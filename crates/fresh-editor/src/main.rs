@@ -2740,11 +2740,14 @@ where
 
     loop {
         // Run shared per-tick housekeeping (async messages, timers, auto-save, etc.)
-        if fresh::app::editor_tick(editor, || {
-            terminal.clear()?;
-            Ok(())
-        })? {
-            needs_render = true;
+        {
+            let _span = tracing::info_span!("editor_tick").entered();
+            if fresh::app::editor_tick(editor, || {
+                terminal.clear()?;
+                Ok(())
+            })? {
+                needs_render = true;
+            }
         }
 
         if editor.should_quit() {
@@ -2759,7 +2762,10 @@ where
         }
 
         if needs_render && last_render.elapsed() >= FRAME_DURATION {
-            terminal.draw(|frame| editor.render(frame))?;
+            {
+                let _span = tracing::info_span!("terminal_draw").entered();
+                terminal.draw(|frame| editor.render(frame))?;
+            }
             last_render = Instant::now();
             needs_render = false;
         }

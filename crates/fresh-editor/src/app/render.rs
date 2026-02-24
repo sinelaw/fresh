@@ -5,7 +5,7 @@ use rust_i18n::t;
 impl Editor {
     /// Render the editor to the terminal
     pub fn render(&mut self, frame: &mut Frame) {
-        let _span = tracing::trace_span!("render").entered();
+        let _span = tracing::info_span!("render").entered();
         let size = frame.area();
 
         // Save frame dimensions for recompute_layout (used by macro replay)
@@ -17,11 +17,17 @@ impl Editor {
         // Otherwise, cursor movements like 'G' (go to end) won't sync properly because
         // viewport.top_byte hasn't been updated yet.
         let active_split = self.split_manager.active_split();
-        self.pre_sync_ensure_visible(active_split);
+        {
+            let _span = tracing::info_span!("pre_sync_ensure_visible").entered();
+            self.pre_sync_ensure_visible(active_split);
+        }
 
         // Synchronize scroll sync groups (anchor-based scroll for side-by-side diffs)
         // This sets viewport positions based on the authoritative scroll_line in each group
-        self.sync_scroll_groups();
+        {
+            let _span = tracing::info_span!("sync_scroll_groups").entered();
+            self.sync_scroll_groups();
+        }
 
         // NOTE: Viewport sync with cursor is handled by split_rendering.rs which knows the
         // correct content area dimensions. Don't sync here with incorrect EditorState viewport size.
@@ -30,19 +36,23 @@ impl Editor {
         // Each split may have a different viewport position on the same buffer
         let mut semantic_ranges: std::collections::HashMap<BufferId, (usize, usize)> =
             std::collections::HashMap::new();
-        for (split_id, view_state) in &self.split_view_states {
-            if let Some(buffer_id) = self.split_manager.get_buffer_id((*split_id).into()) {
-                if let Some(state) = self.buffers.get(&buffer_id) {
-                    let start_line = state.buffer.get_line_number(view_state.viewport.top_byte);
-                    let visible_lines = view_state.viewport.visible_line_count().saturating_sub(1);
-                    let end_line = start_line.saturating_add(visible_lines);
-                    semantic_ranges
-                        .entry(buffer_id)
-                        .and_modify(|(min_start, max_end)| {
-                            *min_start = (*min_start).min(start_line);
-                            *max_end = (*max_end).max(end_line);
-                        })
-                        .or_insert((start_line, end_line));
+        {
+            let _span = tracing::info_span!("compute_semantic_ranges").entered();
+            for (split_id, view_state) in &self.split_view_states {
+                if let Some(buffer_id) = self.split_manager.get_buffer_id((*split_id).into()) {
+                    if let Some(state) = self.buffers.get(&buffer_id) {
+                        let start_line = state.buffer.get_line_number(view_state.viewport.top_byte);
+                        let visible_lines =
+                            view_state.viewport.visible_line_count().saturating_sub(1);
+                        let end_line = start_line.saturating_add(visible_lines);
+                        semantic_ranges
+                            .entry(buffer_id)
+                            .and_modify(|(min_start, max_end)| {
+                                *min_start = (*min_start).min(start_line);
+                                *max_end = (*max_end).max(end_line);
+                            })
+                            .or_insert((start_line, end_line));
+                    }
                 }
             }
         }
@@ -53,7 +63,7 @@ impl Editor {
         }
 
         {
-            let _span = tracing::trace_span!("prepare_for_render").entered();
+            let _span = tracing::info_span!("prepare_for_render").entered();
             for (split_id, view_state) in &self.split_view_states {
                 if let Some(buffer_id) = self.split_manager.get_buffer_id((*split_id).into()) {
                     if let Some(state) = self.buffers.get_mut(&buffer_id) {

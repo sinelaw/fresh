@@ -86,6 +86,14 @@ impl StringBuffer {
         matches!(self.data, BufferData::Loaded { .. })
     }
 
+    /// Returns the total byte count of an unloaded buffer, or `None` if loaded.
+    pub fn unloaded_bytes(&self) -> Option<usize> {
+        match &self.data {
+            BufferData::Unloaded { bytes, .. } => Some(*bytes),
+            BufferData::Loaded { .. } => None,
+        }
+    }
+
     /// Get data reference if loaded, None if unloaded
     ///
     /// NOTE: This is a low-level API. External code should use TextBuffer::get_text_range_mut()

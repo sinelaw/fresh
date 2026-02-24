@@ -3,7 +3,7 @@
 use crate::model::encoding;
 use crate::model::filesystem::{FileMetadata, FileSystem, WriteOp};
 use crate::model::piece_tree::{
-    BufferData, BufferLocation, Cursor, PieceInfo, PieceRangeIter, PieceTree, Position,
+    BufferData, BufferLocation, Cursor, PieceInfo, PieceRangeIter, PieceTree, PieceView, Position,
     StringBuffer, TreeStats,
 };
 use crate::model::piece_tree_diff::PieceTreeDiff;
@@ -2026,7 +2026,7 @@ impl TextBuffer {
     /// NOTE: Currently loads entire buffers on-demand. Future optimization would split
     /// large pieces and load only LOAD_CHUNK_SIZE chunks at a time.
     pub fn get_text_range_mut(&mut self, offset: usize, bytes: usize) -> Result<Vec<u8>> {
-        let _span = tracing::trace_span!("get_text_range_mut", offset, bytes).entered();
+        let _span = tracing::info_span!("get_text_range_mut", offset, bytes).entered();
         if bytes == 0 {
             return Ok(Vec::new());
         }
@@ -2035,9 +2035,11 @@ impl TextBuffer {
         // Clamp end_offset to buffer length to handle reads beyond EOF
         let end_offset = (offset + bytes).min(self.len());
         let mut current_offset = offset;
+        let mut iteration_count = 0u32;
 
         // Keep iterating until we've collected all requested bytes
         while current_offset < end_offset {
+            iteration_count += 1;
             let mut made_progress = false;
             let mut restarted_iteration = false;
 
@@ -2056,97 +2058,9 @@ impl TextBuffer {
                     .unwrap_or(false);
 
                 if needs_loading {
-                    // Check if piece is too large for full loading
-                    if piece_view.bytes > LOAD_CHUNK_SIZE {
-                        let _span = tracing::trace_span!(
-                            "chunk_split_and_load",
-                            piece_bytes = piece_view.bytes,
-                            buffer_id,
-                        )
-                        .entered();
-
-                        // Split large piece into chunks
-                        let piece_start_in_doc = piece_view.doc_offset;
-                        let offset_in_piece = current_offset.saturating_sub(piece_start_in_doc);
-
-                        // Calculate chunk boundaries aligned to CHUNK_ALIGNMENT
-                        let chunk_start_in_buffer = (piece_view.buffer_offset + offset_in_piece)
-                            / CHUNK_ALIGNMENT
-                            * CHUNK_ALIGNMENT;
-                        let chunk_bytes = LOAD_CHUNK_SIZE.min(
-                            (piece_view.buffer_offset + piece_view.bytes)
-                                .saturating_sub(chunk_start_in_buffer),
-                        );
-
-                        // Calculate document offsets for splitting
-                        let chunk_start_offset_in_piece =
-                            chunk_start_in_buffer.saturating_sub(piece_view.buffer_offset);
-                        let split_start_in_doc = piece_start_in_doc + chunk_start_offset_in_piece;
-                        let split_end_in_doc = split_start_in_doc + chunk_bytes;
-
-                        // Split the piece to isolate the chunk
-                        {
-                            let _span = tracing::trace_span!("split_piece", chunk_bytes).entered();
-                            if chunk_start_offset_in_piece > 0 {
-                                self.piece_tree
-                                    .split_at_offset(split_start_in_doc, &self.buffers);
-                            }
-                            if split_end_in_doc < piece_start_in_doc + piece_view.bytes {
-                                self.piece_tree
-                                    .split_at_offset(split_end_in_doc, &self.buffers);
-                            }
-                        }
-
-                        // Create a new buffer for this chunk
-                        let chunk_buffer = self
-                            .buffers
-                            .get(buffer_id)
-                            .context("Buffer not found")?
-                            .create_chunk_buffer(
-                                self.next_buffer_id,
-                                chunk_start_in_buffer,
-                                chunk_bytes,
-                            )
-                            .context("Failed to create chunk buffer")?;
-
-                        self.next_buffer_id += 1;
-                        let new_buffer_id = chunk_buffer.id;
-                        self.buffers.push(chunk_buffer);
-
-                        // Update the piece to reference the new chunk buffer
-                        self.piece_tree.replace_buffer_reference(
-                            buffer_id,
-                            piece_view.buffer_offset + chunk_start_offset_in_piece,
-                            chunk_bytes,
-                            BufferLocation::Added(new_buffer_id),
-                        );
-
-                        // Load the chunk buffer using the FileSystem trait
-                        {
-                            let _span = tracing::trace_span!("load_chunk", chunk_bytes).entered();
-                            self.buffers
-                                .get_mut(new_buffer_id)
-                                .context("Chunk buffer not found")?
-                                .load(&*self.fs)
-                                .context("Failed to load chunk")?;
-                        }
-
-                        // Restart iteration with the modified tree
+                    if self.chunk_split_and_load(&piece_view, current_offset)? {
                         restarted_iteration = true;
                         break;
-                    } else {
-                        // Piece is small enough, load the entire buffer
-                        let _span = tracing::trace_span!(
-                            "load_small_buffer",
-                            piece_bytes = piece_view.bytes,
-                            buffer_id,
-                        )
-                        .entered();
-                        self.buffers
-                            .get_mut(buffer_id)
-                            .context("Buffer not found")?
-                            .load(&*self.fs)
-                            .context("Failed to load buffer")?;
                     }
                 }
 
@@ -2208,6 +2122,14 @@ impl TextBuffer {
             }
         }
 
+        if iteration_count > 1 {
+            tracing::info!(
+                iteration_count,
+                result_len = result.len(),
+                "get_text_range_mut: completed with multiple iterations"
+            );
+        }
+
         Ok(result)
     }
 
@@ -2224,6 +2146,7 @@ impl TextBuffer {
     /// # Returns
     /// Ok(()) if preparation succeeded, Err if loading failed
     pub fn prepare_viewport(&mut self, start_offset: usize, line_count: usize) -> Result<()> {
+        let _span = tracing::info_span!("prepare_viewport", start_offset, line_count).entered();
         // Estimate how many bytes we need (pessimistic assumption)
         // Average line length is typically 80-100 bytes, but we use 200 to be safe
         let estimated_bytes = line_count.saturating_mul(200);
@@ -2231,12 +2154,149 @@ impl TextBuffer {
         // Cap the estimate at the remaining bytes in the document
         let remaining_bytes = self.total_bytes().saturating_sub(start_offset);
         let bytes_to_load = estimated_bytes.min(remaining_bytes);
+        tracing::info!(
+            bytes_to_load,
+            total_bytes = self.total_bytes(),
+            "prepare_viewport loading"
+        );
 
         // Pre-load with full chunk-splitting support
         // This may load more than we need, but ensures all data is available
         self.get_text_range_mut(start_offset, bytes_to_load)?;
 
         Ok(())
+    }
+
+    /// Split a piece that references a large unloaded buffer, create a chunk
+    /// buffer for the region around `current_offset`, and load it.
+    ///
+    /// Returns `true` if the piece tree was modified (caller must restart its
+    /// iteration), `false` if the piece was small enough to load in-place.
+    fn chunk_split_and_load(
+        &mut self,
+        piece_view: &PieceView,
+        current_offset: usize,
+    ) -> Result<bool> {
+        let buffer_id = piece_view.location.buffer_id();
+
+        // The underlying buffer may be much larger than this piece (e.g. the
+        // whole-file Stored buffer after rebuild_with_pristine_saved_root).
+        // We must chunk-split if either the piece or its buffer exceeds
+        // LOAD_CHUNK_SIZE, because `load()` loads the entire buffer.
+        let buffer_bytes = self
+            .buffers
+            .get(buffer_id)
+            .and_then(|b| b.unloaded_bytes())
+            .unwrap_or(0);
+        let needs_chunk_split =
+            piece_view.bytes > LOAD_CHUNK_SIZE || buffer_bytes > piece_view.bytes;
+
+        tracing::info!(
+            buffer_id,
+            piece_bytes = piece_view.bytes,
+            buffer_bytes,
+            needs_chunk_split,
+            piece_doc_offset = piece_view.doc_offset,
+            current_offset,
+            "chunk_split_and_load: loading unloaded piece"
+        );
+
+        if !needs_chunk_split {
+            // Piece is small enough and its buffer matches — load in-place.
+            let _span = tracing::info_span!(
+                "load_small_buffer",
+                piece_bytes = piece_view.bytes,
+                buffer_id,
+            )
+            .entered();
+            self.buffers
+                .get_mut(buffer_id)
+                .context("Buffer not found")?
+                .load(&*self.fs)
+                .context("Failed to load buffer")?;
+            return Ok(false);
+        }
+
+        let _span = tracing::info_span!(
+            "chunk_split_and_load",
+            piece_bytes = piece_view.bytes,
+            buffer_id,
+        )
+        .entered();
+
+        let piece_start_in_doc = piece_view.doc_offset;
+        let offset_in_piece = current_offset.saturating_sub(piece_start_in_doc);
+
+        // Calculate chunk boundaries aligned to CHUNK_ALIGNMENT
+        let chunk_start_in_buffer =
+            (piece_view.buffer_offset + offset_in_piece) / CHUNK_ALIGNMENT * CHUNK_ALIGNMENT;
+        let chunk_bytes = LOAD_CHUNK_SIZE.min(
+            (piece_view.buffer_offset + piece_view.bytes).saturating_sub(chunk_start_in_buffer),
+        );
+
+        // Calculate document offsets for splitting
+        let chunk_start_offset_in_piece =
+            chunk_start_in_buffer.saturating_sub(piece_view.buffer_offset);
+        let split_start_in_doc = piece_start_in_doc + chunk_start_offset_in_piece;
+        let split_end_in_doc = split_start_in_doc + chunk_bytes;
+
+        // Split the piece to isolate the chunk
+        if chunk_start_offset_in_piece > 0 {
+            self.piece_tree
+                .split_at_offset(split_start_in_doc, &self.buffers);
+        }
+        if split_end_in_doc < piece_start_in_doc + piece_view.bytes {
+            self.piece_tree
+                .split_at_offset(split_end_in_doc, &self.buffers);
+        }
+
+        // Create a new buffer for this chunk
+        let chunk_buffer = self
+            .buffers
+            .get(buffer_id)
+            .context("Buffer not found")?
+            .create_chunk_buffer(self.next_buffer_id, chunk_start_in_buffer, chunk_bytes)
+            .context("Failed to create chunk buffer")?;
+
+        self.next_buffer_id += 1;
+        let new_buffer_id = chunk_buffer.id;
+        self.buffers.push(chunk_buffer);
+
+        // Update the piece to reference the new chunk buffer
+        self.piece_tree.replace_buffer_reference(
+            buffer_id,
+            piece_view.buffer_offset + chunk_start_offset_in_piece,
+            chunk_bytes,
+            BufferLocation::Added(new_buffer_id),
+        );
+
+        // Load the chunk buffer
+        self.buffers
+            .get_mut(new_buffer_id)
+            .context("Chunk buffer not found")?
+            .load(&*self.fs)
+            .context("Failed to load chunk")?;
+
+        // split_at_offset uses compute_line_feeds_static which returns None
+        // for unloaded buffers, destroying the scanned line feed counts.
+        // Fix up: the loaded chunk is counted from memory, remaining unloaded
+        // pieces use the filesystem's count_line_feeds_in_range.
+        if self.line_feeds_scanned {
+            let leaves = self.piece_tree.get_leaves();
+            let mut fixups: Vec<(usize, usize)> = Vec::new();
+            for (idx, leaf) in leaves.iter().enumerate() {
+                if leaf.line_feed_cnt.is_none() {
+                    if let Ok(count) = self.scan_leaf(leaf) {
+                        fixups.push((idx, count));
+                    }
+                }
+            }
+            if !fixups.is_empty() {
+                self.piece_tree.update_leaf_line_feeds_path_copy(&fixups);
+            }
+        }
+
+        Ok(true)
     }
 
     /// Get all text as a single Vec<u8>
@@ -5841,6 +5901,251 @@ mod tests {
                  Arc::ptr_eq short-circuiting is not working",
                 diff.nodes_visited,
                 total_leaves,
+            );
+        }
+
+        /// After rebuild_with_pristine_saved_root, loading a small viewport
+        /// range must NOT cause the entire original file buffer to be loaded.
+        /// This is a regression test for a bug where the pristine tree's 1MB
+        /// pieces all referenced Stored(0) (the whole-file buffer). Because
+        /// piece_view.bytes (1MB) <= LOAD_CHUNK_SIZE, get_text_range_mut took
+        /// the "load_small_buffer" path, calling load() on the 814MB buffer.
+        #[test]
+        fn test_viewport_load_after_rebuild_does_not_load_entire_file() {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            /// Filesystem wrapper that tracks the largest read_range call.
+            struct TrackingFs {
+                inner: crate::model::filesystem::StdFileSystem,
+                max_read_range_len: Arc<AtomicUsize>,
+            }
+
+            impl crate::model::filesystem::FileSystem for TrackingFs {
+                fn read_file(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+                    self.inner.read_file(path)
+                }
+                fn read_range(
+                    &self,
+                    path: &Path,
+                    offset: u64,
+                    len: usize,
+                ) -> std::io::Result<Vec<u8>> {
+                    self.max_read_range_len.fetch_max(len, Ordering::SeqCst);
+                    self.inner.read_range(path, offset, len)
+                }
+                fn write_file(&self, path: &Path, data: &[u8]) -> std::io::Result<()> {
+                    self.inner.write_file(path, data)
+                }
+                fn create_file(
+                    &self,
+                    path: &Path,
+                ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>>
+                {
+                    self.inner.create_file(path)
+                }
+                fn open_file(
+                    &self,
+                    path: &Path,
+                ) -> std::io::Result<Box<dyn crate::model::filesystem::FileReader>>
+                {
+                    self.inner.open_file(path)
+                }
+                fn open_file_for_write(
+                    &self,
+                    path: &Path,
+                ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>>
+                {
+                    self.inner.open_file_for_write(path)
+                }
+                fn open_file_for_append(
+                    &self,
+                    path: &Path,
+                ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>>
+                {
+                    self.inner.open_file_for_append(path)
+                }
+                fn set_file_length(&self, path: &Path, len: u64) -> std::io::Result<()> {
+                    self.inner.set_file_length(path, len)
+                }
+                fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+                    self.inner.rename(from, to)
+                }
+                fn copy(&self, from: &Path, to: &Path) -> std::io::Result<u64> {
+                    self.inner.copy(from, to)
+                }
+                fn remove_file(&self, path: &Path) -> std::io::Result<()> {
+                    self.inner.remove_file(path)
+                }
+                fn remove_dir(&self, path: &Path) -> std::io::Result<()> {
+                    self.inner.remove_dir(path)
+                }
+                fn metadata(
+                    &self,
+                    path: &Path,
+                ) -> std::io::Result<crate::model::filesystem::FileMetadata> {
+                    self.inner.metadata(path)
+                }
+                fn symlink_metadata(
+                    &self,
+                    path: &Path,
+                ) -> std::io::Result<crate::model::filesystem::FileMetadata> {
+                    self.inner.symlink_metadata(path)
+                }
+                fn is_dir(&self, path: &Path) -> std::io::Result<bool> {
+                    self.inner.is_dir(path)
+                }
+                fn is_file(&self, path: &Path) -> std::io::Result<bool> {
+                    self.inner.is_file(path)
+                }
+                fn set_permissions(
+                    &self,
+                    path: &Path,
+                    permissions: &crate::model::filesystem::FilePermissions,
+                ) -> std::io::Result<()> {
+                    self.inner.set_permissions(path, permissions)
+                }
+                fn is_owner(&self, path: &Path) -> bool {
+                    self.inner.is_owner(path)
+                }
+                fn read_dir(
+                    &self,
+                    path: &Path,
+                ) -> std::io::Result<Vec<crate::model::filesystem::DirEntry>> {
+                    self.inner.read_dir(path)
+                }
+                fn create_dir(&self, path: &Path) -> std::io::Result<()> {
+                    self.inner.create_dir(path)
+                }
+                fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+                    self.inner.create_dir_all(path)
+                }
+                fn canonicalize(&self, path: &Path) -> std::io::Result<PathBuf> {
+                    self.inner.canonicalize(path)
+                }
+                fn current_uid(&self) -> u32 {
+                    self.inner.current_uid()
+                }
+                fn sudo_write(
+                    &self,
+                    path: &Path,
+                    data: &[u8],
+                    mode: u32,
+                    uid: u32,
+                    gid: u32,
+                ) -> std::io::Result<()> {
+                    self.inner.sudo_write(path, data, mode, uid, gid)
+                }
+            }
+
+            // Create a 3MB file with newlines (3 chunks at LOAD_CHUNK_SIZE=1MB).
+            let file_size = LOAD_CHUNK_SIZE * 3;
+            let content = make_content(file_size);
+
+            let tmp = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(tmp.path(), &content).unwrap();
+
+            let max_read = Arc::new(AtomicUsize::new(0));
+            let fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
+                Arc::new(TrackingFs {
+                    inner: crate::model::filesystem::StdFileSystem,
+                    max_read_range_len: max_read.clone(),
+                });
+
+            // Build an unloaded large-file buffer with the tracking FS.
+            let buffer = crate::model::piece_tree::StringBuffer::new_unloaded(
+                0,
+                tmp.path().to_path_buf(),
+                0,
+                file_size,
+            );
+            let piece_tree = PieceTree::new(BufferLocation::Stored(0), 0, file_size, None);
+            let saved_root = piece_tree.root();
+            let mut buf = TextBuffer {
+                fs,
+                piece_tree,
+                saved_root,
+                buffers: vec![buffer],
+                next_buffer_id: 1,
+                file_path: Some(tmp.path().to_path_buf()),
+                modified: false,
+                recovery_pending: false,
+                large_file: true,
+                line_feeds_scanned: false,
+                is_binary: false,
+                line_ending: LineEnding::LF,
+                original_line_ending: LineEnding::LF,
+                encoding: Encoding::Utf8,
+                original_encoding: Encoding::Utf8,
+                saved_file_size: Some(file_size),
+                version: 0,
+                config: BufferConfig::default(),
+            };
+
+            // Load a small viewport in the middle (forces chunk splitting).
+            let viewport_offset = LOAD_CHUNK_SIZE + 100; // somewhere in chunk 2
+            buf.get_text_range_mut(viewport_offset, 4096).unwrap();
+
+            // Run the line-feed scan and rebuild the pristine tree.
+            let updates = scan_line_feeds(&mut buf);
+            buf.rebuild_with_pristine_saved_root(&updates);
+
+            // Reset the tracker — we only care about reads AFTER the rebuild.
+            max_read.store(0, Ordering::SeqCst);
+
+            // Load the same viewport range again.
+            buf.get_text_range_mut(viewport_offset, 4096).unwrap();
+
+            let largest_read = max_read.load(Ordering::SeqCst);
+            assert!(
+                largest_read <= LOAD_CHUNK_SIZE,
+                "After rebuild, loading a viewport triggered a read of {} bytes \
+                 (file_size={}). This means the entire Stored buffer is being \
+                 loaded instead of just the needed chunk.",
+                largest_read,
+                file_size,
+            );
+        }
+
+        /// After rebuild_with_pristine_saved_root, loading a viewport must not
+        /// destroy the line feed counts on pieces. The chunk-split path in
+        /// get_text_range_mut calls split_at_offset, which invokes
+        /// compute_line_feeds_static — returning None for unloaded buffers.
+        /// This turns exact line numbers back into byte-based estimates.
+        #[test]
+        fn test_viewport_load_after_rebuild_preserves_line_counts() {
+            let file_size = LOAD_CHUNK_SIZE * 3;
+            let content = make_content(file_size);
+
+            let tmp = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(tmp.path(), &content).unwrap();
+            let mut buf = large_file_buffer_unloaded(tmp.path(), content.len());
+
+            // Scan + rebuild so every leaf has a known line_feed_cnt.
+            let updates = scan_line_feeds(&mut buf);
+            buf.rebuild_with_pristine_saved_root(&updates);
+
+            let line_count_before = buf.piece_tree.line_count();
+            assert!(
+                line_count_before.is_some(),
+                "line_count must be Some after rebuild"
+            );
+
+            // Load a viewport that starts in the MIDDLE of a piece, forcing
+            // split_at_offset (not just replace_buffer_reference).
+            let mid_piece_offset = LOAD_CHUNK_SIZE + LOAD_CHUNK_SIZE / 2;
+            buf.get_text_range_mut(mid_piece_offset, 4096).unwrap();
+
+            let line_count_after = buf.piece_tree.line_count();
+            assert!(
+                line_count_after.is_some(),
+                "line_count must still be Some after viewport load \
+                 (was {:?} before, now {:?})",
+                line_count_before,
+                line_count_after,
+            );
+            assert_eq!(
+                line_count_before, line_count_after,
+                "line_count must not change after viewport load"
             );
         }
 

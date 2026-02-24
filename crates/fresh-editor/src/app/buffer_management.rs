@@ -2296,6 +2296,7 @@ impl Editor {
     /// Process chunks for the incremental line-feed scan.
     /// Returns `true` if the UI should re-render (progress updated or scan finished).
     pub fn process_line_scan(&mut self) -> bool {
+        let _span = tracing::info_span!("process_line_scan").entered();
         let scan = match self.line_scan_state.as_mut() {
             Some(s) => s,
             None => return false,
@@ -2331,6 +2332,7 @@ impl Editor {
     /// `count_line_feeds_in_range` on the filesystem, which remote implementations
     /// override to count on the server without transferring data.
     fn process_line_scan_batch(&mut self, buffer_id: BufferId) -> std::io::Result<()> {
+        let _span = tracing::info_span!("process_line_scan_batch").entered();
         let concurrency = self.config.editor.read_concurrency.max(1);
 
         let state = self.buffers.get(&buffer_id);
@@ -2409,9 +2411,15 @@ impl Editor {
     }
 
     fn finish_line_scan_ok(&mut self) {
+        let _span = tracing::info_span!("finish_line_scan_ok").entered();
         let scan = self.line_scan_state.take().unwrap();
         let open_goto = scan.open_goto_line_on_complete;
         if let Some(state) = self.buffers.get_mut(&scan.buffer_id) {
+            let _span = tracing::info_span!(
+                "rebuild_with_pristine_saved_root",
+                updates = scan.updates.len()
+            )
+            .entered();
             state.buffer.rebuild_with_pristine_saved_root(&scan.updates);
         }
         self.set_status_message(t!("goto.scan_complete").to_string());
