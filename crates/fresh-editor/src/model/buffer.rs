@@ -1268,7 +1268,7 @@ impl TextBuffer {
     ) -> io::Result<()> {
         const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
 
-        let file_size = self.fs.metadata(src_path)?.size as u64;
+        let file_size = self.fs.metadata(src_path)?.size;
         let mut offset = 0u64;
 
         while offset < file_size {
@@ -1820,7 +1820,7 @@ impl TextBuffer {
                 // querying the entire leaf. This handles unloaded segments in
                 // large file mode after line scanning has populated the metadata.
                 if start == 0 && len == leaf.bytes {
-                    leaf.line_feed_cnt.map(|c| c as usize)
+                    leaf.line_feed_cnt.map(|c| c)
                 } else {
                     tracing::warn!(
                         "diff line_counter: returning None for partial leaf query: \
@@ -2204,11 +2204,9 @@ impl TextBuffer {
                     .map(|b| !b.is_loaded())
                     .unwrap_or(false);
 
-                if needs_loading {
-                    if self.chunk_split_and_load(&piece_view, current_offset)? {
-                        restarted_iteration = true;
-                        break;
-                    }
+                if needs_loading && self.chunk_split_and_load(&piece_view, current_offset)? {
+                    restarted_iteration = true;
+                    break;
                 }
 
                 // Calculate the range to read from this piece

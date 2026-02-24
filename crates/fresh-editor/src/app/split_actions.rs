@@ -179,11 +179,7 @@ impl Editor {
 
         // Ensure the active tab is visible in the newly active split
         let split_id = self.split_manager.active_split();
-        self.ensure_active_tab_visible(
-            split_id.into(),
-            self.active_buffer(),
-            self.effective_tabs_width(),
-        );
+        self.ensure_active_tab_visible(split_id, self.active_buffer(), self.effective_tabs_width());
 
         let buffer_id = self.active_buffer();
 

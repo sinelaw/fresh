@@ -411,7 +411,7 @@ impl FileProvider {
             .try_git_files(cwd)
             .or_else(|| self.try_fd_files(cwd))
             .or_else(|| self.try_find_files(cwd))
-            .unwrap_or_else(Vec::new);
+            .unwrap_or_default();
 
         // Add frecency scores
         let files: Vec<FileEntry> = files

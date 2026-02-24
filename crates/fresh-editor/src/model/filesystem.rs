@@ -860,9 +860,7 @@ impl FileSystem for StdFileSystem {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("failed to spawn sudo: {}", e))
-            })?;
+            .map_err(|e| io::Error::other(format!("failed to spawn sudo: {}", e)))?;
 
         if let Some(mut stdin) = child.stdin.take() {
             use std::io::Write;
@@ -883,7 +881,7 @@ impl FileSystem for StdFileSystem {
             .args(["chmod", &format!("{:o}", mode), &path.to_string_lossy()])
             .status()?;
         if !status.success() {
-            return Err(io::Error::new(io::ErrorKind::Other, "sudo chmod failed"));
+            return Err(io::Error::other("sudo chmod failed"));
         }
 
         // Set ownership via sudo chown
@@ -895,7 +893,7 @@ impl FileSystem for StdFileSystem {
             ])
             .status()?;
         if !status.success() {
-            return Err(io::Error::new(io::ErrorKind::Other, "sudo chown failed"));
+            return Err(io::Error::other("sudo chown failed"));
         }
 
         Ok(())

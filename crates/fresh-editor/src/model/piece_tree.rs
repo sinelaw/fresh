@@ -1114,16 +1114,8 @@ impl PieceTree {
                 }
 
                 // Partial overlap - keep parts outside delete range
-                let before_bytes = if delete_start > piece_start {
-                    delete_start - piece_start
-                } else {
-                    0
-                };
-                let after_bytes = if delete_end < piece_end {
-                    piece_end - delete_end
-                } else {
-                    0
-                };
+                let before_bytes = delete_start.saturating_sub(piece_start);
+                let after_bytes = piece_end.saturating_sub(delete_end);
 
                 if before_bytes > 0 && after_bytes > 0 {
                     // Delete in the middle of this leaf - split into two

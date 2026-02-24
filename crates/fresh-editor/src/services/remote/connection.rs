@@ -218,10 +218,7 @@ impl Drop for SshConnection {
         // If it fails (process already exited, permission error, etc.)
         // there's nothing we can do in a Drop impl — the OS will clean
         // up the zombie when our process exits.
-        match self.process.start_kill() {
-            Ok(()) => {}
-            Err(_) => {}
-        }
+        if let Ok(()) = self.process.start_kill() {}
     }
 }
 

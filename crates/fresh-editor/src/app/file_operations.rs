@@ -903,10 +903,11 @@ impl Editor {
         let path = self.active_state().buffer.file_path()?;
 
         // Get current file modification time
-        let current_mtime = match self.filesystem.metadata(path).ok().and_then(|m| m.modified) {
-            Some(mtime) => mtime,
-            None => return None, // File doesn't exist or can't read metadata
-        };
+        let current_mtime = self
+            .filesystem
+            .metadata(path)
+            .ok()
+            .and_then(|m| m.modified)?;
 
         // Compare with our recorded modification time
         match self.file_mod_times.get(path) {

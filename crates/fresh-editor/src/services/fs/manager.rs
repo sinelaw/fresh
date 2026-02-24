@@ -74,7 +74,7 @@ impl FsManager {
             let path_clone = path.clone();
             let result = tokio::task::spawn_blocking(move || fs.read_dir(&path_clone))
                 .await
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| io::Error::other(e.to_string()))?;
 
             // Notify all waiting requesters
             let mut pending = self.pending_dir_requests.lock().await;
@@ -120,7 +120,7 @@ impl FsManager {
         for task in tasks {
             match task.await {
                 Ok(result) => results.push(result),
-                Err(e) => results.push(Err(io::Error::new(io::ErrorKind::Other, e.to_string()))),
+                Err(e) => results.push(Err(io::Error::other(e.to_string()))),
             }
         }
 
@@ -133,7 +133,7 @@ impl FsManager {
         let path = path.to_path_buf();
         tokio::task::spawn_blocking(move || fs.metadata(&path))
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+            .map_err(|e| io::Error::other(e.to_string()))?
     }
 
     /// Check if a path exists
@@ -151,7 +151,7 @@ impl FsManager {
         let path = path.to_path_buf();
         tokio::task::spawn_blocking(move || fs.is_dir(&path))
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+            .map_err(|e| io::Error::other(e.to_string()))?
     }
 
     /// Get a complete entry for a path (with metadata)
@@ -204,7 +204,7 @@ impl FsManager {
             }
         })
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+        .map_err(|e| io::Error::other(e.to_string()))?
     }
 
     /// Get canonical path
@@ -213,7 +213,7 @@ impl FsManager {
         let path = path.to_path_buf();
         tokio::task::spawn_blocking(move || fs.canonicalize(&path))
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+            .map_err(|e| io::Error::other(e.to_string()))?
     }
 
     /// List directory and fetch metadata for all entries in parallel

@@ -60,7 +60,7 @@ impl RemoteFileSystem {
                 };
                 io::Error::new(kind, msg)
             }
-            e => io::Error::new(io::ErrorKind::Other, e.to_string()),
+            e => io::Error::other(e.to_string()),
         }
     }
 

@@ -514,7 +514,7 @@ fn byte_to_keycode(byte: u8) -> KeyCode {
         28..=31 => KeyCode::Char((b'\\' + byte - 28) as char),
         32 => KeyCode::Char(' '),
         127 => KeyCode::Backspace,
-        b if b >= 32 && b < 127 => KeyCode::Char(b as char),
+        b if (32..127).contains(&b) => KeyCode::Char(b as char),
         _ => KeyCode::Null,
     }
 }

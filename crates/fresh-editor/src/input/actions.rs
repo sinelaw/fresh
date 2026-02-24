@@ -1839,7 +1839,7 @@ pub fn action_to_events(
                 let mut found_pos = None;
                 while let Some((line_start, line_content)) = iter.prev() {
                     // Check if this is an empty line (only whitespace/newline)
-                    let trimmed = line_content.trim_end_matches(|c| c == '\n' || c == '\r');
+                    let trimmed = line_content.trim_end_matches(['\n', '\r']);
                     if trimmed.is_empty() || trimmed.chars().all(char::is_whitespace) {
                         found_pos = Some(line_start);
                         break;
@@ -1876,7 +1876,7 @@ pub fn action_to_events(
                 let mut found_pos = None;
                 while let Some((line_start, line_content)) = iter.next_line() {
                     // Check if this is an empty line (only whitespace/newline)
-                    let trimmed = line_content.trim_end_matches(|c| c == '\n' || c == '\r');
+                    let trimmed = line_content.trim_end_matches(['\n', '\r']);
                     if trimmed.is_empty() || trimmed.chars().all(char::is_whitespace) {
                         found_pos = Some(line_start);
                         break;

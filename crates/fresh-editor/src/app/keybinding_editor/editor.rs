@@ -628,10 +628,7 @@ impl KeybindingEditor {
     /// Apply the edit dialog to create/update a binding.
     /// Returns an error message if validation fails.
     pub fn apply_edit_dialog(&mut self) -> Option<String> {
-        let dialog = match self.edit_dialog.take() {
-            Some(d) => d,
-            None => return None,
-        };
+        let dialog = self.edit_dialog.take()?;
 
         if dialog.key_code.is_none() || dialog.action_text.is_empty() {
             self.edit_dialog = Some(dialog);

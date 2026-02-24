@@ -2257,11 +2257,9 @@ impl Editor {
             let (new_pos, new_sticky) = match &visual_action {
                 VisualAction::UpDown { direction, .. } => {
                     // Calculate current visual column from cached layout
-                    let current_visual_col =
-                        match self.cached_layout.byte_to_visual_column(split_id, position) {
-                            Some(col) => col,
-                            None => return None,
-                        };
+                    let current_visual_col = self
+                        .cached_layout
+                        .byte_to_visual_column(split_id, position)?;
 
                     let goal_visual_col = if sticky_column > 0 {
                         sticky_column

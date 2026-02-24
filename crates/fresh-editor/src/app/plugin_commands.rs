@@ -1569,11 +1569,7 @@ impl Editor {
 
         // Update config.languages with the extensions so detect_language() works
         for (language, _path, extensions) in &additional {
-            let lang_config = self
-                .config
-                .languages
-                .entry(language.clone())
-                .or_insert_with(Default::default);
+            let lang_config = self.config.languages.entry(language.clone()).or_default();
             for ext in extensions {
                 if !lang_config.extensions.contains(ext) {
                     lang_config.extensions.push(ext.clone());

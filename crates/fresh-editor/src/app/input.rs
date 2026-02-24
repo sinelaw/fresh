@@ -311,7 +311,7 @@ impl Editor {
                 let has_line_index = self
                     .buffers
                     .get(&self.active_buffer())
-                    .map_or(true, |s| s.buffer.line_count().is_some());
+                    .is_none_or(|s| s.buffer.line_count().is_some());
                 if has_line_index {
                     self.start_prompt(
                         t!("file.goto_line_prompt").to_string(),
@@ -1380,7 +1380,7 @@ impl Editor {
                 .unwrap_or(0);
             if let Some(view_state) = self
                 .composite_view_states
-                .get_mut(&(active_split.into(), buffer_id))
+                .get_mut(&(active_split, buffer_id))
             {
                 view_state.scroll(delta as isize, max_row);
                 tracing::trace!(
@@ -2922,7 +2922,7 @@ impl Editor {
         // Add all available syntaxes from the grammar registry (100+ languages)
         let mut syntax_names: Vec<&str> = self.grammar_registry.available_syntaxes();
         // Sort alphabetically for easier navigation
-        syntax_names.sort_unstable_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        syntax_names.sort_unstable_by_key(|a| a.to_lowercase());
 
         let mut current_index_found = None;
         for syntax_name in syntax_names {
@@ -2935,7 +2935,7 @@ impl Editor {
             // config key, e.g. "rust" not "Rust").
             let is_current = self
                 .resolve_language_id(syntax_name)
-                .map_or(false, |id| id == current_language);
+                .is_some_and(|id| id == current_language);
             if is_current {
                 current_index_found = Some(suggestions.len());
             }

@@ -1088,7 +1088,7 @@ impl SplitRenderer {
                     .as_deref()
                     .and_then(|vs| vs.get(&split_id))
                     .map(|vs| vs.cursors.clone())
-                    .unwrap_or_else(crate::model::cursor::Cursors::new);
+                    .unwrap_or_default();
                 // Resolve hidden fold byte ranges so ensure_visible can skip
                 // folded lines when counting distance to the cursor.
                 let hidden_ranges: Vec<(usize, usize)> = split_view_states
@@ -1333,7 +1333,7 @@ impl SplitRenderer {
             let split_cursors = split_view_states
                 .get(&split_id)
                 .map(|vs| vs.cursors.clone())
-                .unwrap_or_else(crate::model::cursor::Cursors::new);
+                .unwrap_or_default();
             // Resolve hidden fold byte ranges so ensure_visible can skip
             // folded lines when counting distance to the cursor.
             let hidden_ranges: Vec<(usize, usize)> = split_view_states
@@ -2557,7 +2557,7 @@ impl SplitRenderer {
             let viewport_end = tokens
                 .iter()
                 .filter_map(|t| t.source_offset)
-                .last()
+                .next_back()
                 .unwrap_or(viewport.top_byte)
                 + 1;
             let soft_breaks = state.soft_breaks.query_viewport(
@@ -2576,7 +2576,7 @@ impl SplitRenderer {
             let viewport_end = tokens
                 .iter()
                 .filter_map(|t| t.source_offset)
-                .last()
+                .next_back()
                 .unwrap_or(viewport.top_byte)
                 + 1;
             let conceal_ranges =
@@ -3937,10 +3937,8 @@ impl SplitRenderer {
 
             // Skip markdown compose overlays in Source mode — they should only
             // render in the Compose-mode split.
-            if !is_compose {
-                if overlay.namespace.as_ref() == Some(&md_emphasis_ns) {
-                    continue;
-                }
+            if !is_compose && overlay.namespace.as_ref() == Some(&md_emphasis_ns) {
+                continue;
             }
 
             viewport_overlays.push((overlay.clone(), range));
@@ -5247,7 +5245,7 @@ impl SplitRenderer {
                     .map(|m| m.line_end_byte)
                     .unwrap_or(0);
                 let near_buffer_end = last_mapped_byte + 2 >= state.buffer.len();
-                let already_mapped = view_line_mappings.last().map_or(false, |m| {
+                let already_mapped = view_line_mappings.last().is_some_and(|m| {
                     m.char_source_bytes.is_empty() && m.line_end_byte == state.buffer.len()
                 });
                 if near_buffer_end && !already_mapped {

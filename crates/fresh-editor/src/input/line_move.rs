@@ -228,7 +228,7 @@ pub(crate) fn move_lines(
             .map(|(cursor_id, cursor)| {
                 (
                     cursor_id,
-                    cursor.selection_range().map(|range| range.clone()),
+                    cursor.selection_range(),
                     cursor.position,
                     cursor.anchor,
                     cursor.sticky_column,

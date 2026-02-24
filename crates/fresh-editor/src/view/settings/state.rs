@@ -1611,11 +1611,9 @@ impl SettingsState {
                 }
             }
             self.on_value_changed();
-        } else {
-            if let Some(item) = self.current_item_mut() {
-                if let SettingControl::Json(state) = &mut item.control {
-                    state.revert();
-                }
+        } else if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.revert();
             }
         }
         self.editing_text = false;

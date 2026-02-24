@@ -133,7 +133,7 @@ impl ProcessSpawner for RemoteProcessSpawner {
         let result = result_rx
             .await
             .map_err(|_| SpawnError::Channel(ChannelError::ChannelClosed))?
-            .map_err(|e| SpawnError::Process(e))?;
+            .map_err(SpawnError::Process)?;
 
         let exit_code = result
             .get("code")

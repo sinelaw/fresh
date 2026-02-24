@@ -1095,21 +1095,18 @@ impl Editor {
         selected_index: Option<usize>,
     ) -> PromptResult {
         // Determine the mode based on prefix
-        if input.starts_with('>') {
+        if let Some(query) = input.strip_prefix('>') {
             // Command mode - find and execute the selected command
-            let query = &input[1..];
             return self.handle_quick_open_command(query, selected_index);
         }
 
-        if input.starts_with('#') {
+        if let Some(query) = input.strip_prefix('#') {
             // Buffer mode - switch to selected buffer
-            let query = &input[1..];
             return self.handle_quick_open_buffer(query, selected_index);
         }
 
-        if input.starts_with(':') {
+        if let Some(line_str) = input.strip_prefix(':') {
             // Go to line mode
-            let line_str = &input[1..];
             if let Ok(line_num) = line_str.parse::<usize>() {
                 if line_num > 0 {
                     self.goto_line_col(line_num, None);

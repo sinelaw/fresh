@@ -113,7 +113,7 @@ impl FileExplorerRenderer {
             // Extract just the hostname from "user@host" or "user@host:port"
             let hostname = host
                 .split('@')
-                .last()
+                .next_back()
                 .unwrap_or(host)
                 .split(':')
                 .next()

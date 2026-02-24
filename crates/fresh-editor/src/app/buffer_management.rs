@@ -2570,9 +2570,10 @@ impl Editor {
                 None => return Ok(()),
             };
 
-            let rt = self.tokio_runtime.as_ref().ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::Other, "async runtime not available")
-            })?;
+            let rt = self
+                .tokio_runtime
+                .as_ref()
+                .ok_or_else(|| std::io::Error::other("async runtime not available"))?;
 
             let io_results: Vec<std::io::Result<(usize, usize)>> = rt.block_on(async {
                 let mut handles = Vec::with_capacity(io_work.len());

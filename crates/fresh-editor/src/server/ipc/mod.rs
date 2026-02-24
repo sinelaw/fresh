@@ -207,17 +207,8 @@ impl ServerListener {
     pub fn accept(&mut self) -> io::Result<Option<ServerConnection>> {
         // Try to accept on control socket first (client connects here first)
         // Use set_nonblocking for non-blocking accept
-        if let Err(e) = self
-            .control_listener
-            .set_nonblocking(ListenerNonblockingMode::Accept)
-        {
-            // On Windows, set_nonblocking might fail if the pipe is in a certain state
-            #[cfg(windows)]
-            if platform_windows::is_transient_pipe_error(&e) {
-                return Ok(None);
-            }
-            return Err(e);
-        }
+        self.control_listener
+            .set_nonblocking(ListenerNonblockingMode::Accept)?;
 
         let control_stream = match self.control_listener.accept() {
             Ok(stream) => stream,
@@ -282,7 +273,7 @@ impl StreamWrapper {
     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
         self.0
             .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "mutex poisoned"))?
+            .map_err(|_| io::Error::other("mutex poisoned"))?
             .set_nonblocking(nonblocking)
     }
 
@@ -291,7 +282,7 @@ impl StreamWrapper {
         let mut guard = self
             .0
             .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "mutex poisoned"))?;
+            .map_err(|_| io::Error::other("mutex poisoned"))?;
         Write::write_all(&mut *guard, buf)
     }
 
@@ -300,7 +291,7 @@ impl StreamWrapper {
         let mut guard = self
             .0
             .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "mutex poisoned"))?;
+            .map_err(|_| io::Error::other("mutex poisoned"))?;
         Write::flush(&mut *guard)
     }
 
@@ -315,11 +306,11 @@ impl StreamWrapper {
                 ));
             }
             Err(std::sync::TryLockError::Poisoned(_)) => {
-                return Err(io::Error::new(io::ErrorKind::Other, "mutex poisoned"));
+                return Err(io::Error::other("mutex poisoned"));
             }
         };
 
-        platform::try_read_nonblocking(&mut *guard, buf)
+        platform::try_read_nonblocking(&mut guard, buf)
     }
 }
 
@@ -340,7 +331,7 @@ impl Read for StreamWrapper {
         let result = self
             .0
             .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "mutex poisoned"))?
+            .map_err(|_| io::Error::other("mutex poisoned"))?
             .read(buf);
         map_windows_pipe_error(result)
     }
@@ -351,7 +342,7 @@ impl Read for &StreamWrapper {
         let result = self
             .0
             .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "mutex poisoned"))?
+            .map_err(|_| io::Error::other("mutex poisoned"))?
             .read(buf);
         map_windows_pipe_error(result)
     }

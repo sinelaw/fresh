@@ -37,16 +37,12 @@ impl Editor {
         let mut ran_any_action = false;
 
         // Run whitespace cleanup actions first (before formatter)
-        if self.config.editor.trim_trailing_whitespace_on_save {
-            if self.trim_trailing_whitespace()? {
-                ran_any_action = true;
-            }
+        if self.config.editor.trim_trailing_whitespace_on_save && self.trim_trailing_whitespace()? {
+            ran_any_action = true;
         }
 
-        if self.config.editor.ensure_final_newline_on_save {
-            if self.ensure_final_newline()? {
-                ran_any_action = true;
-            }
+        if self.config.editor.ensure_final_newline_on_save && self.ensure_final_newline()? {
+            ran_any_action = true;
         }
 
         // If whitespace cleanup made changes, re-save

@@ -15,7 +15,7 @@ use super::types::{Theme, ThemeFile, ThemeInfo, BUILTIN_THEMES};
 /// This ensures that theme names can be matched regardless of how they appear
 /// in filenames vs. JSON content (e.g., "Catppuccin Mocha" matches "catppuccin-mocha").
 pub fn normalize_theme_name(name: &str) -> String {
-    name.to_lowercase().replace('_', "-").replace(' ', "-")
+    name.to_lowercase().replace(['_', ' '], "-")
 }
 
 /// A registry holding all loaded themes.

@@ -819,8 +819,7 @@ impl Editor {
 
                 // Restore label if present
                 if let Some(label) = label {
-                    self.split_manager
-                        .set_label(current_leaf_id.into(), label.clone());
+                    self.split_manager.set_label(current_leaf_id, label.clone());
                 }
 
                 // Restore the view state for this split
@@ -854,8 +853,7 @@ impl Editor {
 
                 // Restore label if present
                 if let Some(label) = label {
-                    self.split_manager
-                        .set_label(current_leaf_id.into(), label.clone());
+                    self.split_manager.set_label(current_leaf_id, label.clone());
                 }
 
                 self.split_manager
