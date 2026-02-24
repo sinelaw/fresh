@@ -468,9 +468,21 @@ fn handle_skip_over_with_dedent(
     tab_size: usize,
 ) -> bool {
     let correct_indent = calculate_closing_delimiter_indent(state, insert_position, ch, tab_size);
-    let current_indent = insert_position - line_start;
+    let use_tabs = state.buffer_settings.use_tabs;
 
-    if current_indent != correct_indent {
+    // Calculate current visual indent width (tabs count as tab_size columns)
+    let mut current_visual_indent = 0;
+    let mut pos = line_start;
+    while pos < insert_position {
+        match state.buffer.slice_bytes(pos..pos + 1).first() {
+            Some(&b' ') => current_visual_indent += 1,
+            Some(&b'\t') => current_visual_indent += tab_size,
+            _ => break,
+        }
+        pos += 1;
+    }
+
+    if current_visual_indent != correct_indent {
         // Delete incorrect spacing
         let deleted_text = state.get_text_range(line_start, insert_position);
         events.push(Event::Delete {
@@ -479,11 +491,13 @@ fn handle_skip_over_with_dedent(
             cursor_id,
         });
 
-        // Insert correct spacing
-        if correct_indent > 0 {
+        // Insert correct spacing using tabs or spaces per language config
+        let indent_str = indent_to_string(correct_indent, use_tabs, tab_size);
+        let indent_byte_len = indent_str.len();
+        if indent_byte_len > 0 {
             events.push(Event::Insert {
                 position: line_start,
-                text: " ".repeat(correct_indent),
+                text: indent_str,
                 cursor_id,
             });
         }
@@ -491,8 +505,8 @@ fn handle_skip_over_with_dedent(
         // Move cursor to after the closing delimiter
         events.push(Event::MoveCursor {
             cursor_id,
-            old_position: line_start + correct_indent,
-            new_position: line_start + correct_indent + 1,
+            old_position: line_start + indent_byte_len,
+            new_position: line_start + indent_byte_len + 1,
             old_anchor: None,
             new_anchor: None,
             old_sticky_column: 0,
@@ -541,7 +555,9 @@ fn handle_auto_dedent(
     }
 
     // Insert correct spacing + the closing delimiter
-    let mut text = " ".repeat(correct_indent);
+    // Use tabs or spaces per language config
+    let use_tabs = state.buffer_settings.use_tabs;
+    let mut text = indent_to_string(correct_indent, use_tabs, tab_size);
     text.push(ch);
     events.push(Event::Insert {
         position: line_start,
