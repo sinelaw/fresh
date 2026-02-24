@@ -2227,12 +2227,19 @@ impl TextBuffer {
         let piece_start_in_doc = piece_view.doc_offset;
         let offset_in_piece = current_offset.saturating_sub(piece_start_in_doc);
 
-        // Calculate chunk boundaries aligned to CHUNK_ALIGNMENT
-        let chunk_start_in_buffer =
-            (piece_view.buffer_offset + offset_in_piece) / CHUNK_ALIGNMENT * CHUNK_ALIGNMENT;
-        let chunk_bytes = LOAD_CHUNK_SIZE.min(
-            (piece_view.buffer_offset + piece_view.bytes).saturating_sub(chunk_start_in_buffer),
-        );
+        // When the piece already fits within LOAD_CHUNK_SIZE, create a chunk
+        // buffer for the exact piece range (no alignment/splitting needed).
+        // Alignment rounding is only useful when carving a sub-range out of a
+        // piece larger than LOAD_CHUNK_SIZE.
+        let (chunk_start_in_buffer, chunk_bytes) = if piece_view.bytes <= LOAD_CHUNK_SIZE {
+            (piece_view.buffer_offset, piece_view.bytes)
+        } else {
+            let start =
+                (piece_view.buffer_offset + offset_in_piece) / CHUNK_ALIGNMENT * CHUNK_ALIGNMENT;
+            let bytes = LOAD_CHUNK_SIZE
+                .min((piece_view.buffer_offset + piece_view.bytes).saturating_sub(start));
+            (start, bytes)
+        };
 
         // Calculate document offsets for splitting
         let chunk_start_offset_in_piece =
