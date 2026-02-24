@@ -2236,7 +2236,7 @@ fn run_open_files_command(session_name: Option<&str>, files: &[String]) -> Anyho
 
 /// Attach to an existing session, starting a server if needed
 fn run_attach_command(args: &Args) -> AnyhowResult<()> {
-    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
         ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
     };
@@ -2364,9 +2364,10 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
     // Run the client relay loop (handshake already done)
     let result = client::run_client_relay(conn);
 
-    // Best-effort: disable raw mode before printing any messages
-    #[allow(clippy::let_underscore_must_use)]
-    let _ = disable_raw_mode();
+    // Best-effort: restore terminal state before printing any messages.
+    // The server sends terminal setup sequences (alternate screen, mouse capture, etc.)
+    // through us, so we must undo all of them, not just raw mode.
+    fresh::services::terminal_modes::emergency_cleanup();
 
     // Handle result
     match result {
