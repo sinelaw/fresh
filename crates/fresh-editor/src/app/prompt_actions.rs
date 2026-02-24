@@ -884,17 +884,23 @@ impl Editor {
         }
     }
 
-    /// Resolve a syntect display name to the canonical config language ID.
+    /// Resolve a syntect syntax name to the canonical config language ID.
     ///
     /// The config `[languages]` section is the single authoritative registry of
-    /// language IDs.  Each entry has a `grammar` field that names the syntect
-    /// grammar (matched case-insensitively).  This helper performs the reverse
-    /// lookup: given a syntect display name, find the config key.
+    /// language IDs.  Each entry has a `grammar` field that is resolved to a
+    /// syntect syntax via `GrammarRegistry::find_syntax_by_name`.  This helper
+    /// performs the reverse lookup: for each config entry, resolve its grammar
+    /// through the registry and check whether the resulting syntax has the same
+    /// name as the one we're looking up.
     pub(crate) fn resolve_language_id(&self, syntax_name: &str) -> Option<String> {
-        let name_lower = syntax_name.to_lowercase();
         for (lang_id, lang_config) in &self.config.languages {
-            if lang_config.grammar.to_lowercase() == name_lower {
-                return Some(lang_id.clone());
+            if let Some(syntax) = self
+                .grammar_registry
+                .find_syntax_by_name(&lang_config.grammar)
+            {
+                if syntax.name == syntax_name {
+                    return Some(lang_id.clone());
+                }
             }
         }
         None

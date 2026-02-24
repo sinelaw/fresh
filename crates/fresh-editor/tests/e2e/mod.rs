@@ -88,9 +88,9 @@ pub mod split_view_expectations;
 pub mod split_view_markdown_compose;
 pub mod stdin_input;
 pub mod sudo_save_prompt;
-pub mod syntax_language_case;
 #[cfg(unix)]
 pub mod symlinks;
+pub mod syntax_language_case;
 pub mod tab_config;
 pub mod tab_drag;
 pub mod tab_indent_selection;
