@@ -884,6 +884,22 @@ impl Editor {
         }
     }
 
+    /// Resolve a syntect display name to the canonical config language ID.
+    ///
+    /// The config `[languages]` section is the single authoritative registry of
+    /// language IDs.  Each entry has a `grammar` field that names the syntect
+    /// grammar (matched case-insensitively).  This helper performs the reverse
+    /// lookup: given a syntect display name, find the config key.
+    pub(crate) fn resolve_language_id(&self, syntax_name: &str) -> Option<String> {
+        let name_lower = syntax_name.to_lowercase();
+        for (lang_id, lang_config) in &self.config.languages {
+            if lang_config.grammar.to_lowercase() == name_lower {
+                return Some(lang_id.clone());
+            }
+        }
+        None
+    }
+
     /// Handle SetLanguage prompt confirmation.
     fn handle_set_language(&mut self, input: &str) {
         use crate::primitives::highlight_engine::HighlightEngine;
@@ -895,7 +911,7 @@ impl Editor {
         if trimmed == "Plain Text" || trimmed.to_lowercase() == "text" {
             let buffer_id = self.active_buffer();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                state.language = "Plain Text".to_string();
+                state.language = "text".to_string();
                 state.highlighter = HighlightEngine::None;
                 self.set_status_message("Language set to Plain Text".to_string());
             }
@@ -910,17 +926,16 @@ impl Editor {
             // tree-sitter only supports ~18 languages while syntect supports 100+.
             let ts_language = Language::from_name(trimmed);
 
+            // Resolve the canonical language ID from config.  The config
+            // `[languages]` section is the single source of truth for language
+            // IDs used by LSP, formatters, and all other subsystems.
+            let language_id = self
+                .resolve_language_id(trimmed)
+                .unwrap_or_else(|| trimmed.to_string());
+
             let buffer_id = self.active_buffer();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                // Use the canonical lowercase ID when a tree-sitter language is
-                // available so that state.language matches the value produced by
-                // file-detection (Language::to_string() delegates to id()).
-                // This keeps LSP config lookups consistent.
-                state.language = if let Some(lang) = ts_language {
-                    lang.to_string()
-                } else {
-                    trimmed.to_string()
-                };
+                state.language = language_id;
                 state.highlighter =
                     HighlightEngine::for_syntax_name(trimmed, &self.grammar_registry, ts_language);
                 // Update reference highlighter if tree-sitter language is available
