@@ -10,7 +10,9 @@ use std::sync::Arc;
 use syntect::parsing::{SyntaxDefinition, SyntaxReference, SyntaxSet, SyntaxSetBuilder};
 
 // Re-export glob matching utilities for use by other modules
-pub use crate::primitives::glob_match::{filename_glob_matches, is_glob_pattern};
+pub use crate::primitives::glob_match::{
+    filename_glob_matches, is_glob_pattern, is_path_pattern, path_glob_matches,
+};
 
 /// Embedded TOML grammar (syntect doesn't include one)
 pub const TOML_GRAMMAR: &str = include_str!("../../grammars/toml.sublime-syntax");
@@ -354,12 +356,20 @@ impl GrammarRegistry {
             }
 
             // Second pass: glob pattern matches
+            // Path patterns (containing `/`) are matched against the full path;
+            // filename-only patterns are matched against just the filename.
+            let path_str = path.to_str().unwrap_or("");
             for (lang_name, lang_config) in languages.iter() {
-                if lang_config
-                    .filenames
-                    .iter()
-                    .any(|f| is_glob_pattern(f) && filename_glob_matches(f, filename))
-                {
+                if lang_config.filenames.iter().any(|f| {
+                    if !is_glob_pattern(f) {
+                        return false;
+                    }
+                    if is_path_pattern(f) {
+                        path_glob_matches(f, path_str)
+                    } else {
+                        filename_glob_matches(f, filename)
+                    }
+                }) {
                     tracing::info!(
                         "[SYNTAX DEBUG] filename glob match: {} -> grammar '{}'",
                         lang_name,
@@ -841,6 +851,55 @@ mod tests {
             .find_syntax_for_file_with_languages(Path::new("randomfile"), &languages);
         // May still match via built-in detection, but not via our config
         // Just verify it doesn't panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_find_syntax_with_path_glob_filenames() {
+        let registry = GrammarRegistry::default();
+        let mut languages = std::collections::HashMap::new();
+        languages.insert(
+            "shell-configs".to_string(),
+            crate::config::LanguageConfig {
+                extensions: vec!["sh".to_string()],
+                filenames: vec!["/etc/**/rc.*".to_string()],
+                grammar: "bash".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                highlighter: crate::config::HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        // /etc/**/rc.* should match via full path
+        let result = registry.find_syntax_for_file_with_languages(
+            Path::new("/etc/rc.conf"),
+            &languages,
+        );
+        assert!(result.is_some(), "/etc/**/rc.* should match /etc/rc.conf");
+
+        let result = registry.find_syntax_for_file_with_languages(
+            Path::new("/etc/init/rc.local"),
+            &languages,
+        );
+        assert!(
+            result.is_some(),
+            "/etc/**/rc.* should match /etc/init/rc.local"
+        );
+
+        // Should NOT match a different root
+        let result = registry.find_syntax_for_file_with_languages(
+            Path::new("/var/rc.conf"),
+            &languages,
+        );
+        // /var/rc.conf won't match the path glob, but may match built-in detection
+        // Just verify no panic
         let _ = result;
     }
 
