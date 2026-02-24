@@ -708,7 +708,12 @@ mod tests {
         // User presses Escape, then moves mouse. Both arrive in one chunk:
         // ESC (0x1b) followed by mouse event ESC [ < 35 ; 67 ; 18 M
         let events = parser.parse(b"\x1b\x1b[<35;67;18M");
-        assert_eq!(events.len(), 2, "Expected Escape + mouse event, got: {:?}", events);
+        assert_eq!(
+            events.len(),
+            2,
+            "Expected Escape + mouse event, got: {:?}",
+            events
+        );
 
         // First event: standalone Escape
         match &events[0] {
@@ -740,7 +745,12 @@ mod tests {
 
         // Second chunk: mouse event arrives later
         let events = parser.parse(b"\x1b[<35;67;18M");
-        assert_eq!(events.len(), 2, "Expected Escape + mouse event, got: {:?}", events);
+        assert_eq!(
+            events.len(),
+            2,
+            "Expected Escape + mouse event, got: {:?}",
+            events
+        );
 
         // First event: standalone Escape (disambiguated by seeing another ESC)
         match &events[0] {
@@ -830,7 +840,12 @@ mod tests {
         let mut parser = InputParser::new();
         // ESC followed by mouse button press: ESC [ < 0 ; 10 ; 5 M
         let events = parser.parse(b"\x1b\x1b[<0;10;5M");
-        assert_eq!(events.len(), 2, "Expected Escape + mouse click, got: {:?}", events);
+        assert_eq!(
+            events.len(),
+            2,
+            "Expected Escape + mouse click, got: {:?}",
+            events
+        );
 
         match &events[0] {
             Event::Key(ke) => assert_eq!(ke.code, KeyCode::Esc),

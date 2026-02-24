@@ -1083,10 +1083,7 @@ mod integration_tests {
         let screen = vt100_screen_text(&output);
 
         // Should have the typed text
-        assert!(
-            screen.contains("WORLD"),
-            "Screen should contain 'WORLD'"
-        );
+        assert!(screen.contains("WORLD"), "Screen should contain 'WORLD'");
 
         // Should NOT have literal [Z from a mis-parsed Shift+Tab
         // If the bug exists, after "hello" we'd see "[Z" inserted before "WORLD"
