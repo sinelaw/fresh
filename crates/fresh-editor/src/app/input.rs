@@ -43,6 +43,14 @@ impl Editor {
         // Create key event for dispatch methods
         let key_event = crossterm::event::KeyEvent::new(code, modifiers);
 
+        // Event debug dialog intercepts ALL key events before any other processing.
+        // This must be checked here (not just in main.rs/gui) so it works in
+        // client/server mode where handle_key is called directly.
+        if self.is_event_debug_active() {
+            self.handle_event_debug_input(&key_event);
+            return Ok(());
+        }
+
         // Try terminal input dispatch first (handles terminal mode and re-entry)
         if self.dispatch_terminal_input(&key_event).is_some() {
             return Ok(());
