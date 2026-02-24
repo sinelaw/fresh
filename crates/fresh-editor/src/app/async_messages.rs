@@ -941,22 +941,23 @@ impl Editor {
             }
         }
 
-        // Apply pending session restore settings (fixes #569)
-        if let Some(show_hidden) = self.pending_file_explorer_show_hidden.take() {
-            view.ignore_patterns_mut().set_show_hidden(show_hidden);
-            tracing::debug!(
-                "Applied pending show_hidden={} from session restore",
-                show_hidden
-            );
-        }
-        if let Some(show_gitignored) = self.pending_file_explorer_show_gitignored.take() {
-            view.ignore_patterns_mut()
-                .set_show_gitignored(show_gitignored);
-            tracing::debug!(
-                "Applied pending show_gitignored={} from session restore",
-                show_gitignored
-            );
-        }
+        // Apply show_hidden / show_gitignored settings.
+        // Use pending session-restore values if present, otherwise fall back
+        // to the persisted config so the setting survives across sessions.
+        let show_hidden = self
+            .pending_file_explorer_show_hidden
+            .take()
+            .unwrap_or(self.config.file_explorer.show_hidden);
+        view.ignore_patterns_mut().set_show_hidden(show_hidden);
+        tracing::debug!("Applied show_hidden={} on init", show_hidden);
+
+        let show_gitignored = self
+            .pending_file_explorer_show_gitignored
+            .take()
+            .unwrap_or(self.config.file_explorer.show_gitignored);
+        view.ignore_patterns_mut()
+            .set_show_gitignored(show_gitignored);
+        tracing::debug!("Applied show_gitignored={} on init", show_gitignored);
 
         self.file_explorer = Some(view);
         self.set_status_message(t!("status.file_explorer_ready").to_string());
