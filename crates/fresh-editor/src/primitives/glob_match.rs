@@ -308,7 +308,10 @@ mod tests {
     fn test_path_doublestar_and_single_star() {
         // Combine ** and *
         assert!(path_glob_matches("/etc/**/*.conf", "/etc/nftables.conf"));
-        assert!(path_glob_matches("/etc/**/*.conf", "/etc/sub/nftables.conf"));
+        assert!(path_glob_matches(
+            "/etc/**/*.conf",
+            "/etc/sub/nftables.conf"
+        ));
         assert!(path_glob_matches("/etc/**/*.conf", "/etc/a/b/c/foo.conf"));
         assert!(!path_glob_matches("/etc/**/*.conf", "/etc/a/b/c/foo.txt"));
         assert!(!path_glob_matches("/etc/**/*.conf", "/var/foo.conf"));
@@ -324,7 +327,10 @@ mod tests {
 
     #[test]
     fn test_path_multiple_doublestars() {
-        assert!(path_glob_matches("/**/src/**/*.rs", "/home/user/src/main.rs"));
+        assert!(path_glob_matches(
+            "/**/src/**/*.rs",
+            "/home/user/src/main.rs"
+        ));
         assert!(path_glob_matches("/**/src/**/*.rs", "/src/lib.rs"));
         assert!(path_glob_matches("/**/src/**/*.rs", "/a/b/src/c/d/foo.rs"));
     }

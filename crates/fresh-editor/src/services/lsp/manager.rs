@@ -969,10 +969,7 @@ mod tests {
             "shell".to_string(),
             crate::config::LanguageConfig {
                 extensions: vec!["sh".to_string()],
-                filenames: vec![
-                    "/etc/**/rc.*".to_string(),
-                    "*rc".to_string(),
-                ],
+                filenames: vec!["/etc/**/rc.*".to_string(), "*rc".to_string()],
                 grammar: "bash".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: true,

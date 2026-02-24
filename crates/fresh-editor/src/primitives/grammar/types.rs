@@ -837,18 +837,17 @@ mod tests {
         );
 
         // *.conf should match
-        let result = registry
-            .find_syntax_for_file_with_languages(Path::new("nftables.conf"), &languages);
+        let result =
+            registry.find_syntax_for_file_with_languages(Path::new("nftables.conf"), &languages);
         assert!(result.is_some(), "*.conf should match nftables.conf");
 
         // *rc should match
-        let result =
-            registry.find_syntax_for_file_with_languages(Path::new("lfrc"), &languages);
+        let result = registry.find_syntax_for_file_with_languages(Path::new("lfrc"), &languages);
         assert!(result.is_some(), "*rc should match lfrc");
 
         // Unrelated file should not match via glob
-        let result = registry
-            .find_syntax_for_file_with_languages(Path::new("randomfile"), &languages);
+        let result =
+            registry.find_syntax_for_file_with_languages(Path::new("randomfile"), &languages);
         // May still match via built-in detection, but not via our config
         // Just verify it doesn't panic
         let _ = result;
@@ -878,26 +877,20 @@ mod tests {
         );
 
         // /etc/**/rc.* should match via full path
-        let result = registry.find_syntax_for_file_with_languages(
-            Path::new("/etc/rc.conf"),
-            &languages,
-        );
+        let result =
+            registry.find_syntax_for_file_with_languages(Path::new("/etc/rc.conf"), &languages);
         assert!(result.is_some(), "/etc/**/rc.* should match /etc/rc.conf");
 
-        let result = registry.find_syntax_for_file_with_languages(
-            Path::new("/etc/init/rc.local"),
-            &languages,
-        );
+        let result = registry
+            .find_syntax_for_file_with_languages(Path::new("/etc/init/rc.local"), &languages);
         assert!(
             result.is_some(),
             "/etc/**/rc.* should match /etc/init/rc.local"
         );
 
         // Should NOT match a different root
-        let result = registry.find_syntax_for_file_with_languages(
-            Path::new("/var/rc.conf"),
-            &languages,
-        );
+        let result =
+            registry.find_syntax_for_file_with_languages(Path::new("/var/rc.conf"), &languages);
         // /var/rc.conf won't match the path glob, but may match built-in detection
         // Just verify no panic
         let _ = result;
@@ -949,8 +942,7 @@ mod tests {
         );
 
         // "lfrc" should match the exact rule (python), not the glob (bash)
-        let result =
-            registry.find_syntax_for_file_with_languages(Path::new("lfrc"), &languages);
+        let result = registry.find_syntax_for_file_with_languages(Path::new("lfrc"), &languages);
         assert!(result.is_some());
         let syntax = result.unwrap();
         assert!(
