@@ -794,16 +794,19 @@ impl IndentCalculator {
             (reference_indent, reference_offset)
         };
 
-        // Check if the last non-whitespace character before cursor is a closing delimiter
-        // If so, we should NOT be inside any @indent node for the purposes of the next line
-        let last_nonws_is_closing = {
+        // Check if the last non-whitespace character before cursor is a closing brace `}`.
+        // Only `}` is checked because it closes @indent blocks (block, struct_type, etc.).
+        // Other closing delimiters like `)` and `]` typically close function calls, array
+        // indices, or expressions that don't define indent scopes, so they should NOT
+        // suppress the cursor's indent level counting.
+        let last_nonws_is_closing_brace = {
             let mut result = false;
             let mut pos = cursor_offset;
             while pos > line_start_offset {
                 pos -= 1;
                 match source.get(pos) {
                     Some(b' ') | Some(b'\t') | Some(b'\r') => continue,
-                    Some(b'}') | Some(b']') | Some(b')') => {
+                    Some(b'}') => {
                         result = true;
                         break;
                     }
@@ -840,10 +843,13 @@ impl IndentCalculator {
                         let cursor_inside_node =
                             node_start < cursor_offset && cursor_offset <= node_end;
 
-                        if cursor_inside_node && node_on_previous_line && !last_nonws_is_closing {
+                        if cursor_inside_node
+                            && node_on_previous_line
+                            && !last_nonws_is_closing_brace
+                        {
                             cursor_indent_count += 1;
                             found_any_captures = true;
-                        } else if last_nonws_is_closing && cursor_inside_node {
+                        } else if last_nonws_is_closing_brace && cursor_inside_node {
                             // Mark as found but don't count (closing delimiter line)
                             found_any_captures = true;
                         }
@@ -875,7 +881,7 @@ impl IndentCalculator {
         //   def foo():
         //       if True:   <-- cursor here, delta=0 but should indent
         // Detect this case and add +1 to the delta.
-        if indent_delta == 0 && !last_nonws_is_closing {
+        if indent_delta == 0 && !last_nonws_is_closing_brace {
             let mut check_pos = cursor_offset;
             while check_pos > line_start_offset {
                 check_pos -= 1;

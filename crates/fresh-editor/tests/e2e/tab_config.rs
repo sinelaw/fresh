@@ -685,8 +685,11 @@ fn test_issue_384_auto_indent_maintains_indent_with_tabs_in_go() {
     let file_path = temp_dir.path().join("test.go");
 
     // Create a Go file with a function containing a statement
-    std::fs::write(&file_path, "package main\n\nfunc main() {\n\tfmt.Println(\"Hello\")\n}\n")
-        .unwrap();
+    std::fs::write(
+        &file_path,
+        "package main\n\nfunc main() {\n\tfmt.Println(\"Hello\")\n}\n",
+    )
+    .unwrap();
 
     let mut config = Config::default();
     config.editor.auto_indent = true;
@@ -705,18 +708,10 @@ fn test_issue_384_auto_indent_maintains_indent_with_tabs_in_go() {
     //  ^0                            ^28                   ^49
     // Line 4 is: \tfmt.Println("Hello")
     // Move to end of line 4
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap(); // Now on line 4 (0-indexed line 3)
-    harness
-        .send_key(KeyCode::End, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Now on line 4 (0-indexed line 3)
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Press Enter - auto-indent should maintain the tab indentation
@@ -726,10 +721,7 @@ fn test_issue_384_auto_indent_maintains_indent_with_tabs_in_go() {
     harness.render().unwrap();
 
     let content = harness.get_buffer_content().unwrap();
-    println!(
-        "Buffer after Enter on normal Go line: {:?}",
-        content
-    );
+    println!("Buffer after Enter on normal Go line: {:?}", content);
 
     // The new line should have a tab character for indentation (same level as fmt.Println)
     let lines: Vec<&str> = content.lines().collect();
