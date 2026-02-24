@@ -29,6 +29,8 @@ tracing = { workspace = true }
 tokio = { version = "1.49", features = ["rt", "rt-multi-thread"] }
 # JSON for menu action args
 serde_json = { workspace = true }
+# PNG decoding for window icon (already a transitive dep via ratatui-wgpu)
+png = "0.18"
 
 # macOS: native menu bar
 [target.'cfg(target_os = "macos")'.dependencies]

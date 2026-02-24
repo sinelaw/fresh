@@ -851,32 +851,34 @@ pub fn cell_dimensions_to_grid(width: f64, height: f64, cell_size: (f64, f64)) -
 
 /// Decode the embedded 32x32 PNG icon into a winit `Icon`.
 fn load_window_icon() -> Option<winit::window::Icon> {
-    // Decode the PNG using a minimal inline decoder.
-    // The PNG is 32x32 RGBA, so we expect 32*32*4 = 4096 bytes of pixel data.
-    // We use the `image` crate if available, otherwise fall back to a raw approach.
-    // Since we can't add `image` as a dep easily, decode from raw PNG bytes.
-    // For now, try to decode using a simple approach — the icon is small enough.
     decode_png_rgba(ICON_PNG_32)
         .and_then(|(rgba, w, h)| winit::window::Icon::from_rgba(rgba, w, h).ok())
 }
 
-/// Minimal PNG decoder for small RGBA images (used for window icon).
+/// Decode a PNG image to RGBA bytes.
 /// Returns (rgba_bytes, width, height) or None on failure.
 fn decode_png_rgba(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
-    // PNG magic: 137 80 78 71 13 10 26 10
-    if data.len() < 8 || &data[0..8] != b"\x89PNG\r\n\x1a\n" {
-        return None;
-    }
+    let decoder = png::Decoder::new(std::io::Cursor::new(data));
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0u8; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    buf.truncate(info.buffer_size());
 
-    // For simplicity, create a basic RGBA image from the embedded icon.
-    // Since we compile the icon at build time and it's a small 32x32 image,
-    // we embed it pre-decoded as well. For now just return None and let
-    // platforms that support it use the icon from the app bundle instead.
-    //
-    // TODO: Add `image` crate as optional dependency for proper PNG decoding,
-    // or embed pre-decoded RGBA bytes at build time.
-    let _ = data;
-    None
+    // Convert to RGBA if needed.
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => buf,
+        png::ColorType::Rgb => {
+            let mut rgba = Vec::with_capacity(buf.len() / 3 * 4);
+            for chunk in buf.chunks_exact(3) {
+                rgba.extend_from_slice(chunk);
+                rgba.push(255);
+            }
+            rgba
+        }
+        _ => return None,
+    };
+
+    Some((rgba, info.width, info.height))
 }
 
 // ---------------------------------------------------------------------------

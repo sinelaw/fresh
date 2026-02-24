@@ -48,13 +48,20 @@ chmod +x "${MACOS_DIR}/Fresh"
 sed 's|<string>fresh</string>|<string>Fresh</string>|' \
     "${RESOURCES_DIR}/Info.plist" > "${CONTENTS_DIR}/Info.plist"
 
-# Copy icon if ICNS exists, otherwise note it needs conversion
-if [ -f "${RESOURCES_DIR}/../icon_1024x1024.png" ]; then
-    # If iconutil is available (macOS), convert PNG to ICNS
+# Copy icon — prefer the pre-built ICNS from docs/icons/macos, fall back
+# to generating one from PNGs if available.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+ICONS_DIR="${REPO_ROOT}/docs/icons/macos"
+
+if [ -f "${ICONS_DIR}/AppIcon.icns" ]; then
+    # Use the pre-built ICNS from the icon set (best quality, all sizes).
+    cp "${ICONS_DIR}/AppIcon.icns" "${RESOURCES_OUT}/Fresh.icns"
+    echo "Copied pre-built AppIcon.icns"
+elif [ -f "${RESOURCES_DIR}/../icon_1024x1024.png" ]; then
+    # Fall back: generate ICNS from 1024px PNG using macOS tools.
     if command -v iconutil &> /dev/null; then
         ICONSET_DIR=$(mktemp -d)/Fresh.iconset
         mkdir -p "$ICONSET_DIR"
-        # sips is available on macOS for image conversion
         sips -z 16 16     "${RESOURCES_DIR}/../icon_1024x1024.png" --out "${ICONSET_DIR}/icon_16x16.png" 2>/dev/null
         sips -z 32 32     "${RESOURCES_DIR}/../icon_1024x1024.png" --out "${ICONSET_DIR}/icon_16x16@2x.png" 2>/dev/null
         sips -z 32 32     "${RESOURCES_DIR}/../icon_1024x1024.png" --out "${ICONSET_DIR}/icon_32x32.png" 2>/dev/null
@@ -67,11 +74,14 @@ if [ -f "${RESOURCES_DIR}/../icon_1024x1024.png" ]; then
         cp "${RESOURCES_DIR}/../icon_1024x1024.png" "${ICONSET_DIR}/icon_512x512@2x.png"
         iconutil -c icns "$ICONSET_DIR" -o "${RESOURCES_OUT}/Fresh.icns"
         rm -rf "$(dirname "$ICONSET_DIR")"
-        echo "Created ICNS icon"
+        echo "Created ICNS icon from PNG"
     else
         echo "Warning: iconutil not found (not on macOS?). Icon not converted to ICNS."
         echo "Copy Fresh.icns manually to ${RESOURCES_OUT}/Fresh.icns"
     fi
+else
+    echo "Warning: No icon found. Place AppIcon.icns in docs/icons/macos/ or"
+    echo "         icon_1024x1024.png in ${RESOURCES_DIR}/../"
 fi
 
 echo "Created ${APP_DIR}"
