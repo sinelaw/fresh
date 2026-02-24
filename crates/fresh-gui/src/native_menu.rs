@@ -30,6 +30,9 @@ pub struct NativeMenuBar {
     _menu: muda::Menu,
     /// Last known context — used to avoid redundant state syncs.
     last_context: MenuContext,
+    /// Whether we have a deferred state sync pending (because the menu was
+    /// being tracked when `sync_state` was called).
+    needs_deferred_sync: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -37,28 +40,63 @@ impl NativeMenuBar {
     /// Build a native menu bar from the editor's menu model and attach it
     /// to the running NSApplication.
     pub fn build(menus: &[Menu], app_name: &str, context: &MenuContext) -> Self {
+        // Install notification observers for menu tracking detection (idempotent-safe:
+        // called once, leaks observers intentionally for process lifetime).
+        super::macos::menu_tracking::install_tracking_observers();
+
         let muda_menu = super::macos::menu::build_from_model(menus, app_name, context);
         muda_menu.init_for_nsapp();
         Self {
             _menu: muda_menu,
             last_context: context.clone(),
+            needs_deferred_sync: false,
         }
+    }
+
+    /// Returns `true` if the native menu bar is currently being tracked
+    /// (user is hovering over menus).  Callers should avoid consuming
+    /// pending menu model updates when this returns `true`.
+    pub fn is_tracking(&self) -> bool {
+        super::macos::menu_tracking::is_menu_tracking()
     }
 
     /// Rebuild the native menu bar from an updated model.
     pub fn update(&mut self, menus: &[Menu], app_name: &str, context: &MenuContext) {
+        self.do_update(menus, app_name, context);
+    }
+
+    fn do_update(&mut self, menus: &[Menu], app_name: &str, context: &MenuContext) {
         // Remove old menu from NSApp, build a fresh one.
         self._menu.remove_for_nsapp();
         self._menu = super::macos::menu::build_from_model(menus, app_name, context);
         self._menu.init_for_nsapp();
         self.last_context = context.clone();
+        self.needs_deferred_sync = false;
     }
 
     /// Incrementally sync enabled/disabled and checkbox states from the
     /// application's current [`MenuContext`].  This is cheap — it only
     /// iterates tracked items and calls `set_enabled` / `set_checked`
     /// when values differ from the last sync.
+    ///
+    /// Mutations are suppressed while the menu bar is being tracked to avoid
+    /// the macOS bug where modifying `NSMenuItem` properties during tracking
+    /// causes the highlighted menu to jump to the leftmost item.
     pub fn sync_state(&mut self, context: &MenuContext) {
+        if super::macos::menu_tracking::is_menu_tracking() {
+            // Remember that we owe a sync so we catch up once tracking ends.
+            if *context != self.last_context {
+                self.needs_deferred_sync = true;
+            }
+            return;
+        }
+
+        // If we deferred work while the menu was tracked, flush it now.
+        if self.needs_deferred_sync {
+            self.needs_deferred_sync = false;
+            // Fall through to do the sync below.
+        }
+
         if *context == self.last_context {
             return; // Nothing changed.
         }
@@ -87,6 +125,10 @@ pub struct NativeMenuBar;
 impl NativeMenuBar {
     pub fn build(_menus: &[Menu], _app_name: &str, _context: &MenuContext) -> Self {
         Self
+    }
+
+    pub fn is_tracking(&self) -> bool {
+        false
     }
 
     pub fn update(&mut self, _menus: &[Menu], _app_name: &str, _context: &MenuContext) {}

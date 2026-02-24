@@ -7,3 +7,4 @@
 //! - App icon and bundle resource helpers
 
 pub mod menu;
+pub mod menu_tracking;

@@ -33,3 +33,9 @@ serde_json = { workspace = true }
 # macOS: native menu bar
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = "0.15"
+# ObjC interop for NSNotificationCenter (menu tracking detection).
+# Versions match the ones muda 0.15 already pulls in.
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = ["NSNotification", "NSString", "NSOperation", "block2"] }
+objc2-app-kit = { version = "0.2", features = ["NSMenu"] }
+block2 = "0.5"

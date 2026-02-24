@@ -1612,9 +1612,13 @@ name = "fresh-gui"
 version = "0.2.9"
 dependencies = [
  "anyhow",
+ "block2",
  "crossterm",
  "fresh-core",
  "muda",
+ "objc2 0.5.2",
+ "objc2-app-kit 0.2.2",
+ "objc2-foundation 0.2.2",
  "ratatui",
  "ratatui-wgpu",
  "serde_json",

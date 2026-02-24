@@ -425,18 +425,23 @@ impl<A: GuiApplication + 'static> ApplicationHandler for WgpuRunner<A> {
             Err(e) => tracing::error!("Tick error: {}", e),
         }
 
-        // If the app signalled a menu model change, rebuild native menus.
-        if let Some(updated_menus) = state.app.take_menu_update() {
-            let ctx = state.app.menu_context();
-            state
-                .native_menu
-                .update(&updated_menus, &self.config.title, &ctx);
-        }
+        // Skip menu mutations while the menu bar is being tracked (user
+        // is hovering over menus).  Modifying NSMenuItem properties during
+        // tracking causes the highlighted menu to jump to the leftmost item.
+        if !state.native_menu.is_tracking() {
+            // If the app signalled a menu model change, rebuild native menus.
+            if let Some(updated_menus) = state.app.take_menu_update() {
+                let ctx = state.app.menu_context();
+                state
+                    .native_menu
+                    .update(&updated_menus, &self.config.title, &ctx);
+            }
 
-        // Sync native menu item states (enabled/disabled, checkmarks) from
-        // the application's current MenuContext — cheap incremental update.
-        let ctx = state.app.menu_context();
-        state.native_menu.sync_state(&ctx);
+            // Sync native menu item states (enabled/disabled, checkmarks) from
+            // the application's current MenuContext — cheap incremental update.
+            let ctx = state.app.menu_context();
+            state.native_menu.sync_state(&ctx);
+        }
 
         if state.app.should_quit() {
             state.app.on_close();
