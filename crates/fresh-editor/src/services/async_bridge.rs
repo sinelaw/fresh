@@ -241,6 +241,11 @@ pub enum AsyncMessage {
         status: LspServerStatus,
         message: Option<String>,
     },
+
+    /// Background grammar build completed — swap in the new registry
+    GrammarRegistryBuilt {
+        registry: std::sync::Arc<crate::primitives::grammar::GrammarRegistry>,
+    },
 }
 
 /// LSP progress value types

@@ -1142,6 +1142,9 @@ impl Editor {
             }
         }
 
+        // Flush any deferred grammar rebuilds as a single batch
+        self.flush_pending_grammars();
+
         has_visual_commands
     }
 

@@ -284,6 +284,15 @@ pub struct Editor {
     /// Pending grammars registered by plugins, waiting for reload_grammars() to apply
     pending_grammars: Vec<PendingGrammar>,
 
+    /// Whether a grammar reload has been requested but not yet flushed.
+    /// This allows batching multiple RegisterGrammar+ReloadGrammars sequences
+    /// into a single rebuild.
+    grammar_reload_pending: bool,
+
+    /// Whether a background grammar build is in progress.
+    /// When true, `flush_pending_grammars()` defers work until the build completes.
+    grammar_build_in_progress: bool,
+
     /// Active theme
     theme: crate::view::theme::Theme,
 
@@ -966,8 +975,7 @@ impl Editor {
         color_capability: crate::view::color_support::ColorCapability,
         filesystem: Arc<dyn FileSystem + Send + Sync>,
     ) -> AnyhowResult<Self> {
-        let grammar_registry =
-            crate::primitives::grammar::GrammarRegistry::for_editor(dir_context.config_dir.clone());
+        let grammar_registry = crate::primitives::grammar::GrammarRegistry::defaults_only();
         Self::with_options(
             config,
             width,
@@ -998,8 +1006,8 @@ impl Editor {
         time_source: Option<SharedTimeSource>,
         grammar_registry: Option<Arc<crate::primitives::grammar::GrammarRegistry>>,
     ) -> AnyhowResult<Self> {
-        let grammar_registry = grammar_registry
-            .unwrap_or_else(|| crate::primitives::grammar::GrammarRegistry::empty());
+        let grammar_registry =
+            grammar_registry.unwrap_or_else(crate::primitives::grammar::GrammarRegistry::empty);
         Self::with_options(
             config,
             width,
@@ -1061,11 +1069,6 @@ impl Editor {
 
         // Set terminal cursor color to match theme
         theme.set_terminal_cursor_color();
-
-        tracing::info!(
-            "Grammar registry has {} syntaxes",
-            grammar_registry.available_syntaxes().len()
-        );
 
         let keybindings = KeybindingResolver::new(&config);
 
@@ -1274,6 +1277,27 @@ impl Editor {
             }
         }
 
+        // Spawn background thread to build the full grammar registry
+        // (includes embedded grammars, user grammars, and language packs).
+        // The defaults-only registry is used until this completes.
+        let grammar_build_in_progress = enable_plugins; // only needed when plugins may register grammars
+        {
+            let grammar_sender = async_bridge.sender();
+            let grammar_config_dir = dir_context.config_dir.clone();
+            std::thread::Builder::new()
+                .name("grammar-build".to_string())
+                .spawn(move || {
+                    let registry =
+                        crate::primitives::grammar::GrammarRegistry::for_editor(grammar_config_dir);
+                    let _ = grammar_sender.send(
+                        crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
+                            registry,
+                        },
+                    );
+                })
+                .ok();
+        }
+
         // Extract config values before moving config into the struct
         let file_explorer_width = config.file_explorer.width;
         let recovery_enabled = config.editor.recovery_enabled;
@@ -1309,6 +1333,8 @@ impl Editor {
             dir_context: dir_context.clone(),
             grammar_registry,
             pending_grammars: Vec::new(),
+            grammar_reload_pending: false,
+            grammar_build_in_progress,
             theme,
             theme_registry,
             theme_cache,
@@ -4642,6 +4668,41 @@ impl Editor {
                         stderr,
                         exit_code,
                     );
+                }
+                AsyncMessage::GrammarRegistryBuilt { registry } => {
+                    tracing::info!(
+                        "Background grammar build completed ({} syntaxes)",
+                        registry.available_syntaxes().len()
+                    );
+                    self.grammar_registry = registry;
+                    self.grammar_build_in_progress = false;
+
+                    // Re-detect syntax for all open buffers with the full registry
+                    let buffers_to_update: Vec<_> = self
+                        .buffer_metadata
+                        .iter()
+                        .filter_map(|(id, meta)| meta.file_path().map(|p| (*id, p.to_path_buf())))
+                        .collect();
+
+                    for (buf_id, path) in buffers_to_update {
+                        if let Some(state) = self.buffers.get_mut(&buf_id) {
+                            let detected =
+                                crate::primitives::detected_language::DetectedLanguage::from_path(
+                                    &path,
+                                    &self.grammar_registry,
+                                    &self.config.languages,
+                                );
+
+                            if detected.highlighter.has_highlighting()
+                                || !state.highlighter.has_highlighting()
+                            {
+                                state.apply_language(detected);
+                            }
+                        }
+                    }
+
+                    // Flush any plugin grammars that arrived during the build
+                    self.flush_pending_grammars();
                 }
             }
         }

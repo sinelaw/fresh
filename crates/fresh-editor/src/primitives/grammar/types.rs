@@ -46,6 +46,14 @@ pub const TYPST_GRAMMAR: &str = include_str!("../../grammars/typst.sublime-synta
 ///
 /// This struct holds the compiled syntax set and provides lookup methods.
 /// It does not perform I/O directly - use `GrammarLoader` for loading grammars.
+impl std::fmt::Debug for GrammarRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GrammarRegistry")
+            .field("syntax_count", &self.syntax_set.syntaxes().len())
+            .finish()
+    }
+}
+
 pub struct GrammarRegistry {
     /// Combined syntax set (built-in + embedded + user grammars)
     syntax_set: Arc<SyntaxSet>,
@@ -83,6 +91,23 @@ impl GrammarRegistry {
             syntax_set: Arc::new(builder.build()),
             user_extensions: HashMap::new(),
             filename_scopes: HashMap::new(),
+            loaded_grammar_paths: Vec::new(),
+        })
+    }
+
+    /// Create a registry with only syntect's pre-compiled defaults (~0ms).
+    ///
+    /// This provides instant syntax highlighting for ~50 common languages
+    /// (Rust, Python, JS/TS, C/C++, Go, Java, HTML, CSS, Markdown, etc.)
+    /// without any `SyntaxSetBuilder::build()` call. Use this at startup,
+    /// then swap in a full registry built on a background thread.
+    pub fn defaults_only() -> Arc<Self> {
+        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let filename_scopes = Self::build_filename_scopes();
+        Arc::new(Self {
+            syntax_set: Arc::new(syntax_set),
+            user_extensions: HashMap::new(),
+            filename_scopes,
             loaded_grammar_paths: Vec::new(),
         })
     }

@@ -1510,32 +1510,55 @@ impl Editor {
     }
 
     /// Handle ReloadGrammars command
-    /// Rebuilds the grammar registry with pending grammars and invalidates highlight caches
+    /// Defers the actual rebuild — sets a flag so all pending grammars from the
+    /// current command batch are collected before a single rebuild.
     pub(super) fn handle_reload_grammars(&mut self) {
-        use crate::primitives::grammar::GrammarRegistry;
-        use std::path::PathBuf;
-
-        tracing::info!(
-            "[SYNTAX DEBUG] handle_reload_grammars called, pending_grammars count: {}",
+        tracing::debug!(
+            "ReloadGrammars requested, pending_grammars count: {}",
             self.pending_grammars.len()
         );
+        self.grammar_reload_pending = true;
+    }
 
-        if self.pending_grammars.is_empty() {
-            tracing::debug!("ReloadGrammars called but no pending grammars");
+    /// Flush pending grammars: spawn a background rebuild if any ReloadGrammars
+    /// commands were received during this command batch.
+    ///
+    /// Called after processing all plugin commands in a batch, so that multiple
+    /// RegisterGrammar+ReloadGrammars pairs result in only one rebuild.
+    /// The rebuild happens on a background thread; when complete, a
+    /// `GrammarRegistryBuilt` message swaps in the new registry.
+    pub(super) fn flush_pending_grammars(&mut self) {
+        if !self.grammar_reload_pending {
             return;
         }
+        self.grammar_reload_pending = false;
+
+        // If a background build is already in progress, it will call
+        // flush_pending_grammars() again when it completes — so just
+        // re-arm the flag and return.
+        if self.grammar_build_in_progress {
+            self.grammar_reload_pending = true;
+            tracing::debug!("Grammar build in progress, deferring flush");
+            return;
+        }
+
+        use std::path::PathBuf;
+
+        if self.pending_grammars.is_empty() {
+            tracing::debug!("Grammar reload requested but no pending grammars");
+            return;
+        }
+
+        tracing::info!(
+            "Flushing {} pending grammars via background rebuild",
+            self.pending_grammars.len()
+        );
 
         // Collect pending grammars
         let additional: Vec<_> = self
             .pending_grammars
             .drain(..)
             .map(|g| {
-                tracing::info!(
-                    "[SYNTAX DEBUG] pending grammar: lang='{}', path='{}', extensions={:?}",
-                    g.language,
-                    g.grammar_path,
-                    g.extensions
-                );
                 (
                     g.language.clone(),
                     PathBuf::from(g.grammar_path),
@@ -1544,8 +1567,6 @@ impl Editor {
             })
             .collect();
 
-        let grammar_count = additional.len();
-
         // Update config.languages with the extensions so detect_language() works
         for (language, _path, extensions) in &additional {
             let lang_config = self
@@ -1553,78 +1574,36 @@ impl Editor {
                 .languages
                 .entry(language.clone())
                 .or_insert_with(Default::default);
-            // Add extensions that aren't already present
             for ext in extensions {
                 if !lang_config.extensions.contains(ext) {
                     lang_config.extensions.push(ext.clone());
                 }
             }
-            tracing::info!(
-                "[SYNTAX DEBUG] updated config.languages['{}']: extensions={:?}, grammar='{}'",
-                language,
-                lang_config.extensions,
-                lang_config.grammar
-            );
         }
 
-        tracing::info!(
-            "[SYNTAX DEBUG] before rebuild: registry has {} syntaxes, user_extensions: {}",
-            self.grammar_registry.available_syntaxes().len(),
-            self.grammar_registry.user_extensions_debug()
-        );
-
-        // Rebuild registry with pending grammars
-        match GrammarRegistry::with_additional_grammars(&self.grammar_registry, &additional) {
-            Some(new_registry) => {
-                tracing::info!(
-                    "[SYNTAX DEBUG] after rebuild: new registry has {} syntaxes, user_extensions: {}",
-                    new_registry.available_syntaxes().len(),
-                    new_registry.user_extensions_debug()
-                );
-                self.grammar_registry = std::sync::Arc::new(new_registry);
-
-                // Re-detect syntax for all buffers that might now have highlighting
-                // Collect buffer IDs and paths first to avoid borrow issues
-                let buffers_to_update: Vec<_> = self
-                    .buffer_metadata
-                    .iter()
-                    .filter_map(|(id, meta)| meta.file_path().map(|p| (*id, p.to_path_buf())))
-                    .collect();
-
-                for (buf_id, path) in buffers_to_update {
-                    if let Some(state) = self.buffers.get_mut(&buf_id) {
-                        let detected =
-                            crate::primitives::detected_language::DetectedLanguage::from_path(
-                                &path,
-                                &self.grammar_registry,
-                                &self.config.languages,
-                            );
-
-                        // Only update if the new engine has highlighting capability
-                        // or if the current one doesn't (don't downgrade)
-                        if detected.highlighter.has_highlighting()
-                            || !state.highlighter.has_highlighting()
-                        {
-                            state.apply_language(detected);
-                            tracing::debug!(
-                                "Updated syntax highlighting for {:?}",
-                                path.file_name()
+        // Spawn background rebuild
+        let base_registry = std::sync::Arc::clone(&self.grammar_registry);
+        if let Some(bridge) = &self.async_bridge {
+            let sender = bridge.sender();
+            self.grammar_build_in_progress = true;
+            std::thread::Builder::new()
+                .name("grammar-rebuild".to_string())
+                .spawn(move || {
+                    use crate::primitives::grammar::GrammarRegistry;
+                    match GrammarRegistry::with_additional_grammars(&base_registry, &additional) {
+                        Some(new_registry) => {
+                            let _ = sender.send(
+                                crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
+                                    registry: std::sync::Arc::new(new_registry),
+                                },
                             );
                         }
+                        None => {
+                            tracing::error!("Failed to rebuild grammar registry in background");
+                        }
                     }
-                }
-
-                // Emit event for plugins that might want to react
-                self.emit_event(
-                    "grammars_changed",
-                    serde_json::json!({ "count": grammar_count }),
-                );
-
-                tracing::info!("Grammars reloaded ({} new grammars)", grammar_count);
-            }
-            None => {
-                tracing::error!("Failed to rebuild grammar registry");
-            }
+                })
+                .ok();
         }
     }
 }

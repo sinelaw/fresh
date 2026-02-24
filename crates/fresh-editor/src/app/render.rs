@@ -365,6 +365,9 @@ impl Editor {
                     tracing::error!("Error handling plugin command: {}", e);
                 }
             }
+
+            // Flush any deferred grammar rebuilds as a single batch
+            self.flush_pending_grammars();
         }
 
         // Render editor content (same for both layouts)
