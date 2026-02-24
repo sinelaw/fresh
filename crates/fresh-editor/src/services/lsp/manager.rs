@@ -707,10 +707,13 @@ impl Drop for LspManager {
 /// Checks in order:
 /// 1. File extension against `extensions`
 /// 2. Exact filename against `filenames`
+/// 3. Glob pattern match against `filenames` entries containing wildcards
 pub fn detect_language(
     path: &std::path::Path,
     languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
 ) -> Option<String> {
+    use crate::primitives::glob_match::{filename_glob_matches, is_glob_pattern};
+
     // Try extension first
     if let Some(extension) = path.extension().and_then(|e| e.to_str()) {
         for (language_name, lang_config) in languages {
@@ -720,10 +723,25 @@ pub fn detect_language(
         }
     }
 
-    // Try exact filename match
     if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+        // Try exact filename match
         for (language_name, lang_config) in languages {
-            if lang_config.filenames.iter().any(|f| f == filename) {
+            if lang_config
+                .filenames
+                .iter()
+                .any(|f| !is_glob_pattern(f) && f == filename)
+            {
+                return Some(language_name.clone());
+            }
+        }
+
+        // Try glob pattern match
+        for (language_name, lang_config) in languages {
+            if lang_config
+                .filenames
+                .iter()
+                .any(|f| is_glob_pattern(f) && filename_glob_matches(f, filename))
+            {
                 return Some(language_name.clone());
             }
         }

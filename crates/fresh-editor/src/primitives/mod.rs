@@ -16,6 +16,7 @@
 
 // Pure modules - available for both runtime and WASM
 pub mod display_width;
+pub mod glob_match;
 pub mod grapheme;
 pub mod line_wrapping;
 pub mod path_utils;
