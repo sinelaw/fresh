@@ -30,9 +30,6 @@ pub struct NativeMenuBar {
     _menu: muda::Menu,
     /// Last known context — used to avoid redundant state syncs.
     last_context: MenuContext,
-    /// Whether we have a deferred state sync pending (because the menu was
-    /// being tracked when `sync_state` was called).
-    needs_deferred_sync: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -49,7 +46,6 @@ impl NativeMenuBar {
         Self {
             _menu: muda_menu,
             last_context: context.clone(),
-            needs_deferred_sync: false,
         }
     }
 
@@ -71,7 +67,6 @@ impl NativeMenuBar {
         self._menu = super::macos::menu::build_from_model(menus, app_name, context);
         self._menu.init_for_nsapp();
         self.last_context = context.clone();
-        self.needs_deferred_sync = false;
     }
 
     /// Incrementally sync enabled/disabled and checkbox states from the
@@ -79,24 +74,9 @@ impl NativeMenuBar {
     /// iterates tracked items and calls `set_enabled` / `set_checked`
     /// when values differ from the last sync.
     ///
-    /// Mutations are suppressed while the menu bar is being tracked to avoid
-    /// the macOS bug where modifying `NSMenuItem` properties during tracking
-    /// causes the highlighted menu to jump to the leftmost item.
+    /// The caller (`about_to_wait`) is responsible for not calling this
+    /// while the menu bar is being tracked.
     pub fn sync_state(&mut self, context: &MenuContext) {
-        if super::macos::menu_tracking::is_menu_tracking() {
-            // Remember that we owe a sync so we catch up once tracking ends.
-            if *context != self.last_context {
-                self.needs_deferred_sync = true;
-            }
-            return;
-        }
-
-        // If we deferred work while the menu was tracked, flush it now.
-        if self.needs_deferred_sync {
-            self.needs_deferred_sync = false;
-            // Fall through to do the sync below.
-        }
-
         if *context == self.last_context {
             return; // Nothing changed.
         }

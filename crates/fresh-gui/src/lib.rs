@@ -163,7 +163,15 @@ where
     A: GuiApplication + 'static,
 {
     let event_loop = EventLoop::new().context("Failed to create winit event loop")?;
-    event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+    // Use WaitUntil for frame pacing instead of Poll.  Poll causes winit to
+    // schedule a CFRunLoopTimer at f64::MIN (fire immediately), which
+    // continuously wakes the run loop — including during macOS's modal menu
+    // tracking loop, causing the highlighted menu to jump to the leftmost
+    // item.  WaitUntil achieves the same ~60fps without aggressive polling
+    // and is also friendlier to CPU / battery.
+    event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
+        Instant::now() + FRAME_DURATION,
+    ));
 
     let mut runner: WgpuRunner<A> = WgpuRunner {
         config,
@@ -413,6 +421,20 @@ impl<A: GuiApplication + 'static> ApplicationHandler for WgpuRunner<A> {
             return;
         };
 
+        // While the macOS menu bar is being tracked (user hovering over menus),
+        // switch to pure Wait mode so winit does not schedule any timer wake-
+        // ups.  The modal tracking run loop is very sensitive to external
+        // interference; even periodic timer wake-ups can cause the highlighted
+        // menu to jump to the leftmost item.
+        if state.native_menu.is_tracking() {
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
+            return;
+        }
+        // Schedule the next frame wake-up (~60fps).
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
+            Instant::now() + FRAME_DURATION,
+        ));
+
         // Poll native menu bar for user clicks and dispatch to the app.
         if let Some(action) = state.native_menu.poll_action() {
             state.app.on_menu_action(&action.action, &action.args);
@@ -425,23 +447,18 @@ impl<A: GuiApplication + 'static> ApplicationHandler for WgpuRunner<A> {
             Err(e) => tracing::error!("Tick error: {}", e),
         }
 
-        // Skip menu mutations while the menu bar is being tracked (user
-        // is hovering over menus).  Modifying NSMenuItem properties during
-        // tracking causes the highlighted menu to jump to the leftmost item.
-        if !state.native_menu.is_tracking() {
-            // If the app signalled a menu model change, rebuild native menus.
-            if let Some(updated_menus) = state.app.take_menu_update() {
-                let ctx = state.app.menu_context();
-                state
-                    .native_menu
-                    .update(&updated_menus, &self.config.title, &ctx);
-            }
-
-            // Sync native menu item states (enabled/disabled, checkmarks) from
-            // the application's current MenuContext — cheap incremental update.
+        // If the app signalled a menu model change, rebuild native menus.
+        if let Some(updated_menus) = state.app.take_menu_update() {
             let ctx = state.app.menu_context();
-            state.native_menu.sync_state(&ctx);
+            state
+                .native_menu
+                .update(&updated_menus, &self.config.title, &ctx);
         }
+
+        // Sync native menu item states (enabled/disabled, checkmarks) from
+        // the application's current MenuContext — cheap incremental update.
+        let ctx = state.app.menu_context();
+        state.native_menu.sync_state(&ctx);
 
         if state.app.should_quit() {
             state.app.on_close();
