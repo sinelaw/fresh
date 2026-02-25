@@ -59,6 +59,10 @@ pub struct EditorServer {
     term_size: TermSize,
     /// Index of the client that most recently provided input (for per-client detach)
     last_input_client: Option<usize>,
+    /// Next wait ID for --wait tracking
+    next_wait_id: u64,
+    /// Maps wait_id → client_id for clients waiting on file events
+    waiting_clients: std::collections::HashMap<u64, u64>,
 }
 
 /// Buffered writer for sending data to a client without blocking the server loop.
@@ -128,6 +132,8 @@ struct ConnectedClient {
     input_parser: InputParser,
     /// Whether this client needs a full screen render on next frame
     needs_full_render: bool,
+    /// If set, this client is waiting for a --wait completion signal
+    wait_id: Option<u64>,
 }
 
 impl EditorServer {
@@ -157,6 +163,8 @@ impl EditorServer {
             shutdown: Arc::new(AtomicBool::new(false)),
             term_size: TermSize::new(80, 24), // Default until first client connects
             last_input_client: None,
+            next_wait_id: 1,
+            waiting_clients: std::collections::HashMap::new(),
         })
     }
 
@@ -320,6 +328,21 @@ impl EditorServer {
                 if editor.process_pending_file_opens() {
                     needs_render = true;
                 }
+
+                // Process completed --wait operations
+                for wait_id in editor.take_completed_waits() {
+                    if let Some(client_id) = self.waiting_clients.remove(&wait_id) {
+                        // Find the client and send WaitComplete
+                        if let Some(client) = self.clients.iter_mut().find(|c| c.id == client_id) {
+                            let msg = serde_json::to_string(&ServerControl::WaitComplete)
+                                .unwrap_or_default();
+                            #[allow(clippy::let_underscore_must_use)]
+                            let _ = client.conn.write_control(&msg);
+                            client.wait_id = None;
+                        }
+                    }
+                }
+
                 if editor.check_mouse_hover_timer() {
                     needs_render = true;
                 }
@@ -480,6 +503,7 @@ impl EditorServer {
             id: client_id,
             input_parser: InputParser::new(),
             needs_full_render: true,
+            wait_id: None,
         })
     }
 
@@ -500,7 +524,10 @@ impl EditorServer {
             match client.conn.read_data(&mut buf) {
                 Ok(0) => {
                     tracing::debug!("[server] Client {} data stream closed (EOF)", client.id);
-                    disconnected.push(idx);
+                    // Don't disconnect waiting clients on data EOF - they're not sending data
+                    if client.wait_id.is_none() {
+                        disconnected.push(idx);
+                    }
                     data_eof = true;
                     // Don't continue - still need to check control socket for pending messages
                 }
@@ -645,9 +672,19 @@ impl EditorServer {
                     tracing::info!("Client {} detached", idx);
                     disconnected.push(idx);
                 }
-                ClientControl::OpenFiles { files } => {
+                ClientControl::OpenFiles { files, wait } => {
                     if let Some(ref mut editor) = self.editor {
-                        for file_req in &files {
+                        // Assign a wait_id if --wait was requested
+                        let wait_id = if wait {
+                            let id = self.next_wait_id;
+                            self.next_wait_id += 1;
+                            Some(id)
+                        } else {
+                            None
+                        };
+
+                        let file_count = files.len();
+                        for (i, file_req) in files.iter().enumerate() {
                             let path = std::path::PathBuf::from(&file_req.path);
                             tracing::debug!(
                                 "Queuing file open: {:?} line={:?} col={:?} end_line={:?} end_col={:?} message={:?}",
@@ -658,6 +695,8 @@ impl EditorServer {
                                 file_req.end_column,
                                 file_req.message,
                             );
+                            // Only the last file gets the wait_id (it's the one that will be active)
+                            let file_wait_id = if i == file_count - 1 { wait_id } else { None };
                             editor.queue_file_open(
                                 path,
                                 file_req.line,
@@ -665,8 +704,18 @@ impl EditorServer {
                                 file_req.end_line,
                                 file_req.end_column,
                                 file_req.message.clone(),
+                                file_wait_id,
                             );
                         }
+
+                        // Track the waiting client
+                        if let Some(wait_id) = wait_id {
+                            if let Some(client) = self.clients.get_mut(idx) {
+                                self.waiting_clients.insert(wait_id, client.id);
+                                client.wait_id = Some(wait_id);
+                            }
+                        }
+
                         resize_occurred = true; // Force re-render
                     }
                 }
@@ -689,6 +738,14 @@ impl EditorServer {
         // Remove disconnected clients
         for idx in disconnected.into_iter().rev() {
             let client = self.clients.remove(idx);
+            // Clean up --wait tracking if this client was waiting
+            if let Some(wait_id) = client.wait_id {
+                self.waiting_clients.remove(&wait_id);
+                // Also clean up editor wait_tracking for this wait_id
+                if let Some(ref mut editor) = self.editor {
+                    editor.remove_wait_tracking(wait_id);
+                }
+            }
             // Best-effort teardown via the non-blocking writer
             let teardown = terminal_teardown_sequences();
             let _ = client.data_writer.try_write(&teardown);
@@ -787,8 +844,11 @@ impl EditorServer {
             return Ok(());
         }
 
-        // Broadcast to all clients via non-blocking writer threads
+        // Broadcast to all clients via non-blocking writer threads (skip waiting clients)
         for client in &mut self.clients {
+            if client.wait_id.is_some() {
+                continue;
+            }
             // Combine pending sequences and output into a single frame
             let frame = if !pending_sequences.is_empty() && !output.is_empty() {
                 let mut combined = Vec::with_capacity(pending_sequences.len() + output.len());

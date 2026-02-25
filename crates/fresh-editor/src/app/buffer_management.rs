@@ -1531,6 +1531,11 @@ impl Editor {
 
     /// Internal helper to close a buffer (shared by close_buffer and force_close_buffer)
     fn close_buffer_internal(&mut self, id: BufferId) -> anyhow::Result<()> {
+        // Complete any --wait tracking for this buffer
+        if let Some((wait_id, _)) = self.wait_tracking.remove(&id) {
+            self.completed_waits.push(wait_id);
+        }
+
         // Save file state before closing (for per-file session persistence)
         self.save_file_state_on_close(id);
 
@@ -2307,6 +2312,7 @@ impl Editor {
         end_line: Option<usize>,
         end_column: Option<usize>,
         message: Option<String>,
+        wait_id: Option<u64>,
     ) {
         self.pending_file_opens.push(super::PendingFileOpen {
             path,
@@ -2315,6 +2321,7 @@ impl Editor {
             end_line,
             end_column,
             message,
+            wait_id,
         });
     }
 
@@ -2352,8 +2359,14 @@ impl Editor {
                         self.goto_line_col(line, pending_file.column);
                     }
                     // Show hover message popup if specified
+                    let has_popup = pending_file.message.is_some();
                     if let Some(ref msg) = pending_file.message {
                         self.show_file_message_popup(msg);
+                    }
+                    // Track wait ID for --wait support
+                    if let Some(wait_id) = pending_file.wait_id {
+                        let buffer_id = self.active_buffer();
+                        self.wait_tracking.insert(buffer_id, (wait_id, has_popup));
                     }
                     processed_any = true;
                 }
@@ -2376,6 +2389,16 @@ impl Editor {
         }
 
         processed_any
+    }
+
+    /// Take and return completed wait IDs (for --wait support).
+    pub fn take_completed_waits(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.completed_waits)
+    }
+
+    /// Remove wait tracking for a given wait_id (e.g., when waiting client disconnects).
+    pub fn remove_wait_tracking(&mut self, wait_id: u64) {
+        self.wait_tracking.retain(|_, (wid, _)| *wid != wait_id);
     }
 
     /// Start an incremental line-feed scan for the active buffer.

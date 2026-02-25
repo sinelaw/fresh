@@ -47,7 +47,7 @@ const EXIT_NEW_SESSION: i32 = 2;
     "  session attach [NAME]     Attach to a session (NAME or current dir)\n",
     "  session new NAME          Start a new named session\n",
     "  session kill [NAME]       Terminate a session\n",
-    "  session open-file NAME FILES   Open files in session (starts if needed, exit 2 = new)\n",
+    "  session open-file NAME FILES [--wait]   Open files in session (--wait blocks until done)\n",
     "\n",
     "File location syntax:\n",
     "  file.txt:10                  Open at line 10\n",
@@ -67,12 +67,39 @@ const EXIT_NEW_SESSION: i32 = 2;
     "  fresh --cmd session open-file . main.rs     Open file in current dir session\n",
     "  fresh --cmd session open-file proj a.rs     Open file in 'proj' session\n",
     "\n",
+    "Guided walkthrough with --wait:\n",
+    "  The --wait flag blocks the CLI process until the user dismisses the popup\n",
+    "  (if @\"message\" was given) or closes the buffer (if no message). This lets\n",
+    "  a script or tool open files sequentially, waiting for the user to finish\n",
+    "  with each one before moving on.\n",
+    "\n",
+    "  Use NAME '.' to target the session for the current working directory.\n",
+    "  A session is started automatically if one isn't already running (exit\n",
+    "  code 2 is suppressed when --wait is used).\n",
+    "\n",
+    "  To show a file with an annotation, combine range selection with @\"msg\":\n",
+    "    fresh --cmd session open-file . 'src/main.rs:10-25@\"msg\"' --wait\n",
+    "\n",
+    "  The message supports markdown. Use real newlines (not \\n literals) in\n",
+    "  the shell string for multi-line messages. For example with $'...':\n",
+    "    fresh --cmd session open-file . \\\n",
+    "      $'src/main.rs:10-25@\"**Title**\\nBody text here\"' --wait\n",
+    "\n",
+    "  To walk through multiple locations, run commands sequentially — each\n",
+    "  one blocks until the user presses Escape (popup) or closes the buffer:\n",
+    "    fresh --cmd session open-file . 'a.rs:1-10@\"Step 1\"' --wait\n",
+    "    fresh --cmd session open-file . 'b.rs:5-20@\"Step 2\"' --wait\n",
+    "    fresh --cmd session open-file . 'c.rs:30@\"Step 3\"'   --wait\n",
+    "\n",
+    "  Use as git's editor:\n",
+    "    git config core.editor 'fresh --cmd session open-file . --wait'\n",
+    "\n",
     "Documentation: https://getfresh.dev/docs"
 ))]
 struct Cli {
     /// Run a command instead of opening files
     /// Commands: session (list|attach|new|kill|open-file), config (show|paths), init
-    #[arg(long, num_args = 1.., value_name = "COMMAND")]
+    #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
     /// Files to open (supports file:line:col, ranges, and @"message" syntax)
@@ -170,8 +197,8 @@ struct Args {
     list_sessions: bool,
     session_name: Option<String>,
     kill: Option<Option<String>>,
-    /// Open files in a session without attaching (session_name, files)
-    open_files_in_session: Option<(Option<String>, Vec<String>)>,
+    /// Open files in a session without attaching (session_name, files, wait)
+    open_files_in_session: Option<(Option<String>, Vec<String>, bool)>,
     /// Launch in GUI mode
     #[cfg(feature = "gui")]
     gui: bool,
@@ -199,7 +226,7 @@ impl From<Cli> for Args {
                 | ["s", "list", ..]
                 | ["session", "ls", ..]
                 | ["s", "ls", ..] => (true, None, false, None, false, false, None, cli.files, None),
-                // Open file in session: fresh --cmd session open-file <name> <files...>
+                // Open file in session: fresh --cmd session open-file <name> <files...> [--wait]
                 ["session", "open-file", name, files @ ..]
                 | ["s", "open-file", name, files @ ..] => {
                     let session = if *name == "." {
@@ -207,7 +234,12 @@ impl From<Cli> for Args {
                     } else {
                         Some((*name).to_string())
                     };
-                    let file_list: Vec<String> = files.iter().map(|s| (*s).to_string()).collect();
+                    let wait = files.iter().any(|s| *s == "--wait");
+                    let file_list: Vec<String> = files
+                        .iter()
+                        .filter(|s| **s != "--wait")
+                        .map(|s| (*s).to_string())
+                        .collect();
                     (
                         false,
                         None,
@@ -217,7 +249,7 @@ impl From<Cli> for Args {
                         false,
                         None,
                         vec![],
-                        Some((session, file_list)),
+                        Some((session, file_list, wait)),
                     )
                 }
                 ["session", "attach", name, ..]
@@ -746,6 +778,7 @@ fn handle_first_run_setup(
             loc.end_line,
             loc.end_column,
             loc.message.clone(),
+            None,
         );
     }
 
@@ -2210,7 +2243,11 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
 }
 
 /// Open files in a running session without attaching
-fn run_open_files_command(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> {
+fn run_open_files_command(
+    session_name: Option<&str>,
+    files: &[String],
+    wait: bool,
+) -> AnyhowResult<()> {
     use fresh::server::daemon::is_process_running;
     use fresh::server::protocol::{
         ClientControl, ClientHello, FileRequest, ServerControl, TermSize, PROTOCOL_VERSION,
@@ -2331,16 +2368,41 @@ fn run_open_files_command(session_name: Option<&str>, files: &[String]) -> Anyho
     // Send OpenFiles command
     let msg = serde_json::to_string(&ClientControl::OpenFiles {
         files: file_requests.clone(),
+        wait,
     })?;
     conn.write_control(&msg)?;
 
-    if server_was_started {
+    if server_was_started && !wait {
         eprintln!(
             "Started new session and opened {} file(s).",
             file_requests.len()
         );
         // Exit code 2 signals caller to spawn a terminal with attached client
         std::process::exit(EXIT_NEW_SESSION);
+    } else if server_was_started {
+        eprintln!(
+            "Started new session and opened {} file(s). Waiting...",
+            file_requests.len()
+        );
+    }
+
+    if wait {
+        // Block until the server sends WaitComplete
+        loop {
+            match conn.read_control() {
+                Ok(Some(line)) => {
+                    if let Ok(msg) = serde_json::from_str::<ServerControl>(&line) {
+                        match msg {
+                            ServerControl::WaitComplete => break,
+                            ServerControl::Quit { .. } => break,
+                            _ => {} // Ignore other messages
+                        }
+                    }
+                }
+                Ok(None) => break, // Server closed connection
+                Err(_) => break,   // Connection error
+            }
+        }
     } else {
         eprintln!("Opened {} file(s) in session.", file_requests.len());
     }
@@ -2614,8 +2676,8 @@ fn real_main() -> AnyhowResult<()> {
     }
 
     // Handle open-file in session: send files to running session without attaching
-    if let Some((session_name, files)) = &args.open_files_in_session {
-        return run_open_files_command(session_name.as_deref(), files);
+    if let Some((session_name, files, wait)) = &args.open_files_in_session {
+        return run_open_files_command(session_name.as_deref(), files, *wait);
     }
 
     // Handle --attach: connect to existing session

@@ -116,7 +116,11 @@ pub enum ClientControl {
     /// Request to quit (shutdown server if last client)
     Quit,
     /// Request to open files in the editor
-    OpenFiles { files: Vec<FileRequest> },
+    OpenFiles {
+        files: Vec<FileRequest>,
+        #[serde(default)]
+        wait: bool,
+    },
 }
 
 /// A file to open with optional line/column position, range, and hover message
@@ -151,6 +155,8 @@ pub enum ServerControl {
     Quit { reason: String },
     /// Error message
     Error { message: String },
+    /// Signal that a --wait operation has completed
+    WaitComplete,
 }
 
 /// Wrapper for control channel messages (used for JSON serialization)
@@ -277,6 +283,7 @@ mod tests {
                     end_column: None,
                     message: None,
                 }],
+                wait: false,
             },
         ];
 
@@ -301,6 +308,7 @@ mod tests {
             ServerControl::Error {
                 message: "error".to_string(),
             },
+            ServerControl::WaitComplete,
         ];
 
         for variant in variants {

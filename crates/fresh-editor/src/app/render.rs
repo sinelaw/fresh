@@ -1448,6 +1448,12 @@ impl Editor {
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
 
+        // Complete --wait tracking if this buffer had a popup-based wait
+        let active = self.active_buffer();
+        if let Some((wait_id, true)) = self.wait_tracking.remove(&active) {
+            self.completed_waits.push(wait_id);
+        }
+
         // Clear hover symbol highlight if present
         if let Some(handle) = self.hover_symbol_overlay.take() {
             let remove_overlay_event = crate::model::event::Event::RemoveOverlay { handle };

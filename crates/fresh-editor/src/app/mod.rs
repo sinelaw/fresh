@@ -787,6 +787,11 @@ pub struct Editor {
     /// ensuring consistent error handling (e.g., encoding confirmation prompts).
     pending_file_opens: Vec<PendingFileOpen>,
 
+    /// Tracks buffers opened with --wait: maps buffer_id → (wait_id, has_popup)
+    wait_tracking: HashMap<BufferId, (u64, bool)>,
+    /// Wait IDs that have completed (buffer closed or popup dismissed)
+    completed_waits: Vec<u64>,
+
     /// Stdin streaming state (if reading from stdin)
     stdin_streaming: Option<StdinStreamingState>,
 
@@ -809,6 +814,8 @@ pub struct PendingFileOpen {
     pub end_column: Option<usize>,
     /// Hover popup message to show after opening (optional)
     pub message: Option<String>,
+    /// Wait ID for --wait tracking (if the CLI is blocking until done)
+    pub wait_id: Option<u64>,
 }
 
 /// State for an incremental line-feed scan (non-blocking Go to Line)
@@ -1397,6 +1404,8 @@ impl Editor {
             .unwrap_or_default(),
             color_capability,
             pending_file_opens: Vec::new(),
+            wait_tracking: HashMap::new(),
+            completed_waits: Vec::new(),
             stdin_streaming: None,
             line_scan_state: None,
             review_hunks: Vec::new(),

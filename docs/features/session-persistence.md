@@ -51,7 +51,7 @@ Detaching exits only the client; the server keeps running.
 | `fresh -a <name>` | Attach to named session |
 | `fresh --cmd session list` | List running sessions |
 | `fresh --cmd session new <name>` | Start a new named session |
-| `fresh --cmd session open-file <name> <files>` | Open files in a running session |
+| `fresh --cmd session open-file <name> <files> [--wait]` | Open files in a running session |
 | `fresh --cmd session kill` | Kill session for current directory |
 | `fresh --cmd session kill <name>` | Kill named session |
 | `fresh --cmd session kill --all` | Kill all sessions |
@@ -82,6 +82,66 @@ fresh --cmd session open-file . file1.rs file2.rs
 ```
 
 This is useful for integrating Fresh with file managers or other tools—files open in the existing editor without starting a new terminal session.
+
+### Blocking Until Done (`--wait`)
+
+The `--wait` flag keeps the CLI process alive until the user is done with the file. The process exits when:
+
+- The **popup is dismissed** (press Escape) — if the file was opened with an `@"message"`
+- The **buffer is closed** — if no message was given
+
+```bash
+# Open a file and block until the user closes the buffer
+fresh --cmd session open-file . src/main.rs --wait
+
+# Open at a line with a popup message — blocks until popup is dismissed
+fresh --cmd session open-file . 'src/main.rs:42@"Review this function"' --wait
+```
+
+If no session is running, one is started automatically.
+
+#### Use as Git's Editor
+
+Set Fresh as git's editor so `git commit`, `git rebase -i`, etc. open in your running session and block until you close the buffer:
+
+```bash
+git config --global core.editor 'fresh --cmd session open-file . --wait'
+```
+
+Git appends the filename, so the final command becomes e.g. `fresh --cmd session open-file . --wait .git/COMMIT_EDITMSG`. The `--wait` flag can appear anywhere after the session name — files after it are collected normally.
+
+#### Annotated Code Walkthroughs
+
+Combine `--wait` with [range selection and popup messages](../../#file-location-syntax) to walk a user through code one location at a time. Each command blocks until the user presses Escape, then the next location opens:
+
+```bash
+fresh --cmd session open-file . 'src/parse.rs:10-25@"Step 1: The parser entry point"' --wait
+fresh --cmd session open-file . 'src/eval.rs:80-95@"Step 2: Expression evaluation"' --wait
+fresh --cmd session open-file . 'src/emit.rs:5@"Step 3: Code generation starts here"' --wait
+```
+
+Popup messages support markdown. Use `$'...'` quoting for multi-line messages:
+
+```bash
+fresh --cmd session open-file . \
+  $'src/main.rs:1-15@"**Overview**\n\nThis is the entry point.\nNote the error handling on line 12."' --wait
+```
+
+#### Programmatic Integration
+
+The `--wait` blocking behavior makes `session open-file` composable with any tool that needs to present files to a user and wait for acknowledgement:
+
+```bash
+# Code review script
+for file in $(git diff --name-only HEAD~1); do
+  fresh --cmd session open-file . "$file@\"Review this file\"" --wait
+done
+
+# Step through grep matches
+grep -rn "TODO" src/ | while IFS=: read -r file line _; do
+  fresh --cmd session open-file . "$file:$line@\"TODO found here\"" --wait
+done
+```
 
 ### Detaching
 
