@@ -235,6 +235,7 @@ impl Editor {
 
         // Preserve user settings before reloading
         let old_buffer_settings = self.active_state().buffer_settings.clone();
+        let old_editing_disabled = self.active_state().editing_disabled;
 
         // Load the file content fresh from disk
         let mut new_state = EditorState::from_file_with_languages(
@@ -257,6 +258,7 @@ impl Editor {
         });
         // Restore user settings (tab size, indentation, etc.)
         new_state.buffer_settings = old_buffer_settings;
+        new_state.editing_disabled = old_editing_disabled;
         // Line number visibility is in per-split BufferViewState (survives buffer replacement)
 
         // Replace the current buffer with the new state
@@ -730,10 +732,10 @@ impl Editor {
                 }
             })
             .unwrap_or_default();
-        let old_buffer_settings = self
+        let (old_buffer_settings, old_editing_disabled) = self
             .buffers
             .get(&buffer_id)
-            .map(|s| s.buffer_settings.clone())
+            .map(|s| (s.buffer_settings.clone(), s.editing_disabled))
             .unwrap_or_default();
 
         // Load the file content fresh from disk
@@ -758,6 +760,7 @@ impl Editor {
         });
         // Restore user settings (tab size, indentation, etc.)
         new_state.buffer_settings = old_buffer_settings;
+        new_state.editing_disabled = old_editing_disabled;
         // Line number visibility is in per-split BufferViewState (survives buffer replacement)
 
         // Replace the buffer content
