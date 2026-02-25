@@ -51,7 +51,7 @@ Detaching exits only the client; the server keeps running.
 | `fresh -a <name>` | Attach to named session |
 | `fresh --cmd session list` | List running sessions |
 | `fresh --cmd session new <name>` | Start a new named session |
-| `fresh --cmd session open-file <name> <files> [--wait]` | Open files in a running session |
+| `fresh --cmd session open-file <name> <files> [--wait]` | Open files in a session (starts and attaches if needed) |
 | `fresh --cmd session kill` | Kill session for current directory |
 | `fresh --cmd session kill <name>` | Kill named session |
 | `fresh --cmd session kill --all` | Kill all sessions |
@@ -66,9 +66,9 @@ fresh --cmd session list
 fresh -a feature-work
 ```
 
-### Opening Files in a Running Session
+### Opening Files in a Session
 
-Open files in an existing session without attaching to it:
+Open files in an existing session without attaching to it. If no session is running, one is started and the client attaches interactively:
 
 ```bash
 # Open file in current directory session (use "." for session name)
@@ -98,7 +98,7 @@ fresh --cmd session open-file . src/main.rs --wait
 fresh --cmd session open-file . 'src/main.rs:42@"Review this function"' --wait
 ```
 
-If no session is running, one is started automatically.
+If no session is running, one is started automatically and the client attaches interactively (`--wait` is ignored in this case — quit or detach normally).
 
 #### Use as Git's Editor
 

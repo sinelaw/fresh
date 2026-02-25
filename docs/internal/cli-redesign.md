@@ -68,7 +68,7 @@ Commands:
   list, ls       List active sessions
   attach, a      Attach to an existing session
   new, n         Start a new named session
-  open-file, o   Open files in a running session
+  open-file, o   Open files in a session (starts and attaches if needed)
   kill, k        Terminate a session
   info           Show details about a session
 ```
@@ -202,7 +202,7 @@ Commands:
   list, ls       List active sessions
   attach, a      Attach to a session
   new, n         Start a new named session
-  open-file, o   Open files in a running session
+  open-file, o   Open files in a session (starts and attaches if needed)
   kill, k        Terminate a session
   info           Show session details
 
@@ -301,7 +301,7 @@ Examples:
 | `fresh session list`              | List active sessions                      |
 | `fresh session attach [NAME]`     | Attach to session                         |
 | `fresh session new NAME`          | Start new named session                   |
-| `fresh session open-file NAME FILES` | Open files in a running session        |
+| `fresh session open-file NAME FILES` | Open files in a session (starts and attaches if needed) |
 | `fresh session kill [NAME]`       | Terminate a session                       |
 | `fresh -a [NAME]`                 | Shortcut for `session attach`             |
 

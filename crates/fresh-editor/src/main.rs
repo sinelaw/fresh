@@ -28,10 +28,6 @@ use std::{
     time::Duration,
 };
 
-/// Exit code when open-file command starts a new session.
-/// Callers can check for this to spawn a terminal with an attached client.
-const EXIT_NEW_SESSION: i32 = 2;
-
 /// A terminal text editor with multi-cursor support
 #[derive(Parser, Debug)]
 #[command(name = "fresh")]
@@ -74,8 +70,8 @@ const EXIT_NEW_SESSION: i32 = 2;
     "  with each one before moving on.\n",
     "\n",
     "  Use NAME '.' to target the session for the current working directory.\n",
-    "  A session is started automatically if one isn't already running (exit\n",
-    "  code 2 is suppressed when --wait is used).\n",
+    "  A session is started automatically if one isn't already running. When a\n",
+    "  new session is started, the client attaches interactively (--wait is ignored).\n",
     "\n",
     "  To show a file with an annotation, combine range selection with @\"msg\":\n",
     "    fresh --cmd session open-file . 'src/main.rs:10-25@\"msg\"' --wait\n",
@@ -2331,8 +2327,16 @@ fn run_open_files_command(
     // Connect to server
     let conn = fresh::server::ipc::ClientConnection::connect(&socket_paths)?;
 
+    // Use real terminal size if we're about to attach, dummy size otherwise
+    let term_size = if server_was_started {
+        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+        TermSize::new(cols, rows)
+    } else {
+        TermSize::new(80, 24) // Size doesn't matter, we're not rendering
+    };
+
     // Perform handshake
-    let hello = ClientHello::new(TermSize::new(80, 24)); // Size doesn't matter, we're not rendering
+    let hello = ClientHello::new(term_size);
     let hello_json = serde_json::to_string(&ClientControl::Hello(hello))?;
     conn.write_control(&hello_json)?;
 
@@ -2372,22 +2376,42 @@ fn run_open_files_command(
     })?;
     conn.write_control(&msg)?;
 
-    if server_was_started && !wait {
-        eprintln!(
-            "Started new session and opened {} file(s).",
-            file_requests.len()
-        );
-        // Exit code 2 signals caller to spawn a terminal with attached client
-        std::process::exit(EXIT_NEW_SESSION);
-    } else if server_was_started {
-        eprintln!(
-            "Started new session and opened {} file(s). Waiting...",
-            file_requests.len()
-        );
-    }
+    if server_was_started {
+        // We just started the server — attach as an interactive client so the
+        // user can actually see the editor (--wait is ignored in this path).
 
-    if wait {
-        // Block until the server sends WaitComplete
+        // Belt-and-suspenders resize in case the handshake used a dummy size
+        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+        let resize_msg =
+            serde_json::to_string(&ClientControl::Resize { cols, rows })?;
+        conn.write_control(&resize_msg)?;
+
+        crossterm::terminal::enable_raw_mode()?;
+        let result = client::run_client_relay(conn);
+        fresh::services::terminal_modes::emergency_cleanup();
+
+        match result {
+            Ok(client::ClientExitReason::ServerQuit) => {}
+            Ok(client::ClientExitReason::Detached) => {
+                eprintln!("Detached from session. Server continues running.");
+                eprintln!("Reattach with: fresh -a  or  fresh session attach");
+            }
+            Ok(client::ClientExitReason::VersionMismatch { server_version }) => {
+                eprintln!("Version mismatch: server is v{}", server_version);
+                eprintln!(
+                    "Please restart the server with the same version as the client."
+                );
+            }
+            Ok(client::ClientExitReason::Error(e)) => {
+                eprintln!("Connection error: {}", e);
+                return Err(e.into());
+            }
+            Err(e) => {
+                return Err(e.into());
+            }
+        }
+    } else if wait {
+        // Existing session — block until the server sends WaitComplete
         loop {
             match conn.read_control() {
                 Ok(Some(line)) => {
