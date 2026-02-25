@@ -152,7 +152,10 @@ impl Server {
         conn: ServerConnection,
         client_id: u64,
     ) -> io::Result<ConnectedClient> {
-        // Read client hello
+        // Read client hello (blocking read)
+        // On Windows, named pipes are already in blocking mode from accept().
+        // On Unix, we need to explicitly set blocking mode for the handshake.
+        #[cfg(not(windows))]
         conn.control.set_nonblocking(false)?;
         let hello_json = conn
             .read_control()?
@@ -209,7 +212,12 @@ impl Server {
             hello.term()
         );
 
-        // Set sockets back to non-blocking for normal operation
+        // Set sockets back to non-blocking for normal operation.
+        // On Windows, keep pipes in blocking mode — try_read_nonblocking()
+        // uses PeekNamedPipe to check data availability before doing a
+        // blocking read. Setting PIPE_NOWAIT on Windows can trigger
+        // STATUS_STACK_BUFFER_OVERRUN (0xc0000409).
+        #[cfg(not(windows))]
         conn.control.set_nonblocking(true)?;
 
         // Send terminal setup sequences to initialize the client's terminal
