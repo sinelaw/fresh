@@ -2327,16 +2327,8 @@ fn run_open_files_command(
     // Connect to server
     let conn = fresh::server::ipc::ClientConnection::connect(&socket_paths)?;
 
-    // Use real terminal size if we're about to attach, dummy size otherwise
-    let term_size = if server_was_started {
-        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-        TermSize::new(cols, rows)
-    } else {
-        TermSize::new(80, 24) // Size doesn't matter, we're not rendering
-    };
-
     // Perform handshake
-    let hello = ClientHello::new(term_size);
+    let hello = ClientHello::new(TermSize::new(80, 24)); // Size doesn't matter, we're not rendering
     let hello_json = serde_json::to_string(&ClientControl::Hello(hello))?;
     conn.write_control(&hello_json)?;
 
@@ -2377,39 +2369,11 @@ fn run_open_files_command(
     conn.write_control(&msg)?;
 
     if server_was_started {
-        // We just started the server — attach as an interactive client so the
-        // user can actually see the editor (--wait is ignored in this path).
-
-        // Belt-and-suspenders resize in case the handshake used a dummy size
-        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-        let resize_msg =
-            serde_json::to_string(&ClientControl::Resize { cols, rows })?;
-        conn.write_control(&resize_msg)?;
-
-        crossterm::terminal::enable_raw_mode()?;
-        let result = client::run_client_relay(conn);
-        fresh::services::terminal_modes::emergency_cleanup();
-
-        match result {
-            Ok(client::ClientExitReason::ServerQuit) => {}
-            Ok(client::ClientExitReason::Detached) => {
-                eprintln!("Detached from session. Server continues running.");
-                eprintln!("Reattach with: fresh -a  or  fresh session attach");
-            }
-            Ok(client::ClientExitReason::VersionMismatch { server_version }) => {
-                eprintln!("Version mismatch: server is v{}", server_version);
-                eprintln!(
-                    "Please restart the server with the same version as the client."
-                );
-            }
-            Ok(client::ClientExitReason::Error(e)) => {
-                eprintln!("Connection error: {}", e);
-                return Err(e.into());
-            }
-            Err(e) => {
-                return Err(e.into());
-            }
-        }
+        // We just started the server — drop this fire-and-forget connection
+        // and attach as a normal interactive client so the user can see the
+        // editor. --wait is ignored in this path; the user quits normally.
+        drop(conn);
+        return run_attach(session_name);
     } else if wait {
         // Existing session — block until the server sends WaitComplete
         loop {
@@ -2435,6 +2399,10 @@ fn run_open_files_command(
 
 /// Attach to an existing session, starting a server if needed
 fn run_attach_command(args: &Args) -> AnyhowResult<()> {
+    run_attach(args.session_name.as_deref())
+}
+
+fn run_attach(session_name: Option<&str>) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
         ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
@@ -2460,7 +2428,7 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
     let working_dir = std::env::current_dir()?;
 
     // Determine socket paths based on session name or working directory
-    let socket_paths = if let Some(ref name) = args.session_name {
+    let socket_paths = if let Some(name) = session_name {
         SocketPaths::for_session_name(name)?
     } else {
         SocketPaths::for_working_dir(&working_dir)?
@@ -2476,7 +2444,7 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
         eprintln!("Starting server...");
 
         // Spawn server in background
-        let _pid = spawn_server_detached(args.session_name.as_deref())?;
+        let _pid = spawn_server_detached(session_name)?;
         true
     } else {
         false
