@@ -48,10 +48,9 @@ unsafe fn install_observers_inner() {
 
         // NSMenuDidBeginTrackingNotification
         let begin_name = NSString::from_str("NSMenuDidBeginTrackingNotification");
-        let begin_block =
-            RcBlock::new(|_notif: NonNull<NSNotification>| {
-                MENU_TRACKING.store(true, Ordering::Relaxed);
-            });
+        let begin_block = RcBlock::new(|_notif: NonNull<NSNotification>| {
+            MENU_TRACKING.store(true, Ordering::Relaxed);
+        });
         let _begin_observer = center.addObserverForName_object_queue_usingBlock(
             Some(&begin_name),
             None,
@@ -63,10 +62,9 @@ unsafe fn install_observers_inner() {
 
         // NSMenuDidEndTrackingNotification
         let end_name = NSString::from_str("NSMenuDidEndTrackingNotification");
-        let end_block =
-            RcBlock::new(|_notif: NonNull<NSNotification>| {
-                MENU_TRACKING.store(false, Ordering::Relaxed);
-            });
+        let end_block = RcBlock::new(|_notif: NonNull<NSNotification>| {
+            MENU_TRACKING.store(false, Ordering::Relaxed);
+        });
         let _end_observer = center.addObserverForName_object_queue_usingBlock(
             Some(&end_name),
             None,
@@ -76,4 +74,3 @@ unsafe fn install_observers_inner() {
         std::mem::forget(_end_observer);
     }
 }
-
