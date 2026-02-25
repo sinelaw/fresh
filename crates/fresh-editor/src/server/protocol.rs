@@ -119,12 +119,18 @@ pub enum ClientControl {
     OpenFiles { files: Vec<FileRequest> },
 }
 
-/// A file to open with optional line/column position
+/// A file to open with optional line/column position, range, and hover message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileRequest {
     pub path: String,
     pub line: Option<usize>,
     pub column: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// Control messages from server to client
@@ -267,6 +273,9 @@ mod tests {
                     path: "/test/file.txt".to_string(),
                     line: Some(10),
                     column: Some(5),
+                    end_line: None,
+                    end_column: None,
+                    message: None,
                 }],
             },
         ];

@@ -803,6 +803,12 @@ pub struct PendingFileOpen {
     pub line: Option<usize>,
     /// Column number to navigate to (1-indexed, optional)
     pub column: Option<usize>,
+    /// End line for range selection (1-indexed, optional)
+    pub end_line: Option<usize>,
+    /// End column for range selection (1-indexed, optional)
+    pub end_column: Option<usize>,
+    /// Hover popup message to show after opening (optional)
+    pub message: Option<String>,
 }
 
 /// State for an incremental line-feed scan (non-blocking Go to Line)

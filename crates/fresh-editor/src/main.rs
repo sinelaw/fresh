@@ -383,11 +383,16 @@ impl From<Cli> for Args {
 }
 
 /// Parsed file location from CLI argument in file:line:col format
+/// Also supports range selections (file:L-EL or file:L:C-EL:EC) and
+/// hover messages (file:L@"message").
 #[derive(Debug)]
 struct FileLocation {
     path: PathBuf,
     line: Option<usize>,
     column: Option<usize>,
+    end_line: Option<usize>,
+    end_column: Option<usize>,
+    message: Option<String>,
 }
 
 /// Parsed remote location from CLI argument in user@host:path format
@@ -724,7 +729,14 @@ fn handle_first_run_setup(
             continue;
         }
         tracing::info!("[SYNTAX DEBUG] Queueing CLI file for open: {:?}", loc.path);
-        editor.queue_file_open(loc.path.clone(), loc.line, loc.column);
+        editor.queue_file_open(
+            loc.path.clone(),
+            loc.line,
+            loc.column,
+            loc.end_line,
+            loc.end_column,
+            loc.message.clone(),
+        );
     }
 
     if show_file_explorer {
@@ -749,11 +761,15 @@ fn handle_first_run_setup(
     Ok(())
 }
 
-/// Parse a file path that may include line and column information.
+/// Parse a file path that may include line/column, range, and message information.
 /// Supports formats:
 /// - file.txt
 /// - file.txt:10
 /// - file.txt:10:5
+/// - file.txt:13-16           (line range)
+/// - file.txt:13:17-21:1      (full range with columns)
+/// - file.txt:10@"message"    (position + hover message)
+/// - file.txt:13-16@"message" (range + hover message)
 /// - /path/to/file.txt:10:5
 ///
 /// For Windows paths like C:\path\file.txt:10:5, we handle the drive letter
@@ -763,6 +779,15 @@ fn handle_first_run_setup(
 fn parse_file_location(input: &str) -> FileLocation {
     use std::path::{Component, Path};
 
+    let empty = FileLocation {
+        path: PathBuf::from(input),
+        line: None,
+        column: None,
+        end_line: None,
+        end_column: None,
+        message: None,
+    };
+
     let full_path = PathBuf::from(input);
 
     // If the full path exists as a file, use it directly
@@ -770,13 +795,15 @@ fn parse_file_location(input: &str) -> FileLocation {
     if full_path.is_file() {
         return FileLocation {
             path: full_path,
-            line: None,
-            column: None,
+            ..empty
         };
     }
 
+    // Extract message from @"..." suffix (before parsing positions)
+    let (input_no_msg, message) = extract_message_suffix(input);
+
     // Check if the path has a Windows drive prefix using std::path
-    let has_prefix = Path::new(input)
+    let has_prefix = Path::new(input_no_msg)
         .components()
         .next()
         .map(|c| matches!(c, Component::Prefix(_)))
@@ -786,25 +813,43 @@ fn parse_file_location(input: &str) -> FileLocation {
     // For Windows paths with prefix (e.g., "C:"), skip past the drive letter and colon
     let search_start = if has_prefix {
         // Find the first colon (the drive letter separator) and skip it
-        input.find(':').map(|i| i + 1).unwrap_or(0)
+        input_no_msg.find(':').map(|i| i + 1).unwrap_or(0)
     } else {
         0
     };
 
     // Find the last colon(s) that could be line:col
-    let suffix = &input[search_start..];
+    let suffix = &input_no_msg[search_start..];
 
-    // Try to parse from the end: look for :col and :line patterns
-    // We work backwards to find numeric suffixes
+    // Check if there's a range (contains '-' in the location suffix, not in the path)
+    // We need to find the first colon that starts the location suffix, then check for '-'
+    if let Some(first_colon) = suffix.find(':') {
+        let location_part = &suffix[first_colon + 1..];
+        if location_part.contains('-') {
+            // Range syntax: try to parse as L-EL or L:C-EL:EC
+            let path_part = &suffix[..first_colon];
+            let path_str = if has_prefix {
+                format!("{}{}", &input_no_msg[..search_start], path_part)
+            } else {
+                path_part.to_string()
+            };
+
+            if let Some(result) =
+                parse_range(location_part, PathBuf::from(path_str), message.clone())
+            {
+                return result;
+            }
+        }
+    }
+
+    // No range — fall back to standard :line or :line:col parsing
     let parts: Vec<&str> = suffix.rsplitn(3, ':').collect();
 
     match parts.as_slice() {
-        // Could be "col", "line", "rest" or just parts of the path
         [maybe_col, maybe_line, rest] => {
             if let (Ok(line), Ok(col)) = (maybe_line.parse::<usize>(), maybe_col.parse::<usize>()) {
-                // Both parsed as numbers: file:line:col
                 let path_str = if has_prefix {
-                    format!("{}{}", &input[..search_start], rest)
+                    format!("{}{}", &input_no_msg[..search_start], rest)
                 } else {
                     rest.to_string()
                 };
@@ -812,35 +857,87 @@ fn parse_file_location(input: &str) -> FileLocation {
                     path: PathBuf::from(path_str),
                     line: Some(line),
                     column: Some(col),
+                    message,
+                    ..empty
                 };
             }
-            // Fall through - not valid line:col format
         }
-        // Could be "line", "rest" or just parts of the path
         [maybe_line, rest] => {
             if let Ok(line) = maybe_line.parse::<usize>() {
-                // Parsed as number: file:line
                 let path_str = if has_prefix {
-                    format!("{}{}", &input[..search_start], rest)
+                    format!("{}{}", &input_no_msg[..search_start], rest)
                 } else {
                     rest.to_string()
                 };
                 return FileLocation {
                     path: PathBuf::from(path_str),
                     line: Some(line),
-                    column: None,
+                    message,
+                    ..empty
                 };
             }
-            // Fall through - not valid line format
         }
         _ => {}
     }
 
-    // No valid line:col suffix found, treat the whole thing as a path
+    // No valid suffix found, treat the whole thing as a path
     FileLocation {
-        path: full_path,
-        line: None,
-        column: None,
+        path: PathBuf::from(input_no_msg),
+        message,
+        ..empty
+    }
+}
+
+/// Extract a @"message" suffix from a file location string.
+/// Returns (remaining_input, optional_message).
+fn extract_message_suffix(input: &str) -> (&str, Option<String>) {
+    // Look for @" pattern — the message is everything between the quotes
+    if let Some(at_pos) = input.rfind("@\"") {
+        if input.ends_with('"') && input.len() > at_pos + 2 {
+            let msg = &input[at_pos + 2..input.len() - 1];
+            // Unescape \" within the message
+            let msg = msg.replace("\\\"", "\"");
+            return (&input[..at_pos], Some(msg));
+        }
+    }
+    (input, None)
+}
+
+/// Parse a range location suffix like "13-16" or "13:17-21:1".
+/// Returns a FileLocation if successful.
+fn parse_range(location: &str, path: PathBuf, message: Option<String>) -> Option<FileLocation> {
+    let parts: Vec<&str> = location.splitn(2, '-').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let start_part = parts[0];
+    let end_part = parts[1];
+
+    // Parse start: either "L" or "L:C"
+    let (start_line, start_col) = parse_line_col(start_part)?;
+    // Parse end: either "EL" or "EL:EC"
+    let (end_line, end_col) = parse_line_col(end_part)?;
+
+    Some(FileLocation {
+        path,
+        line: Some(start_line),
+        column: start_col,
+        end_line: Some(end_line),
+        end_column: end_col,
+        message,
+    })
+}
+
+/// Parse "L" or "L:C" into (line, optional_column).
+fn parse_line_col(s: &str) -> Option<(usize, Option<usize>)> {
+    if let Some((line_str, col_str)) = s.split_once(':') {
+        let line = line_str.parse::<usize>().ok()?;
+        let col = col_str.parse::<usize>().ok()?;
+        Some((line, Some(col)))
+    } else {
+        let line = s.parse::<usize>().ok()?;
+        Some((line, None))
     }
 }
 
@@ -1096,6 +1193,9 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
                 path: PathBuf::from(&rl.path),
                 line: rl.line,
                 column: rl.column,
+                end_line: None,
+                end_column: None,
+                message: None,
             },
         })
         .collect();
@@ -2139,6 +2239,9 @@ fn run_open_files_command(session_name: Option<&str>, files: &[String]) -> Anyho
             path: canonical_path.to_string_lossy().to_string(),
             line: loc.line,
             column: loc.column,
+            end_line: loc.end_line,
+            end_column: loc.end_column,
+            message: loc.message,
         });
     }
 
@@ -3179,6 +3282,117 @@ mod tests {
             }
             ParsedLocation::Remote(_) => panic!("Expected local, got remote"),
         }
+    }
+
+    // Tests for range selection and message parsing
+
+    #[test]
+    fn test_parse_file_location_line_range() {
+        let loc = parse_file_location("file.txt:13-16");
+        assert_eq!(loc.path, PathBuf::from("file.txt"));
+        assert_eq!(loc.line, Some(13));
+        assert_eq!(loc.column, None);
+        assert_eq!(loc.end_line, Some(16));
+        assert_eq!(loc.end_column, None);
+        assert_eq!(loc.message, None);
+    }
+
+    #[test]
+    fn test_parse_file_location_full_range() {
+        let loc = parse_file_location("file.txt:13:17-21:1");
+        assert_eq!(loc.path, PathBuf::from("file.txt"));
+        assert_eq!(loc.line, Some(13));
+        assert_eq!(loc.column, Some(17));
+        assert_eq!(loc.end_line, Some(21));
+        assert_eq!(loc.end_column, Some(1));
+        assert_eq!(loc.message, None);
+    }
+
+    #[test]
+    fn test_parse_file_location_line_range_with_message() {
+        let loc = parse_file_location("file.txt:13-16@\"hello world\"");
+        assert_eq!(loc.path, PathBuf::from("file.txt"));
+        assert_eq!(loc.line, Some(13));
+        assert_eq!(loc.end_line, Some(16));
+        assert_eq!(loc.message, Some("hello world".to_string()));
+    }
+
+    #[test]
+    fn test_parse_file_location_point_with_message() {
+        let loc = parse_file_location("file.txt:13:5@\"msg\"");
+        assert_eq!(loc.path, PathBuf::from("file.txt"));
+        assert_eq!(loc.line, Some(13));
+        assert_eq!(loc.column, Some(5));
+        assert_eq!(loc.end_line, None);
+        assert_eq!(loc.end_column, None);
+        assert_eq!(loc.message, Some("msg".to_string()));
+    }
+
+    #[test]
+    fn test_parse_file_location_full_range_with_message() {
+        let loc = parse_file_location("file.txt:13:17-21:1@\"explanation\"");
+        assert_eq!(loc.path, PathBuf::from("file.txt"));
+        assert_eq!(loc.line, Some(13));
+        assert_eq!(loc.column, Some(17));
+        assert_eq!(loc.end_line, Some(21));
+        assert_eq!(loc.end_column, Some(1));
+        assert_eq!(loc.message, Some("explanation".to_string()));
+    }
+
+    #[test]
+    fn test_parse_file_location_message_with_escaped_quotes() {
+        let loc = parse_file_location(r#"file.txt:5@"say \"hello\"""#);
+        assert_eq!(loc.path, PathBuf::from("file.txt"));
+        assert_eq!(loc.line, Some(5));
+        assert_eq!(loc.message, Some("say \"hello\"".to_string()));
+    }
+
+    #[test]
+    fn test_parse_file_location_empty_message() {
+        let loc = parse_file_location("file.txt:5@\"\"");
+        assert_eq!(loc.path, PathBuf::from("file.txt"));
+        assert_eq!(loc.line, Some(5));
+        assert_eq!(loc.message, Some("".to_string()));
+    }
+
+    #[test]
+    fn test_parse_file_location_line_only_with_message() {
+        let loc = parse_file_location("file.txt:10@\"check this\"");
+        assert_eq!(loc.path, PathBuf::from("file.txt"));
+        assert_eq!(loc.line, Some(10));
+        assert_eq!(loc.column, None);
+        assert_eq!(loc.end_line, None);
+        assert_eq!(loc.message, Some("check this".to_string()));
+    }
+
+    #[test]
+    fn test_parse_file_location_absolute_path_with_range() {
+        let loc = parse_file_location("/home/user/file.txt:5-10");
+        assert_eq!(loc.path, PathBuf::from("/home/user/file.txt"));
+        assert_eq!(loc.line, Some(5));
+        assert_eq!(loc.end_line, Some(10));
+    }
+
+    #[test]
+    fn test_parse_file_location_no_range_fields_for_simple() {
+        let loc = parse_file_location("foo.txt:42:10");
+        assert_eq!(loc.end_line, None);
+        assert_eq!(loc.end_column, None);
+        assert_eq!(loc.message, None);
+    }
+
+    #[test]
+    fn test_extract_message_suffix() {
+        let (rest, msg) = extract_message_suffix("file.txt:10@\"hello\"");
+        assert_eq!(rest, "file.txt:10");
+        assert_eq!(msg, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn test_extract_message_suffix_no_message() {
+        let (rest, msg) = extract_message_suffix("file.txt:10");
+        assert_eq!(rest, "file.txt:10");
+        assert_eq!(msg, None);
     }
 }
 

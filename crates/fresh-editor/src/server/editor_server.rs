@@ -650,12 +650,22 @@ impl EditorServer {
                         for file_req in &files {
                             let path = std::path::PathBuf::from(&file_req.path);
                             tracing::debug!(
-                                "Queuing file open: {:?} line={:?} col={:?}",
+                                "Queuing file open: {:?} line={:?} col={:?} end_line={:?} end_col={:?} message={:?}",
                                 path,
                                 file_req.line,
-                                file_req.column
+                                file_req.column,
+                                file_req.end_line,
+                                file_req.end_column,
+                                file_req.message,
                             );
-                            editor.queue_file_open(path, file_req.line, file_req.column);
+                            editor.queue_file_open(
+                                path,
+                                file_req.line,
+                                file_req.column,
+                                file_req.end_line,
+                                file_req.end_column,
+                                file_req.message.clone(),
+                            );
                         }
                         resize_occurred = true; // Force re-render
                     }

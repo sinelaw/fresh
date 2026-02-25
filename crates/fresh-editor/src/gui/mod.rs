@@ -105,7 +105,7 @@ pub fn run_gui(
 
         if !file_locations.is_empty() {
             for (path, line, col) in &file_locations {
-                editor.queue_file_open(path.clone(), *line, *col);
+                editor.queue_file_open(path.clone(), *line, *col, None, None, None);
             }
         } else if show_file_explorer {
             editor.show_file_explorer();
