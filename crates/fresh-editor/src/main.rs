@@ -49,8 +49,18 @@ const EXIT_NEW_SESSION: i32 = 2;
     "  session kill [NAME]       Terminate a session\n",
     "  session open-file NAME FILES   Open files in session (starts if needed, exit 2 = new)\n",
     "\n",
+    "File location syntax:\n",
+    "  file.txt:10                  Open at line 10\n",
+    "  file.txt:10:5                Open at line 10, column 5\n",
+    "  file.txt:10-20               Select lines 10 to 20\n",
+    "  file.txt:10:5-20:1           Select from line 10 col 5 to line 20 col 1\n",
+    "  file.txt:10@\"msg\"            Open at line 10 with markdown popup message\n",
+    "  file.txt:10-20@\"msg\"         Select range with markdown popup message\n",
+    "  Tip: use single quotes to avoid shell expansion, e.g. 'file.txt:10@\"msg\"'\n",
+    "\n",
     "Examples:\n",
     "  fresh file.txt                               Open a file\n",
+    "  fresh 'file.txt:10-20@\"Check this code\"'     Open with range selected and popup\n",
     "  fresh -a                                     Attach to session (current dir)\n",
     "  fresh -a mysession                           Attach to named session\n",
     "  fresh --cmd session new proj                 Start session named 'proj'\n",
@@ -65,7 +75,7 @@ struct Cli {
     #[arg(long, num_args = 1.., value_name = "COMMAND")]
     cmd: Vec<String>,
 
-    /// Files to open (supports line:col syntax, e.g., file.txt:10:5)
+    /// Files to open (supports file:line:col, ranges, and @"message" syntax)
     #[arg(value_name = "FILES")]
     files: Vec<String>,
 
