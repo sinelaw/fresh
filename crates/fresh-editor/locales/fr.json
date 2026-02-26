@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "Mode débogage ACTIVÉ - affichage des plages d'octets",
   "toggle.horizontal_scrollbar_hidden": "Barre de défilement horizontale masquée",
   "toggle.horizontal_scrollbar_shown": "Barre de défilement horizontale affichée",
+  "toggle.whitespace_indicators_hidden": "Indicateurs d'espaces masqués",
+  "toggle.whitespace_indicators_shown": "Indicateurs d'espaces affichés",
   "toggle.inlay_hints_disabled": "Indices inlay désactivés",
   "toggle.inlay_hints_enabled": "Indices inlay activés",
   "toggle.line_numbers_hidden": "Numéros de ligne masqués",

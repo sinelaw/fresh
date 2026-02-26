@@ -4439,10 +4439,11 @@ impl SplitRenderer {
 
                     // Classify whitespace position: leading, inner, or trailing
                     // Leading = before first non-ws char, Trailing = after last non-ws char
+                    // All-whitespace lines match both leading and trailing
                     let ws_show_tab = is_tab_start && {
                         let ws = &state.buffer_settings.whitespace;
                         match (first_non_ws_idx, last_non_ws_idx) {
-                            (None, _) | (_, None) => ws.tabs_trailing,
+                            (None, _) | (_, None) => ws.tabs_leading || ws.tabs_trailing,
                             (Some(first), Some(last)) => {
                                 if display_char_idx < first {
                                     ws.tabs_leading
@@ -4457,7 +4458,7 @@ impl SplitRenderer {
                     let ws_show_space = ch == ' ' && !is_tab_start && {
                         let ws = &state.buffer_settings.whitespace;
                         match (first_non_ws_idx, last_non_ws_idx) {
-                            (None, _) | (_, None) => ws.spaces_trailing,
+                            (None, _) | (_, None) => ws.spaces_leading || ws.spaces_trailing,
                             (Some(first), Some(last)) => {
                                 if display_char_idx < first {
                                     ws.spaces_leading

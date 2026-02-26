@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "เปิดโหมดดีบักไฮไลท์ - แสดงช่วงไบต์",
   "toggle.horizontal_scrollbar_hidden": "ซ่อนแถบเลื่อนแนวนอนแล้ว",
   "toggle.horizontal_scrollbar_shown": "แสดงแถบเลื่อนแนวนอนแล้ว",
+  "toggle.whitespace_indicators_hidden": "ซ่อนตัวบ่งชี้ช่องว่างแล้ว",
+  "toggle.whitespace_indicators_shown": "แสดงตัวบ่งชี้ช่องว่างแล้ว",
   "toggle.inlay_hints_disabled": "ปิดใช้งานคำแนะนำแทรก",
   "toggle.inlay_hints_enabled": "เปิดใช้งานคำแนะนำแทรก",
   "toggle.line_numbers_hidden": "ซ่อนเลขบรรทัด",

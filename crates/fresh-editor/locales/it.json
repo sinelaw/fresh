@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "Modalità debug evidenziazione ON - mostro intervalli byte",
   "toggle.horizontal_scrollbar_hidden": "Barra di scorrimento orizzontale nascosta",
   "toggle.horizontal_scrollbar_shown": "Barra di scorrimento orizzontale mostrata",
+  "toggle.whitespace_indicators_hidden": "Indicatori spazi bianchi nascosti",
+  "toggle.whitespace_indicators_shown": "Indicatori spazi bianchi visibili",
   "toggle.inlay_hints_disabled": "Suggerimenti incorporati disabilitati",
   "toggle.inlay_hints_enabled": "Suggerimenti incorporati abilitati",
   "toggle.line_numbers_hidden": "Numeri di riga nascosti",

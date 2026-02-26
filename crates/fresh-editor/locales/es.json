@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "Modo de depuración ACTIVADO - mostrando rangos de bytes",
   "toggle.horizontal_scrollbar_hidden": "Barra de desplazamiento horizontal oculta",
   "toggle.horizontal_scrollbar_shown": "Barra de desplazamiento horizontal mostrada",
+  "toggle.whitespace_indicators_hidden": "Indicadores de espacios ocultos",
+  "toggle.whitespace_indicators_shown": "Indicadores de espacios visibles",
   "toggle.inlay_hints_disabled": "Sugerencias incrustadas desactivadas",
   "toggle.inlay_hints_enabled": "Sugerencias incrustadas activadas",
   "toggle.line_numbers_hidden": "Números de línea ocultos",

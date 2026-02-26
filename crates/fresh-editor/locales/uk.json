@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "Режим налагодження УВІМК - показати діапазони байтів",
   "toggle.horizontal_scrollbar_hidden": "Горизонтальну смугу прокрутки приховано",
   "toggle.horizontal_scrollbar_shown": "Горизонтальну смугу прокрутки показано",
+  "toggle.whitespace_indicators_hidden": "Індикатори пробілів приховано",
+  "toggle.whitespace_indicators_shown": "Індикатори пробілів показано",
   "toggle.inlay_hints_disabled": "Вбудовані підказки вимкнено",
   "toggle.inlay_hints_enabled": "Вбудовані підказки увімкнено",
   "toggle.line_numbers_hidden": "Номери рядків приховано",

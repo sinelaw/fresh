@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "Режим отладки ВКЛ - показать диапазоны байтов",
   "toggle.horizontal_scrollbar_hidden": "Горизонтальная полоса прокрутки скрыта",
   "toggle.horizontal_scrollbar_shown": "Горизонтальная полоса прокрутки показана",
+  "toggle.whitespace_indicators_hidden": "Индикаторы пробелов скрыты",
+  "toggle.whitespace_indicators_shown": "Индикаторы пробелов показаны",
   "toggle.inlay_hints_disabled": "Встроенные подсказки отключены",
   "toggle.inlay_hints_enabled": "Встроенные подсказки включены",
   "toggle.line_numbers_hidden": "Номера строк скрыты",

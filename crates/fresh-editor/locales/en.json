@@ -1223,6 +1223,8 @@
   "toggle.vertical_scrollbar_shown": "Vertical scrollbar shown",
   "toggle.horizontal_scrollbar_hidden": "Horizontal scrollbar hidden",
   "toggle.horizontal_scrollbar_shown": "Horizontal scrollbar shown",
+  "toggle.whitespace_indicators_hidden": "Whitespace indicators hidden",
+  "toggle.whitespace_indicators_shown": "Whitespace indicators shown",
   "view.background_set": "Background set to %{path}",
   "view.compose": "Compose",
   "view.cursor_style_changed": "Cursor style changed to %{style}",

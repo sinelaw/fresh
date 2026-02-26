@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "Režim ladění ZAPNUTÝ - zobrazit rozsahy bajtů",
   "toggle.horizontal_scrollbar_hidden": "Vodorovný posuvník skryt",
   "toggle.horizontal_scrollbar_shown": "Vodorovný posuvník zobrazen",
+  "toggle.whitespace_indicators_hidden": "Indikátory bílých znaků skryty",
+  "toggle.whitespace_indicators_shown": "Indikátory bílých znaků zobrazeny",
   "toggle.inlay_hints_disabled": "Vložené nápovědy zakázány",
   "toggle.inlay_hints_enabled": "Vložené nápovědy povoleny",
   "toggle.line_numbers_hidden": "Čísla řádků skryta",

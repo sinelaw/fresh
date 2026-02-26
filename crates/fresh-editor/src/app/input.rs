@@ -742,24 +742,13 @@ impl Editor {
                     self.set_status_message(status.to_string());
                 }
             }
-            Action::ToggleTabIndicators => {
+            Action::ToggleTabIndicators | Action::ToggleWhitespaceIndicators => {
                 if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
-                    state.buffer_settings.whitespace.toggle_tabs();
-                    let status = if state.buffer_settings.whitespace.any_tabs() {
-                        "Tab indicators: Visible"
+                    state.buffer_settings.whitespace.toggle_all();
+                    let status = if state.buffer_settings.whitespace.any_visible() {
+                        t!("toggle.whitespace_indicators_shown")
                     } else {
-                        "Tab indicators: Hidden"
-                    };
-                    self.set_status_message(status.to_string());
-                }
-            }
-            Action::ToggleWhitespaceIndicators => {
-                if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
-                    state.buffer_settings.whitespace.toggle_spaces();
-                    let status = if state.buffer_settings.whitespace.any_spaces() {
-                        "Whitespace indicators: Visible"
-                    } else {
-                        "Whitespace indicators: Hidden"
+                        t!("toggle.whitespace_indicators_hidden")
                     };
                     self.set_status_message(status.to_string());
                 }

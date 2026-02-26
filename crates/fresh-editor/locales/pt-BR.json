@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "Modo de depuração ATIVADO - exibir intervalos de bytes",
   "toggle.horizontal_scrollbar_hidden": "Barra de rolagem horizontal oculta",
   "toggle.horizontal_scrollbar_shown": "Barra de rolagem horizontal exibida",
+  "toggle.whitespace_indicators_hidden": "Indicadores de espaços ocultos",
+  "toggle.whitespace_indicators_shown": "Indicadores de espaços visíveis",
   "toggle.inlay_hints_disabled": "Dicas inline desativadas",
   "toggle.inlay_hints_enabled": "Dicas inline ativadas",
   "toggle.line_numbers_hidden": "Números de linha ocultos",

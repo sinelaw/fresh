@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "デバッグモード ON - バイト範囲を表示中",
   "toggle.horizontal_scrollbar_hidden": "水平スクロールバーを非表示",
   "toggle.horizontal_scrollbar_shown": "水平スクロールバーを表示",
+  "toggle.whitespace_indicators_hidden": "空白文字インジケーターを非表示",
+  "toggle.whitespace_indicators_shown": "空白文字インジケーターを表示",
   "toggle.inlay_hints_disabled": "インレイヒントを無効化",
   "toggle.inlay_hints_enabled": "インレイヒントを有効化",
   "toggle.line_numbers_hidden": "行番号を非表示",

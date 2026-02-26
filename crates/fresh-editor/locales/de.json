@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "Debug-Modus EIN - Byte-Bereiche anzeigen",
   "toggle.horizontal_scrollbar_hidden": "Horizontale Scrollleiste ausgeblendet",
   "toggle.horizontal_scrollbar_shown": "Horizontale Scrollleiste angezeigt",
+  "toggle.whitespace_indicators_hidden": "Leerzeichen-Indikatoren ausgeblendet",
+  "toggle.whitespace_indicators_shown": "Leerzeichen-Indikatoren angezeigt",
   "toggle.inlay_hints_disabled": "Inlay-Hinweise deaktiviert",
   "toggle.inlay_hints_enabled": "Inlay-Hinweise aktiviert",
   "toggle.line_numbers_hidden": "Zeilennummern ausgeblendet",

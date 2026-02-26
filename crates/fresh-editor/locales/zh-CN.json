@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "调试模式开启 - 显示字节范围",
   "toggle.horizontal_scrollbar_hidden": "水平滚动条已隐藏",
   "toggle.horizontal_scrollbar_shown": "水平滚动条已显示",
+  "toggle.whitespace_indicators_hidden": "空白字符指示器已隐藏",
+  "toggle.whitespace_indicators_shown": "空白字符指示器已显示",
   "toggle.inlay_hints_disabled": "内联提示已禁用",
   "toggle.inlay_hints_enabled": "内联提示已启用",
   "toggle.line_numbers_hidden": "隐藏行号",

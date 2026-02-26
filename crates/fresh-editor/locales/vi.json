@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "Chế độ gỡ lỗi highlight BẬT - hiển thị phạm vi byte",
   "toggle.horizontal_scrollbar_hidden": "Đã ẩn thanh cuộn ngang",
   "toggle.horizontal_scrollbar_shown": "Đã hiển thị thanh cuộn ngang",
+  "toggle.whitespace_indicators_hidden": "Đã ẩn chỉ báo khoảng trắng",
+  "toggle.whitespace_indicators_shown": "Đã hiển thị chỉ báo khoảng trắng",
   "toggle.inlay_hints_disabled": "Đã tắt gợi ý nội tuyến",
   "toggle.inlay_hints_enabled": "Đã bật gợi ý nội tuyến",
   "toggle.line_numbers_hidden": "Đã ẩn số dòng",

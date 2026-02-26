@@ -513,20 +513,27 @@ impl WhitespaceVisibility {
         self.tabs_leading || self.tabs_inner || self.tabs_trailing
     }
 
-    /// Toggle all tab positions on/off
-    pub fn toggle_tabs(&mut self) {
-        let new_val = !self.any_tabs();
-        self.tabs_leading = new_val;
-        self.tabs_inner = new_val;
-        self.tabs_trailing = new_val;
+    /// Returns true if any indicator (space or tab) is enabled
+    pub fn any_visible(&self) -> bool {
+        self.any_spaces() || self.any_tabs()
     }
 
-    /// Toggle all space positions on/off
-    pub fn toggle_spaces(&mut self) {
-        let new_val = !self.any_spaces();
-        self.spaces_leading = new_val;
-        self.spaces_inner = new_val;
-        self.spaces_trailing = new_val;
+    /// Toggle all whitespace indicators on/off (master switch).
+    /// When turning off, all positions are disabled.
+    /// When turning on, restores to default visibility (tabs all on, spaces all off).
+    pub fn toggle_all(&mut self) {
+        if self.any_visible() {
+            *self = Self {
+                spaces_leading: false,
+                spaces_inner: false,
+                spaces_trailing: false,
+                tabs_leading: false,
+                tabs_inner: false,
+                tabs_trailing: false,
+            };
+        } else {
+            *self = Self::default();
+        }
     }
 }
 

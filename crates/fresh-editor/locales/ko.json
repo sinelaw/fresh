@@ -1207,6 +1207,8 @@
   "toggle.debug_mode_on": "디버그 모드 켜짐 - 바이트 범위 표시",
   "toggle.horizontal_scrollbar_hidden": "가로 스크롤바 숨김",
   "toggle.horizontal_scrollbar_shown": "가로 스크롤바 표시됨",
+  "toggle.whitespace_indicators_hidden": "공백 표시기 숨김",
+  "toggle.whitespace_indicators_shown": "공백 표시기 표시됨",
   "toggle.inlay_hints_disabled": "인레이 힌트 비활성화됨",
   "toggle.inlay_hints_enabled": "인레이 힌트 활성화됨",
   "toggle.line_numbers_hidden": "줄 번호 숨김",
