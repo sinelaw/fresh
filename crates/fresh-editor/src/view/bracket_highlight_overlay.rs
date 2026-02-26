@@ -27,6 +27,13 @@ pub fn bracket_highlight_namespace() -> OverlayNamespace {
 /// Bracket types we match
 const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
 
+/// Maximum number of bytes to scan for bracket matching/nesting depth.
+/// Prevents O(n) scans on huge files from hanging the editor.
+const MAX_BRACKET_SEARCH_BYTES: usize = 1_000_000;
+
+/// Chunk size for bulk reads during bracket scanning.
+const BRACKET_SCAN_CHUNK: usize = 16 * 1024;
+
 /// Check if a character is an opening bracket
 #[cfg(test)]
 fn is_opening_bracket(ch: char) -> bool {
@@ -175,25 +182,26 @@ impl BracketHighlightOverlay {
         closing: char,
         is_opening: bool,
     ) -> usize {
-        // Count how many unclosed opening brackets of the same type come before this position
+        // Only scan up to MAX_BRACKET_SEARCH_BYTES backwards to avoid O(n) on huge files.
+        let scan_start = position.saturating_sub(MAX_BRACKET_SEARCH_BYTES);
+        let open = opening as u8;
+        let close = closing as u8;
         let mut depth: usize = 0;
-        let mut pos = 0;
+        let mut pos = scan_start;
 
         while pos < position {
-            let bytes = buffer.slice_bytes(pos..pos + 1);
-            if !bytes.is_empty() {
-                let c = bytes[0] as char;
-                if c == opening {
+            let chunk_end = (pos + BRACKET_SCAN_CHUNK).min(position);
+            let chunk = buffer.slice_bytes(pos..chunk_end);
+            for &b in &chunk {
+                if b == open {
                     depth += 1;
-                } else if c == closing {
+                } else if b == close {
                     depth = depth.saturating_sub(1);
                 }
             }
-            pos += 1;
+            pos = chunk_end;
         }
 
-        // For closing brackets, the depth is the current count
-        // For opening brackets, the depth is the current count (depth before this bracket)
         if is_opening {
             depth
         } else {
@@ -201,7 +209,7 @@ impl BracketHighlightOverlay {
         }
     }
 
-    /// Find the matching bracket
+    /// Find the matching bracket (bounded to MAX_BRACKET_SEARCH_BYTES)
     fn find_matching_bracket(
         &self,
         buffer: &Buffer,
@@ -211,44 +219,45 @@ impl BracketHighlightOverlay {
         forward: bool,
     ) -> Option<usize> {
         let buffer_len = buffer.len();
-        let mut depth = 1;
+        let open = opening as u8;
+        let close = closing as u8;
+        let mut depth: i32 = 1;
 
         if forward {
-            let mut search_pos = position + 1;
-            while search_pos < buffer_len && depth > 0 {
-                let b = buffer.slice_bytes(search_pos..search_pos + 1);
-                if !b.is_empty() {
-                    let c = b[0] as char;
-                    if c == opening {
+            let search_limit = (position + 1 + MAX_BRACKET_SEARCH_BYTES).min(buffer_len);
+            let mut pos = position + 1;
+            while pos < search_limit {
+                let chunk_end = (pos + BRACKET_SCAN_CHUNK).min(search_limit);
+                let chunk = buffer.slice_bytes(pos..chunk_end);
+                for (i, &b) in chunk.iter().enumerate() {
+                    if b == open {
                         depth += 1;
-                    } else if c == closing {
+                    } else if b == close {
                         depth -= 1;
                         if depth == 0 {
-                            return Some(search_pos);
+                            return Some(pos + i);
                         }
                     }
                 }
-                search_pos += 1;
+                pos = chunk_end;
             }
         } else {
-            let mut search_pos = position.saturating_sub(1);
-            loop {
-                let b = buffer.slice_bytes(search_pos..search_pos + 1);
-                if !b.is_empty() {
-                    let c = b[0] as char;
-                    if c == closing {
+            let search_limit = position.saturating_sub(MAX_BRACKET_SEARCH_BYTES);
+            let mut pos = position;
+            while pos > search_limit {
+                let chunk_start = pos.saturating_sub(BRACKET_SCAN_CHUNK).max(search_limit);
+                let chunk = buffer.slice_bytes(chunk_start..pos);
+                for (i, &b) in chunk.iter().enumerate().rev() {
+                    if b == close {
                         depth += 1;
-                    } else if c == opening {
+                    } else if b == open {
                         depth -= 1;
                         if depth == 0 {
-                            return Some(search_pos);
+                            return Some(chunk_start + i);
                         }
                     }
                 }
-                if search_pos == 0 {
-                    break;
-                }
-                search_pos -= 1;
+                pos = chunk_start;
             }
         }
 
