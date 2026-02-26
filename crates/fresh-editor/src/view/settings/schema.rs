@@ -52,6 +52,7 @@
 //! - **Plugin-friendly**: External sources can contribute enum values
 //! - **Type-safe**: Values are validated against their referenced type
 
+use rust_i18n::t;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -364,7 +365,7 @@ fn parse_setting(
 
     SettingSchema {
         path: path.to_string(),
-        name: humanize_name(name),
+        name: i18n_name(path, name),
         description,
         setting_type,
         default: schema.default.clone(),
@@ -514,6 +515,21 @@ fn resolve_ref<'a>(schema: &'a RawSchema, defs: &'a HashMap<String, RawSchema>) 
         }
     }
     schema
+}
+
+/// Look up an i18n translation for a settings field, falling back to humanized name.
+///
+/// Derives a translation key from the schema path, e.g. `/editor/whitespace_show`
+/// becomes `settings.field.editor.whitespace_show`. If no translation is found,
+/// falls back to `humanize_name()`.
+fn i18n_name(path: &str, fallback_name: &str) -> String {
+    let key = format!("settings.field{}", path.replace('/', "."));
+    let translated = t!(&key);
+    if *translated == key {
+        humanize_name(fallback_name)
+    } else {
+        translated.to_string()
+    }
 }
 
 /// Convert snake_case to Title Case
