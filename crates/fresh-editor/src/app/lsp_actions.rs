@@ -278,16 +278,22 @@ impl Editor {
                 .as_ref()
                 .filter(|text| !text.trim().is_empty())
                 .cloned();
-            (range.start_line as usize, range.end_line as usize, placeholder)
-        } else {
-            // Fallback: indent-based folding.
+            (
+                range.start_line as usize,
+                range.end_line as usize,
+                placeholder,
+            )
+        } else if state.buffer.len() < crate::config::LARGE_FILE_THRESHOLD_BYTES as usize {
+            // Fallback: indent-based folding (only for normal-sized files).
             // First try the current line, then walk upward to find a foldable ancestor.
             use crate::view::folding::indent_folding;
             let tab_size = state.buffer_settings.tab_size;
 
             let mut header = line;
             loop {
-                if let Some(end) = indent_folding::indent_fold_end_line(&state.buffer, header, tab_size) {
+                if let Some(end) =
+                    indent_folding::indent_fold_end_line(&state.buffer, header, tab_size)
+                {
                     if end >= line {
                         break;
                     }
@@ -297,8 +303,12 @@ impl Editor {
                 }
                 header -= 1;
             }
-            let end = indent_folding::indent_fold_end_line(&state.buffer, header, tab_size).unwrap();
+            let end =
+                indent_folding::indent_fold_end_line(&state.buffer, header, tab_size).unwrap();
             (header, end, None)
+        } else {
+            // Large file without LSP — no folding available
+            return;
         };
 
         let first_hidden = header_line.saturating_add(1);

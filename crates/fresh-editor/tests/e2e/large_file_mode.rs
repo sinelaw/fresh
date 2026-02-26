@@ -1291,9 +1291,10 @@ fn test_large_file_gutter_indicators_after_line_scan() {
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
 
-    // Allow time for the plugin to process
-    harness.sleep(std::time::Duration::from_millis(200));
-    harness.render().unwrap();
+    // Wait for plugin to process and show gutter indicators
+    harness
+        .wait_until(|h| count_gutter_indicators(&h.screen_to_string(), "│") >= 3)
+        .unwrap();
 
     // Capture post-scan indicator state
     let screen_after_scan = harness.screen_to_string();

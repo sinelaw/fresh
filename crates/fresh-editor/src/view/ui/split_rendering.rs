@@ -4011,8 +4011,10 @@ impl SplitRenderer {
                     .entry(start_line)
                     .or_insert(FoldIndicator { collapsed: false });
             }
-        } else {
-            // Fallback: indent-based folding when LSP ranges are unavailable
+        } else if state.buffer.len() < crate::config::LARGE_FILE_THRESHOLD_BYTES as usize {
+            // Fallback: indent-based folding when LSP ranges are unavailable.
+            // Skip for large files — line_start_offset traversals are too
+            // expensive on big piece trees.
             use crate::view::folding::indent_folding;
             let tab_size = state.buffer_settings.tab_size;
             for line in viewport_start_line..=viewport_end_line {
