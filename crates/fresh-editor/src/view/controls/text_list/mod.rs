@@ -40,6 +40,8 @@ pub struct TextListState {
     pub label: String,
     /// Focus state
     pub focus: FocusState,
+    /// Whether items should be treated as integers (for IntegerArray settings)
+    pub is_integer: bool,
 }
 
 impl TextListState {
@@ -52,12 +54,19 @@ impl TextListState {
             new_item_text: String::new(),
             label: label.into(),
             focus: FocusState::Normal,
+            is_integer: false,
         }
     }
 
     /// Set the initial items
     pub fn with_items(mut self, items: Vec<String>) -> Self {
         self.items = items;
+        self
+    }
+
+    /// Mark this list as containing integer values
+    pub fn with_integer_mode(mut self) -> Self {
+        self.is_integer = true;
         self
     }
 

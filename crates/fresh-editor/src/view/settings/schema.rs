@@ -95,6 +95,8 @@ pub enum SettingType {
     Enum { options: Vec<EnumOption> },
     /// Array of strings
     StringArray,
+    /// Array of integers (rendered as TextList, values parsed as numbers)
+    IntegerArray,
     /// Array of objects with a schema (for keybindings, etc.)
     ObjectArray {
         item_schema: Box<SettingSchema>,
@@ -436,11 +438,15 @@ fn determine_type(
         }
         Some("string") => SettingType::String,
         Some("array") => {
-            // Check if it's an array of strings or objects
+            // Check if it's an array of strings, integers, or objects
             if let Some(ref items) = resolved.items {
                 let item_resolved = resolve_ref(items, defs);
-                if item_resolved.schema_type.as_ref().and_then(|t| t.primary()) == Some("string") {
+                let item_type = item_resolved.schema_type.as_ref().and_then(|t| t.primary());
+                if item_type == Some("string") {
                     return SettingType::StringArray;
+                }
+                if item_type == Some("integer") || item_type == Some("number") {
+                    return SettingType::IntegerArray;
                 }
                 // Check if items reference an object type
                 if items.ref_path.is_some() {

@@ -243,6 +243,8 @@ pub struct SettingItem {
     pub section: Option<String>,
     /// Whether this item is the first in its section (for rendering section headers)
     pub is_section_start: bool,
+    /// Layout width for description wrapping (set during render)
+    pub layout_width: u16,
 }
 
 /// The type of control to render for a setting
@@ -324,6 +326,7 @@ pub const SECTION_HEADER_HEIGHT: u16 = 2;
 
 impl SettingItem {
     /// Calculate the total height needed for this item (control + description + spacing + section header if applicable)
+    /// Uses layout_width for description wrapping when available.
     pub fn item_height(&self) -> u16 {
         // Height = section header (if first in section) + control + description (if any) + spacing
         let section_height = if self.is_section_start {
@@ -331,26 +334,19 @@ impl SettingItem {
         } else {
             0
         };
-        let description_height = if self.description.is_some() { 1 } else { 0 };
+        let description_height = self.description_height(self.layout_width);
         section_height + self.control.control_height() + description_height + 1
     }
 
-    /// Calculate height with expanded description when focused
-    pub fn item_height_expanded(&self, width: u16) -> u16 {
-        let section_height = if self.is_section_start {
-            SECTION_HEADER_HEIGHT
-        } else {
-            0
-        };
-        let description_height = self.description_height_expanded(width);
-        section_height + self.control.control_height() + description_height + 1
-    }
-
-    /// Calculate description height when expanded (wrapped to width)
-    pub fn description_height_expanded(&self, width: u16) -> u16 {
+    /// Calculate description height wrapped to the given width.
+    /// If width is 0 (not yet set), falls back to 1 line.
+    pub fn description_height(&self, width: u16) -> u16 {
         if let Some(ref desc) = self.description {
-            if desc.is_empty() || width == 0 {
+            if desc.is_empty() {
                 return 0;
+            }
+            if width == 0 {
+                return 1;
             }
             // Calculate number of lines needed for wrapped description
             let chars_per_line = width.saturating_sub(2) as usize; // Leave some margin
@@ -364,14 +360,9 @@ impl SettingItem {
     }
 
     /// Calculate the content height (control + description, excluding spacing)
+    /// Uses layout_width for description wrapping when available.
     pub fn content_height(&self) -> u16 {
-        let description_height = if self.description.is_some() { 1 } else { 0 };
-        self.control.control_height() + description_height
-    }
-
-    /// Calculate content height with expanded description
-    pub fn content_height_expanded(&self, width: u16) -> u16 {
-        let description_height = self.description_height_expanded(width);
+        let description_height = self.description_height(self.layout_width);
         self.control.control_height() + description_height
     }
 }
@@ -731,6 +722,41 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
             SettingControl::TextList(state)
         }
 
+        SettingType::IntegerArray => {
+            let items: Vec<String> = current_value
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| {
+                            v.as_i64()
+                                .map(|n| n.to_string())
+                                .or_else(|| v.as_u64().map(|n| n.to_string()))
+                                .or_else(|| v.as_f64().map(|n| n.to_string()))
+                        })
+                        .collect()
+                })
+                .or_else(|| {
+                    schema.default.as_ref().and_then(|d| {
+                        d.as_array().map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| {
+                                    v.as_i64()
+                                        .map(|n| n.to_string())
+                                        .or_else(|| v.as_u64().map(|n| n.to_string()))
+                                        .or_else(|| v.as_f64().map(|n| n.to_string()))
+                                })
+                                .collect()
+                        })
+                    })
+                })
+                .unwrap_or_default();
+
+            let state = TextListState::new(&schema.name)
+                .with_items(items)
+                .with_integer_mode();
+            SettingControl::TextList(state)
+        }
+
         SettingType::Object { .. } => {
             json_control(&schema.name, current_value, schema.default.as_ref())
         }
@@ -808,6 +834,7 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
         is_auto_managed,
         section: schema.section.clone(),
         is_section_start: false, // Set later in build_page after sorting
+        layout_width: 0,
     }
 }
 
@@ -918,6 +945,41 @@ pub fn build_item_from_value(
             SettingControl::TextList(state)
         }
 
+        SettingType::IntegerArray => {
+            let items: Vec<String> = current_value
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| {
+                            v.as_i64()
+                                .map(|n| n.to_string())
+                                .or_else(|| v.as_u64().map(|n| n.to_string()))
+                                .or_else(|| v.as_f64().map(|n| n.to_string()))
+                        })
+                        .collect()
+                })
+                .or_else(|| {
+                    schema.default.as_ref().and_then(|d| {
+                        d.as_array().map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| {
+                                    v.as_i64()
+                                        .map(|n| n.to_string())
+                                        .or_else(|| v.as_u64().map(|n| n.to_string()))
+                                        .or_else(|| v.as_f64().map(|n| n.to_string()))
+                                })
+                                .collect()
+                        })
+                    })
+                })
+                .unwrap_or_default();
+
+            let state = TextListState::new(&schema.name)
+                .with_items(items)
+                .with_integer_mode();
+            SettingControl::TextList(state)
+        }
+
         SettingType::Object { .. } => {
             json_control(&schema.name, current_value, schema.default.as_ref())
         }
@@ -987,6 +1049,7 @@ pub fn build_item_from_value(
         is_auto_managed,
         section: schema.section.clone(),
         is_section_start: false, // Not used in dialogs
+        layout_width: 0,
     }
 }
 
@@ -1025,7 +1088,15 @@ pub fn control_to_value(control: &SettingControl) -> serde_json::Value {
             let arr: Vec<serde_json::Value> = state
                 .items
                 .iter()
-                .map(|s| serde_json::Value::String(s.clone()))
+                .filter_map(|s| {
+                    if state.is_integer {
+                        s.parse::<i64>()
+                            .ok()
+                            .map(|n| serde_json::Value::Number(n.into()))
+                    } else {
+                        Some(serde_json::Value::String(s.clone()))
+                    }
+                })
                 .collect();
             serde_json::Value::Array(arr)
         }

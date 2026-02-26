@@ -111,6 +111,9 @@ pub struct SettingsState {
     /// When a user "resets" a setting, we remove it from the delta rather than
     /// setting it to the schema default.
     pub pending_deletions: std::collections::HashSet<String>,
+    /// Last known layout width for description wrapping.
+    /// Set during render and propagated to items for height calculations.
+    pub layout_width: u16,
 }
 
 impl SettingsState {
@@ -156,6 +159,7 @@ impl SettingsState {
             target_layer,
             layer_sources,
             pending_deletions: std::collections::HashSet::new(),
+            layout_width: 0,
         })
     }
 
@@ -263,7 +267,7 @@ impl SettingsState {
     /// Update the focus state of the current item's control.
     /// This should be called when selection changes to ensure the control
     /// knows whether it's focused (for proper "[Enter to edit]" hints, etc.)
-    fn update_control_focus(&mut self, focused: bool) {
+    pub(super) fn update_control_focus(&mut self, focused: bool) {
         let focus_state = if focused {
             FocusState::Focused
         } else {
@@ -396,7 +400,18 @@ impl SettingsState {
     pub fn toggle_focus(&mut self) {
         let old_panel = self.focus_panel();
         self.focus.focus_next();
+        self.on_panel_changed(old_panel, true);
+    }
 
+    /// Switch focus to the previous panel: Categories <- Settings <- Footer <- Categories
+    pub fn toggle_focus_backward(&mut self) {
+        let old_panel = self.focus_panel();
+        self.focus.focus_prev();
+        self.on_panel_changed(old_panel, false);
+    }
+
+    /// Common logic after panel focus changes
+    fn on_panel_changed(&mut self, old_panel: FocusPanel, forward: bool) {
         // Unfocus control when leaving Settings panel
         if old_panel == FocusPanel::Settings {
             self.update_control_focus(false);
@@ -411,23 +426,42 @@ impl SettingsState {
         self.sub_focus = None;
 
         if self.focus_panel() == FocusPanel::Settings {
-            self.init_map_focus(true); // entering from above
+            self.init_map_focus(forward); // entering from above if forward
             self.update_control_focus(true); // Focus the control
         }
 
-        // Reset footer button to Save when entering Footer panel
+        // Reset footer button when entering Footer panel
         if self.focus_panel() == FocusPanel::Footer {
-            self.footer_button_index = 2; // Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
+            self.footer_button_index = if forward {
+                0 // Start at first button (Layer) when tabbing forward
+            } else {
+                4 // Start at last button (Edit) when tabbing backward
+            };
         }
 
         self.ensure_visible();
     }
 
     /// Ensure the selected item is visible in the viewport
+    /// Update layout_width on all items in the current page.
+    /// Called before any scroll calculations so heights are correct.
+    pub fn update_layout_widths(&mut self) {
+        let width = self.layout_width;
+        if width > 0 {
+            if let Some(page) = self.pages.get_mut(self.selected_category) {
+                for item in &mut page.items {
+                    item.layout_width = width;
+                }
+            }
+        }
+    }
+
     pub fn ensure_visible(&mut self) {
         if self.focus_panel() != FocusPanel::Settings {
             return;
         }
+
+        self.update_layout_widths();
 
         // Need to avoid borrowing self for both page and scroll_panel
         let selected_item = self.selected_item;
@@ -799,6 +833,7 @@ impl SettingsState {
         // Reset scroll offset but preserve viewport for ensure_visible
         self.scroll_panel.scroll.offset = 0;
         // Update content height for the new category's items
+        self.update_layout_widths();
         if let Some(page) = self.pages.get(self.selected_category) {
             self.scroll_panel.update_content_height(&page.items);
         }
@@ -1282,6 +1317,12 @@ impl SettingsState {
     }
 
     /// Start text editing mode for TextList, Text, or Map controls
+    /// Check if the current control is a number input
+    pub fn is_number_control(&self) -> bool {
+        self.current_item()
+            .is_some_and(|item| matches!(item.control, SettingControl::Number(_)))
+    }
+
     pub fn start_editing(&mut self) {
         if let Some(item) = self.current_item() {
             if matches!(
@@ -1634,6 +1675,7 @@ impl SettingsState {
         // When dropdown opens, update content height and ensure it's visible
         if opened {
             // Update content height since item is now taller
+            self.update_layout_widths();
             let selected_item = self.selected_item;
             if let Some(page) = self.pages.get(self.selected_category) {
                 self.scroll_panel.update_content_height(&page.items);
@@ -1993,7 +2035,16 @@ fn update_control_from_value(control: &mut SettingControl, value: &serde_json::V
             if let Some(arr) = value.as_array() {
                 state.items = arr
                     .iter()
-                    .filter_map(|v| v.as_str().map(String::from))
+                    .filter_map(|v| {
+                        if state.is_integer {
+                            v.as_i64()
+                                .map(|n| n.to_string())
+                                .or_else(|| v.as_u64().map(|n| n.to_string()))
+                                .or_else(|| v.as_f64().map(|n| n.to_string()))
+                        } else {
+                            v.as_str().map(String::from)
+                        }
+                    })
                     .collect();
             }
         }

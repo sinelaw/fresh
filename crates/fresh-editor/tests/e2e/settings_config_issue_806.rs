@@ -94,13 +94,9 @@ fn test_issue_806_external_config_edits_lost_on_settings_save() {
         .unwrap();
     harness.render().unwrap();
 
-    // Step 5: Tab to footer and press Save
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Press Enter on Save button
+    // Step 5: Save with Ctrl+S
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 

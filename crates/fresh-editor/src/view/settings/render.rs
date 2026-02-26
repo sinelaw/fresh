@@ -542,6 +542,11 @@ fn render_settings_panel(
     // Calculate available height for items
     let available_height = area.height.saturating_sub(header_height as u16);
 
+    // Update layout width so description heights are computed correctly
+    let focus_indicator_width: u16 = 3;
+    state.layout_width = area.width.saturating_sub(focus_indicator_width);
+    state.update_layout_widths();
+
     // Update scroll panel with current viewport and content
     let page = state.pages.get(state.selected_category).unwrap();
     state.scroll_panel.set_viewport(available_height);
@@ -756,12 +761,8 @@ fn render_setting_item_pure(
     // Examples: ">● ", ">  ", " ● ", "   "
     let focus_indicator_width: u16 = 3;
 
-    // Calculate content height - expanded when focused/hovered
-    let content_height = if is_focused_or_hovered {
-        item.content_height_expanded(area.width.saturating_sub(focus_indicator_width))
-    } else {
-        item.content_height()
-    };
+    // Calculate content height (descriptions always fully expanded)
+    let content_height = item.content_height();
     // Adjust for skipped rows
     let visible_content_height = content_height.saturating_sub(skip_top);
 
@@ -773,7 +774,18 @@ fn render_setting_item_pure(
         } else {
             Style::default().bg(theme.menu_hover_bg)
         };
-        for row in 0..visible_content_height.min(area.height) {
+        // For multi-row controls (Map, ObjectArray, TextList) only highlight
+        // the label row — per-entry highlighting is handled by the control itself
+        let is_multi_row_control = matches!(
+            item.control,
+            SettingControl::Map(_) | SettingControl::ObjectArray(_) | SettingControl::TextList(_)
+        );
+        let highlight_rows = if is_multi_row_control && skip_top == 0 {
+            1 // Only the label/name row
+        } else {
+            visible_content_height.min(area.height)
+        };
+        for row in 0..highlight_rows {
             let row_area = Rect::new(area.x, area.y + row, area.width, 1);
             frame.render_widget(Paragraph::new("").style(bg_style), row_area);
         }
@@ -842,40 +854,28 @@ fn render_setting_item_pure(
             let desc_style = Style::default().fg(theme.line_number_fg);
             let max_width = desc_width.saturating_sub(2) as usize;
 
-            if is_focused_or_hovered && description.len() > max_width {
-                // Wrap description to multiple lines when focused/hovered
-                let wrapped_lines = wrap_text(description, max_width);
-                let available_rows = area.height.saturating_sub(desc_start_row) as usize;
+            // Always wrap description to show full text
+            let wrapped_lines = wrap_text(description, max_width);
+            let available_rows = area.height.saturating_sub(desc_start_row) as usize;
 
-                for (i, line) in wrapped_lines.iter().take(available_rows).enumerate() {
-                    frame.render_widget(
-                        Paragraph::new(line.as_str()).style(desc_style),
-                        Rect::new(desc_x, desc_y + i as u16, desc_width, 1),
-                    );
+            // Append layer indicator to last wrapped line
+            let mut lines = wrapped_lines;
+            if let Some(layer) = layer_label {
+                if let Some(last) = lines.last_mut() {
+                    last.push_str(&format!(" ({})", layer));
                 }
-            } else {
-                // Single line with optional layer indicator
-                let mut display_desc = if description.len() > max_width.saturating_sub(12) {
-                    format!(
-                        "{}...",
-                        &description[..max_width.saturating_sub(15).max(10)]
-                    )
-                } else {
-                    description.clone()
-                };
-                // Add layer indicator if not default
-                if let Some(layer) = layer_label {
-                    display_desc.push_str(&format!(" ({})", layer));
-                }
+            }
+
+            for (i, line) in lines.iter().take(available_rows).enumerate() {
                 frame.render_widget(
-                    Paragraph::new(display_desc).style(desc_style),
-                    Rect::new(desc_x, desc_y, desc_width, 1),
+                    Paragraph::new(line.as_str()).style(desc_style),
+                    Rect::new(desc_x, desc_y + i as u16, desc_width, 1),
                 );
             }
         }
     } else if let Some(layer) = layer_label {
         // No description, but show layer indicator for non-default values
-        if desc_start_row < area.height && is_focused_or_hovered {
+        if desc_start_row < area.height {
             let desc_x = area.x + focus_indicator_width;
             let desc_y = area.y + desc_start_row;
             let desc_width = area.width.saturating_sub(focus_indicator_width);
@@ -2841,6 +2841,17 @@ fn render_entry_dialog(
         let is_selected = dialog.focus_on_buttons && dialog.focused_button == idx;
         let is_hovered = dialog.hover_button == Some(idx);
         let is_delete = !dialog.is_new && !dialog.no_delete && idx == 1;
+        // Render ">" focus indicator before selected button
+        if is_selected {
+            let indicator_style = Style::default()
+                .fg(theme.settings_selected_fg)
+                .add_modifier(Modifier::BOLD);
+            frame.render_widget(
+                Paragraph::new(">").style(indicator_style),
+                Rect::new(x, button_y, 1, 1),
+            );
+            x += 2;
+        }
         let style = if is_selected {
             Style::default()
                 .fg(theme.menu_highlight_fg)

@@ -186,6 +186,7 @@ mod tests {
             is_auto_managed: false,
             section: None,
             is_section_start: false,
+            layout_width: 0,
         }
     }
 

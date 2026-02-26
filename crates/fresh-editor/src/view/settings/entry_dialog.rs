@@ -79,6 +79,7 @@ impl EntryDialogState {
             is_auto_managed: false,
             section: None,
             is_section_start: false,
+            layout_width: 0,
         };
         items.push(key_item);
 

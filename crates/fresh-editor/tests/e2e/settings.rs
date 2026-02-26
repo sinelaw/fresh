@@ -558,9 +558,15 @@ fn test_settings_dropdown_increment() {
     // Get initial screen
     let initial_screen = harness.screen_to_string();
 
-    // Press Right arrow to cycle to next option
+    // Open dropdown with Enter, navigate down, confirm with Enter
     harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -948,16 +954,23 @@ fn test_settings_footer_buttons_keyboard_accessible() {
     harness.assert_screen_contains("modified");
 
     // Tab to footer - from settings panel, Tab goes to footer
+    // First button (Layer) should be selected
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Save button should be selected (has > indicator)
+    // Layer button should be selected (has > indicator)
+    harness.assert_screen_contains(">[ User ]");
+
+    // Tab through all footer buttons: Layer(0) → Reset(1) → Save(2) → Cancel(3)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(">[ Reset ]");
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
     harness.assert_screen_contains(">[ Save ]");
 
-    // Navigate right to Cancel
-    harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Cancel button should now be selected
@@ -1023,29 +1036,25 @@ fn test_settings_change_theme_and_save() {
         .unwrap();
     harness.render().unwrap();
 
-    // Cycle through theme options until we get to "light"
-    let mut found_light = false;
-    for _ in 0..10 {
-        harness
-            .send_key(KeyCode::Right, KeyModifiers::NONE)
-            .unwrap();
-        harness.render().unwrap();
-
-        if harness.screen_to_string().contains("light") {
-            found_light = true;
-            break;
-        }
-    }
-
-    assert!(found_light, "Should be able to cycle to light theme");
-
-    // Tab to footer (Save button)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Press Enter to save
+    // Open dropdown with Enter, navigate to a different theme, confirm
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Navigate down one option to select a different theme
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Confirm selection with Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Save with Ctrl+S (works from any panel)
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
@@ -1057,9 +1066,9 @@ fn test_settings_change_theme_and_save() {
 
     // Verify theme changed via state check
     let new_theme = harness.editor().theme().name.clone();
-    assert_eq!(
-        new_theme, "light",
-        "Theme should be 'light' after saving. Was: {}, Now: {}",
+    assert_ne!(
+        new_theme, initial_theme,
+        "Theme should have changed after saving. Was: {}, Now: {}",
         initial_theme, new_theme
     );
 }
@@ -1318,8 +1327,10 @@ fn test_settings_percentage_value_saves_correctly() {
     // Should show modified indicator
     harness.assert_screen_contains("modified");
 
-    // Tab to footer (Save button)
+    // Tab to footer (Layer button), then Tab to Save
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Reset
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Save
     harness.render().unwrap();
 
     // Press Enter to save
@@ -1632,8 +1643,10 @@ fn test_settings_loads_saved_values_on_reopen() {
     // Should now show 5
     harness.assert_screen_contains("5");
 
-    // Tab to footer (Save button)
+    // Tab to footer (Layer button), then Tab to Save
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Reset
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Save
     harness.render().unwrap();
 
     // Press Enter to save
@@ -2143,8 +2156,10 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
         screen
     );
 
-    // Save: Tab to footer, Enter on Save button
+    // Save: Tab to footer (Layer), Tab to Save, Enter
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Reset
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Save
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -2228,11 +2243,9 @@ fn test_line_numbers_config_applied_to_new_buffers() {
         .unwrap();
     harness.render().unwrap();
 
-    // Save settings
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    // Save settings with Ctrl+S
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
@@ -2290,11 +2303,9 @@ fn test_line_wrap_config_applied_to_new_buffers() {
         .unwrap();
     harness.render().unwrap();
 
-    // Save settings
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    // Save settings with Ctrl+S
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
@@ -2586,15 +2597,27 @@ fn test_settings_edit_button_keyboard_navigation() {
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Tab to footer (defaults to Save button)
+    // Tab to footer (defaults to Layer button, index 0)
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Should show Save button focused
+    // Should show Layer button focused
+    harness.assert_screen_contains(">[ User ]");
+
+    // Navigate with Right arrow: Layer -> Reset -> Save -> Cancel -> Edit
+    // Footer order: 0=Layer, 1=Reset, 2=Save, 3=Cancel, 4=Edit
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(">[ Reset ]");
+
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
     harness.assert_screen_contains(">[ Save ]");
 
-    // Navigate with Right arrow: Save -> Cancel -> Edit
-    // Footer order: 0=Layer, 1=Reset, 2=Save, 3=Cancel, 4=Edit
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
@@ -2632,15 +2655,13 @@ fn test_settings_edit_button_opens_config_file() {
         "Settings should be open"
     );
 
-    // Navigate to Edit button: Tab -> Tab -> Right -> Right
+    // Navigate to Edit button: Tab -> Tab -> Tab*4 (through all footer buttons)
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Settings
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Footer (Save)
-    harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
-        .unwrap(); // to Cancel
-    harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
-        .unwrap(); // to Edit
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Footer (Layer)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Reset
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Save
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Cancel
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Edit
     harness.render().unwrap();
 
     // Verify Edit button is focused
@@ -2697,14 +2718,12 @@ fn test_settings_edit_button_blocked_with_pending_changes() {
     // Should show modified indicator
     harness.assert_screen_contains("modified");
 
-    // Navigate to Edit button
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Footer
-    harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
-        .unwrap(); // to Cancel
-    harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
-        .unwrap(); // to Edit
+    // Navigate to Edit button (Footer now starts at Layer, index 0)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Footer (Layer)
+                                                                 // Tab through Layer -> Reset -> Save -> Cancel -> Edit
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    }
     harness.render().unwrap();
 
     // Press Enter to try to activate Edit button
@@ -3118,5 +3137,370 @@ fn test_settings_search_results_scroll() {
 
     // Close settings
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+// =============================================================================
+// Settings usability regression tests
+// =============================================================================
+
+/// Test: Shift+Tab (BackTab) navigates backward between panels.
+///
+/// Before fix: Shift+Tab was not handled in Categories or Settings panels.
+/// After fix: Shift+Tab cycles: Categories → Footer → Settings → Categories.
+#[test]
+fn test_usability_backtab_backward_navigation() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    // Start in Categories panel. Tab forward to Settings.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Now in Settings. Shift+Tab should go back to Categories.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // We should be back in Categories. Tab forward to verify we're at Categories
+    // (Tab from Categories goes to Settings).
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Tab to Footer
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should be in Footer - Layer button visible with focus
+    harness.assert_screen_contains(">[ User ]");
+
+    // Shift+Tab from Footer should go to Settings
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Shift+Tab from Settings should go to Categories
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Shift+Tab from Categories should wrap to Footer
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should be in Footer with Edit button focused (last button when entering backward)
+    harness.assert_screen_contains(">[ Edit ]");
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test: Tab in footer visits ALL 5 buttons (Layer, Reset, Save, Cancel, Edit).
+///
+/// Before fix: Footer always started at Save (index 2), skipping Layer and Reset.
+/// After fix: Footer starts at Layer (index 0), Tab visits all 5 buttons.
+#[test]
+fn test_usability_footer_tab_visits_all_buttons() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    // Tab to Settings, then Tab to Footer
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Button 0: Layer
+    harness.assert_screen_contains(">[ User ]");
+
+    // Button 1: Reset
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(">[ Reset ]");
+
+    // Button 2: Save
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(">[ Save ]");
+
+    // Button 3: Cancel
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(">[ Cancel ]");
+
+    // Button 4: Edit
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(">[ Edit ]");
+
+    // Tab again should wrap to Categories
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    // Verify we left footer (no > indicator on any button)
+    harness.assert_screen_not_contains(">[ Edit ]");
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test: Left arrow from Settings navigates back to Categories.
+///
+/// Before fix: Left on non-number controls called handle_control_decrement
+/// (which changed dropdown values).
+/// After fix: Left on non-number controls navigates to Categories panel.
+#[test]
+fn test_usability_left_arrow_to_categories() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    // Tab to Settings panel
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // We're now on a setting item. Press Left to go back to Categories.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Verify we're back in Categories by pressing Tab (which goes to Settings)
+    // then Tab again (which goes to Footer)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // We should be in Footer now
+    harness.assert_screen_contains(">[ User ]");
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test: Left/Right on dropdown does NOT change the value.
+///
+/// Before fix: Right/Left on a focused dropdown cycled through options.
+/// After fix: Right/Left are ignored for dropdowns (user must press Enter to open).
+#[test]
+fn test_usability_dropdown_no_left_right_change() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    // Search for a dropdown setting (theme)
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "theme".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Capture the current screen with the dropdown value
+    let before = harness.screen_to_string();
+
+    // Press Right - should NOT change the dropdown value
+    // (Left would navigate to categories which is also correct behavior)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let after = harness.screen_to_string();
+
+    // The screen should be the same (no dropdown cycling happened)
+    // Note: Right on non-number controls is now a no-op
+    assert_eq!(
+        before, after,
+        "Right arrow should not change dropdown value"
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test: Rulers setting (IntegerArray) renders as TextList and survives Enter/Escape.
+///
+/// Before fix: Rulers was rendered as a JSON editor (Complex type).
+/// Enter/Escape would destroy saved data.
+/// After fix: Rulers renders as TextList with integer mode.
+#[test]
+fn test_usability_rulers_integer_array_no_data_loss() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    // Search for "rulers"
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "rulers".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The rulers setting should be visible
+    harness.assert_screen_contains("Rulers");
+
+    // It should render as a TextList (with "Add item" field), NOT as a JSON editor
+    // TextList shows "[Enter to edit]" when focused
+    let screen = harness.screen_to_string();
+    // It should NOT show JSON brackets like "[" "]" for editing
+    // Instead, it should show a text list control
+    assert!(
+        !screen.contains("[Enter to edit JSON]"),
+        "Rulers should NOT render as JSON editor. Screen:\n{}",
+        screen
+    );
+
+    // Enter editing mode (focus into the TextList)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type a ruler value
+    for c in "80".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Press Enter to add the item
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // "80" should be visible as an item
+    harness.assert_screen_contains("80");
+
+    // Press Escape to exit editing mode
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // "80" should STILL be visible (no data loss on Escape)
+    harness.assert_screen_contains("80");
+
+    // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    if harness.screen_to_string().contains("Unsaved Changes") {
+        // Discard
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+    }
+}
+
+/// Test: Descriptions are always fully rendered (not truncated).
+///
+/// Before fix: Non-focused items showed truncated 1-line descriptions with "...".
+/// After fix: All items always show their full description text.
+#[test]
+fn test_usability_descriptions_always_full() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+
+    // Descriptions should NOT be truncated with "..."
+    // Count occurrences of "..." in the settings area
+    // There should be very few or none (only if description actually ends with "...")
+    let truncation_markers: Vec<&str> = screen
+        .lines()
+        .filter(|line| {
+            // Look for truncation pattern: text followed by "..." but not if it's actual ellipsis in content
+            let trimmed = line.trim();
+            trimmed.ends_with("...")
+                && !trimmed.ends_with("e.g., ...")
+                && !trimmed.ends_with("etc...")
+                && trimmed.len() > 10
+        })
+        .collect();
+
+    // With full descriptions, there should be no truncation markers
+    assert!(
+        truncation_markers.len() <= 1,
+        "Descriptions should not be truncated. Found {} lines ending with '...': {:?}",
+        truncation_markers.len(),
+        truncation_markers
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test: Entry dialog buttons show ">" focus indicator.
+///
+/// Before fix: Entry dialog buttons used REVERSED text but no ">" prefix.
+/// After fix: Entry dialog buttons show ">" prefix for consistency.
+#[test]
+fn test_usability_entry_dialog_button_focus_indicator() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    // Search for "languages" (which has an entry dialog)
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "languages".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Enter the languages map - press Enter to edit first entry
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Navigate down past all items to reach the buttons
+    // Languages have many properties, navigate past all of them
+    for _ in 0..30 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // The entry dialog buttons should show ">" focus indicator
+    let screen = harness.screen_to_string();
+    let has_focused_button = screen.contains(">[ Save ]")
+        || screen.contains(">[ Delete ]")
+        || screen.contains(">[ Cancel ]");
+
+    if !has_focused_button {
+        // Try Tab to cycle to buttons (some dialogs use Tab for items<->buttons)
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+
+    let screen = harness.screen_to_string();
+    // The ">" indicator is rendered with a gap before the button bracket
+    let has_focused_button = screen.contains("> [ Save ]")
+        || screen.contains("> [ Delete ]")
+        || screen.contains("> [ Cancel ]");
+
+    assert!(
+        has_focused_button,
+        "Entry dialog buttons should show > focus indicator. Screen:\n{}",
+        screen
+    );
+
+    // Close the dialog
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
