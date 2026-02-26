@@ -253,7 +253,7 @@ impl Editor {
         // with fallback to global editor config for tab_size
         // Use the buffer's stored language (already set by from_file_with_languages)
         let mut whitespace =
-            crate::config::WhitespaceVisibility::from_config(&self.config.editor.whitespace);
+            crate::config::WhitespaceVisibility::from_editor_config(&self.config.editor);
         if let Some(lang_config) = self.config.languages.get(&state.language) {
             whitespace = whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
             state.buffer_settings.use_tabs = lang_config.use_tabs;

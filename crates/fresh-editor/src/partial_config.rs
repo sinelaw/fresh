@@ -7,7 +7,7 @@ use crate::config::{
     AcceptSuggestionOnEnter, ClipboardConfig, CursorStyle, FileBrowserConfig, FileExplorerConfig,
     FormatterConfig, HighlighterPreference, Keybinding, KeybindingMapName, KeymapConfig,
     LanguageConfig, LineEndingOption, OnSaveAction, PluginConfig, TerminalConfig, ThemeName,
-    WarningsConfig, WhitespaceConfig, WhitespacePositionConfig,
+    WarningsConfig,
 };
 use crate::types::LspServerConfig;
 use serde::{Deserialize, Serialize};
@@ -180,7 +180,13 @@ pub struct PartialEditorConfig {
     pub show_horizontal_scrollbar: Option<bool>,
     pub use_terminal_bg: Option<bool>,
     pub rulers: Option<Vec<usize>>,
-    pub whitespace: Option<PartialWhitespaceConfig>,
+    pub whitespace_show: Option<bool>,
+    pub whitespace_spaces_leading: Option<bool>,
+    pub whitespace_spaces_inner: Option<bool>,
+    pub whitespace_spaces_trailing: Option<bool>,
+    pub whitespace_tabs_leading: Option<bool>,
+    pub whitespace_tabs_inner: Option<bool>,
+    pub whitespace_tabs_trailing: Option<bool>,
 }
 
 impl Merge for PartialEditorConfig {
@@ -257,87 +263,19 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.show_horizontal_scrollbar);
         self.use_terminal_bg.merge_from(&other.use_terminal_bg);
         self.rulers.merge_from(&other.rulers);
-        merge_partial(&mut self.whitespace, &other.whitespace);
-    }
-}
-
-/// Partial whitespace position configuration for layered merging.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(default)]
-pub struct PartialWhitespacePositionConfig {
-    pub leading: Option<bool>,
-    pub inner: Option<bool>,
-    pub trailing: Option<bool>,
-}
-
-impl Merge for PartialWhitespacePositionConfig {
-    fn merge_from(&mut self, other: &Self) {
-        self.leading.merge_from(&other.leading);
-        self.inner.merge_from(&other.inner);
-        self.trailing.merge_from(&other.trailing);
-    }
-}
-
-impl PartialWhitespacePositionConfig {
-    pub fn resolve(self, defaults: &WhitespacePositionConfig) -> WhitespacePositionConfig {
-        WhitespacePositionConfig {
-            leading: self.leading.unwrap_or(defaults.leading),
-            inner: self.inner.unwrap_or(defaults.inner),
-            trailing: self.trailing.unwrap_or(defaults.trailing),
-        }
-    }
-}
-
-impl From<&WhitespacePositionConfig> for PartialWhitespacePositionConfig {
-    fn from(cfg: &WhitespacePositionConfig) -> Self {
-        Self {
-            leading: Some(cfg.leading),
-            inner: Some(cfg.inner),
-            trailing: Some(cfg.trailing),
-        }
-    }
-}
-
-/// Partial whitespace configuration for layered merging.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(default)]
-pub struct PartialWhitespaceConfig {
-    pub show: Option<bool>,
-    pub spaces: Option<PartialWhitespacePositionConfig>,
-    pub tabs: Option<PartialWhitespacePositionConfig>,
-}
-
-impl Merge for PartialWhitespaceConfig {
-    fn merge_from(&mut self, other: &Self) {
-        self.show.merge_from(&other.show);
-        merge_partial(&mut self.spaces, &other.spaces);
-        merge_partial(&mut self.tabs, &other.tabs);
-    }
-}
-
-impl PartialWhitespaceConfig {
-    pub fn resolve(self, defaults: &WhitespaceConfig) -> WhitespaceConfig {
-        WhitespaceConfig {
-            show: self.show.unwrap_or(defaults.show),
-            spaces: self
-                .spaces
-                .map(|s| s.resolve(&defaults.spaces))
-                .unwrap_or_else(|| defaults.spaces.clone()),
-            tabs: self
-                .tabs
-                .map(|t| t.resolve(&defaults.tabs))
-                .unwrap_or_else(|| defaults.tabs.clone()),
-        }
-    }
-}
-
-impl From<&WhitespaceConfig> for PartialWhitespaceConfig {
-    fn from(cfg: &WhitespaceConfig) -> Self {
-        Self {
-            show: Some(cfg.show),
-            spaces: Some(PartialWhitespacePositionConfig::from(&cfg.spaces)),
-            tabs: Some(PartialWhitespacePositionConfig::from(&cfg.tabs)),
-        }
+        self.whitespace_show.merge_from(&other.whitespace_show);
+        self.whitespace_spaces_leading
+            .merge_from(&other.whitespace_spaces_leading);
+        self.whitespace_spaces_inner
+            .merge_from(&other.whitespace_spaces_inner);
+        self.whitespace_spaces_trailing
+            .merge_from(&other.whitespace_spaces_trailing);
+        self.whitespace_tabs_leading
+            .merge_from(&other.whitespace_tabs_leading);
+        self.whitespace_tabs_inner
+            .merge_from(&other.whitespace_tabs_inner);
+        self.whitespace_tabs_trailing
+            .merge_from(&other.whitespace_tabs_trailing);
     }
 }
 
@@ -558,7 +496,13 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             show_horizontal_scrollbar: Some(cfg.show_horizontal_scrollbar),
             use_terminal_bg: Some(cfg.use_terminal_bg),
             rulers: Some(cfg.rulers.clone()),
-            whitespace: Some(PartialWhitespaceConfig::from(&cfg.whitespace)),
+            whitespace_show: Some(cfg.whitespace_show),
+            whitespace_spaces_leading: Some(cfg.whitespace_spaces_leading),
+            whitespace_spaces_inner: Some(cfg.whitespace_spaces_inner),
+            whitespace_spaces_trailing: Some(cfg.whitespace_spaces_trailing),
+            whitespace_tabs_leading: Some(cfg.whitespace_tabs_leading),
+            whitespace_tabs_inner: Some(cfg.whitespace_tabs_inner),
+            whitespace_tabs_trailing: Some(cfg.whitespace_tabs_trailing),
         }
     }
 }
@@ -667,10 +611,25 @@ impl PartialEditorConfig {
                 .unwrap_or(defaults.show_horizontal_scrollbar),
             use_terminal_bg: self.use_terminal_bg.unwrap_or(defaults.use_terminal_bg),
             rulers: self.rulers.unwrap_or_else(|| defaults.rulers.clone()),
-            whitespace: self
-                .whitespace
-                .map(|w| w.resolve(&defaults.whitespace))
-                .unwrap_or_else(|| defaults.whitespace.clone()),
+            whitespace_show: self.whitespace_show.unwrap_or(defaults.whitespace_show),
+            whitespace_spaces_leading: self
+                .whitespace_spaces_leading
+                .unwrap_or(defaults.whitespace_spaces_leading),
+            whitespace_spaces_inner: self
+                .whitespace_spaces_inner
+                .unwrap_or(defaults.whitespace_spaces_inner),
+            whitespace_spaces_trailing: self
+                .whitespace_spaces_trailing
+                .unwrap_or(defaults.whitespace_spaces_trailing),
+            whitespace_tabs_leading: self
+                .whitespace_tabs_leading
+                .unwrap_or(defaults.whitespace_tabs_leading),
+            whitespace_tabs_inner: self
+                .whitespace_tabs_inner
+                .unwrap_or(defaults.whitespace_tabs_inner),
+            whitespace_tabs_trailing: self
+                .whitespace_tabs_trailing
+                .unwrap_or(defaults.whitespace_tabs_trailing),
         }
     }
 }

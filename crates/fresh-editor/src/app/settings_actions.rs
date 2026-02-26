@@ -153,7 +153,7 @@ impl Editor {
         // Each buffer resolves its settings from its language + the new global config
         for state in self.buffers.values_mut() {
             let mut whitespace =
-                crate::config::WhitespaceVisibility::from_config(&self.config.editor.whitespace);
+                crate::config::WhitespaceVisibility::from_editor_config(&self.config.editor);
             if let Some(lang_config) = self.config.languages.get(&state.language) {
                 state.buffer_settings.tab_size =
                     lang_config.tab_size.unwrap_or(self.config.editor.tab_size);

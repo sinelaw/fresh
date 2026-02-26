@@ -118,7 +118,7 @@ impl Editor {
         let buffer_id = self.active_buffer();
 
         // Determine settings from config using buffer's stored language
-        let mut whitespace = WhitespaceVisibility::from_config(&self.config.editor.whitespace);
+        let mut whitespace = WhitespaceVisibility::from_editor_config(&self.config.editor);
         let (tab_size, use_tabs) = if let Some(state) = self.buffers.get(&buffer_id) {
             let language = &state.language;
             if let Some(lang_config) = self.config.languages.get(language) {
