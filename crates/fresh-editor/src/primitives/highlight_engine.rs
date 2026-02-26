@@ -92,6 +92,16 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         }
     }
 
+    // Punctuation that belongs to a parent construct (comment/string delimiters)
+    // These must be checked before the generic punctuation rule below.
+    // TextMate grammars assign e.g. `punctuation.definition.comment` to # // /* etc.
+    if scope_lower.starts_with("punctuation.definition.comment") {
+        return Some(HighlightCategory::Comment);
+    }
+    if scope_lower.starts_with("punctuation.definition.string") {
+        return Some(HighlightCategory::String);
+    }
+
     // Operators (including keyword.operator)
     if scope_lower.starts_with("keyword.operator") || scope_lower.starts_with("punctuation") {
         return Some(HighlightCategory::Operator);
@@ -1133,5 +1143,48 @@ mod tests {
         let engine = HighlightEngine::for_file(Path::new(".gitattributes"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.has_highlighting());
+    }
+
+    #[test]
+    fn test_comment_delimiter_uses_comment_color() {
+        // Comment delimiters (#, //, /*) should use comment color, not operator
+        assert_eq!(
+            scope_to_category("punctuation.definition.comment"),
+            Some(HighlightCategory::Comment)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.definition.comment.python"),
+            Some(HighlightCategory::Comment)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.definition.comment.begin"),
+            Some(HighlightCategory::Comment)
+        );
+    }
+
+    #[test]
+    fn test_string_delimiter_uses_string_color() {
+        // String delimiters (", ', `) should use string color, not operator
+        assert_eq!(
+            scope_to_category("punctuation.definition.string.begin"),
+            Some(HighlightCategory::String)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.definition.string.end"),
+            Some(HighlightCategory::String)
+        );
+    }
+
+    #[test]
+    fn test_other_punctuation_still_operator() {
+        // Other punctuation (brackets, delimiters) should still be operator
+        assert_eq!(
+            scope_to_category("punctuation.separator"),
+            Some(HighlightCategory::Operator)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.section"),
+            Some(HighlightCategory::Operator)
+        );
     }
 }

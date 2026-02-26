@@ -339,6 +339,16 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         return Some(HighlightCategory::Keyword);
     }
 
+    // Punctuation that belongs to a parent construct (comment/string delimiters)
+    // These must be checked before the generic punctuation rule below.
+    // TextMate grammars assign e.g. `punctuation.definition.comment` to # // /* etc.
+    if scope_lower.starts_with("punctuation.definition.comment") {
+        return Some(HighlightCategory::Comment);
+    }
+    if scope_lower.starts_with("punctuation.definition.string") {
+        return Some(HighlightCategory::String);
+    }
+
     // Operators
     if scope_lower.starts_with("keyword.operator") || scope_lower.starts_with("punctuation") {
         return Some(HighlightCategory::Operator);
@@ -426,6 +436,36 @@ mod tests {
         assert_eq!(
             scope_to_category("variable.parameter"),
             Some(HighlightCategory::Variable)
+        );
+    }
+
+    #[test]
+    fn test_comment_delimiter_uses_comment_color() {
+        // Comment delimiters (#, //, /*) should use comment color, not operator
+        assert_eq!(
+            scope_to_category("punctuation.definition.comment"),
+            Some(HighlightCategory::Comment)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.definition.comment.python"),
+            Some(HighlightCategory::Comment)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.definition.comment.begin"),
+            Some(HighlightCategory::Comment)
+        );
+    }
+
+    #[test]
+    fn test_string_delimiter_uses_string_color() {
+        // String delimiters (", ', `) should use string color, not operator
+        assert_eq!(
+            scope_to_category("punctuation.definition.string.begin"),
+            Some(HighlightCategory::String)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.definition.string.end"),
+            Some(HighlightCategory::String)
         );
     }
 }
