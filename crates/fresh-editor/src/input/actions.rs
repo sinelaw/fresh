@@ -2782,6 +2782,7 @@ pub fn action_to_events(
         | Action::SetLanguage
         | Action::ToggleIndentationStyle
         | Action::ToggleTabIndicators
+        | Action::ToggleWhitespaceIndicators
         | Action::ToggleDebugHighlights
         | Action::ResetBufferSettings
         | Action::ShellCommand

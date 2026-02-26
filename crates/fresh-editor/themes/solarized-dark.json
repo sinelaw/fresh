@@ -7,7 +7,8 @@
     "selection_bg": [7, 54, 66],
     "current_line_bg": [7, 54, 66],
     "line_number_fg": [88, 110, 117],
-    "line_number_bg": [0, 43, 54]
+    "line_number_bg": [0, 43, 54],
+    "whitespace_indicator_fg": [0, 60, 75]
   },
   "ui": {
     "tab_active_fg": [253, 246, 227],

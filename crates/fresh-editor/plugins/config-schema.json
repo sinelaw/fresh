@@ -41,6 +41,8 @@
         "use_terminal_bg": false,
         "cursor_style": "default",
         "rulers": [],
+        "show_tab_indicators": true,
+        "show_whitespace_indicators": false,
         "tab_size": 4,
         "auto_indent": true,
         "scroll_offset": 3,
@@ -277,6 +279,18 @@
             "minimum": 0
           },
           "default": [],
+          "x-section": "Display"
+        },
+        "show_tab_indicators": {
+          "description": "Show tab indicator characters (→) in the editor.\nWhen enabled, tab characters are displayed with a visible arrow symbol.\nCan be overridden per-language in the languages config.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "show_whitespace_indicators": {
+          "description": "Show whitespace indicator characters (·) in the editor.\nWhen enabled, space characters are displayed with a subtle dot symbol.\nDefault: false",
+          "type": "boolean",
+          "default": false,
           "x-section": "Display"
         },
         "tab_size": {

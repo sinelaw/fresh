@@ -4403,7 +4403,7 @@ impl SplitRenderer {
                     };
 
                     let CharStyleOutput {
-                        style,
+                        mut style,
                         is_secondary_cursor,
                     } = compute_char_style(&CharStyleContext {
                         byte_pos,
@@ -4422,7 +4422,9 @@ impl SplitRenderer {
 
                     // Determine display character (tabs already expanded in ViewLineIterator)
                     // Show tab indicator (→) at the start of tab expansions (if enabled for this language)
-                    let tab_indicator: String;
+                    // Show space indicator (·) when whitespace indicators are enabled
+                    let indicator_buf: String;
+                    let mut is_whitespace_indicator = false;
                     let display_char: &str = if is_cursor && lsp_waiting && is_active {
                         "⋯"
                     } else if debug_tracker.is_some() && ch == '\r' {
@@ -4435,12 +4437,23 @@ impl SplitRenderer {
                         ""
                     } else if is_tab_start && state.buffer_settings.show_whitespace_tabs {
                         // Visual indicator for tab: show → at the first position
-                        tab_indicator = "→".to_string();
-                        &tab_indicator
+                        is_whitespace_indicator = true;
+                        indicator_buf = "→".to_string();
+                        &indicator_buf
+                    } else if ch == ' ' && state.buffer_settings.show_whitespace_indicators {
+                        // Visual indicator for space: show · when enabled
+                        is_whitespace_indicator = true;
+                        indicator_buf = "·".to_string();
+                        &indicator_buf
                     } else {
-                        tab_indicator = ch.to_string();
-                        &tab_indicator
+                        indicator_buf = ch.to_string();
+                        &indicator_buf
                     };
+
+                    // Apply subdued whitespace indicator color from theme
+                    if is_whitespace_indicator && !is_cursor && !is_selected {
+                        style = style.fg(theme.whitespace_indicator_fg);
+                    }
 
                     if let Some(bp) = byte_pos {
                         if let Some(vtexts) = virtual_text_lookup.get(&bp) {

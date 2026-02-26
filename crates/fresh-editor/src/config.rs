@@ -519,6 +519,21 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub rulers: Vec<usize>,
 
+    /// Show tab indicator characters (→) in the editor.
+    /// When enabled, tab characters are displayed with a visible arrow symbol.
+    /// Can be overridden per-language in the languages config.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_tab_indicators: bool,
+
+    /// Show whitespace indicator characters (·) in the editor.
+    /// When enabled, space characters are displayed with a subtle dot symbol.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_whitespace_indicators: bool,
+
     // ===== Editing =====
     /// Number of spaces per tab character
     #[serde(default = "default_tab_size")]
@@ -889,6 +904,8 @@ impl Default for EditorConfig {
             show_horizontal_scrollbar: false,
             use_terminal_bg: false,
             rulers: Vec::new(),
+            show_tab_indicators: true,
+            show_whitespace_indicators: false,
         }
     }
 }
@@ -1224,6 +1241,9 @@ pub struct BufferConfig {
     /// Whether to show whitespace tab indicators (→)
     pub show_whitespace_tabs: bool,
 
+    /// Whether to show whitespace space indicators (·)
+    pub show_whitespace_indicators: bool,
+
     /// Formatter command for this buffer
     pub formatter: Option<FormatterConfig>,
 
@@ -1257,7 +1277,8 @@ impl BufferConfig {
             tab_size: editor.tab_size,
             use_tabs: false, // Global default is spaces
             auto_indent: editor.auto_indent,
-            show_whitespace_tabs: true, // Global default
+            show_whitespace_tabs: editor.show_tab_indicators,
+            show_whitespace_indicators: editor.show_whitespace_indicators,
             formatter: None,
             format_on_save: false,
             on_save: Vec::new(),

@@ -145,6 +145,15 @@
             50,
             50
           ]
+        },
+        "whitespace_indicator_fg": {
+          "description": "Whitespace indicator foreground color (for tab arrows and space dots)",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            70,
+            70,
+            70
+          ]
         }
       }
     },

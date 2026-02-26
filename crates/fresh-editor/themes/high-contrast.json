@@ -11,7 +11,8 @@
     "line_number_bg": "Black",
     "diff_add_bg": [0, 80, 0],
     "diff_remove_bg": [100, 0, 0],
-    "diff_modify_bg": [25, 22, 0]
+    "diff_modify_bg": [25, 22, 0],
+    "whitespace_indicator_fg": [80, 80, 80]
   },
   "ui": {
     "tab_active_fg": "Black",

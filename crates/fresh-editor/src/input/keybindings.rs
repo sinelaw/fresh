@@ -543,6 +543,7 @@ pub enum Action {
     SetLanguage,
     ToggleIndentationStyle,
     ToggleTabIndicators,
+    ToggleWhitespaceIndicators,
     ResetBufferSettings,
     AddRuler,
     RemoveRuler,
@@ -910,6 +911,7 @@ impl Action {
             "reload_with_encoding" => ReloadWithEncoding,
             "toggle_indentation_style" => ToggleIndentationStyle,
             "toggle_tab_indicators" => ToggleTabIndicators,
+            "toggle_whitespace_indicators" => ToggleWhitespaceIndicators,
             "reset_buffer_settings" => ResetBufferSettings,
 
             "dump_config" => DumpConfig,
@@ -1985,6 +1987,7 @@ impl KeybindingResolver {
             Action::SetLanguage => t!("action.set_language"),
             Action::ToggleIndentationStyle => t!("action.toggle_indentation_style"),
             Action::ToggleTabIndicators => t!("action.toggle_tab_indicators"),
+            Action::ToggleWhitespaceIndicators => t!("action.toggle_whitespace_indicators"),
             Action::ResetBufferSettings => t!("action.reset_buffer_settings"),
             Action::DumpConfig => t!("action.dump_config"),
             Action::Search => t!("action.search"),

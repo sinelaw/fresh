@@ -180,6 +180,8 @@ pub struct PartialEditorConfig {
     pub show_horizontal_scrollbar: Option<bool>,
     pub use_terminal_bg: Option<bool>,
     pub rulers: Option<Vec<usize>>,
+    pub show_tab_indicators: Option<bool>,
+    pub show_whitespace_indicators: Option<bool>,
 }
 
 impl Merge for PartialEditorConfig {
@@ -256,6 +258,10 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.show_horizontal_scrollbar);
         self.use_terminal_bg.merge_from(&other.use_terminal_bg);
         self.rulers.merge_from(&other.rulers);
+        self.show_tab_indicators
+            .merge_from(&other.show_tab_indicators);
+        self.show_whitespace_indicators
+            .merge_from(&other.show_whitespace_indicators);
     }
 }
 
@@ -476,6 +482,8 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             show_horizontal_scrollbar: Some(cfg.show_horizontal_scrollbar),
             use_terminal_bg: Some(cfg.use_terminal_bg),
             rulers: Some(cfg.rulers.clone()),
+            show_tab_indicators: Some(cfg.show_tab_indicators),
+            show_whitespace_indicators: Some(cfg.show_whitespace_indicators),
         }
     }
 }
@@ -584,6 +592,12 @@ impl PartialEditorConfig {
                 .unwrap_or(defaults.show_horizontal_scrollbar),
             use_terminal_bg: self.use_terminal_bg.unwrap_or(defaults.use_terminal_bg),
             rulers: self.rulers.unwrap_or_else(|| defaults.rulers.clone()),
+            show_tab_indicators: self
+                .show_tab_indicators
+                .unwrap_or(defaults.show_tab_indicators),
+            show_whitespace_indicators: self
+                .show_whitespace_indicators
+                .unwrap_or(defaults.show_whitespace_indicators),
         }
     }
 }

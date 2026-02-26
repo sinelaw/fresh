@@ -754,6 +754,18 @@ impl Editor {
                     self.set_status_message(status.to_string());
                 }
             }
+            Action::ToggleWhitespaceIndicators => {
+                if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+                    state.buffer_settings.show_whitespace_indicators =
+                        !state.buffer_settings.show_whitespace_indicators;
+                    let status = if state.buffer_settings.show_whitespace_indicators {
+                        "Whitespace indicators: Visible"
+                    } else {
+                        "Whitespace indicators: Hidden"
+                    };
+                    self.set_status_message(status.to_string());
+                }
+            }
             Action::ResetBufferSettings => self.reset_buffer_settings(),
             Action::FocusFileExplorer => self.focus_file_explorer(),
             Action::FocusEditor => self.focus_editor(),

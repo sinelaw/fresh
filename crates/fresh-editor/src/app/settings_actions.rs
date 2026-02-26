@@ -149,7 +149,7 @@ impl Editor {
             }
         }
 
-        // Propagate tab_size/use_tabs/show_whitespace_tabs to all open buffers
+        // Propagate tab_size/use_tabs/show_whitespace_tabs/show_whitespace_indicators to all open buffers
         // Each buffer resolves its settings from its language + the new global config
         for state in self.buffers.values_mut() {
             if let Some(lang_config) = self.config.languages.get(&state.language) {
@@ -159,7 +159,10 @@ impl Editor {
                 state.buffer_settings.show_whitespace_tabs = lang_config.show_whitespace_tabs;
             } else {
                 state.buffer_settings.tab_size = self.config.editor.tab_size;
+                state.buffer_settings.show_whitespace_tabs = self.config.editor.show_tab_indicators;
             }
+            state.buffer_settings.show_whitespace_indicators =
+                self.config.editor.show_whitespace_indicators;
         }
 
         // Save ONLY the changes to disk (preserves external edits to the config file)

@@ -633,6 +633,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_whitespace_indicators",
+        desc_key: "cmd.toggle_whitespace_indicators_desc",
+        action: || Action::ToggleWhitespaceIndicators,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.reset_buffer_settings",
         desc_key: "cmd.reset_buffer_settings_desc",
         action: || Action::ResetBufferSettings,

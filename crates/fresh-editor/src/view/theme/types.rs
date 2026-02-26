@@ -221,6 +221,9 @@ pub struct EditorColors {
     /// Vertical ruler background color
     #[serde(default = "default_ruler_bg")]
     pub ruler_bg: ColorDef,
+    /// Whitespace indicator foreground color (for tab arrows and space dots)
+    #[serde(default = "default_whitespace_indicator_fg")]
+    pub whitespace_indicator_fg: ColorDef,
 }
 
 // Default editor colors (for minimal themes)
@@ -259,6 +262,9 @@ fn default_diff_modify_bg() -> ColorDef {
 }
 fn default_ruler_bg() -> ColorDef {
     ColorDef::Rgb(50, 50, 50) // Subtle dark gray, slightly lighter than default editor bg
+}
+fn default_whitespace_indicator_fg() -> ColorDef {
+    ColorDef::Rgb(70, 70, 70) // Subdued dark gray, subtle but visible
 }
 
 /// UI element colors (tabs, menus, status bar, etc.)
@@ -809,6 +815,9 @@ pub struct Theme {
     // Vertical ruler color
     pub ruler_bg: Color,
 
+    // Whitespace indicator color (tab arrows, space dots)
+    pub whitespace_indicator_fg: Color,
+
     // Diff highlighting colors
     pub diff_add_bg: Color,
     pub diff_remove_bg: Color,
@@ -945,6 +954,7 @@ impl From<ThemeFile> for Theme {
             line_number_fg: file.editor.line_number_fg.into(),
             line_number_bg: file.editor.line_number_bg.into(),
             ruler_bg: file.editor.ruler_bg.into(),
+            whitespace_indicator_fg: file.editor.whitespace_indicator_fg.into(),
             diff_add_bg: file.editor.diff_add_bg.clone().into(),
             diff_remove_bg: file.editor.diff_remove_bg.clone().into(),
             diff_modify_bg: file.editor.diff_modify_bg.into(),
@@ -1053,6 +1063,7 @@ impl From<Theme> for ThemeFile {
                 diff_remove_bg: theme.diff_remove_bg.into(),
                 diff_modify_bg: theme.diff_modify_bg.into(),
                 ruler_bg: theme.ruler_bg.into(),
+                whitespace_indicator_fg: theme.whitespace_indicator_fg.into(),
             },
             ui: UiColors {
                 tab_active_fg: theme.tab_active_fg.into(),
@@ -1197,6 +1208,7 @@ impl Theme {
                 "diff_remove_bg" => Some(self.diff_remove_bg),
                 "diff_modify_bg" => Some(self.diff_modify_bg),
                 "ruler_bg" => Some(self.ruler_bg),
+                "whitespace_indicator_fg" => Some(self.whitespace_indicator_fg),
                 _ => None,
             },
             "ui" => match field {

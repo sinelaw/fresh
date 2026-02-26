@@ -112,7 +112,7 @@ impl Editor {
         self.set_status_message(status.to_string());
     }
 
-    /// Reset buffer settings (tab_size, use_tabs, show_whitespace_tabs) to config defaults
+    /// Reset buffer settings (tab_size, use_tabs, show_whitespace_tabs, show_whitespace_indicators) to config defaults
     pub fn reset_buffer_settings(&mut self) {
         let buffer_id = self.active_buffer();
 
@@ -127,17 +127,28 @@ impl Editor {
                         lang_config.show_whitespace_tabs,
                     )
                 } else {
-                    (self.config.editor.tab_size, false, true)
+                    (
+                        self.config.editor.tab_size,
+                        false,
+                        self.config.editor.show_tab_indicators,
+                    )
                 }
             } else {
-                (self.config.editor.tab_size, false, true)
+                (
+                    self.config.editor.tab_size,
+                    false,
+                    self.config.editor.show_tab_indicators,
+                )
             };
+
+        let show_whitespace_indicators = self.config.editor.show_whitespace_indicators;
 
         // Apply settings to buffer
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             state.buffer_settings.tab_size = tab_size;
             state.buffer_settings.use_tabs = use_tabs;
             state.buffer_settings.show_whitespace_tabs = show_whitespace_tabs;
+            state.buffer_settings.show_whitespace_indicators = show_whitespace_indicators;
         }
 
         self.set_status_message(t!("toggle.buffer_settings_reset").to_string());

@@ -260,7 +260,10 @@ impl Editor {
                 lang_config.tab_size.unwrap_or(self.config.editor.tab_size);
         } else {
             state.buffer_settings.tab_size = self.config.editor.tab_size;
+            state.buffer_settings.show_whitespace_tabs = self.config.editor.show_tab_indicators;
         }
+        state.buffer_settings.show_whitespace_indicators =
+            self.config.editor.show_whitespace_indicators;
 
         // Apply line_numbers default from config
         state
