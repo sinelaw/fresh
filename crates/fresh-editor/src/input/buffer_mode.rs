@@ -126,6 +126,12 @@ impl ModeRegistry {
     /// - Uppercase char (with or without SHIFT) -> lowercase char with SHIFT
     /// - Lowercase char with SHIFT -> keep as is (already normalized form)
     fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
+        // BackTab already encodes Shift+Tab, so strip the redundant SHIFT modifier.
+        // This ensures "BackTab" in a mode definition matches the terminal's
+        // (BackTab, SHIFT) key event.
+        if code == KeyCode::BackTab {
+            return (code, modifiers.difference(KeyModifiers::SHIFT));
+        }
         if let KeyCode::Char(c) = code {
             if c.is_ascii_uppercase() {
                 // Uppercase char -> always normalize to lowercase with SHIFT

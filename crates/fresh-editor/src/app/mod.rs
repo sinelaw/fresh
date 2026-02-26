@@ -6590,6 +6590,7 @@ fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
     let code = match upper.as_str() {
         "RET" | "RETURN" | "ENTER" => KeyCode::Enter,
         "TAB" => KeyCode::Tab,
+        "BACKTAB" => KeyCode::BackTab,
         "ESC" | "ESCAPE" => KeyCode::Esc,
         "SPC" | "SPACE" => KeyCode::Char(' '),
         "DEL" | "DELETE" => KeyCode::Delete,

@@ -479,6 +479,138 @@ fn test_tab_cycles_bullet_on_blank_item() {
 }
 
 // ---------------------------------------------------------------------------
+// Shift+Tab: de-indent + reverse-cycle bullet on blank list item
+// ---------------------------------------------------------------------------
+
+/// Shift+Tab on a blank list item should de-indent and cycle the bullet
+/// in reverse order (the exact opposite of Tab).
+///
+/// Forward (Tab):  * → - → + → *  (each step +4 spaces indent)
+/// Reverse (Shift+Tab): * → + → - → *  (each step −4 spaces indent)
+///
+/// This test starts with an indented "    - " (from a previous Tab on "* "),
+/// then presses Shift+Tab through a full reverse cycle.
+#[test]
+fn test_shift_tab_reverse_cycles_bullet_on_blank_item() {
+    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+
+    // Start with "    - " — as if Tab was already pressed once on "* "
+    let content = "    - \n";
+    let fixture = TestFixture::new("reverse_cycle.md", content).unwrap();
+    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Shift+Tab #1:  "    - " → "* "   (de-indent, reverse cycle - → *)
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.starts_with("* \n"))
+        })
+        .unwrap();
+    harness.assert_no_plugin_errors();
+}
+
+/// Full round-trip: Tab cycles * → - → + → *, each adding 4 spaces of indent,
+/// then Shift+Tab reverses the entire sequence back to the starting state.
+#[test]
+fn test_tab_shift_tab_full_round_trip() {
+    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+
+    // Start with "* " (asterisk bullet, no content)
+    let content = "* \n";
+    let fixture = TestFixture::new("roundtrip.md", content).unwrap();
+    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Helper: drain any remaining async commands (e.g. setBufferCursor) so the
+    // plugin state snapshot is fully up-to-date before sending the next key.
+    let drain = |h: &mut EditorTestHarness| {
+        for _ in 0..3 {
+            h.process_async_and_render().unwrap();
+        }
+    };
+
+    // --- Forward cycle via Tab ---
+
+    // Tab #1: "* " → "    - "
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.starts_with("    - \n"))
+        })
+        .unwrap();
+    drain(&mut harness);
+
+    // Tab #2: "    - " → "        + "
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.starts_with("        + \n"))
+        })
+        .unwrap();
+    drain(&mut harness);
+
+    // Tab #3: "        + " → "            * "
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.starts_with("            * \n"))
+        })
+        .unwrap();
+    drain(&mut harness);
+
+    // --- Reverse cycle via Shift+Tab (exact opposite) ---
+
+    // Shift+Tab #1: "            * " → "        + "
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.starts_with("        + \n"))
+        })
+        .unwrap();
+    drain(&mut harness);
+
+    // Shift+Tab #2: "        + " → "    - "
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.starts_with("    - \n"))
+        })
+        .unwrap();
+    drain(&mut harness);
+
+    // Shift+Tab #3: "    - " → "* "  (back to original)
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.starts_with("* \n"))
+        })
+        .unwrap();
+
+    harness.assert_no_plugin_errors();
+}
+
+// ---------------------------------------------------------------------------
 // Normal typing still works
 // ---------------------------------------------------------------------------
 
