@@ -273,6 +273,10 @@ type BufferInfo = {
 	* Compose width (if set), from the active split's view state
 	*/
 	compose_width: number | null;
+	/**
+	* The detected language for this buffer (e.g., "rust", "markdown", "text")
+	*/
+	language: string;
 };
 type JsDiagnostic = {
 	/**

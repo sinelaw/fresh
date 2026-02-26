@@ -259,6 +259,13 @@ pub enum HookArgs {
         /// The output data
         data: String,
     },
+
+    /// Buffer language was changed (e.g. via "Set Language" command or Save-As)
+    LanguageChanged {
+        buffer_id: BufferId,
+        /// The new language identifier (e.g., "markdown", "rust", "text")
+        language: String,
+    },
 }
 
 /// Information about a single line for the LinesChanged hook
@@ -688,6 +695,15 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             serde_json::json!({
                 "process_id": process_id,
                 "data": data,
+            })
+        }
+        HookArgs::LanguageChanged {
+            buffer_id,
+            language,
+        } => {
+            serde_json::json!({
+                "buffer_id": buffer_id.0,
+                "language": language,
             })
         }
     };

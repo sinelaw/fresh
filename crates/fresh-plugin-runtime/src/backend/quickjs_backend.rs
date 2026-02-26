@@ -5454,6 +5454,7 @@ mod tests {
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,
                     compose_width: None,
+                    language: "text".to_string(),
                 },
             );
             state.buffers.insert(
@@ -5467,6 +5468,7 @@ mod tests {
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,
                     compose_width: None,
+                    language: "text".to_string(),
                 },
             );
         }

@@ -4624,6 +4624,7 @@ impl Editor {
                     view_mode: view_mode.to_string(),
                     is_composing_in_any_split,
                     compose_width,
+                    language: state.language.clone(),
                 };
                 snapshot.buffers.insert(*buffer_id, buffer_info);
 

@@ -5,11 +5,13 @@
 //   indentation; on an empty list item, removes the marker instead
 // - Tab: on a blank list item, indents and cycles the bullet (* -> - -> + -> *);
 //   otherwise inserts spaces (always spaces, never literal tabs)
-// - Shift+Tab: falls through to built-in dedent_selection
+// - Shift+Tab: on a blank list item, de-indents and cycles the bullet in reverse
+//   (+ -> - -> * -> +); otherwise falls through to built-in dedent_selection
 //
 // This plugin defines a "markdown-source" mode that auto-activates when a
-// markdown file is opened in source view. It uses readOnly=false so that
-// normal character insertion is unaffected.
+// markdown file is opened in source view, or when the buffer language is set
+// to markdown. It uses readOnly=false so that normal character insertion is
+// unaffected.
 
 const editor = getEditor();
 
@@ -25,6 +27,16 @@ const TAB_SIZE = 4;
 
 function isMarkdownFile(path: string): boolean {
   return path.endsWith(".md") || path.endsWith(".markdown") || path.endsWith(".mdx");
+}
+
+function isMarkdownLanguage(language: string): boolean {
+  return language === "markdown" || language === "multimarkdown";
+}
+
+// Check whether a buffer should use markdown-source mode based on its
+// file path OR its language setting.
+function isMarkdownBuffer(info: BufferInfo): boolean {
+  return isMarkdownFile(info.path) || isMarkdownLanguage(info.language);
 }
 
 // ---------------------------------------------------------------------------
@@ -102,12 +114,22 @@ function nextMarkerText(info: ListMarkerInfo): string {
   return info.indent + info.bullet + " ";
 }
 
-// Cycle bullet character: * -> - -> + -> *
+// Cycle bullet character forward: * -> - -> + -> *
 function cycleBullet(bullet: string): string {
   switch (bullet) {
     case "*": return "-";
     case "-": return "+";
     case "+": return "*";
+    default: return "-";
+  }
+}
+
+// Cycle bullet character in reverse: * -> + -> - -> *
+function reverseCycleBullet(bullet: string): string {
+  switch (bullet) {
+    case "*": return "+";
+    case "+": return "-";
+    case "-": return "*";
     default: return "-";
   }
 }
@@ -221,22 +243,73 @@ globalThis.md_src_tab = async function (): Promise<void> {
 };
 
 // ---------------------------------------------------------------------------
+// Shift+Tab handler: de-indent + reverse-cycle bullet on blank list items
+// ---------------------------------------------------------------------------
+
+globalThis.md_src_shift_tab = async function (): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  if (!bufferId) {
+    editor.executeAction("dedent_selection");
+    return;
+  }
+
+  const cursorPos = editor.getCursorPosition();
+  const windowStart = Math.max(0, cursorPos - 1024);
+  const textBefore = await editor.getBufferText(bufferId, windowStart, cursorPos);
+
+  const lastNl = textBefore.lastIndexOf("\n");
+  const lineText = lastNl >= 0 ? textBefore.substring(lastNl + 1) : textBefore;
+
+  const listMatch = parseListMarker(lineText);
+
+  if (listMatch && (listMatch.type === "unordered" || listMatch.type === "checkbox")) {
+    const restOfLine = await readRestOfLine(bufferId, cursorPos);
+
+    if (listMatch.content.trim() === "" && restOfLine.trim() === "") {
+      // Blank list item — de-indent + reverse cycle bullet
+      const currentIndent = listMatch.indent;
+      // Only de-indent if there is indentation to remove
+      if (currentIndent.length >= TAB_SIZE) {
+        const lineStartByte = cursorPos - editor.utf8ByteLength(lineText);
+        const lineEndByte = cursorPos + editor.utf8ByteLength(restOfLine);
+        const newBullet = reverseCycleBullet(listMatch.bullet!);
+        const newIndent = currentIndent.substring(TAB_SIZE);
+        let newLine: string;
+        if (listMatch.type === "checkbox") {
+          const check = listMatch.checked ? "x" : " ";
+          newLine = newIndent + newBullet + " [" + check + "] ";
+        } else {
+          newLine = newIndent + newBullet + " ";
+        }
+        editor.deleteRange(bufferId, lineStartByte, lineEndByte);
+        editor.insertText(bufferId, lineStartByte, newLine);
+        editor.setBufferCursor(bufferId, lineStartByte + editor.utf8ByteLength(newLine));
+        return;
+      }
+    }
+  }
+
+  // Default: fall through to built-in dedent
+  editor.executeAction("dedent_selection");
+};
+
+// ---------------------------------------------------------------------------
 // Mode definition
 // ---------------------------------------------------------------------------
 
 // Define a non-read-only mode so unmapped keys insert normally.
-// Enter and Tab are intercepted; Shift+Tab (BackTab) falls through to the
-// default keybinding which is already dedent_selection.
+// Enter, Tab, and Shift+Tab are intercepted for smart list handling.
 editor.defineMode("markdown-source", null, [
   ["Enter", "md_src_enter"],
   ["Tab", "md_src_tab"],
+  ["BackTab", "md_src_shift_tab"],
 ], false);
 
 // ---------------------------------------------------------------------------
-// Auto-activation: switch mode when a markdown file is focused
+// Auto-activation: switch mode when a markdown file is focused or language changes
 // ---------------------------------------------------------------------------
 
-globalThis.md_src_on_buffer_activated = function (): void {
+function updateMarkdownMode(): void {
   const bufferId = editor.getActiveBufferId();
   if (!bufferId) return;
 
@@ -245,7 +318,7 @@ globalThis.md_src_on_buffer_activated = function (): void {
 
   const currentMode = editor.getEditorMode();
 
-  if (isMarkdownFile(info.path) && info.view_mode === "source") {
+  if (isMarkdownBuffer(info) && info.view_mode === "source") {
     // Only activate if no other mode is already set (e.g., vi-mode)
     if (currentMode == null) {
       editor.setEditorMode("markdown-source");
@@ -256,8 +329,17 @@ globalThis.md_src_on_buffer_activated = function (): void {
       editor.setEditorMode(null);
     }
   }
+}
+
+globalThis.md_src_on_buffer_activated = function (): void {
+  updateMarkdownMode();
+};
+
+globalThis.md_src_on_language_changed = function (): void {
+  updateMarkdownMode();
 };
 
 editor.on("buffer_activated", "md_src_on_buffer_activated");
+editor.on("language_changed", "md_src_on_language_changed");
 
 editor.debug("markdown_source plugin loaded");

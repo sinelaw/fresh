@@ -324,6 +324,8 @@ pub struct BufferInfo {
     pub is_composing_in_any_split: bool,
     /// Compose width (if set), from the active split's view state
     pub compose_width: Option<u16>,
+    /// The detected language for this buffer (e.g., "rust", "markdown", "text")
+    pub language: String,
 }
 
 fn serialize_path<S: serde::Serializer>(path: &Option<PathBuf>, s: S) -> Result<S::Ok, S::Error> {
@@ -2788,6 +2790,7 @@ mod tests {
                 view_mode: "source".to_string(),
                 is_composing_in_any_split: false,
                 compose_width: None,
+                language: "text".to_string(),
             };
             snapshot.buffers.insert(BufferId(1), buffer_info);
         }
@@ -2831,6 +2834,7 @@ mod tests {
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,
                     compose_width: None,
+                    language: "text".to_string(),
                 },
             );
             snapshot.buffers.insert(
@@ -2844,6 +2848,7 @@ mod tests {
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,
                     compose_width: None,
+                    language: "text".to_string(),
                 },
             );
             snapshot.buffers.insert(
@@ -2857,6 +2862,7 @@ mod tests {
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,
                     compose_width: None,
+                    language: "text".to_string(),
                 },
             );
         }

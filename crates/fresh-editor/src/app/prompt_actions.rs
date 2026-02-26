@@ -537,6 +537,8 @@ impl Editor {
 
                 // Auto-detect language if it's currently "text"
                 // This ensures syntax highlighting works immediately after "Save As"
+                let mut language_changed = false;
+                let mut new_language = String::new();
                 if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
                     if state.language == "text" {
                         let detected =
@@ -545,8 +547,21 @@ impl Editor {
                                 &self.grammar_registry,
                                 &self.config.languages,
                             );
+                        new_language = detected.name.clone();
                         state.apply_language(detected);
+                        language_changed = new_language != "text";
                     }
+                }
+                if language_changed {
+                    #[cfg(feature = "plugins")]
+                    self.update_plugin_state_snapshot();
+                    self.plugin_manager.run_hook(
+                        "language_changed",
+                        crate::services::plugins::hooks::HookArgs::LanguageChanged {
+                            buffer_id: self.active_buffer(),
+                            language: new_language,
+                        },
+                    );
                 }
 
                 self.active_event_log_mut().mark_saved();
@@ -913,6 +928,15 @@ impl Editor {
                 state.apply_language(DetectedLanguage::plain_text());
                 self.set_status_message("Language set to Plain Text".to_string());
             }
+            #[cfg(feature = "plugins")]
+            self.update_plugin_state_snapshot();
+            self.plugin_manager.run_hook(
+                "language_changed",
+                crate::services::plugins::hooks::HookArgs::LanguageChanged {
+                    buffer_id: self.active_buffer(),
+                    language: "text".to_string(),
+                },
+            );
             return;
         }
 
@@ -922,11 +946,21 @@ impl Editor {
             &self.grammar_registry,
             &self.config.languages,
         ) {
+            let language = detected.name.clone();
             let buffer_id = self.active_buffer();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 state.apply_language(detected);
                 self.set_status_message(format!("Language set to {}", trimmed));
             }
+            #[cfg(feature = "plugins")]
+            self.update_plugin_state_snapshot();
+            self.plugin_manager.run_hook(
+                "language_changed",
+                crate::services::plugins::hooks::HookArgs::LanguageChanged {
+                    buffer_id,
+                    language,
+                },
+            );
         } else {
             self.set_status_message(format!("Unknown language: {}", input));
         }
