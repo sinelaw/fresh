@@ -344,7 +344,7 @@ impl Editor {
                     state.cycle_target_layer();
                 }
             }
-            SettingsHit::SaveButton => self.save_settings(),
+            SettingsHit::SaveButton => self.close_settings(true),
             SettingsHit::CancelButton => {
                 if let Some(ref mut state) = self.settings_state {
                     if state.has_changes() {
