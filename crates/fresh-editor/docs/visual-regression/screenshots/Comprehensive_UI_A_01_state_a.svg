@@ -306,6 +306,7 @@
   <rect x="243" y="54" width="9" height="18" fill="#141414"/>
   <rect x="252" y="54" width="9" height="18" fill="#141414"/>
   <text x="262" y="68" fill="#8c8c8c" class="terminal" style="">│</text>
+  <text x="271" y="68" fill="#8c8c8c" class="terminal" style="">▾</text>
   <text x="307" y="68" fill="#8c8c8c" class="terminal" style="">2</text>
   <text x="325" y="68" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="343" y="68" fill="#8be9fd" class="terminal" style="">f</text>
@@ -484,6 +485,7 @@
   <rect x="891" y="180" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="212" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="212" fill="#8c8c8c" class="terminal" style="">│</text>
+  <text x="271" y="212" fill="#8c8c8c" class="terminal" style="">▾</text>
   <text x="298" y="212" fill="#8c8c8c" class="terminal" style="">1</text>
   <text x="307" y="212" fill="#8c8c8c" class="terminal" style="">0</text>
   <text x="325" y="212" fill="#8c8c8c" class="terminal" style="">│</text>
@@ -625,6 +627,7 @@
   <rect x="891" y="306" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="338" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="338" fill="#8c8c8c" class="terminal" style="">│</text>
+  <text x="271" y="338" fill="#8c8c8c" class="terminal" style="">▾</text>
   <text x="298" y="338" fill="#8c8c8c" class="terminal" style="">1</text>
   <text x="307" y="338" fill="#8c8c8c" class="terminal" style="">7</text>
   <text x="325" y="338" fill="#8c8c8c" class="terminal" style="">│</text>
