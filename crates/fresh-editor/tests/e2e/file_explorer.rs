@@ -2805,7 +2805,7 @@ fn test_dotfiles_hidden_by_default_and_toggle_controls_visibility() {
 /// top, then falls back to "┘" (bottom-right).
 fn find_explorer_border_col(harness: &EditorTestHarness) -> u16 {
     let height = 40u16; // match test terminal height
-    // Look for ┐ (top-right corner) — it's on the top border row of the explorer block.
+                        // Look for ┐ (top-right corner) — it's on the top border row of the explorer block.
     for row in 0..height {
         let text = harness.get_row_text(row);
         for (i, ch) in text.chars().enumerate() {
@@ -2854,17 +2854,24 @@ fn test_file_explorer_border_hover_does_not_overwrite_editor_column() {
     // Record the character in the first column of the editor area (just right of border)
     let mid_row = 10u16; // a content row inside the explorer area
     let row_text_before = harness.get_row_text(mid_row);
-    let editor_char_before: char = row_text_before.chars().nth(editor_first_col as usize).unwrap();
+    let editor_char_before: char = row_text_before
+        .chars()
+        .nth(editor_first_col as usize)
+        .unwrap();
 
     // Hover on the border column
     harness.mouse_move(border_col, mid_row).unwrap();
 
     // The editor column right of the border should NOT have been overwritten with "│"
     let row_text_after = harness.get_row_text(mid_row);
-    let editor_char_after: char = row_text_after.chars().nth(editor_first_col as usize).unwrap();
+    let editor_char_after: char = row_text_after
+        .chars()
+        .nth(editor_first_col as usize)
+        .unwrap();
 
     assert_eq!(
-        editor_char_before, editor_char_after,
+        editor_char_before,
+        editor_char_after,
         "Hovering on the file explorer border should NOT overwrite the first column of the \
          editor area (border_col={}, editor_col={}). \
          Before hover: '{}', After hover: '{}'.\nScreen:\n{}",

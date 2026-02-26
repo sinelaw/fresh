@@ -384,9 +384,7 @@ fn validate_gutter_format(screen: &str, context: &str) {
         let invalid_chars: Vec<char> = before_bar
             .chars()
             .filter(|c| {
-                !c.is_ascii_whitespace()
-                    && !c.is_ascii_digit()
-                    && !matches!(*c, '▾' | '▸' | '●')
+                !c.is_ascii_whitespace() && !c.is_ascii_digit() && !matches!(*c, '▾' | '▸' | '●')
             })
             .collect();
         assert!(
