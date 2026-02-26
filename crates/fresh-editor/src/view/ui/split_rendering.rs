@@ -3984,14 +3984,10 @@ impl SplitRenderer {
     ) -> BTreeMap<usize, FoldIndicator> {
         let mut indicators = BTreeMap::new();
 
-        if state.folding_ranges.is_empty() && folds.is_empty() {
-            return indicators;
-        }
-
         let viewport_start_line = state.buffer.get_line_number(viewport_start);
         let viewport_end_line = state.buffer.get_line_number(viewport_end);
 
-        // Collapsed headers from marker-based folds
+        // Collapsed headers from marker-based folds (always shown regardless of source)
         let collapsed_headers = folds.collapsed_headers(&state.buffer, &state.marker_list);
 
         for (line, _) in &collapsed_headers {
@@ -4000,18 +3996,33 @@ impl SplitRenderer {
             }
         }
 
-        for range in &state.folding_ranges {
-            let start_line = range.start_line as usize;
-            let end_line = range.end_line as usize;
-            if end_line <= start_line {
-                continue;
+        if !state.folding_ranges.is_empty() {
+            // Use LSP-provided folding ranges
+            for range in &state.folding_ranges {
+                let start_line = range.start_line as usize;
+                let end_line = range.end_line as usize;
+                if end_line <= start_line {
+                    continue;
+                }
+                if start_line < viewport_start_line || start_line > viewport_end_line {
+                    continue;
+                }
+                indicators
+                    .entry(start_line)
+                    .or_insert(FoldIndicator { collapsed: false });
             }
-            if start_line < viewport_start_line || start_line > viewport_end_line {
-                continue;
+        } else {
+            // Fallback: indent-based folding when LSP ranges are unavailable
+            use crate::view::folding::indent_folding;
+            let tab_size = state.buffer_settings.tab_size;
+            for line in viewport_start_line..=viewport_end_line {
+                if indicators.contains_key(&line) {
+                    continue; // already has a collapsed indicator
+                }
+                if indent_folding::indent_fold_end_line(&state.buffer, line, tab_size).is_some() {
+                    indicators.insert(line, FoldIndicator { collapsed: false });
+                }
             }
-            indicators
-                .entry(start_line)
-                .or_insert(FoldIndicator { collapsed: false });
         }
 
         indicators

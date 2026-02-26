@@ -2298,16 +2298,32 @@ impl Editor {
         }
 
         let line = state.buffer.get_line_number(target_position);
-        let has_fold = state.folding_ranges.iter().any(|range| {
+
+        // Already collapsed → allow toggling (unfold)
+        if collapsed_headers.contains_key(&line) {
+            return Some(line);
+        }
+
+        // Check LSP folding ranges first
+        let has_lsp_fold = state.folding_ranges.iter().any(|range| {
             let start_line = range.start_line as usize;
             let end_line = range.end_line as usize;
             start_line == line && end_line > start_line
         });
-        if has_fold || collapsed_headers.contains_key(&line) {
-            Some(line)
-        } else {
-            None
+        if has_lsp_fold {
+            return Some(line);
         }
+
+        // Fallback: indent-based foldable detection when LSP ranges are empty
+        if state.folding_ranges.is_empty() {
+            use crate::view::folding::indent_folding;
+            let tab_size = state.buffer_settings.tab_size;
+            if indent_folding::indent_fold_end_line(&state.buffer, line, tab_size).is_some() {
+                return Some(line);
+            }
+        }
+
+        None
     }
 
     pub(super) fn fold_toggle_line_at_screen_position(

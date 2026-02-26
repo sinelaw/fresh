@@ -51,8 +51,13 @@ fn find_text_position(harness: &EditorTestHarness, needle: &str) -> (u16, u16) {
     let (start_row, end_row) = harness.content_area_rows();
     for row in start_row..=end_row {
         let text = harness.get_row_text(row as u16);
-        if let Some(col) = text.find(needle) {
-            return (row as u16, col as u16);
+        if let Some(byte_offset) = text.find(needle) {
+            // Convert byte offset to cell (column) position.
+            // get_row_text concatenates cell symbols which may be multi-byte
+            // (e.g. "│" is 3 bytes but 1 cell), so we count cells up to the
+            // byte offset.
+            let cell_col = text[..byte_offset].chars().count();
+            return (row as u16, cell_col as u16);
         }
     }
     panic!(

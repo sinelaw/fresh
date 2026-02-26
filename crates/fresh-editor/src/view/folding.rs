@@ -249,3 +249,100 @@ impl Default for FoldManager {
         Self::new()
     }
 }
+
+/// Indent-based folding fallback for when LSP folding ranges are not available.
+///
+/// Computes foldable ranges by analyzing indentation levels, reusing the same
+/// indent measurement logic as the auto-indent feature
+/// ([`PatternIndentCalculator::count_leading_indent`]).
+pub mod indent_folding {
+    use crate::model::buffer::Buffer;
+    use crate::primitives::indent_pattern::PatternIndentCalculator;
+
+    /// Information about a line's indentation.
+    struct LineIndent {
+        indent: usize,
+        is_blank: bool,
+    }
+
+    /// Measure the indent level of a given line, reusing the pattern-based
+    /// indent calculator shared with auto-indent.
+    fn line_indent(buffer: &Buffer, line: usize, tab_size: usize) -> Option<LineIndent> {
+        let start = buffer.line_start_offset(line)?;
+        let end = buffer
+            .line_start_offset(line + 1)
+            .unwrap_or_else(|| buffer.len());
+
+        let is_blank = (start..end).all(|pos| {
+            matches!(
+                PatternIndentCalculator::byte_at(buffer, pos),
+                Some(b' ' | b'\t' | b'\r' | b'\n') | None
+            )
+        });
+
+        let indent = PatternIndentCalculator::count_leading_indent(buffer, start, end, tab_size);
+        Some(LineIndent { indent, is_blank })
+    }
+
+    /// Compute the end line (inclusive) of an indent-based fold starting at
+    /// `header_line`, or `None` if the line is not foldable.
+    ///
+    /// A line is foldable when the next non-blank line is more indented.
+    /// The fold extends forward until a non-blank line at the header's indent
+    /// level (or less) is found.  Trailing blank lines inside the fold are
+    /// included up to (but not past) the last non-blank line that is still
+    /// more indented than the header.
+    pub fn indent_fold_end_line(
+        buffer: &Buffer,
+        header_line: usize,
+        tab_size: usize,
+    ) -> Option<usize> {
+        let header = line_indent(buffer, header_line, tab_size)?;
+        if header.is_blank {
+            return None;
+        }
+
+        let line_count = buffer.line_count()?;
+
+        // Find the next non-blank line after the header.
+        let mut next = header_line + 1;
+        while next < line_count {
+            let li = line_indent(buffer, next, tab_size)?;
+            if !li.is_blank {
+                break;
+            }
+            next += 1;
+        }
+        if next >= line_count {
+            return None;
+        }
+
+        let next_li = line_indent(buffer, next, tab_size)?;
+        if next_li.indent <= header.indent {
+            return None; // not more indented → not foldable
+        }
+
+        // Scan forward to find where the fold ends.
+        let mut last_non_blank_in_fold = next;
+        let mut current = next + 1;
+        while current < line_count {
+            let li = line_indent(buffer, current, tab_size)?;
+            if li.is_blank {
+                current += 1;
+                continue;
+            }
+            if li.indent <= header.indent {
+                break;
+            }
+            last_non_blank_in_fold = current;
+            current += 1;
+        }
+
+        // Only foldable if we'd actually hide at least one line.
+        if last_non_blank_in_fold > header_line {
+            Some(last_non_blank_in_fold)
+        } else {
+            None
+        }
+    }
+}

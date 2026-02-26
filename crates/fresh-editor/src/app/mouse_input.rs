@@ -783,8 +783,9 @@ impl Editor {
                 }
             }
 
-            // The border is at the right edge of the file explorer area
-            let border_x = explorer_area.x + explorer_area.width;
+            // The border is at the rightmost column of the file explorer area
+            // (the drawn border character), not one past it.
+            let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
             if col == border_x
                 && row >= explorer_area.y
                 && row < explorer_area.y + explorer_area.height
@@ -1638,8 +1639,10 @@ impl Editor {
         }
 
         // Check if click is on file explorer border (for drag resizing)
+        // Use the rightmost column of the explorer area (the drawn border character)
+        // rather than one past it, so the resize handle doesn't overlap fold indicators.
         if let Some(explorer_area) = self.cached_layout.file_explorer_area {
-            let border_x = explorer_area.x + explorer_area.width;
+            let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
             if col == border_x
                 && row >= explorer_area.y
                 && row < explorer_area.y + explorer_area.height

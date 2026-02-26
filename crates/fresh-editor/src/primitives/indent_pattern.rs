@@ -241,7 +241,7 @@ impl PatternIndentCalculator {
     }
 
     /// Get a single byte at a position
-    fn byte_at(buffer: &Buffer, pos: usize) -> Option<u8> {
+    pub fn byte_at(buffer: &Buffer, pos: usize) -> Option<u8> {
         if pos >= buffer.len() {
             return None;
         }
@@ -249,7 +249,7 @@ impl PatternIndentCalculator {
     }
 
     /// Count leading whitespace indent
-    fn count_leading_indent(
+    pub fn count_leading_indent(
         buffer: &Buffer,
         line_start: usize,
         line_end: usize,

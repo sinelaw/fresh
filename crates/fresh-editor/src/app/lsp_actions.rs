@@ -232,35 +232,46 @@ impl Editor {
             return;
         }
 
-        if state.folding_ranges.is_empty() {
-            return;
-        }
+        // Determine the fold end line: prefer LSP ranges, fall back to indent-based.
+        let (end_line, placeholder) = if !state.folding_ranges.is_empty() {
+            // Find the smallest LSP range whose start_line matches.
+            let mut selected_range: Option<&lsp_types::FoldingRange> = None;
+            let mut selected_span = usize::MAX;
 
-        let mut selected_range: Option<&lsp_types::FoldingRange> = None;
-        let mut selected_span = usize::MAX;
+            for range in &state.folding_ranges {
+                let start_line = range.start_line as usize;
+                let range_end = range.end_line as usize;
+                if range_end <= start_line || start_line != line {
+                    continue;
+                }
+                let span = range_end.saturating_sub(start_line);
+                if span < selected_span {
+                    selected_span = span;
+                    selected_range = Some(range);
+                }
+            }
 
-        for range in &state.folding_ranges {
-            let start_line = range.start_line as usize;
-            let end_line = range.end_line as usize;
-            if end_line <= start_line {
-                continue;
-            }
-            if start_line != line {
-                continue;
-            }
-            let span = end_line.saturating_sub(start_line);
-            if span < selected_span {
-                selected_span = span;
-                selected_range = Some(range);
-            }
-        }
-
-        let Some(range) = selected_range else {
-            return;
+            let Some(range) = selected_range else {
+                return;
+            };
+            let placeholder = range
+                .collapsed_text
+                .as_ref()
+                .filter(|text| !text.trim().is_empty())
+                .cloned();
+            (range.end_line as usize, placeholder)
+        } else {
+            // Fallback: indent-based folding
+            use crate::view::folding::indent_folding;
+            let tab_size = state.buffer_settings.tab_size;
+            let Some(end) = indent_folding::indent_fold_end_line(&state.buffer, line, tab_size)
+            else {
+                return;
+            };
+            (end, None)
         };
 
         let start_line = line.saturating_add(1);
-        let end_line = range.end_line as usize;
         if start_line > end_line {
             return;
         }
@@ -291,12 +302,6 @@ impl Editor {
                 }
             });
         }
-
-        let placeholder = range
-            .collapsed_text
-            .as_ref()
-            .filter(|text| !text.trim().is_empty())
-            .cloned();
 
         buf_state
             .folds
