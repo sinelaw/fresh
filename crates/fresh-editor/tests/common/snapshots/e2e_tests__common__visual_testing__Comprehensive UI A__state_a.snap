@@ -6,7 +6,7 @@ expression: "&screen_text"
  File   Edit   View   Selection   Go   LSP   Help                                                   
 ┌ File Explorer (Ctrl+E) ──×─┐ main.rs ×                                                            
 │▼ project_root              │    1 │ // Main entry point                                           
-│  ▼ src                     │    2 │ fn main() {                                                   
+│  ▼ src                     │▾   2 │ fn main() {                                                   
 │      main.rs               │    3 │     let hello = "world";                                      
 │    Cargo.toml              │    4 │     let hello = "again";                                      
 │    README.md               │    5 │     let hello = "once more";                                  
@@ -14,14 +14,14 @@ expression: "&screen_text"
 │                            │    7 │ }                                                             
 │                            │    8 │                                                               
 │                            │    9 │ // Helper function                                            
-│                            │   10 │ fn helper(x: i32) -> i32 {                                    
+│                            │▾  10 │ fn helper(x: i32) -> i32 {                                    
 │                            │   11 │     let unused_var = 5;                                       
 │                            │●  12 │     let another_unused = 10;                                  
 │                            │   13 │     x * 2                                                     
 │                            │   14 │ }                                                             
 │                            │   15 │                                                               
 │                            │   16 │ // More code to enable scrolling                              
-│                            │   17 │ fn long_function() {                                          
+│                            │▾  17 │ fn long_function() {                                          
 │                            │   18 │     println!("Line 1");                                       
 │                            │   19 │     println!("Line 2");                                       
 │                            │   20 │     println!("Line 3");                                       

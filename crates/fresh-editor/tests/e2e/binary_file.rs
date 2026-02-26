@@ -379,10 +379,15 @@ fn validate_gutter_format(screen: &str, context: &str) {
         let bar_pos = bar_pos.unwrap();
         let before_bar = &line[..bar_pos];
 
-        // Before the bar should only contain spaces and optionally digits (line number)
+        // Before the bar should only contain spaces, digits (line number),
+        // and fold indicators (▾ uncollapsed / ▸ collapsed / ● diagnostic).
         let invalid_chars: Vec<char> = before_bar
             .chars()
-            .filter(|c| !c.is_ascii_whitespace() && !c.is_ascii_digit())
+            .filter(|c| {
+                !c.is_ascii_whitespace()
+                    && !c.is_ascii_digit()
+                    && !matches!(*c, '▾' | '▸' | '●')
+            })
             .collect();
         assert!(
             invalid_chars.is_empty(),
