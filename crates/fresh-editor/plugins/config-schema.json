@@ -41,8 +41,19 @@
         "use_terminal_bg": false,
         "cursor_style": "default",
         "rulers": [],
-        "show_tab_indicators": true,
-        "show_whitespace_indicators": false,
+        "whitespace": {
+          "show": true,
+          "spaces": {
+            "leading": false,
+            "inner": false,
+            "trailing": false
+          },
+          "tabs": {
+            "leading": true,
+            "inner": true,
+            "trailing": true
+          }
+        },
         "tab_size": 4,
         "auto_indent": true,
         "scroll_offset": 3,
@@ -281,16 +292,22 @@
           "default": [],
           "x-section": "Display"
         },
-        "show_tab_indicators": {
-          "description": "Show tab indicator characters (→) in the editor.\nWhen enabled, tab characters are displayed with a visible arrow symbol.\nCan be overridden per-language in the languages config.\nDefault: true",
-          "type": "boolean",
-          "default": true,
-          "x-section": "Display"
-        },
-        "show_whitespace_indicators": {
-          "description": "Show whitespace indicator characters (·) in the editor.\nWhen enabled, space characters are displayed with a subtle dot symbol.\nDefault: false",
-          "type": "boolean",
-          "default": false,
+        "whitespace": {
+          "description": "Granular whitespace visibility settings.\nControls which whitespace characters (spaces, tabs) are rendered\nand at which line positions (leading, inner, trailing).\nIncludes a master toggle to quickly enable/disable all indicators.",
+          "$ref": "#/$defs/WhitespaceConfig",
+          "default": {
+            "show": true,
+            "spaces": {
+              "leading": false,
+              "inner": false,
+              "trailing": false
+            },
+            "tabs": {
+              "leading": true,
+              "inner": true,
+              "trailing": true
+            }
+          },
           "x-section": "Display"
         },
         "tab_size": {
@@ -535,6 +552,56 @@
         "blinking_underline",
         "steady_underline"
       ]
+    },
+    "WhitespaceConfig": {
+      "description": "Granular whitespace visibility configuration.\n\nControls which whitespace characters are rendered and where.\nThe master `show` toggle must be enabled for any indicators to appear.\nThe `spaces` and `tabs` sub-configs control visibility by position on the line.",
+      "type": "object",
+      "properties": {
+        "show": {
+          "description": "Master toggle for whitespace visibility.\nWhen disabled, no whitespace indicators are shown regardless of other settings.\nDefault: true",
+          "type": "boolean",
+          "default": true
+        },
+        "spaces": {
+          "description": "Space character (` `) visibility settings by line position.\nDefault: all positions disabled",
+          "$ref": "#/$defs/WhitespacePositionConfig",
+          "default": {
+            "leading": false,
+            "inner": false,
+            "trailing": false
+          }
+        },
+        "tabs": {
+          "description": "Tab character (`\\t`) visibility settings by line position.\nCan be overridden per-language via `show_whitespace_tabs`.\nDefault: all positions enabled",
+          "$ref": "#/$defs/WhitespacePositionConfig",
+          "default": {
+            "leading": true,
+            "inner": true,
+            "trailing": true
+          }
+        }
+      }
+    },
+    "WhitespacePositionConfig": {
+      "description": "Whitespace indicator visibility for a specific position.\n\nControls whether whitespace characters are shown in each line position:\nleading (indentation), inner (between tokens), or trailing (after last text).",
+      "type": "object",
+      "properties": {
+        "leading": {
+          "description": "Show indicators for leading whitespace (indentation before first non-whitespace character)",
+          "type": "boolean",
+          "default": false
+        },
+        "inner": {
+          "description": "Show indicators for inner whitespace (between text tokens on a line)",
+          "type": "boolean",
+          "default": false
+        },
+        "trailing": {
+          "description": "Show indicators for trailing whitespace (after the last non-whitespace character)",
+          "type": "boolean",
+          "default": false
+        }
+      }
     },
     "LineEndingOption": {
       "description": "Default line ending format for new files",

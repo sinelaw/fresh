@@ -744,9 +744,8 @@ impl Editor {
             }
             Action::ToggleTabIndicators => {
                 if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
-                    state.buffer_settings.show_whitespace_tabs =
-                        !state.buffer_settings.show_whitespace_tabs;
-                    let status = if state.buffer_settings.show_whitespace_tabs {
+                    state.buffer_settings.whitespace.toggle_tabs();
+                    let status = if state.buffer_settings.whitespace.any_tabs() {
                         "Tab indicators: Visible"
                     } else {
                         "Tab indicators: Hidden"
@@ -756,9 +755,8 @@ impl Editor {
             }
             Action::ToggleWhitespaceIndicators => {
                 if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
-                    state.buffer_settings.show_whitespace_indicators =
-                        !state.buffer_settings.show_whitespace_indicators;
-                    let status = if state.buffer_settings.show_whitespace_indicators {
+                    state.buffer_settings.whitespace.toggle_spaces();
+                    let status = if state.buffer_settings.whitespace.any_spaces() {
                         "Whitespace indicators: Visible"
                     } else {
                         "Whitespace indicators: Hidden"

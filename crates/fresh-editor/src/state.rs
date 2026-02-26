@@ -53,13 +53,9 @@ pub enum ViewMode {
 /// rather than per-buffer.
 #[derive(Debug, Clone)]
 pub struct BufferSettings {
-    /// Whether to show whitespace tab indicators (→) for this buffer
-    /// Set based on language config; can be toggled per-buffer by user
-    pub show_whitespace_tabs: bool,
-
-    /// Whether to show whitespace space indicators (·) for this buffer
-    /// Set based on global config; can be toggled per-buffer by user
-    pub show_whitespace_indicators: bool,
+    /// Resolved whitespace indicator visibility for this buffer.
+    /// Set based on global + language config; can be toggled per-buffer by user
+    pub whitespace: crate::config::WhitespaceVisibility,
 
     /// Whether pressing Tab should insert a tab character instead of spaces.
     /// Set based on language config; can be toggled per-buffer by user
@@ -74,8 +70,7 @@ pub struct BufferSettings {
 impl Default for BufferSettings {
     fn default() -> Self {
         Self {
-            show_whitespace_tabs: true,
-            show_whitespace_indicators: false,
+            whitespace: crate::config::WhitespaceVisibility::default(),
             use_tabs: false,
             tab_size: 4,
         }

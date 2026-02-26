@@ -112,43 +112,34 @@ impl Editor {
         self.set_status_message(status.to_string());
     }
 
-    /// Reset buffer settings (tab_size, use_tabs, show_whitespace_tabs, show_whitespace_indicators) to config defaults
+    /// Reset buffer settings (tab_size, use_tabs, whitespace visibility) to config defaults
     pub fn reset_buffer_settings(&mut self) {
+        use crate::config::WhitespaceVisibility;
         let buffer_id = self.active_buffer();
 
         // Determine settings from config using buffer's stored language
-        let (tab_size, use_tabs, show_whitespace_tabs) =
-            if let Some(state) = self.buffers.get(&buffer_id) {
-                let language = &state.language;
-                if let Some(lang_config) = self.config.languages.get(language) {
-                    (
-                        lang_config.tab_size.unwrap_or(self.config.editor.tab_size),
-                        lang_config.use_tabs,
-                        lang_config.show_whitespace_tabs,
-                    )
-                } else {
-                    (
-                        self.config.editor.tab_size,
-                        false,
-                        self.config.editor.show_tab_indicators,
-                    )
-                }
-            } else {
+        let mut whitespace = WhitespaceVisibility::from_config(&self.config.editor.whitespace);
+        let (tab_size, use_tabs) = if let Some(state) = self.buffers.get(&buffer_id) {
+            let language = &state.language;
+            if let Some(lang_config) = self.config.languages.get(language) {
+                whitespace =
+                    whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
                 (
-                    self.config.editor.tab_size,
-                    false,
-                    self.config.editor.show_tab_indicators,
+                    lang_config.tab_size.unwrap_or(self.config.editor.tab_size),
+                    lang_config.use_tabs,
                 )
-            };
-
-        let show_whitespace_indicators = self.config.editor.show_whitespace_indicators;
+            } else {
+                (self.config.editor.tab_size, false)
+            }
+        } else {
+            (self.config.editor.tab_size, false)
+        };
 
         // Apply settings to buffer
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             state.buffer_settings.tab_size = tab_size;
             state.buffer_settings.use_tabs = use_tabs;
-            state.buffer_settings.show_whitespace_tabs = show_whitespace_tabs;
-            state.buffer_settings.show_whitespace_indicators = show_whitespace_indicators;
+            state.buffer_settings.whitespace = whitespace;
         }
 
         self.set_status_message(t!("toggle.buffer_settings_reset").to_string());

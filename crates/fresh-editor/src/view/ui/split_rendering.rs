@@ -4163,6 +4163,17 @@ impl SplitRenderer {
             let line_tab_starts = &current_view_line.tab_starts;
             let _line_start_type = current_view_line.line_start;
 
+            // Pre-compute whitespace position boundaries for this view line.
+            // first_non_ws: index of first non-whitespace char (None if all whitespace)
+            // last_non_ws: index of last non-whitespace char (None if all whitespace)
+            let line_chars_for_ws: Vec<char> = line_content.chars().collect();
+            let first_non_ws_idx = line_chars_for_ws
+                .iter()
+                .position(|&c| c != ' ' && c != '\n' && c != '\r');
+            let last_non_ws_idx = line_chars_for_ws
+                .iter()
+                .rposition(|&c| c != ' ' && c != '\n' && c != '\r');
+
             // Helper to get source byte at a visual column using the new O(1) lookup
             let _source_byte_at_col = |vis_col: usize| -> Option<usize> {
                 let char_idx = line_visual_to_char.get(vis_col).copied()?;
@@ -4421,10 +4432,44 @@ impl SplitRenderer {
                     });
 
                     // Determine display character (tabs already expanded in ViewLineIterator)
-                    // Show tab indicator (→) at the start of tab expansions (if enabled for this language)
-                    // Show space indicator (·) when whitespace indicators are enabled
+                    // Show tab indicator (→) or space indicator (·) based on granular
+                    // whitespace visibility settings (leading/inner/trailing positions)
                     let indicator_buf: String;
                     let mut is_whitespace_indicator = false;
+
+                    // Classify whitespace position: leading, inner, or trailing
+                    // Leading = before first non-ws char, Trailing = after last non-ws char
+                    let ws_show_tab = is_tab_start && {
+                        let ws = &state.buffer_settings.whitespace;
+                        match (first_non_ws_idx, last_non_ws_idx) {
+                            (None, _) | (_, None) => ws.tabs_trailing,
+                            (Some(first), Some(last)) => {
+                                if display_char_idx < first {
+                                    ws.tabs_leading
+                                } else if display_char_idx > last {
+                                    ws.tabs_trailing
+                                } else {
+                                    ws.tabs_inner
+                                }
+                            }
+                        }
+                    };
+                    let ws_show_space = ch == ' ' && !is_tab_start && {
+                        let ws = &state.buffer_settings.whitespace;
+                        match (first_non_ws_idx, last_non_ws_idx) {
+                            (None, _) | (_, None) => ws.spaces_trailing,
+                            (Some(first), Some(last)) => {
+                                if display_char_idx < first {
+                                    ws.spaces_leading
+                                } else if display_char_idx > last {
+                                    ws.spaces_trailing
+                                } else {
+                                    ws.spaces_inner
+                                }
+                            }
+                        }
+                    };
+
                     let display_char: &str = if is_cursor && lsp_waiting && is_active {
                         "⋯"
                     } else if debug_tracker.is_some() && ch == '\r' {
@@ -4435,12 +4480,12 @@ impl SplitRenderer {
                         "\\n"
                     } else if ch == '\n' {
                         ""
-                    } else if is_tab_start && state.buffer_settings.show_whitespace_tabs {
+                    } else if ws_show_tab {
                         // Visual indicator for tab: show → at the first position
                         is_whitespace_indicator = true;
                         indicator_buf = "→".to_string();
                         &indicator_buf
-                    } else if ch == ' ' && state.buffer_settings.show_whitespace_indicators {
+                    } else if ws_show_space {
                         // Visual indicator for space: show · when enabled
                         is_whitespace_indicator = true;
                         indicator_buf = "·".to_string();
