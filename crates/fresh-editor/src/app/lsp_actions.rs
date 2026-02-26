@@ -223,8 +223,7 @@ impl Editor {
         };
         let buf_state = view_state.ensure_buffer_state(buffer_id);
 
-        // Try to unfold first — this only needs the marker-based FoldManager,
-        // not the LSP folding_ranges, so it works even after LSP disconnect.
+        // Try to unfold first — check if this line is a fold header.
         if buf_state
             .folds
             .remove_by_header_line(&state.buffer, &mut state.marker_list, line)
@@ -232,26 +231,46 @@ impl Editor {
             return;
         }
 
-        // Determine the fold end line: prefer LSP ranges, fall back to indent-based.
-        let (end_line, placeholder) = if !state.folding_ranges.is_empty() {
-            // Find the smallest LSP range whose start_line matches.
-            let mut selected_range: Option<&lsp_types::FoldingRange> = None;
-            let mut selected_span = usize::MAX;
+        // Also unfold if the cursor is inside an existing fold.
+        if let Some(byte) = state.buffer.line_start_offset(line) {
+            if buf_state
+                .folds
+                .remove_if_contains_byte(&mut state.marker_list, byte)
+            {
+                return;
+            }
+        }
+
+        // Determine the fold header and end line: prefer LSP ranges, fall back to indent-based.
+        // When the cursor is not on a fold header, find the smallest containing range.
+        let (header_line, end_line, placeholder) = if !state.folding_ranges.is_empty() {
+            // First: try exact match (start_line == line).
+            // Then: find the smallest containing range (start_line <= line <= end_line).
+            let mut exact_range: Option<&lsp_types::FoldingRange> = None;
+            let mut exact_span = usize::MAX;
+            let mut containing_range: Option<&lsp_types::FoldingRange> = None;
+            let mut containing_span = usize::MAX;
 
             for range in &state.folding_ranges {
                 let start_line = range.start_line as usize;
                 let range_end = range.end_line as usize;
-                if range_end <= start_line || start_line != line {
+                if range_end <= start_line {
                     continue;
                 }
                 let span = range_end.saturating_sub(start_line);
-                if span < selected_span {
-                    selected_span = span;
-                    selected_range = Some(range);
+
+                if start_line == line && span < exact_span {
+                    exact_span = span;
+                    exact_range = Some(range);
+                }
+                if start_line <= line && line <= range_end && span < containing_span {
+                    containing_span = span;
+                    containing_range = Some(range);
                 }
             }
 
-            let Some(range) = selected_range else {
+            let chosen = exact_range.or(containing_range);
+            let Some(range) = chosen else {
                 return;
             };
             let placeholder = range
@@ -259,24 +278,35 @@ impl Editor {
                 .as_ref()
                 .filter(|text| !text.trim().is_empty())
                 .cloned();
-            (range.end_line as usize, placeholder)
+            (range.start_line as usize, range.end_line as usize, placeholder)
         } else {
-            // Fallback: indent-based folding
+            // Fallback: indent-based folding.
+            // First try the current line, then walk upward to find a foldable ancestor.
             use crate::view::folding::indent_folding;
             let tab_size = state.buffer_settings.tab_size;
-            let Some(end) = indent_folding::indent_fold_end_line(&state.buffer, line, tab_size)
-            else {
-                return;
-            };
-            (end, None)
+
+            let mut header = line;
+            loop {
+                if let Some(end) = indent_folding::indent_fold_end_line(&state.buffer, header, tab_size) {
+                    if end >= line {
+                        break;
+                    }
+                }
+                if header == 0 {
+                    return;
+                }
+                header -= 1;
+            }
+            let end = indent_folding::indent_fold_end_line(&state.buffer, header, tab_size).unwrap();
+            (header, end, None)
         };
 
-        let start_line = line.saturating_add(1);
-        if start_line > end_line {
+        let first_hidden = header_line.saturating_add(1);
+        if first_hidden > end_line {
             return;
         }
 
-        let Some(start_byte) = state.buffer.line_start_offset(start_line) else {
+        let Some(start_byte) = state.buffer.line_start_offset(first_hidden) else {
             return;
         };
 
@@ -286,7 +316,7 @@ impl Editor {
             .unwrap_or_else(|| state.buffer.len());
 
         // Move any cursors inside the soon-to-be-hidden range to the header line.
-        if let Some(header_byte) = state.buffer.line_start_offset(line) {
+        if let Some(header_byte) = state.buffer.line_start_offset(header_line) {
             buf_state.cursors.map(|cursor| {
                 let in_hidden_range = cursor.position >= start_byte && cursor.position < end_byte;
                 let anchor_in_hidden = cursor
@@ -309,8 +339,8 @@ impl Editor {
 
         // If the viewport top is now inside the folded range, move it to the header.
         let top_line = state.buffer.get_line_number(buf_state.viewport.top_byte);
-        if top_line >= start_line && top_line <= end_line {
-            if let Some(header_byte) = state.buffer.line_start_offset(line) {
+        if top_line >= first_hidden && top_line <= end_line {
+            if let Some(header_byte) = state.buffer.line_start_offset(header_line) {
                 buf_state.viewport.top_byte = header_byte;
                 buf_state.viewport.top_view_line_offset = 0;
             }

@@ -2797,3 +2797,128 @@ fn test_dotfiles_hidden_by_default_and_toggle_controls_visibility() {
         screen
     );
 }
+
+/// Helper: find the right border column of the file explorer on screen.
+///
+/// Scans for the box-drawing corner characters that ratatui's `Block` draws
+/// for the file explorer.  Tries "┐" (top-right) first on each row from the
+/// top, then falls back to "┘" (bottom-right).
+fn find_explorer_border_col(harness: &EditorTestHarness) -> u16 {
+    let height = 40u16; // match test terminal height
+    // Look for ┐ (top-right corner) — it's on the top border row of the explorer block.
+    for row in 0..height {
+        let text = harness.get_row_text(row);
+        for (i, ch) in text.chars().enumerate() {
+            if ch == '┐' {
+                return i as u16;
+            }
+        }
+    }
+    // Fallback: look for ┘ (bottom-right corner)
+    for row in (0..height).rev() {
+        let text = harness.get_row_text(row);
+        for (i, ch) in text.chars().enumerate() {
+            if ch == '┘' {
+                return i as u16;
+            }
+        }
+    }
+    panic!(
+        "Could not find file explorer border on screen.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Test that hovering on the file explorer right border highlights that border
+/// and does NOT overwrite the adjacent editor column.
+#[test]
+fn test_file_explorer_border_hover_does_not_overwrite_editor_column() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    fs::write(project_root.join("hello.txt"), "hello world\n").unwrap();
+
+    // Open and wait for file explorer
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.editor().file_explorer_visible(),
+        "File explorer should be visible"
+    );
+
+    // Find the right border column of the file explorer
+    let border_col = find_explorer_border_col(&harness);
+    let editor_first_col = border_col + 1;
+
+    // Record the character in the first column of the editor area (just right of border)
+    let mid_row = 10u16; // a content row inside the explorer area
+    let row_text_before = harness.get_row_text(mid_row);
+    let editor_char_before: char = row_text_before.chars().nth(editor_first_col as usize).unwrap();
+
+    // Hover on the border column
+    harness.mouse_move(border_col, mid_row).unwrap();
+
+    // The editor column right of the border should NOT have been overwritten with "│"
+    let row_text_after = harness.get_row_text(mid_row);
+    let editor_char_after: char = row_text_after.chars().nth(editor_first_col as usize).unwrap();
+
+    assert_eq!(
+        editor_char_before, editor_char_after,
+        "Hovering on the file explorer border should NOT overwrite the first column of the \
+         editor area (border_col={}, editor_col={}). \
+         Before hover: '{}', After hover: '{}'.\nScreen:\n{}",
+        border_col,
+        editor_first_col,
+        editor_char_before,
+        editor_char_after,
+        harness.screen_to_string()
+    );
+}
+
+/// Test that dragging the file explorer border changes the explorer width.
+#[test]
+fn test_file_explorer_border_drag_resizes() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    fs::write(project_root.join("hello.txt"), "hello world\n").unwrap();
+
+    // Open and wait for file explorer
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.render().unwrap();
+
+    let border_col_before = find_explorer_border_col(&harness);
+
+    // Use a row in the middle of the content area (inside the explorer block's borders)
+    let mid_row = 15u16;
+    let drag_delta = 10u16;
+    harness
+        .mouse_drag(
+            border_col_before,
+            mid_row,
+            border_col_before + drag_delta,
+            mid_row,
+        )
+        .unwrap();
+
+    let border_col_after = find_explorer_border_col(&harness);
+
+    assert!(
+        border_col_after > border_col_before,
+        "After dragging the border right, the file explorer should be wider. \
+         Border was at col {}, expected it to move right but found it at col {}.\nScreen:\n{}",
+        border_col_before,
+        border_col_after,
+        harness.screen_to_string()
+    );
+
+    // The delta should be approximately what we dragged (allow some rounding from percentage math)
+    let actual_delta = border_col_after as i32 - border_col_before as i32;
+    assert!(
+        (actual_delta - drag_delta as i32).abs() <= 2,
+        "Border should have moved roughly {} columns, but moved {}",
+        drag_delta,
+        actual_delta
+    );
+}

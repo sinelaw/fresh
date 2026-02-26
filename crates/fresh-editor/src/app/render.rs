@@ -1160,7 +1160,7 @@ impl Editor {
                 // Highlight the file explorer border for resize
                 if let Some(explorer_area) = self.cached_layout.file_explorer_area {
                     let hover_style = Style::default().fg(self.theme.split_separator_hover_fg);
-                    let border_x = explorer_area.x + explorer_area.width;
+                    let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
                     for row_offset in 0..explorer_area.height {
                         let paragraph = Paragraph::new(Span::styled("│", hover_style));
                         frame.render_widget(

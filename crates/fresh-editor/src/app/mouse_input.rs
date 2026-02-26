@@ -1430,6 +1430,22 @@ impl Editor {
             return Ok(());
         }
 
+        // Check if click is on file explorer border (for drag resizing).
+        // Must come before the general file explorer click check, because
+        // the border column is inside the explorer area rect.
+        if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+            let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
+            if col == border_x
+                && row >= explorer_area.y
+                && row < explorer_area.y + explorer_area.height
+            {
+                self.mouse_state.dragging_file_explorer = true;
+                self.mouse_state.drag_start_position = Some((col, row));
+                self.mouse_state.drag_start_explorer_width = Some(self.file_explorer_width_percent);
+                return Ok(());
+            }
+        }
+
         // Check if click is on file explorer
         if let Some(explorer_area) = self.cached_layout.file_explorer_area {
             if col >= explorer_area.x
@@ -1635,23 +1651,6 @@ impl Editor {
                     }
                     SearchOptionsHover::None => {}
                 }
-            }
-        }
-
-        // Check if click is on file explorer border (for drag resizing)
-        // Use the rightmost column of the explorer area (the drawn border character)
-        // rather than one past it, so the resize handle doesn't overlap fold indicators.
-        if let Some(explorer_area) = self.cached_layout.file_explorer_area {
-            let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
-            if col == border_x
-                && row >= explorer_area.y
-                && row < explorer_area.y + explorer_area.height
-            {
-                // Start file explorer border drag
-                self.mouse_state.dragging_file_explorer = true;
-                self.mouse_state.drag_start_position = Some((col, row));
-                self.mouse_state.drag_start_explorer_width = Some(self.file_explorer_width_percent);
-                return Ok(());
             }
         }
 
