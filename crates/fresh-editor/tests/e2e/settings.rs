@@ -3504,3 +3504,212 @@ fn test_usability_entry_dialog_button_focus_indicator() {
     harness.render().unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
+
+/// Test that discarding changes via confirmation dialog doesn't persist dialog on reopen
+///
+/// Regression test: After opening settings, making changes, pressing Escape to trigger
+/// the confirmation dialog, then clicking Discard to close, re-opening settings should
+/// show a clean settings view, not the confirmation dialog again.
+#[test]
+fn test_discard_dialog_does_not_persist_on_reopen() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness.open_settings().unwrap();
+
+    // Use search to find "Check For Updates" and toggle it to create a pending change
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "check".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Jump to result and toggle
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Press Escape to trigger confirmation dialog
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Unsaved Changes");
+
+    // Navigate to Discard button (one Right from Save)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(">[ Discard ]");
+
+    // Press Enter to discard and close settings
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Settings should be closed
+    harness.assert_screen_not_contains("Settings");
+    harness.assert_screen_not_contains("Unsaved Changes");
+
+    // Re-open settings
+    harness.open_settings().unwrap();
+
+    // Settings should show clean, without the confirmation dialog
+    harness.assert_screen_contains("Settings");
+    harness.assert_screen_not_contains("Unsaved Changes");
+}
+
+/// Test that the Reset button shows a confirmation dialog listing changed settings
+///
+/// When there are pending changes, pressing Reset should show a dialog listing
+/// all pending changes and asking for confirmation before discarding them.
+#[test]
+fn test_reset_button_shows_confirmation_dialog() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness.open_settings().unwrap();
+
+    // Use search to find "Check For Updates" and toggle it to create a pending change
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "check".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Jump to result and toggle
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show modified indicator
+    harness.assert_screen_contains("modified");
+
+    // Navigate to footer: Tab from Settings goes to Footer (starts at Layer/Project, index 0)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Go Right from Layer (index 0) to Reset (index 1)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Press Enter on Reset button
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Reset confirmation dialog should appear
+    harness.assert_screen_contains("Reset All Changes");
+    harness.assert_screen_contains("check_for_updates");
+
+    // Should show Reset and Cancel buttons
+    harness.assert_screen_contains("Reset");
+    harness.assert_screen_contains("Cancel");
+
+    // Cancel the dialog with Escape
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Dialog should be dismissed, settings still open with changes
+    harness.assert_screen_not_contains("Reset All Changes");
+    harness.assert_screen_contains("Settings");
+    harness.assert_screen_contains("modified");
+
+    // Discard and close
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+}
+
+/// Test that confirming the Reset dialog actually discards all pending changes
+#[test]
+fn test_reset_dialog_confirm_discards_changes() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness.open_settings().unwrap();
+
+    // Use search to find "Check For Updates" and toggle it to create a pending change
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "check".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Jump to result and toggle
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show modified indicator
+    harness.assert_screen_contains("modified");
+
+    // Navigate to footer: Tab from Settings goes to Footer (starts at Layer/Project, index 0)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Go Right from Layer (index 0) to Reset (index 1)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Press Enter on Reset button
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Reset confirmation dialog should appear
+    harness.assert_screen_contains("Reset All Changes");
+
+    // Confirm reset (Reset button is selected by default at index 0)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Dialog should be dismissed
+    harness.assert_screen_not_contains("Reset All Changes");
+
+    // Settings should still be open but without the modified indicator
+    harness.assert_screen_contains("Settings");
+    harness.assert_screen_not_contains("modified");
+
+    // Closing settings should NOT show Unsaved Changes dialog since all changes were reset
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("Unsaved Changes");
+}

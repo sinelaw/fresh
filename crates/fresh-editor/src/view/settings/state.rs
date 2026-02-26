@@ -84,6 +84,12 @@ pub struct SettingsState {
     pub confirm_dialog_selection: usize,
     /// Hovered option in confirmation dialog (for mouse hover feedback)
     pub confirm_dialog_hover: Option<usize>,
+    /// Whether the reset confirmation dialog is showing
+    pub showing_reset_dialog: bool,
+    /// Selected option in reset dialog (0=Reset, 1=Cancel)
+    pub reset_dialog_selection: usize,
+    /// Hovered option in reset dialog (for mouse hover feedback)
+    pub reset_dialog_hover: Option<usize>,
     /// Whether the help overlay is showing
     pub showing_help: bool,
     /// Scrollable panel for settings items
@@ -149,6 +155,9 @@ impl SettingsState {
             showing_confirm_dialog: false,
             confirm_dialog_selection: 0,
             confirm_dialog_hover: None,
+            showing_reset_dialog: false,
+            reset_dialog_selection: 0,
+            reset_dialog_hover: None,
             showing_help: false,
             scroll_panel: ScrollablePanel::new(),
             sub_focus: None,
@@ -178,6 +187,14 @@ impl SettingsState {
         self.selected_item = 0;
         self.scroll_panel = ScrollablePanel::new();
         self.sub_focus = None;
+        // Reset all dialog states so re-opening settings starts clean
+        self.showing_confirm_dialog = false;
+        self.confirm_dialog_selection = 0;
+        self.confirm_dialog_hover = None;
+        self.showing_reset_dialog = false;
+        self.reset_dialog_selection = 0;
+        self.reset_dialog_hover = None;
+        self.showing_help = false;
     }
 
     /// Hide the settings panel
@@ -1990,7 +2007,8 @@ impl SettingsState {
 
     /// Get list of pending changes for display
     pub fn get_change_descriptions(&self) -> Vec<String> {
-        self.pending_changes
+        let mut descriptions: Vec<String> = self
+            .pending_changes
             .iter()
             .map(|(path, value)| {
                 let value_str = match value {
@@ -2001,7 +2019,13 @@ impl SettingsState {
                 };
                 format!("{}: {}", path, value_str)
             })
-            .collect()
+            .collect();
+        // Also include pending deletions (resets)
+        for path in &self.pending_deletions {
+            descriptions.push(format!("{}: (reset to default)", path));
+        }
+        descriptions.sort();
+        descriptions
     }
 }
 

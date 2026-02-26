@@ -35,6 +35,11 @@ impl InputHandler for SettingsState {
             return self.handle_confirm_dialog_input(event, ctx);
         }
 
+        // Reset confirmation dialog takes priority
+        if self.showing_reset_dialog {
+            return self.handle_reset_dialog_input(event);
+        }
+
         // Help overlay takes priority
         if self.showing_help {
             return self.handle_help_input(event, ctx);
@@ -445,6 +450,49 @@ impl SettingsState {
         }
     }
 
+    /// Handle input when reset confirmation dialog is showing
+    fn handle_reset_dialog_input(&mut self, event: &KeyEvent) -> InputResult {
+        match event.code {
+            KeyCode::Left | KeyCode::BackTab => {
+                if self.reset_dialog_selection > 0 {
+                    self.reset_dialog_selection -= 1;
+                }
+                InputResult::Consumed
+            }
+            KeyCode::Right | KeyCode::Tab => {
+                if self.reset_dialog_selection < 1 {
+                    self.reset_dialog_selection += 1;
+                }
+                InputResult::Consumed
+            }
+            KeyCode::Enter => {
+                match self.reset_dialog_selection {
+                    0 => {
+                        // Reset all changes
+                        self.discard_changes();
+                        self.showing_reset_dialog = false;
+                    }
+                    1 => {
+                        // Cancel - back to settings
+                        self.showing_reset_dialog = false;
+                    }
+                    _ => {}
+                }
+                InputResult::Consumed
+            }
+            KeyCode::Esc => {
+                self.showing_reset_dialog = false;
+                InputResult::Consumed
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.discard_changes();
+                self.showing_reset_dialog = false;
+                InputResult::Consumed
+            }
+            _ => InputResult::Consumed, // Modal: consume all
+        }
+    }
+
     /// Handle input when help overlay is showing
     fn handle_help_input(&mut self, _event: &KeyEvent, _ctx: &mut InputContext) -> InputResult {
         // Any key dismisses help
@@ -627,7 +675,7 @@ impl SettingsState {
             KeyCode::Enter => {
                 match self.footer_button_index {
                     0 => self.cycle_target_layer(), // Layer button
-                    1 => self.reset_current_to_default(),
+                    1 => self.request_reset(),
                     2 => ctx.defer(DeferredAction::CloseSettings { save: true }),
                     3 => self.request_close(ctx),
                     4 => ctx.defer(DeferredAction::OpenConfigFile {
@@ -872,6 +920,14 @@ impl SettingsState {
                 InputResult::Consumed
             }
             _ => InputResult::Consumed, // Consume all while dropdown is open
+        }
+    }
+
+    /// Request to reset all changes (shows confirm dialog if there are changes)
+    fn request_reset(&mut self) {
+        if self.has_changes() {
+            self.showing_reset_dialog = true;
+            self.reset_dialog_selection = 0;
         }
     }
 
