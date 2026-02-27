@@ -58,6 +58,8 @@
               (lib.fileset.fileFilter (file: file.hasExt "sublime-syntax") unfilteredRoot)
               # Font files (used by include_bytes! in fresh-gui and fresh-editor)
               (lib.fileset.fileFilter (file: file.hasExt "ttf") unfilteredRoot)
+              # Icon files (used by include_bytes! in fresh-gui)
+              (lib.fileset.fileFilter (file: file.hasExt "png") unfilteredRoot)
               # Runtime assets in crates/fresh-editor
               ./crates/fresh-editor/docs
               ./crates/fresh-editor/keymaps
