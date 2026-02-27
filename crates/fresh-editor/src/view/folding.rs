@@ -30,6 +30,8 @@ pub struct ResolvedFoldRange {
     pub start_byte: usize,
     /// End byte of hidden range (exclusive)
     pub end_byte: usize,
+    /// Line-start byte of the fold header
+    pub header_byte: usize,
     /// Optional placeholder text
     pub placeholder: Option<String>,
 }
@@ -93,41 +95,6 @@ impl FoldManager {
         self.ranges.clear();
     }
 
-    /// Remove the fold range whose header line matches `header_line`.
-    /// Returns true if a fold was removed.
-    pub fn remove_by_header_line(
-        &mut self,
-        buffer: &Buffer,
-        marker_list: &mut MarkerList,
-        header_line: usize,
-    ) -> bool {
-        let mut to_delete = Vec::new();
-
-        self.ranges.retain(|range| {
-            let Some(start_byte) = marker_list.get_position(range.start_marker) else {
-                return true;
-            };
-            let start_line = buffer.get_line_number(start_byte);
-            if start_line == 0 {
-                return true;
-            }
-            let current_header = start_line - 1;
-            if current_header == header_line {
-                to_delete.push((range.start_marker, range.end_marker));
-                false
-            } else {
-                true
-            }
-        });
-
-        for (start, end) in &to_delete {
-            marker_list.delete(*start);
-            marker_list.delete(*end);
-        }
-
-        !to_delete.is_empty()
-    }
-
     /// Remove any fold that contains the given byte position.
     /// Returns true if a fold was removed.
     pub fn remove_if_contains_byte(&mut self, marker_list: &mut MarkerList, byte: usize) -> bool {
@@ -184,12 +151,16 @@ impl FoldManager {
                 continue;
             }
 
+            let header_byte =
+                indent_folding::find_line_start_byte(buffer, start_byte.saturating_sub(1));
+
             ranges.push(ResolvedFoldRange {
                 header_line: start_line - 1,
                 start_line,
                 end_line,
                 start_byte,
                 end_byte,
+                header_byte,
                 placeholder: range.placeholder.clone(),
             });
         }
@@ -197,17 +168,49 @@ impl FoldManager {
         ranges
     }
 
-    /// Return a map of header line -> placeholder for collapsed folds.
-    pub fn collapsed_headers(
+    /// Return a map of header_byte -> placeholder for collapsed folds.
+    pub fn collapsed_header_bytes(
         &self,
         buffer: &Buffer,
         marker_list: &MarkerList,
     ) -> std::collections::BTreeMap<usize, Option<String>> {
         let mut map = std::collections::BTreeMap::new();
         for range in self.resolved_ranges(buffer, marker_list) {
-            map.insert(range.header_line, range.placeholder);
+            map.insert(range.header_byte, range.placeholder);
         }
         map
+    }
+
+    /// Remove the fold range whose header byte matches `target_header_byte`.
+    /// Returns true if a fold was removed.
+    pub fn remove_by_header_byte(
+        &mut self,
+        buffer: &Buffer,
+        marker_list: &mut MarkerList,
+        target_header_byte: usize,
+    ) -> bool {
+        let mut to_delete = Vec::new();
+
+        self.ranges.retain(|range| {
+            let Some(start_byte) = marker_list.get_position(range.start_marker) else {
+                return true;
+            };
+            let current_header =
+                indent_folding::find_line_start_byte(buffer, start_byte.saturating_sub(1));
+            if current_header == target_header_byte {
+                to_delete.push((range.start_marker, range.end_marker));
+                false
+            } else {
+                true
+            }
+        });
+
+        for (start, end) in &to_delete {
+            marker_list.delete(*start);
+            marker_list.delete(*end);
+        }
+
+        !to_delete.is_empty()
     }
 
     /// Return collapsed fold ranges as line-based data (for persistence/cloning).
@@ -259,90 +262,301 @@ pub mod indent_folding {
     use crate::model::buffer::Buffer;
     use crate::primitives::indent_pattern::PatternIndentCalculator;
 
-    /// Information about a line's indentation.
-    struct LineIndent {
-        indent: usize,
-        is_blank: bool,
+    /// Find the byte offset of the start of the line containing `pos`.
+    /// Scans backward for `\n` (or returns 0).
+    pub fn find_line_start_byte(buffer: &Buffer, pos: usize) -> usize {
+        if pos == 0 {
+            return 0;
+        }
+        let mut p = pos.min(buffer.len()).saturating_sub(1);
+        loop {
+            match PatternIndentCalculator::byte_at(buffer, p) {
+                Some(b'\n') => return p + 1,
+                None => return 0,
+                _ => {
+                    if p == 0 {
+                        return 0;
+                    }
+                    p -= 1;
+                }
+            }
+        }
     }
 
-    /// Measure the indent level of a given line, reusing the pattern-based
-    /// indent calculator shared with auto-indent.
-    fn line_indent(buffer: &Buffer, line: usize, tab_size: usize) -> Option<LineIndent> {
-        let start = buffer.line_start_offset(line)?;
-        let end = buffer
-            .line_start_offset(line + 1)
-            .unwrap_or_else(|| buffer.len());
-
-        let is_blank = (start..end).all(|pos| {
-            matches!(
-                PatternIndentCalculator::byte_at(buffer, pos),
-                Some(b' ' | b'\t' | b'\r' | b'\n') | None
-            )
-        });
-
-        let indent = PatternIndentCalculator::count_leading_indent(buffer, start, end, tab_size);
-        Some(LineIndent { indent, is_blank })
+    /// Measure leading indent of a line given as a byte slice (no trailing `\n`).
+    fn slice_indent(line: &[u8], tab_size: usize) -> (usize, bool) {
+        let mut indent = 0;
+        let mut all_blank = true;
+        for &b in line {
+            match b {
+                b' ' => indent += 1,
+                b'\t' => {
+                    if tab_size > 0 {
+                        indent += tab_size - (indent % tab_size);
+                    } else {
+                        indent += 1;
+                    }
+                }
+                b'\r' => {}
+                _ => {
+                    all_blank = false;
+                    break;
+                }
+            }
+        }
+        (indent, all_blank)
     }
 
-    /// Compute the end line (inclusive) of an indent-based fold starting at
-    /// `header_line`, or `None` if the line is not foldable.
+    /// Identify foldable lines in a raw byte slice by analysing indentation.
     ///
-    /// A line is foldable when the next non-blank line is more indented.
-    /// The fold extends forward until a non-blank line at the header's indent
-    /// level (or less) is found.  Trailing blank lines inside the fold are
-    /// included up to (but not past) the last non-blank line that is still
-    /// more indented than the header.
-    pub fn indent_fold_end_line(
-        buffer: &Buffer,
-        header_line: usize,
+    /// Works without any line metadata, so it can be used on large files whose
+    /// piece tree has not been scanned for line feeds.
+    ///
+    /// `max_lookahead` limits how many lines *ahead* of each candidate we scan
+    /// to decide foldability.
+    ///
+    /// Returns an iterator of 0-based line indices (within the slice) that are
+    /// foldable.
+    pub fn foldable_lines_in_bytes(
+        bytes: &[u8],
         tab_size: usize,
+        max_lookahead: usize,
+    ) -> Vec<usize> {
+        // Split into lines (preserving empty trailing line if present).
+        let lines: Vec<&[u8]> = bytes.split(|&b| b == b'\n').collect();
+        let line_count = lines.len();
+        let mut result = Vec::new();
+
+        for i in 0..line_count {
+            let (header_indent, header_blank) = slice_indent(lines[i], tab_size);
+            if header_blank {
+                continue;
+            }
+
+            // Find next non-blank line within lookahead.
+            let limit = line_count.min(i + 1 + max_lookahead);
+            let mut next = i + 1;
+            while next < limit {
+                let (_, blank) = slice_indent(lines[next], tab_size);
+                if !blank {
+                    break;
+                }
+                next += 1;
+            }
+            if next >= limit {
+                continue;
+            }
+
+            let (next_indent, _) = slice_indent(lines[next], tab_size);
+            if next_indent > header_indent {
+                result.push(i);
+            }
+        }
+
+        result
+    }
+
+    /// Byte-based fold-end search for a single header line.
+    ///
+    /// Reads up to `max_scan_bytes` forward from `header_byte` and determines
+    /// whether the line at that offset is foldable (next non-blank line is more
+    /// indented).  Returns `Some(end_byte)` where `end_byte` is the start of
+    /// the last non-blank line still inside the fold, or `None`.
+    pub fn indent_fold_end_byte(
+        buffer: &Buffer,
+        header_byte: usize,
+        tab_size: usize,
+        max_scan_bytes: usize,
     ) -> Option<usize> {
-        let header = line_indent(buffer, header_line, tab_size)?;
-        if header.is_blank {
+        let buf_len = buffer.len();
+        let end = buf_len.min(header_byte.saturating_add(max_scan_bytes));
+        let bytes = buffer.slice_bytes(header_byte..end);
+        if bytes.is_empty() {
             return None;
         }
 
-        let line_count = buffer.line_count()?;
+        let lines: Vec<&[u8]> = bytes.split(|&b| b == b'\n').collect();
+        if lines.is_empty() {
+            return None;
+        }
 
-        // Find the next non-blank line after the header.
-        let mut next = header_line + 1;
-        while next < line_count {
-            let li = line_indent(buffer, next, tab_size)?;
-            if !li.is_blank {
+        let (header_indent, header_blank) = slice_indent(lines[0], tab_size);
+        if header_blank {
+            return None;
+        }
+
+        // Find next non-blank line.
+        let mut next = 1;
+        while next < lines.len() {
+            let (_, blank) = slice_indent(lines[next], tab_size);
+            if !blank {
                 break;
             }
             next += 1;
         }
-        if next >= line_count {
+        if next >= lines.len() {
             return None;
         }
 
-        let next_li = line_indent(buffer, next, tab_size)?;
-        if next_li.indent <= header.indent {
-            return None; // not more indented → not foldable
+        let (next_indent, _) = slice_indent(lines[next], tab_size);
+        if next_indent <= header_indent {
+            return None;
         }
 
-        // Scan forward to find where the fold ends.
-        let mut last_non_blank_in_fold = next;
+        // Scan forward for fold boundary.
+        let mut last_non_blank_line = next;
         let mut current = next + 1;
-        while current < line_count {
-            let li = line_indent(buffer, current, tab_size)?;
-            if li.is_blank {
+        while current < lines.len() {
+            let (indent, blank) = slice_indent(lines[current], tab_size);
+            if blank {
                 current += 1;
                 continue;
             }
-            if li.indent <= header.indent {
+            if indent <= header_indent {
                 break;
             }
-            last_non_blank_in_fold = current;
+            last_non_blank_line = current;
             current += 1;
         }
 
-        // Only foldable if we'd actually hide at least one line.
-        if last_non_blank_in_fold > header_line {
-            Some(last_non_blank_in_fold)
-        } else {
-            None
+        if last_non_blank_line < 1 {
+            return None;
+        }
+
+        // Convert line index back to byte offset: sum lengths of lines 0..last_non_blank_line
+        // (each line was separated by a `\n`).
+        let mut byte_offset = 0;
+        for i in 0..last_non_blank_line {
+            byte_offset += lines[i].len() + 1; // +1 for the \n
+        }
+        Some(header_byte + byte_offset)
+    }
+
+    /// Find the byte offset of the start of the *next* line after `pos`.
+    /// Scans forward for `\n` and returns the byte after it. If no `\n` is
+    /// found, returns `buffer.len()`.
+    pub fn find_next_line_start_byte(buffer: &Buffer, pos: usize) -> usize {
+        let mut p = pos;
+        let len = buffer.len();
+        while p < len {
+            match PatternIndentCalculator::byte_at(buffer, p) {
+                Some(b'\n') => return p + 1,
+                None => return len,
+                _ => p += 1,
+            }
+        }
+        len
+    }
+
+    /// Byte-range of a fold that contains `target_byte`.
+    ///
+    /// Walks backward (up to `max_upward_lines` lines) from the line
+    /// containing `target_byte`, trying each candidate as a fold header via
+    /// [`indent_fold_end_byte`].  When a fold is found whose hidden range
+    /// reaches at least `target_byte`, returns `(header_byte, start_byte,
+    /// end_byte)` where:
+    ///
+    /// * `header_byte` – first byte of the fold header line
+    /// * `start_byte`  – first hidden byte (start of the line after the header)
+    /// * `end_byte`    – one past the last hidden byte (start of the line
+    ///   *after* the last hidden line, or `buffer.len()`)
+    ///
+    /// Returns `None` if no enclosing fold is found within the search limit.
+    pub fn find_fold_range_at_byte(
+        buffer: &Buffer,
+        target_byte: usize,
+        tab_size: usize,
+        max_scan_bytes: usize,
+        max_upward_lines: usize,
+    ) -> Option<(usize, usize, usize)> {
+        let mut header_byte = find_line_start_byte(buffer, target_byte);
+
+        for _ in 0..=max_upward_lines {
+            if let Some(fold_end_byte) =
+                indent_fold_end_byte(buffer, header_byte, tab_size, max_scan_bytes)
+            {
+                if fold_end_byte >= target_byte {
+                    let eb = find_next_line_start_byte(buffer, fold_end_byte);
+                    let sb = find_next_line_start_byte(buffer, header_byte);
+                    if sb < eb {
+                        return Some((header_byte, sb, eb));
+                    }
+                }
+            }
+            if header_byte == 0 {
+                break;
+            }
+            header_byte = find_line_start_byte(buffer, header_byte.saturating_sub(1));
+        }
+
+        None
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_slice_indent_spaces() {
+            assert_eq!(slice_indent(b"    hello", 4), (4, false));
+            assert_eq!(slice_indent(b"hello", 4), (0, false));
+            assert_eq!(slice_indent(b"        deep", 4), (8, false));
+        }
+
+        #[test]
+        fn test_slice_indent_tabs() {
+            assert_eq!(slice_indent(b"\thello", 4), (4, false));
+            assert_eq!(slice_indent(b"\t\thello", 4), (8, false));
+            // Mixed: 2 spaces + tab (tab_size=4) → 2 + (4-2) = 4
+            assert_eq!(slice_indent(b"  \thello", 4), (4, false));
+        }
+
+        #[test]
+        fn test_slice_indent_blank() {
+            assert_eq!(slice_indent(b"", 4), (0, true));
+            assert_eq!(slice_indent(b"   ", 4), (3, true));
+            assert_eq!(slice_indent(b"  \r", 4), (2, true));
+        }
+
+        #[test]
+        fn test_foldable_lines_basic() {
+            let text = b"fn main() {\n    println!();\n}\n";
+            let foldable = foldable_lines_in_bytes(text, 4, 50);
+            assert_eq!(foldable, vec![0]); // line 0 is foldable
+        }
+
+        #[test]
+        fn test_foldable_lines_nested() {
+            let text = b"fn main() {\n    if true {\n        x();\n    }\n}\n";
+            let foldable = foldable_lines_in_bytes(text, 4, 50);
+            assert_eq!(foldable, vec![0, 1]); // both fn and if are foldable
+        }
+
+        #[test]
+        fn test_foldable_lines_not_foldable() {
+            let text = b"line1\nline2\nline3\n";
+            let foldable = foldable_lines_in_bytes(text, 4, 50);
+            assert!(foldable.is_empty());
+        }
+
+        #[test]
+        fn test_foldable_lines_blank_lines_skipped() {
+            // Blank line between header and indented line should still be foldable
+            let text = b"fn main() {\n\n    println!();\n}\n";
+            let foldable = foldable_lines_in_bytes(text, 4, 50);
+            assert_eq!(foldable, vec![0]);
+        }
+
+        #[test]
+        fn test_foldable_lines_max_lookahead() {
+            // With max_lookahead=1, a blank line between header and content means
+            // the lookahead can't reach the indented line.
+            let text = b"fn main() {\n\n\n    println!();\n}\n";
+            let foldable_short = foldable_lines_in_bytes(text, 4, 1);
+            assert!(foldable_short.is_empty());
+
+            let foldable_long = foldable_lines_in_bytes(text, 4, 50);
+            assert_eq!(foldable_long, vec![0]);
         }
     }
 }

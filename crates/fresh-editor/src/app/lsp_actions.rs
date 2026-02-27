@@ -199,18 +199,34 @@ impl Editor {
         }
     }
 
-    /// Toggle folding at the current cursor line, if a foldable range exists.
+    /// Toggle folding at the current cursor position.
     pub fn toggle_fold_at_cursor(&mut self) {
         let buffer_id = self.active_buffer();
-        let line = self
-            .active_state()
-            .buffer
-            .get_line_number(self.active_cursors().primary().position);
-        self.toggle_fold_at_line(buffer_id, line);
+        let pos = self.active_cursors().primary().position;
+        self.toggle_fold_at_byte(buffer_id, pos);
     }
 
     /// Toggle folding for the given line in the specified buffer.
+    ///
+    /// Kept for callers that only have a line number (e.g. gutter clicks
+    /// that already resolved the line).  Converts to a byte position and
+    /// delegates to [`Self::toggle_fold_at_byte`].
     pub fn toggle_fold_at_line(&mut self, buffer_id: BufferId, line: usize) {
+        let byte_pos = {
+            let Some(state) = self.buffers.get(&buffer_id) else {
+                return;
+            };
+            state.buffer.line_start_offset(line).unwrap_or_else(|| {
+                use crate::view::folding::indent_folding;
+                let approx = line * state.buffer.estimated_line_length();
+                indent_folding::find_line_start_byte(&state.buffer, approx)
+            })
+        };
+        self.toggle_fold_at_byte(buffer_id, byte_pos);
+    }
+
+    /// Toggle folding at the given byte position in the specified buffer.
+    pub fn toggle_fold_at_byte(&mut self, buffer_id: BufferId, byte_pos: usize) {
         let split_id = self.split_manager.active_split();
         let (buffers, split_view_states) = (&mut self.buffers, &mut self.split_view_states);
 
@@ -223,29 +239,31 @@ impl Editor {
         };
         let buf_state = view_state.ensure_buffer_state(buffer_id);
 
-        // Try to unfold first — check if this line is a fold header.
+        // Try to unfold first — check if this byte's line is a fold header.
+        let header_byte = {
+            use crate::view::folding::indent_folding;
+            indent_folding::find_line_start_byte(&state.buffer, byte_pos)
+        };
         if buf_state
             .folds
-            .remove_by_header_line(&state.buffer, &mut state.marker_list, line)
+            .remove_by_header_byte(&state.buffer, &mut state.marker_list, header_byte)
         {
             return;
         }
 
-        // Also unfold if the cursor is inside an existing fold.
-        if let Some(byte) = state.buffer.line_start_offset(line) {
-            if buf_state
-                .folds
-                .remove_if_contains_byte(&mut state.marker_list, byte)
-            {
-                return;
-            }
+        // Also unfold if the byte position is inside an existing fold.
+        if buf_state
+            .folds
+            .remove_if_contains_byte(&mut state.marker_list, byte_pos)
+        {
+            return;
         }
 
-        // Determine the fold header and end line: prefer LSP ranges, fall back to indent-based.
-        // When the cursor is not on a fold header, find the smallest containing range.
-        let (header_line, end_line, placeholder) = if !state.folding_ranges.is_empty() {
-            // First: try exact match (start_line == line).
-            // Then: find the smallest containing range (start_line <= line <= end_line).
+        // Determine the fold byte range: prefer LSP ranges, fall back to indent-based.
+        if !state.folding_ranges.is_empty() {
+            // --- LSP-provided ranges (line-based) ---
+            // LSP ranges use line numbers, so we need get_line_number here.
+            let line = state.buffer.get_line_number(byte_pos);
             let mut exact_range: Option<&lsp_types::FoldingRange> = None;
             let mut exact_span = usize::MAX;
             let mut containing_range: Option<&lsp_types::FoldingRange> = None;
@@ -278,82 +296,92 @@ impl Editor {
                 .as_ref()
                 .filter(|text| !text.trim().is_empty())
                 .cloned();
-            (
-                range.start_line as usize,
-                range.end_line as usize,
-                placeholder,
-            )
-        } else if state.buffer.len() < crate::config::LARGE_FILE_THRESHOLD_BYTES as usize {
-            // Fallback: indent-based folding (only for normal-sized files).
-            // First try the current line, then walk upward to find a foldable ancestor.
+            let header_line = range.start_line as usize;
+            let end_line = range.end_line as usize;
+            let first_hidden = header_line.saturating_add(1);
+            if first_hidden > end_line {
+                return;
+            }
+            let Some(sb) = state.buffer.line_start_offset(first_hidden) else {
+                return;
+            };
+            let eb = state
+                .buffer
+                .line_start_offset(end_line.saturating_add(1))
+                .unwrap_or_else(|| state.buffer.len());
+            let hb = state.buffer.line_start_offset(header_line).unwrap_or(0);
+            Self::create_fold(state, buf_state, sb, eb, hb, placeholder);
+        } else {
+            // --- Indent-based folding on bytes ---
             use crate::view::folding::indent_folding;
             let tab_size = state.buffer_settings.tab_size;
+            let max_upward = crate::config::INDENT_FOLD_MAX_UPWARD_SCAN;
+            let est_ll = state.buffer.estimated_line_length();
+            let max_scan_bytes = crate::config::INDENT_FOLD_MAX_SCAN_LINES * est_ll;
 
-            let mut header = line;
-            loop {
-                if let Some(end) =
-                    indent_folding::indent_fold_end_line(&state.buffer, header, tab_size)
-                {
-                    if end >= line {
-                        break;
-                    }
-                }
-                if header == 0 {
-                    return;
-                }
-                header -= 1;
+            // Ensure the region around the cursor is loaded from disk so the
+            // immutable slice_bytes in find_fold_range_at_byte can read it.
+            let upward_bytes = max_upward * est_ll;
+            let load_start = byte_pos.saturating_sub(upward_bytes);
+            let load_end = byte_pos
+                .saturating_add(max_scan_bytes)
+                .min(state.buffer.len());
+            // Load chunks from disk so immutable slice_bytes in
+            // find_fold_range_at_byte can read the region.
+            drop(
+                state
+                    .buffer
+                    .get_text_range_mut(load_start, load_end - load_start),
+            );
+
+            if let Some((hb, sb, eb)) = indent_folding::find_fold_range_at_byte(
+                &state.buffer,
+                byte_pos,
+                tab_size,
+                max_scan_bytes,
+                max_upward,
+            ) {
+                Self::create_fold(state, buf_state, sb, eb, hb, None);
             }
-            let end =
-                indent_folding::indent_fold_end_line(&state.buffer, header, tab_size).unwrap();
-            (header, end, None)
-        } else {
-            // Large file without LSP — no folding available
-            return;
-        };
+        }
+    }
 
-        let first_hidden = header_line.saturating_add(1);
-        if first_hidden > end_line {
+    fn create_fold(
+        state: &mut crate::state::EditorState,
+        buf_state: &mut crate::view::split::BufferViewState,
+        start_byte: usize,
+        end_byte: usize,
+        header_byte: usize,
+        placeholder: Option<String>,
+    ) {
+        if end_byte <= start_byte {
             return;
         }
-
-        let Some(start_byte) = state.buffer.line_start_offset(first_hidden) else {
-            return;
-        };
-
-        let end_byte = state
-            .buffer
-            .line_start_offset(end_line.saturating_add(1))
-            .unwrap_or_else(|| state.buffer.len());
 
         // Move any cursors inside the soon-to-be-hidden range to the header line.
-        if let Some(header_byte) = state.buffer.line_start_offset(header_line) {
-            buf_state.cursors.map(|cursor| {
-                let in_hidden_range = cursor.position >= start_byte && cursor.position < end_byte;
-                let anchor_in_hidden = cursor
-                    .anchor
-                    .is_some_and(|anchor| anchor >= start_byte && anchor < end_byte);
-                if in_hidden_range || anchor_in_hidden {
-                    cursor.position = header_byte;
-                    cursor.anchor = None;
-                    cursor.sticky_column = 0;
-                    cursor.selection_mode = crate::model::cursor::SelectionMode::Normal;
-                    cursor.block_anchor = None;
-                    cursor.deselect_on_move = true;
-                }
-            });
-        }
+        buf_state.cursors.map(|cursor| {
+            let in_hidden_range = cursor.position >= start_byte && cursor.position < end_byte;
+            let anchor_in_hidden = cursor
+                .anchor
+                .is_some_and(|anchor| anchor >= start_byte && anchor < end_byte);
+            if in_hidden_range || anchor_in_hidden {
+                cursor.position = header_byte;
+                cursor.anchor = None;
+                cursor.sticky_column = 0;
+                cursor.selection_mode = crate::model::cursor::SelectionMode::Normal;
+                cursor.block_anchor = None;
+                cursor.deselect_on_move = true;
+            }
+        });
 
         buf_state
             .folds
             .add(&mut state.marker_list, start_byte, end_byte, placeholder);
 
         // If the viewport top is now inside the folded range, move it to the header.
-        let top_line = state.buffer.get_line_number(buf_state.viewport.top_byte);
-        if top_line >= first_hidden && top_line <= end_line {
-            if let Some(header_byte) = state.buffer.line_start_offset(header_line) {
-                buf_state.viewport.top_byte = header_byte;
-                buf_state.viewport.top_view_line_offset = 0;
-            }
+        if buf_state.viewport.top_byte >= start_byte && buf_state.viewport.top_byte < end_byte {
+            buf_state.viewport.top_byte = header_byte;
+            buf_state.viewport.top_view_line_offset = 0;
         }
     }
 

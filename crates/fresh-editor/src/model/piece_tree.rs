@@ -164,10 +164,13 @@ impl StringBuffer {
                     file_path.display()
                 );
 
-                // Replace with loaded data (no line indexing for lazy-loaded chunks)
+                // Replace with loaded data, computing line starts so that
+                // line-based APIs (line_start_offset, indent folding, etc.)
+                // work on large-file chunks.
+                let line_starts = Self::compute_line_starts(&buffer);
                 self.data = BufferData::Loaded {
                     data: buffer,
-                    line_starts: None,
+                    line_starts: Some(line_starts),
                 };
 
                 Ok(())

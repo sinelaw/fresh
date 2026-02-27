@@ -925,6 +925,18 @@ fn default_large_file_threshold() -> u64 {
     LARGE_FILE_THRESHOLD_BYTES
 }
 
+/// Maximum lines to scan forward when computing indent-based fold end
+/// for the fold toggle action (user-triggered, infrequent).
+pub const INDENT_FOLD_MAX_SCAN_LINES: usize = 10_000;
+
+/// Maximum lines to scan forward when checking foldability for gutter
+/// indicators or click detection (called per-viewport-line during render).
+pub const INDENT_FOLD_INDICATOR_MAX_SCAN: usize = 50;
+
+/// Maximum lines to walk backward when searching for a fold header
+/// that contains the cursor (in the fold toggle action).
+pub const INDENT_FOLD_MAX_UPWARD_SCAN: usize = 200;
+
 fn default_read_concurrency() -> usize {
     64
 }

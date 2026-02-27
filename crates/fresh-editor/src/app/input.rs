@@ -2285,9 +2285,11 @@ impl Editor {
         }
     }
 
-    fn fold_toggle_line_from_position(
+    /// Check whether a gutter click at `target_position` should toggle a fold.
+    /// Returns `Some(target_position)` (the byte to fold at) or `None`.
+    fn fold_toggle_byte_from_position(
         state: &crate::state::EditorState,
-        collapsed_headers: &std::collections::BTreeMap<usize, Option<String>>,
+        collapsed_header_bytes: &std::collections::BTreeMap<usize, Option<String>>,
         target_position: usize,
         content_col: u16,
         gutter_width: u16,
@@ -2296,29 +2298,36 @@ impl Editor {
             return None;
         }
 
-        let line = state.buffer.get_line_number(target_position);
+        use crate::view::folding::indent_folding;
+        let line_start = indent_folding::find_line_start_byte(&state.buffer, target_position);
 
         // Already collapsed → allow toggling (unfold)
-        if collapsed_headers.contains_key(&line) {
-            return Some(line);
+        if collapsed_header_bytes.contains_key(&line_start) {
+            return Some(target_position);
         }
 
-        // Check LSP folding ranges first
-        let has_lsp_fold = state.folding_ranges.iter().any(|range| {
-            let start_line = range.start_line as usize;
-            let end_line = range.end_line as usize;
-            start_line == line && end_line > start_line
-        });
-        if has_lsp_fold {
-            return Some(line);
+        // Check LSP folding ranges first (line-based comparison unavoidable)
+        if !state.folding_ranges.is_empty() {
+            let line = state.buffer.get_line_number(target_position);
+            let has_lsp_fold = state.folding_ranges.iter().any(|range| {
+                let start_line = range.start_line as usize;
+                let end_line = range.end_line as usize;
+                start_line == line && end_line > start_line
+            });
+            if has_lsp_fold {
+                return Some(target_position);
+            }
         }
 
-        // Fallback: indent-based foldable detection when LSP ranges are empty
+        // Fallback: indent-based foldable detection on bytes when LSP ranges are empty
         if state.folding_ranges.is_empty() {
-            use crate::view::folding::indent_folding;
             let tab_size = state.buffer_settings.tab_size;
-            if indent_folding::indent_fold_end_line(&state.buffer, line, tab_size).is_some() {
-                return Some(line);
+            let max_scan = crate::config::INDENT_FOLD_INDICATOR_MAX_SCAN;
+            let max_bytes = max_scan * state.buffer.estimated_line_length();
+            if indent_folding::indent_fold_end_byte(&state.buffer, line_start, tab_size, max_bytes)
+                .is_some()
+            {
+                return Some(target_position);
             }
         }
 
@@ -2345,14 +2354,14 @@ impl Editor {
                 continue;
             }
 
-            let (gutter_width, collapsed_headers) = {
+            let (gutter_width, collapsed_header_bytes) = {
                 let state = self.buffers.get(buffer_id)?;
                 let headers = self
                     .split_view_states
                     .get(split_id)
                     .map(|vs| {
                         vs.folds
-                            .collapsed_headers(&state.buffer, &state.marker_list)
+                            .collapsed_header_bytes(&state.buffer, &state.marker_list)
                     })
                     .unwrap_or_default();
                 (state.margins.left_total_width() as u16, headers)
@@ -2383,14 +2392,14 @@ impl Editor {
             let adjusted_rect = Self::adjust_content_rect_for_compose(*content_rect, compose_width);
             let content_col = col.saturating_sub(adjusted_rect.x);
             let state = self.buffers.get(buffer_id)?;
-            if let Some(line) = Self::fold_toggle_line_from_position(
+            if let Some(byte_pos) = Self::fold_toggle_byte_from_position(
                 state,
-                &collapsed_headers,
+                &collapsed_header_bytes,
                 target_position,
                 content_col,
                 gutter_width,
             ) {
-                return Some((*buffer_id, line));
+                return Some((*buffer_id, byte_pos));
             }
         }
 
@@ -2467,7 +2476,7 @@ impl Editor {
             .and_then(|vs| vs.compose_width);
 
         // Calculate clicked position in buffer
-        let (toggle_fold_line, onclick_action, target_position, cursor_snapshot) =
+        let (toggle_fold_byte, onclick_action, target_position, cursor_snapshot) =
             if let Some(state) = self.buffers.get(&buffer_id) {
                 let gutter_width = state.margins.left_total_width() as u16;
 
@@ -2488,17 +2497,17 @@ impl Editor {
                 let adjusted_rect =
                     Self::adjust_content_rect_for_compose(content_rect, compose_width);
                 let content_col = col.saturating_sub(adjusted_rect.x);
-                let collapsed_headers = self
+                let collapsed_header_bytes = self
                     .split_view_states
                     .get(&split_id)
                     .map(|vs| {
                         vs.folds
-                            .collapsed_headers(&state.buffer, &state.marker_list)
+                            .collapsed_header_bytes(&state.buffer, &state.marker_list)
                     })
                     .unwrap_or_default();
-                let toggle_fold_line = Self::fold_toggle_line_from_position(
+                let toggle_fold_byte = Self::fold_toggle_byte_from_position(
                     state,
-                    &collapsed_headers,
+                    &collapsed_header_bytes,
                     target_position,
                     content_col,
                     gutter_width,
@@ -2532,7 +2541,7 @@ impl Editor {
                     });
 
                 (
-                    toggle_fold_line,
+                    toggle_fold_byte,
                     onclick_action,
                     target_position,
                     cursor_snapshot,
@@ -2541,8 +2550,8 @@ impl Editor {
                 return Ok(());
             };
 
-        if let Some(line) = toggle_fold_line {
-            self.toggle_fold_at_line(buffer_id, line);
+        if toggle_fold_byte.is_some() {
+            self.toggle_fold_at_byte(buffer_id, target_position);
             return Ok(());
         }
 

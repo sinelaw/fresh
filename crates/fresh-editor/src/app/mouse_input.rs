@@ -117,10 +117,10 @@ impl Editor {
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if is_double_click || is_triple_click {
-                    if let Some((buffer_id, line)) =
+                    if let Some((buffer_id, byte_pos)) =
                         self.fold_toggle_line_at_screen_position(col, row)
                     {
-                        self.toggle_fold_at_line(buffer_id, line);
+                        self.toggle_fold_at_byte(buffer_id, byte_pos);
                         needs_render = true;
                         return Ok(needs_render);
                     }

@@ -336,13 +336,12 @@ struct DecorationContext {
     semantic_token_spans: Vec<crate::primitives::highlighter::HighlightSpan>,
     viewport_overlays: Vec<(crate::view::overlay::Overlay, Range<usize>)>,
     virtual_text_lookup: HashMap<usize, Vec<crate::view::virtual_text::VirtualText>>,
+    /// Diagnostic lines indexed by line-start byte offset
     diagnostic_lines: HashSet<usize>,
-    /// Line indicators indexed by line number (highest priority indicator per line)
+    /// Line indicators indexed by line-start byte offset
     line_indicators: BTreeMap<usize, crate::view::margin::LineIndicator>,
-    /// Fold indicators indexed by line number
+    /// Fold indicators indexed by line-start byte offset
     fold_indicators: BTreeMap<usize, FoldIndicator>,
-    /// Collapsed fold header -> hidden line count
-    collapsed_header_hidden_lines: BTreeMap<usize, usize>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -406,7 +405,6 @@ struct LineRenderInput<'a> {
     gutter_width: usize,
     selection: &'a SelectionContext,
     decorations: &'a DecorationContext,
-    starting_line_num: usize,
     visible_line_count: usize,
     lsp_waiting: bool,
     is_active: bool,
@@ -457,23 +455,24 @@ struct LeftMarginContext<'a> {
     state: &'a EditorState,
     theme: &'a crate::view::theme::Theme,
     is_continuation: bool,
-    current_source_line_num: usize,
+    /// Line-start byte offset for fold/diagnostic/indicator lookups (None for continuations)
+    line_start_byte: Option<usize>,
+    /// Display line number or byte offset for the gutter
+    gutter_num: usize,
     estimated_lines: usize,
     diagnostic_lines: &'a HashSet<usize>,
-    /// Pre-computed line indicators (line_num -> indicator)
+    /// Pre-computed line indicators (line_start_byte -> indicator)
     line_indicators: &'a BTreeMap<usize, crate::view::margin::LineIndicator>,
-    /// Fold indicators (line_num -> indicator)
+    /// Fold indicators (line_start_byte -> indicator)
     fold_indicators: &'a BTreeMap<usize, FoldIndicator>,
-    /// Line number where the primary cursor is located (for relative line numbers)
-    cursor_line: usize,
+    /// Line-start byte of the cursor line (for relative line numbers and cursor highlight)
+    cursor_line_start_byte: usize,
     /// Whether to show relative line numbers
     relative_line_numbers: bool,
     /// Whether to show line numbers in the gutter
     show_line_numbers: bool,
     /// Whether the gutter shows byte offsets instead of line numbers
     byte_offset_mode: bool,
-    /// The absolute byte offset at the start of this line (used in byte_offset_mode)
-    line_byte_offset: Option<usize>,
 }
 
 /// Render the left margin (indicators + line numbers + separator) to line_spans
@@ -486,6 +485,8 @@ fn render_left_margin(
         return;
     }
 
+    let lookup_key = ctx.line_start_byte;
+
     // For continuation lines, don't show any indicators
     if ctx.is_continuation {
         push_span_with_map(
@@ -495,7 +496,7 @@ fn render_left_margin(
             Style::default(),
             None,
         );
-    } else if ctx.diagnostic_lines.contains(&ctx.current_source_line_num) {
+    } else if lookup_key.is_some_and(|k| ctx.diagnostic_lines.contains(&k)) {
         // Diagnostic indicators have highest priority
         push_span_with_map(
             line_spans,
@@ -504,18 +505,11 @@ fn render_left_margin(
             Style::default().fg(ratatui::style::Color::Red),
             None,
         );
-    } else if ctx
-        .fold_indicators
-        .contains_key(&ctx.current_source_line_num)
-        && !ctx
-            .line_indicators
-            .contains_key(&ctx.current_source_line_num)
-    {
+    } else if lookup_key.is_some_and(|k| {
+        ctx.fold_indicators.contains_key(&k) && !ctx.line_indicators.contains_key(&k)
+    }) {
         // Show fold indicator when no other indicator is present
-        let fold = ctx
-            .fold_indicators
-            .get(&ctx.current_source_line_num)
-            .unwrap();
+        let fold = ctx.fold_indicators.get(&lookup_key.unwrap()).unwrap();
         let symbol = if fold.collapsed { "▸" } else { "▾" };
         push_span_with_map(
             line_spans,
@@ -524,7 +518,7 @@ fn render_left_margin(
             Style::default().fg(ctx.theme.line_number_fg),
             None,
         );
-    } else if let Some(indicator) = ctx.line_indicators.get(&ctx.current_source_line_num) {
+    } else if let Some(indicator) = lookup_key.and_then(|k| ctx.line_indicators.get(&k)) {
         // Show line indicator (git gutter, breakpoints, etc.)
         push_span_with_map(
             line_spans,
@@ -544,6 +538,8 @@ fn render_left_margin(
         );
     }
 
+    let is_cursor_line = lookup_key.is_some_and(|k| k == ctx.cursor_line_start_byte);
+
     // Render line number (right-aligned) or blank for continuations
     if ctx.is_continuation {
         // For wrapped continuation lines, render blank space
@@ -557,11 +553,9 @@ fn render_left_margin(
         );
     } else if ctx.byte_offset_mode && ctx.show_line_numbers {
         // Byte offset mode: show the absolute byte offset at the start of each line
-        let is_cursor_line = ctx.current_source_line_num == ctx.cursor_line;
-        let byte_off = ctx.line_byte_offset.unwrap_or(0);
         let rendered_text = format!(
             "{:>width$}",
-            byte_off,
+            ctx.gutter_num,
             width = ctx.state.margins.left_config.width
         );
         let margin_style = if is_cursor_line {
@@ -572,13 +566,12 @@ fn render_left_margin(
         push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     } else if ctx.relative_line_numbers {
         // Relative line numbers: show distance from cursor, or absolute for cursor line
-        let is_cursor_line = ctx.current_source_line_num == ctx.cursor_line;
         let display_num = if is_cursor_line {
             // Show absolute line number for the cursor line (1-indexed)
-            ctx.current_source_line_num + 1
+            ctx.gutter_num + 1
         } else {
             // Show relative distance for other lines
-            ctx.current_source_line_num.abs_diff(ctx.cursor_line)
+            ctx.gutter_num.abs_diff(ctx.cursor_line_start_byte)
         };
         let rendered_text = format!(
             "{:>width$}",
@@ -594,7 +587,7 @@ fn render_left_margin(
         push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     } else {
         let margin_content = ctx.state.margins.render_line(
-            ctx.current_source_line_num,
+            ctx.gutter_num,
             crate::view::margin::MarginPosition::Left,
             ctx.estimated_lines,
             ctx.show_line_numbers,
@@ -2694,29 +2687,30 @@ impl SplitRenderer {
             return lines;
         }
 
-        let collapsed_headers = folds.collapsed_headers(buffer, marker_list);
+        let collapsed_header_bytes = folds.collapsed_header_bytes(buffer, marker_list);
 
-        let mut next_source_line: Vec<Option<usize>> = vec![None; lines.len()];
-        let mut next_line: Option<usize> = None;
+        // Pre-compute: for each line, what is the source byte of the next line?
+        let mut next_source_byte: Vec<Option<usize>> = vec![None; lines.len()];
+        let mut next_byte: Option<usize> = None;
         for (idx, line) in lines.iter().enumerate().rev() {
-            next_source_line[idx] = next_line;
-            if let Some(line_num) = Self::view_line_source_line(line, buffer) {
-                next_line = Some(line_num);
+            next_source_byte[idx] = next_byte;
+            if let Some(byte) = Self::view_line_source_byte(line) {
+                next_byte = Some(byte);
             }
         }
 
         let mut filtered = Vec::with_capacity(lines.len());
         for (idx, mut line) in lines.into_iter().enumerate() {
-            let source_line = Self::view_line_source_line(&line, buffer);
+            let source_byte = Self::view_line_source_byte(&line);
 
-            if let Some(line_num) = source_line {
-                if Self::is_hidden_line(line_num, &collapsed_ranges) {
+            if let Some(byte) = source_byte {
+                if Self::is_hidden_byte(byte, &collapsed_ranges) {
                     continue;
                 }
 
-                if let Some(placeholder) = collapsed_headers.get(&line_num) {
+                if let Some(placeholder) = collapsed_header_bytes.get(&byte) {
                     // Only append placeholder on the last visual segment of the line
-                    if next_source_line[idx] != Some(line_num) {
+                    if next_source_byte[idx] != Some(byte) {
                         let raw_text = placeholder
                             .as_deref()
                             .filter(|s| !s.trim().is_empty())
@@ -2729,8 +2723,8 @@ impl SplitRenderer {
                         Self::append_fold_placeholder(&mut line, &text, placeholder_style);
                     }
                 }
-            } else if let Some(next_line_num) = next_source_line[idx] {
-                if Self::is_hidden_line(next_line_num, &collapsed_ranges) {
+            } else if let Some(next_byte) = next_source_byte[idx] {
+                if Self::is_hidden_byte(next_byte, &collapsed_ranges) {
                     continue;
                 }
             }
@@ -2741,17 +2735,16 @@ impl SplitRenderer {
         filtered
     }
 
-    fn view_line_source_line(line: &ViewLine, buffer: &Buffer) -> Option<usize> {
-        line.char_source_bytes
-            .iter()
-            .find_map(|m| *m)
-            .map(|b| buffer.get_line_number(b))
+    /// Get the source byte offset of a view line (first `Some` in char_source_bytes).
+    fn view_line_source_byte(line: &ViewLine) -> Option<usize> {
+        line.char_source_bytes.iter().find_map(|m| *m)
     }
 
-    fn is_hidden_line(line_num: usize, ranges: &[crate::view::folding::ResolvedFoldRange]) -> bool {
+    /// Check if a byte offset falls within any collapsed fold range.
+    fn is_hidden_byte(byte: usize, ranges: &[crate::view::folding::ResolvedFoldRange]) -> bool {
         ranges
             .iter()
-            .any(|range| line_num >= range.start_line && line_num <= range.end_line)
+            .any(|range| byte >= range.start_byte && byte < range.end_byte)
     }
 
     fn append_fold_placeholder(line: &mut ViewLine, text: &str, style: &ViewTokenStyle) {
@@ -3858,6 +3851,8 @@ impl SplitRenderer {
         highlight_context_bytes: usize,
         view_mode: &ViewMode,
     ) -> DecorationContext {
+        use crate::view::folding::indent_folding;
+
         // Extend highlighting range by ~1 viewport size before/after for better context.
         // This helps tree-sitter parse multi-line constructs that span viewport boundaries.
         let viewport_size = viewport_end.saturating_sub(viewport_start);
@@ -3929,12 +3924,16 @@ impl SplitRenderer {
         }
 
         // Use the lsp-diagnostic namespace to identify diagnostic overlays
+        // Key by line-start byte so lookups match line_start_byte in render loop
         let diagnostic_ns = crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
         let diagnostic_lines: HashSet<usize> = viewport_overlays
             .iter()
             .filter_map(|(overlay, range)| {
                 if overlay.namespace.as_ref() == Some(&diagnostic_ns) {
-                    return Some(state.buffer.get_line_number(range.start));
+                    return Some(indent_folding::find_line_start_byte(
+                        &state.buffer,
+                        range.start,
+                    ));
                 }
                 None
             })
@@ -3949,20 +3948,15 @@ impl SplitRenderer {
                 .collect();
 
         // Pre-compute line indicators for the viewport (only query markers in visible range)
+        // Key by line-start byte so lookups match line_start_byte in render loop
         let line_indicators = state.margins.get_indicators_for_viewport(
             viewport_start,
             viewport_end,
-            |byte_offset| state.buffer.get_line_number(byte_offset),
+            |byte_offset| indent_folding::find_line_start_byte(&state.buffer, byte_offset),
         );
 
         let fold_indicators =
             Self::fold_indicators_for_viewport(state, folds, viewport_start, viewport_end);
-        let collapsed_header_hidden_lines = Self::collapsed_header_hidden_lines_for_viewport(
-            state,
-            folds,
-            viewport_start,
-            viewport_end,
-        );
 
         DecorationContext {
             highlight_spans,
@@ -3972,7 +3966,6 @@ impl SplitRenderer {
             diagnostic_lines,
             line_indicators,
             fold_indicators,
-            collapsed_header_hidden_lines,
         }
     }
 
@@ -3984,45 +3977,39 @@ impl SplitRenderer {
     ) -> BTreeMap<usize, FoldIndicator> {
         let mut indicators = BTreeMap::new();
 
-        let viewport_start_line = state.buffer.get_line_number(viewport_start);
-        let viewport_end_line = state.buffer.get_line_number(viewport_end);
-
-        // Collapsed headers from marker-based folds (always shown regardless of source)
-        let collapsed_headers = folds.collapsed_headers(&state.buffer, &state.marker_list);
-
-        for (line, _) in &collapsed_headers {
-            if *line >= viewport_start_line && *line <= viewport_end_line {
-                indicators.insert(*line, FoldIndicator { collapsed: true });
-            }
+        // Collapsed headers from marker-based folds — always keyed by header_byte
+        for range in folds.resolved_ranges(&state.buffer, &state.marker_list) {
+            indicators.insert(range.header_byte, FoldIndicator { collapsed: true });
         }
 
         if !state.folding_ranges.is_empty() {
-            // Use LSP-provided folding ranges
+            // Use LSP-provided folding ranges — key by line-start byte
             for range in &state.folding_ranges {
                 let start_line = range.start_line as usize;
                 let end_line = range.end_line as usize;
                 if end_line <= start_line {
                     continue;
                 }
-                if start_line < viewport_start_line || start_line > viewport_end_line {
-                    continue;
+                if let Some(line_byte) = state.buffer.line_start_offset(start_line) {
+                    indicators
+                        .entry(line_byte)
+                        .or_insert(FoldIndicator { collapsed: false });
                 }
-                indicators
-                    .entry(start_line)
-                    .or_insert(FoldIndicator { collapsed: false });
             }
-        } else if state.buffer.len() < crate::config::LARGE_FILE_THRESHOLD_BYTES as usize {
-            // Fallback: indent-based folding when LSP ranges are unavailable.
-            // Skip for large files — line_start_offset traversals are too
-            // expensive on big piece trees.
+        } else {
+            // Indent-based fold detection on viewport bytes — key by absolute byte offset
             use crate::view::folding::indent_folding;
             let tab_size = state.buffer_settings.tab_size;
-            for line in viewport_start_line..=viewport_end_line {
-                if indicators.contains_key(&line) {
-                    continue; // already has a collapsed indicator
-                }
-                if indent_folding::indent_fold_end_line(&state.buffer, line, tab_size).is_some() {
-                    indicators.insert(line, FoldIndicator { collapsed: false });
+            let max_lookahead = crate::config::INDENT_FOLD_INDICATOR_MAX_SCAN;
+            let bytes = state.buffer.slice_bytes(viewport_start..viewport_end);
+            if !bytes.is_empty() {
+                let foldable =
+                    indent_folding::foldable_lines_in_bytes(&bytes, tab_size, max_lookahead);
+                for line_idx in foldable {
+                    let byte_off = Self::byte_offset_of_line_in_bytes(&bytes, line_idx);
+                    indicators
+                        .entry(viewport_start + byte_off)
+                        .or_insert(FoldIndicator { collapsed: false });
                 }
             }
         }
@@ -4030,34 +4017,20 @@ impl SplitRenderer {
         indicators
     }
 
-    fn collapsed_header_hidden_lines_for_viewport(
-        state: &EditorState,
-        folds: &FoldManager,
-        viewport_start: usize,
-        viewport_end: usize,
-    ) -> BTreeMap<usize, usize> {
-        let mut map = BTreeMap::new();
-        if folds.is_empty() {
-            return map;
-        }
-
-        let viewport_start_line = state.buffer.get_line_number(viewport_start);
-        let viewport_end_line = state.buffer.get_line_number(viewport_end);
-
-        for range in folds.resolved_ranges(&state.buffer, &state.marker_list) {
-            if range.header_line < viewport_start_line || range.header_line > viewport_end_line {
-                continue;
+    /// Given a byte slice, return the byte offset of line N (0-indexed)
+    /// within that slice.
+    fn byte_offset_of_line_in_bytes(bytes: &[u8], line_idx: usize) -> usize {
+        let mut current_line = 0;
+        for (i, &b) in bytes.iter().enumerate() {
+            if current_line == line_idx {
+                return i;
             }
-            let hidden = range
-                .end_line
-                .saturating_sub(range.start_line)
-                .saturating_add(1);
-            if hidden > 0 {
-                map.insert(range.header_line, hidden);
+            if b == b'\n' {
+                current_line += 1;
             }
         }
-
-        map
+        // If we exhausted the bytes without reaching the line, return end
+        bytes.len()
     }
 
     // semantic token colors are mapped when overlays are created
@@ -4083,6 +4056,8 @@ impl SplitRenderer {
     }
 
     fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput {
+        use crate::view::folding::indent_folding;
+
         let LineRenderInput {
             state,
             theme,
@@ -4092,7 +4067,6 @@ impl SplitRenderer {
             gutter_width,
             selection,
             decorations,
-            starting_line_num,
             visible_line_count,
             lsp_waiting,
             is_active,
@@ -4111,8 +4085,9 @@ impl SplitRenderer {
         let cursor_positions = &selection.cursor_positions;
         let primary_cursor_position = selection.primary_cursor_position;
 
-        // Compute cursor line number for relative line numbers display
-        let cursor_line = state.buffer.get_line_number(primary_cursor_position);
+        // Compute cursor line start byte — universal key for cursor line highlight
+        let cursor_line_start_byte =
+            indent_folding::find_line_start_byte(&state.buffer, primary_cursor_position);
 
         let highlight_spans = &decorations.highlight_spans;
         let semantic_token_spans = &decorations.semantic_token_spans;
@@ -4133,6 +4108,7 @@ impl SplitRenderer {
         let mut cursor_screen_y = 0u16;
         let mut have_cursor = false;
         let mut last_line_end: Option<LastLineEnd> = None;
+        let mut last_gutter_num: Option<usize> = None;
         let mut trailing_empty_line_rendered = false;
 
         let is_empty_buffer = state.buffer.is_empty();
@@ -4140,11 +4116,6 @@ impl SplitRenderer {
         // Track cursor position during rendering (eliminates duplicate line iteration)
         let mut last_visible_x: u16 = 0;
         let _view_start_line_skip = view_anchor.start_line_skip; // Currently unused
-
-        // Track the current source line number separately from display lines
-        let mut current_source_line_num = starting_line_num;
-        let mut seen_source_line = false;
-        let mut pending_line_skip = 0usize;
 
         loop {
             // Get the current ViewLine from the pipeline
@@ -4203,25 +4174,47 @@ impl SplitRenderer {
             // This correctly handles: injected content, wrapped continuations, and source lines
             let show_line_number = should_show_line_number(current_view_line);
 
-            if show_line_number {
-                if !seen_source_line {
-                    current_source_line_num = starting_line_num;
-                    seen_source_line = true;
-                } else {
-                    current_source_line_num = current_source_line_num
-                        .saturating_add(1)
-                        .saturating_add(pending_line_skip);
-                }
-
-                pending_line_skip = decorations
-                    .collapsed_header_hidden_lines
-                    .get(&current_source_line_num)
-                    .copied()
-                    .unwrap_or(0);
-            }
-
             // is_continuation means "don't show line number" for rendering purposes
             let is_continuation = !show_line_number;
+
+            // Per-line byte offset — universal key for all fold/diagnostic/indicator lookups
+            let line_start_byte: Option<usize> = if !is_continuation {
+                line_char_source_bytes
+                    .iter()
+                    .find_map(|opt| *opt)
+                    .or_else(|| {
+                        // Trailing empty line (after final newline) has no source bytes,
+                        // but its logical position is buffer.len() — needed for diagnostic
+                        // gutter markers placed at the end of the file.
+                        if line_content.is_empty()
+                            && _line_start_type == LineStart::AfterSourceNewline
+                        {
+                            Some(state.buffer.len())
+                        } else {
+                            None
+                        }
+                    })
+            } else {
+                None
+            };
+
+            // Gutter display number — line number for small files, byte offset for large files
+            let gutter_num = if let Some(byte) = line_start_byte {
+                let n = if byte_offset_mode {
+                    byte
+                } else {
+                    state.buffer.get_line_number(byte)
+                };
+                last_gutter_num = Some(n);
+                n
+            } else if !is_continuation {
+                // Non-continuation line with no source bytes (trailing empty line
+                // produced by ViewLineIterator after final newline).
+                // For empty buffers (last_gutter_num is None), show line 0 (displays as "1").
+                last_gutter_num.map_or(0, |n| n + 1)
+            } else {
+                0
+            };
 
             lines_rendered += 1;
 
@@ -4238,29 +4231,22 @@ impl SplitRenderer {
             // This is critical for proper rendering of combining characters (Thai, etc.)
             let mut span_acc = SpanAccumulator::new();
 
-            // Compute the byte offset at the start of this line (for byte offset gutter mode)
-            let line_byte_offset = if byte_offset_mode && !is_continuation {
-                line_char_source_bytes.iter().find_map(|opt| *opt)
-            } else {
-                None
-            };
-
             // Render left margin (indicators + line numbers + separator)
             render_left_margin(
                 &LeftMarginContext {
                     state,
                     theme,
                     is_continuation,
-                    current_source_line_num,
+                    line_start_byte,
+                    gutter_num,
                     estimated_lines,
                     diagnostic_lines,
                     line_indicators,
                     fold_indicators: &decorations.fold_indicators,
-                    cursor_line,
+                    cursor_line_start_byte,
                     relative_line_numbers,
                     show_line_numbers,
                     byte_offset_mode,
-                    line_byte_offset,
                 },
                 &mut line_spans,
                 &mut line_view_map,
@@ -4388,11 +4374,12 @@ impl SplitRenderer {
                         .unwrap_or(false);
 
                     // Check if this character is in any selection range (but not at cursor position)
-                    // Also check for block/rectangular selections
+                    // Also check for block/rectangular selections (uses gutter_num which is
+                    // the line number for small files — block_rects stores line numbers)
                     let is_in_block_selection = block_selections.iter().any(
                         |(start_line, start_col, end_line, end_col)| {
-                            current_source_line_num >= *start_line
-                                && current_source_line_num <= *end_line
+                            gutter_num >= *start_line
+                                && gutter_num <= *end_line
                                 && byte_index >= *start_col
                                 && byte_index <= *end_col
                         },
@@ -4990,11 +4977,17 @@ impl SplitRenderer {
             {
                 // Render the implicit line after the newline
                 let mut implicit_line_spans = Vec::new();
-                let implicit_line_num = current_source_line_num + 1;
+                // The implicit trailing line is at buffer.len()
+                let implicit_line_byte = state.buffer.len();
+                let implicit_gutter_num = if byte_offset_mode {
+                    implicit_line_byte
+                } else {
+                    last_gutter_num.map_or(0, |n| n + 1)
+                };
 
                 if state.margins.left_config.enabled {
                     // Indicator column: check for diagnostic markers on this implicit line
-                    if decorations.diagnostic_lines.contains(&implicit_line_num) {
+                    if decorations.diagnostic_lines.contains(&implicit_line_byte) {
                         implicit_line_spans.push(Span::styled(
                             "●",
                             Style::default().fg(ratatui::style::Color::Red),
@@ -5007,7 +5000,7 @@ impl SplitRenderer {
                     let rendered_text = if byte_offset_mode && show_line_numbers {
                         format!(
                             "{:>width$}",
-                            state.buffer.len(),
+                            implicit_gutter_num,
                             width = state.margins.left_config.width
                         )
                     } else {
@@ -5015,7 +5008,7 @@ impl SplitRenderer {
                             (state.buffer.len() / state.buffer.estimated_line_length()).max(1),
                         );
                         let margin_content = state.margins.render_line(
-                            implicit_line_num,
+                            implicit_gutter_num,
                             crate::view::margin::MarginPosition::Left,
                             estimated_lines,
                             show_line_numbers,
@@ -5327,19 +5320,12 @@ impl SplitRenderer {
             visible_count,
         );
 
-        let mut starting_line_num = state
+        // Populate line cache to ensure chunks are loaded for rendering.
+        // For small files this also builds the line index; for large files
+        // it just loads the needed chunks from disk.
+        let _ = state
             .buffer
             .populate_line_cache(viewport.top_byte, adjusted_visible_count);
-        if !folds.is_empty() {
-            let top_line = state.buffer.get_line_number(viewport.top_byte);
-            if let Some(range) = folds
-                .resolved_ranges(&state.buffer, &state.marker_list)
-                .iter()
-                .find(|range| top_line >= range.start_line && top_line <= range.end_line)
-            {
-                starting_line_num = range.end_line.saturating_add(1);
-            }
-        }
 
         let viewport_start = viewport.top_byte;
         let viewport_end = Self::calculate_viewport_end(
@@ -5369,22 +5355,13 @@ impl SplitRenderer {
             view_data_lines = view_data.lines.len(),
             "view line offset calculation"
         );
-        let (view_lines_to_render, adjusted_starting_line_num, adjusted_view_anchor) =
+        let (view_lines_to_render, adjusted_view_anchor) =
             if calculated_offset > 0 && calculated_offset < view_data.lines.len() {
                 let sliced = &view_data.lines[calculated_offset..];
-
-                let skipped_lines = &view_data.lines[..calculated_offset];
-                let skipped_source_lines = skipped_lines
-                    .iter()
-                    .filter(|vl| should_show_line_number(vl))
-                    .count();
-
-                let adjusted_line_num = starting_line_num + skipped_source_lines;
                 let adjusted_anchor = Self::calculate_view_anchor(sliced, viewport.top_byte);
-
-                (sliced, adjusted_line_num, adjusted_anchor)
+                (sliced, adjusted_anchor)
             } else {
-                (&view_data.lines[..], starting_line_num, view_anchor)
+                (&view_data.lines[..], view_anchor)
             };
 
         let render_output = Self::render_view_lines(LineRenderInput {
@@ -5396,7 +5373,6 @@ impl SplitRenderer {
             gutter_width,
             selection: &selection,
             decorations: &decorations,
-            starting_line_num: adjusted_starting_line_num,
             visible_line_count: visible_count,
             lsp_waiting,
             is_active,
@@ -5978,7 +5954,7 @@ mod tests {
         let gutter_width = state.margins.left_total_width();
 
         let selection = SplitRenderer::selection_context(&state, &cursors);
-        let starting_line_num = state
+        let _ = state
             .buffer
             .populate_line_cache(viewport.top_byte, visible_count);
         let viewport_start = viewport.top_byte;
@@ -6008,7 +5984,6 @@ mod tests {
             gutter_width,
             selection: &selection,
             decorations: &decorations,
-            starting_line_num,
             visible_line_count: visible_count,
             lsp_waiting: false,
             is_active: true,
@@ -6101,8 +6076,14 @@ mod tests {
         let indicators =
             SplitRenderer::fold_indicators_for_viewport(&state, &folds, 0, state.buffer.len());
 
+        // Collapsed fold: header is line 0 (byte 0)
         assert_eq!(indicators.get(&0).map(|i| i.collapsed), Some(true));
-        assert_eq!(indicators.get(&1).map(|i| i.collapsed), Some(false));
+        // LSP range starting at line 1 (byte 2, since "a\n" is 2 bytes)
+        let line1_byte = state.buffer.line_start_offset(1).unwrap();
+        assert_eq!(
+            indicators.get(&line1_byte).map(|i| i.collapsed),
+            Some(false)
+        );
     }
 
     #[test]

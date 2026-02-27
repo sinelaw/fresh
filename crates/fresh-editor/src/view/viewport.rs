@@ -409,10 +409,29 @@ impl Viewport {
         wrap_config: &WrapConfig,
         viewport_height: usize,
     ) -> (usize, usize) {
-        // Build a list of all visual row positions
-        let mut positions: Vec<(usize, usize)> = Vec::new(); // (line_start_byte, offset_in_line)
+        let buffer_len = buffer.len();
+        if buffer_len == 0 {
+            return (0, 0);
+        }
 
-        let mut iter = buffer.line_iterator(0, 80);
+        // Scan backward from the end to find a starting point, then scan forward.
+        // This is O(viewport_height) instead of O(total_lines), avoiding a full-file
+        // scan that hangs on large files.
+        let scan_start = {
+            let mut iter = buffer.line_iterator(buffer_len, 80);
+            // Go back 2x viewport_height logical lines — each line produces at least
+            // 1 visual row, so this guarantees enough visual rows.
+            for _ in 0..(viewport_height * 2) {
+                if iter.prev().is_none() {
+                    break;
+                }
+            }
+            iter.current_position()
+        };
+
+        // Build visual row positions from scan_start to end of file
+        let mut positions: Vec<(usize, usize)> = Vec::new();
+        let mut iter = buffer.line_iterator(scan_start, 80);
         while let Some((line_start, content)) = iter.next_line() {
             let line_content = content.trim_end_matches(['\n', '\r']).to_string();
             let segments = wrap_line(&line_content, wrap_config);
@@ -425,17 +444,12 @@ impl Viewport {
 
         let total_rows = positions.len();
         if total_rows <= viewport_height {
-            // Everything fits, max scroll is at the beginning
+            // Everything from scan_start fits — the whole file fits in the viewport
             return (0, 0);
         }
 
-        // Max scroll is total_rows - viewport_height visual rows from the start
         let max_scroll_row = total_rows - viewport_height;
-        if max_scroll_row < positions.len() {
-            positions[max_scroll_row]
-        } else {
-            (0, 0)
-        }
+        positions[max_scroll_row]
     }
 
     /// Scroll through ViewLines (view-transform aware)
