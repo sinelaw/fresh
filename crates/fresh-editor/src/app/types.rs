@@ -29,12 +29,24 @@ pub(super) struct SearchState {
     pub query: String,
     /// All match positions in the buffer (byte offsets)
     pub matches: Vec<usize>,
+    /// Match lengths parallel to `matches` (needed for viewport overlay creation)
+    pub match_lengths: Vec<usize>,
     /// Index of the currently selected match
     pub current_match_index: Option<usize>,
     /// Whether search wraps around at document boundaries
     pub wrap_search: bool,
     /// Optional search range (for search in selection)
     pub search_range: Option<Range<usize>>,
+    /// True if the match count was capped at MAX_MATCHES
+    #[allow(dead_code)]
+    pub capped: bool,
+}
+
+impl SearchState {
+    /// Maximum number of search matches to collect before stopping.
+    /// Prevents unbounded memory usage when searching for common patterns
+    /// in large files.
+    pub const MAX_MATCHES: usize = 100_000;
 }
 
 /// A bookmark in the editor (position in a specific buffer)

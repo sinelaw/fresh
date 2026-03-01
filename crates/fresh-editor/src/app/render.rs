@@ -2386,14 +2386,38 @@ impl Editor {
         }
     }
 
-    /// Perform a search and update search state
-    pub(super) fn perform_search(&mut self, query: &str) {
-        // Don't clear search highlights here - keep them from incremental search
-        // They will be cleared when:
-        // 1. User cancels search (Escape)
-        // 2. User makes an edit to the buffer
-        // 3. User starts a new search (update_search_highlights clears old ones)
+    /// Build a compiled regex from the current search settings and query.
+    fn build_search_regex(&self, query: &str) -> Result<regex::Regex, String> {
+        let regex_pattern = if self.search_use_regex {
+            if self.search_whole_word {
+                format!(r"\b{}\b", query)
+            } else {
+                query.to_string()
+            }
+        } else {
+            let escaped = regex::escape(query);
+            if self.search_whole_word {
+                format!(r"\b{}\b", escaped)
+            } else {
+                escaped
+            }
+        };
 
+        regex::RegexBuilder::new(&regex_pattern)
+            .case_insensitive(!self.search_case_sensitive)
+            .build()
+            .map_err(|e| e.to_string())
+    }
+
+    /// Perform a search and update search state.
+    ///
+    /// For large files (lazy-loaded buffers), this starts an incremental
+    /// chunked search that runs a few pieces per render frame so the UI
+    /// stays responsive.  For normal-sized files the search runs inline.
+    ///
+    /// Matches are capped at `MAX_SEARCH_MATCHES` to bound memory usage,
+    /// and overlays are only created for the visible viewport.
+    pub(super) fn perform_search(&mut self, query: &str) {
         if query.is_empty() {
             self.search_state = None;
             self.set_status_message(t!("search.cancelled").to_string());
@@ -2402,15 +2426,28 @@ impl Editor {
 
         let search_range = self.pending_search_range.take();
 
-        // For large files with lazy loading, we need to load the entire buffer
-        // before searching. This ensures the search can access all content.
-        // (Issue #657: Search on large plain text files)
+        // Build the regex early so we can bail on invalid patterns
+        let regex = match self.build_search_regex(query) {
+            Ok(r) => r,
+            Err(e) => {
+                self.search_state = None;
+                self.set_status_message(t!("error.invalid_regex", error = e).to_string());
+                return;
+            }
+        };
+
+        // For large files, start an incremental (non-blocking) search scan
+        let is_large = self.active_state().buffer.is_large_file();
+        if is_large && search_range.is_none() {
+            self.start_search_scan(query, regex);
+            return;
+        }
+
+        // --- Normal (small-file) path: search inline with match cap ---
+
         let buffer_content = {
             let state = self.active_state_mut();
             let total_bytes = state.buffer.len();
-
-            // Force-load the entire buffer if not already loaded
-            // get_text_range_mut() handles lazy loading and returns the content
             match state.buffer.get_text_range_mut(0, total_bytes) {
                 Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                 Err(e) => {
@@ -2421,55 +2458,24 @@ impl Editor {
             }
         };
 
-        // Get search settings
-        let case_sensitive = self.search_case_sensitive;
-        let whole_word = self.search_whole_word;
-        let use_regex = self.search_use_regex;
-
-        // Determine search boundaries
         let (search_start, search_end) = if let Some(ref range) = search_range {
             (range.start, range.end)
         } else {
             (0, buffer_content.len())
         };
 
-        // Build regex pattern
-        let regex_pattern = if use_regex {
-            if whole_word {
-                format!(r"\b{}\b", query)
-            } else {
-                query.to_string()
-            }
-        } else {
-            let escaped = regex::escape(query);
-            if whole_word {
-                format!(r"\b{}\b", escaped)
-            } else {
-                escaped
-            }
-        };
-
-        // Build regex with case sensitivity
-        let regex = match regex::RegexBuilder::new(&regex_pattern)
-            .case_insensitive(!case_sensitive)
-            .build()
-        {
-            Ok(r) => r,
-            Err(e) => {
-                self.search_state = None;
-                self.set_status_message(
-                    t!("error.invalid_regex", error = e.to_string()).to_string(),
-                );
-                return;
-            }
-        };
-
-        // Find all matches within the search range (store position and length for overlays)
         let search_slice = &buffer_content[search_start..search_end];
-        let match_ranges: Vec<(usize, usize)> = regex
-            .find_iter(search_slice)
-            .map(|m| (search_start + m.start(), m.end() - m.start()))
-            .collect();
+
+        // Collect matches with a cap to bound memory
+        let mut match_ranges: Vec<(usize, usize)> = Vec::new();
+        let mut capped = false;
+        for m in regex.find_iter(search_slice) {
+            if match_ranges.len() >= SearchState::MAX_MATCHES {
+                capped = true;
+                break;
+            }
+            match_ranges.push((search_start + m.start(), m.end() - m.start()));
+        }
 
         if match_ranges.is_empty() {
             self.search_state = None;
@@ -2482,35 +2488,27 @@ impl Editor {
             return;
         }
 
-        // Extract just positions for search_state.matches
+        self.finalize_search(query, match_ranges, capped, search_range);
+    }
+
+    /// Common finalization after all matches have been collected (inline or
+    /// from the incremental scan).  Sets `search_state`, moves the cursor to
+    /// the nearest match, creates overlays, and updates the status message.
+    ///
+    /// For small files, overlays are created for ALL matches so that marker-
+    /// based position tracking keeps F3 correct across edits.  For large
+    /// files (`viewport_only == true`), only visible-viewport overlays are
+    /// created to avoid multi-GB overlay allocations.
+    pub(super) fn finalize_search(
+        &mut self,
+        query: &str,
+        match_ranges: Vec<(usize, usize)>,
+        capped: bool,
+        search_range: Option<std::ops::Range<usize>>,
+    ) {
         let matches: Vec<usize> = match_ranges.iter().map(|(pos, _)| *pos).collect();
-
-        // Create overlays for ALL matches (not just visible ones)
-        // This ensures F3 can find matches outside viewport and markers track through edits
-        {
-            let search_bg = self.theme.search_match_bg;
-            let search_fg = self.theme.search_match_fg;
-            let ns = self.search_namespace.clone();
-            let state = self.active_state_mut();
-
-            // Clear existing (visible-only) overlays from incremental search
-            state.overlays.clear_namespace(&ns, &mut state.marker_list);
-
-            // Create overlays for all matches
-            for &(match_pos, match_len) in &match_ranges {
-                let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
-                let overlay = crate::view::overlay::Overlay::with_namespace(
-                    &mut state.marker_list,
-                    match_pos..(match_pos + match_len),
-                    crate::view::overlay::OverlayFace::Style {
-                        style: search_style,
-                    },
-                    ns.clone(),
-                )
-                .with_priority_value(10);
-                state.overlays.add(overlay);
-            }
-        }
+        let match_lengths: Vec<usize> = match_ranges.iter().map(|(_, len)| *len).collect();
+        let is_large = self.active_state().buffer.is_large_file();
 
         // Find the first match at or after the current cursor position
         let cursor_pos = self.active_cursors().primary().position;
@@ -2527,7 +2525,6 @@ impl Editor {
             if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
                 view_state.cursors.primary_mut().position = match_pos;
                 view_state.cursors.primary_mut().anchor = None;
-                // Ensure cursor is visible
                 let state = self.buffers.get_mut(&active_buffer).unwrap();
                 view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
             }
@@ -2535,26 +2532,60 @@ impl Editor {
 
         let num_matches = matches.len();
 
-        // Update search state
         self.search_state = Some(SearchState {
             query: query.to_string(),
             matches,
+            match_lengths: match_lengths.clone(),
             current_match_index: Some(current_match_index),
-            wrap_search: search_range.is_none(), // Only wrap if not searching in selection
+            wrap_search: search_range.is_none(),
             search_range,
+            capped,
         });
 
+        if is_large {
+            // Large file: viewport-only overlays to avoid O(matches) memory
+            self.refresh_search_overlays();
+        } else {
+            // Small file: overlays for ALL matches so markers auto-track edits
+            let search_bg = self.theme.search_match_bg;
+            let search_fg = self.theme.search_match_fg;
+            let ns = self.search_namespace.clone();
+            let state = self.active_state_mut();
+            state.overlays.clear_namespace(&ns, &mut state.marker_list);
+
+            for (&pos, &len) in match_ranges
+                .iter()
+                .map(|(p, _)| p)
+                .zip(match_lengths.iter())
+            {
+                let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
+                let overlay = crate::view::overlay::Overlay::with_namespace(
+                    &mut state.marker_list,
+                    pos..(pos + len),
+                    crate::view::overlay::OverlayFace::Style {
+                        style: search_style,
+                    },
+                    ns.clone(),
+                )
+                .with_priority_value(10);
+                state.overlays.add(overlay);
+            }
+        }
+
+        let cap_suffix = if capped { "+" } else { "" };
         let msg = if self.search_state.as_ref().unwrap().search_range.is_some() {
             format!(
-                "Found {} match{} for '{}' in selection",
+                "Found {}{} match{} for '{}' in selection",
                 num_matches,
+                cap_suffix,
                 if num_matches == 1 { "" } else { "es" },
                 query
             )
         } else {
             format!(
-                "Found {} match{} for '{}'",
+                "Found {}{} match{} for '{}'",
                 num_matches,
+                cap_suffix,
                 if num_matches == 1 { "" } else { "es" },
                 query
             )
@@ -2562,13 +2593,138 @@ impl Editor {
         self.set_status_message(msg);
     }
 
-    /// Get current match positions from search overlays (which use markers that track edits)
-    /// This ensures positions are always up-to-date even after buffer modifications
+    /// Create search-highlight overlays only for matches visible in the current
+    /// viewport.  Uses binary search on the sorted `search_state.matches` vec
+    /// so it is O(log N + visible_matches) regardless of total match count.
+    pub(super) fn refresh_search_overlays(&mut self) {
+        let search_bg = self.theme.search_match_bg;
+        let search_fg = self.theme.search_match_fg;
+        let ns = self.search_namespace.clone();
+
+        // Determine the visible byte range from the active viewport
+        let active_split = self.split_manager.active_split();
+        let (top_byte, visible_height) = self
+            .split_view_states
+            .get(&active_split)
+            .map(|vs| (vs.viewport.top_byte, vs.viewport.height.saturating_sub(2)))
+            .unwrap_or((0, 20));
+
+        // Remember the viewport we computed overlays for so we can detect
+        // scrolling in check_search_overlay_refresh().
+        self.search_overlay_top_byte = Some(top_byte);
+
+        let state = self.active_state_mut();
+
+        // Clear existing search overlays
+        state.overlays.clear_namespace(&ns, &mut state.marker_list);
+
+        // Walk visible lines to find the visible byte range
+        let visible_start = top_byte;
+        let mut visible_end = top_byte;
+        {
+            let mut line_iter = state.buffer.line_iterator(top_byte, 80);
+            for _ in 0..visible_height {
+                if let Some((line_start, line_content)) = line_iter.next_line() {
+                    visible_end = line_start + line_content.len();
+                } else {
+                    break;
+                }
+            }
+        }
+        visible_end = visible_end.min(state.buffer.len());
+
+        // Collect viewport matches into a local vec to avoid holding an
+        // immutable borrow on self.search_state while we need &mut self for
+        // the buffer state.
+        let _ = state;
+
+        let viewport_matches: Vec<(usize, usize)> = match &self.search_state {
+            Some(ss) => {
+                let start_idx = ss.matches.partition_point(|&pos| pos < visible_start);
+                ss.matches[start_idx..]
+                    .iter()
+                    .zip(ss.match_lengths[start_idx..].iter())
+                    .take_while(|(&pos, _)| pos <= visible_end)
+                    .map(|(&pos, &len)| (pos, len))
+                    .collect()
+            }
+            None => return,
+        };
+
+        let state = self.active_state_mut();
+
+        for (pos, len) in &viewport_matches {
+            let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
+            let overlay = crate::view::overlay::Overlay::with_namespace(
+                &mut state.marker_list,
+                *pos..(*pos + *len),
+                crate::view::overlay::OverlayFace::Style {
+                    style: search_style,
+                },
+                ns.clone(),
+            )
+            .with_priority_value(10);
+            state.overlays.add(overlay);
+        }
+    }
+
+    /// Check whether the viewport has scrolled since we last created search
+    /// overlays. If so, refresh them. Called from `editor_tick()`.
+    pub(super) fn check_search_overlay_refresh(&mut self) -> bool {
+        if self.search_state.is_none() {
+            return false;
+        }
+        let active_split = self.split_manager.active_split();
+        let current_top = self
+            .split_view_states
+            .get(&active_split)
+            .map(|vs| vs.viewport.top_byte);
+        if current_top != self.search_overlay_top_byte {
+            self.refresh_search_overlays();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Start an incremental search scan for a large file.
+    /// Splits the piece tree into ≤1 MB chunks and sets up the scan state
+    /// that `process_search_scan()` (called from `editor_tick()`) will
+    /// consume a few chunks per frame.
+    fn start_search_scan(&mut self, query: &str, regex: regex::Regex) {
+        let buffer_id = self.active_buffer();
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let (chunks, total_bytes) = state.buffer.prepare_line_scan();
+            let leaves = state.buffer.piece_tree_leaves();
+            self.search_scan_state = Some(super::SearchScanState {
+                buffer_id,
+                leaves,
+                chunks,
+                next_chunk: 0,
+                total_bytes,
+                scanned_bytes: 0,
+                regex,
+                query: query.to_string(),
+                match_ranges: Vec::new(),
+                overlap_tail: Vec::new(),
+                overlap_doc_offset: 0,
+                search_range: None,
+                capped: false,
+                case_sensitive: self.search_case_sensitive,
+                whole_word: self.search_whole_word,
+                use_regex: self.search_use_regex,
+            });
+            self.set_status_message(t!("goto.scanning_progress", percent = 0).to_string());
+        }
+    }
+
+    /// Get current match positions from search overlays (which use markers
+    /// that auto-track edits).  Only useful for small files where we create
+    /// overlays for ALL matches.
     fn get_search_match_positions(&self) -> Vec<usize> {
         let ns = &self.search_namespace;
         let state = self.active_state();
 
-        // Get positions from search overlay markers
         let mut positions: Vec<usize> = state
             .overlays
             .all()
@@ -2577,28 +2733,31 @@ impl Editor {
             .filter_map(|o| state.marker_list.get_position(o.start_marker))
             .collect();
 
-        // Sort positions for consistent ordering
         positions.sort_unstable();
-        positions.dedup(); // Remove any duplicates
-
+        positions.dedup();
         positions
     }
 
-    /// Find the next match
+    /// Find the next match.
+    ///
+    /// For small files, overlay markers are used as the source of truth
+    /// (they auto-track buffer edits).  For large files, `search_state.matches`
+    /// is used directly and viewport overlays are refreshed after the cursor
+    /// moves.
     pub(super) fn find_next(&mut self) {
-        // Get current positions from overlay markers (auto-updated with buffer edits)
-        // Fall back to search_state.matches if no overlays exist (e.g., find_selection_next)
+        // For small files, try overlay-based positions first (auto-updated)
         let overlay_positions = self.get_search_match_positions();
+        let is_large = self.active_state().buffer.is_large_file();
 
         if let Some(ref mut search_state) = self.search_state {
-            // Use overlay positions if they exist and there's no search_range
-            // (selection-based search uses cached matches to respect range)
-            let match_positions =
-                if !overlay_positions.is_empty() && search_state.search_range.is_none() {
-                    overlay_positions
-                } else {
-                    search_state.matches.clone()
-                };
+            let match_positions = if !is_large
+                && !overlay_positions.is_empty()
+                && search_state.search_range.is_none()
+            {
+                overlay_positions
+            } else {
+                search_state.matches.clone()
+            };
 
             if match_positions.is_empty() {
                 return;
@@ -2624,7 +2783,6 @@ impl Editor {
                 if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
                     view_state.cursors.primary_mut().position = match_pos;
                     view_state.cursors.primary_mut().anchor = None;
-                    // Ensure cursor is visible
                     let state = self.buffers.get_mut(&active_buffer).unwrap();
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                 }
@@ -2638,6 +2796,10 @@ impl Editor {
                 )
                 .to_string(),
             );
+
+            if is_large {
+                self.refresh_search_overlays();
+            }
         } else {
             let find_key = self
                 .get_keybinding_for_action("find")
@@ -2646,22 +2808,24 @@ impl Editor {
         }
     }
 
-    /// Find the previous match
+    /// Find the previous match.
+    ///
+    /// For small files, overlay markers are used as the source of truth
+    /// (they auto-track buffer edits).  For large files, `search_state.matches`
+    /// is used directly and viewport overlays are refreshed.
     pub(super) fn find_previous(&mut self) {
-        // Get current positions from overlay markers first (auto-updated with buffer edits)
-        // Fall back to search_state.matches if no overlays exist (e.g., find_selection_previous)
         let overlay_positions = self.get_search_match_positions();
+        let is_large = self.active_state().buffer.is_large_file();
 
         if let Some(ref mut search_state) = self.search_state {
-            // Use overlay positions if:
-            // 1. They exist (overlays were created)
-            // 2. There's no search_range (selection-based search uses cached matches to respect range)
-            let match_positions =
-                if !overlay_positions.is_empty() && search_state.search_range.is_none() {
-                    overlay_positions
-                } else {
-                    search_state.matches.clone()
-                };
+            let match_positions = if !is_large
+                && !overlay_positions.is_empty()
+                && search_state.search_range.is_none()
+            {
+                overlay_positions
+            } else {
+                search_state.matches.clone()
+            };
 
             if match_positions.is_empty() {
                 return;
@@ -2687,7 +2851,6 @@ impl Editor {
                 if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
                     view_state.cursors.primary_mut().position = match_pos;
                     view_state.cursors.primary_mut().anchor = None;
-                    // Ensure cursor is visible
                     let state = self.buffers.get_mut(&active_buffer).unwrap();
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                 }
@@ -2701,6 +2864,10 @@ impl Editor {
                 )
                 .to_string(),
             );
+
+            if is_large {
+                self.refresh_search_overlays();
+            }
         } else {
             let find_key = self
                 .get_keybinding_for_action("find")

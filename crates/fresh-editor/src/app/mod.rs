@@ -64,6 +64,12 @@ pub fn editor_tick(
     if editor.process_line_scan() {
         needs_render = true;
     }
+    if editor.process_search_scan() {
+        needs_render = true;
+    }
+    if editor.check_search_overlay_refresh() {
+        needs_render = true;
+    }
     if editor.check_mouse_hover_timer() {
         needs_render = true;
     }
@@ -797,6 +803,13 @@ pub struct Editor {
 
     /// Incremental line scan state (for non-blocking progress during Go to Line)
     line_scan_state: Option<LineScanState>,
+
+    /// Incremental search scan state (for non-blocking search on large files)
+    search_scan_state: Option<SearchScanState>,
+
+    /// Viewport top_byte when search overlays were last refreshed.
+    /// Used to detect viewport scrolling so overlays can be updated.
+    search_overlay_top_byte: Option<usize>,
 }
 
 /// A file that should be opened after the TUI starts
@@ -816,6 +829,40 @@ pub struct PendingFileOpen {
     pub message: Option<String>,
     /// Wait ID for --wait tracking (if the CLI is blocking until done)
     pub wait_id: Option<u64>,
+}
+
+/// State for an incremental chunked search on large files.
+/// Mirrors the `LineScanState` pattern: the piece tree is pre-split into
+/// ≤1 MB leaves and processed a few leaves per render frame so the UI stays
+/// responsive.
+#[allow(dead_code)] // Fields are used across module files via self.search_scan_state
+struct SearchScanState {
+    buffer_id: BufferId,
+    /// Snapshot of the (pre-split) leaves.
+    leaves: Vec<crate::model::piece_tree::LeafData>,
+    /// One work item per leaf.
+    chunks: Vec<crate::model::buffer::LineScanChunk>,
+    next_chunk: usize,
+    total_bytes: usize,
+    scanned_bytes: usize,
+    /// Compiled regex for searching.
+    regex: regex::Regex,
+    /// The original query string.
+    query: String,
+    /// Accumulated match results: (byte_offset, match_len).
+    match_ranges: Vec<(usize, usize)>,
+    /// Tail bytes from the previous chunk for cross-boundary matching.
+    overlap_tail: Vec<u8>,
+    /// Byte offset of the overlap_tail's first byte in the document.
+    overlap_doc_offset: usize,
+    /// Search range restriction (from selection search).
+    search_range: Option<std::ops::Range<usize>>,
+    /// Whether the match count was capped.
+    capped: bool,
+    /// Search settings captured at scan start.
+    case_sensitive: bool,
+    whole_word: bool,
+    use_regex: bool,
 }
 
 /// State for an incremental line-feed scan (non-blocking Go to Line)
@@ -1408,6 +1455,8 @@ impl Editor {
             completed_waits: Vec::new(),
             stdin_streaming: None,
             line_scan_state: None,
+            search_scan_state: None,
+            search_overlay_top_byte: None,
             review_hunks: Vec::new(),
             active_action_popup: None,
             composite_buffers: HashMap::new(),

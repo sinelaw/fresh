@@ -1850,10 +1850,12 @@ fn test_search_in_large_file() {
     harness.type_text("UNIQUE_SEARCH_TARGET").unwrap();
     harness.render().unwrap();
 
-    // Confirm search - with the fix, this should load the buffer and find the match
+    // Confirm search - this starts an incremental search scan for large files
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // Drive the incremental search scan to completion
+    while harness.editor_mut().process_search_scan() {}
     harness.process_async_and_render().unwrap();
 
     // VERIFY THE FIX: Search should succeed without "Buffer not fully loaded" error
@@ -1948,10 +1950,12 @@ fn test_search_in_large_file_with_low_threshold() {
     harness.type_text("FINDME_SPECIAL").unwrap();
     harness.render().unwrap();
 
-    // Confirm search
+    // Confirm search - starts incremental search scan for large files
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // Drive the incremental search scan to completion
+    while harness.editor_mut().process_search_scan() {}
     harness.process_async_and_render().unwrap();
 
     // The search should succeed without errors
