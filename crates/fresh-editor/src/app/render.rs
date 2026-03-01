@@ -405,7 +405,7 @@ impl Editor {
 
         let is_maximized = self.split_manager.is_maximized();
 
-        let _content_span = tracing::trace_span!("render_content").entered();
+        let _content_span = tracing::info_span!("render_content").entered();
         let (
             split_areas,
             tab_layouts,
@@ -2597,6 +2597,7 @@ impl Editor {
     /// viewport.  Uses binary search on the sorted `search_state.matches` vec
     /// so it is O(log N + visible_matches) regardless of total match count.
     pub(super) fn refresh_search_overlays(&mut self) {
+        let _span = tracing::info_span!("refresh_search_overlays").entered();
         let search_bg = self.theme.search_match_bg;
         let search_fg = self.theme.search_match_fg;
         let ns = self.search_namespace.clone();
@@ -2701,6 +2702,7 @@ impl Editor {
                 leaves,
                 chunks,
                 next_chunk: 0,
+                next_doc_offset: 0,
                 total_bytes,
                 scanned_bytes: 0,
                 regex,
@@ -2750,13 +2752,14 @@ impl Editor {
         let is_large = self.active_state().buffer.is_large_file();
 
         if let Some(ref mut search_state) = self.search_state {
-            let match_positions = if !is_large
-                && !overlay_positions.is_empty()
-                && search_state.search_range.is_none()
-            {
-                overlay_positions
+            // Use overlay positions for small files (they auto-track edits),
+            // otherwise reference search_state.matches directly to avoid cloning.
+            let use_overlays =
+                !is_large && !overlay_positions.is_empty() && search_state.search_range.is_none();
+            let match_positions: &[usize] = if use_overlays {
+                &overlay_positions
             } else {
-                search_state.matches.clone()
+                &search_state.matches
             };
 
             if match_positions.is_empty() {
@@ -2818,13 +2821,12 @@ impl Editor {
         let is_large = self.active_state().buffer.is_large_file();
 
         if let Some(ref mut search_state) = self.search_state {
-            let match_positions = if !is_large
-                && !overlay_positions.is_empty()
-                && search_state.search_range.is_none()
-            {
-                overlay_positions
+            let use_overlays =
+                !is_large && !overlay_positions.is_empty() && search_state.search_range.is_none();
+            let match_positions: &[usize] = if use_overlays {
+                &overlay_positions
             } else {
-                search_state.matches.clone()
+                &search_state.matches
             };
 
             if match_positions.is_empty() {
@@ -2887,7 +2889,7 @@ impl Editor {
         // just continue to next match. Otherwise, clear and start fresh.
         if let Some(ref search_state) = self.search_state {
             let cursor_pos = self.active_cursors().primary().position;
-            if search_state.matches.contains(&cursor_pos) {
+            if search_state.matches.binary_search(&cursor_pos).is_ok() {
                 self.find_next();
                 return;
             }
@@ -2914,7 +2916,7 @@ impl Editor {
                     // and perform_search didn't move us (or moved us to the same match),
                     // then we need to find_next
                     let started_at_match = selection_start
-                        .map(|start| search_state.matches.contains(&start))
+                        .map(|start| search_state.matches.binary_search(&start).is_ok())
                         .unwrap_or(false);
 
                     let landed_at_start = selection_start
@@ -2947,7 +2949,7 @@ impl Editor {
         // just continue to previous match. Otherwise, clear and start fresh.
         if let Some(ref search_state) = self.search_state {
             let cursor_pos = self.active_cursors().primary().position;
-            if search_state.matches.contains(&cursor_pos) {
+            if search_state.matches.binary_search(&cursor_pos).is_ok() {
                 self.find_previous();
                 return;
             }
@@ -2972,7 +2974,7 @@ impl Editor {
 
                     // Check if we started at a match
                     let started_at_match = selection_start
-                        .map(|start| search_state.matches.contains(&start))
+                        .map(|start| search_state.matches.binary_search(&start).is_ok())
                         .unwrap_or(false);
 
                     let landed_at_start = selection_start

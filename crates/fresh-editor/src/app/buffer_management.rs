@@ -2605,7 +2605,7 @@ impl Editor {
         }
 
         let scan = self.search_scan_state.as_ref().unwrap();
-        if scan.next_chunk >= scan.chunks.len() {
+        if scan.next_chunk >= scan.chunks.len() || scan.capped {
             self.finish_search_scan();
         } else {
             let pct = if scan.total_bytes > 0 {
@@ -2650,10 +2650,8 @@ impl Editor {
                 scan.next_chunk += 1;
                 scan.scanned_bytes += chunk.byte_len;
 
-                let doc_offset: usize = scan.leaves[..chunk.leaf_index]
-                    .iter()
-                    .map(|l| l.bytes)
-                    .sum();
+                let doc_offset = scan.next_doc_offset;
+                scan.next_doc_offset += chunk.byte_len;
 
                 let overlap_tail = scan.overlap_tail.clone();
                 let overlap_doc_offset = scan.overlap_doc_offset;
@@ -2728,9 +2726,17 @@ impl Editor {
     /// the cursor, and creates viewport overlays.
     fn finish_search_scan(&mut self) {
         let scan = self.search_scan_state.take().unwrap();
+        let buffer_id = scan.buffer_id;
         let match_ranges = scan.match_ranges;
         let capped = scan.capped;
         let query = scan.query;
+
+        // The search scan loaded chunks via chunk_split_and_load, which
+        // restructures the piece tree.  Refresh saved_root so that
+        // diff_since_saved() can take the fast Arc::ptr_eq path.
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.buffer.refresh_saved_root_if_unmodified();
+        }
 
         if match_ranges.is_empty() {
             self.search_state = None;

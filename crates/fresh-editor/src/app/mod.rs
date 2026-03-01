@@ -55,19 +55,31 @@ pub fn editor_tick(
 ) -> AnyhowResult<bool> {
     let mut needs_render = false;
 
-    if editor.process_async_messages() {
+    if {
+        let _s = tracing::info_span!("process_async_messages").entered();
+        editor.process_async_messages()
+    } {
         needs_render = true;
     }
-    if editor.process_pending_file_opens() {
+    if {
+        let _s = tracing::info_span!("process_pending_file_opens").entered();
+        editor.process_pending_file_opens()
+    } {
         needs_render = true;
     }
     if editor.process_line_scan() {
         needs_render = true;
     }
-    if editor.process_search_scan() {
+    if {
+        let _s = tracing::info_span!("process_search_scan").entered();
+        editor.process_search_scan()
+    } {
         needs_render = true;
     }
-    if editor.check_search_overlay_refresh() {
+    if {
+        let _s = tracing::info_span!("check_search_overlay_refresh").entered();
+        editor.check_search_overlay_refresh()
+    } {
         needs_render = true;
     }
     if editor.check_mouse_hover_timer() {
@@ -843,6 +855,8 @@ struct SearchScanState {
     /// One work item per leaf.
     chunks: Vec<crate::model::buffer::LineScanChunk>,
     next_chunk: usize,
+    /// Running document byte offset for the next chunk (avoids O(N²) recomputation).
+    next_doc_offset: usize,
     total_bytes: usize,
     scanned_bytes: usize,
     /// Compiled regex for searching.
@@ -4088,8 +4102,15 @@ impl Editor {
             return false;
         };
 
-        let messages = bridge.try_recv_all();
+        let messages = {
+            let _s = tracing::info_span!("try_recv_all").entered();
+            bridge.try_recv_all()
+        };
         let needs_render = !messages.is_empty();
+        tracing::info!(
+            async_message_count = messages.len(),
+            "received async messages"
+        );
 
         for message in messages {
             match message {
@@ -4515,25 +4536,38 @@ impl Editor {
         // Update plugin state snapshot BEFORE processing commands
         // This ensures plugins have access to current editor state (cursor positions, etc.)
         #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
+        {
+            let _s = tracing::info_span!("update_plugin_state_snapshot").entered();
+            self.update_plugin_state_snapshot();
+        }
 
         // Process TypeScript plugin commands
-        let processed_any_commands = self.process_plugin_commands();
+        let processed_any_commands = {
+            let _s = tracing::info_span!("process_plugin_commands").entered();
+            self.process_plugin_commands()
+        };
 
         // Re-sync snapshot after commands — commands like SetViewMode change
         // state that plugins read via getBufferInfo().  Without this, a
         // subsequent lines_changed callback would see stale values.
         #[cfg(feature = "plugins")]
         if processed_any_commands {
+            let _s = tracing::info_span!("update_plugin_state_snapshot_post").entered();
             self.update_plugin_state_snapshot();
         }
 
         // Process pending plugin action completions
         #[cfg(feature = "plugins")]
-        self.process_pending_plugin_actions();
+        {
+            let _s = tracing::info_span!("process_pending_plugin_actions").entered();
+            self.process_pending_plugin_actions();
+        }
 
         // Process pending LSP server restarts (with exponential backoff)
-        self.process_pending_lsp_restarts();
+        {
+            let _s = tracing::info_span!("process_pending_lsp_restarts").entered();
+            self.process_pending_lsp_restarts();
+        }
 
         // Check and clear the plugin render request flag
         #[cfg(feature = "plugins")]
@@ -4552,8 +4586,14 @@ impl Editor {
         }
 
         // Poll for file changes (auto-revert) and file tree changes
-        let file_changes = self.poll_file_changes();
-        let tree_changes = self.poll_file_tree_changes();
+        let file_changes = {
+            let _s = tracing::info_span!("poll_file_changes").entered();
+            self.poll_file_changes()
+        };
+        let tree_changes = {
+            let _s = tracing::info_span!("poll_file_tree_changes").entered();
+            self.poll_file_tree_changes()
+        };
 
         // Trigger render if any async messages, plugin commands were processed, or plugin requested render
         needs_render || processed_any_commands || plugin_render || file_changes || tree_changes
@@ -7666,6 +7706,88 @@ mod tests {
         );
         assert_eq!(search_state.matches[0], 0, "First match at position 0");
         assert_eq!(search_state.matches[1], 27, "Second match at position 27");
+    }
+
+    #[test]
+    fn test_search_scan_completes_when_capped() {
+        // Regression test: when the incremental search scan hits MAX_MATCHES
+        // early (e.g. at 15% of the file), the scan's `capped` flag is set to
+        // true and the batch loop breaks.  The completion check in
+        // process_search_scan() must also consider `capped` — otherwise the
+        // scan gets stuck in an infinite loop showing "Searching... 15%".
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+
+        // Manually create a search scan state that is already capped but not
+        // at the last chunk (simulating early cap at ~15%).
+        let buffer_id = editor.active_buffer();
+        let regex = regex::Regex::new("test").unwrap();
+        let fake_chunks = vec![
+            crate::model::buffer::LineScanChunk {
+                leaf_index: 0,
+                byte_len: 100,
+                already_known: true,
+            },
+            crate::model::buffer::LineScanChunk {
+                leaf_index: 1,
+                byte_len: 100,
+                already_known: true,
+            },
+        ];
+
+        editor.search_scan_state = Some(SearchScanState {
+            buffer_id,
+            leaves: Vec::new(),
+            chunks: fake_chunks,
+            next_chunk: 1, // Only processed 1 of 2 chunks
+            next_doc_offset: 100,
+            total_bytes: 200,
+            scanned_bytes: 100,
+            regex,
+            query: "test".to_string(),
+            match_ranges: vec![(10, 4), (50, 4)],
+            overlap_tail: Vec::new(),
+            overlap_doc_offset: 0,
+            search_range: None,
+            capped: true, // Capped early — this is the key condition
+            case_sensitive: false,
+            whole_word: false,
+            use_regex: false,
+        });
+
+        // process_search_scan should finalize the search (not loop forever)
+        let result = editor.process_search_scan();
+        assert!(
+            result,
+            "process_search_scan should return true (needs render)"
+        );
+
+        // The scan state should be consumed (taken)
+        assert!(
+            editor.search_scan_state.is_none(),
+            "search_scan_state should be None after capped scan completes"
+        );
+
+        // Search state should be set with the accumulated matches
+        let search_state = editor
+            .search_state
+            .as_ref()
+            .expect("search_state should be set after scan finishes");
+        assert_eq!(search_state.matches.len(), 2, "Should have 2 matches");
+        assert_eq!(search_state.query, "test");
+        assert!(
+            search_state.capped,
+            "search_state should be marked as capped"
+        );
     }
 
     #[test]

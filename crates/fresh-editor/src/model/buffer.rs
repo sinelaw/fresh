@@ -1468,6 +1468,16 @@ impl TextBuffer {
         self.modified = false;
     }
 
+    /// Refresh the saved root to match the current tree structure without
+    /// clearing the modified flag.  Call this after structural-only changes
+    /// (e.g. chunk_split_and_load during search scan) so that
+    /// `diff_since_saved()` can take the fast `Arc::ptr_eq` path.
+    pub fn refresh_saved_root_if_unmodified(&mut self) {
+        if !self.modified {
+            self.saved_root = self.piece_tree.root();
+        }
+    }
+
     /// Diff the current piece tree against the last saved snapshot.
     ///
     /// This compares actual byte content, not just tree structure. This means

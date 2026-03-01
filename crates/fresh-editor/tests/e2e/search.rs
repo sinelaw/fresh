@@ -2482,3 +2482,150 @@ fn test_regex_replace_with_capture_group() {
     let content = harness.get_buffer_content().unwrap();
     assert_eq!(content, "ooblaoobla");
 }
+
+/// Reproduce the performance issue where editor_tick takes ~700ms after a large
+/// search completes with many matches. This test uses tracing to identify the
+/// bottleneck. Run with: RUST_LOG=info cargo test -p fresh-editor --test e2e_tests
+///     test_search_large_file_tick_performance -- --nocapture
+#[test]
+fn test_search_large_file_tick_performance() {
+    use crate::common::fixtures::TestFixture;
+    use crate::common::tracing::init_tracing_from_env;
+
+    init_tracing_from_env();
+
+    // Use the shared 61MB test file (contains "x" repeated on every line)
+    let file_path = TestFixture::big_txt_for_test("search_perf").unwrap();
+
+    let file_size = std::fs::metadata(&file_path).unwrap().len();
+    eprintln!(
+        "Test file size: {} bytes ({:.1} MB)",
+        file_size,
+        file_size as f64 / 1024.0 / 1024.0
+    );
+
+    // Use a low threshold to force large-file mode (incremental search scan, lazy loading)
+    let mut config = Config::default();
+    config.editor.large_file_threshold_bytes = 10 * 1024 * 1024; // 10MB (below 61MB file)
+
+    let mut harness =
+        EditorTestHarness::create(100, 40, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let is_large = harness.editor().active_state().buffer.is_large_file();
+    eprintln!("Buffer is_large_file: {}", is_large);
+    assert!(
+        is_large,
+        "Buffer should be in large file mode with 10MB threshold"
+    );
+
+    // Open search prompt
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for "x" — appears ~68 times per line across ~753K lines = many matches
+    harness.type_text("x").unwrap();
+    harness.render().unwrap();
+
+    // Confirm search (starts search)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Drive the incremental search scan to completion (if large file mode)
+    let scan_start = std::time::Instant::now();
+    while harness.editor_mut().process_search_scan() {}
+    let scan_elapsed = scan_start.elapsed();
+    eprintln!("Search scan completed in {:?}", scan_elapsed);
+    harness.process_async_and_render().unwrap();
+
+    // Verify search completed with matches
+    let screen = harness.screen_to_string();
+    eprintln!("Screen after search:\n{}", screen);
+
+    // Measure steady-state ticks — disable tracing to get clean wall-clock times
+    eprintln!("\n--- Measuring editor_tick + render performance (steady state, no search) ---");
+
+    // First measure WITHOUT search (cancel search to get baseline)
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    // Clear search state
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    for i in 0..3 {
+        let tick_start = std::time::Instant::now();
+        let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
+        let tick_elapsed = tick_start.elapsed();
+
+        let render_start = std::time::Instant::now();
+        harness.render().unwrap();
+        let render_elapsed = render_start.elapsed();
+
+        eprintln!(
+            "  no-search tick[{}]: editor_tick={:?}, render={:?}, total={:?}",
+            i,
+            tick_elapsed,
+            render_elapsed,
+            tick_elapsed + render_elapsed
+        );
+    }
+
+    // Now re-run search
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("x").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    while harness.editor_mut().process_search_scan() {}
+    harness.process_async_and_render().unwrap();
+
+    eprintln!("\n--- Measuring ticks WITH search active ---");
+    for i in 0..3 {
+        let tick_start = std::time::Instant::now();
+        let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
+        let tick_elapsed = tick_start.elapsed();
+
+        let render_start = std::time::Instant::now();
+        harness.render().unwrap();
+        let render_elapsed = render_start.elapsed();
+
+        eprintln!(
+            "  with-search tick[{}]: editor_tick={:?}, render={:?}, total={:?}",
+            i,
+            tick_elapsed,
+            render_elapsed,
+            tick_elapsed + render_elapsed
+        );
+    }
+
+    // Press F3 (find next) and measure
+    eprintln!("\n--- Pressing F3 (find next) ---");
+    harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
+
+    eprintln!("\n--- Measuring ticks after F3 ---");
+    for i in 0..3 {
+        let tick_start = std::time::Instant::now();
+        let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
+        let tick_elapsed = tick_start.elapsed();
+
+        let render_start = std::time::Instant::now();
+        harness.render().unwrap();
+        let render_elapsed = render_start.elapsed();
+
+        eprintln!(
+            "  after-F3 tick[{}]: editor_tick={:?}, render={:?}, total={:?}",
+            i,
+            tick_elapsed,
+            render_elapsed,
+            tick_elapsed + render_elapsed
+        );
+    }
+}
