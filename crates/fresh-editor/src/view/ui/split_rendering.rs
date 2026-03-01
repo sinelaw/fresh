@@ -414,7 +414,7 @@ struct LineRenderInput<'a> {
     left_column: usize,
     /// Whether to show relative line numbers (distance from cursor)
     relative_line_numbers: bool,
-    /// Session mode: use hardware cursor only, skip REVERSED style for software cursor
+    /// Skip REVERSED style on the primary cursor (session mode or non-block cursor style)
     session_mode: bool,
     /// No hardware cursor: always render software cursor indicators
     software_cursor_only: bool,
@@ -440,8 +440,9 @@ struct CharStyleContext<'a> {
     viewport_overlays: &'a [(crate::view::overlay::Overlay, Range<usize>)],
     primary_cursor_position: usize,
     is_active: bool,
-    /// Session mode: use hardware cursor only, skip REVERSED style for software cursor
-    session_mode: bool,
+    /// Skip REVERSED style on the primary cursor cell (session mode or
+    /// non-block cursor styles like bar/underline).
+    skip_primary_cursor_reverse: bool,
 }
 
 /// Output from compute_char_style
@@ -771,16 +772,18 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     let is_secondary_cursor = ctx.is_cursor && ctx.byte_pos != Some(ctx.primary_cursor_position);
     if ctx.is_active {
         if ctx.is_cursor {
-            if ctx.session_mode {
-                // Session mode: rely on hardware cursor for primary cursor, no REVERSED
-                // (REVERSED + hardware cursor = double inversion = invisible cursor)
-                // Secondary cursors still need visual indicator via REVERSED
+            if ctx.skip_primary_cursor_reverse {
+                // Hardware cursor provides the primary cursor visual (session mode
+                // or non-block cursor styles like bar/underline where REVERSED
+                // would create a block highlight that hides the thin cursor shape).
+                // Secondary cursors still need REVERSED as their only indicator.
                 if is_secondary_cursor {
                     style = style.add_modifier(Modifier::REVERSED);
                 }
             } else {
-                // Normal mode: apply REVERSED to all cursor positions (primary and secondary)
-                // This ensures the character under the cursor is always visible
+                // Block cursor mode: apply REVERSED to all cursor positions
+                // (primary and secondary). The REVERSED block highlight is
+                // visually consistent with the block cursor shape.
                 style = style.add_modifier(Modifier::REVERSED);
             }
         }
@@ -4428,7 +4431,7 @@ impl SplitRenderer {
                         viewport_overlays,
                         primary_cursor_position,
                         is_active,
-                        session_mode,
+                        skip_primary_cursor_reverse: session_mode,
                     });
 
                     // Determine display character (tabs already expanded in ViewLineIterator)

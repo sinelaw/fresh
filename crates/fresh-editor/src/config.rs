@@ -154,6 +154,16 @@ impl CursorStyle {
         "_ Solid underline",
     ];
 
+    /// Returns true for block-style cursors where REVERSED cell styling
+    /// is visually consistent with the cursor shape.  Bar and underline
+    /// cursors are thin and get hidden by a full-cell REVERSED highlight.
+    pub fn is_block(self) -> bool {
+        matches!(
+            self,
+            Self::BlinkingBlock | Self::SteadyBlock | Self::Default
+        )
+    }
+
     /// Convert to crossterm cursor style (runtime only)
     #[cfg(feature = "runtime")]
     pub fn to_crossterm_style(self) -> crossterm::cursor::SetCursorStyle {
