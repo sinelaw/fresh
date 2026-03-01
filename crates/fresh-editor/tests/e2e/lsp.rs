@@ -6608,11 +6608,8 @@ fn test_hover_no_duplicate_popup_when_moving_within_symbol() -> anyhow::Result<(
     harness.sleep(Duration::from_millis(600));
     harness.editor_mut().force_check_mouse_hover();
 
-    // Step 6: Process any second response
-    for _ in 0..10 {
-        harness.process_async_and_render()?;
-        harness.sleep(Duration::from_millis(50));
-    }
+    // Step 6: Wait for screen to stabilize after any second response would have arrived
+    harness.wait_until_stable(|h| h.screen_to_string().contains("Test hover content"))?;
 
     // Count corners - should have exactly 1 popup, not 2
     let screen = harness.screen_to_string();
