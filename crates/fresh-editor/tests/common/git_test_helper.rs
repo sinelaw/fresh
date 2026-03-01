@@ -311,18 +311,19 @@ A sample project for testing.
         copy_plugin(&plugins_dir, "git_explorer");
     }
 
-    /// Set up buffer modified plugin for unsaved changes indicator tests
+    /// Buffer-modified indicators are now computed natively during rendering.
+    /// Creates an empty plugins directory to prevent embedded plugins (git_gutter, etc.)
+    /// from auto-loading and interfering with tests that only test native indicators.
     pub fn setup_buffer_modified_plugin(&self) {
         let plugins_dir = self.path.join("plugins");
-        fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
-        copy_plugin_lib(&plugins_dir);
-        copy_plugin(&plugins_dir, "buffer_modified");
+        if !plugins_dir.exists() {
+            fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
+        }
     }
 
-    /// Set up both gutter plugins (git gutter + buffer modified)
+    /// Set up gutter plugins (git gutter; buffer-modified is native)
     pub fn setup_gutter_plugins(&self) {
         self.setup_git_gutter_plugin();
-        self.setup_buffer_modified_plugin();
     }
 
     /// Modify a file without staging or committing (working copy change)

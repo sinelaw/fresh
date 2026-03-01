@@ -533,7 +533,7 @@ impl PieceTreeNode {
     }
 
     /// Collect all leaves in order
-    fn collect_leaves(&self, leaves: &mut Vec<LeafData>) {
+    pub(crate) fn collect_leaves(&self, leaves: &mut Vec<LeafData>) {
         match self {
             Self::Internal { left, right, .. } => {
                 left.collect_leaves(leaves);

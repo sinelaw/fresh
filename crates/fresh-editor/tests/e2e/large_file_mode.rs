@@ -1063,13 +1063,201 @@ fn test_edit_scan_edit_line_numbers_stay_exact() {
     );
 }
 
+/// End-to-end test: gutter indicators appear in byte-offset mode (no line scan).
+///
+/// In large file mode without a line scan, the editor is in byte-offset mode
+/// (no line numbers).  Native diff indicators should still appear because
+/// `diff_indicators_for_viewport` works purely with byte ranges — it scans
+/// viewport bytes for `\n` to find line starts, with no line metadata needed.
+///
+/// Flow:
+///   1. Open a large file (>11 MB) — editor enters byte-offset mode
+///   2. Verify byte-offset mode (no line numbers)
+///   3. Make edits on three separate lines
+///   4. Verify gutter indicators appear on all edited lines (no line scan!)
+#[test]
+fn test_large_file_gutter_indicators_byte_offset_mode() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn get_content_lines(screen: &str) -> Vec<&str> {
+        let lines: Vec<&str> = screen.lines().collect();
+        let content_start = 2;
+        let content_end = lines.len().saturating_sub(2);
+        if content_end > content_start {
+            lines[content_start..content_end].to_vec()
+        } else {
+            vec![]
+        }
+    }
+
+    fn count_gutter_indicators(screen: &str, symbol: &str) -> usize {
+        get_content_lines(screen)
+            .iter()
+            .filter(|line| {
+                line.chars()
+                    .next()
+                    .map(|c| c.to_string() == symbol)
+                    .unwrap_or(false)
+            })
+            .count()
+    }
+
+    fn get_indicator_lines(screen: &str, symbol: &str) -> Vec<usize> {
+        get_content_lines(screen)
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, line)| {
+                line.chars()
+                    .next()
+                    .filter(|c| c.to_string() == symbol)
+                    .map(|_| idx)
+            })
+            .collect()
+    }
+
+    // ── Setup ──
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a file that exceeds the 11 MB threshold.
+    let file_path = temp_dir.path().join("large.txt");
+    let line_count = 300_000usize;
+    let mut content = String::with_capacity(line_count * 55);
+    for i in 0..line_count {
+        use std::fmt::Write;
+        writeln!(
+            content,
+            "Line {:06} content for large file testing, padding.",
+            i
+        )
+        .unwrap();
+    }
+    let file_size = content.len();
+    assert!(
+        file_size > 11 * 1024 * 1024,
+        "Test file should be >11MB, got {} bytes",
+        file_size
+    );
+    fs::write(&file_path, &content).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        fresh::config::Config {
+            editor: fresh::config::EditorConfig {
+                large_file_threshold_bytes: 11 * 1024 * 1024,
+                auto_indent: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        temp_dir.path().to_path_buf(),
+    )
+    .unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("large.txt"))
+        .unwrap();
+
+    // ── Step 1: Verify byte-offset mode ──
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Byte 0"),
+        "Should be in byte-offset mode (no line scan).\nScreen:\n{}",
+        screen
+    );
+
+    // ── Step 2: No indicators before editing ──
+    let indicators_before = count_gutter_indicators(&screen, "│");
+    assert_eq!(
+        indicators_before, 0,
+        "No indicators before any edits.\nScreen:\n{}",
+        screen
+    );
+
+    // ── Step 3: Make edits on three separate lines ──
+
+    // Edit A – line 1 (top of file)
+    harness.type_text("EDIT_A ").unwrap();
+
+    // Edit B – 5 lines down
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.type_text("EDIT_B ").unwrap();
+
+    // Edit C – 10 more lines down
+    for _ in 0..10 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.type_text("EDIT_C ").unwrap();
+
+    // Go back to top so all edits are visible
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // ── Step 4: Verify indicators appear without line scan ──
+    let screen = harness.screen_to_string();
+    let indicators = count_gutter_indicators(&screen, "│");
+    let indicator_lines = get_indicator_lines(&screen, "│");
+    println!(
+        "=== Byte-offset mode indicators ===\nCount: {}\nLines: {:?}\nScreen:\n{}",
+        indicators, indicator_lines, screen
+    );
+
+    // Still in byte-offset mode
+    assert!(
+        screen.contains("Byte 0"),
+        "Should still be in byte-offset mode.\nScreen:\n{}",
+        screen
+    );
+
+    // All three edits should be visible
+    assert!(screen.contains("EDIT_A"), "EDIT_A should be visible");
+    assert!(screen.contains("EDIT_B"), "EDIT_B should be visible");
+    assert!(screen.contains("EDIT_C"), "EDIT_C should be visible");
+
+    // Exactly the 3 edited lines should have gutter indicators — no more, no less.
+    let content_lines = get_content_lines(&screen);
+    let edit_a_row = content_lines
+        .iter()
+        .position(|l| l.contains("EDIT_A"))
+        .expect("EDIT_A should be in content area");
+    let edit_b_row = content_lines
+        .iter()
+        .position(|l| l.contains("EDIT_B"))
+        .expect("EDIT_B should be in content area");
+    let edit_c_row = content_lines
+        .iter()
+        .position(|l| l.contains("EDIT_C"))
+        .expect("EDIT_C should be in content area");
+
+    let expected: Vec<usize> = {
+        let mut v = vec![edit_a_row, edit_b_row, edit_c_row];
+        v.sort();
+        v
+    };
+    assert_eq!(
+        indicator_lines, expected,
+        "Only the 3 edited lines should have indicators.\n\
+         Expected rows: {:?}\nGot rows: {:?}\nScreen:\n{}",
+        expected, indicator_lines, screen
+    );
+}
+
 /// End-to-end test: large file mode gutter indicators appear after enabling line scan.
 ///
-/// In large file mode, the buffer_modified plugin cannot always compute accurate
-/// line ranges for gutter indicators because line metadata is not available.
-/// After the user enables line scanning (via the "Go to Line" command), the line
-/// metadata becomes available, and all previously-edited lines should receive
-/// gutter indicators.
+/// In large file mode, gutter indicators are computed natively from
+/// `diff_since_saved()` byte ranges during rendering.  After line scanning
+/// completes, line numbers become available in the gutter.
 ///
 /// Flow:
 ///   1. Open a large file (>11 MB threshold) – editor enters byte-offset mode
@@ -1080,7 +1268,6 @@ fn test_edit_scan_edit_line_numbers_stay_exact() {
 #[test]
 #[cfg(feature = "plugins")]
 fn test_large_file_gutter_indicators_after_line_scan() {
-    use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crossterm::event::KeyModifiers;
     use std::fs;
     use tempfile::TempDir;
@@ -1130,11 +1317,7 @@ fn test_large_file_gutter_indicators_after_line_scan() {
 
     let temp_dir = TempDir::new().unwrap();
 
-    // Install buffer_modified plugin so we get gutter indicators for unsaved edits
-    let plugins_dir = temp_dir.path().join("plugins");
-    fs::create_dir_all(&plugins_dir).unwrap();
-    copy_plugin_lib(&plugins_dir);
-    copy_plugin(&plugins_dir, "buffer_modified");
+    // Buffer-modified gutter indicators are now native (no plugin needed).
 
     // Create a file that exceeds the 11 MB threshold.
     // Each line: "Line NNNNNN content for large file testing, padding." + \n ≈ 55 bytes
@@ -1320,7 +1503,7 @@ fn test_large_file_gutter_indicators_after_line_scan() {
     );
 
     // ── Step 6: Verify gutter indicators for ALL edited lines ──
-    // After scanning, the buffer_modified plugin can compute accurate line ranges.
+    // Native diff indicators are computed per-frame from diff_since_saved().
     // All three edited lines should now have gutter indicators.
     assert!(
         indicators_after >= 3,
@@ -1377,7 +1560,7 @@ fn test_large_file_gutter_indicators_after_line_scan() {
 
 /// Test that gutter indicators update correctly when scrolling through a large file.
 ///
-/// After line scan, the buffer_modified plugin uses viewport-filtered batch indicators.
+/// Native diff indicators are viewport-filtered per-frame during rendering.
 /// This test verifies:
 /// 1. Editing at the top shows indicators for the visible modified lines
 /// 2. Jumping to EOF and editing shows indicators at that location (not the old ones)
@@ -1385,9 +1568,7 @@ fn test_large_file_gutter_indicators_after_line_scan() {
 /// 4. Jumping back to EOF shows the EOF edit indicator is still present
 #[test]
 fn test_large_file_gutter_indicators_viewport_filtering() {
-    use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crossterm::event::KeyModifiers;
-    use std::fs;
     use tempfile::TempDir;
 
     // ── Helpers ──
@@ -1452,11 +1633,7 @@ fn test_large_file_gutter_indicators_viewport_filtering() {
 
     let temp_dir = TempDir::new().unwrap();
 
-    // Install buffer_modified plugin
-    let plugins_dir = temp_dir.path().join("plugins");
-    fs::create_dir_all(&plugins_dir).unwrap();
-    copy_plugin_lib(&plugins_dir);
-    copy_plugin(&plugins_dir, "buffer_modified");
+    // Buffer-modified gutter indicators are now native (no plugin needed).
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,

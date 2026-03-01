@@ -3952,11 +3952,19 @@ impl SplitRenderer {
 
         // Pre-compute line indicators for the viewport (only query markers in visible range)
         // Key by line-start byte so lookups match line_start_byte in render loop
-        let line_indicators = state.margins.get_indicators_for_viewport(
+        let mut line_indicators = state.margins.get_indicators_for_viewport(
             viewport_start,
             viewport_end,
             |byte_offset| indent_folding::find_line_start_byte(&state.buffer, byte_offset),
         );
+
+        // Merge native diff-since-saved indicators (cornflower blue │ for unsaved edits).
+        // These have priority 5, lower than git gutter (10), so existing indicators win.
+        let diff_indicators =
+            Self::diff_indicators_for_viewport(state, viewport_start, viewport_end);
+        for (key, diff_ind) in diff_indicators {
+            line_indicators.entry(key).or_insert(diff_ind);
+        }
 
         let fold_indicators =
             Self::fold_indicators_for_viewport(state, folds, viewport_start, viewport_end);
@@ -4013,6 +4021,69 @@ impl SplitRenderer {
                     indicators
                         .entry(viewport_start + byte_off)
                         .or_insert(FoldIndicator { collapsed: false });
+                }
+            }
+        }
+
+        indicators
+    }
+
+    /// Compute diff-since-saved indicators for the viewport.
+    ///
+    /// Calls `diff_since_saved()` to get byte ranges that differ from the saved
+    /// version, intersects them with the viewport, and scans for line starts to
+    /// produce per-line indicators. Works identically with and without line
+    /// number metadata (byte-offset mode for large files).
+    fn diff_indicators_for_viewport(
+        state: &EditorState,
+        viewport_start: usize,
+        viewport_end: usize,
+    ) -> BTreeMap<usize, crate::view::margin::LineIndicator> {
+        use crate::view::folding::indent_folding;
+        let diff = state.buffer.diff_since_saved();
+        if diff.equal || diff.byte_ranges.is_empty() {
+            return BTreeMap::new();
+        }
+
+        let mut indicators = BTreeMap::new();
+        let indicator = crate::view::margin::LineIndicator::new(
+            "│",
+            Color::Rgb(100, 149, 237), // Cornflower blue
+            5,                         // Lower priority than git gutter (10)
+        );
+
+        let bytes = state.buffer.slice_bytes(viewport_start..viewport_end);
+        if bytes.is_empty() {
+            return indicators;
+        }
+
+        for range in &diff.byte_ranges {
+            // Intersect diff range with viewport
+            let lo = range.start.max(viewport_start);
+            let hi = range.end.min(viewport_end);
+            if lo >= hi {
+                continue;
+            }
+
+            // Mark the line containing the start of this diff range
+            let line_start = indent_folding::find_line_start_byte(&state.buffer, lo);
+            if line_start >= viewport_start && line_start < viewport_end {
+                indicators
+                    .entry(line_start)
+                    .or_insert_with(|| indicator.clone());
+            }
+
+            // Scan forward for \n within [lo..hi] to find subsequent line starts
+            let rel_lo = lo - viewport_start;
+            let rel_hi = (hi - viewport_start).min(bytes.len());
+            for i in rel_lo..rel_hi {
+                if bytes[i] == b'\n' {
+                    let next_line_start = viewport_start + i + 1;
+                    if next_line_start < viewport_end {
+                        indicators
+                            .entry(next_line_start)
+                            .or_insert_with(|| indicator.clone());
+                    }
                 }
             }
         }

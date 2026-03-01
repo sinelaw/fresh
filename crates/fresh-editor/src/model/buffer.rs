@@ -1478,6 +1478,85 @@ impl TextBuffer {
         }
     }
 
+    /// Apply a chunk-load buffer replacement to `saved_root`.
+    ///
+    /// When viewport loading converts a `Stored(buffer_id)` piece to
+    /// `Added(new_buffer_id)` in the current tree and the buffer is already
+    /// modified, we must apply the same transformation to `saved_root` so
+    /// that `diff_since_saved()` can match loaded-but-unedited regions by
+    /// `(location, offset)` identity.
+    fn apply_chunk_load_to_saved_root(
+        &mut self,
+        old_buffer_id: usize,
+        chunk_offset_in_buffer: usize,
+        chunk_bytes: usize,
+        new_buffer_id: usize,
+    ) {
+        use crate::model::piece_tree::{LeafData, PieceTree};
+
+        let mut leaves = Vec::new();
+        self.saved_root.collect_leaves(&mut leaves);
+
+        let mut modified = false;
+        let mut new_leaves: Vec<LeafData> = Vec::with_capacity(leaves.len() + 2);
+
+        for leaf in &leaves {
+            if leaf.location.buffer_id() != old_buffer_id {
+                new_leaves.push(*leaf);
+                continue;
+            }
+
+            let leaf_start = leaf.offset;
+            let leaf_end = leaf.offset + leaf.bytes;
+            let chunk_start = chunk_offset_in_buffer;
+            let chunk_end = chunk_offset_in_buffer + chunk_bytes;
+
+            // Check if this leaf overlaps the chunk range
+            if chunk_start >= leaf_end || chunk_end <= leaf_start {
+                // No overlap — keep as-is
+                new_leaves.push(*leaf);
+                continue;
+            }
+
+            modified = true;
+
+            // Prefix: portion of this leaf before the chunk
+            if chunk_start > leaf_start {
+                new_leaves.push(LeafData::new(
+                    leaf.location,
+                    leaf.offset,
+                    chunk_start - leaf_start,
+                    None, // line feed count unknown after split
+                ));
+            }
+
+            // The chunk itself — replaced with Added(new_buffer_id)
+            let actual_start = chunk_start.max(leaf_start);
+            let actual_end = chunk_end.min(leaf_end);
+            let offset_in_chunk = actual_start - chunk_start;
+            new_leaves.push(LeafData::new(
+                BufferLocation::Added(new_buffer_id),
+                offset_in_chunk,
+                actual_end - actual_start,
+                None,
+            ));
+
+            // Suffix: portion of this leaf after the chunk
+            if chunk_end < leaf_end {
+                new_leaves.push(LeafData::new(
+                    leaf.location,
+                    chunk_end,
+                    leaf_end - chunk_end,
+                    None,
+                ));
+            }
+        }
+
+        if modified {
+            self.saved_root = PieceTree::from_leaves(&new_leaves).root();
+        }
+    }
+
     /// Diff the current piece tree against the last saved snapshot.
     ///
     /// This compares actual byte content, not just tree structure. This means
@@ -1490,9 +1569,33 @@ impl TextBuffer {
     ///
     /// This is O(edit_size) instead of O(file_size) for small edits in large files.
     pub fn diff_since_saved(&self) -> PieceTreeDiff {
-        // First, quick check: if tree roots are identical (Arc pointer equality),
+        let _span = tracing::info_span!(
+            "diff_since_saved",
+            large_file = self.large_file,
+            modified = self.modified,
+            lf_scanned = self.line_feeds_scanned
+        )
+        .entered();
+
+        // Fast path: if the buffer hasn't been modified since loading/saving,
+        // the content is identical to the saved version by definition.
+        // This avoids an expensive O(num_leaves) structure walk when the tree
+        // has been restructured for non-edit reasons (viewport chunk loading,
+        // line-scan preparation, search-scan splits).
+        if !self.modified {
+            tracing::info!("diff_since_saved: not modified → equal");
+            return PieceTreeDiff {
+                equal: true,
+                byte_ranges: Vec::new(),
+                line_ranges: Some(Vec::new()),
+                nodes_visited: 0,
+            };
+        }
+
+        // Quick check: if tree roots are identical (Arc pointer equality),
         // the content is definitely the same.
         if Arc::ptr_eq(&self.saved_root, &self.piece_tree.root()) {
+            tracing::info!("diff_since_saved: Arc::ptr_eq fast path → equal");
             return PieceTreeDiff {
                 equal: true,
                 byte_ranges: Vec::new(),
@@ -1507,6 +1610,13 @@ impl TextBuffer {
 
         // If structure says trees are equal (same pieces in same order), we're done
         if structure_diff.equal {
+            tracing::info!(
+                "diff_since_saved: structure equal, line_ranges={}",
+                structure_diff
+                    .line_ranges
+                    .as_ref()
+                    .map_or("None".to_string(), |r| format!("Some({})", r.len()))
+            );
             return structure_diff;
         }
 
@@ -1526,6 +1636,14 @@ impl TextBuffer {
         if total_changed_bytes <= MAX_VERIFY_BYTES && !structure_diff.byte_ranges.is_empty() {
             // Check if content in the changed ranges is actually different
             if self.verify_content_differs_in_ranges(&structure_diff.byte_ranges) {
+                tracing::info!(
+                    "diff_since_saved: content differs, byte_ranges={}, line_ranges={}",
+                    structure_diff.byte_ranges.len(),
+                    structure_diff
+                        .line_ranges
+                        .as_ref()
+                        .map_or("None".to_string(), |r| format!("Some({})", r.len()))
+                );
                 // Content actually differs - return the structure diff result
                 return structure_diff;
             } else {
@@ -1539,6 +1657,15 @@ impl TextBuffer {
             }
         }
 
+        tracing::info!(
+            "diff_since_saved: large change, byte_ranges={}, line_ranges={}, nodes_visited={}",
+            structure_diff.byte_ranges.len(),
+            structure_diff
+                .line_ranges
+                .as_ref()
+                .map_or("None".to_string(), |r| format!("Some({})", r.len())),
+            structure_diff.nodes_visited
+        );
         // For large changes or when we can't verify, trust the structure diff
         structure_diff
     }
@@ -1695,6 +1822,16 @@ impl TextBuffer {
                 if start == 0 && len == leaf.bytes {
                     leaf.line_feed_cnt.map(|c| c as usize)
                 } else {
+                    tracing::warn!(
+                        "diff line_counter: returning None for partial leaf query: \
+                         loc={:?} offset={} bytes={} lf_cnt={:?} query_start={} query_len={}",
+                        leaf.location,
+                        leaf.offset,
+                        leaf.bytes,
+                        leaf.line_feed_cnt,
+                        start,
+                        len
+                    );
                     None
                 }
             },
@@ -2313,6 +2450,24 @@ impl TextBuffer {
             }
         }
 
+        // Keep saved_root in sync with viewport-loading tree restructures so
+        // that diff_since_saved() can match by (location, offset) identity.
+        //
+        // When !modified the current tree IS the saved state, so just snapshot.
+        // When modified, we must apply the same Stored→Added leaf replacement
+        // to saved_root so the diff doesn't see loaded-but-unedited regions as
+        // changed.
+        if !self.modified {
+            self.saved_root = self.piece_tree.root();
+        } else {
+            self.apply_chunk_load_to_saved_root(
+                buffer_id,
+                chunk_start_in_buffer,
+                chunk_bytes,
+                new_buffer_id,
+            );
+        }
+
         Ok(true)
     }
 
@@ -2443,6 +2598,13 @@ impl TextBuffer {
             let buffer_id = piece_info.location.buffer_id();
             if let Some(buffer) = self.buffers.get_mut(buffer_id) {
                 if !buffer.is_loaded() {
+                    let buf_bytes = buffer.unloaded_bytes().unwrap_or(0);
+                    tracing::info!(
+                        "ensure_chunk_loaded_at: loading buffer {} ({} bytes) for offset {}",
+                        buffer_id,
+                        buf_bytes,
+                        offset
+                    );
                     if let Err(e) = buffer.load(&*self.fs) {
                         tracing::warn!("Failed to load chunk at offset {offset}: {e}");
                     }

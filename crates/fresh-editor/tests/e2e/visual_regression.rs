@@ -251,13 +251,11 @@ fn helper() {
     harness.type_text("help").unwrap();
     harness.render().unwrap();
 
-    // Wait for git gutter indicator to appear (semantic wait to avoid flakiness)
-    // The git diff change marker (│) should appear in the gutter for modified files
+    // Wait for the command palette to fully render with the "help" filter text
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            // Look for the git change marker in the gutter
-            screen.contains("│   1 │") || screen.contains("│   2 │")
+            screen.contains("help")
         })
         .unwrap();
 

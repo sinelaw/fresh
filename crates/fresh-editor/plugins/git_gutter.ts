@@ -396,7 +396,7 @@ globalThis.onGitGutterAfterSave = function (args: {
 
 // Note: Git diff compares the file on disk, not the in-memory buffer.
 // Line indicators automatically track position changes via byte-position markers.
-// A full re-diff happens on save. For unsaved changes, see buffer_modified plugin.
+// A full re-diff happens on save. Unsaved changes are shown natively by the editor.
 
 /**
  * Handle buffer closed - cleanup state

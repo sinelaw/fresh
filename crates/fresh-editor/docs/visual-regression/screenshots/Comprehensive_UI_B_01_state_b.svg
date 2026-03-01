@@ -821,7 +821,6 @@
   <rect x="1062" y="288" width="9" height="18" fill="#1e1e23"/>
   <text x="1063" y="302" fill="#8c8c8c" class="terminal" style="">×</text>
   <rect x="1071" y="288" width="9" height="18" fill="#1e1e23"/>
-  <text x="1" y="320" fill="#6495ed" class="terminal" style="">│</text>
   <text x="37" y="320" fill="#8c8c8c" class="terminal" style="">1</text>
   <text x="55" y="320" fill="#8c8c8c" class="terminal" style="">│</text>
   <rect x="1071" y="306" width="9" height="18" fill="#6272a4"/>
