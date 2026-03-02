@@ -42,6 +42,7 @@ pub mod lsp;
 pub mod lsp_completion_french_locale;
 pub mod lsp_completion_popup_behavior;
 pub mod lsp_config;
+pub mod lsp_env;
 pub mod lsp_no_config;
 pub mod lsp_order;
 pub mod lsp_publish_diagnostics_capability;
