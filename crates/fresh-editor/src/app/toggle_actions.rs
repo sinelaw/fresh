@@ -327,6 +327,11 @@ impl Editor {
         // Update clipboard configuration
         self.clipboard.apply_config(&self.config.clipboard);
 
+        // Apply bar visibility changes immediately
+        self.menu_bar_visible = self.config.editor.show_menu_bar;
+        self.tab_bar_visible = self.config.editor.show_tab_bar;
+        self.status_bar_visible = self.config.editor.show_status_bar;
+
         // Update LSP configs
         if let Some(ref mut lsp) = self.lsp {
             for (language, lsp_config) in &self.config.lsp {
