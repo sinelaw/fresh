@@ -1064,10 +1064,12 @@ impl Editor {
             config.editor.large_file_threshold_bytes as usize,
             Arc::clone(&filesystem),
         );
-        // Configure initial margin layout from config default
+        // Configure initial buffer settings from config
         state
             .margins
             .configure_for_line_numbers(config.editor.line_numbers);
+        state.buffer_settings.tab_size = config.editor.tab_size;
+        state.buffer_settings.auto_close = config.editor.auto_close;
         // Note: line_wrap_enabled is now stored in SplitViewState.viewport
         tracing::info!("EditorState created for buffer {:?}", buffer_id);
         buffers.insert(buffer_id, state);

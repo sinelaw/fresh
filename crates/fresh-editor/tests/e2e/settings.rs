@@ -1917,12 +1917,13 @@ fn test_entry_dialog_focus_indicator() {
     harness.assert_screen_contains("Key:");
 
     // The focused field should have a ">" indicator
-    // First editable field (Auto Indent) should be focused by default
+    // First editable field (Auto Close) should be focused by default
+    // (fields are sorted alphabetically within a language entry dialog)
     // Format: ">  " or ">● " (3-char indicator area: focus, modified, space)
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(">  Auto Indent") || screen.contains(">● Auto Indent"),
-        "Focus indicator '>' should appear before Auto Indent. Screen:\n{}",
+        screen.contains(">  Auto Close") || screen.contains(">● Auto Close"),
+        "Focus indicator '>' should appear before Auto Close. Screen:\n{}",
         screen
     );
 
@@ -1930,12 +1931,11 @@ fn test_entry_dialog_focus_indicator() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Now "Comment Prefix" should be focused with ">" indicator
-    // May have modified indicator if value differs from default
+    // Now "Auto Indent" should be focused with ">" indicator
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(">  Comment Prefix") || screen.contains(">● Comment Prefix"),
-        "Focus indicator '>' should appear before Comment Prefix. Screen:\n{}",
+        screen.contains(">  Auto Indent") || screen.contains(">● Auto Indent"),
+        "Focus indicator '>' should appear before Auto Indent. Screen:\n{}",
         screen
     );
 

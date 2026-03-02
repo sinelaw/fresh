@@ -6,7 +6,12 @@ use crossterm::event::{KeyCode, KeyModifiers};
 
 #[test]
 fn test_enter_after_brace_no_autoindent() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    // Disable auto_indent and auto_close so the shadow model (which doesn't
+    // simulate either) stays in sync with the buffer
+    let mut config = fresh::config::Config::default();
+    config.editor.auto_indent = false;
+    config.editor.auto_close = false;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.enable_shadow_validation();
 
     // Type a brace

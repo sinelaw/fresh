@@ -925,7 +925,7 @@ pub fn action_to_events(
 
                 // Check for bracket expansion: cursor between matching brackets like {|}
                 // Only applies to braces, brackets, and parentheses (not quotes)
-                let bracket_expansion = if auto_indent && indent_position > 0 {
+                let bracket_expansion = if auto_close && indent_position > 0 {
                     let char_before = state
                         .buffer
                         .slice_bytes(indent_position.saturating_sub(1)..indent_position)

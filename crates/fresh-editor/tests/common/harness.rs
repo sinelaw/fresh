@@ -432,9 +432,10 @@ impl EditorTestHarness {
         // If no config provided, use defaults; if config provided, respect its settings
         let config_was_provided = options.config.is_some();
         let mut config = options.config.unwrap_or_default();
-        // Only override auto_indent if no config was explicitly provided
+        // Only override auto_indent/auto_close if no config was explicitly provided
         if !config_was_provided {
             config.editor.auto_indent = false; // Disable for simpler testing
+            config.editor.auto_close = false; // Disable for simpler testing
         }
         // Force "default" keybinding map for consistent test behavior across platforms
         // (Config::default() uses platform-specific keymaps which breaks test assumptions)

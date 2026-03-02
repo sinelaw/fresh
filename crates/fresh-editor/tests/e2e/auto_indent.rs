@@ -224,9 +224,10 @@ fn test_auto_indent_disabled_by_config() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "").unwrap();
 
-    // Create harness with auto_indent disabled
+    // Create harness with auto_indent and auto_close disabled
     let mut config = Config::default();
     config.editor.auto_indent = false;
+    config.editor.auto_close = false;
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.open_file(&file_path).unwrap();
 

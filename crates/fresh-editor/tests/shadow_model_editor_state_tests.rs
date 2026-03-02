@@ -68,7 +68,12 @@ fn op_strategy() -> impl Strategy<Value = Op> {
 
 /// Run a sequence of ops and verify shadow model matches editor state
 fn run_and_verify(ops: &[Op]) -> Result<(), proptest::test_runner::TestCaseError> {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    // Disable auto_indent and auto_close so the shadow model (which is a simple
+    // string that doesn't simulate either) stays in sync with the editor buffer.
+    let mut config = fresh::config::Config::default();
+    config.editor.auto_indent = false;
+    config.editor.auto_close = false;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.enable_shadow_validation();
 
     for op in ops {
@@ -134,7 +139,10 @@ fn test_single_op_each() {
     ];
 
     for op in &ops {
-        let mut harness = EditorTestHarness::new(80, 24).unwrap();
+        let mut config = fresh::config::Config::default();
+        config.editor.auto_indent = false;
+        config.editor.auto_close = false;
+        let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
         harness.enable_shadow_validation();
 
         op.apply(&mut harness).unwrap();

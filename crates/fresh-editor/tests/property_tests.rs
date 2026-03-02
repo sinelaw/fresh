@@ -69,7 +69,11 @@ proptest! {
     /// Property test: piece tree should always match shadow string after any sequence of edits
     #[test]
     fn prop_piece_tree_matches_shadow(ops in prop::collection::vec(edit_op_strategy(), 1..50)) {
-        let mut harness = EditorTestHarness::new(80, 24).unwrap();
+        // Disable auto_indent and auto_close so the shadow model stays in sync
+        let mut config = fresh::config::Config::default();
+        config.editor.auto_indent = false;
+        config.editor.auto_close = false;
+        let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
         harness.enable_shadow_validation();
 
         // Apply all operations
@@ -115,7 +119,11 @@ proptest! {
     /// Property test: buffer length should match shadow length
     #[test]
     fn prop_buffer_length_matches_shadow(ops in prop::collection::vec(edit_op_strategy(), 1..50)) {
-        let mut harness = EditorTestHarness::new(80, 24).unwrap();
+        // Disable auto_indent and auto_close so the shadow model stays in sync
+        let mut config = fresh::config::Config::default();
+        config.editor.auto_indent = false;
+        config.editor.auto_close = false;
+        let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
         harness.enable_shadow_validation();
 
         for op in &ops {
