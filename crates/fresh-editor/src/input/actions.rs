@@ -2614,6 +2614,7 @@ pub fn action_to_events(
         | Action::QuickOpen
         | Action::ShowHelp
         | Action::ToggleLineWrap
+        | Action::ToggleReadOnly
         | Action::ToggleComposeMode
         | Action::SetComposeWidth
         | Action::IncreaseSplitSize

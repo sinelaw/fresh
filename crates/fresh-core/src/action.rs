@@ -206,6 +206,7 @@ pub enum Action {
     ClearWarnings,
     CommandPalette,
     ToggleLineWrap,
+    ToggleReadOnly,
     ToggleComposeMode,
     SetComposeWidth,
     SelectTheme,

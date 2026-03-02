@@ -663,6 +663,11 @@ impl Editor {
                 .get(&active_split)
                 .map(|vs| &vs.cursors)
                 .unwrap_or(&default_cursors);
+            let is_read_only = self
+                .buffer_metadata
+                .get(&active_buf)
+                .map(|m| m.read_only)
+                .unwrap_or(false);
             let status_bar_layout = StatusBarRenderer::render_status_bar(
                 frame,
                 main_chunks[status_bar_idx],
@@ -681,6 +686,7 @@ impl Editor {
                 status_bar_hover,             // Pass hover state for indicator styling
                 remote_connection.as_deref(), // Pass remote connection info
                 session_name.as_deref(),      // Pass session name for status bar display
+                is_read_only,                 // Pass read-only flag from metadata
             );
 
             // Store status bar layout for click detection

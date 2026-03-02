@@ -224,8 +224,9 @@ impl BufferMetadata {
         // Use canonicalized forms first to handle macOS /var -> /private/var differences.
         let display_name = Self::display_name_for_path(&path, working_dir);
 
-        // Check if this is a library file (in vendor directories)
-        let (lsp_enabled, lsp_disabled_reason) = if Self::is_library_path(&path, working_dir) {
+        // Check if this is a library file (in vendor directories or standard libraries)
+        let is_library = Self::is_library_path(&path, working_dir);
+        let (lsp_enabled, lsp_disabled_reason) = if is_library {
             (false, Some(t!("lsp.disabled.library_file").to_string()))
         } else {
             (true, None)
@@ -239,7 +240,7 @@ impl BufferMetadata {
             display_name,
             lsp_enabled,
             lsp_disabled_reason,
-            read_only: false,
+            read_only: is_library,
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
@@ -247,16 +248,22 @@ impl BufferMetadata {
         }
     }
 
-    /// Check if a path is a library file (in vendor directories)
+    /// Check if a path is a library file (in vendor directories or standard libraries)
     ///
     /// Library files include:
     /// - Files in common vendor/dependency directories (.cargo, node_modules, etc.)
+    /// - Standard library / toolchain files (rustup toolchains, system includes, etc.)
     pub fn is_library_path(path: &Path, _working_dir: &Path) -> bool {
         // Check for common library paths
         let path_str = path.to_string_lossy();
 
         // Rust: .cargo directory (can be within project for vendor'd crates)
         if path_str.contains("/.cargo/") || path_str.contains("\\.cargo\\") {
+            return true;
+        }
+
+        // Rust: rustup toolchains (standard library source files)
+        if path_str.contains("/rustup/toolchains/") || path_str.contains("\\rustup\\toolchains\\") {
             return true;
         }
 
@@ -291,6 +298,35 @@ impl BufferMetadata {
 
         // Maven: .m2
         if path_str.contains("/.m2/") || path_str.contains("\\.m2\\") {
+            return true;
+        }
+
+        // C/C++: system include directories
+        if path_str.starts_with("/usr/include/") || path_str.starts_with("/usr/local/include/") {
+            return true;
+        }
+
+        // Nix store (system-managed packages)
+        if path_str.starts_with("/nix/store/") {
+            return true;
+        }
+
+        // Homebrew (macOS system-managed packages)
+        if path_str.starts_with("/opt/homebrew/Cellar/")
+            || path_str.starts_with("/usr/local/Cellar/")
+        {
+            return true;
+        }
+
+        // .NET / C#: NuGet packages
+        if path_str.contains("/.nuget/") || path_str.contains("\\.nuget\\") {
+            return true;
+        }
+
+        // Swift / Xcode toolchains
+        if path_str.contains("/Xcode.app/Contents/Developer/")
+            || path_str.contains("/CommandLineTools/SDKs/")
+        {
             return true;
         }
 

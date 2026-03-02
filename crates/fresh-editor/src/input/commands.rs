@@ -789,6 +789,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_read_only",
+        desc_key: "cmd.toggle_read_only_desc",
+        action: || Action::ToggleReadOnly,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.set_background",
         desc_key: "cmd.set_background_desc",
         action: || Action::SetBackground,

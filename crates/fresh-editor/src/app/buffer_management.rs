@@ -286,6 +286,22 @@ impl Editor {
             metadata.disable_lsp(t!("buffer.binary_file").to_string());
         }
 
+        // Check if the file is read-only on disk (filesystem permissions)
+        if file_exists && !metadata.read_only {
+            if let Ok(file_meta) = self.filesystem.metadata(path) {
+                if file_meta.is_readonly {
+                    metadata.read_only = true;
+                }
+            }
+        }
+
+        // Mark read-only files (library, binary, or filesystem-readonly) as editing-disabled
+        if metadata.read_only {
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                state.editing_disabled = true;
+            }
+        }
+
         // Notify LSP about the newly opened file (skip for binary files)
         if !is_binary {
             self.notify_lsp_file_opened(path, buffer_id, &mut metadata);

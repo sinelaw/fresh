@@ -510,6 +510,22 @@ impl Editor {
                 };
                 self.set_status_message(t!("view.line_wrap_state", state = state).to_string());
             }
+            Action::ToggleReadOnly => {
+                let buffer_id = self.active_buffer();
+                let is_now_read_only = self
+                    .buffer_metadata
+                    .get(&buffer_id)
+                    .map(|m| !m.read_only)
+                    .unwrap_or(false);
+                self.mark_buffer_read_only(buffer_id, is_now_read_only);
+
+                let state_str = if is_now_read_only {
+                    t!("view.state_enabled").to_string()
+                } else {
+                    t!("view.state_disabled").to_string()
+                };
+                self.set_status_message(t!("view.read_only_state", state = state_str).to_string());
+            }
             Action::ToggleComposeMode => {
                 self.handle_toggle_compose_mode();
             }

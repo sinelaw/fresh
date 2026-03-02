@@ -1619,6 +1619,17 @@ impl Editor {
         self.active_state().editing_disabled
     }
 
+    /// Mark a buffer as read-only, setting both metadata and editor state consistently.
+    /// This is the single entry point for making a buffer read-only.
+    pub fn mark_buffer_read_only(&mut self, buffer_id: BufferId, read_only: bool) {
+        if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+            metadata.read_only = read_only;
+        }
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.editing_disabled = read_only;
+        }
+    }
+
     /// Resolve a keybinding for the current mode
     ///
     /// First checks the global editor mode (for vi mode and other modal editing).
@@ -1797,13 +1808,7 @@ impl Editor {
             // Use open_local_file since log files are always local
             match self.open_local_file(&path) {
                 Ok(buffer_id) => {
-                    // Make the buffer read-only since it's a log file
-                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                        state.editing_disabled = true;
-                    }
-                    if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                        metadata.read_only = true;
-                    }
+                    self.mark_buffer_read_only(buffer_id, true);
                 }
                 Err(e) => {
                     tracing::error!("Failed to open status log: {}", e);
@@ -1854,13 +1859,7 @@ impl Editor {
             // Use open_local_file since log files are always local
             match self.open_local_file(&path) {
                 Ok(buffer_id) => {
-                    // Make the buffer read-only since it's a log file
-                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                        state.editing_disabled = true;
-                    }
-                    if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                        metadata.read_only = true;
-                    }
+                    self.mark_buffer_read_only(buffer_id, true);
                 }
                 Err(e) => {
                     tracing::error!("Failed to open warning log: {}", e);
@@ -4202,14 +4201,7 @@ impl Editor {
                             tracing::info!("Opening LSP stderr log in background: {:?}", log_path);
                             match self.open_file_no_focus(&log_path) {
                                 Ok(buffer_id) => {
-                                    // Make the buffer read-only
-                                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                                        state.editing_disabled = true;
-                                    }
-                                    if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id)
-                                    {
-                                        metadata.read_only = true;
-                                    }
+                                    self.mark_buffer_read_only(buffer_id, true);
                                     self.status_message = Some(format!(
                                         "LSP error ({}): {} - See stderr log",
                                         language, error

@@ -408,6 +408,7 @@ pub enum Action {
     /// Quick Open - unified prompt with prefix-based provider routing
     QuickOpen,
     ToggleLineWrap,
+    ToggleReadOnly,
     ToggleComposeMode,
     SetComposeWidth,
     SelectTheme,
@@ -802,6 +803,7 @@ impl Action {
             "command_palette" => CommandPalette,
             "quick_open" => QuickOpen,
             "toggle_line_wrap" => ToggleLineWrap,
+            "toggle_read_only" => ToggleReadOnly,
             "toggle_compose_mode" => ToggleComposeMode,
             "set_compose_width" => SetComposeWidth,
 
@@ -1882,6 +1884,7 @@ impl KeybindingResolver {
             Action::CommandPalette => t!("action.command_palette"),
             Action::QuickOpen => t!("action.quick_open"),
             Action::ToggleLineWrap => t!("action.toggle_line_wrap"),
+            Action::ToggleReadOnly => t!("action.toggle_read_only"),
             Action::ToggleComposeMode => t!("action.toggle_compose_mode"),
             Action::SetComposeWidth => t!("action.set_compose_width"),
             Action::NextBuffer => t!("action.next_buffer"),

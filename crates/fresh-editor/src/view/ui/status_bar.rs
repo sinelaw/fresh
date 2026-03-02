@@ -284,6 +284,7 @@ impl StatusBarRenderer {
         hover: StatusBarHover,
         remote_connection: Option<&str>,
         session_name: Option<&str>,
+        read_only: bool,
     ) -> StatusBarLayout {
         Self::render_status(
             frame,
@@ -303,6 +304,7 @@ impl StatusBarRenderer {
             hover,
             remote_connection,
             session_name,
+            read_only,
         )
     }
 
@@ -488,6 +490,7 @@ impl StatusBarRenderer {
         hover: StatusBarHover,
         remote_connection: Option<&str>,
         session_name: Option<&str>,
+        read_only: bool,
     ) -> StatusBarLayout {
         // Initialize layout tracking
         let mut layout = StatusBarLayout::default();
@@ -499,6 +502,8 @@ impl StatusBarRenderer {
         } else {
             ""
         };
+
+        let read_only_indicator = if read_only { " [RO]" } else { "" };
 
         // Format chord state if present
         let chord_display = if !chord_state.is_empty() {
@@ -608,19 +613,19 @@ impl StatusBarRenderer {
         let base_status = if state.show_cursors {
             if byte_offset_mode {
                 format!(
-                    "{session_prefix}{remote_prefix}{filename}{modified} | Byte {}{diagnostics_summary}{cursor_count_indicator}",
+                    "{session_prefix}{remote_prefix}{filename}{modified}{read_only_indicator} | Byte {}{diagnostics_summary}{cursor_count_indicator}",
                     cursor.position
                 )
             } else {
                 format!(
-                    "{session_prefix}{remote_prefix}{filename}{modified} | Ln {}, Col {}{diagnostics_summary}{cursor_count_indicator}",
+                    "{session_prefix}{remote_prefix}{filename}{modified}{read_only_indicator} | Ln {}, Col {}{diagnostics_summary}{cursor_count_indicator}",
                     line + 1,
                     col + 1
                 )
             }
         } else {
             // Virtual buffer - just show filename and modified indicator
-            format!("{session_prefix}{remote_prefix}{filename}{modified}{diagnostics_summary}")
+            format!("{session_prefix}{remote_prefix}{filename}{modified}{read_only_indicator}{diagnostics_summary}")
         };
 
         // Track where the message starts for click detection

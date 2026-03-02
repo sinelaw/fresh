@@ -224,18 +224,6 @@ impl Editor {
                 }
             };
 
-            // Check if file is outside project root (library file)
-            let is_library_file = self.is_library_file(&path);
-            if is_library_file {
-                // Mark as read-only
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.editing_disabled = true;
-                }
-                if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                    metadata.read_only = true;
-                }
-            }
-
             // Move cursor to the definition position
             let line = location.range.start.line as usize;
             let character = location.range.start.character as usize;
@@ -288,12 +276,6 @@ impl Editor {
         }
 
         Ok(())
-    }
-
-    /// Check if a file path is a library file (outside project root or in common library directories).
-    /// Library files should be opened as read-only.
-    fn is_library_file(&self, path: &std::path::Path) -> bool {
-        super::types::BufferMetadata::is_library_path(path, &self.working_dir)
     }
 
     /// Check if there are any pending LSP requests
