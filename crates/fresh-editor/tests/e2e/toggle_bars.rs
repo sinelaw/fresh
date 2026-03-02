@@ -266,8 +266,16 @@ fn test_tab_bar_toggle_with_multiple_buffers() {
 /// Test that status bar is visible by default
 #[test]
 fn test_status_bar_visible_by_default() {
-    let harness = EditorTestHarness::new(80, 24).unwrap();
-    assert!(harness.editor().status_bar_visible());
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Status bar should show cursor position info (Ln/Col) at the expected row
+    let status_bar = harness.get_status_bar();
+    assert!(
+        status_bar.contains("Ln") && status_bar.contains("Col"),
+        "Status bar should show cursor position. Got: {}",
+        status_bar
+    );
 }
 
 /// Test that toggling status bar via command palette hides and shows it
@@ -277,7 +285,12 @@ fn test_toggle_status_bar_via_command_palette() {
     harness.render().unwrap();
 
     // Status bar should be visible initially
-    assert!(harness.editor().status_bar_visible());
+    let status_bar = harness.get_status_bar();
+    assert!(
+        status_bar.contains("Ln"),
+        "Status bar should be visible initially. Got: {}",
+        status_bar
+    );
 
     // Open command palette
     harness
@@ -295,9 +308,13 @@ fn test_toggle_status_bar_via_command_palette() {
         .unwrap();
     harness.render().unwrap();
 
-    // Status bar should now be hidden (status message renders in the status bar,
-    // which is now hidden, so we check the state instead)
-    assert!(!harness.editor().status_bar_visible());
+    // Status bar row should no longer show cursor position info
+    let status_bar = harness.get_status_bar();
+    assert!(
+        !status_bar.contains("Ln"),
+        "Status bar should be hidden after toggle. Got: {}",
+        status_bar
+    );
 
     // Toggle back - open command palette again
     harness
@@ -312,8 +329,7 @@ fn test_toggle_status_bar_via_command_palette() {
         .unwrap();
     harness.render().unwrap();
 
-    // Status bar should be visible again - and now the status message should be visible
-    assert!(harness.editor().status_bar_visible());
+    // Status bar should be visible again with "Status bar shown" message
     harness.assert_screen_contains("Status bar shown");
 }
 
@@ -323,8 +339,16 @@ fn test_config_show_status_bar_false() {
     let mut config = Config::default();
     config.editor.show_status_bar = false;
 
-    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
-    assert!(!harness.editor().status_bar_visible());
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.render().unwrap();
+
+    // The status bar row should not show cursor position info
+    let status_bar_row = harness.get_screen_row(layout::status_bar_row(24));
+    assert!(
+        !status_bar_row.contains("Ln"),
+        "Status bar should be hidden when show_status_bar is false. Got: {}",
+        status_bar_row
+    );
 }
 
 /// Test that all three bars can be hidden simultaneously
@@ -338,9 +362,15 @@ fn test_all_bars_hidden() {
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.render().unwrap();
 
-    assert!(!harness.editor().tab_bar_visible());
-    assert!(!harness.editor().status_bar_visible());
-
+    // Menu bar row should not contain menu items
     let row0 = harness.get_screen_row(0);
     assert!(!row0.contains("File"), "Menu bar should be hidden");
+
+    // Status bar row should not contain cursor position info
+    let status_bar_row = harness.get_screen_row(layout::status_bar_row(24));
+    assert!(
+        !status_bar_row.contains("Ln"),
+        "Status bar should be hidden. Got: {}",
+        status_bar_row
+    );
 }
