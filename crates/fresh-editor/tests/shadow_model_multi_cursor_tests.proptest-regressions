@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b300f109ce1b4b137ac795b84aa2ca03a24f8814f13b05dcd5d8a948ed527029 # shrinks to ops = [SelectLeft, Left]
+cc ee01487dbbaa332bdf3f2fe2ecc664845727274dc3213934777c4c0cb8af09d0 # shrinks to ops = [SelectRight, SelectRight, Backspace, SelectLeft, SelectLeft, TypeChar(' '), TypeChar('a')]
+cc 3074aa12274e839cfc7424befe1733ba639d2e3a1fa19293768c59dc31be0fbe # shrinks to ops = [SelectRight, Right, Right, Delete]
+cc 0ee4111c94a541a5208b4b6f6aab6815aca56802a7b31c4c5d8b682e1817c1a4 # shrinks to ops = [Backspace, Backspace, Right, SelectRight, SelectRight, SelectRight, SelectRight, TypeChar('0')]
