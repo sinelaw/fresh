@@ -89,6 +89,22 @@ impl Editor {
         self.tab_bar_visible
     }
 
+    /// Toggle status bar visibility
+    pub fn toggle_status_bar(&mut self) {
+        self.status_bar_visible = !self.status_bar_visible;
+        let status = if self.status_bar_visible {
+            t!("toggle.status_bar_shown")
+        } else {
+            t!("toggle.status_bar_hidden")
+        };
+        self.set_status_message(status.to_string());
+    }
+
+    /// Get status bar visibility
+    pub fn status_bar_visible(&self) -> bool {
+        self.status_bar_visible
+    }
+
     /// Toggle vertical scrollbar visibility
     pub fn toggle_vertical_scrollbar(&mut self) {
         self.config.editor.show_vertical_scrollbar = !self.config.editor.show_vertical_scrollbar;

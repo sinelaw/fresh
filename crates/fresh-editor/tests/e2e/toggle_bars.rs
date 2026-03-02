@@ -262,3 +262,85 @@ fn test_tab_bar_toggle_with_multiple_buffers() {
     harness.assert_screen_contains("Tab bar shown");
     assert!(harness.editor().tab_bar_visible());
 }
+
+/// Test that status bar is visible by default
+#[test]
+fn test_status_bar_visible_by_default() {
+    let harness = EditorTestHarness::new(80, 24).unwrap();
+    assert!(harness.editor().status_bar_visible());
+}
+
+/// Test that toggling status bar via command palette hides and shows it
+#[test]
+fn test_toggle_status_bar_via_command_palette() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Status bar should be visible initially
+    assert!(harness.editor().status_bar_visible());
+
+    // Open command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type "toggle status bar" to find the command
+    harness.type_text("Toggle Status Bar").unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to execute
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Status bar should now be hidden (status message renders in the status bar,
+    // which is now hidden, so we check the state instead)
+    assert!(!harness.editor().status_bar_visible());
+
+    // Toggle back - open command palette again
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.type_text("Toggle Status Bar").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Status bar should be visible again - and now the status message should be visible
+    assert!(harness.editor().status_bar_visible());
+    harness.assert_screen_contains("Status bar shown");
+}
+
+/// Test that config option show_status_bar: false hides status bar on startup
+#[test]
+fn test_config_show_status_bar_false() {
+    let mut config = Config::default();
+    config.editor.show_status_bar = false;
+
+    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    assert!(!harness.editor().status_bar_visible());
+}
+
+/// Test that all three bars can be hidden simultaneously
+#[test]
+fn test_all_bars_hidden() {
+    let mut config = Config::default();
+    config.editor.show_menu_bar = false;
+    config.editor.show_tab_bar = false;
+    config.editor.show_status_bar = false;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.render().unwrap();
+
+    assert!(!harness.editor().tab_bar_visible());
+    assert!(!harness.editor().status_bar_visible());
+
+    let row0 = harness.get_screen_row(0);
+    assert!(!row0.contains("File"), "Menu bar should be hidden");
+}

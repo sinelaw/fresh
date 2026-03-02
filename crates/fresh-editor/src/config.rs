@@ -587,6 +587,14 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_tab_bar: bool,
 
+    /// Whether the status bar is visible by default.
+    /// The status bar shows file info, cursor position, and editor status at the bottom of the screen.
+    /// Can be toggled at runtime via command palette or keybinding.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_status_bar: bool,
+
     /// Whether the vertical scrollbar is visible in each split pane.
     /// Can be toggled at runtime via command palette or keybinding.
     /// Default: true
@@ -1074,6 +1082,7 @@ impl Default for EditorConfig {
             accept_suggestion_on_enter: default_accept_suggestion_on_enter(),
             show_menu_bar: true,
             show_tab_bar: true,
+            show_status_bar: true,
             show_vertical_scrollbar: true,
             show_horizontal_scrollbar: false,
             use_terminal_bg: false,

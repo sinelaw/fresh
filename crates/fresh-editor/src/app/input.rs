@@ -708,6 +708,7 @@ impl Editor {
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
             Action::ToggleMenuBar => self.toggle_menu_bar(),
             Action::ToggleTabBar => self.toggle_tab_bar(),
+            Action::ToggleStatusBar => self.toggle_status_bar(),
             Action::ToggleVerticalScrollbar => self.toggle_vertical_scrollbar(),
             Action::ToggleHorizontalScrollbar => self.toggle_horizontal_scrollbar(),
             Action::ToggleLineNumbers => self.toggle_line_numbers(),

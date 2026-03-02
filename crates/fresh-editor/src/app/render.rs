@@ -123,11 +123,13 @@ impl Editor {
         let constraints = vec![
             Constraint::Length(if self.menu_bar_visible { 1 } else { 0 }), // Menu bar
             Constraint::Min(0),                                            // Main content area
-            Constraint::Length(if has_suggestions || has_file_browser {
-                0
-            } else {
-                1
-            }), // Status bar (hidden with popups)
+            Constraint::Length(
+                if !self.status_bar_visible || has_suggestions || has_file_browser {
+                    0
+                } else {
+                    1
+                },
+            ), // Status bar (hidden when toggled off or with popups)
             Constraint::Length(if show_search_options { 1 } else { 0 }),   // Search options bar
             Constraint::Length(1), // Prompt line (always reserved)
         ];
@@ -623,8 +625,8 @@ impl Editor {
         // Get update availability info
         let update_available = self.latest_version().map(|v| v.to_string());
 
-        // Render status bar (hidden when suggestions or file browser popup is shown)
-        if !has_suggestions && !has_file_browser {
+        // Render status bar (hidden when toggled off, or when suggestions/file browser popup is shown)
+        if self.status_bar_visible && !has_suggestions && !has_file_browser {
             // Get warning level for colored indicator (respects config setting)
             let (warning_level, general_warning_count) =
                 if self.config.warnings.show_status_indicator {
@@ -4275,7 +4277,7 @@ impl Editor {
         let constraints = vec![
             Constraint::Length(if self.menu_bar_visible { 1 } else { 0 }),
             Constraint::Min(0),
-            Constraint::Length(1), // status bar
+            Constraint::Length(if self.status_bar_visible { 1 } else { 0 }), // status bar
             Constraint::Length(0), // search options (doesn't matter for layout)
             Constraint::Length(1), // prompt line
         ];

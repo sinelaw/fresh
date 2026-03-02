@@ -36,6 +36,7 @@
         "syntax_highlighting": true,
         "show_menu_bar": true,
         "show_tab_bar": true,
+        "show_status_bar": true,
         "show_vertical_scrollbar": true,
         "show_horizontal_scrollbar": false,
         "use_terminal_bg": false,
@@ -249,6 +250,12 @@
         },
         "show_tab_bar": {
           "description": "Whether the tab bar is visible by default.\nThe tab bar shows open files in each split pane.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "show_status_bar": {
+          "description": "Whether the status bar is visible by default.\nThe status bar shows file info, cursor position, and editor status at the bottom of the screen.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
           "type": "boolean",
           "default": true,
           "x-section": "Display"

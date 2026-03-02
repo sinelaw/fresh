@@ -2746,6 +2746,7 @@ pub fn action_to_events(
         | Action::ToggleFileExplorer
         | Action::ToggleMenuBar
         | Action::ToggleTabBar
+        | Action::ToggleStatusBar
         | Action::ToggleVerticalScrollbar
         | Action::ToggleHorizontalScrollbar
         | Action::FocusFileExplorer
