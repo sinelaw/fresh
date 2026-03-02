@@ -1736,3 +1736,332 @@ fn test_multicursor_cut_undo_batched() {
         "Single undo should restore all 'hello' instances (undo should be batched)"
     );
 }
+
+/// Test that pressing Enter with multiple cursors inserts a newline at ALL cursor positions
+/// Issue #1140: Enter only adds a newline at the last cursor created
+#[test]
+fn test_multi_cursor_enter_inserts_newline_at_all_cursors() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type three lines
+    harness.type_text("aaa\nbbb\nccc").unwrap();
+    harness.assert_buffer_content("aaa\nbbb\nccc");
+
+    // Go to beginning, then right once to be after 'a' on line 1
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+
+    // Add a cursor below (Ctrl+Alt+Down) - this places a second cursor on line 2 at same column
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+
+    // Press Enter - should insert newline at BOTH cursor positions
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Each cursor was after the first char of its line.
+    // After Enter at each cursor, each line should be split after the first character.
+    // "aaa" with cursor at 1 -> "a\naa"
+    // "bbb" with cursor at 5 (4+1) -> "b\nbb"
+    // "ccc" stays unchanged
+    harness.assert_buffer_content("a\naa\nb\nbb\nccc");
+}
+
+/// Test that pressing Enter with multiple cursors inserts newlines with auto_indent enabled
+/// Issue #1140
+#[test]
+fn test_multi_cursor_enter_with_auto_indent() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut config = fresh::config::Config::default();
+    config.editor.auto_indent = true;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    // Type three lines
+    harness.type_text("aaa\nbbb\nccc").unwrap();
+
+    // Go to beginning, then right once to be after 'a' on line 1 (position 1)
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+
+    // Add a cursor below
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness.assert_buffer_content("a\naa\nb\nbb\nccc");
+
+    // Now type a character - it should appear at ALL cursor positions
+    harness.type_text("X").unwrap();
+    let content_after_type = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content_after_type, "a\nXaa\nb\nXbb\nccc",
+        "Typing after Enter should insert at ALL cursor positions"
+    );
+
+    // Press Enter again
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    let content_after_enter2 = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content_after_enter2, "a\nX\naa\nb\nX\nbb\nccc",
+        "Second Enter should also insert newline at ALL cursor positions"
+    );
+}
+
+/// Test that pressing Enter with multiple cursors created via Ctrl+D inserts newlines at all
+/// Issue #1140: Enter only adds a newline at the last cursor created
+#[test]
+fn test_multi_cursor_enter_via_ctrl_d() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type text with repeated word
+    harness.type_text("foo bar foo baz").unwrap();
+    harness.assert_buffer_content("foo bar foo baz");
+
+    // Go to beginning
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Ctrl+D to select first "foo"
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Ctrl+D again to add cursor at second "foo"
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Press Enter - should replace both selections with newline
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Both "foo"s should be replaced with a newline
+    // "foo bar foo baz" -> "\n bar \n baz"
+    harness.assert_buffer_content("\n bar \n baz");
+}
+
+/// Test that pressing Enter with multiple cursors works correctly when auto_indent is enabled
+/// with tree-sitter syntax highlighting active (e.g., editing a .rs file).
+/// Issue #1140: Enter only adds a newline to the last cursor created
+#[test]
+fn test_multi_cursor_enter_with_tree_sitter_auto_indent() {
+    use crate::common::fixtures::TestFixture;
+    use crate::common::harness::HarnessOptions;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut config = fresh::config::Config::default();
+    config.editor.auto_indent = true;
+
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+
+    // Create a .rs file so tree-sitter Rust grammar activates
+    let fixture =
+        TestFixture::new("test.rs", "let aaa = 1;\nlet bbb = 2;\nlet ccc = 3;\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+
+    // Verify content loaded
+    harness.assert_buffer_content("let aaa = 1;\nlet bbb = 2;\nlet ccc = 3;\n");
+
+    // Go to beginning, then right 4 times to be after "let " on line 1
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    for _ in 0..4 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // Add a cursor below (Ctrl+Alt+Down) - second cursor on line 2 at same column
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+
+    // Press Enter - should insert newline at BOTH cursor positions
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    // After Enter at column 4 on both lines:
+    // "let aaa = 1;" -> "let \naaa = 1;" (with possible auto-indent)
+    // "let bbb = 2;" -> "let \nbbb = 2;" (with possible auto-indent)
+    // "let ccc = 3;\n" stays unchanged
+    //
+    // The key assertion: BOTH lines should be split, not just one
+    let line_count = content.lines().count();
+    assert!(
+        line_count >= 5,
+        "After Enter at 2 cursors, should have at least 5 lines (had 4, added 2 newlines), got {}: {:?}",
+        line_count,
+        content
+    );
+
+    // Type a character to confirm both cursors are active via output
+    harness.type_text("X").unwrap();
+    let content_after_type = harness.get_buffer_content().unwrap();
+    let x_count = content_after_type.matches('X').count();
+    assert_eq!(
+        x_count, 2,
+        "Typing after Enter should insert at ALL cursors, found {} X's in: {:?}",
+        x_count, content_after_type
+    );
+}
+
+/// Test that pressing Enter with multiple cursors works correctly in markdown mode.
+/// Issue #1140: Enter only adds a newline to the last cursor created - reported in markdown mode.
+#[test]
+fn test_multi_cursor_enter_in_markdown_mode() {
+    use crate::common::fixtures::TestFixture;
+    use crate::common::harness::HarnessOptions;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut config = fresh::config::Config::default();
+    config.editor.auto_indent = true;
+
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+
+    // Create a .md file so markdown grammar/plugin activates
+    let fixture = TestFixture::new("test.md", "aaa\nbbb\nccc\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+
+    harness.assert_buffer_content("aaa\nbbb\nccc\n");
+
+    // Go to beginning, move right once to be after first char on line 1
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+
+    // Add a cursor below (Ctrl+Alt+Down)
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    // "aaa" split at pos 1 -> "a\naa"
+    // "bbb" split at pos 1 -> "b\nbb"
+    // "ccc\n" unchanged
+    let line_count = content.lines().count();
+    assert!(
+        line_count >= 5,
+        "After Enter at 2 cursors in markdown mode, should have at least 5 lines, got {}: {:?}",
+        line_count,
+        content
+    );
+
+    // Type a character to confirm both cursors are active via output
+    harness.type_text("X").unwrap();
+    let content_after = harness.get_buffer_content().unwrap();
+    let x_count = content_after.matches('X').count();
+    assert_eq!(
+        x_count, 2,
+        "Typing after Enter in markdown mode should insert at ALL cursors, found {} X's in: {:?}",
+        x_count, content_after
+    );
+}
+
+/// Test multi-cursor Enter in markdown mode with bullet list content.
+/// Issue #1140: Markdown plugin may intercept Enter for bullet continuation.
+#[test]
+fn test_multi_cursor_enter_markdown_bullet_list() {
+    use crate::common::fixtures::TestFixture;
+    use crate::common::harness::HarnessOptions;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut config = fresh::config::Config::default();
+    config.editor.auto_indent = true;
+
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+
+    // Create a markdown file with bullet list items
+    let fixture = TestFixture::new("test.md", "- item one\n- item two\n- item three\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+
+    harness.assert_buffer_content("- item one\n- item two\n- item three\n");
+
+    // Go to end of line 1 ("- item one")
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+
+    // Add a cursor on line 2 at end
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+
+    // Press Enter - in markdown mode, this may trigger bullet list continuation
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    // Both lines should have been split (with possible bullet continuation)
+    let line_count = content.lines().count();
+    assert!(
+        line_count >= 5,
+        "After Enter at 2 cursors in markdown bullet list, should have at least 5 lines, got {}: {:?}",
+        line_count,
+        content
+    );
+
+    // Type to verify both cursors work
+    harness.type_text("X").unwrap();
+    let content_after = harness.get_buffer_content().unwrap();
+    let x_count = content_after.matches('X').count();
+    assert_eq!(
+        x_count, 2,
+        "Typing after Enter in markdown bullet list should insert at ALL cursors, found {} X's in: {:?}",
+        x_count, content_after
+    );
+}
