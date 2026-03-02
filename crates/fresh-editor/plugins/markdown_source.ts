@@ -155,6 +155,15 @@ globalThis.md_src_enter = async function (): Promise<void> {
     return;
   }
 
+  // When multiple cursors are active, fall back to the built-in insert_newline
+  // action which correctly handles all cursors atomically. The markdown-specific
+  // list continuation logic below only operates on the primary cursor.
+  const allCursors = editor.getAllCursors();
+  if (allCursors.length > 1) {
+    editor.executeAction("insert_newline");
+    return;
+  }
+
   const cursorPos = editor.getCursorPosition();
 
   // Read a window of text before the cursor to find the current line.

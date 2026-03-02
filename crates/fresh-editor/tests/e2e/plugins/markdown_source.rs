@@ -756,3 +756,133 @@ fn test_enter_then_type_workflow() {
     );
     harness.assert_no_plugin_errors();
 }
+
+// ---------------------------------------------------------------------------
+// Multi-cursor Enter (issue #1140)
+// ---------------------------------------------------------------------------
+
+/// Pressing Enter with multiple cursors in markdown mode should insert newlines
+/// at ALL cursor positions, not just the primary.
+/// Issue #1140: "Pressing enter with multiple cursors only adds a newline to the last cursor"
+#[test]
+fn test_multi_cursor_enter_inserts_at_all_cursors() {
+    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+
+    let fixture = TestFixture::new("multi.md", "aaa\nbbb\nccc\n").unwrap();
+    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+
+    // Go to beginning, then right once (after first char of line 1)
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+
+    // Add cursor below (Ctrl+Alt+Down)
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+
+    // Press Enter — should insert newline at BOTH cursor positions
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for plugin to process the Enter action
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.lines().count() >= 5)
+        })
+        .unwrap();
+
+    let content = buf(&harness);
+    assert!(
+        content.lines().count() >= 5,
+        "Enter with 2 cursors should produce at least 5 lines (was 4, added 2 newlines). Got {} lines:\n{:?}",
+        content.lines().count(),
+        content,
+    );
+
+    // Type a character to verify both cursors are active via output
+    harness.type_text("X").unwrap();
+
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.matches('X').count() == 2)
+        })
+        .unwrap();
+
+    let content = buf(&harness);
+    let x_count = content.matches('X').count();
+    assert_eq!(
+        x_count, 2,
+        "Typing after Enter should insert at ALL cursors. Expected 2 X's, found {}:\n{:?}",
+        x_count, content,
+    );
+    harness.assert_no_plugin_errors();
+}
+
+/// Pressing Enter with multiple cursors on markdown list items should insert newlines
+/// at all cursor positions (falling back to insert_newline for multi-cursor).
+#[test]
+fn test_multi_cursor_enter_on_list_items() {
+    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+
+    let fixture =
+        TestFixture::new("list_multi.md", "- item one\n- item two\n- item three\n").unwrap();
+    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+
+    // Go to end of line 1
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+
+    // Add cursor on line 2 at end
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+
+    // Press Enter — with multi-cursor, should fall back to insert_newline
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.lines().count() >= 5)
+        })
+        .unwrap();
+
+    let content = buf(&harness);
+    assert!(
+        content.lines().count() >= 5,
+        "Enter with 2 cursors on list items should produce at least 5 lines. Got {} lines:\n{:?}",
+        content.lines().count(),
+        content,
+    );
+
+    // Type to verify both cursors work
+    harness.type_text("X").unwrap();
+
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.matches('X').count() == 2)
+        })
+        .unwrap();
+
+    let content = buf(&harness);
+    let x_count = content.matches('X').count();
+    assert_eq!(
+        x_count, 2,
+        "Typing after Enter on list items should insert at ALL cursors. Expected 2 X's, found {}:\n{:?}",
+        x_count,
+        content,
+    );
+    harness.assert_no_plugin_errors();
+}
