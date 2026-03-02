@@ -275,6 +275,7 @@ fn test_strict_server_sends_diagnostics_with_capability() -> anyhow::Result<()> 
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -335,6 +336,7 @@ fn test_permissive_server_sends_diagnostics_without_capability() -> anyhow::Resu
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 

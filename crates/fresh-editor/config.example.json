@@ -358,7 +358,11 @@
         "max_cpu_percent": 90,
         "enabled": true
       },
-      "initialization_options": null
+      "initialization_options": null,
+      "env": {
+        "DOTNET_gcServer": "0",
+        "DOTNET_GCHeapHardLimitPercent": "50"
+      }
     },
     "html": {
       "command": "vscode-html-languageserver-bin",

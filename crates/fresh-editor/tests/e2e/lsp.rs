@@ -803,6 +803,7 @@ fn test_lsp_waiting_indicator() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -870,6 +871,7 @@ fn test_semantic_tokens_version_gating() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -965,6 +967,7 @@ fn test_semantic_tokens_range_preserves_overlays_on_edit() -> anyhow::Result<()>
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -1058,6 +1061,7 @@ fn test_semantic_tokens_persist_on_enter_key() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -1152,6 +1156,7 @@ fn test_semantic_tokens_overlays_shift_on_edit() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -1254,6 +1259,7 @@ fn test_semantic_tokens_range_only_viewport_highlighting() -> anyhow::Result<()>
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -1417,6 +1423,7 @@ fn test_lsp_completion_canceled_on_cursor_move() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -1482,6 +1489,7 @@ fn test_lsp_cursor_animation() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -1550,6 +1558,7 @@ fn test_lsp_completion_canceled_on_text_edit() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -2134,6 +2143,7 @@ fn test_lsp_diagnostics_non_blocking() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -2291,6 +2301,7 @@ fn test_rust_analyzer_rename_real_scenario() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -2899,6 +2910,7 @@ fn test_lsp_progress_status_display() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -3059,6 +3071,7 @@ fn test_lsp_crash_detection_and_restart() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -3355,6 +3368,7 @@ fn test_pull_diagnostics_auto_trigger_after_open() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -3433,6 +3447,7 @@ fn test_pull_diagnostics_result_id_tracking() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -3691,6 +3706,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> anyhow::Result<()> {
             auto_start: true, // Auto-start so it starts when we open the file
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -4014,6 +4030,7 @@ fn test_hover_popup_persists_within_symbol_and_popup() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -5654,6 +5671,7 @@ fn test_hover_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
             auto_start: false, // This is the key setting - LSP should NOT auto-start
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
     // Enable mouse hover in config
@@ -5739,6 +5757,7 @@ fn test_typing_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
             auto_start: false, // This is the key setting - LSP should NOT auto-start
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -5812,6 +5831,7 @@ fn test_completion_triggered_on_trigger_character() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -5892,6 +5912,7 @@ fn test_completion_triggered_on_word_char_with_quick_suggestions() -> anyhow::Re
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -5971,6 +5992,7 @@ fn test_completion_not_triggered_on_word_char_without_quick_suggestions() -> any
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -6052,6 +6074,7 @@ fn test_completion_not_triggered_on_non_word_char() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -6147,6 +6170,7 @@ fn test_hover_popup_follows_mouse_when_lsp_returns_no_range() -> anyhow::Result<
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -6370,6 +6394,7 @@ fn test_hover_does_not_trigger_past_end_of_line() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -6469,6 +6494,7 @@ fn test_hover_does_not_trigger_on_empty_line() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -6570,6 +6596,7 @@ fn test_hover_no_duplicate_popup_when_moving_within_symbol() -> anyhow::Result<(
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -7330,6 +7357,7 @@ log("STOPPED")
             auto_start: true,
             process_limits: fresh::types::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -7644,6 +7672,7 @@ log("STOPPED")
             auto_start: true,
             process_limits: fresh::types::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -7943,6 +7972,7 @@ log("STOPPED")
             auto_start: true,
             process_limits: fresh::types::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 

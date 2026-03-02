@@ -58,6 +58,7 @@ fn test_diagnostics_panel_enter_does_not_jump() {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -204,6 +205,7 @@ fn test_diagnostics_panel_cursor_move_scrolls_editor() {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 

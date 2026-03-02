@@ -3248,6 +3248,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: Some(ra_init_options),
+                env: Default::default(),
             },
         );
 
@@ -3261,6 +3262,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3273,6 +3275,7 @@ impl Config {
             auto_start: false,
             process_limits: ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         };
         lsp.insert("javascript".to_string(), ts_lsp.clone());
         lsp.insert("typescript".to_string(), ts_lsp);
@@ -3287,6 +3290,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3300,6 +3304,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3313,6 +3318,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
         lsp.insert(
@@ -3324,6 +3330,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3337,6 +3344,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3350,6 +3358,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3363,6 +3372,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3377,6 +3387,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3391,6 +3402,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3405,6 +3417,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3419,6 +3432,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3433,6 +3447,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3447,6 +3462,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3461,6 +3477,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3474,6 +3491,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3488,6 +3506,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3501,6 +3520,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3515,6 +3535,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3528,6 +3549,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -3542,6 +3564,7 @@ impl Config {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
+                env: Default::default(),
             },
         );
     }

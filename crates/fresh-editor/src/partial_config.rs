@@ -452,6 +452,14 @@ impl Merge for LspServerConfig {
         if self.initialization_options.is_none() {
             self.initialization_options = other.initialization_options.clone();
         }
+        // For env, merge: other's values first, then self's values override
+        if self.env.is_empty() {
+            self.env = other.env.clone();
+        } else if !other.env.is_empty() {
+            let mut merged = other.env.clone();
+            merged.extend(self.env.drain());
+            self.env = merged;
+        }
     }
 }
 

@@ -489,6 +489,7 @@ fn test_folded_gutter_line_numbers_match_content_during_scroll() -> anyhow::Resu
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 

@@ -33,6 +33,7 @@ fn test_lsp_hover_popup_text_selection_copy() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 

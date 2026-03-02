@@ -323,6 +323,7 @@ fn test_diagnostics_panel_plugin_loads() {
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -746,6 +747,7 @@ fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -815,6 +817,7 @@ fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
             auto_start: true,
             process_limits: ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -1041,6 +1044,7 @@ editor.setStatus("Test diagnostics plugin loaded");
             auto_start: true,
             process_limits: ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 

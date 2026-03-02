@@ -128,6 +128,7 @@ done
             auto_start: true, // Auto-start so LSP starts when file is opened
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 

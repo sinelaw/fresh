@@ -430,6 +430,7 @@ impl LspManager {
             runtime,
             command,
             &config.args,
+            config.env.clone(),
             language.to_string(),
             async_bridge,
             config.process_limits.clone(),
@@ -792,6 +793,7 @@ mod tests {
             process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
             auto_start: false,
             initialization_options: None,
+            env: Default::default(),
         };
 
         manager.set_language_config("rust".to_string(), config);
@@ -815,6 +817,7 @@ mod tests {
                 process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
                 auto_start: false,
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 
@@ -854,6 +857,7 @@ mod tests {
                 process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
                 auto_start: false,
                 initialization_options: None,
+                env: Default::default(),
             },
         );
 

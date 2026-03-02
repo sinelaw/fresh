@@ -2115,6 +2115,7 @@ impl LspTask {
     async fn spawn(
         command: &str,
         args: &[String],
+        env: &std::collections::HashMap<String, String>,
         language: String,
         async_tx: std_mpsc::Sender<AsyncMessage>,
         process_limits: &ProcessLimits,
@@ -2143,6 +2144,7 @@ impl LspTask {
 
         let mut cmd = Command::new(command);
         cmd.args(args)
+            .envs(env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::from(stderr_file))
@@ -3265,6 +3267,7 @@ impl LspHandle {
         runtime: &tokio::runtime::Handle,
         command: &str,
         args: &[String],
+        env: std::collections::HashMap<String, String>,
         language: String,
         async_bridge: &AsyncBridge,
         process_limits: ProcessLimits,
@@ -3292,6 +3295,7 @@ impl LspHandle {
             match LspTask::spawn(
                 &command,
                 &args,
+                &env,
                 language_clone.clone(),
                 async_tx.clone(),
                 &process_limits,
@@ -3948,6 +3952,7 @@ mod tests {
             &runtime,
             "cat",
             &[],
+            Default::default(),
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -3974,6 +3979,7 @@ mod tests {
             &runtime,
             "cat",
             &[],
+            Default::default(),
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -4000,6 +4006,7 @@ mod tests {
             &runtime,
             "cat",
             &[],
+            Default::default(),
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -4032,6 +4039,7 @@ mod tests {
             &runtime,
             "cat",
             &[],
+            Default::default(),
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -4065,6 +4073,7 @@ mod tests {
             &runtime,
             "this-command-does-not-exist-12345",
             &[],
+            Default::default(),
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -4102,6 +4111,7 @@ mod tests {
                     &runtime,
                     "cat",
                     &[],
+                    Default::default(),
                     "test".to_string(),
                     &async_bridge,
                     ProcessLimits::unlimited(),
@@ -4171,6 +4181,7 @@ mod tests {
             &runtime,
             "cat", // Simple command that will exit immediately
             &[],
+            Default::default(),
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -4220,6 +4231,7 @@ mod tests {
             &runtime,
             "bash",
             &["-c".to_string(), fake_lsp_script.to_string()],
+            Default::default(),
             "fake".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),

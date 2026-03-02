@@ -37,6 +37,7 @@ fn test_start_lsp_command_works_when_config_disabled() -> anyhow::Result<()> {
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -123,6 +124,7 @@ fn test_settings_ui_lsp_enabled_change_takes_effect() -> anyhow::Result<()> {
             auto_start: true, // auto_start=true so it will start when enabled
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -247,6 +249,7 @@ fn test_lsp_manager_config_updated_via_set_lsp_config() -> anyhow::Result<()> {
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
+            env: Default::default(),
         },
     );
 
@@ -281,6 +284,7 @@ fn test_lsp_manager_config_updated_via_set_lsp_config() -> anyhow::Result<()> {
         auto_start: false,
         process_limits: fresh::services::process_limits::ProcessLimits::default(),
         initialization_options: None,
+        env: Default::default(),
     };
     harness
         .editor_mut()

@@ -3,6 +3,8 @@
 //! These types are kept in a separate module so that the schema generator
 //! can import them without pulling in heavy runtime dependencies.
 
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -108,6 +110,11 @@ pub struct LspServerConfig {
     /// These are passed in the `initializationOptions` field of the LSP Initialize request
     #[serde(default)]
     pub initialization_options: Option<serde_json::Value>,
+
+    /// Environment variables to set for the LSP server process.
+    /// These are added to (or override) the inherited parent environment.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 impl LspServerConfig {
@@ -133,6 +140,11 @@ impl LspServerConfig {
             initialization_options: self
                 .initialization_options
                 .or_else(|| defaults.initialization_options.clone()),
+            env: {
+                let mut merged = defaults.env.clone();
+                merged.extend(self.env);
+                merged
+            },
         }
     }
 }
