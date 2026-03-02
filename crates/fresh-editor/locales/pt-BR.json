@@ -1251,5 +1251,6 @@
   "whitespace.already_has_newline": "O arquivo já termina com nova linha",
   "whitespace.newline_added": "Nova linha final adicionada",
   "whitespace.no_trailing": "Nenhum espaço em branco final para remover",
-  "whitespace.trimmed": "Espaços em branco finais removidos"
+  "whitespace.trimmed": "Espaços em branco finais removidos",
+  "settings.field.editor.auto_close": "Fechamento automático"
 }

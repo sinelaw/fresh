@@ -1251,5 +1251,6 @@
   "whitespace.already_has_newline": "ファイルは既に改行で終わっています",
   "whitespace.newline_added": "最終改行を追加しました",
   "whitespace.no_trailing": "削除する末尾の空白がありません",
-  "whitespace.trimmed": "末尾の空白を削除しました"
+  "whitespace.trimmed": "末尾の空白を削除しました",
+  "settings.field.editor.auto_close": "自動閉じ"
 }

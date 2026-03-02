@@ -1251,5 +1251,6 @@
   "whitespace.already_has_newline": "파일이 이미 줄바꿈으로 끝납니다",
   "whitespace.newline_added": "마지막 줄바꿈이 추가되었습니다",
   "whitespace.no_trailing": "제거할 후행 공백이 없습니다",
-  "whitespace.trimmed": "후행 공백이 제거되었습니다"
+  "whitespace.trimmed": "후행 공백이 제거되었습니다",
+  "settings.field.editor.auto_close": "자동 닫기"
 }

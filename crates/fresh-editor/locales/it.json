@@ -1251,5 +1251,6 @@
   "whitespace.already_has_newline": "Il file termina già con una nuova riga",
   "whitespace.newline_added": "Nuova riga finale aggiunta",
   "whitespace.no_trailing": "Nessuno spazio bianco finale da rimuovere",
-  "whitespace.trimmed": "Spazi bianchi finali rimossi"
+  "whitespace.trimmed": "Spazi bianchi finali rimossi",
+  "settings.field.editor.auto_close": "Chiusura automatica"
 }

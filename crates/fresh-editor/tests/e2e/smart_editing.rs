@@ -205,16 +205,16 @@ fn test_auto_close_before_whitespace() {
     );
 }
 
-/// Test auto-close is disabled when auto_indent config is false
+/// Test auto-close is disabled when auto_close config is false
 #[test]
 fn test_no_auto_close_when_config_disabled() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "").unwrap();
 
-    // Create harness with auto_indent disabled
+    // Create harness with auto_close disabled
     let mut config = Config::default();
-    config.editor.auto_indent = false;
+    config.editor.auto_close = false;
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.open_file(&file_path).unwrap();
 
@@ -225,7 +225,7 @@ fn test_no_auto_close_when_config_disabled() {
     let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "(",
-        "Should NOT auto-close when auto_indent is disabled"
+        "Should NOT auto-close when auto_close is disabled"
     );
 }
 
@@ -1325,4 +1325,160 @@ fn test_block_selection_up() {
         .buffer
         .get_line_number(cursor.position);
     assert_eq!(cur_line, 1, "Cursor should be on line 1 after moving up");
+}
+
+// =============================================================================
+// Auto-Close Config Toggle Tests
+// =============================================================================
+
+/// Test that auto-close is disabled when auto_close config is false,
+/// even when auto_indent is still enabled.
+#[test]
+fn test_no_auto_close_when_auto_close_config_disabled() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    // Create harness with auto_indent enabled but auto_close disabled
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    config.editor.auto_close = false;
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.enable_shadow_validation();
+    harness.open_file(&file_path).unwrap();
+
+    // Type opening paren - should NOT auto-close
+    harness.type_text("(").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content, "(",
+        "Should NOT auto-close when auto_close config is disabled"
+    );
+
+    // Cursor should be right after the paren
+    assert_eq!(harness.cursor_position(), 1);
+}
+
+/// Test that skip-over is disabled when auto_close config is false.
+#[test]
+fn test_no_skip_over_when_auto_close_config_disabled() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    // Start with existing paired parens
+    std::fs::write(&file_path, "()").unwrap();
+
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    config.editor.auto_close = false;
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.enable_shadow_validation();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between parens (position 1)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), 1);
+
+    // Type closing paren - should insert normally, not skip over
+    harness.type_text(")").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content, "())",
+        "Typing closing paren should insert normally when auto_close is disabled"
+    );
+}
+
+/// Test that auto-pair deletion is disabled when auto_close config is false.
+#[test]
+fn test_no_auto_pair_delete_when_auto_close_config_disabled() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    // Start with existing paired parens
+    std::fs::write(&file_path, "()").unwrap();
+
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    config.editor.auto_close = false;
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.enable_shadow_validation();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between parens (position 1)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), 1);
+
+    // Backspace - should only delete the opening paren, not both
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content, ")",
+        "Backspace should only delete opening paren when auto_close is disabled"
+    );
+}
+
+/// Test that auto-close still works when auto_close is true (separate from auto_indent).
+#[test]
+fn test_auto_close_works_independently_from_auto_indent() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    // auto_indent disabled, auto_close enabled
+    let mut config = Config::default();
+    config.editor.auto_indent = false;
+    config.editor.auto_close = true;
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.enable_shadow_validation();
+    harness.open_file(&file_path).unwrap();
+
+    // Type opening paren - should auto-close even though auto_indent is false
+    harness.type_text("(").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content, "()",
+        "Auto-close should work when auto_close is true, even if auto_indent is false"
+    );
 }

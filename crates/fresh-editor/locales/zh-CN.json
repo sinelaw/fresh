@@ -1251,5 +1251,6 @@
   "whitespace.already_has_newline": "文件已以换行符结尾",
   "whitespace.newline_added": "已添加最终换行符",
   "whitespace.no_trailing": "没有尾随空格需要删除",
-  "whitespace.trimmed": "已删除尾随空格"
+  "whitespace.trimmed": "已删除尾随空格",
+  "settings.field.editor.auto_close": "自动关闭"
 }

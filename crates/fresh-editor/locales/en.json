@@ -800,8 +800,8 @@
   "keybinding_editor.btn_save": "Save",
   "keybinding_editor.confirm_message": "You have unsaved keybinding changes.",
   "keybinding_editor.confirm_title": "Unsaved Changes",
-  "keybinding_editor.conflicts_label": "\u26a0 Conflicts:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 to change",
+  "keybinding_editor.conflicts_label": "⚠ Conflicts:",
+  "keybinding_editor.context_change_hint": "←/→ to change",
   "keybinding_editor.dialog_add_title": "Add Keybinding",
   "keybinding_editor.dialog_edit_title": "Edit Keybinding",
   "keybinding_editor.error_key_action_required": "Key and action are required",
@@ -1251,5 +1251,6 @@
   "warning.one_logged": "1 warning has been logged.",
   "warning.title": "Warnings",
   "warning.view_log": "View Log",
-  "warnings.none": "No warnings"
+  "warnings.none": "No warnings",
+  "settings.field.editor.auto_close": "Auto Close"
 }

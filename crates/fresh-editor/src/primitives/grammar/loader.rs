@@ -521,6 +521,7 @@ mod tests {
                 grammar: "Bourne Again Shell (bash)".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: crate::config::HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,

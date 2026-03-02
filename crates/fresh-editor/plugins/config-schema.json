@@ -50,6 +50,7 @@
         "whitespace_tabs_trailing": true,
         "tab_size": 4,
         "auto_indent": true,
+        "auto_close": true,
         "scroll_offset": 3,
         "default_line_ending": "lf",
         "trim_trailing_whitespace_on_save": false,
@@ -338,6 +339,12 @@
         },
         "auto_indent": {
           "description": "Automatically indent new lines based on the previous line",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Editing"
+        },
+        "auto_close": {
+          "description": "Automatically close brackets, parentheses, and quotes when typing.\nWhen enabled, typing an opening delimiter like `(`, `[`, `{`, `\"`, `'`, or `` ` ``\nwill automatically insert the matching closing delimiter.\nAlso enables skip-over (moving past existing closing delimiters) and\npair deletion (deleting both delimiters when backspacing between them).\nDefault: true",
           "type": "boolean",
           "default": true,
           "x-section": "Editing"
@@ -801,6 +808,14 @@
           "description": "Whether to auto-indent",
           "type": "boolean",
           "default": true
+        },
+        "auto_close": {
+          "description": "Whether to auto-close brackets, parentheses, and quotes for this language.\nIf not specified (`null`), falls back to the global `editor.auto_close` setting.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
         },
         "highlighter": {
           "description": "Preferred highlighter backend (auto, tree-sitter, or textmate)",

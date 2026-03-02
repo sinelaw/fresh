@@ -1251,5 +1251,6 @@
   "whitespace.already_has_newline": "Le fichier se termine déjà par un saut de ligne",
   "whitespace.newline_added": "Saut de ligne final ajouté",
   "whitespace.no_trailing": "Aucun espace de fin à supprimer",
-  "whitespace.trimmed": "Espaces de fin supprimés"
+  "whitespace.trimmed": "Espaces de fin supprimés",
+  "settings.field.editor.auto_close": "Fermeture automatique"
 }

@@ -1251,5 +1251,6 @@
   "whitespace.already_has_newline": "Datei endet bereits mit Zeilenumbruch",
   "whitespace.newline_added": "Abschließender Zeilenumbruch hinzugefügt",
   "whitespace.no_trailing": "Keine Leerzeichen am Zeilenende vorhanden",
-  "whitespace.trimmed": "Leerzeichen am Zeilenende entfernt"
+  "whitespace.trimmed": "Leerzeichen am Zeilenende entfernt",
+  "settings.field.editor.auto_close": "Automatisches Schließen"
 }

@@ -2062,8 +2062,9 @@ impl Editor {
         let buffer_id = self.active_buffer();
         let state = self.buffers.get_mut(&buffer_id).unwrap();
 
-        // Use per-buffer tab_size which respects language overrides and user changes
+        // Use per-buffer settings which respect language overrides and user changes
         let tab_size = state.buffer_settings.tab_size;
+        let auto_close = state.buffer_settings.auto_close;
 
         let cursors = &mut self
             .split_view_states
@@ -2076,6 +2077,7 @@ impl Editor {
             action,
             tab_size,
             auto_indent,
+            auto_close,
             estimated_line_length,
             viewport_height,
         )

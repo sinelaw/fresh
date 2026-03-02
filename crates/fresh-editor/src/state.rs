@@ -65,6 +65,10 @@ pub struct BufferSettings {
     /// Used for visual display of tab characters and indent calculations.
     /// Set based on language config; can be changed per-buffer by user
     pub tab_size: usize,
+
+    /// Whether to auto-close brackets, parentheses, and quotes.
+    /// Set based on global + language config.
+    pub auto_close: bool,
 }
 
 impl Default for BufferSettings {
@@ -73,6 +77,7 @@ impl Default for BufferSettings {
             whitespace: crate::config::WhitespaceVisibility::default(),
             use_tabs: false,
             tab_size: 4,
+            auto_close: true,
         }
     }
 }

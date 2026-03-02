@@ -1251,5 +1251,6 @@
   "whitespace.already_has_newline": "Soubor již končí novým řádkem",
   "whitespace.newline_added": "Přidán koncový nový řádek",
   "whitespace.no_trailing": "Žádné koncové mezery k odstranění",
-  "whitespace.trimmed": "Koncové mezery odstraněny"
+  "whitespace.trimmed": "Koncové mezery odstraněny",
+  "settings.field.editor.auto_close": "Automatické uzavírání"
 }

@@ -687,6 +687,16 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Editing"))]
     pub auto_indent: bool,
 
+    /// Automatically close brackets, parentheses, and quotes when typing.
+    /// When enabled, typing an opening delimiter like `(`, `[`, `{`, `"`, `'`, or `` ` ``
+    /// will automatically insert the matching closing delimiter.
+    /// Also enables skip-over (moving past existing closing delimiters) and
+    /// pair deletion (deleting both delimiters when backspacing between them).
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub auto_close: bool,
+
     /// Minimum lines to keep visible above/below cursor when scrolling
     #[serde(default = "default_scroll_offset")]
     #[schemars(extend("x-section" = "Editing"))]
@@ -1016,6 +1026,7 @@ impl Default for EditorConfig {
         Self {
             tab_size: default_tab_size(),
             auto_indent: true,
+            auto_close: true,
             line_numbers: true,
             relative_line_numbers: false,
             scroll_offset: default_scroll_offset(),
@@ -1340,6 +1351,11 @@ pub struct LanguageConfig {
     #[serde(default = "default_true")]
     pub auto_indent: bool,
 
+    /// Whether to auto-close brackets, parentheses, and quotes for this language.
+    /// If not specified (`null`), falls back to the global `editor.auto_close` setting.
+    #[serde(default)]
+    pub auto_close: Option<bool>,
+
     /// Preferred highlighter backend (auto, tree-sitter, or textmate)
     #[serde(default)]
     pub highlighter: HighlighterPreference,
@@ -1397,6 +1413,9 @@ pub struct BufferConfig {
     /// Whether to auto-indent new lines
     pub auto_indent: bool,
 
+    /// Whether to auto-close brackets, parentheses, and quotes
+    pub auto_close: bool,
+
     /// Resolved whitespace indicator visibility
     pub whitespace: WhitespaceVisibility,
 
@@ -1434,6 +1453,7 @@ impl BufferConfig {
             tab_size: editor.tab_size,
             use_tabs: false, // Global default is spaces
             auto_indent: editor.auto_indent,
+            auto_close: editor.auto_close,
             whitespace,
             formatter: None,
             format_on_save: false,
@@ -1455,6 +1475,13 @@ impl BufferConfig {
 
                 // Auto indent: language override
                 config.auto_indent = lang_config.auto_indent;
+
+                // Auto close: language override (only if globally enabled)
+                if config.auto_close {
+                    if let Some(lang_auto_close) = lang_config.auto_close {
+                        config.auto_close = lang_auto_close;
+                    }
+                }
 
                 // Whitespace tabs: language override can disable tab indicators
                 whitespace =
@@ -2499,6 +2526,7 @@ impl Config {
                 grammar: "rust".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2523,6 +2551,7 @@ impl Config {
                 grammar: "javascript".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2547,6 +2576,7 @@ impl Config {
                 grammar: "typescript".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2571,6 +2601,7 @@ impl Config {
                 grammar: "python".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2599,6 +2630,7 @@ impl Config {
                 grammar: "c".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2630,6 +2662,7 @@ impl Config {
                 grammar: "cpp".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2654,6 +2687,7 @@ impl Config {
                 grammar: "c_sharp".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2688,6 +2722,7 @@ impl Config {
                 grammar: "bash".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2711,6 +2746,7 @@ impl Config {
                 grammar: "make".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: false,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2730,6 +2766,7 @@ impl Config {
                 grammar: "dockerfile".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2749,6 +2786,7 @@ impl Config {
                 grammar: "json".to_string(),
                 comment_prefix: None,
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2773,6 +2811,7 @@ impl Config {
                 grammar: "toml".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2792,6 +2831,7 @@ impl Config {
                 grammar: "yaml".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2816,6 +2856,7 @@ impl Config {
                 grammar: "markdown".to_string(),
                 comment_prefix: None,
                 auto_indent: false,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2836,6 +2877,7 @@ impl Config {
                 grammar: "go".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
@@ -2860,6 +2902,7 @@ impl Config {
                 grammar: "odin".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
@@ -2879,6 +2922,7 @@ impl Config {
                 grammar: "zig".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2898,6 +2942,7 @@ impl Config {
                 grammar: "java".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2924,6 +2969,7 @@ impl Config {
                 grammar: "latex".to_string(),
                 comment_prefix: Some("%".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2943,6 +2989,7 @@ impl Config {
                 grammar: "go".to_string(), // Templ uses Go-like syntax
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2963,6 +3010,7 @@ impl Config {
                 grammar: "Git Rebase Todo".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: false,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -2987,6 +3035,7 @@ impl Config {
                 grammar: "Git Commit Message".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: false,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -3011,6 +3060,7 @@ impl Config {
                 grammar: "Gitignore".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: false,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -3030,6 +3080,7 @@ impl Config {
                 grammar: "Git Config".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -3049,6 +3100,7 @@ impl Config {
                 grammar: "Git Attributes".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: false,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -3068,6 +3120,7 @@ impl Config {
                 grammar: "Typst".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
@@ -3743,6 +3796,7 @@ mod tests {
                 grammar: "go".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                auto_close: None,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: false, // Go hides tab indicators
