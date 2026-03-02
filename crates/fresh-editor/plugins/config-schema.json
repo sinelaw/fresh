@@ -1040,6 +1040,14 @@
         "initialization_options": {
           "description": "Custom initialization options to send to the server\nThese are passed in the `initializationOptions` field of the LSP Initialize request",
           "default": null
+        },
+        "env": {
+          "description": "Environment variables to set for the LSP server process.\nThese are added to (or override) the inherited parent environment.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
         }
       },
       "x-display-field": "/command"
