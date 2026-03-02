@@ -2483,7 +2483,7 @@ impl Editor {
                         } else {
                             0
                         };
-                        *pos = (*new_position as isize + shift) as usize;
+                        *pos = (*new_position as isize + shift).max(0) as usize;
                         *anchor = *new_anchor;
                         found_move_cursor = true;
                     }
@@ -2492,6 +2492,7 @@ impl Editor {
 
             // If no explicit MoveCursor, derive position from Insert/Delete
             if !found_move_cursor {
+                let mut found_edit = false;
                 for event in &events {
                     match event {
                         Event::Insert {
@@ -2502,9 +2503,10 @@ impl Editor {
                             // For insert, cursor moves to end of inserted text
                             // Account for shifts from edits at lower positions
                             let shift = calc_shift(*position);
-                            let adjusted_pos = (*position as isize + shift) as usize;
-                            *pos = adjusted_pos + text.len();
+                            let adjusted_pos = (*position as isize + shift).max(0) as usize;
+                            *pos = adjusted_pos.saturating_add(text.len());
                             *anchor = None;
+                            found_edit = true;
                         }
                         Event::Delete {
                             range,
@@ -2514,11 +2516,20 @@ impl Editor {
                             // For delete, cursor moves to start of deleted range
                             // Account for shifts from edits at lower positions
                             let shift = calc_shift(range.start);
-                            *pos = (range.start as isize + shift) as usize;
+                            *pos = (range.start as isize + shift).max(0) as usize;
                             *anchor = None;
+                            found_edit = true;
                         }
                         _ => {}
                     }
+                }
+
+                // If this cursor had no events at all (e.g., cursor at end of buffer
+                // during Delete, or at start during Backspace), still adjust its position
+                // for shifts caused by other cursors' edits.
+                if !found_edit {
+                    let shift = calc_shift(original_pos);
+                    *pos = (original_pos as isize + shift).max(0) as usize;
                 }
             }
         }
