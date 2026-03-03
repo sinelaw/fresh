@@ -4925,16 +4925,6 @@ impl SplitRenderer {
                     let min_text = 10usize;
 
                     if available > gap + min_text {
-                        // Gap between code and diagnostic
-                        push_span_with_map(
-                            &mut line_spans,
-                            &mut line_view_map,
-                            "  ".to_string(),
-                            Style::default(),
-                            None,
-                        );
-                        visible_char_count += gap;
-
                         // Truncate message to fit
                         let max_chars = available - gap;
                         let display: String = if message.chars().count() > max_chars {
@@ -4945,6 +4935,20 @@ impl SplitRenderer {
                             message.clone()
                         };
                         let display_width = display.chars().count();
+
+                        // Right-align: fill gap between code and diagnostic text
+                        let padding = available.saturating_sub(display_width);
+                        if padding > 0 {
+                            push_span_with_map(
+                                &mut line_spans,
+                                &mut line_view_map,
+                                " ".repeat(padding),
+                                Style::default(),
+                                None,
+                            );
+                            visible_char_count += padding;
+                        }
+
                         push_span_with_map(
                             &mut line_spans,
                             &mut line_view_map,
