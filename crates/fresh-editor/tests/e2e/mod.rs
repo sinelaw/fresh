@@ -28,6 +28,7 @@ pub mod glob_language_detection;
 pub mod gui;
 pub mod horizontal_scrollbar;
 pub mod indent_dedent;
+pub mod inline_diagnostics;
 pub mod issue_1147_wrapped_line_nav;
 pub mod keybinding_editor;
 pub mod language_features_e2e;
