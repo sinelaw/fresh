@@ -299,10 +299,6 @@ pub struct MarginManager {
     /// Annotations per line (right margin)
     right_annotations: BTreeMap<usize, Vec<MarginAnnotation>>,
 
-    /// Diagnostic indicators per line (displayed between line numbers and separator)
-    /// Maps line number to (symbol, color) tuple
-    diagnostic_indicators: BTreeMap<usize, (String, Color)>,
-
     /// Marker list for tracking indicator positions through edits
     /// Shared with the buffer's edit tracking
     indicator_markers: MarkerList,
@@ -321,7 +317,6 @@ impl MarginManager {
             right_config: MarginConfig::right_default(),
             left_annotations: BTreeMap::new(),
             right_annotations: BTreeMap::new(),
-            diagnostic_indicators: BTreeMap::new(),
             indicator_markers: MarkerList::new(),
             line_indicators: BTreeMap::new(),
         }
@@ -349,26 +344,6 @@ impl MarginManager {
     /// Call this when text is deleted from the buffer
     pub fn adjust_for_delete(&mut self, position: usize, length: usize) {
         self.indicator_markers.adjust_for_delete(position, length);
-    }
-
-    /// Set a diagnostic indicator for a line
-    pub fn set_diagnostic_indicator(&mut self, line: usize, symbol: String, color: Color) {
-        self.diagnostic_indicators.insert(line, (symbol, color));
-    }
-
-    /// Remove diagnostic indicator for a line
-    pub fn remove_diagnostic_indicator(&mut self, line: usize) {
-        self.diagnostic_indicators.remove(&line);
-    }
-
-    /// Clear all diagnostic indicators
-    pub fn clear_diagnostic_indicators(&mut self) {
-        self.diagnostic_indicators.clear();
-    }
-
-    /// Get diagnostic indicator for a line
-    pub fn get_diagnostic_indicator(&self, line: usize) -> Option<&(String, Color)> {
-        self.diagnostic_indicators.get(&line)
     }
 
     /// Set a line indicator at a byte position for a specific namespace

@@ -7,7 +7,6 @@ use crate::common::visual_testing::VisualFlow;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::model::event::{Event, OverlayFace};
 use fresh::view::overlay::OverlayNamespace;
-use ratatui::style::Color;
 use std::fs;
 
 /// Comprehensive visual test A:
@@ -116,15 +115,6 @@ fn long_function() {
                 url: None,
             })
             .unwrap();
-
-        // Add margin indicators
-        let state = harness.editor_mut().active_state_mut();
-        state
-            .margins
-            .set_diagnostic_indicator(10, "●".to_string(), Color::Red);
-        state
-            .margins
-            .set_diagnostic_indicator(11, "●".to_string(), Color::Yellow);
     }
 
     // Scroll down a bit to show scrolled state
