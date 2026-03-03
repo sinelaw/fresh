@@ -483,18 +483,10 @@ struct LeftMarginContext<'a> {
 /// Priority values: 100=error, 50=warning, 30=info, 10=hint.
 fn inline_diagnostic_style(priority: i32, theme: &crate::view::theme::Theme) -> Style {
     match priority {
-        100 => Style::default()
-            .fg(theme.diagnostic_error_fg)
-            .bg(theme.diagnostic_error_bg),
-        50 => Style::default()
-            .fg(theme.diagnostic_warning_fg)
-            .bg(theme.diagnostic_warning_bg),
-        30 => Style::default()
-            .fg(theme.diagnostic_info_fg)
-            .bg(theme.diagnostic_info_bg),
-        _ => Style::default()
-            .fg(theme.diagnostic_hint_fg)
-            .bg(theme.diagnostic_hint_bg),
+        100 => Style::default().fg(theme.diagnostic_error_fg),
+        50 => Style::default().fg(theme.diagnostic_warning_fg),
+        30 => Style::default().fg(theme.diagnostic_info_fg),
+        _ => Style::default().fg(theme.diagnostic_hint_fg),
     }
 }
 
