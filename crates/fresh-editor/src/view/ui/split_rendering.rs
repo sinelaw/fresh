@@ -338,6 +338,9 @@ struct DecorationContext {
     virtual_text_lookup: HashMap<usize, Vec<crate::view::virtual_text::VirtualText>>,
     /// Diagnostic lines indexed by line-start byte offset
     diagnostic_lines: HashSet<usize>,
+    /// Inline diagnostic text per line (line_start_byte -> (message, style))
+    /// Derived from viewport overlays; highest severity wins per line.
+    diagnostic_inline_texts: HashMap<usize, (String, Style)>,
     /// Line indicators indexed by line-start byte offset
     line_indicators: BTreeMap<usize, crate::view::margin::LineIndicator>,
     /// Fold indicators indexed by line-start byte offset
@@ -474,6 +477,25 @@ struct LeftMarginContext<'a> {
     show_line_numbers: bool,
     /// Whether the gutter shows byte offsets instead of line numbers
     byte_offset_mode: bool,
+}
+
+/// Compute the inline diagnostic style from overlay priority (severity).
+/// Priority values: 100=error, 50=warning, 30=info, 10=hint.
+fn inline_diagnostic_style(priority: i32, theme: &crate::view::theme::Theme) -> Style {
+    match priority {
+        100 => Style::default()
+            .fg(theme.diagnostic_error_fg)
+            .bg(theme.diagnostic_error_bg),
+        50 => Style::default()
+            .fg(theme.diagnostic_warning_fg)
+            .bg(theme.diagnostic_warning_bg),
+        30 => Style::default()
+            .fg(theme.diagnostic_info_fg)
+            .bg(theme.diagnostic_info_bg),
+        _ => Style::default()
+            .fg(theme.diagnostic_hint_fg)
+            .bg(theme.diagnostic_hint_bg),
+    }
 }
 
 /// Render the left margin (indicators + line numbers + separator) to line_spans
@@ -854,6 +876,7 @@ impl SplitRenderer {
         software_cursor_only: bool,
         show_vertical_scrollbar: bool,
         show_horizontal_scrollbar: bool,
+        diagnostics_inline_text: bool,
     ) -> (
         Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
         HashMap<LeafId, crate::view::ui::tabs::TabLayout>, // tab layouts per split
@@ -1136,6 +1159,7 @@ impl SplitRenderer {
                     software_cursor_only,
                     &view_prefs.rulers,
                     view_prefs.show_line_numbers,
+                    diagnostics_inline_text,
                 );
 
                 drop(_render_buf_span);
@@ -1274,6 +1298,7 @@ impl SplitRenderer {
         tab_bar_visible: bool,
         show_vertical_scrollbar: bool,
         show_horizontal_scrollbar: bool,
+        diagnostics_inline_text: bool,
     ) -> HashMap<LeafId, Vec<ViewLineMapping>> {
         let visible_buffers = split_manager.get_visible_buffers(area);
         let active_split_id = split_manager.active_split();
@@ -1365,6 +1390,7 @@ impl SplitRenderer {
                 session_mode,
                 software_cursor_only,
                 view_prefs.show_line_numbers,
+                diagnostics_inline_text,
             );
 
             view_line_mappings.insert(split_id, layout_output.view_line_mappings);
@@ -3853,6 +3879,7 @@ impl SplitRenderer {
         theme: &crate::view::theme::Theme,
         highlight_context_bytes: usize,
         view_mode: &ViewMode,
+        diagnostics_inline_text: bool,
     ) -> DecorationContext {
         use crate::view::folding::indent_folding;
 
@@ -3942,6 +3969,37 @@ impl SplitRenderer {
             })
             .collect();
 
+        // Build inline diagnostic text map from the same viewport overlays.
+        // For each line with diagnostics, keep only the highest-priority (severity) message.
+        let diagnostic_inline_texts: HashMap<usize, (String, Style)> = if diagnostics_inline_text {
+            let mut by_line: HashMap<usize, (String, Style, i32)> = HashMap::new();
+            for (overlay, range) in &viewport_overlays {
+                if overlay.namespace.as_ref() != Some(&diagnostic_ns) {
+                    continue;
+                }
+                if let Some(ref message) = overlay.message {
+                    let line_start =
+                        indent_folding::find_line_start_byte(&state.buffer, range.start);
+                    let priority = overlay.priority;
+                    let dominated = by_line
+                        .get(&line_start)
+                        .is_some_and(|(_, _, existing_pri)| *existing_pri >= priority);
+                    if !dominated {
+                        let style = inline_diagnostic_style(priority, theme);
+                        // Take first line of multi-line messages
+                        let first_line = message.lines().next().unwrap_or(message);
+                        by_line.insert(line_start, (first_line.to_string(), style, priority));
+                    }
+                }
+            }
+            by_line
+                .into_iter()
+                .map(|(k, (msg, style, _))| (k, (msg, style)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
         let virtual_text_lookup: HashMap<usize, Vec<crate::view::virtual_text::VirtualText>> =
             state
                 .virtual_texts
@@ -3975,6 +4033,7 @@ impl SplitRenderer {
             viewport_overlays,
             virtual_text_lookup,
             diagnostic_lines,
+            diagnostic_inline_texts,
             line_indicators,
             fold_indicators,
         }
@@ -4854,6 +4913,50 @@ impl SplitRenderer {
                 }
             }
 
+            // Inline diagnostic text: render after line content (before extend_to_line_end fill).
+            // Only for non-continuation lines that have a diagnostic overlay.
+            if let Some(lsb) = line_start_byte {
+                if let Some((message, diag_style)) = decorations.diagnostic_inline_texts.get(&lsb) {
+                    let content_width =
+                        render_area.width.saturating_sub(gutter_width as u16) as usize;
+                    let used = visible_char_count;
+                    let available = content_width.saturating_sub(used);
+                    let gap = 2usize;
+                    let min_text = 10usize;
+
+                    if available > gap + min_text {
+                        // Gap between code and diagnostic
+                        push_span_with_map(
+                            &mut line_spans,
+                            &mut line_view_map,
+                            "  ".to_string(),
+                            Style::default(),
+                            None,
+                        );
+                        visible_char_count += gap;
+
+                        // Truncate message to fit
+                        let max_chars = available - gap;
+                        let display: String = if message.chars().count() > max_chars {
+                            let truncated: String =
+                                message.chars().take(max_chars.saturating_sub(1)).collect();
+                            format!("{}…", truncated)
+                        } else {
+                            message.clone()
+                        };
+                        let display_width = display.chars().count();
+                        push_span_with_map(
+                            &mut line_spans,
+                            &mut line_view_map,
+                            display,
+                            *diag_style,
+                            None,
+                        );
+                        visible_char_count += display_width;
+                    }
+                }
+            }
+
             // Fill remaining width for overlays with extend_to_line_end
             // Only when line wrapping is disabled (side-by-side diff typically disables wrapping)
             if !line_wrap {
@@ -5239,6 +5342,7 @@ impl SplitRenderer {
         session_mode: bool,
         software_cursor_only: bool,
         show_line_numbers: bool,
+        diagnostics_inline_text: bool,
     ) -> BufferLayoutOutput {
         let _span = tracing::trace_span!("compute_buffer_layout").entered();
 
@@ -5418,6 +5522,7 @@ impl SplitRenderer {
             theme,
             highlight_context_bytes,
             &view_mode,
+            diagnostics_inline_text,
         );
 
         let calculated_offset = viewport.top_view_line_offset;
@@ -5652,6 +5757,7 @@ impl SplitRenderer {
         software_cursor_only: bool,
         rulers: &[usize],
         show_line_numbers: bool,
+        diagnostics_inline_text: bool,
     ) -> Vec<ViewLineMapping> {
         let layout_output = Self::compute_buffer_layout(
             state,
@@ -5672,6 +5778,7 @@ impl SplitRenderer {
             session_mode,
             software_cursor_only,
             show_line_numbers,
+            diagnostics_inline_text,
         );
 
         let view_line_mappings = layout_output.view_line_mappings.clone();
@@ -6047,6 +6154,7 @@ mod tests {
             &theme,
             100_000,           // default highlight context bytes
             &ViewMode::Source, // Tests use source mode
+            false,             // inline diagnostics off for test
         );
 
         let output = SplitRenderer::render_view_lines(LineRenderInput {

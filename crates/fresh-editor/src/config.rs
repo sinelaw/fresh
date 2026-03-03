@@ -799,6 +799,14 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "LSP"))]
     pub enable_semantic_tokens_full: bool,
 
+    /// Whether to show inline diagnostic text at the end of lines with errors/warnings.
+    /// When enabled, the highest-severity diagnostic message is rendered after the
+    /// source code on each affected line.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Diagnostics"))]
+    pub diagnostics_inline_text: bool,
+
     // ===== Mouse =====
     /// Whether mouse hover triggers LSP hover requests.
     /// When enabled, hovering over code with the mouse will show documentation.
@@ -1055,6 +1063,7 @@ impl Default for EditorConfig {
             estimated_line_length: default_estimated_line_length(),
             enable_inlay_hints: true,
             enable_semantic_tokens_full: false,
+            diagnostics_inline_text: false,
             auto_save_enabled: false,
             auto_save_interval_secs: default_auto_save_interval(),
             recovery_enabled: true,

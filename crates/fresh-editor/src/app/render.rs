@@ -445,6 +445,7 @@ impl Editor {
             self.software_cursor_only,
             self.config.editor.show_vertical_scrollbar,
             self.config.editor.show_horizontal_scrollbar,
+            self.config.editor.diagnostics_inline_text,
         );
 
         drop(_content_span);
@@ -4322,6 +4323,7 @@ impl Editor {
             self.tab_bar_visible,
             self.config.editor.show_vertical_scrollbar,
             self.config.editor.show_horizontal_scrollbar,
+            self.config.editor.diagnostics_inline_text,
         );
 
         self.cached_layout.view_line_mappings = view_line_mappings;

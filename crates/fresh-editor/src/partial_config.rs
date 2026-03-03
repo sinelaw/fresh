@@ -151,6 +151,7 @@ pub struct PartialEditorConfig {
     pub estimated_line_length: Option<usize>,
     pub enable_inlay_hints: Option<bool>,
     pub enable_semantic_tokens_full: Option<bool>,
+    pub diagnostics_inline_text: Option<bool>,
     pub recovery_enabled: Option<bool>,
     pub auto_recovery_save_interval_secs: Option<u32>,
     pub auto_save_enabled: Option<bool>,
@@ -216,6 +217,8 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.enable_inlay_hints);
         self.enable_semantic_tokens_full
             .merge_from(&other.enable_semantic_tokens_full);
+        self.diagnostics_inline_text
+            .merge_from(&other.diagnostics_inline_text);
         self.recovery_enabled.merge_from(&other.recovery_enabled);
         self.auto_recovery_save_interval_secs
             .merge_from(&other.auto_recovery_save_interval_secs);
@@ -483,6 +486,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             estimated_line_length: Some(cfg.estimated_line_length),
             enable_inlay_hints: Some(cfg.enable_inlay_hints),
             enable_semantic_tokens_full: Some(cfg.enable_semantic_tokens_full),
+            diagnostics_inline_text: Some(cfg.diagnostics_inline_text),
             recovery_enabled: Some(cfg.recovery_enabled),
             auto_recovery_save_interval_secs: Some(cfg.auto_recovery_save_interval_secs),
             auto_save_enabled: Some(cfg.auto_save_enabled),
@@ -561,6 +565,9 @@ impl PartialEditorConfig {
             enable_semantic_tokens_full: self
                 .enable_semantic_tokens_full
                 .unwrap_or(defaults.enable_semantic_tokens_full),
+            diagnostics_inline_text: self
+                .diagnostics_inline_text
+                .unwrap_or(defaults.diagnostics_inline_text),
             recovery_enabled: self.recovery_enabled.unwrap_or(defaults.recovery_enabled),
             auto_recovery_save_interval_secs: self
                 .auto_recovery_save_interval_secs
