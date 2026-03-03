@@ -65,6 +65,7 @@
         "accept_suggestion_on_enter": "on",
         "enable_inlay_hints": true,
         "enable_semantic_tokens_full": false,
+        "diagnostics_inline_text": false,
         "mouse_hover_enabled": true,
         "mouse_hover_delay_ms": 500,
         "double_click_time_ms": 500,
@@ -438,6 +439,12 @@
           "type": "boolean",
           "default": false,
           "x-section": "LSP"
+        },
+        "diagnostics_inline_text": {
+          "description": "Whether to show inline diagnostic text at the end of lines with errors/warnings.\nWhen enabled, the highest-severity diagnostic message is rendered after the\nsource code on each affected line.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Diagnostics"
         },
         "mouse_hover_enabled": {
           "description": "Whether mouse hover triggers LSP hover requests.\nWhen enabled, hovering over code with the mouse will show documentation.\nDefault: true",
