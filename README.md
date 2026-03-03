@@ -67,6 +67,7 @@ Or, pick your preferred method:
 | Debian/Ubuntu | [.deb](#debianubuntu-deb) |
 | Fedora/RHEL | [.rpm](#fedorarhelopensuse-rpm), [Terra](https://terra.fyralabs.com/) |
 | FreeBSD | [ports / pkg](https://www.freshports.org/editors/fresh) |
+| Gentoo | [GURU](#gentoo-guru) |
 | Linux (any distro) | [AppImage](#appimage), [Flatpak](#flatpak) |
 | All platforms | [Pre-built binaries](#pre-built-binaries) |
 | npm | [npm / npx](#npm) |
@@ -141,6 +142,15 @@ curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | 
 ```
 
 Or download the `.rpm` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
+
+### Gentoo ([GURU](https://wiki.gentoo.org/wiki/Project:GURU))
+
+Enable the repository as read in [Project:GURU/Information for End Users](https://wiki.gentoo.org/wiki/Project:GURU/Information_for_End_Users) then emerge the package:
+
+
+```bash
+emerge --ask app-editors/fresh
+```
 
 ### AppImage
 
