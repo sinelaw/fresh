@@ -151,6 +151,12 @@ impl SettingsState {
                             // Select all
                             dialog.select_all();
                         }
+                        'c' | 'C' => {
+                            // Copy selected text to clipboard
+                            if let Some(text) = dialog.selected_text() {
+                                ctx.defer(DeferredAction::CopyToClipboard(text));
+                            }
+                        }
                         'v' | 'V' => {
                             // Paste
                             ctx.defer(DeferredAction::PasteToSettings);
@@ -705,12 +711,12 @@ impl SettingsState {
     fn handle_text_editing_input(
         &mut self,
         event: &KeyEvent,
-        _ctx: &mut InputContext,
+        ctx: &mut InputContext,
     ) -> InputResult {
         let is_json = self.is_editing_json();
 
         if is_json {
-            return self.handle_json_editing_input(event);
+            return self.handle_json_editing_input(event, ctx);
         }
 
         match event.code {
@@ -759,7 +765,7 @@ impl SettingsState {
     }
 
     /// Handle input when editing a JSON control (multiline editor)
-    fn handle_json_editing_input(&mut self, event: &KeyEvent) -> InputResult {
+    fn handle_json_editing_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
         match event.code {
             KeyCode::Esc | KeyCode::Tab => {
                 // Accept if valid JSON, revert if invalid, then stop editing
@@ -772,6 +778,14 @@ impl SettingsState {
                 if event.modifiers.contains(KeyModifiers::CONTROL) {
                     match c {
                         'a' | 'A' => self.json_select_all(),
+                        'c' | 'C' => {
+                            if let Some(text) = self.json_selected_text() {
+                                ctx.defer(DeferredAction::CopyToClipboard(text));
+                            }
+                        }
+                        'v' | 'V' => {
+                            ctx.defer(DeferredAction::PasteToSettings);
+                        }
                         _ => {}
                     }
                 } else {

@@ -1630,6 +1630,16 @@ impl SettingsState {
         }
     }
 
+    /// Get selected text from JSON editor
+    pub fn json_selected_text(&self) -> Option<String> {
+        if let Some(item) = self.current_item() {
+            if let SettingControl::Json(state) = &item.control {
+                return state.selected_text();
+            }
+        }
+        None
+    }
+
     /// Move cursor up with selection in JSON editor
     pub fn json_cursor_up_selecting(&mut self) {
         if let Some(item) = self.current_item_mut() {

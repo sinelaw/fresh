@@ -1083,6 +1083,19 @@ impl EntryDialogState {
         }
     }
 
+    /// Get selected text from current JSON control
+    pub fn selected_text(&self) -> Option<String> {
+        if !self.editing_text {
+            return None;
+        }
+        if let Some(item) = self.current_item() {
+            if let SettingControl::Json(state) = &item.control {
+                return state.selected_text();
+            }
+        }
+        None
+    }
+
     /// Check if any field is currently in edit mode
     pub fn is_editing(&self) -> bool {
         self.editing_text
