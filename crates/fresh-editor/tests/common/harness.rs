@@ -1921,6 +1921,16 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Run a full editor tick (the same work the real event loop performs
+    /// between frames) followed by a render.  This includes async message
+    /// processing, search-scan progress, search-overlay refresh, and all
+    /// other periodic checks that `editor_tick()` handles.
+    pub fn tick_and_render(&mut self) -> anyhow::Result<()> {
+        let _ = fresh::app::editor_tick(&mut self.editor, || Ok(()));
+        self.render()?;
+        Ok(())
+    }
+
     /// Wait for async operations with timeout
     /// Repeatedly processes async messages until condition is met or timeout
     pub fn wait_for_async<F>(&mut self, mut condition: F, timeout_ms: u64) -> anyhow::Result<bool>

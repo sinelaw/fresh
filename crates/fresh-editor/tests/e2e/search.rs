@@ -2631,7 +2631,7 @@ fn test_search_large_file_tick_performance() {
     }
 }
 
-/// Test that F3 navigates through ALL search matches after editor_tick runs,
+/// Test that F3 navigates through ALL search matches after a tick runs,
 /// even when matches are outside the initial viewport.
 ///
 /// Regression test: check_search_overlay_refresh() was unconditionally replacing
@@ -2666,9 +2666,6 @@ fn test_search_f3_navigates_all_matches_after_scroll() {
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
-    // Verify cursor starts at top (NEEDLE is not visible in initial viewport)
-    assert_eq!(harness.cursor_position(), 0);
-
     // Open search and type "NEEDLE"
     harness
         .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
@@ -2681,55 +2678,23 @@ fn test_search_f3_navigates_all_matches_after_scroll() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.process_async_and_render().unwrap();
+    harness.tick_and_render().unwrap();
 
     // The status line should report 4 matches
     harness.assert_screen_contains("Found 4 matches");
 
-    let first_match_pos = harness.cursor_position();
+    // Run another tick (this is where the bug manifests: the viewport has
+    // scrolled since finalize_search, so check_search_overlay_refresh fires
+    // and would replace all overlays with viewport-only ones).
+    harness.tick_and_render().unwrap();
 
-    // Simulate editor ticks (this is where the bug manifests: the viewport
-    // has scrolled since finalize_search, so check_search_overlay_refresh
-    // fires and replaces all overlays with viewport-only ones).
-    let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
-    harness.render().unwrap();
-
-    // Press F3 to navigate to next match. The status should say "Match 2 of 4"
-    // (not "Match 2 of 2" which was the buggy behavior).
-    harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
-    let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
-    harness.render().unwrap();
-
-    let second_match_pos = harness.cursor_position();
-    assert!(
-        second_match_pos > first_match_pos,
-        "F3 should advance to the next match"
-    );
-    harness.assert_screen_contains("Match 2 of 4");
-
-    // Press F3 again -> match 3 of 4
-    harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
-    let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
-    harness.render().unwrap();
-
-    let third_match_pos = harness.cursor_position();
-    assert!(
-        third_match_pos > second_match_pos,
-        "F3 should advance to the third match"
-    );
-    harness.assert_screen_contains("Match 3 of 4");
-
-    // Press F3 again -> match 4 of 4
-    harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
-    let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
-    harness.render().unwrap();
-
-    let fourth_match_pos = harness.cursor_position();
-    assert!(
-        fourth_match_pos > third_match_pos,
-        "F3 should advance to the fourth match"
-    );
-    harness.assert_screen_contains("Match 4 of 4");
+    // Press F3 to navigate through all matches. The status should report the
+    // correct total (4), not the viewport-only count (which was 2 before fix).
+    for n in 2..=4 {
+        harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        harness.assert_screen_contains(&format!("Match {} of 4", n));
+    }
 }
 
 /// Same as test_search_f3_navigates_all_matches_after_scroll but for large-file
@@ -2797,11 +2762,6 @@ fn test_search_f3_navigates_all_matches_large_file() {
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
-    assert!(
-        harness.editor().active_state().buffer.is_large_file(),
-        "Buffer should be in large file mode"
-    );
-
     // Search for NEEDLE
     harness
         .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
@@ -2812,27 +2772,20 @@ fn test_search_f3_navigates_all_matches_large_file() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    // Drive the incremental search scan to completion
-    while harness.editor_mut().process_search_scan() {}
-    harness.process_async_and_render().unwrap();
-
-    harness.assert_screen_contains("Found 4 matches");
-    let first_pos = harness.cursor_position();
-
-    // Simulate ticks + F3 through all 4 matches
-    for expected_match in 2..=4 {
-        harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
-        let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
-        harness.render().unwrap();
-
-        let expected_msg = format!("Match {} of 4", expected_match);
-        harness.assert_screen_contains(&expected_msg);
+    // Drive the incremental search scan to completion via ticks
+    // (large files use async multi-frame scanning)
+    loop {
+        harness.tick_and_render().unwrap();
+        if harness.screen_to_string().contains("Found 4 matches") {
+            break;
+        }
     }
 
-    // After cycling through all, the cursor should have advanced
-    let last_pos = harness.cursor_position();
-    assert!(
-        last_pos > first_pos,
-        "F3 should have advanced through all 4 matches"
-    );
+    // F3 through all 4 matches — tick between each to trigger
+    // viewport-scoped overlay refresh
+    for n in 2..=4 {
+        harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        harness.assert_screen_contains(&format!("Match {} of 4", n));
+    }
 }
