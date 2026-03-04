@@ -2674,18 +2674,19 @@ fn test_search_f3_navigates_all_matches_after_scroll() {
     harness.type_text("NEEDLE").unwrap();
     harness.render().unwrap();
 
-    // Confirm search
+    // Confirm search (use process_async_and_render so the transient "Found"
+    // status message is still visible before any editor_tick clears it).
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.tick_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
 
     // The status line should report 4 matches
     harness.assert_screen_contains("Found 4 matches");
 
-    // Run another tick (this is where the bug manifests: the viewport has
-    // scrolled since finalize_search, so check_search_overlay_refresh fires
-    // and would replace all overlays with viewport-only ones).
+    // Run a tick (this is where the bug manifests: the viewport has scrolled
+    // since finalize_search, so check_search_overlay_refresh fires and would
+    // replace all overlays with viewport-only ones).
     harness.tick_and_render().unwrap();
 
     // Press F3 to navigate through all matches. The status should report the
@@ -2772,14 +2773,13 @@ fn test_search_f3_navigates_all_matches_large_file() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    // Drive the incremental search scan to completion via ticks
-    // (large files use async multi-frame scanning)
-    loop {
-        harness.tick_and_render().unwrap();
-        if harness.screen_to_string().contains("Found 4 matches") {
-            break;
-        }
-    }
+    // Drive the incremental search scan to completion, then render.
+    // (Large files use multi-frame scanning; the loop mirrors other
+    // large-file tests in this file.)
+    while harness.editor_mut().process_search_scan() {}
+    harness.process_async_and_render().unwrap();
+
+    harness.assert_screen_contains("Found 4 matches");
 
     // F3 through all 4 matches — tick between each to trigger
     // viewport-scoped overlay refresh
