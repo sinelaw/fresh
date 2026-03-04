@@ -2854,6 +2854,180 @@ fn test_save_builtin_theme_produces_valid_file() {
     );
 }
 
+/// Test that saving a theme works when the themes directory does not exist yet
+/// (fresh install scenario). Reproduces #1180 where Save As fails because
+/// ~/.config/fresh/themes is not created by the editor.
+#[test]
+fn test_issue_1180_save_theme_creates_themes_directory() {
+    init_tracing_from_env();
+
+    // Create isolated directory context but do NOT create the themes directory.
+    // This simulates a fresh install where ~/.config/fresh/themes doesn't exist.
+    let context_temp = tempfile::TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(context_temp.path());
+    // Intentionally NOT calling: fs::create_dir_all(dir_context.themes_dir())
+
+    // Verify the themes directory really doesn't exist
+    assert!(
+        !dir_context.themes_dir().exists(),
+        "Themes directory should not exist before save"
+    );
+
+    // Create project directory with plugins
+    let project_temp = tempfile::TempDir::new().unwrap();
+    let project_root = project_temp.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    let test_file = project_root.join("test.txt");
+    fs::write(&test_file, "Hello world\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        120,
+        40,
+        Default::default(),
+        project_root.clone(),
+        dir_context.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&test_file).unwrap();
+    harness.render().unwrap();
+
+    // Open theme editor via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Edit Theme").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for theme selection prompt
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Select theme to edit"))
+        .unwrap();
+
+    // Select the "light" builtin theme
+    harness.type_text("light").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for theme editor to load
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Theme Editor") || screen.contains("*Theme Editor*")
+        })
+        .unwrap();
+
+    // Navigate to a color field and edit it
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for color input prompt
+    harness
+        .wait_until(|h| h.screen_to_string().contains("#"))
+        .unwrap();
+
+    // Clear input and type a new color
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("#FF0000").unwrap();
+    harness.render().unwrap();
+
+    // Confirm the color edit
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for theme editor to redisplay
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Theme Editor"))
+        .unwrap();
+
+    // Save with Ctrl+Shift+S (Save As) to trigger the save-as flow
+    harness
+        .send_key(
+            KeyCode::Char('S'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for save-as prompt
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Save") || screen.contains("name")
+        })
+        .unwrap();
+
+    // Type a new name for the theme
+    harness.type_text("my-fresh-theme").unwrap();
+    harness.render().unwrap();
+
+    // Confirm save
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for save confirmation
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("saved") || screen.contains("Saved") || screen.contains("applied")
+        })
+        .unwrap();
+
+    // Verify the themes directory was created
+    assert!(
+        dir_context.themes_dir().exists(),
+        "Themes directory should have been created by the save operation"
+    );
+
+    // Verify the saved theme file exists and is valid
+    let saved_path = dir_context.themes_dir().join("my-fresh-theme.json");
+    assert!(
+        saved_path.exists(),
+        "Saved theme file should exist at {:?}.\nThemes dir exists: {}\nFiles in themes dir: {:?}",
+        saved_path,
+        dir_context.themes_dir().exists(),
+        fs::read_dir(dir_context.themes_dir())
+            .map(|entries| entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name())
+                .collect::<Vec<_>>())
+            .unwrap_or_default()
+    );
+
+    let content = fs::read_to_string(&saved_path).unwrap();
+    let theme_file: Result<fresh::view::theme::ThemeFile, _> = serde_json::from_str(&content);
+    assert!(
+        theme_file.is_ok(),
+        "Saved theme must be a valid ThemeFile. Got error: {:?}\nFile content:\n{}",
+        theme_file.err(),
+        content
+    );
+
+    let theme = theme_file.unwrap();
+    assert_eq!(theme.name, "my-fresh-theme");
+}
+
 /// Test that after saving a custom theme, "Inspect Theme at Cursor" works
 /// with the newly saved theme active. Reproduces a bug where the normalized
 /// theme name (underscores→hyphens) didn't match the filename on disk.
