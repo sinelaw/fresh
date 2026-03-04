@@ -1266,7 +1266,15 @@ impl JsEditorApi {
 
     /// Write file contents
     pub fn write_file(&self, path: String, content: String) -> bool {
-        std::fs::write(&path, content).is_ok()
+        let p = Path::new(&path);
+        if let Some(parent) = p.parent() {
+            if !parent.exists() {
+                if std::fs::create_dir_all(parent).is_err() {
+                    return false;
+                }
+            }
+        }
+        std::fs::write(p, content).is_ok()
     }
 
     /// Read directory contents (returns array of {name, is_file, is_dir})

@@ -1321,17 +1321,6 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
   const themeName = (name || state.themeName).toLowerCase().replace(/[_ ]/g, "-");
   const userThemesDir = getUserThemesDir();
 
-  // Ensure themes directory exists
-  if (!editor.fileExists(userThemesDir)) {
-    try {
-      // Create directory via shell command
-      await editor.spawnProcess("mkdir", ["-p", userThemesDir]);
-    } catch (e) {
-      editor.setStatus(editor.t("status.mkdir_failed", { error: String(e) }));
-      return false;
-    }
-  }
-
   const themePath = editor.pathJoin(userThemesDir, `${themeName}.json`);
 
   try {
