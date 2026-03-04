@@ -2731,3 +2731,108 @@ fn test_search_f3_navigates_all_matches_after_scroll() {
     );
     harness.assert_screen_contains("Match 4 of 4");
 }
+
+/// Same as test_search_f3_navigates_all_matches_after_scroll but for large-file
+/// mode, where overlays are viewport-scoped and refresh_search_overlays must
+/// recreate them on scroll.  Uses a 4MB file to trigger genuine large-file
+/// lazy loading (the effective minimum for the chunked loader is ~1MB).
+#[test]
+fn test_search_f3_navigates_all_matches_large_file() {
+    use std::io::Write;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large_search.txt");
+
+    let mut file = std::fs::File::create(&file_path).unwrap();
+
+    // Build a ~4MB file with 4 NEEDLE occurrences spread throughout.
+    // Each filler line is ~70 bytes; 60_000 lines ≈ 4.2 MB.
+    for i in 0..20_000 {
+        writeln!(
+            file,
+            "Line {:06}: This is padding content to make the file large enough.",
+            i
+        )
+        .unwrap();
+    }
+    writeln!(file, "first NEEDLE here").unwrap();
+    writeln!(file, "second NEEDLE here").unwrap();
+    for i in 0..20_000 {
+        writeln!(
+            file,
+            "Line {:06}: More padding content to spread out the matches.",
+            i
+        )
+        .unwrap();
+    }
+    writeln!(file, "third NEEDLE here").unwrap();
+    for i in 0..20_000 {
+        writeln!(
+            file,
+            "Line {:06}: Yet more padding to push the last match far away.",
+            i
+        )
+        .unwrap();
+    }
+    writeln!(file, "fourth NEEDLE here").unwrap();
+    for i in 0..100 {
+        writeln!(file, "Trailing {:06}", i).unwrap();
+    }
+    file.flush().unwrap();
+    drop(file);
+
+    let file_size = std::fs::metadata(&file_path).unwrap().len();
+    assert!(
+        file_size > 3 * 1024 * 1024,
+        "File should be >3MB to trigger real large-file mode, but is {} bytes",
+        file_size
+    );
+
+    // Use a 1MB threshold so our ~4MB file is well above it
+    let mut config = Config::default();
+    config.editor.large_file_threshold_bytes = 1024 * 1024;
+
+    let mut harness =
+        EditorTestHarness::create(120, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.editor().active_state().buffer.is_large_file(),
+        "Buffer should be in large file mode"
+    );
+
+    // Search for NEEDLE
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("NEEDLE").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // Drive the incremental search scan to completion
+    while harness.editor_mut().process_search_scan() {}
+    harness.process_async_and_render().unwrap();
+
+    harness.assert_screen_contains("Found 4 matches");
+    let first_pos = harness.cursor_position();
+
+    // Simulate ticks + F3 through all 4 matches
+    for expected_match in 2..=4 {
+        harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
+        let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
+        harness.render().unwrap();
+
+        let expected_msg = format!("Match {} of 4", expected_match);
+        harness.assert_screen_contains(&expected_msg);
+    }
+
+    // After cycling through all, the cursor should have advanced
+    let last_pos = harness.cursor_position();
+    assert!(
+        last_pos > first_pos,
+        "F3 should have advanced through all 4 matches"
+    );
+}
