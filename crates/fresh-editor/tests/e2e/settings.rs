@@ -2562,6 +2562,58 @@ fn test_json_editor_ctrl_a_selects_all() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
+/// Test that Ctrl+C copies selected text in JSON editor to clipboard
+///
+/// BUG: Selecting text with Shift+Arrow in the JSON editor and pressing Ctrl+C
+/// does not copy the selected text to the clipboard.
+#[test]
+fn test_json_editor_ctrl_c_copies_selected_text() {
+    let mut harness = EditorTestHarness::new(120, 50).unwrap();
+    harness.render().unwrap();
+
+    // Enable internal-only clipboard for test isolation
+    harness.editor_mut().set_clipboard_for_test("".to_string());
+
+    navigate_to_lsp_json_editor(&mut harness);
+
+    // Press Enter to start editing the JSON field
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify we're in JSON editing mode
+    harness.assert_screen_contains("Enter:Newline");
+
+    // Select all with Ctrl+A, then type known text to have predictable content
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("HELLO").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("HELLO");
+
+    // Select all text with Ctrl+A
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Copy with Ctrl+C
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify clipboard contains the selected text
+    let clipboard_content = harness.editor_mut().clipboard_content_for_test();
+    assert!(
+        clipboard_content.contains("HELLO"),
+        "Ctrl+C should copy selected JSON text to clipboard. Clipboard content: {:?}",
+        clipboard_content
+    );
+}
+
 // =============================================================================
 // EDIT CONFIG FILE BUTTON TESTS
 // =============================================================================

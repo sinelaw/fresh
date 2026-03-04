@@ -765,7 +765,11 @@ impl SettingsState {
     }
 
     /// Handle input when editing a JSON control (multiline editor)
-    fn handle_json_editing_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
+    fn handle_json_editing_input(
+        &mut self,
+        event: &KeyEvent,
+        ctx: &mut InputContext,
+    ) -> InputResult {
         match event.code {
             KeyCode::Esc | KeyCode::Tab => {
                 // Accept if valid JSON, revert if invalid, then stop editing
