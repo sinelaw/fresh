@@ -115,6 +115,12 @@ pub struct LspServerConfig {
     /// These are added to (or override) the inherited parent environment.
     #[serde(default)]
     pub env: HashMap<String, String>,
+
+    /// Override the LSP languageId sent in textDocument/didOpen based on file extension.
+    /// Maps file extension (without dot) to LSP language ID string.
+    /// For example: `{"tsx": "typescriptreact", "jsx": "javascriptreact"}`
+    #[serde(default)]
+    pub language_id_overrides: HashMap<String, String>,
 }
 
 impl LspServerConfig {
@@ -143,6 +149,11 @@ impl LspServerConfig {
             env: {
                 let mut merged = defaults.env.clone();
                 merged.extend(self.env);
+                merged
+            },
+            language_id_overrides: {
+                let mut merged = defaults.language_id_overrides.clone();
+                merged.extend(self.language_id_overrides);
                 merged
             },
         }

@@ -59,6 +59,7 @@ fn test_diagnostics_panel_enter_does_not_jump() {
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 
@@ -206,6 +207,7 @@ fn test_diagnostics_panel_cursor_move_scrolls_editor() {
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 

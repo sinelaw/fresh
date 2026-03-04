@@ -207,6 +207,7 @@ fn test_rust_analyzer_push_diagnostics_displayed() -> anyhow::Result<()> {
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 
@@ -296,6 +297,7 @@ fn test_rust_analyzer_diagnostics_cleared_after_fix() -> anyhow::Result<()> {
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 
@@ -549,6 +551,7 @@ fn test_edit_save_edit_save_diagnostic_flow() -> anyhow::Result<()> {
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 
@@ -696,6 +699,7 @@ fn test_workspace_diagnostic_refresh_handled() -> anyhow::Result<()> {
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 
@@ -899,6 +903,7 @@ fn test_stale_diagnostics_dropped_during_rapid_typing() -> anyhow::Result<()> {
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 

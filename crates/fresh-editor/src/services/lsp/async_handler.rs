@@ -578,6 +578,9 @@ struct LspState {
     /// Mapping from editor request_id to LSP JSON-RPC id for cancellation
     /// Key: editor request_id, Value: LSP JSON-RPC id
     active_requests: HashMap<u64, i64>,
+
+    /// Extension-to-languageId overrides for textDocument/didOpen
+    language_id_overrides: HashMap<String, String>,
 }
 
 // Channel sends (`async_tx.send()`) throughout LspState are best-effort: if the receiver
@@ -889,13 +892,14 @@ impl LspState {
 
         tracing::trace!("LSP: did_open for {}", uri.as_str());
 
-        // Remap languageId for JSX/TSX files per LSP spec:
-        // .tsx → "typescriptreact", .jsx → "javascriptreact"
-        let lsp_language_id = match path.extension().and_then(|e| e.to_str()) {
-            Some("tsx") if language_id == "typescript" => "typescriptreact".to_string(),
-            Some("jsx") if language_id == "javascript" => "javascriptreact".to_string(),
-            _ => language_id,
-        };
+        // Remap languageId based on file extension using configured overrides.
+        // For example, .tsx → "typescriptreact", .jsx → "javascriptreact"
+        let lsp_language_id = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(|ext| self.language_id_overrides.get(ext))
+            .cloned()
+            .unwrap_or(language_id);
 
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
@@ -2140,6 +2144,9 @@ struct LspTask {
 
     /// Path to stderr log file
     stderr_log_path: std::path::PathBuf,
+
+    /// Extension-to-languageId overrides for textDocument/didOpen
+    language_id_overrides: HashMap<String, String>,
 }
 
 impl LspTask {
@@ -2152,6 +2159,7 @@ impl LspTask {
         async_tx: std_mpsc::Sender<AsyncMessage>,
         process_limits: &ProcessLimits,
         stderr_log_path: std::path::PathBuf,
+        language_id_overrides: HashMap<String, String>,
     ) -> Result<Self, String> {
         tracing::info!("Spawning async LSP server: {} {:?}", command, args);
         tracing::info!("Process limits: {:?}", process_limits);
@@ -2226,6 +2234,7 @@ impl LspTask {
             language,
             server_command: command.to_string(),
             stderr_log_path,
+            language_id_overrides,
         })
     }
 
@@ -2349,6 +2358,7 @@ impl LspTask {
             async_tx: self.async_tx.clone(),
             language: self.language.clone(),
             active_requests: HashMap::new(),
+            language_id_overrides: self.language_id_overrides.clone(),
         };
 
         let pending = Arc::new(Mutex::new(self.pending));
@@ -3358,6 +3368,7 @@ impl LspHandle {
         language: String,
         async_bridge: &AsyncBridge,
         process_limits: ProcessLimits,
+        language_id_overrides: std::collections::HashMap<String, String>,
     ) -> Result<Self, String> {
         let (command_tx, command_rx) = mpsc::channel(100); // Buffer up to 100 commands
         let async_tx = async_bridge.sender();
@@ -3387,6 +3398,7 @@ impl LspHandle {
                 async_tx.clone(),
                 &process_limits,
                 stderr_log_path_clone.clone(),
+                language_id_overrides,
             )
             .await
             {
@@ -4043,6 +4055,7 @@ mod tests {
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
+            Default::default(),
         );
 
         // Should succeed in spawning
@@ -4070,6 +4083,7 @@ mod tests {
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
+            Default::default(),
         )
         .unwrap();
 
@@ -4097,6 +4111,7 @@ mod tests {
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
+            Default::default(),
         )
         .unwrap();
 
@@ -4130,6 +4145,7 @@ mod tests {
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
+            Default::default(),
         )
         .unwrap();
 
@@ -4164,6 +4180,7 @@ mod tests {
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
+            Default::default(),
         );
 
         // Should succeed in creating handle (error happens asynchronously)
@@ -4202,6 +4219,7 @@ mod tests {
                     "test".to_string(),
                     &async_bridge,
                     ProcessLimits::unlimited(),
+                    Default::default(),
                 )
                 .unwrap()
             });
@@ -4272,6 +4290,7 @@ mod tests {
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
+            Default::default(),
         )
         .unwrap();
 
@@ -4322,6 +4341,7 @@ mod tests {
             "fake".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
+            Default::default(),
         )
         .unwrap();
 

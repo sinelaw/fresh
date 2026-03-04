@@ -434,6 +434,7 @@ impl LspManager {
             language.to_string(),
             async_bridge,
             config.process_limits.clone(),
+            config.language_id_overrides.clone(),
         ) {
             Ok(handle) => {
                 // Initialize the handle (non-blocking)
@@ -794,6 +795,7 @@ mod tests {
             auto_start: false,
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         };
 
         manager.set_language_config("rust".to_string(), config);
@@ -818,6 +820,7 @@ mod tests {
                 auto_start: false,
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -858,6 +861,7 @@ mod tests {
                 auto_start: false,
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 

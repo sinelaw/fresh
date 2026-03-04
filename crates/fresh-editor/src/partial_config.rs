@@ -463,6 +463,14 @@ impl Merge for LspServerConfig {
             merged.extend(self.env.drain());
             self.env = merged;
         }
+        // For language_id_overrides, merge: other's values first, then self's values override
+        if self.language_id_overrides.is_empty() {
+            self.language_id_overrides = other.language_id_overrides.clone();
+        } else if !other.language_id_overrides.is_empty() {
+            let mut merged = other.language_id_overrides.clone();
+            merged.extend(self.language_id_overrides.drain());
+            self.language_id_overrides = merged;
+        }
     }
 }
 

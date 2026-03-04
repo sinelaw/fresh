@@ -42,6 +42,7 @@ fn test_lsp_env_vars_passed_to_server() -> anyhow::Result<()> {
                 "FRESH_TEST_ENV_VAR".to_string(),
                 "hello_from_config".to_string(),
             )]),
+            language_id_overrides: Default::default(),
         },
     );
 

@@ -51,6 +51,7 @@ fn test_did_open_sent_before_hover() -> anyhow::Result<()> {
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 

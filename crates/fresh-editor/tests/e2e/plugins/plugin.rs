@@ -324,6 +324,7 @@ fn test_diagnostics_panel_plugin_loads() {
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 
@@ -748,6 +749,7 @@ fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
             process_limits: ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 
@@ -818,6 +820,7 @@ fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
             process_limits: ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 
@@ -1045,6 +1048,7 @@ editor.setStatus("Test diagnostics plugin loaded");
             process_limits: ProcessLimits::default(),
             initialization_options: None,
             env: Default::default(),
+            language_id_overrides: Default::default(),
         },
     );
 

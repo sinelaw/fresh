@@ -3258,6 +3258,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: Some(ra_init_options),
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3272,22 +3273,44 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
         // typescript-language-server (installed via npm)
         // Alternative: use "deno lsp" with initialization_options: {"enable": true}
-        let ts_lsp = LspServerConfig {
-            command: "typescript-language-server".to_string(),
-            args: vec!["--stdio".to_string()],
-            enabled: true,
-            auto_start: false,
-            process_limits: ProcessLimits::default(),
-            initialization_options: None,
-            env: Default::default(),
-        };
-        lsp.insert("javascript".to_string(), ts_lsp.clone());
-        lsp.insert("typescript".to_string(), ts_lsp);
+        lsp.insert(
+            "javascript".to_string(),
+            LspServerConfig {
+                command: "typescript-language-server".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: HashMap::from([(
+                    "jsx".to_string(),
+                    "javascriptreact".to_string(),
+                )]),
+            },
+        );
+        lsp.insert(
+            "typescript".to_string(),
+            LspServerConfig {
+                command: "typescript-language-server".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: HashMap::from([(
+                    "tsx".to_string(),
+                    "typescriptreact".to_string(),
+                )]),
+            },
+        );
 
         // vscode-html-language-server (installed via npm install -g vscode-langservers-extracted)
         lsp.insert(
@@ -3300,6 +3323,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3314,6 +3338,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3328,6 +3353,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
         lsp.insert(
@@ -3340,6 +3366,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3354,6 +3381,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3368,6 +3396,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3382,6 +3411,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3397,6 +3427,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3412,6 +3443,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3427,6 +3459,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3442,6 +3475,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3457,6 +3491,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3472,6 +3507,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3487,6 +3523,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3501,6 +3538,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3516,6 +3554,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3530,6 +3569,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3545,6 +3585,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3559,6 +3600,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
 
@@ -3574,6 +3616,7 @@ impl Config {
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
+                language_id_overrides: Default::default(),
             },
         );
     }
