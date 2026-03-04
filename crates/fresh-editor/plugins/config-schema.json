@@ -1055,6 +1055,14 @@
             "type": "string"
           },
           "default": {}
+        },
+        "language_id_overrides": {
+          "description": "Override the LSP languageId sent in textDocument/didOpen based on file extension.\nMaps file extension (without dot) to LSP language ID string.\nFor example: `{\"tsx\": \"typescriptreact\", \"jsx\": \"javascriptreact\"}`",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
         }
       },
       "x-display-field": "/command"
