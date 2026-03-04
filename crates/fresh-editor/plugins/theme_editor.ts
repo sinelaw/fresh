@@ -502,102 +502,17 @@ async function loadBuiltinThemes(): Promise<string[]> {
 }
 
 /**
- * Load a theme file from built-in themes
+ * Load theme data by name from the in-memory theme registry.
+ * Works for all theme types (builtin, user, package) — no file I/O needed.
  */
-async function loadThemeFile(name: string): Promise<Record<string, unknown> | null> {
+function loadThemeFile(name: string): Record<string, unknown> | null {
   try {
-    const rawThemes = editor.getBuiltinThemes();
-    // getBuiltinThemes returns a JSON string, need to parse it
-    const builtinThemes = typeof rawThemes === "string"
-      ? JSON.parse(rawThemes) as Record<string, string>
-      : rawThemes as Record<string, string>;
-    if (name in builtinThemes) {
-      return JSON.parse(builtinThemes[name]);
-    }
-    return null;
+    const data = editor.getThemeData(name);
+    return data as Record<string, unknown> | null;
   } catch (e) {
     editor.debug(`[theme_editor] Failed to load theme data for '${name}': ${e}`);
     return null;
   }
-}
-
-/**
- * Load a user theme file — checks top-level themes dir, then package directories
- */
-async function loadUserThemeFile(name: string): Promise<{ data: Record<string, unknown>; path: string } | null> {
-  const userThemesDir = getUserThemesDir();
-
-  // First check top-level themes directory
-  const themePath = editor.pathJoin(userThemesDir, `${name}.json`);
-  try {
-    const content = await editor.readFile(themePath);
-    return { data: JSON.parse(content), path: themePath };
-  } catch {
-    // Not found at top level — continue searching
-  }
-
-  // Search package directories: themes/packages/*/
-  const packagesDir = editor.pathJoin(userThemesDir, "packages");
-  try {
-    const pkgEntries = editor.readDir(packagesDir);
-    for (const pkg of pkgEntries) {
-      if (!pkg.is_file) {
-        const pkgPath = editor.pathJoin(packagesDir, pkg.name, `${name}.json`);
-        try {
-          const content = await editor.readFile(pkgPath);
-          return { data: JSON.parse(content), path: pkgPath };
-        } catch {
-          // Not in this package, continue
-        }
-      }
-    }
-  } catch {
-    // No packages directory
-  }
-
-  editor.debug(`Failed to load user theme: ${name}`);
-  return null;
-}
-
-/**
- * List available user themes
- */
-function listUserThemes(): string[] {
-  const userThemesDir = getUserThemesDir();
-  try {
-    const entries = editor.readDir(userThemesDir);
-    return entries
-      .filter(e => e.is_file && e.name.endsWith(".json"))
-      .map(e => e.name.replace(".json", ""));
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Get user themes directory
- * Uses the API to get the correct path
- */
-function getUserThemesDir(): string {
-  // Use the API if available (new method)
-  if (typeof editor.getThemesDir === "function") {
-    return editor.getThemesDir();
-  }
-
-  // Fallback for older versions (deprecated)
-  // Check XDG_CONFIG_HOME first (standard on Linux)
-  const xdgConfig = editor.getEnv("XDG_CONFIG_HOME");
-  if (xdgConfig) {
-    return editor.pathJoin(xdgConfig, "fresh", "themes");
-  }
-
-  // Fall back to $HOME/.config
-  const home = editor.getEnv("HOME");
-  if (home) {
-    return editor.pathJoin(home, ".config", "fresh", "themes");
-  }
-
-  return editor.pathJoin(editor.getCwd(), "themes");
 }
 
 // =============================================================================
@@ -1127,36 +1042,19 @@ globalThis.onThemeOpenPromptConfirmed = async function(args: {
     isBuiltin = state.builtinThemes.includes(value);
   }
 
-  if (isBuiltin) {
-    // Load builtin theme
-    const themeData = await loadThemeFile(themeName);
-    if (themeData) {
-      state.themeData = deepClone(themeData);
-      state.originalThemeData = deepClone(themeData);
-      state.themeName = themeName;
-      state.themePath = null; // No user path for builtin
-      state.isBuiltin = true;
-      state.hasChanges = false;
-      updateDisplay();
-      editor.setStatus(editor.t("status.opened_builtin", { name: themeName }));
-    } else {
-      editor.setStatus(editor.t("status.load_failed", { name: themeName }));
-    }
+  const themeData = loadThemeFile(themeName);
+  if (themeData) {
+    state.themeData = deepClone(themeData);
+    state.originalThemeData = deepClone(themeData);
+    state.themeName = themeName;
+    state.themePath = null;
+    state.isBuiltin = isBuiltin;
+    state.hasChanges = false;
+    updateDisplay();
+    const statusKey = isBuiltin ? "status.opened_builtin" : "status.loaded";
+    editor.setStatus(editor.t(statusKey, { name: themeName }));
   } else {
-    // Load user theme
-    const result = await loadUserThemeFile(themeName);
-    if (result) {
-      state.themeData = deepClone(result.data);
-      state.originalThemeData = deepClone(result.data);
-      state.themeName = themeName;
-      state.themePath = result.path;
-      state.isBuiltin = false;
-      state.hasChanges = false;
-      updateDisplay();
-      editor.setStatus(editor.t("status.loaded", { name: themeName }));
-    } else {
-      editor.setStatus(editor.t("status.load_failed", { name: themeName }));
-    }
+    editor.setStatus(editor.t("status.load_failed", { name: themeName }));
   }
 
   return true;
@@ -1181,11 +1079,8 @@ globalThis.onThemeSaveAsPromptConfirmed = async function(args: {
       return true;
     }
 
-    // Check if a user theme already exists with this name
-    const userThemesDir = getUserThemesDir();
-    const targetPath = editor.pathJoin(userThemesDir, `${name}.json`);
-
-    if (editor.fileExists(targetPath)) {
+    // Check if a user theme file already exists with this name
+    if (editor.themeFileExists(name)) {
       // Store pending save name for overwrite confirmation
       state.pendingSaveName = name;
       editor.startPrompt(editor.t("prompt.overwrite_confirm", { name }), "theme-overwrite-confirm");
@@ -1258,34 +1153,17 @@ globalThis.onThemeSelectInitialPromptConfirmed = async function(args: {
 
   editor.debug(editor.t("status.loading"));
 
-  if (isBuiltin) {
-    // Load builtin theme
-    const themeData = await loadThemeFile(themeName);
-    if (themeData) {
-      state.themeData = deepClone(themeData);
-      state.originalThemeData = deepClone(themeData);
-      state.themeName = themeName;
-      state.themePath = null; // No user path for builtin
-      state.isBuiltin = true;
-      state.hasChanges = false;
-    } else {
-      editor.setStatus(`Failed to load builtin theme '${themeName}'`);
-      return true;
-    }
+  const themeData = loadThemeFile(themeName);
+  if (themeData) {
+    state.themeData = deepClone(themeData);
+    state.originalThemeData = deepClone(themeData);
+    state.themeName = themeName;
+    state.themePath = null;
+    state.isBuiltin = isBuiltin;
+    state.hasChanges = false;
   } else {
-    // Load user theme (searches top-level and package directories)
-    const result = await loadUserThemeFile(themeName);
-    if (result) {
-      state.themeData = deepClone(result.data);
-      state.originalThemeData = deepClone(result.data);
-      state.themeName = themeName;
-      state.themePath = result.path;
-      state.isBuiltin = false;
-      state.hasChanges = false;
-    } else {
-      editor.setStatus(`Failed to load theme '${themeName}'`);
-      return true;
-    }
+    editor.setStatus(`Failed to load theme '${themeName}'`);
+    return true;
   }
 
   // Now open the editor with loaded theme
@@ -1319,9 +1197,6 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
   // Normalize theme name: lowercase, replace underscores/spaces with hyphens
   // (must match Rust's normalize_theme_name so config name matches filename)
   const themeName = (name || state.themeName).toLowerCase().replace(/[_ ]/g, "-");
-  const userThemesDir = getUserThemesDir();
-
-  const themePath = editor.pathJoin(userThemesDir, `${themeName}.json`);
 
   try {
     // Build a complete theme object from all known fields.
@@ -1342,9 +1217,9 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
     }
 
     const content = JSON.stringify(completeTheme, null, 2);
-    await editor.writeFile(themePath, content);
+    const savedPath = editor.saveThemeFile(themeName, content);
 
-    state.themePath = themePath;
+    state.themePath = savedPath;
     state.themeName = themeName;
     state.isBuiltin = false; // After saving, it's now a user theme
     state.originalThemeData = deepClone(state.themeData);
@@ -1518,32 +1393,17 @@ globalThis.onThemeInspectKey = async function(data: {
 
   // Auto-load the current theme (builtin or user)
   const isBuiltin = state.builtinThemes.includes(data.theme_name);
-  if (isBuiltin) {
-    const themeData = await loadThemeFile(data.theme_name);
-    if (themeData) {
-      state.themeData = deepClone(themeData);
-      state.originalThemeData = deepClone(themeData);
-      state.themeName = data.theme_name;
-      state.themePath = null;
-      state.isBuiltin = true;
-      state.hasChanges = false;
-    } else {
-      editor.setStatus(`Failed to load builtin theme '${data.theme_name}'`);
-      return;
-    }
+  const themeData = loadThemeFile(data.theme_name);
+  if (themeData) {
+    state.themeData = deepClone(themeData);
+    state.originalThemeData = deepClone(themeData);
+    state.themeName = data.theme_name;
+    state.themePath = null;
+    state.isBuiltin = isBuiltin;
+    state.hasChanges = false;
   } else {
-    const result = await loadUserThemeFile(data.theme_name);
-    if (result) {
-      state.themeData = deepClone(result.data);
-      state.originalThemeData = deepClone(result.data);
-      state.themeName = data.theme_name;
-      state.themePath = result.path;
-      state.isBuiltin = false;
-      state.hasChanges = false;
-    } else {
-      editor.setStatus(`Failed to load user theme '${data.theme_name}'`);
-      return;
-    }
+    editor.setStatus(`Failed to load theme '${data.theme_name}'`);
+    return;
   }
 
   // Expand the target section
@@ -1792,15 +1652,23 @@ globalThis.open_theme_editor = async function(): Promise<void> {
 
   const suggestions: PromptSuggestion[] = [];
 
-  // Add user themes first
-  const userThemes = listUserThemes();
-  for (const name of userThemes) {
-    const isCurrent = name === currentThemeName;
-    suggestions.push({
-      text: name,
-      description: isCurrent ? editor.t("suggestion.user_theme_current") : editor.t("suggestion.user_theme"),
-      value: `user:${name}`,
-    });
+  // Add user themes first (from themes directory)
+  const userThemesDir = editor.getThemesDir();
+  try {
+    const entries = editor.readDir(userThemesDir);
+    for (const e of entries) {
+      if (e.is_file && e.name.endsWith(".json")) {
+        const name = e.name.replace(".json", "");
+        const isCurrent = name === currentThemeName;
+        suggestions.push({
+          text: name,
+          description: isCurrent ? editor.t("suggestion.user_theme_current") : editor.t("suggestion.user_theme"),
+          value: `user:${name}`,
+        });
+      }
+    }
+  } catch {
+    // No user themes directory
   }
 
   // Add built-in themes
@@ -1974,14 +1842,22 @@ globalThis.theme_editor_open = function(): void {
 
   const suggestions: PromptSuggestion[] = [];
 
-  // Add user themes first
-  const userThemes = listUserThemes();
-  for (const name of userThemes) {
-    suggestions.push({
-      text: name,
-      description: editor.t("suggestion.user_theme"),
-      value: `user:${name}`,
-    });
+  // Add user themes first (from themes directory)
+  const userThemesDir = editor.getThemesDir();
+  try {
+    const entries = editor.readDir(userThemesDir);
+    for (const e of entries) {
+      if (e.is_file && e.name.endsWith(".json")) {
+        const name = e.name.replace(".json", "");
+        suggestions.push({
+          text: name,
+          description: editor.t("suggestion.user_theme"),
+          value: `user:${name}`,
+        });
+      }
+    }
+  } catch {
+    // No user themes directory
   }
 
   // Add built-in themes
@@ -2022,10 +1898,9 @@ globalThis.theme_editor_save = async function(): Promise<void> {
   }
 
   // Check for name collision if name has changed since last save
-  const userThemesDir = getUserThemesDir();
-  const targetPath = editor.pathJoin(userThemesDir, `${state.themeName}.json`);
+  const expectedPath = editor.pathJoin(editor.getThemesDir(), `${state.themeName}.json`);
 
-  if (state.themePath !== targetPath && editor.fileExists(targetPath)) {
+  if (state.themePath !== expectedPath && editor.themeFileExists(state.themeName)) {
     // File exists with this name - ask for confirmation
     editor.startPrompt(editor.t("prompt.overwrite_confirm", { name: state.themeName }), "theme-overwrite-confirm");
     const suggestions: PromptSuggestion[] = [
@@ -2093,7 +1968,7 @@ globalThis.theme_editor_save_as = function(): void {
 globalThis.theme_editor_reload = async function(): Promise<void> {
   if (state.themePath) {
     const themeName = state.themeName;
-    const themeData = await loadThemeFile(themeName);
+    const themeData = loadThemeFile(themeName);
     if (themeData) {
       state.themeData = deepClone(themeData);
       state.originalThemeData = deepClone(themeData);

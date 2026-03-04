@@ -1449,6 +1449,31 @@ impl JsEditorApi {
         self.delete_theme_sync(name)
     }
 
+    /// Get theme data (JSON) by name from the in-memory cache
+    pub fn get_theme_data<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        name: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        match self.services.get_theme_data(&name) {
+            Some(data) => rquickjs_serde::to_value(ctx, &data)
+                .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string())),
+            None => Ok(Value::new_null(ctx)),
+        }
+    }
+
+    /// Save a theme file to the user themes directory, returns the saved path
+    pub fn save_theme_file(&self, name: String, content: String) -> rquickjs::Result<String> {
+        self.services
+            .save_theme_file(&name, &content)
+            .map_err(|e| rquickjs::Error::new_from_js_message("io", "", &e))
+    }
+
+    /// Check if a user theme file exists
+    pub fn theme_file_exists(&self, name: String) -> bool {
+        self.services.theme_file_exists(&name)
+    }
+
     // === File Stats ===
 
     /// Get file stat information
@@ -4134,6 +4159,15 @@ mod tests {
         fn config_dir(&self) -> std::path::PathBuf {
             std::path::PathBuf::from("/tmp/config")
         }
+        fn get_theme_data(&self, _name: &str) -> Option<serde_json::Value> {
+            None
+        }
+        fn save_theme_file(&self, _name: &str, _content: &str) -> Result<String, String> {
+            Err("not implemented in test".to_string())
+        }
+        fn theme_file_exists(&self, _name: &str) -> bool {
+            false
+        }
     }
 
     #[test]
@@ -5401,6 +5435,204 @@ mod tests {
                 assert_eq!(theme_name, "dark");
             }
             _ => panic!("Expected ApplyTheme, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_api_get_theme_data_missing() {
+        let (mut backend, _rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            const data = editor.getThemeData("nonexistent");
+            globalThis._isNull = data === null;
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let is_null: bool = global.get("_isNull").unwrap();
+                // getThemeData should return null for non-existent theme
+                assert!(is_null);
+            });
+    }
+
+    #[test]
+    fn test_api_get_theme_data_present() {
+        // Use a custom service bridge that returns theme data
+        let (tx, _rx) = mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let services = Arc::new(ThemeCacheTestBridge {
+            inner: TestServiceBridge::new(),
+        });
+        let mut backend = QuickJsBackend::with_state(state_snapshot, tx, services).unwrap();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            const data = editor.getThemeData("test-theme");
+            globalThis._hasData = data !== null && typeof data === 'object';
+            globalThis._name = data ? data.name : null;
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let has_data: bool = global.get("_hasData").unwrap();
+                assert!(has_data, "getThemeData should return theme object");
+                let name: String = global.get("_name").unwrap();
+                assert_eq!(name, "test-theme");
+            });
+    }
+
+    #[test]
+    fn test_api_theme_file_exists() {
+        let (mut backend, _rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis._exists = editor.themeFileExists("anything");
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let exists: bool = global.get("_exists").unwrap();
+                // TestServiceBridge returns false
+                assert!(!exists);
+            });
+    }
+
+    #[test]
+    fn test_api_save_theme_file_error() {
+        let (mut backend, _rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            let threw = false;
+            try {
+                editor.saveThemeFile("test", "{}");
+            } catch (e) {
+                threw = true;
+            }
+            globalThis._threw = threw;
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let threw: bool = global.get("_threw").unwrap();
+                // TestServiceBridge returns Err, so JS should throw
+                assert!(threw);
+            });
+    }
+
+    /// Test helper: a service bridge that provides theme data in the cache.
+    struct ThemeCacheTestBridge {
+        inner: TestServiceBridge,
+    }
+
+    impl fresh_core::services::PluginServiceBridge for ThemeCacheTestBridge {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn translate(
+            &self,
+            plugin_name: &str,
+            key: &str,
+            args: &HashMap<String, String>,
+        ) -> String {
+            self.inner.translate(plugin_name, key, args)
+        }
+        fn current_locale(&self) -> String {
+            self.inner.current_locale()
+        }
+        fn set_js_execution_state(&self, state: String) {
+            self.inner.set_js_execution_state(state);
+        }
+        fn clear_js_execution_state(&self) {
+            self.inner.clear_js_execution_state();
+        }
+        fn get_theme_schema(&self) -> serde_json::Value {
+            self.inner.get_theme_schema()
+        }
+        fn get_builtin_themes(&self) -> serde_json::Value {
+            self.inner.get_builtin_themes()
+        }
+        fn register_command(&self, command: fresh_core::command::Command) {
+            self.inner.register_command(command);
+        }
+        fn unregister_command(&self, name: &str) {
+            self.inner.unregister_command(name);
+        }
+        fn unregister_commands_by_prefix(&self, prefix: &str) {
+            self.inner.unregister_commands_by_prefix(prefix);
+        }
+        fn unregister_commands_by_plugin(&self, plugin_name: &str) {
+            self.inner.unregister_commands_by_plugin(plugin_name);
+        }
+        fn plugins_dir(&self) -> std::path::PathBuf {
+            self.inner.plugins_dir()
+        }
+        fn config_dir(&self) -> std::path::PathBuf {
+            self.inner.config_dir()
+        }
+        fn get_theme_data(&self, name: &str) -> Option<serde_json::Value> {
+            if name == "test-theme" {
+                Some(serde_json::json!({
+                    "name": "test-theme",
+                    "editor": {},
+                    "ui": {},
+                    "syntax": {}
+                }))
+            } else {
+                None
+            }
+        }
+        fn save_theme_file(&self, _name: &str, _content: &str) -> Result<String, String> {
+            Err("test bridge does not support save".to_string())
+        }
+        fn theme_file_exists(&self, name: &str) -> bool {
+            name == "test-theme"
         }
     }
 

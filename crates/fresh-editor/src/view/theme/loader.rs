@@ -65,6 +65,24 @@ impl ThemeRegistry {
     pub fn is_empty(&self) -> bool {
         self.themes.is_empty()
     }
+
+    /// Convert all themes to a JSON map (name → serde_json::Value).
+    ///
+    /// Uses the existing `From<Theme> for ThemeFile` conversion to produce
+    /// JSON that matches what the theme files look like on disk.
+    pub fn to_json_map(&self) -> HashMap<String, serde_json::Value> {
+        use super::types::ThemeFile;
+
+        self.themes
+            .iter()
+            .filter_map(|(name, theme)| {
+                let theme_file: ThemeFile = theme.clone().into();
+                serde_json::to_value(theme_file)
+                    .ok()
+                    .map(|v| (name.clone(), v))
+            })
+            .collect()
+    }
 }
 
 /// Loads themes and creates a ThemeRegistry.
@@ -595,5 +613,32 @@ mod tests {
             theme_info.pack, "user/my-collection",
             "Nested theme should have subdirectory in pack name"
         );
+    }
+
+    #[test]
+    fn test_to_json_map() {
+        let loader = ThemeLoader::embedded_only();
+        let registry = loader.load_all();
+
+        let json_map = registry.to_json_map();
+
+        // Should contain all themes
+        assert_eq!(json_map.len(), registry.len());
+
+        // Each entry should be a valid JSON object with a "name" field
+        let dark = json_map
+            .get("dark")
+            .expect("dark theme should be in json map");
+        assert!(dark.is_object(), "theme should serialize to a JSON object");
+        assert_eq!(
+            dark.get("name").and_then(|v| v.as_str()),
+            Some("dark"),
+            "theme JSON should have correct name"
+        );
+
+        // Should have the expected section keys
+        assert!(dark.get("editor").is_some(), "should have editor section");
+        assert!(dark.get("ui").is_some(), "should have ui section");
+        assert!(dark.get("syntax").is_some(), "should have syntax section");
     }
 }

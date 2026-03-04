@@ -359,6 +359,9 @@ impl Editor {
         let theme_loader = ThemeLoader::new(self.dir_context.themes_dir());
         self.theme_registry = theme_loader.load_all();
 
+        // Update shared theme cache for plugin access
+        *self.theme_cache.write().unwrap() = self.theme_registry.to_json_map();
+
         // Re-apply current theme if it still exists, otherwise it might have been updated
         if let Some(theme) = self.theme_registry.get_cloned(&self.config.theme) {
             self.theme = theme;

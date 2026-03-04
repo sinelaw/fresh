@@ -37,6 +37,7 @@ impl PluginManager {
         enable: bool,
         command_registry: Arc<RwLock<CommandRegistry>>,
         dir_context: DirectoryContext,
+        theme_cache: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     ) -> Self {
         #[cfg(feature = "plugins")]
         {
@@ -44,6 +45,7 @@ impl PluginManager {
                 let services = Arc::new(EditorServiceBridge {
                     command_registry: command_registry.clone(),
                     dir_context,
+                    theme_cache,
                 });
                 match PluginThreadHandle::spawn(services) {
                     Ok(handle) => {
@@ -67,6 +69,7 @@ impl PluginManager {
         {
             let _ = command_registry; // Suppress unused warning
             let _ = dir_context; // Suppress unused warning
+            let _ = theme_cache; // Suppress unused warning
             if enable {
                 tracing::warn!("Plugins requested but compiled without plugin support");
             }

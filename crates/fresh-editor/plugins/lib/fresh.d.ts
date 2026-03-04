@@ -899,7 +899,7 @@ interface EditorAPI {
 	*/
 	reloadThemes(): void;
 	/**
-	* Reload theme registry from disk and apply a theme atomically
+	* Reload theme registry and apply a theme atomically
 	*/
 	reloadAndApplyTheme(themeName: string): void;
 	/**
@@ -944,6 +944,18 @@ interface EditorAPI {
 	* Delete a custom theme (alias for deleteThemeSync)
 	*/
 	deleteTheme(name: string): boolean;
+	/**
+	* Get theme data (JSON) by name from the in-memory cache
+	*/
+	getThemeData(name: string): unknown;
+	/**
+	* Save a theme file to the user themes directory, returns the saved path
+	*/
+	saveThemeFile(name: string, content: string): string;
+	/**
+	* Check if a user theme file exists
+	*/
+	themeFileExists(name: string): boolean;
 	/**
 	* Get file stat information
 	*/

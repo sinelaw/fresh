@@ -12,6 +12,7 @@ use std::sync::{Arc, RwLock};
 pub struct EditorServiceBridge {
     pub command_registry: Arc<RwLock<CommandRegistry>>,
     pub dir_context: DirectoryContext,
+    pub theme_cache: Arc<RwLock<std::collections::HashMap<String, serde_json::Value>>>,
 }
 
 impl PluginServiceBridge for EditorServiceBridge {
@@ -98,5 +99,25 @@ impl PluginServiceBridge for EditorServiceBridge {
 
     fn config_dir(&self) -> PathBuf {
         self.dir_context.config_dir.clone()
+    }
+
+    fn get_theme_data(&self, name: &str) -> Option<serde_json::Value> {
+        let cache = self.theme_cache.read().unwrap();
+        cache.get(name).cloned()
+    }
+
+    fn save_theme_file(&self, name: &str, content: &str) -> Result<String, String> {
+        let themes_dir = self.dir_context.themes_dir();
+        if !themes_dir.exists() {
+            std::fs::create_dir_all(&themes_dir).map_err(|e| e.to_string())?;
+        }
+        let path = themes_dir.join(format!("{}.json", name));
+        std::fs::write(&path, content).map_err(|e| e.to_string())?;
+        Ok(path.to_string_lossy().to_string())
+    }
+
+    fn theme_file_exists(&self, name: &str) -> bool {
+        let themes_dir = self.dir_context.themes_dir();
+        themes_dir.join(format!("{}.json", name)).exists()
     }
 }

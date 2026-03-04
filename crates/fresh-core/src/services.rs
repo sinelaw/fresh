@@ -52,6 +52,22 @@ pub trait PluginServiceBridge: Send + Sync + 'static {
 
     /// Get the config directory path
     fn config_dir(&self) -> std::path::PathBuf;
+
+    /// Get theme data (JSON) by name from the in-memory cache.
+    fn get_theme_data(&self, _name: &str) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// Save a theme file to the user themes directory.
+    /// Returns the path where the file was written.
+    fn save_theme_file(&self, _name: &str, _content: &str) -> Result<String, String> {
+        Err("not implemented".to_string())
+    }
+
+    /// Check if a user theme file exists (for overwrite confirmation).
+    fn theme_file_exists(&self, _name: &str) -> bool {
+        false
+    }
 }
 
 /// A no-op implementation of the service bridge for testing

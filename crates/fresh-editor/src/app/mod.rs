@@ -290,6 +290,9 @@ pub struct Editor {
     /// All loaded themes (embedded + user)
     theme_registry: crate::view::theme::ThemeRegistry,
 
+    /// Shared theme data cache for plugin access (name → JSON value)
+    theme_cache: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+
     /// Optional ANSI background image
     ansi_background: Option<crate::primitives::ansi_background::AnsiBackground>,
 
@@ -1158,11 +1161,15 @@ impl Editor {
         // File provider is the default (empty prefix) - use the shared Arc instance
         // We'll handle commands and buffers inline since they need App state
 
+        // Build shared theme cache for plugin access
+        let theme_cache = Arc::new(RwLock::new(theme_registry.to_json_map()));
+
         // Initialize plugin manager (handles both enabled and disabled cases internally)
         let plugin_manager = PluginManager::new(
             enable_plugins,
             Arc::clone(&command_registry),
             dir_context.clone(),
+            Arc::clone(&theme_cache),
         );
 
         // Update the plugin state snapshot with working_dir BEFORE loading plugins
@@ -1306,6 +1313,7 @@ impl Editor {
             pending_grammars: Vec::new(),
             theme,
             theme_registry,
+            theme_cache,
             ansi_background: None,
             ansi_background_path: None,
             background_fade: crate::primitives::ansi_background::DEFAULT_BACKGROUND_FADE,
