@@ -2736,8 +2736,17 @@ impl Editor {
 
     /// Check whether the viewport has scrolled since we last created search
     /// overlays. If so, refresh them. Called from `editor_tick()`.
+    ///
+    /// Only applies to large files where overlays are viewport-scoped.
+    /// Small files already have overlays for ALL matches (created by
+    /// `finalize_search`), so replacing them with viewport-only overlays
+    /// would lose matches outside the visible area.
     pub(super) fn check_search_overlay_refresh(&mut self) -> bool {
         if self.search_state.is_none() {
+            return false;
+        }
+        // Only refresh viewport-scoped overlays for large files
+        if !self.active_state().buffer.is_large_file() {
             return false;
         }
         let active_split = self.split_manager.active_split();

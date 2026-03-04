@@ -3,6 +3,7 @@
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use std::fmt::Write as _;
 use tempfile::TempDir;
 
 /// Test basic forward search functionality
@@ -2628,4 +2629,105 @@ fn test_search_large_file_tick_performance() {
             tick_elapsed + render_elapsed
         );
     }
+}
+
+/// Test that F3 navigates through ALL search matches after editor_tick runs,
+/// even when matches are outside the initial viewport.
+///
+/// Regression test: check_search_overlay_refresh() was unconditionally replacing
+/// the full set of search overlays (created by finalize_search for small files)
+/// with viewport-only overlays, causing F3 to report fewer matches than found.
+#[test]
+fn test_search_f3_navigates_all_matches_after_scroll() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Build a file where "NEEDLE" appears 4 times, but the first occurrence
+    // is far enough from the top that the viewport will scroll on search.
+    // The editor viewport is 24 rows high, so we need >24 lines of filler.
+    let mut content = String::new();
+    for i in 0..40 {
+        writeln!(content, "filler line {}", i).unwrap();
+    }
+    writeln!(content, "first NEEDLE here").unwrap();
+    writeln!(content, "second NEEDLE here").unwrap();
+    for i in 0..20 {
+        writeln!(content, "more filler {}", i).unwrap();
+    }
+    writeln!(content, "third NEEDLE here").unwrap();
+    for i in 0..20 {
+        writeln!(content, "yet more filler {}", i).unwrap();
+    }
+    writeln!(content, "fourth NEEDLE here").unwrap();
+
+    std::fs::write(&file_path, &content).unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Verify cursor starts at top (NEEDLE is not visible in initial viewport)
+    assert_eq!(harness.cursor_position(), 0);
+
+    // Open search and type "NEEDLE"
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("NEEDLE").unwrap();
+    harness.render().unwrap();
+
+    // Confirm search
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // The status line should report 4 matches
+    harness.assert_screen_contains("Found 4 matches");
+
+    let first_match_pos = harness.cursor_position();
+
+    // Simulate editor ticks (this is where the bug manifests: the viewport
+    // has scrolled since finalize_search, so check_search_overlay_refresh
+    // fires and replaces all overlays with viewport-only ones).
+    let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
+    harness.render().unwrap();
+
+    // Press F3 to navigate to next match. The status should say "Match 2 of 4"
+    // (not "Match 2 of 2" which was the buggy behavior).
+    harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
+    let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
+    harness.render().unwrap();
+
+    let second_match_pos = harness.cursor_position();
+    assert!(
+        second_match_pos > first_match_pos,
+        "F3 should advance to the next match"
+    );
+    harness.assert_screen_contains("Match 2 of 4");
+
+    // Press F3 again -> match 3 of 4
+    harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
+    let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
+    harness.render().unwrap();
+
+    let third_match_pos = harness.cursor_position();
+    assert!(
+        third_match_pos > second_match_pos,
+        "F3 should advance to the third match"
+    );
+    harness.assert_screen_contains("Match 3 of 4");
+
+    // Press F3 again -> match 4 of 4
+    harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
+    let _ = fresh::app::editor_tick(harness.editor_mut(), || Ok(()));
+    harness.render().unwrap();
+
+    let fourth_match_pos = harness.cursor_position();
+    assert!(
+        fourth_match_pos > third_match_pos,
+        "F3 should advance to the fourth match"
+    );
+    harness.assert_screen_contains("Match 4 of 4");
 }
