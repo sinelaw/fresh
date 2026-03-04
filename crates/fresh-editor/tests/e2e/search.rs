@@ -2639,8 +2639,9 @@ fn test_search_large_file_tick_performance() {
 /// with viewport-only overlays, causing F3 to report fewer matches than found.
 #[test]
 fn test_search_f3_navigates_all_matches_after_scroll() {
-    let temp_dir = TempDir::new().unwrap();
-    let file_path = temp_dir.path().join("test.txt");
+    let mut harness = EditorTestHarness::with_temp_project(100, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    let file_path = project_dir.join("test.txt");
 
     // Build a file where "NEEDLE" appears 4 times, but the first occurrence
     // is far enough from the top that the viewport will scroll on search.
@@ -2661,8 +2662,6 @@ fn test_search_f3_navigates_all_matches_after_scroll() {
     writeln!(content, "fourth NEEDLE here").unwrap();
 
     std::fs::write(&file_path, &content).unwrap();
-
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
@@ -2706,8 +2705,13 @@ fn test_search_f3_navigates_all_matches_after_scroll() {
 fn test_search_f3_navigates_all_matches_large_file() {
     use std::io::Write;
 
-    let temp_dir = TempDir::new().unwrap();
-    let file_path = temp_dir.path().join("large_search.txt");
+    // Use a 1MB threshold so our ~4MB file is well above it
+    let mut config = Config::default();
+    config.editor.large_file_threshold_bytes = 1024 * 1024;
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 24, config).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    let file_path = project_dir.join("large_search.txt");
 
     let mut file = std::fs::File::create(&file_path).unwrap();
 
@@ -2754,12 +2758,6 @@ fn test_search_f3_navigates_all_matches_large_file() {
         file_size
     );
 
-    // Use a 1MB threshold so our ~4MB file is well above it
-    let mut config = Config::default();
-    config.editor.large_file_threshold_bytes = 1024 * 1024;
-
-    let mut harness =
-        EditorTestHarness::create(120, 24, HarnessOptions::new().with_config(config)).unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
