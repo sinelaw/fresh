@@ -80,10 +80,7 @@ impl Editor {
                 continue; // Skip buffers that aren't fully loaded
             };
 
-            let Some(uri) = url::Url::from_file_path(&buf_path)
-                .ok()
-                .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok())
-            else {
+            let Some(uri) = super::types::file_path_to_lsp_uri(&buf_path) else {
                 continue;
             };
 

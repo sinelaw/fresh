@@ -618,10 +618,7 @@ impl Editor {
     pub(crate) fn notify_lsp_file_changed(&mut self, path: &Path) {
         use crate::services::lsp::manager::LspSpawnResult;
 
-        let Ok(uri) = url::Url::from_file_path(path) else {
-            return;
-        };
-        let Ok(lsp_uri) = uri.as_str().parse::<lsp_types::Uri>() else {
+        let Some(lsp_uri) = super::types::file_path_to_lsp_uri(path) else {
             return;
         };
 

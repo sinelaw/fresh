@@ -1220,9 +1220,7 @@ impl Editor {
                     Some(c) => c,
                     None => continue, // Skip buffers that aren't fully loaded
                 };
-                let uri: Option<lsp_types::Uri> = url::Url::from_file_path(&path)
-                    .ok()
-                    .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
+                let uri: Option<lsp_types::Uri> = super::types::file_path_to_lsp_uri(&path);
 
                 if let Some(uri) = uri {
                     let lang_id = state.language.clone();

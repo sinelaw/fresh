@@ -216,9 +216,7 @@ impl BufferMetadata {
     /// * `working_dir` - The canonical working directory for computing relative display name
     pub fn with_file(path: PathBuf, working_dir: &Path) -> Self {
         // Compute URI from the absolute path
-        let file_uri = url::Url::from_file_path(&path)
-            .ok()
-            .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
+        let file_uri = file_path_to_lsp_uri(&path);
 
         // Compute display name (project-relative when under working_dir, else absolute path).
         // Use canonicalized forms first to handle macOS /var -> /private/var differences.
@@ -987,5 +985,107 @@ impl CachedLayout {
         } else {
             Some(row.line_end_byte)
         }
+    }
+}
+
+/// Convert a file path to an `lsp_types::Uri`.
+///
+/// Uses `url::Url::from_file_path` for initial encoding, then percent-encodes
+/// characters that the `url` crate (WHATWG) leaves raw but that `lsp_types::Uri`
+/// (strict RFC 3986) rejects — specifically `[`, `]`, `{`, `}`, `|`, `^`, and `` ` ``.
+pub fn file_path_to_lsp_uri(path: &Path) -> Option<lsp_types::Uri> {
+    let url = url::Url::from_file_path(path).ok()?;
+    let url_str = url.as_str();
+
+    // Fast path: if no problematic characters, parse directly
+    if !url_str
+        .bytes()
+        .any(|b| matches!(b, b'[' | b']' | b'{' | b'}' | b'|' | b'^' | b'`'))
+    {
+        return url_str.parse::<lsp_types::Uri>().ok();
+    }
+
+    // Percent-encode characters that url (WHATWG) allows but lsp_types::Uri (RFC 3986) rejects
+    let mut encoded = String::with_capacity(url_str.len() + 16);
+    for byte in url_str.bytes() {
+        match byte {
+            b'[' => encoded.push_str("%5B"),
+            b']' => encoded.push_str("%5D"),
+            b'{' => encoded.push_str("%7B"),
+            b'}' => encoded.push_str("%7D"),
+            b'|' => encoded.push_str("%7C"),
+            b'^' => encoded.push_str("%5E"),
+            b'`' => encoded.push_str("%60"),
+            _ => encoded.push(byte as char),
+        }
+    }
+    encoded.parse::<lsp_types::Uri>().ok()
+}
+
+#[cfg(test)]
+mod uri_encoding_tests {
+    use super::*;
+
+    /// Helper to get a platform-appropriate absolute path for testing.
+    /// On Windows, url::Url::from_file_path rejects Unix-style paths.
+    fn abs_path(suffix: &str) -> PathBuf {
+        std::env::temp_dir().join(suffix)
+    }
+
+    #[test]
+    fn test_brackets_in_path() {
+        let path = abs_path("MY_PROJECTS [temp]/gogame/main.go");
+        let uri = file_path_to_lsp_uri(&path);
+        assert!(
+            uri.is_some(),
+            "URI should be computed for path with brackets"
+        );
+        let uri = uri.unwrap();
+        assert!(
+            uri.as_str().contains("%5Btemp%5D"),
+            "Brackets should be percent-encoded: {}",
+            uri.as_str()
+        );
+    }
+
+    #[test]
+    fn test_spaces_in_path() {
+        let path = abs_path("My Projects/src/main.go");
+        let uri = file_path_to_lsp_uri(&path);
+        assert!(uri.is_some(), "URI should be computed for path with spaces");
+    }
+
+    #[test]
+    fn test_normal_path() {
+        let path = abs_path("project/main.go");
+        let uri = file_path_to_lsp_uri(&path);
+        assert!(uri.is_some(), "URI should be computed for normal path");
+        let s = uri.unwrap().as_str().to_string();
+        assert!(s.starts_with("file:///"), "Should be a file URI: {}", s);
+        assert!(
+            s.ends_with("project/main.go"),
+            "Should end with the path: {}",
+            s
+        );
+    }
+
+    #[test]
+    fn test_relative_path_returns_none() {
+        let path = PathBuf::from("main.go");
+        assert!(file_path_to_lsp_uri(&path).is_none());
+    }
+
+    #[test]
+    fn test_all_special_chars() {
+        let path = abs_path("a[b]c{d}e^g`h/file.rs");
+        let uri = file_path_to_lsp_uri(&path);
+        assert!(uri.is_some(), "Should handle all special characters");
+        let s = uri.unwrap().as_str().to_string();
+        assert!(!s.contains('['), "[ should be encoded in {}", s);
+        assert!(!s.contains(']'), "] should be encoded in {}", s);
+        assert!(!s.contains('{'), "{{ should be encoded in {}", s);
+        assert!(!s.contains('}'), "}} should be encoded in {}", s);
+        assert!(!s.contains('^'), "^ should be encoded in {}", s);
+        assert!(!s.contains('`'), "` should be encoded in {}", s);
     }
 }

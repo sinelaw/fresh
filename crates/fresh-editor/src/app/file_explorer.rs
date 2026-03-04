@@ -728,9 +728,7 @@ impl Editor {
                         // Update the buffer metadata
                         if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
                             // Compute new URI
-                            let file_uri = url::Url::from_file_path(&new_path)
-                                .ok()
-                                .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
+                            let file_uri = super::types::file_path_to_lsp_uri(&new_path);
 
                             // Update kind with new path and URI
                             metadata.kind = super::BufferKind::File {

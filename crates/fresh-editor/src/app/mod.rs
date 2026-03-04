@@ -1097,9 +1097,7 @@ impl Editor {
         buffer_metadata.insert(buffer_id, BufferMetadata::new());
 
         // Initialize LSP manager with current working directory as root
-        let root_uri = url::Url::from_file_path(&working_dir)
-            .ok()
-            .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
+        let root_uri = types::file_path_to_lsp_uri(&working_dir);
 
         // Create Tokio runtime for async I/O (LSP, file watching, git, etc.)
         let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
