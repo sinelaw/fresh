@@ -3426,8 +3426,15 @@ impl Editor {
             let line_str = &input[1..];
             self.get_goto_line_suggestions(line_str)
         } else {
-            // File mode (default)
-            self.get_file_suggestions(input)
+            // File mode (default) — strip :line:col suffix so fuzzy matching
+            // continues to work when the user appends a jump target.
+            let (path_part, _, _) = prompt_actions::parse_path_line_col(input);
+            let query = if path_part.is_empty() {
+                input
+            } else {
+                &path_part
+            };
+            self.get_file_suggestions(query)
         };
 
         if let Some(prompt) = &mut self.prompt {

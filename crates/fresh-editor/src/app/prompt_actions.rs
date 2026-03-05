@@ -55,24 +55,28 @@ pub(super) fn parse_path_line_col(input: &str) -> (String, Option<usize>, Option
                 if let (Ok(line), Ok(col)) =
                     (maybe_line.parse::<usize>(), maybe_col.parse::<usize>())
                 {
-                    let path_str = if has_prefix {
-                        format!("{}{}", &trimmed[..search_start], rest)
-                    } else {
-                        rest.to_string()
-                    };
-                    return (path_str, Some(line), Some(col));
+                    if line > 0 && col > 0 {
+                        let path_str = if has_prefix {
+                            format!("{}{}", &trimmed[..search_start], rest)
+                        } else {
+                            rest.to_string()
+                        };
+                        return (path_str, Some(line), Some(col));
+                    }
                 }
             }
         }
         [maybe_line, rest] => {
             if !rest.is_empty() {
                 if let Ok(line) = maybe_line.parse::<usize>() {
-                    let path_str = if has_prefix {
-                        format!("{}{}", &trimmed[..search_start], rest)
-                    } else {
-                        rest.to_string()
-                    };
-                    return (path_str, Some(line), None);
+                    if line > 0 {
+                        let path_str = if has_prefix {
+                            format!("{}{}", &trimmed[..search_start], rest)
+                        } else {
+                            rest.to_string()
+                        };
+                        return (path_str, Some(line), None);
+                    }
                 }
             }
         }
@@ -103,18 +107,7 @@ impl Editor {
                     normalize_path(&self.working_dir.join(&expanded_path))
                 };
 
-                if let Err(e) = self.open_file(&resolved_path) {
-                    self.set_status_message(
-                        t!("file.error_opening", error = e.to_string()).to_string(),
-                    );
-                } else {
-                    if let Some(line) = line {
-                        self.goto_line_col(line, column);
-                    }
-                    self.set_status_message(
-                        t!("buffer.opened", name = resolved_path.display().to_string()).to_string(),
-                    );
-                }
+                self.open_file_with_jump(resolved_path, line, column);
             }
             PromptType::OpenFileWithEncoding { path } => {
                 self.handle_open_file_with_encoding(&path, &input);
@@ -1321,8 +1314,14 @@ impl Editor {
         selected_index: Option<usize>,
     ) -> PromptResult {
         let (path_from_input, line, column) = parse_path_line_col(input);
-        // Regenerate file suggestions since prompt was already taken by confirm_prompt
-        let suggestions = self.get_file_suggestions(input);
+        // Regenerate file suggestions using the parsed path (without :line:col suffix)
+        // so that fuzzy matching still works when the user types a jump suffix.
+        let suggestion_input = if path_from_input.is_empty() {
+            input
+        } else {
+            &path_from_input
+        };
+        let suggestions = self.get_file_suggestions(suggestion_input);
 
         if let Some(idx) = selected_index {
             if let Some(suggestion) = suggestions.get(idx) {
@@ -1409,6 +1408,22 @@ mod tests {
         assert_eq!(path, "src/main.rs");
         assert_eq!(line, Some(5));
         assert_eq!(col, Some(2));
+    }
+
+    #[test]
+    fn test_parse_path_line_col_zero_line_rejected() {
+        let (path, line, col) = parse_path_line_col("src/main.rs:0");
+        assert_eq!(path, "src/main.rs:0");
+        assert_eq!(line, None);
+        assert_eq!(col, None);
+    }
+
+    #[test]
+    fn test_parse_path_line_col_zero_col_rejected() {
+        let (path, line, col) = parse_path_line_col("src/main.rs:1:0");
+        assert_eq!(path, "src/main.rs:1:0");
+        assert_eq!(line, None);
+        assert_eq!(col, None);
     }
 
     #[cfg(windows)]
