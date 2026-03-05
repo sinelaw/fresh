@@ -380,20 +380,22 @@ impl Editor {
                             None => Vec::new(),
                         };
 
-                        crate::services::lsp::semantic_tokens::apply_semantic_tokens_range_to_state(
+                        let applied = crate::services::lsp::semantic_tokens::apply_semantic_tokens_range_to_state(
                             state,
                             range.clone(),
                             &spans,
                             &self.theme,
                         );
-                        self.semantic_tokens_range_applied.insert(
-                            buffer_id,
-                            (
-                                requested_start_line.unwrap_or(0),
-                                requested_end_line.unwrap_or(0),
-                                current_version,
-                            ),
-                        );
+                        if applied {
+                            self.semantic_tokens_range_applied.insert(
+                                buffer_id,
+                                (
+                                    requested_start_line.unwrap_or(0),
+                                    requested_end_line.unwrap_or(0),
+                                    current_version,
+                                ),
+                            );
+                        }
                     }
                 }
             }

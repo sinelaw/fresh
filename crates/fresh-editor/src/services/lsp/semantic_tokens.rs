@@ -58,12 +58,20 @@ pub fn apply_semantic_tokens_to_state(
 }
 
 /// Apply semantic tokens for a specific buffer range.
+/// Returns `true` if tokens were applied, `false` if skipped (degraded response).
 pub fn apply_semantic_tokens_range_to_state(
     state: &mut EditorState,
     range: std::ops::Range<usize>,
     tokens: &[SemanticTokenSpan],
     theme: &crate::view::theme::Theme,
-) {
+) -> bool {
+    // If the response contains unresolvedReference tokens, rust-analyzer hasn't
+    // finished loading yet. Skip the entire response to preserve existing good
+    // overlays from tree-sitter or a previous (better) semantic token response.
+    if tokens.iter().any(|t| t.token_type == "unresolvedReference") {
+        return false;
+    }
+
     let ns = lsp_semantic_tokens_namespace();
     let mut new_overlays = Vec::with_capacity(tokens.len());
 
@@ -83,6 +91,7 @@ pub fn apply_semantic_tokens_range_to_state(
     state
         .overlays
         .replace_range_in_namespace(&ns, &range, new_overlays, &mut state.marker_list);
+    true
 }
 
 #[cfg(test)]
