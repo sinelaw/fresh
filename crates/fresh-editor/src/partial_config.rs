@@ -145,6 +145,7 @@ pub struct PartialEditorConfig {
     pub scroll_offset: Option<usize>,
     pub syntax_highlighting: Option<bool>,
     pub line_wrap: Option<bool>,
+    pub wrap_indent: Option<bool>,
     pub highlight_timeout_ms: Option<u64>,
     pub snapshot_interval: Option<usize>,
     pub large_file_threshold_bytes: Option<u64>,
@@ -206,6 +207,7 @@ impl Merge for PartialEditorConfig {
         self.syntax_highlighting
             .merge_from(&other.syntax_highlighting);
         self.line_wrap.merge_from(&other.line_wrap);
+        self.wrap_indent.merge_from(&other.wrap_indent);
         self.highlight_timeout_ms
             .merge_from(&other.highlight_timeout_ms);
         self.snapshot_interval.merge_from(&other.snapshot_interval);
@@ -488,6 +490,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             scroll_offset: Some(cfg.scroll_offset),
             syntax_highlighting: Some(cfg.syntax_highlighting),
             line_wrap: Some(cfg.line_wrap),
+            wrap_indent: Some(cfg.wrap_indent),
             highlight_timeout_ms: Some(cfg.highlight_timeout_ms),
             snapshot_interval: Some(cfg.snapshot_interval),
             large_file_threshold_bytes: Some(cfg.large_file_threshold_bytes),
@@ -557,6 +560,7 @@ impl PartialEditorConfig {
                 .syntax_highlighting
                 .unwrap_or(defaults.syntax_highlighting),
             line_wrap: self.line_wrap.unwrap_or(defaults.line_wrap),
+            wrap_indent: self.wrap_indent.unwrap_or(defaults.wrap_indent),
             highlight_timeout_ms: self
                 .highlight_timeout_ms
                 .unwrap_or(defaults.highlight_timeout_ms),

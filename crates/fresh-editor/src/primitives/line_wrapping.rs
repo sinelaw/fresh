@@ -14,11 +14,19 @@ pub struct WrappedSegment {
     pub text: String,
     /// Whether this is a continuation of a previous segment (not the first segment)
     pub is_continuation: bool,
+    /// Number of visual columns of indent to apply before this segment (hanging indent).
+    /// Always 0 for the first segment; for continuation segments, matches the leading
+    /// whitespace width of the original line.
+    pub indent_cols: usize,
     /// Start position of this segment in the original line (character offset, not byte offset)
     pub start_char_offset: usize,
     /// End position of this segment in the original line (character offset, not byte offset)
     pub end_char_offset: usize,
 }
+
+/// Minimum content width for continuation lines when hanging indent is active.
+/// Ensures continuation lines always have room for content even with deep indentation.
+const MIN_CONTINUATION_CONTENT_WIDTH: usize = 10;
 
 /// Configuration for line wrapping
 #[derive(Debug, Clone)]
@@ -29,6 +37,8 @@ pub struct WrapConfig {
     pub continuation_line_width: usize,
     /// Width of gutter (for continuation line indentation)
     pub gutter_width: usize,
+    /// Whether hanging indent is enabled for wrapped lines
+    pub hanging_indent: bool,
 }
 
 impl WrapConfig {
@@ -38,7 +48,13 @@ impl WrapConfig {
     /// * `content_area_width` - Width of the content area (after UI elements like tabs/status bar, but including scrollbar and gutter)
     /// * `gutter_width` - Width of the line number gutter
     /// * `has_scrollbar` - Whether to reserve a column for scrollbar
-    pub fn new(content_area_width: usize, gutter_width: usize, has_scrollbar: bool) -> Self {
+    /// * `hanging_indent` - Whether continuation lines should be indented to match leading whitespace
+    pub fn new(
+        content_area_width: usize,
+        gutter_width: usize,
+        has_scrollbar: bool,
+        hanging_indent: bool,
+    ) -> Self {
         let scrollbar_width = if has_scrollbar { 1 } else { 0 };
         // Calculate the width available for text content
         // Both first line and continuation lines have the same text width
@@ -51,6 +67,7 @@ impl WrapConfig {
             first_line_width: text_area_width,
             continuation_line_width: text_area_width, // Same width, not reduced!
             gutter_width,
+            hanging_indent,
         }
     }
 
@@ -61,7 +78,35 @@ impl WrapConfig {
             first_line_width: usize::MAX,
             continuation_line_width: usize::MAX,
             gutter_width,
+            hanging_indent: false,
         }
+    }
+}
+
+/// Detect the visual width of leading whitespace in text.
+/// Returns 0 if hanging indent would leave less than MIN_CONTINUATION_CONTENT_WIDTH
+/// for content.
+fn detect_indent(text: &str, available_width: usize) -> usize {
+    let mut indent_width = 0;
+    for c in text.chars() {
+        if c == ' ' {
+            indent_width += 1;
+        } else if c == '\t' {
+            // Tab at the start of a line: in the wrap_line context, tabs are measured
+            // by char_width which returns 0 (control char). In the actual rendering
+            // pipeline, tabs are expanded to spaces. For indent detection, treat each
+            // tab as expanding to the next 4-column tab stop.
+            let tab_stop = 4;
+            indent_width = ((indent_width / tab_stop) + 1) * tab_stop;
+        } else {
+            break;
+        }
+    }
+    // Clamp so continuation lines have at least MIN_CONTINUATION_CONTENT_WIDTH columns
+    if indent_width + MIN_CONTINUATION_CONTENT_WIDTH > available_width {
+        0
+    } else {
+        indent_width
     }
 }
 
@@ -69,6 +114,11 @@ impl WrapConfig {
 ///
 /// This is the core wrapping transformation. It takes raw text and produces
 /// a list of wrapped segments that both rendering and cursor positioning can use.
+///
+/// When `config.hanging_indent` is true, continuation lines are indented to
+/// match the leading whitespace of the original line. The `indent_cols` field
+/// on each continuation segment indicates how many columns of visual padding
+/// to add before the text.
 ///
 /// # Arguments
 /// * `text` - The line text to wrap
@@ -84,10 +134,18 @@ pub fn wrap_line(text: &str, config: &WrapConfig) -> Vec<WrappedSegment> {
         return vec![WrappedSegment {
             text: String::new(),
             is_continuation: false,
+            indent_cols: 0,
             start_char_offset: 0,
             end_char_offset: 0,
         }];
     }
+
+    // Detect hanging indent from leading whitespace
+    let indent_cols = if config.hanging_indent {
+        detect_indent(text, config.first_line_width)
+    } else {
+        0
+    };
 
     let chars: Vec<char> = text.chars().collect();
     let mut pos = 0; // Position in chars array
@@ -97,7 +155,8 @@ pub fn wrap_line(text: &str, config: &WrapConfig) -> Vec<WrappedSegment> {
         let width = if is_first {
             config.first_line_width
         } else {
-            config.continuation_line_width
+            // Continuation lines have reduced width to make room for indent
+            config.continuation_line_width.saturating_sub(indent_cols)
         };
 
         // Track where this segment starts in the original text
@@ -132,6 +191,7 @@ pub fn wrap_line(text: &str, config: &WrapConfig) -> Vec<WrappedSegment> {
         segments.push(WrappedSegment {
             text: segment_text,
             is_continuation: !is_first,
+            indent_cols: if is_first { 0 } else { indent_cols },
             start_char_offset: segment_start_char,
             end_char_offset: pos,
         });
@@ -144,6 +204,7 @@ pub fn wrap_line(text: &str, config: &WrapConfig) -> Vec<WrappedSegment> {
         segments.push(WrappedSegment {
             text: String::new(),
             is_continuation: false,
+            indent_cols: 0,
             start_char_offset: 0,
             end_char_offset: 0,
         });
@@ -198,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_wrap_empty_line() {
-        let config = WrapConfig::new(60, 8, true);
+        let config = WrapConfig::new(60, 8, true, false);
         let segments = wrap_line("", &config);
 
         assert_eq!(segments.len(), 1);
@@ -208,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_wrap_short_line() {
-        let config = WrapConfig::new(60, 8, true);
+        let config = WrapConfig::new(60, 8, true, false);
         let text = "Hello world";
         let segments = wrap_line(text, &config);
 
@@ -222,7 +283,7 @@ mod tests {
         // Terminal: 60 cols, Gutter: 8, Scrollbar: 1
         // Available width: 60 - 1 (scrollbar) - 8 (gutter) = 51 chars
         // BOTH first line and continuation lines: 51 chars (same width!)
-        let config = WrapConfig::new(60, 8, true);
+        let config = WrapConfig::new(60, 8, true, false);
 
         let text = "A fast, lightweight terminal text editor written in Rust. Handles files of any size with instant startup, low memory usage, and modern IDE features.";
         let segments = wrap_line(text, &config);
@@ -287,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_wrap_with_leading_space() {
-        let config = WrapConfig::new(60, 8, true);
+        let config = WrapConfig::new(60, 8, true, false);
         // With our config: 60 - 1 (scrollbar) - 8 (gutter) = 51 chars per line
 
         // Create text that wraps such that continuation starts with space
@@ -313,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_wrap_exact_width() {
-        let config = WrapConfig::new(60, 8, true);
+        let config = WrapConfig::new(60, 8, true, false);
         println!(
             "Config: first={}, cont={}",
             config.first_line_width, config.continuation_line_width
@@ -350,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_wrap_with_real_text() {
-        let config = WrapConfig::new(60, 8, true);
+        let config = WrapConfig::new(60, 8, true, false);
         println!(
             "Config: first={}, cont={}",
             config.first_line_width, config.continuation_line_width
@@ -385,7 +446,7 @@ mod tests {
     #[test]
     fn test_wrap_config_widths() {
         // Test that WrapConfig calculates widths correctly
-        let config = WrapConfig::new(60, 8, true);
+        let config = WrapConfig::new(60, 8, true, false);
 
         println!(
             "Config: first_line_width={}, continuation_line_width={}, gutter_width={}",
@@ -481,7 +542,7 @@ mod tests {
     fn test_wrap_line_double_width_characters() {
         // Create a narrow terminal: 20 columns total
         // After gutter (8) and scrollbar (1), we have 11 columns for text
-        let config = WrapConfig::new(20, 8, true);
+        let config = WrapConfig::new(20, 8, true, false);
         assert_eq!(
             config.first_line_width, 11,
             "Should have 11 columns for text"
@@ -526,7 +587,7 @@ mod tests {
     #[test]
     fn test_wrap_line_emoji_str_width() {
         // 11 columns available for text
-        let config = WrapConfig::new(20, 8, true);
+        let config = WrapConfig::new(20, 8, true, false);
         assert_eq!(config.first_line_width, 11);
 
         // "🚀🎉🔥🌟🎄🎊" = 6 emoji characters, but 12 visual columns
@@ -551,7 +612,7 @@ mod tests {
     #[test]
     fn test_wrap_line_mixed_ascii_and_cjk() {
         // 11 columns available for text
-        let config = WrapConfig::new(20, 8, true);
+        let config = WrapConfig::new(20, 8, true, false);
         assert_eq!(config.first_line_width, 11);
 
         // "Hello你好" = 7 characters, but 9 visual columns (5 + 4)
@@ -612,7 +673,7 @@ mod tests {
         // So it thinks "你好世界" takes 4 columns and "HelloWor" takes 8 columns
         // But they both take 8 visual columns on screen!
 
-        let config = WrapConfig::new(20, 8, true); // 11 columns for text
+        let config = WrapConfig::new(20, 8, true, false); // 11 columns for text
 
         let chinese_segments = wrap_line(chinese, &config);
         let ascii_segments = wrap_line(ascii, &config);
@@ -652,6 +713,118 @@ mod tests {
             chinese_long_segments.len(),
             2,
             "Chinese text with 12 visual columns should wrap at 11 column width"
+        );
+    }
+
+    // ==========================================================================
+    // Tests for hanging indent (wrap_indent) feature
+    // ==========================================================================
+
+    #[test]
+    fn test_hanging_indent_basic() {
+        // 51 columns for text (60 - 1 scrollbar - 8 gutter)
+        let config = WrapConfig::new(60, 8, true, true);
+        assert_eq!(config.first_line_width, 51);
+
+        // 4-space indented line that wraps
+        let text = "    The quick brown fox jumps over the lazy dog and runs through the forest exploring.";
+        let segments = wrap_line(text, &config);
+
+        assert!(segments.len() >= 2, "Should wrap into multiple segments");
+        assert_eq!(segments[0].indent_cols, 0, "First segment has no indent");
+        assert_eq!(
+            segments[1].indent_cols, 4,
+            "Continuation should have 4-col indent"
+        );
+        assert!(segments[1].is_continuation);
+    }
+
+    #[test]
+    fn test_hanging_indent_no_indent_on_unindented_line() {
+        let config = WrapConfig::new(60, 8, true, true);
+
+        // Line with no leading whitespace
+        let text = "The quick brown fox jumps over the lazy dog and runs through the forest exploring ancient.";
+        let segments = wrap_line(text, &config);
+
+        assert!(segments.len() >= 2);
+        assert_eq!(segments[1].indent_cols, 0, "No indent for unindented line");
+    }
+
+    #[test]
+    fn test_hanging_indent_disabled() {
+        let config = WrapConfig::new(60, 8, true, false);
+
+        let text = "    The quick brown fox jumps over the lazy dog and runs through the forest exploring.";
+        let segments = wrap_line(text, &config);
+
+        assert!(segments.len() >= 2);
+        assert_eq!(
+            segments[1].indent_cols, 0,
+            "Indent should be 0 when hanging_indent is disabled"
+        );
+    }
+
+    #[test]
+    fn test_hanging_indent_reduces_continuation_width() {
+        // 20 cols for text (30 - 1 - 9 gutter)
+        let config = WrapConfig {
+            first_line_width: 20,
+            continuation_line_width: 20,
+            gutter_width: 0,
+            hanging_indent: true,
+        };
+
+        // 4-space indent + content that wraps
+        let text = "    ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
+        let segments = wrap_line(text, &config);
+
+        // First segment: 20 chars width
+        assert_eq!(segments[0].text.len(), 20);
+        // Continuation: 20 - 4 indent = 16 chars of content
+        assert_eq!(segments[1].text.len(), 16);
+        assert_eq!(segments[1].indent_cols, 4);
+    }
+
+    #[test]
+    fn test_hanging_indent_deep_indent_clamped() {
+        // Only 15 cols available
+        let config = WrapConfig {
+            first_line_width: 15,
+            continuation_line_width: 15,
+            gutter_width: 0,
+            hanging_indent: true,
+        };
+
+        // 10-space indent: would leave only 5 chars for content (< MIN_CONTINUATION_CONTENT_WIDTH=10)
+        // So indent should be clamped to 0
+        let text = "          ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let segments = wrap_line(text, &config);
+
+        assert!(segments.len() >= 2);
+        assert_eq!(
+            segments[1].indent_cols, 0,
+            "Deep indent should be clamped to 0 when not enough room"
+        );
+    }
+
+    #[test]
+    fn test_hanging_indent_tab_indented() {
+        let config = WrapConfig {
+            first_line_width: 20,
+            continuation_line_width: 20,
+            gutter_width: 0,
+            hanging_indent: true,
+        };
+
+        // Tab character expands to 4-column tab stop in detect_indent
+        let text = "\tABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let segments = wrap_line(text, &config);
+
+        assert!(segments.len() >= 2);
+        assert_eq!(
+            segments[1].indent_cols, 4,
+            "Tab-indented line should have indent matching tab stop (4)"
         );
     }
 }
@@ -704,6 +877,7 @@ mod proptests {
                 first_line_width: width,
                 continuation_line_width: width,
                 gutter_width: 0,
+                hanging_indent: false,
             };
 
             let segments = wrap_line(&text, &config);
@@ -727,7 +901,7 @@ mod proptests {
         /// Property: Concatenating all segments should give back the original text
         #[test]
         fn prop_segments_reconstruct_original(text in unicode_string_strategy()) {
-            let config = WrapConfig::new(20, 0, false);
+            let config = WrapConfig::new(20, 0, false, false);
             let segments = wrap_line(&text, &config);
 
             let reconstructed: String = segments.iter().map(|s| s.text.as_str()).collect();
@@ -741,7 +915,7 @@ mod proptests {
         /// Property: Total visual width should be preserved across wrapping
         #[test]
         fn prop_total_visual_width_preserved(text in unicode_string_strategy()) {
-            let config = WrapConfig::new(15, 0, false);
+            let config = WrapConfig::new(15, 0, false, false);
             let segments = wrap_line(&text, &config);
 
             let original_width = str_width(&text);
@@ -756,7 +930,7 @@ mod proptests {
         /// Property: Character offsets should be monotonically increasing and valid
         #[test]
         fn prop_char_offsets_valid(text in unicode_string_strategy()) {
-            let config = WrapConfig::new(10, 0, false);
+            let config = WrapConfig::new(10, 0, false, false);
             let segments = wrap_line(&text, &config);
 
             let text_char_count = text.chars().count();
@@ -818,7 +992,7 @@ mod proptests {
             prop_assert_eq!(ascii_width, wide_width, "Visual widths should match");
 
             // With same config, both should produce same number of segments
-            let config = WrapConfig::new(15, 0, false);
+            let config = WrapConfig::new(15, 0, false, false);
             let ascii_segments = wrap_line(&ascii_text, &config);
             let wide_segments = wrap_line(&wide_text, &config);
 

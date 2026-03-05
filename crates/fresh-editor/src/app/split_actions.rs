@@ -68,6 +68,7 @@ impl Editor {
                 view_state.apply_config_defaults(
                     self.config.editor.line_numbers,
                     self.config.editor.line_wrap,
+                    self.config.editor.wrap_indent,
                     self.config.editor.rulers.clone(),
                 );
 

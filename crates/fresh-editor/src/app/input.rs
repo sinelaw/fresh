@@ -516,6 +516,7 @@ impl Editor {
                 // Update all viewports to reflect the new line wrap setting
                 for view_state in self.split_view_states.values_mut() {
                     view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+                    view_state.viewport.wrap_indent = self.config.editor.wrap_indent;
                 }
 
                 let state = if self.config.editor.line_wrap {
@@ -2100,7 +2101,7 @@ impl Editor {
         let digits = (line_count as f64).log10().floor() as usize + 1;
         let gutter_width = 1 + digits.max(4) + 3; // indicator + digits + separator
 
-        let wrap_config = WrapConfig::new(viewport_width, gutter_width, true);
+        let wrap_config = WrapConfig::new(viewport_width, gutter_width, true, true);
 
         // Count total visual rows and build a map of visual row -> (line_byte, offset_in_line)
         let mut total_visual_rows = 0;
@@ -2169,7 +2170,7 @@ impl Editor {
         let digits = (line_count as f64).log10().floor() as usize + 1;
         let gutter_width = 1 + digits.max(4) + 3; // indicator + digits + separator
 
-        let wrap_config = WrapConfig::new(viewport_width, gutter_width, true);
+        let wrap_config = WrapConfig::new(viewport_width, gutter_width, true, true);
 
         // Build visual row positions map
         let mut total_visual_rows = 0;

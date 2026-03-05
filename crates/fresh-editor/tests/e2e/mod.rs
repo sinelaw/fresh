@@ -26,6 +26,7 @@ pub mod folding;
 pub mod glob_language_detection;
 #[cfg(feature = "gui")]
 pub mod gui;
+pub mod hanging_wrap_indent;
 pub mod horizontal_scrollbar;
 pub mod indent_dedent;
 pub mod inline_diagnostics;

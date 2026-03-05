@@ -154,10 +154,12 @@ impl BufferViewState {
         &mut self,
         line_numbers: bool,
         line_wrap: bool,
+        wrap_indent: bool,
         rulers: Vec<usize>,
     ) {
         self.show_line_numbers = line_numbers;
         self.viewport.line_wrap_enabled = line_wrap;
+        self.viewport.wrap_indent = wrap_indent;
         self.rulers = rulers;
     }
 }

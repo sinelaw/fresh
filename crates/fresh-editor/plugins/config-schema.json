@@ -33,6 +33,7 @@
         "line_numbers": true,
         "relative_line_numbers": false,
         "line_wrap": true,
+        "wrap_indent": true,
         "syntax_highlighting": true,
         "show_menu_bar": true,
         "show_tab_bar": true,
@@ -233,6 +234,12 @@
         },
         "line_wrap": {
           "description": "Wrap long lines to fit the window width (default for new views)",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "wrap_indent": {
+          "description": "Indent wrapped continuation lines to match the leading whitespace of the original line",
           "type": "boolean",
           "default": true,
           "x-section": "Display"

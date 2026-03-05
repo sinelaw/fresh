@@ -1150,6 +1150,7 @@ impl Editor {
         initial_view_state.apply_config_defaults(
             config.editor.line_numbers,
             config.editor.line_wrap,
+            config.editor.wrap_indent,
             config.editor.rulers.clone(),
         );
         split_view_states.insert(initial_split_id, initial_view_state);
@@ -5905,6 +5906,7 @@ impl Editor {
                         view_state.apply_config_defaults(
                             self.config.editor.line_numbers,
                             line_wrap.unwrap_or(self.config.editor.line_wrap),
+                            self.config.editor.wrap_indent,
                             self.config.editor.rulers.clone(),
                         );
                         self.split_view_states.insert(new_split_id, view_state);
@@ -6397,6 +6399,7 @@ impl Editor {
                                     );
                                     view_state.apply_config_defaults(
                                         self.config.editor.line_numbers,
+                                        false,
                                         false,
                                         self.config.editor.rulers.clone(),
                                     );

@@ -334,6 +334,7 @@ impl Editor {
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
                 self.config.editor.line_wrap,
+                self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
         }
@@ -435,6 +436,7 @@ impl Editor {
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
                 self.config.editor.line_wrap,
+                self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
         }
@@ -534,6 +536,7 @@ impl Editor {
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
                 self.config.editor.line_wrap,
+                self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
         }
@@ -669,6 +672,7 @@ impl Editor {
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
                 self.config.editor.line_wrap,
+                self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
         }
@@ -1000,6 +1004,7 @@ impl Editor {
             view_state.apply_config_defaults(
                 self.config.editor.line_numbers,
                 self.config.editor.line_wrap,
+                self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
         }
@@ -1102,6 +1107,7 @@ impl Editor {
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
                 self.config.editor.line_wrap,
+                self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
         }
@@ -1277,6 +1283,7 @@ impl Editor {
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
                 self.config.editor.line_wrap,
+                self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
         } else {
@@ -1286,6 +1293,7 @@ impl Editor {
             view_state.apply_config_defaults(
                 self.config.editor.line_numbers,
                 self.config.editor.line_wrap,
+                self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
             self.split_view_states.insert(active_split, view_state);

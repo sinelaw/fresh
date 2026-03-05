@@ -566,6 +566,11 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub line_wrap: bool,
 
+    /// Indent wrapped continuation lines to match the leading whitespace of the original line
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub wrap_indent: bool,
+
     /// Enable syntax highlighting for code files
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
@@ -1057,6 +1062,7 @@ impl Default for EditorConfig {
             scroll_offset: default_scroll_offset(),
             syntax_highlighting: true,
             line_wrap: true,
+            wrap_indent: true,
             highlight_timeout_ms: default_highlight_timeout(),
             snapshot_interval: default_snapshot_interval(),
             large_file_threshold_bytes: default_large_file_threshold(),

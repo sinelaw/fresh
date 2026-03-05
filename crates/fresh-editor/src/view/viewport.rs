@@ -35,6 +35,9 @@ pub struct Viewport {
     /// When true, horizontal scrolling is disabled
     pub line_wrap_enabled: bool,
 
+    /// Whether wrapped continuation lines should be indented to match leading whitespace
+    pub wrap_indent: bool,
+
     /// Whether viewport needs synchronization with cursor positions
     /// When true, ensure_visible needs to be called before rendering
     /// This allows batching multiple cursor movements into a single viewport update
@@ -73,6 +76,7 @@ impl Viewport {
             scroll_offset: 3,
             horizontal_scroll_offset: 5,
             line_wrap_enabled: false,
+            wrap_indent: true,
             needs_sync: false,
             skip_resize_sync: false,
             skip_ensure_visible: false,
@@ -207,7 +211,8 @@ impl Viewport {
         }
 
         let gutter_width = self.gutter_width(buffer);
-        let wrap_config = WrapConfig::new(self.width as usize, gutter_width, true);
+        let wrap_config =
+            WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
 
         // We need to move backwards through visual rows
         // Start from current top_byte and count backwards
@@ -275,7 +280,8 @@ impl Viewport {
         }
 
         let gutter_width = self.gutter_width(buffer);
-        let wrap_config = WrapConfig::new(self.width as usize, gutter_width, true);
+        let wrap_config =
+            WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
         let buffer_len = buffer.len();
 
         let mut rows_remaining = visual_rows;
@@ -805,7 +811,8 @@ impl Viewport {
             // visual rows, so we must account for that when checking whether the
             // viewport can be filled from proposed_top_byte.
             let gutter_width = self.gutter_width(buffer);
-            let wrap_config = WrapConfig::new(self.width as usize, gutter_width, true);
+            let wrap_config =
+                WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
 
             let mut iter = buffer.line_iterator(proposed_top_byte, 80);
             let mut visual_rows = 0;
@@ -1069,7 +1076,8 @@ impl Viewport {
         } else if self.line_wrap_enabled {
             // With line wrapping: count VISUAL ROWS (wrapped segments), not logical lines
             let gutter_width = self.gutter_width(buffer);
-            let wrap_config = WrapConfig::new(self.width as usize, gutter_width, true);
+            let wrap_config =
+                WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
 
             let mut iter = buffer.line_iterator(self.top_byte, 80);
             let mut visual_rows = 0;
@@ -1217,7 +1225,8 @@ impl Viewport {
                 };
 
                 let gutter_width = self.gutter_width(buffer);
-                let wrap_config = WrapConfig::new(self.width as usize, gutter_width, true);
+                let wrap_config =
+                    WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
 
                 let mut iter = buffer.line_iterator(cursor_line_start, 80);
                 let mut visual_rows_counted = 0;
@@ -1530,7 +1539,7 @@ impl Viewport {
         let (screen_col, additional_rows) = if self.line_wrap_enabled {
             // Use new clean wrapping implementation
             let gutter_width = self.gutter_width(buffer);
-            let config = WrapConfig::new(self.width as usize, gutter_width, true);
+            let config = WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
 
             // Get the line text for wrapping
             let mut line_iter = buffer.line_iterator(line_start, 80);

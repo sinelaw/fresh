@@ -2225,7 +2225,12 @@ impl SplitRenderer {
         }
 
         let gutter_width = viewport.gutter_width(&state.buffer);
-        let wrap_config = WrapConfig::new(viewport.width as usize, gutter_width, true);
+        let wrap_config = WrapConfig::new(
+            viewport.width as usize,
+            gutter_width,
+            true,
+            viewport.wrap_indent,
+        );
 
         // Count total visual rows and find top visual row
         // Use get_line which doesn't require mutable buffer access
@@ -2597,7 +2602,9 @@ impl SplitRenderer {
         } else {
             MAX_SAFE_LINE_WIDTH
         };
-        tokens = Self::apply_wrapping_transform(tokens, effective_width, gutter_width);
+        let hanging_indent = line_wrap_enabled && viewport.wrap_indent;
+        tokens =
+            Self::apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
 
         // Convert tokens to display lines using the view pipeline
         // Each ViewLine preserves LineStart info for correct line number rendering
@@ -3500,15 +3507,66 @@ impl SplitRenderer {
         tokens: Vec<fresh_core::api::ViewTokenWire>,
         content_width: usize,
         gutter_width: usize,
+        hanging_indent: bool,
     ) -> Vec<fresh_core::api::ViewTokenWire> {
+        use crate::primitives::display_width::str_width;
         use crate::primitives::visual_layout::visual_width;
         use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 
+        /// Minimum content width for continuation lines when hanging indent is active.
+        const MIN_CONTINUATION_CONTENT_WIDTH: usize = 10;
+
         let mut wrapped = Vec::new();
-        let mut current_line_width = 0;
+        let mut current_line_width: usize = 0;
 
         // Calculate available width (accounting for gutter on first line only)
         let available_width = content_width.saturating_sub(gutter_width);
+
+        // Hanging indent state: the visual indent width for the current logical line.
+        // Reset to 0 on each Newline, measured from leading whitespace.
+        let mut line_indent: usize = 0;
+        // Whether we're still measuring leading whitespace for the current line
+        let mut measuring_indent = hanging_indent;
+        // Whether we've emitted a Break for the current logical line (i.e., we're on a continuation)
+        let mut on_continuation = false;
+
+        /// Effective width for the current segment: full width for first segment,
+        /// reduced by indent for continuations.
+        #[inline]
+        fn effective_width(
+            available_width: usize,
+            line_indent: usize,
+            on_continuation: bool,
+        ) -> usize {
+            if on_continuation {
+                available_width.saturating_sub(line_indent)
+            } else {
+                available_width
+            }
+        }
+
+        /// Emit a Break token followed by hanging indent spaces.
+        /// Updates current_line_width to reflect the indent.
+        fn emit_break_with_indent(
+            wrapped: &mut Vec<ViewTokenWire>,
+            current_line_width: &mut usize,
+            line_indent: usize,
+        ) {
+            wrapped.push(ViewTokenWire {
+                source_offset: None,
+                kind: ViewTokenWireKind::Break,
+                style: None,
+            });
+            *current_line_width = 0;
+            if line_indent > 0 {
+                wrapped.push(ViewTokenWire {
+                    source_offset: None,
+                    kind: ViewTokenWireKind::Text(" ".repeat(line_indent)),
+                    style: None,
+                });
+                *current_line_width = line_indent;
+            }
+        }
 
         for token in tokens {
             match &token.kind {
@@ -3516,22 +3574,51 @@ impl SplitRenderer {
                     // Real newlines always break the line
                     wrapped.push(token);
                     current_line_width = 0;
+                    line_indent = 0;
+                    measuring_indent = hanging_indent;
+                    on_continuation = false;
                 }
                 ViewTokenWireKind::Text(text) => {
+                    // Measure leading whitespace at the start of a logical line
+                    if measuring_indent {
+                        let leading_ws: usize = text
+                            .chars()
+                            .take_while(|c| *c == ' ' || *c == '\t')
+                            .map(|c| {
+                                if c == '\t' {
+                                    crate::primitives::display_width::char_width(c)
+                                } else {
+                                    1
+                                }
+                            })
+                            .sum();
+                        if leading_ws == text.chars().count() {
+                            // Entire token is whitespace — accumulate and continue measuring
+                            line_indent += str_width(text);
+                        } else {
+                            // Token has non-whitespace: finalize indent measurement
+                            line_indent += leading_ws;
+                            measuring_indent = false;
+                        }
+                        // Clamp indent to ensure continuation lines have room for content
+                        if line_indent + MIN_CONTINUATION_CONTENT_WIDTH > available_width {
+                            line_indent = 0;
+                        }
+                    }
+
+                    let eff_width = effective_width(available_width, line_indent, on_continuation);
+
                     // Use visual_width which properly handles tabs and ANSI codes
                     let text_visual_width = visual_width(text, current_line_width);
 
                     // If this token would exceed line width, insert Break before it
-                    if current_line_width > 0
-                        && current_line_width + text_visual_width > available_width
+                    if current_line_width > 0 && current_line_width + text_visual_width > eff_width
                     {
-                        wrapped.push(ViewTokenWire {
-                            source_offset: None,
-                            kind: ViewTokenWireKind::Break,
-                            style: None,
-                        });
-                        current_line_width = 0;
+                        on_continuation = true;
+                        emit_break_with_indent(&mut wrapped, &mut current_line_width, line_indent);
                     }
+
+                    let eff_width = effective_width(available_width, line_indent, on_continuation);
 
                     // Recalculate visual width after potential line break (tabs depend on column)
                     let text_visual_width = visual_width(text, current_line_width);
@@ -3539,7 +3626,7 @@ impl SplitRenderer {
                     // If visible text is longer than line width, we need to split
                     // However, we don't split tokens containing ANSI codes to avoid
                     // breaking escape sequences. ANSI-heavy content may exceed line width.
-                    if text_visual_width > available_width
+                    if text_visual_width > eff_width
                         && !crate::primitives::ansi::contains_ansi_codes(text)
                     {
                         use unicode_segmentation::UnicodeSegmentation;
@@ -3550,18 +3637,19 @@ impl SplitRenderer {
                         let source_base = token.source_offset;
 
                         while grapheme_idx < graphemes.len() {
+                            let eff_width =
+                                effective_width(available_width, line_indent, on_continuation);
                             // Calculate how many graphemes fit in remaining space
                             // by summing visual widths until we exceed available width
-                            let remaining_width =
-                                available_width.saturating_sub(current_line_width);
+                            let remaining_width = eff_width.saturating_sub(current_line_width);
                             if remaining_width == 0 {
                                 // Need to break to next line
-                                wrapped.push(ViewTokenWire {
-                                    source_offset: None,
-                                    kind: ViewTokenWireKind::Break,
-                                    style: None,
-                                });
-                                current_line_width = 0;
+                                on_continuation = true;
+                                emit_break_with_indent(
+                                    &mut wrapped,
+                                    &mut current_line_width,
+                                    line_indent,
+                                );
                                 continue;
                             }
 
@@ -3620,14 +3708,16 @@ impl SplitRenderer {
                             current_line_width += chunk_visual_width;
                             grapheme_idx += chunk_grapheme_count;
 
+                            let eff_width =
+                                effective_width(available_width, line_indent, on_continuation);
                             // If we filled the line, break
-                            if current_line_width >= available_width {
-                                wrapped.push(ViewTokenWire {
-                                    source_offset: None,
-                                    kind: ViewTokenWireKind::Break,
-                                    style: None,
-                                });
-                                current_line_width = 0;
+                            if current_line_width >= eff_width {
+                                on_continuation = true;
+                                emit_break_with_indent(
+                                    &mut wrapped,
+                                    &mut current_line_width,
+                                    line_indent,
+                                );
                             }
                         }
                     } else {
@@ -3636,14 +3726,20 @@ impl SplitRenderer {
                     }
                 }
                 ViewTokenWireKind::Space => {
+                    // Measure leading whitespace (spaces)
+                    if measuring_indent {
+                        line_indent += 1;
+                        // Clamp indent
+                        if line_indent + MIN_CONTINUATION_CONTENT_WIDTH > available_width {
+                            line_indent = 0;
+                        }
+                    }
+
+                    let eff_width = effective_width(available_width, line_indent, on_continuation);
                     // Spaces count toward line width
-                    if current_line_width + 1 > available_width {
-                        wrapped.push(ViewTokenWire {
-                            source_offset: None,
-                            kind: ViewTokenWireKind::Break,
-                            style: None,
-                        });
-                        current_line_width = 0;
+                    if current_line_width + 1 > eff_width {
+                        on_continuation = true;
+                        emit_break_with_indent(&mut wrapped, &mut current_line_width, line_indent);
                     }
                     wrapped.push(token);
                     current_line_width += 1;
@@ -3652,17 +3748,29 @@ impl SplitRenderer {
                     // Pass through existing breaks
                     wrapped.push(token);
                     current_line_width = 0;
-                }
-                ViewTokenWireKind::BinaryByte(_) => {
-                    // Binary bytes render as <XX> which is 4 characters
-                    let byte_display_width = 4;
-                    if current_line_width + byte_display_width > available_width {
+                    on_continuation = true;
+                    // Inject indent for pre-existing breaks too
+                    if line_indent > 0 {
                         wrapped.push(ViewTokenWire {
                             source_offset: None,
-                            kind: ViewTokenWireKind::Break,
+                            kind: ViewTokenWireKind::Text(" ".repeat(line_indent)),
                             style: None,
                         });
-                        current_line_width = 0;
+                        current_line_width = line_indent;
+                    }
+                }
+                ViewTokenWireKind::BinaryByte(_) => {
+                    // Stop measuring indent on non-whitespace content
+                    if measuring_indent {
+                        measuring_indent = false;
+                    }
+
+                    let eff_width = effective_width(available_width, line_indent, on_continuation);
+                    // Binary bytes render as <XX> which is 4 characters
+                    let byte_display_width = 4;
+                    if current_line_width + byte_display_width > eff_width {
+                        on_continuation = true;
+                        emit_break_with_indent(&mut wrapped, &mut current_line_width, line_indent);
                     }
                     wrapped.push(token);
                     current_line_width += byte_display_width;
@@ -7276,7 +7384,8 @@ mod tests {
         ];
 
         // Apply wrapping with MAX_SAFE_LINE_WIDTH (simulating line_wrap disabled)
-        let wrapped = SplitRenderer::apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0);
+        let wrapped =
+            SplitRenderer::apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
 
         // Count Break tokens - should have at least 2 breaks for 25K chars at 10K width
         let break_count = wrapped
@@ -7326,7 +7435,8 @@ mod tests {
         ];
 
         // Apply wrapping with MAX_SAFE_LINE_WIDTH (simulating line_wrap disabled)
-        let wrapped = SplitRenderer::apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0);
+        let wrapped =
+            SplitRenderer::apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
 
         // Should have no Break tokens for short lines
         let break_count = wrapped
@@ -7383,7 +7493,8 @@ mod tests {
         ];
 
         // Apply safety wrapping (simulating line_wrap=false with MAX_SAFE_LINE_WIDTH)
-        let wrapped = SplitRenderer::apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0);
+        let wrapped =
+            SplitRenderer::apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
 
         // Convert to ViewLines
         let view_lines: Vec<_> = ViewLineIterator::new(&wrapped, false, false, 4, false).collect();
