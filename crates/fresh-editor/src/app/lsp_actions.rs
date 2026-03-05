@@ -654,16 +654,49 @@ impl Editor {
                     }
                 }
 
+                // Set buffer language to TypeScript so LSP requests use the right handle
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let detected =
+                        crate::primitives::detected_language::DetectedLanguage::from_path(
+                            &plugin_file,
+                            &self.grammar_registry,
+                            &self.config.languages,
+                        );
+                    state.apply_language(detected);
+                }
+
                 // Allow TypeScript language so LSP auto-spawns
                 if let Some(lsp) = &mut self.lsp {
                     lsp.allow_language("typescript");
                 }
 
                 // Store workspace for cleanup
+                let workspace_dir = workspace.dir().to_path_buf();
                 self.plugin_dev_workspaces.insert(buffer_id, workspace);
 
                 // Actually spawn the LSP server and send didOpen for this buffer
                 self.send_lsp_did_open_for_buffer(buffer_id, "typescript");
+
+                // Add the plugin workspace folder so tsserver discovers tsconfig.json + fresh.d.ts
+                if let Some(lsp) = &self.lsp {
+                    if let Some(handle) = lsp.get_handle("typescript") {
+                        if let Some(uri) = super::types::file_path_to_lsp_uri(&workspace_dir) {
+                            let name = workspace_dir
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned();
+                            if let Err(e) = handle.add_workspace_folder(uri, name) {
+                                tracing::warn!("Failed to add plugin workspace folder: {}", e);
+                            } else {
+                                tracing::info!(
+                                    "Added plugin workspace folder: {:?}",
+                                    workspace_dir
+                                );
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
                 tracing::warn!("Failed to create plugin dev workspace: {}", e);

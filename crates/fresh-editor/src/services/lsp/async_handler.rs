@@ -232,6 +232,7 @@ fn create_client_capabilities() -> ClientCapabilities {
                 document_changes: Some(true),
                 ..Default::default()
             }),
+            workspace_folders: Some(true),
             ..Default::default()
         }),
         text_document: Some(TextDocumentClientCapabilities {
@@ -431,6 +432,12 @@ enum LspCommand {
 
     /// Notify document saved
     DidSave { uri: Uri, text: Option<String> },
+
+    /// Notify workspace folders changed
+    DidChangeWorkspaceFolders {
+        added: Vec<lsp_types::WorkspaceFolder>,
+        removed: Vec<lsp_types::WorkspaceFolder>,
+    },
 
     /// Request completion at position
     Completion {
@@ -632,6 +639,20 @@ impl LspState {
                 LspCommand::DidSave { uri, text } => {
                     tracing::info!("Replaying DidSave for {}", uri.as_str());
                     let _ = self.handle_did_save(uri, text).await;
+                }
+                LspCommand::DidChangeWorkspaceFolders { added, removed } => {
+                    tracing::info!(
+                        "Replaying DidChangeWorkspaceFolders: +{} -{}",
+                        added.len(),
+                        removed.len()
+                    );
+                    let _ = self
+                        .send_notification::<lsp_types::notification::DidChangeWorkspaceFolders>(
+                            lsp_types::DidChangeWorkspaceFoldersParams {
+                                event: lsp_types::WorkspaceFoldersChangeEvent { added, removed },
+                            },
+                        )
+                        .await;
                 }
                 LspCommand::SemanticTokensFull { request_id, uri } => {
                     tracing::info!("Replaying semantic tokens request for {}", uri.as_str());
@@ -2477,6 +2498,30 @@ impl LspTask {
                                 pending_commands.push(LspCommand::DidSave { uri, text });
                             }
                         }
+                        LspCommand::DidChangeWorkspaceFolders { added, removed } => {
+                            if state.initialized {
+                                tracing::info!(
+                                    "Processing DidChangeWorkspaceFolders: +{} -{}",
+                                    added.len(),
+                                    removed.len()
+                                );
+                                let _ = state
+                                    .send_notification::<lsp_types::notification::DidChangeWorkspaceFolders>(
+                                        lsp_types::DidChangeWorkspaceFoldersParams {
+                                            event: lsp_types::WorkspaceFoldersChangeEvent {
+                                                added,
+                                                removed,
+                                            },
+                                        },
+                                    )
+                                    .await;
+                            } else {
+                                tracing::trace!(
+                                    "Queueing DidChangeWorkspaceFolders until initialization completes"
+                                );
+                                pending_commands.push(LspCommand::DidChangeWorkspaceFolders { added, removed });
+                            }
+                        }
                         LspCommand::Completion {
                             request_id,
                             uri,
@@ -3590,6 +3635,16 @@ impl LspHandle {
         self.command_tx
             .try_send(LspCommand::DidSave { uri, text })
             .map_err(|_| "Failed to send did_save command".to_string())
+    }
+
+    /// Add a workspace folder to the running LSP server
+    pub fn add_workspace_folder(&self, uri: lsp_types::Uri, name: String) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::DidChangeWorkspaceFolders {
+                added: vec![lsp_types::WorkspaceFolder { uri, name }],
+                removed: vec![],
+            })
+            .map_err(|_| "Failed to send workspace folder change".to_string())
     }
 
     /// Request completion at position
