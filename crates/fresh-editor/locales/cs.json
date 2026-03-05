@@ -464,6 +464,8 @@
   "cmd.list_bookmarks_desc": "Zobrazit všechny definované záložky",
   "cmd.list_macros": "Seznam maker",
   "cmd.list_macros_desc": "Zobrazit všechna nahraná makra",
+  "cmd.load_plugin_from_buffer": "Načíst plugin z bufferu",
+  "cmd.load_plugin_from_buffer_desc": "Načíst aktuální buffer jako plugin",
   "cmd.navigate_back": "Přejít zpět",
   "cmd.navigate_back_desc": "Přejít zpět v historii navigace",
   "cmd.navigate_forward": "Přejít vpřed",

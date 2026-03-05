@@ -464,6 +464,8 @@
   "cmd.list_bookmarks_desc": "定義されているすべてのブックマークを表示します",
   "cmd.list_macros": "マクロを一覧表示",
   "cmd.list_macros_desc": "記録されているすべてのマクロを表示します",
+  "cmd.load_plugin_from_buffer": "バッファからプラグインを読み込む",
+  "cmd.load_plugin_from_buffer_desc": "現在のバッファをプラグインとして読み込む",
   "cmd.navigate_back": "戻る",
   "cmd.navigate_back_desc": "ナビゲーション履歴を戻ります",
   "cmd.navigate_forward": "進む",

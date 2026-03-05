@@ -464,6 +464,8 @@
   "cmd.list_bookmarks_desc": "显示所有已定义的书签",
   "cmd.list_macros": "列出宏",
   "cmd.list_macros_desc": "显示所有已录制的宏",
+  "cmd.load_plugin_from_buffer": "从缓冲区加载插件",
+  "cmd.load_plugin_from_buffer_desc": "将当前缓冲区作为插件加载",
   "cmd.navigate_back": "向后导航",
   "cmd.navigate_back_desc": "在导航历史中后退",
   "cmd.navigate_forward": "向前导航",

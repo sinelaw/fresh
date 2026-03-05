@@ -464,6 +464,8 @@
   "cmd.list_bookmarks_desc": "Mostra tutti i segnalibri definiti",
   "cmd.list_macros": "Elenca macro",
   "cmd.list_macros_desc": "Mostra tutte le macro registrate",
+  "cmd.load_plugin_from_buffer": "Carica plugin dal buffer",
+  "cmd.load_plugin_from_buffer_desc": "Carica il buffer corrente come plugin",
   "cmd.navigate_back": "Naviga indietro",
   "cmd.navigate_back_desc": "Torna indietro nella cronologia di navigazione",
   "cmd.navigate_forward": "Naviga avanti",

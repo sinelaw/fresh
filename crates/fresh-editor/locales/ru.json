@@ -464,6 +464,8 @@
   "cmd.list_bookmarks_desc": "Показать все установленные закладки",
   "cmd.list_macros": "Список макросов",
   "cmd.list_macros_desc": "Показать все записанные макросы",
+  "cmd.load_plugin_from_buffer": "Загрузить плагин из буфера",
+  "cmd.load_plugin_from_buffer_desc": "Загрузить текущий буфер как плагин",
   "cmd.navigate_back": "Назад",
   "cmd.navigate_back_desc": "Вернуться назад в истории навигации",
   "cmd.navigate_forward": "Вперёд",

@@ -464,6 +464,8 @@
   "cmd.list_bookmarks_desc": "Alle definierten Lesezeichen anzeigen",
   "cmd.list_macros": "Makros auflisten",
   "cmd.list_macros_desc": "Alle aufgezeichneten Makros anzeigen",
+  "cmd.load_plugin_from_buffer": "Plugin aus Buffer laden",
+  "cmd.load_plugin_from_buffer_desc": "Aktuellen Buffer als Plugin laden",
   "cmd.navigate_back": "Zurück navigieren",
   "cmd.navigate_back_desc": "In der Navigationshistorie zurückgehen",
   "cmd.navigate_forward": "Vorwärts navigieren",

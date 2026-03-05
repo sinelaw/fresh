@@ -464,6 +464,8 @@
   "cmd.list_bookmarks_desc": "แสดงบุ๊คมาร์คทั้งหมดที่กำหนดไว้",
   "cmd.list_macros": "รายการมาโคร",
   "cmd.list_macros_desc": "แสดงมาโครที่บันทึกไว้ทั้งหมด",
+  "cmd.load_plugin_from_buffer": "โหลดปลั๊กอินจากบัฟเฟอร์",
+  "cmd.load_plugin_from_buffer_desc": "โหลดบัฟเฟอร์ปัจจุบันเป็นปลั๊กอิน",
   "cmd.navigate_back": "ไปข้างหลัง",
   "cmd.navigate_back_desc": "ย้อนกลับไปในประวัติการนำทาง",
   "cmd.navigate_forward": "ไปข้างหน้า",
