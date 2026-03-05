@@ -137,6 +137,15 @@ impl TextPropertyManager {
                         range: abs_start..abs_end,
                         options: inline.style,
                     });
+                    // Create a TextProperty for inline overlays with properties
+                    if !inline.properties.is_empty() {
+                        let property = TextProperty {
+                            start: abs_start,
+                            end: abs_end,
+                            properties: inline.properties,
+                        };
+                        manager.add(property);
+                    }
                 }
             }
 

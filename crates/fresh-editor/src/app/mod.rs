@@ -2851,6 +2851,13 @@ impl Editor {
                 let old_line = self.active_state().buffer.get_line_number(*old_position) + 1;
                 let line = self.active_state().buffer.get_line_number(*new_position) + 1;
                 cursor_changed_lines = old_line != line;
+                let text_props = self
+                    .active_state()
+                    .text_properties
+                    .get_at(*new_position)
+                    .into_iter()
+                    .map(|tp| tp.properties.clone())
+                    .collect();
                 Some((
                     "cursor_moved",
                     crate::services::plugins::hooks::HookArgs::CursorMoved {
@@ -2859,6 +2866,7 @@ impl Editor {
                         old_position: *old_position,
                         new_position: *new_position,
                         line,
+                        text_properties: text_props,
                     },
                 ))
             }

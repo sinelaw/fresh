@@ -979,9 +979,9 @@ function styleForRightEntry(item: PickerLine | undefined): { style?: Partial<Ove
       const cellStart = bytePos + getUtf8ByteLength(item.text.substring(0, innerPos));
       const cellEnd = cellStart + cellLen;
       if (cellItem.rgb) {
-        inlines.push({ start: cellStart, end: cellEnd, style: { fg: cellItem.rgb } });
+        inlines.push({ start: cellStart, end: cellEnd, style: { fg: cellItem.rgb }, properties: { namedCol: col } });
       } else {
-        inlines.push({ start: cellStart, end: cellEnd, style: { fg: colors.pickerLabel } });
+        inlines.push({ start: cellStart, end: cellEnd, style: { fg: colors.pickerLabel }, properties: { namedCol: col } });
       }
       innerPos += cellText.length;
     }
@@ -1002,7 +1002,7 @@ function styleForRightEntry(item: PickerLine | undefined): { style?: Partial<Ove
       bytePos = getUtf8ByteLength(" ") + getUtf8ByteLength(item.text.substring(0, innerPos));
       const swatchLen = getUtf8ByteLength("██");
       const rgb = rowColors[col];
-      inlines.push({ start: bytePos, end: bytePos + swatchLen, style: { fg: rgb, bg: rgb } });
+      inlines.push({ start: bytePos, end: bytePos + swatchLen, style: { fg: rgb, bg: rgb }, properties: { paletteCol: col } });
       innerPos += 2; // "██" is 2 JS chars
     }
     return { inlineOverlays: inlines.length > 0 ? inlines : undefined };
@@ -1084,6 +1084,7 @@ function buildDisplayEntries(): TextPropertyEntry[] {
   const canScrollDown = state.treeScrollOffset + treeVisibleRows < allLeftLines.length;
 
   const maxRows = Math.max(leftLines.length, rightLines.length, 8);
+  let byteOffset = 0;
 
   for (let i = 0; i < maxRows; i++) {
     const leftItem = leftLines[i];
@@ -1091,9 +1092,10 @@ function buildDisplayEntries(): TextPropertyEntry[] {
 
     // Left side (padded to LEFT_WIDTH)
     const leftText = leftItem ? (" " + leftItem.text) : "";
+    const leftPadded = leftText.padEnd(LEFT_WIDTH);
     const leftStyle = styleForLeftEntry(leftItem);
     entries.push({
-      text: leftText.padEnd(LEFT_WIDTH),
+      text: leftPadded,
       properties: {
         type: leftItem?.type || "blank",
         index: leftItem?.index,
@@ -1104,9 +1106,12 @@ function buildDisplayEntries(): TextPropertyEntry[] {
       style: leftStyle.style,
       inlineOverlays: leftStyle.inlineOverlays,
     });
+    byteOffset += getUtf8ByteLength(leftPadded);
 
     // Divider
-    entries.push({ text: "│", properties: { type: "divider" }, style: { fg: colors.divider } });
+    const dividerText = "│";
+    entries.push({ text: dividerText, properties: { type: "divider" }, style: { fg: colors.divider } });
+    byteOffset += getUtf8ByteLength(dividerText);
 
     // Right side
     const rightText = rightItem ? (" " + rightItem.text) : "";
@@ -1122,9 +1127,11 @@ function buildDisplayEntries(): TextPropertyEntry[] {
       style: rightStyle.style,
       inlineOverlays: rightStyle.inlineOverlays,
     });
+    byteOffset += getUtf8ByteLength(rightText);
 
     // Newline
     entries.push({ text: "\n", properties: { type: "newline" } });
+    byteOffset += 1;
   }
 
   // Status bar (full width)
@@ -1830,11 +1837,12 @@ function onThemeEditorCursorMoved(data: {
   cursor_id: number;
   old_position: number;
   new_position: number;
+  text_properties?: Array<Record<string, any>>;
 }): void {
   if (state.bufferId === null || data.buffer_id !== state.bufferId) return;
   if (isUpdatingDisplay) return;
 
-  const props = editor.getTextPropertiesAtCursor(state.bufferId);
+  const props = data.text_properties || [];
   if (props.length === 0) return;
 
   const entryType = props[0].type as string | undefined;
@@ -1855,22 +1863,26 @@ function onThemeEditorCursorMoved(data: {
     }
   }
 
-  // Picker named color click — focus row, apply on Enter
+  // Picker named color click — find which column via inline overlay properties
   if (entryType === "picker-named-row" && typeof props[0].namedRow === "number") {
     const namedRow = props[0].namedRow as number;
+    // Look for namedCol property from inline overlay
+    const colProp = props.find(p => typeof p.namedCol === "number");
+    const clickedCol = colProp ? (colProp.namedCol as number) : 0;
     state.focusPanel = "picker";
-    state.pickerFocus = { type: "named-colors", index: namedRow * NAMED_COLORS_PER_ROW };
-    // Apply immediately on click
+    state.pickerFocus = { type: "named-colors", index: namedRow * NAMED_COLORS_PER_ROW + clickedCol };
     applyPickerColor();
     return;
   }
 
-  // Picker palette click — focus row, apply on Enter
+  // Picker palette click — find which column via inline overlay properties
   if (entryType === "picker-palette-row" && typeof props[0].paletteRow === "number") {
     const paletteRow = props[0].paletteRow as number;
+    // Look for paletteCol property from inline overlay
+    const colProp = props.find(p => typeof p.paletteCol === "number");
+    const clickedCol = colProp ? (colProp.paletteCol as number) : 0;
     state.focusPanel = "picker";
-    state.pickerFocus = { type: "palette", row: paletteRow, col: 0 };
-    // Apply immediately on click
+    state.pickerFocus = { type: "palette", row: paletteRow, col: clickedCol };
     applyPickerColor();
     return;
   }

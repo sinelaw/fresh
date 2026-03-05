@@ -3172,3 +3172,150 @@ fn test_inspect_after_saving_custom_theme() {
         screen
     );
 }
+
+/// Test that clicking on a palette swatch in the right panel applies the correct color.
+/// Bug reproduction: clicking on the 5th palette swatch was applying the 1st swatch's color
+/// because the byte offset calculation for click column detection was wrong.
+#[test]
+fn test_palette_swatch_click_targets_correct_column() {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    let themes_dir = project_root.join("themes");
+    fs::create_dir(&themes_dir).unwrap();
+    let test_theme = r#"{
+        "name": "dark",
+        "editor": {
+            "bg": [30, 30, 30],
+            "fg": [212, 212, 212],
+            "cursor": [82, 139, 255],
+            "selection_bg": [38, 79, 120],
+            "current_line_bg": [40, 40, 40],
+            "line_number_fg": [100, 100, 100],
+            "line_number_bg": [30, 30, 30]
+        },
+        "ui": {},
+        "search": {},
+        "diagnostic": {},
+        "syntax": {}
+    }"#;
+    fs::write(themes_dir.join("dark.json"), test_theme).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+
+    harness.render().unwrap();
+    open_theme_editor(&mut harness);
+
+    // Wait for theme editor to fully render with color palette
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Color Palette"))
+        .unwrap();
+
+    // Find the first row of palette swatches (██ characters in the right panel area).
+    // The left panel is 38 chars wide + 1 divider = 39, so right panel starts at col 39.
+    // The palette row text is " " + " ██ ██ ██..." with a " " prefix, so first swatch
+    // starts at approximately col 41.
+    // Each swatch pattern: prefix(1 char) + "██"(2 chars) = 3 chars per swatch.
+    // col N swatch starts at screen column 41 + 3*N.
+
+    // Find the screen row that contains "Color Palette:" to locate palette rows
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+    let palette_label_row = lines
+        .iter()
+        .position(|line| line.contains("Color Palette:"))
+        .expect("Should find 'Color Palette:' label on screen");
+
+    // Palette rows start right after the label
+    let palette_row_y = (palette_label_row + 1) as u16;
+
+    // Verify palette swatches are visible at this row
+    assert!(
+        lines[palette_row_y as usize].contains("██"),
+        "Palette row should contain swatch characters. Row {}: '{}'",
+        palette_row_y,
+        lines[palette_row_y as usize]
+    );
+
+    // Record the fg color of the 1st swatch (col 0) and 5th swatch (col 4)
+    // Col 0 swatch at screen x=41, Col 4 swatch at screen x=41+3*4=53
+    let swatch_col_0_x: u16 = 41;
+    let swatch_col_4_x: u16 = 41 + 3 * 4;
+
+    let color_at_col0 = harness
+        .get_cell_style(swatch_col_0_x, palette_row_y)
+        .and_then(|s| s.fg);
+    let color_at_col4 = harness
+        .get_cell_style(swatch_col_4_x, palette_row_y)
+        .and_then(|s| s.fg);
+
+    // The two swatches should have different colors (hue 0 vs hue 120)
+    assert_ne!(
+        color_at_col0, color_at_col4,
+        "Col 0 and col 4 palette swatches should be different colors: {:?} vs {:?}",
+        color_at_col0, color_at_col4
+    );
+
+    // Click on col 4 swatch (the 5th one)
+    harness.mouse_click(swatch_col_4_x, palette_row_y).unwrap();
+    harness.render().unwrap();
+
+    // Wait for click to be processed and display updated
+    harness
+        .wait_until(|h| {
+            // The hex value should change from the initial bg color (#1E1E1E)
+            let s = h.screen_to_string();
+            s.contains("Hex:") && !s.contains("#1E1E1E")
+        })
+        .unwrap();
+
+    let screen_after_click = harness.screen_to_string();
+
+    // Now click on col 0 swatch (should apply a different color)
+    harness.mouse_click(swatch_col_0_x, palette_row_y).unwrap();
+    harness.render().unwrap();
+
+    // Wait for the hex to change again
+    let hex_after_col4 = screen_after_click
+        .lines()
+        .find(|l| l.contains("Hex:"))
+        .unwrap_or("")
+        .to_string();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            if let Some(hex_line) = s.lines().find(|l| l.contains("Hex:")) {
+                hex_line != hex_after_col4
+            } else {
+                false
+            }
+        })
+        .unwrap();
+
+    let screen_after_second_click = harness.screen_to_string();
+    let hex_after_col0 = screen_after_second_click
+        .lines()
+        .find(|l| l.contains("Hex:"))
+        .unwrap_or("")
+        .to_string();
+
+    // The two clicks should have produced different hex values
+    assert_ne!(
+        hex_after_col4, hex_after_col0,
+        "Clicking col 4 and col 0 palette swatches should apply different colors.\nAfter col 4: {}\nAfter col 0: {}",
+        hex_after_col4, hex_after_col0
+    );
+
+    harness.assert_no_plugin_errors();
+}

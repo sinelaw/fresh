@@ -84,6 +84,8 @@ pub enum HookArgs {
         new_position: usize,
         /// Line number at new position (1-indexed)
         line: usize,
+        /// Text properties at the new cursor position
+        text_properties: Vec<std::collections::HashMap<String, serde_json::Value>>,
     },
 
     /// Buffer became active
@@ -417,6 +419,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             old_position,
             new_position,
             line,
+            text_properties,
         } => {
             serde_json::json!({
                 "buffer_id": buffer_id.0,
@@ -424,6 +427,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
                 "old_position": old_position,
                 "new_position": new_position,
                 "line": line,
+                "text_properties": text_properties,
             })
         }
         HookArgs::BeforeInsert {

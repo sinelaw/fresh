@@ -506,6 +506,10 @@ type InlineOverlay = {
 	* Styling options for this range
 	*/
 	style: Partial<OverlayOptions>;
+	/**
+	* Optional properties for this sub-range (e.g., click target metadata)
+	*/
+	properties?: Record<string, any>;
 };
 type BackgroundProcessResult = {
 	/**

@@ -80,6 +80,10 @@ pub struct InlineOverlay {
     /// Styling options for this range
     #[ts(type = "Partial<OverlayOptions>")]
     pub style: OverlayOptions,
+    /// Optional properties for this sub-range (e.g., click target metadata)
+    #[ts(type = "Record<string, any>")]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub properties: HashMap<String, serde_json::Value>,
 }
 
 /// An entry with text and its properties
@@ -132,8 +136,12 @@ impl TextPropertyEntry {
 
     /// Add a sub-range inline overlay
     pub fn with_inline_overlay(mut self, start: usize, end: usize, style: OverlayOptions) -> Self {
-        self.inline_overlays
-            .push(InlineOverlay { start, end, style });
+        self.inline_overlays.push(InlineOverlay {
+            start,
+            end,
+            style,
+            properties: HashMap::new(),
+        });
         self
     }
 }
