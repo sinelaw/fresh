@@ -1516,6 +1516,12 @@ pub enum PluginCommand {
         language: String,
     },
 
+    /// Restart LSP server for a specific language
+    RestartLspForLanguage {
+        /// The language to restart LSP for (e.g., "python", "rust")
+        language: String,
+    },
+
     /// Set the workspace root URI for a specific language's LSP server
     /// This allows plugins to specify project roots (e.g., directory containing .csproj)
     /// If the LSP is already running, it will be restarted with the new root

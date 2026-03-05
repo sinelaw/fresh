@@ -54,7 +54,7 @@ impl Editor {
     /// Re-send didOpen notifications for all buffers of a given language.
     ///
     /// Called after LSP server restart to re-register open files.
-    fn reopen_buffers_for_language(&mut self, language: &str) {
+    pub(crate) fn reopen_buffers_for_language(&mut self, language: &str) {
         // Collect buffer info first to avoid borrow conflicts
         // Use buffer's stored language rather than detecting from path
         let buffers_for_language: Vec<_> = self

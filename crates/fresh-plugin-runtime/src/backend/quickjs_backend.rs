@@ -2749,6 +2749,13 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Restart LSP server for a specific language
+    pub fn restart_lsp_for_language(&self, language: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::RestartLspForLanguage { language })
+            .is_ok()
+    }
+
     /// Set the workspace root URI for a specific language's LSP server
     /// This allows plugins to specify project roots (e.g., directory containing .csproj)
     pub fn set_lsp_root_uri(&self, language: String, uri: String) -> bool {

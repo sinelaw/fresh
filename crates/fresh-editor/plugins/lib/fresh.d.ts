@@ -1344,6 +1344,10 @@ interface EditorAPI {
 	*/
 	disableLspForLanguage(language: string): boolean;
 	/**
+	* Restart LSP server for a specific language
+	*/
+	restartLspForLanguage(language: string): boolean;
+	/**
 	* Set the workspace root URI for a specific language's LSP server
 	* This allows plugins to specify project roots (e.g., directory containing .csproj)
 	*/

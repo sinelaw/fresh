@@ -6224,6 +6224,23 @@ impl Editor {
                 self.warning_domains.lsp.clear();
             }
 
+            PluginCommand::RestartLspForLanguage { language } => {
+                tracing::info!("Plugin restarting LSP for language: {}", language);
+
+                let success = if let Some(ref mut lsp) = self.lsp {
+                    let (ok, msg) = lsp.manual_restart(&language);
+                    self.status_message = Some(msg);
+                    ok
+                } else {
+                    self.status_message = Some("No LSP manager available".to_string());
+                    false
+                };
+
+                if success {
+                    self.reopen_buffers_for_language(&language);
+                }
+            }
+
             PluginCommand::SetLspRootUri { language, uri } => {
                 tracing::info!("Plugin setting LSP root URI for {}: {}", language, uri);
 
