@@ -46,7 +46,7 @@ editor.setStatus("buffer-plugin loaded ok");
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.type_text("load_plugin_from_buffer").unwrap();
+    harness.type_text("Load Plugin from Buffer").unwrap();
 
     // Process to update suggestions
     for _ in 0..3 {
@@ -68,7 +68,7 @@ editor.setStatus("buffer-plugin loaded ok");
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("buffer-plugin loaded ok")
-            || screen.contains("Plugin 'buffer-my_plugin' loaded from buffer"),
+            || screen.contains("Plugin 'my_plugin.ts' loaded from buffer"),
         "Expected plugin load success message. Screen:\n{}",
         screen
     );
@@ -126,7 +126,7 @@ editor.setStatus("v1 loaded");
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.type_text("load_plugin_from_buffer").unwrap();
+    harness.type_text("Load Plugin from Buffer").unwrap();
     for _ in 0..3 {
         harness.process_async_and_render().unwrap();
         harness.sleep(Duration::from_millis(50));
@@ -198,7 +198,7 @@ editor.setStatus("v2 loaded");
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.type_text("load_plugin_from_buffer").unwrap();
+    harness.type_text("Load Plugin from Buffer").unwrap();
     for _ in 0..3 {
         harness.process_async_and_render().unwrap();
         harness.sleep(Duration::from_millis(50));

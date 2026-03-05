@@ -1122,12 +1122,12 @@ impl Editor {
                         .map(|e| e == "ts" || e == "tsx")
                         .unwrap_or(true);
 
-                    // Derive plugin name from filename or use generic name
+                    // Derive plugin name from buffer filename
                     let name = buffer
                         .file_path()
-                        .and_then(|p| p.file_stem())
+                        .and_then(|p| p.file_name())
                         .and_then(|s| s.to_str())
-                        .map(|s| format!("buffer-{}", s))
+                        .map(|s| s.to_string())
                         .unwrap_or_else(|| "buffer-plugin".to_string());
 
                     match self

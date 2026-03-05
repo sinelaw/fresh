@@ -471,6 +471,8 @@
   "cmd.list_bookmarks_desc": "Show all defined bookmarks",
   "cmd.list_macros": "List Macros",
   "cmd.list_macros_desc": "Show all recorded macros",
+  "cmd.load_plugin_from_buffer": "Load Plugin from Buffer",
+  "cmd.load_plugin_from_buffer_desc": "Load the current buffer as a plugin",
   "cmd.navigate_back": "Navigate Back",
   "cmd.navigate_back_desc": "Go back in navigation history",
   "cmd.navigate_forward": "Navigate Forward",

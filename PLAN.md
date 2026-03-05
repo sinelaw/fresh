@@ -205,11 +205,11 @@ Action::LoadPluginFromBuffer => {
         .map(|e| e == "ts" || e == "tsx")
         .unwrap_or(true); // default to TS (superset of JS)
 
-    // Generate plugin name from filename or use generic name
+    // Derive plugin name from buffer filename
     let name = buffer.file_path()
-        .and_then(|p| p.file_stem())
+        .and_then(|p| p.file_name())
         .and_then(|s| s.to_str())
-        .map(|s| format!("buffer-{}", s))
+        .map(|s| s.to_string())
         .unwrap_or_else(|| "buffer-plugin".to_string());
 
     match self.plugin_manager.load_plugin_from_source(&content, &name, is_ts) {
@@ -223,8 +223,8 @@ Action::LoadPluginFromBuffer => {
 
 ```rust
 CommandDef {
-    name_key: "command.load_plugin_from_buffer",
-    desc_key: "command.load_plugin_from_buffer.desc",
+    name_key: "cmd.load_plugin_from_buffer",
+    desc_key: "cmd.load_plugin_from_buffer_desc",
     action: || Action::LoadPluginFromBuffer,
     contexts: &[KeyContext::Normal],
     custom_contexts: &[],
@@ -237,7 +237,7 @@ CommandDef {
 When the user runs "Load Plugin from Buffer" on a buffer they've already loaded, we **unload the previous version first** then load the new one. This is critical for the dev workflow — edit, re-run, see changes. The alternative (error on duplicate name) would be frustrating.
 
 ### Plugin naming
-We derive the name from the buffer's filename (e.g., `buffer-my_plugin` from `my_plugin.ts`). For unsaved buffers, we use `buffer-plugin`. This means:
+We use the buffer's filename directly as the plugin name (e.g., `my_plugin.ts`). For unsaved buffers, we fall back to `buffer-plugin`. This means:
 - Named buffers get stable identities across reloads (good for hot-reload)
 - Multiple unnamed buffers would collide — acceptable tradeoff for v1
 
