@@ -879,14 +879,13 @@ fn test_comments_appear_before_fields() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    let screen = harness.screen_to_string();
-
-    // The picker panel should show the field path and description for the selected field
-    assert!(
-        screen.contains("editor.bg") || screen.contains("editor.fg"),
-        "Picker panel should show field path when a field is selected. Screen:\n{}",
-        screen
-    );
+    // Wait for the picker panel to show the field path (plugin may need extra render cycles)
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("editor.bg") || screen.contains("editor.fg")
+        })
+        .unwrap();
 }
 
 /// Test that theme changes are applied immediately after saving
@@ -2488,11 +2487,12 @@ fn test_inspect_theme_at_cursor_opens_theme_editor() {
         .unwrap();
     harness.render().unwrap();
 
-    // Wait for the theme editor to open via the hook
+    // Wait for the theme editor to open and auto-navigate to the editor field
+    // (the resolved key will be editor.fg or editor.bg, so "Editor" section expands)
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Theme Editor") || screen.contains("*Theme Editor*")
+            screen.contains("editor.fg") || screen.contains("editor.bg")
         })
         .unwrap();
 
@@ -2502,14 +2502,6 @@ fn test_inspect_theme_at_cursor_opens_theme_editor() {
     assert!(
         !screen.contains("Select theme to edit"),
         "Should NOT prompt for theme selection — should auto-load current theme. Screen:\n{}",
-        screen
-    );
-
-    // The editor section should be expanded since cursor was on editor content
-    // (the resolved key will be editor.fg or editor.bg, so "Editor" section expands)
-    assert!(
-        screen.contains("editor.fg") || screen.contains("editor.bg"),
-        "Theme editor should show editor.fg or editor.bg key (cursor was on editor content). Screen:\n{}",
         screen
     );
 }
@@ -2553,16 +2545,9 @@ fn test_inspect_theme_at_cursor_multiple_rounds() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Theme Editor") || screen.contains("*Theme Editor*")
+            screen.contains("editor.fg") || screen.contains("editor.bg")
         })
         .unwrap();
-
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("editor.fg") || screen.contains("editor.bg"),
-        "Round 1: Theme editor should show editor keys. Screen:\n{}",
-        screen
-    );
 
     // === Switch back to source buffer (Ctrl+PageDown = next_buffer) ===
     harness
@@ -2591,16 +2576,9 @@ fn test_inspect_theme_at_cursor_multiple_rounds() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Theme Editor") || screen.contains("*Theme Editor*")
+            screen.contains("editor.fg") || screen.contains("editor.bg")
         })
         .unwrap();
-
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("editor.fg") || screen.contains("editor.bg"),
-        "Round 2: Theme editor should still show editor keys after re-inspect. Screen:\n{}",
-        screen
-    );
 
     // === Switch back to source again ===
     harness
@@ -2627,16 +2605,11 @@ fn test_inspect_theme_at_cursor_multiple_rounds() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Theme Editor") || screen.contains("*Theme Editor*")
+            screen.contains("editor.fg") || screen.contains("editor.bg")
         })
         .unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("editor.fg") || screen.contains("editor.bg"),
-        "Round 3: Theme editor should work on third inspect. Screen:\n{}",
-        screen
-    );
 
     // Should still not have prompted for theme selection at any point
     assert!(
@@ -3144,31 +3117,20 @@ fn test_inspect_after_saving_custom_theme() {
         .unwrap();
     harness.render().unwrap();
 
-    // Wait for theme editor to reopen via inspect hook
-    let result = harness.wait_until(|h| {
-        let screen = h.screen_to_string();
-        screen.contains("Theme Editor") || screen.contains("*Theme Editor*")
-    });
+    // Wait for theme editor to reopen and auto-navigate to editor fields
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("editor.fg") || screen.contains("editor.bg")
+        })
+        .unwrap();
 
     let screen = harness.screen_to_string();
-
-    assert!(
-        result.is_ok(),
-        "Theme editor should open via inspect on custom theme. Screen:\n{}",
-        screen
-    );
 
     // Should NOT show "Failed to load" error
     assert!(
         !screen.contains("Failed to load"),
         "Should not fail to load the custom theme. Screen:\n{}",
-        screen
-    );
-
-    // Should show editor fields (the section should be expanded)
-    assert!(
-        screen.contains("editor.fg") || screen.contains("editor.bg"),
-        "Theme editor should show editor fields after inspect. Screen:\n{}",
         screen
     );
 }
