@@ -22,7 +22,7 @@ interface ActionPopupResultData {
 const INSTALL_URL = "https://github.com/artempyanykh/marksman#how-to-install";
 let markdownLspError: { serverCommand: string; message: string } | null = null;
 
-globalThis.on_markdown_lsp_server_error = function (data: LspServerErrorData): void {
+function on_markdown_lsp_server_error(data: LspServerErrorData) : void {
   if (data.language !== "markdown") return;
   markdownLspError = { serverCommand: data.server_command, message: data.message };
   if (data.error_type === "not_found") {
@@ -30,10 +30,11 @@ globalThis.on_markdown_lsp_server_error = function (data: LspServerErrorData): v
   } else {
     editor.setStatus(`Markdown LSP error: ${data.message}`);
   }
-};
+}
+registerHandler("on_markdown_lsp_server_error", on_markdown_lsp_server_error);
 editor.on("lsp_server_error", "on_markdown_lsp_server_error");
 
-globalThis.on_markdown_lsp_status_clicked = function (data: LspStatusClickedData): void {
+function on_markdown_lsp_status_clicked(data: LspStatusClickedData) : void {
   if (data.language !== "markdown" || !markdownLspError) return;
   editor.showActionPopup({
     id: "marksman-lsp-help",
@@ -45,10 +46,11 @@ globalThis.on_markdown_lsp_status_clicked = function (data: LspStatusClickedData
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-};
+}
+registerHandler("on_markdown_lsp_status_clicked", on_markdown_lsp_status_clicked);
 editor.on("lsp_status_clicked", "on_markdown_lsp_status_clicked");
 
-globalThis.on_markdown_lsp_action_result = function (data: ActionPopupResultData): void {
+function on_markdown_lsp_action_result(data: ActionPopupResultData) : void {
   if (data.popup_id !== "marksman-lsp-help") return;
   switch (data.action_id) {
     case "copy_url":
@@ -61,5 +63,6 @@ globalThis.on_markdown_lsp_action_result = function (data: ActionPopupResultData
       markdownLspError = null;
       break;
   }
-};
+}
+registerHandler("on_markdown_lsp_action_result", on_markdown_lsp_action_result);
 editor.on("action_popup_result", "on_markdown_lsp_action_result");

@@ -169,7 +169,7 @@ async function restoreProject(projectPath: string): Promise<void> {
 /**
  * Handle file open - set project root and restore packages
  */
-globalThis.on_csharp_file_open = async function (data: AfterFileOpenData): Promise<void> {
+async function on_csharp_file_open(data: AfterFileOpenData) : Promise<void> {
   // Only handle .cs files
   if (!data.path.endsWith(".cs")) {
     return;
@@ -206,7 +206,8 @@ globalThis.on_csharp_file_open = async function (data: AfterFileOpenData): Promi
       await restoreProject(dir);
     }
   }
-};
+}
+registerHandler("on_csharp_file_open", on_csharp_file_open);
 
 // Register hook for file open
 editor.on("after_file_open", "on_csharp_file_open");
@@ -214,7 +215,7 @@ editor.on("after_file_open", "on_csharp_file_open");
 /**
  * Handle LSP server requests from C# language servers (Roslyn-based)
  */
-globalThis.on_csharp_lsp_server_request = function (data: LspServerRequestData): void {
+function on_csharp_lsp_server_request(data: LspServerRequestData) : void {
   // Only handle requests from C# language servers
   if (data.server_command !== "csharp-ls" && data.server_command !== "csharp-language-server") {
     return;
@@ -242,7 +243,8 @@ globalThis.on_csharp_lsp_server_request = function (data: LspServerRequestData):
       // Log unhandled requests for debugging
       editor.debug(`csharp_support: Unhandled LSP request: ${data.method}`);
   }
-};
+}
+registerHandler("on_csharp_lsp_server_request", on_csharp_lsp_server_request);
 
 // Register hook for LSP server requests
 editor.on("lsp_server_request", "on_csharp_lsp_server_request");
@@ -250,7 +252,7 @@ editor.on("lsp_server_request", "on_csharp_lsp_server_request");
 /**
  * Handle LSP server errors for C#
  */
-globalThis.on_csharp_lsp_server_error = function (data: LspServerErrorData): void {
+function on_csharp_lsp_server_error(data: LspServerErrorData) : void {
   // Only handle C# language errors
   if (data.language !== "csharp") {
     return;
@@ -272,7 +274,8 @@ globalThis.on_csharp_lsp_server_error = function (data: LspServerErrorData): voi
   } else {
     editor.setStatus(`C# LSP error: ${data.message}`);
   }
-};
+}
+registerHandler("on_csharp_lsp_server_error", on_csharp_lsp_server_error);
 
 // Register hook for LSP server errors
 editor.on("lsp_server_error", "on_csharp_lsp_server_error");
@@ -280,7 +283,7 @@ editor.on("lsp_server_error", "on_csharp_lsp_server_error");
 /**
  * Handle status bar click when there's a C# LSP error
  */
-globalThis.on_csharp_lsp_status_clicked = function (data: LspStatusClickedData): void {
+function on_csharp_lsp_status_clicked(data: LspStatusClickedData) : void {
   // Only handle C# language clicks when there's an error
   if (data.language !== "csharp" || !csharpLspError) {
     return;
@@ -299,7 +302,8 @@ globalThis.on_csharp_lsp_status_clicked = function (data: LspStatusClickedData):
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-};
+}
+registerHandler("on_csharp_lsp_status_clicked", on_csharp_lsp_status_clicked);
 
 // Register hook for status bar clicks
 editor.on("lsp_status_clicked", "on_csharp_lsp_status_clicked");
@@ -307,7 +311,7 @@ editor.on("lsp_status_clicked", "on_csharp_lsp_status_clicked");
 /**
  * Handle action popup results for C# LSP help
  */
-globalThis.on_csharp_lsp_action_result = function (data: ActionPopupResultData): void {
+function on_csharp_lsp_action_result(data: ActionPopupResultData) : void {
   // Only handle our popup
   if (data.popup_id !== "csharp-lsp-help") {
     return;
@@ -335,7 +339,8 @@ globalThis.on_csharp_lsp_action_result = function (data: ActionPopupResultData):
     default:
       editor.debug(`csharp_support: Unknown action: ${data.action_id}`);
   }
-};
+}
+registerHandler("on_csharp_lsp_action_result", on_csharp_lsp_action_result);
 
 // Register hook for action popup results
 editor.on("action_popup_result", "on_csharp_lsp_action_result");

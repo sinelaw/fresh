@@ -137,7 +137,7 @@ function getTitle(): string {
 }
 
 // Commands
-globalThis.show_diagnostics_panel = async function (): Promise<void> {
+async function show_diagnostics_panel() : Promise<void> {
   if (isOpen) {
     // Already open - just notify to refresh
     provider.notify();
@@ -161,16 +161,18 @@ globalThis.show_diagnostics_panel = async function (): Promise<void> {
   editor.setStatus(
     editor.t("status.diagnostics_count", { count: String(diagnostics.length) })
   );
-};
+}
+registerHandler("show_diagnostics_panel", show_diagnostics_panel);
 
-globalThis.diagnostics_close = function (): void {
+function diagnostics_close() : void {
   finder.close();
   isOpen = false;
   sourceBufferId = null;
   editor.setStatus(editor.t("status.closed"));
-};
+}
+registerHandler("diagnostics_close", diagnostics_close);
 
-globalThis.diagnostics_toggle_all = function (): void {
+function diagnostics_toggle_all() : void {
   if (!isOpen) return;
 
   showAllFiles = !showAllFiles;
@@ -183,37 +185,41 @@ globalThis.diagnostics_toggle_all = function (): void {
     ? editor.t("panel.all_files")
     : editor.t("panel.current_file");
   editor.setStatus(editor.t("status.showing", { label }));
-};
+}
+registerHandler("diagnostics_toggle_all", diagnostics_toggle_all);
 
-globalThis.diagnostics_refresh = function (): void {
+function diagnostics_refresh() : void {
   if (!isOpen) return;
 
   provider.notify();
   editor.setStatus(editor.t("status.refreshed"));
-};
+}
+registerHandler("diagnostics_refresh", diagnostics_refresh);
 
-globalThis.toggle_diagnostics_panel = function (): void {
+function toggle_diagnostics_panel() : void {
   if (isOpen) {
-    globalThis.diagnostics_close();
+    diagnostics_close();
   } else {
-    globalThis.show_diagnostics_panel();
+    show_diagnostics_panel();
   }
-};
+}
+registerHandler("toggle_diagnostics_panel", toggle_diagnostics_panel);
 
 // Event Handlers
 
 // When diagnostics update, notify the provider
-globalThis.on_diagnostics_updated = function (_data: {
+function on_diagnostics_updated(_data: {
   uri: string;
   count: number;
 }): void {
   if (isOpen) {
     provider.notify();
   }
-};
+}
+registerHandler("on_diagnostics_updated", on_diagnostics_updated);
 
 // When a different buffer becomes active, update filter context
-globalThis.on_diagnostics_buffer_activated = function (data: {
+function on_diagnostics_buffer_activated(data: {
   buffer_id: number;
 }): void {
   if (!isOpen) return;
@@ -231,7 +237,8 @@ globalThis.on_diagnostics_buffer_activated = function (data: {
     provider.notify();
     finder.updateTitle(getTitle());
   }
-};
+}
+registerHandler("on_diagnostics_buffer_activated", on_diagnostics_buffer_activated);
 
 // Register event handlers
 editor.on("diagnostics_updated", "on_diagnostics_updated");

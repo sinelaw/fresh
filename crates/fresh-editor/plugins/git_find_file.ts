@@ -39,7 +39,7 @@ async function loadGitFiles(): Promise<string[]> {
 }
 
 // Global function to start file finder
-globalThis.start_git_find_file = function (): void {
+function start_git_find_file() : void {
   finder.prompt({
     title: editor.t("prompt.find_file"),
     source: {
@@ -48,14 +48,16 @@ globalThis.start_git_find_file = function (): void {
       // Uses built-in fuzzy filter by default
     },
   });
-};
+}
+registerHandler("start_git_find_file", start_git_find_file);
 
 // Reload git files command
-globalThis.git_reload_files = async function (): Promise<void> {
+async function git_reload_files() : Promise<void> {
   // Just re-trigger the prompt which will reload
-  globalThis.start_git_find_file();
+  start_git_find_file();
   editor.setStatus(editor.t("status.reloading"));
-};
+}
+registerHandler("git_reload_files", git_reload_files);
 
 // Register commands
 editor.registerCommand(

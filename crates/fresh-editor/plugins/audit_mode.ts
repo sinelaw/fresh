@@ -589,7 +589,7 @@ async function refreshReviewData() {
 
 // --- Actions ---
 
-globalThis.review_stage_hunk = async () => {
+async function review_stage_hunk() {
     const props = editor.getTextPropertiesAtCursor(editor.getActiveBufferId());
     if (props.length > 0 && props[0].hunkId) {
         const id = props[0].hunkId as string;
@@ -598,9 +598,10 @@ globalThis.review_stage_hunk = async () => {
         if (h) h.status = 'staged';
         await updateReviewUI();
     }
-};
+}
+registerHandler("review_stage_hunk", review_stage_hunk);
 
-globalThis.review_discard_hunk = async () => {
+async function review_discard_hunk() {
     const props = editor.getTextPropertiesAtCursor(editor.getActiveBufferId());
     if (props.length > 0 && props[0].hunkId) {
         const id = props[0].hunkId as string;
@@ -609,9 +610,10 @@ globalThis.review_discard_hunk = async () => {
         if (h) h.status = 'discarded';
         await updateReviewUI();
     }
-};
+}
+registerHandler("review_discard_hunk", review_discard_hunk);
 
-globalThis.review_undo_action = async () => {
+async function review_undo_action() {
     const props = editor.getTextPropertiesAtCursor(editor.getActiveBufferId());
     if (props.length > 0 && props[0].hunkId) {
         const id = props[0].hunkId as string;
@@ -620,25 +622,29 @@ globalThis.review_undo_action = async () => {
         if (h) h.status = 'pending';
         await updateReviewUI();
     }
-};
+}
+registerHandler("review_undo_action", review_undo_action);
 
-globalThis.review_next_hunk = () => {
+function review_next_hunk() {
     const bid = editor.getActiveBufferId();
     const props = editor.getTextPropertiesAtCursor(bid);
     let cur = -1;
     if (props.length > 0 && props[0].index !== undefined) cur = props[0].index as number;
     if (cur + 1 < state.hunks.length) editor.setBufferCursor(bid, state.hunks[cur + 1].byteOffset);
-};
+}
+registerHandler("review_next_hunk", review_next_hunk);
 
-globalThis.review_prev_hunk = () => {
+function review_prev_hunk() {
     const bid = editor.getActiveBufferId();
     const props = editor.getTextPropertiesAtCursor(bid);
     let cur = state.hunks.length;
     if (props.length > 0 && props[0].index !== undefined) cur = props[0].index as number;
     if (cur - 1 >= 0) editor.setBufferCursor(bid, state.hunks[cur - 1].byteOffset);
-};
+}
+registerHandler("review_prev_hunk", review_prev_hunk);
 
-globalThis.review_refresh = () => { refreshReviewData(); };
+function review_refresh() { refreshReviewData(); }
+registerHandler("review_refresh", review_refresh);
 
 let activeDiffViewState: { lSplit: number, rSplit: number } | null = null;
 
@@ -659,7 +665,7 @@ function findLineForByte(lineByteOffsets: number[], topByte: number): number {
     return low;
 }
 
-globalThis.on_viewport_changed = (data: any) => {
+function on_viewport_changed(data: any) {
     // This handler is now a no-op - scroll sync is handled by the core
     // using the anchor-based ScrollSyncGroup system.
     // Keeping the handler for backward compatibility if core sync fails.
@@ -681,7 +687,8 @@ globalThis.on_viewport_changed = (data: any) => {
         const targetByte = oldLineByteOffsets[Math.min(lineNum, oldLineByteOffsets.length - 1)];
         (editor as any).setSplitScroll(oldSplitId, targetByte);
     }
-};
+}
+registerHandler("on_viewport_changed", on_viewport_changed);
 
 /**
  * Represents an aligned line pair for side-by-side diff display
@@ -1017,7 +1024,7 @@ interface CompositeDiffState {
 
 let activeCompositeDiffState: CompositeDiffState | null = null;
 
-globalThis.review_drill_down = async () => {
+async function review_drill_down() {
     const bid = editor.getActiveBufferId();
     const props = editor.getTextPropertiesAtCursor(bid);
     if (props.length > 0 && props[0].hunkId) {
@@ -1185,7 +1192,8 @@ globalThis.review_drill_down = async () => {
 
         editor.setStatus(editor.t("status.diff_summary", { added: String(addedCount), removed: String(removedCount), modified: String(modifiedCount) }));
     }
-};
+}
+registerHandler("review_drill_down", review_drill_down);
 
 // Define the diff-view mode - inherits from "normal" for all standard navigation/selection/copy
 // Only adds diff-specific keybindings (close, hunk navigation)
@@ -1237,7 +1245,7 @@ function getCurrentLineInfo(): PendingCommentInfo | null {
 // Pending prompt state for event-based prompt handling
 let pendingCommentInfo: PendingCommentInfo | null = null;
 
-globalThis.review_add_comment = async () => {
+async function review_add_comment() {
     const info = getCurrentLineInfo();
     if (!info) {
         editor.setStatus(editor.t("status.no_hunk_selected"));
@@ -1257,10 +1265,11 @@ globalThis.review_add_comment = async () => {
         lineRef = `L${info.oldLine}`;
     }
     editor.startPrompt(editor.t("prompt.comment", { line: lineRef }), "review-comment");
-};
+}
+registerHandler("review_add_comment", review_add_comment);
 
 // Prompt event handlers
-globalThis.on_review_prompt_confirm = (args: { prompt_type: string; input: string }): boolean => {
+function on_review_prompt_confirm(args: { prompt_type: string; input: string }): boolean {
     if (args.prompt_type !== "review-comment") {
         return true; // Not our prompt
     }
@@ -1292,21 +1301,23 @@ globalThis.on_review_prompt_confirm = (args: { prompt_type: string; input: strin
     }
     pendingCommentInfo = null;
     return true;
-};
+}
+registerHandler("on_review_prompt_confirm", on_review_prompt_confirm);
 
-globalThis.on_review_prompt_cancel = (args: { prompt_type: string }): boolean => {
+function on_review_prompt_cancel(args: { prompt_type: string }): boolean {
     if (args.prompt_type === "review-comment") {
         pendingCommentInfo = null;
         editor.setStatus(editor.t("status.comment_cancelled"));
     }
     return true;
-};
+}
+registerHandler("on_review_prompt_cancel", on_review_prompt_cancel);
 
 // Register prompt event handlers
 editor.on("prompt_confirmed", "on_review_prompt_confirm");
 editor.on("prompt_cancelled", "on_review_prompt_cancel");
 
-globalThis.review_approve_hunk = async () => {
+async function review_approve_hunk() {
     const hunkId = getCurrentHunkId();
     if (!hunkId) return;
     const h = state.hunks.find(x => x.id === hunkId);
@@ -1315,9 +1326,10 @@ globalThis.review_approve_hunk = async () => {
         await updateReviewUI();
         editor.setStatus(editor.t("status.hunk_approved"));
     }
-};
+}
+registerHandler("review_approve_hunk", review_approve_hunk);
 
-globalThis.review_reject_hunk = async () => {
+async function review_reject_hunk() {
     const hunkId = getCurrentHunkId();
     if (!hunkId) return;
     const h = state.hunks.find(x => x.id === hunkId);
@@ -1326,9 +1338,10 @@ globalThis.review_reject_hunk = async () => {
         await updateReviewUI();
         editor.setStatus(editor.t("status.hunk_rejected"));
     }
-};
+}
+registerHandler("review_reject_hunk", review_reject_hunk);
 
-globalThis.review_needs_changes = async () => {
+async function review_needs_changes() {
     const hunkId = getCurrentHunkId();
     if (!hunkId) return;
     const h = state.hunks.find(x => x.id === hunkId);
@@ -1337,9 +1350,10 @@ globalThis.review_needs_changes = async () => {
         await updateReviewUI();
         editor.setStatus(editor.t("status.hunk_needs_changes"));
     }
-};
+}
+registerHandler("review_needs_changes", review_needs_changes);
 
-globalThis.review_question_hunk = async () => {
+async function review_question_hunk() {
     const hunkId = getCurrentHunkId();
     if (!hunkId) return;
     const h = state.hunks.find(x => x.id === hunkId);
@@ -1348,9 +1362,10 @@ globalThis.review_question_hunk = async () => {
         await updateReviewUI();
         editor.setStatus(editor.t("status.hunk_question"));
     }
-};
+}
+registerHandler("review_question_hunk", review_question_hunk);
 
-globalThis.review_clear_status = async () => {
+async function review_clear_status() {
     const hunkId = getCurrentHunkId();
     if (!hunkId) return;
     const h = state.hunks.find(x => x.id === hunkId);
@@ -1359,17 +1374,19 @@ globalThis.review_clear_status = async () => {
         await updateReviewUI();
         editor.setStatus(editor.t("status.hunk_status_cleared"));
     }
-};
+}
+registerHandler("review_clear_status", review_clear_status);
 
-globalThis.review_set_overall_feedback = async () => {
+async function review_set_overall_feedback() {
     const text = await editor.prompt(editor.t("prompt.overall_feedback"), state.overallFeedback || "");
     if (text !== null) {
         state.overallFeedback = text.trim();
         editor.setStatus(text.trim() ? editor.t("status.feedback_set") : editor.t("status.feedback_cleared"));
     }
-};
+}
+registerHandler("review_set_overall_feedback", review_set_overall_feedback);
 
-globalThis.review_export_session = async () => {
+async function review_export_session() {
     const cwd = editor.getCwd();
     const reviewDir = editor.pathJoin(cwd, ".review");
 
@@ -1440,9 +1457,10 @@ globalThis.review_export_session = async () => {
     const filePath = editor.pathJoin(reviewDir, "session.md");
     await editor.writeFile(filePath, md);
     editor.setStatus(editor.t("status.exported", { path: filePath }));
-};
+}
+registerHandler("review_export_session", review_export_session);
 
-globalThis.review_export_json = async () => {
+async function review_export_json() {
     const cwd = editor.getCwd();
     const reviewDir = editor.pathJoin(cwd, ".review");
     // writeFile creates parent directories
@@ -1476,9 +1494,10 @@ globalThis.review_export_json = async () => {
     const filePath = editor.pathJoin(reviewDir, "session.json");
     await editor.writeFile(filePath, JSON.stringify(session, null, 2));
     editor.setStatus(editor.t("status.exported", { path: filePath }));
-};
+}
+registerHandler("review_export_json", review_export_json);
 
-globalThis.start_review_diff = async () => {
+async function start_review_diff() {
     editor.setStatus(editor.t("status.generating"));
     editor.setContext("review-mode", true);
 
@@ -1497,27 +1516,31 @@ globalThis.start_review_diff = async () => {
     editor.setStatus(editor.t("status.review_summary", { count: String(state.hunks.length) }));
     editor.on("buffer_activated", "on_review_buffer_activated");
     editor.on("buffer_closed", "on_review_buffer_closed");
-};
+}
+registerHandler("start_review_diff", start_review_diff);
 
-globalThis.stop_review_diff = () => {
+function stop_review_diff() {
     state.reviewBufferId = null;
     editor.setContext("review-mode", false);
     editor.off("buffer_activated", "on_review_buffer_activated");
     editor.off("buffer_closed", "on_review_buffer_closed");
     editor.setStatus(editor.t("status.stopped"));
-};
+}
+registerHandler("stop_review_diff", stop_review_diff);
 
 
-globalThis.on_review_buffer_activated = (data: any) => {
+function on_review_buffer_activated(data: any) {
     if (data.buffer_id === state.reviewBufferId) refreshReviewData();
-};
+}
+registerHandler("on_review_buffer_activated", on_review_buffer_activated);
 
-globalThis.on_review_buffer_closed = (data: any) => {
-    if (data.buffer_id === state.reviewBufferId) globalThis.stop_review_diff();
-};
+function on_review_buffer_closed(data: any) {
+    if (data.buffer_id === state.reviewBufferId) stop_review_diff();
+}
+registerHandler("on_review_buffer_closed", on_review_buffer_closed);
 
 // Side-by-side diff for current file using composite buffers
-globalThis.side_by_side_diff_current_file = async () => {
+async function side_by_side_diff_current_file() {
     const bid = editor.getActiveBufferId();
     const absolutePath = editor.getBufferPath(bid);
 
@@ -1740,7 +1763,8 @@ globalThis.side_by_side_diff_current_file = async () => {
     const modifiedCount = Math.min(addedCount, removedCount);
 
     editor.setStatus(editor.t("status.diff_summary", { added: String(addedCount), removed: String(removedCount), modified: String(modifiedCount) }));
-};
+}
+registerHandler("side_by_side_diff_current_file", side_by_side_diff_current_file);
 
 // Register Modes and Commands
 editor.registerCommand("%cmd.review_diff", "%cmd.review_diff_desc", "start_review_diff", null);
@@ -1760,7 +1784,7 @@ editor.registerCommand("%cmd.export_markdown", "%cmd.export_markdown_desc", "rev
 editor.registerCommand("%cmd.export_json", "%cmd.export_json_desc", "review_export_json", "review-mode");
 
 // Handler for when buffers are closed - cleans up scroll sync groups and composite buffers
-globalThis.on_buffer_closed = (data: any) => {
+function on_buffer_closed(data: any) {
     // If one of the diff view buffers is closed, clean up the scroll sync group
     if (activeSideBySideState) {
         if (data.buffer_id === activeSideBySideState.oldBufferId ||
@@ -1787,7 +1811,8 @@ globalThis.on_buffer_closed = (data: any) => {
             activeCompositeDiffState = null;
         }
     }
-};
+}
+registerHandler("on_buffer_closed", on_buffer_closed);
 
 editor.on("buffer_closed", "on_buffer_closed");
 

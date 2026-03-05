@@ -75,7 +75,7 @@ async function searchWithRipgrep(query: string): Promise<GrepMatch[]> {
 }
 
 // Start live grep
-globalThis.start_live_grep = function (): void {
+function start_live_grep() : void {
   finder.prompt({
     title: editor.t("prompt.live_grep"),
     source: {
@@ -85,7 +85,8 @@ globalThis.start_live_grep = function (): void {
       minQueryLength: 2,
     },
   });
-};
+}
+registerHandler("start_live_grep", start_live_grep);
 
 // Register command
 editor.registerCommand(

@@ -958,7 +958,7 @@ function findMatchingColor(input: string): string | null {
 /**
  * Handle color prompt confirmation
  */
-globalThis.onThemeColorPromptConfirmed = function(args: {
+function onThemeColorPromptConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -1013,12 +1013,13 @@ globalThis.onThemeColorPromptConfirmed = function(args: {
   }
 
   return true;
-};
+}
+registerHandler("onThemeColorPromptConfirmed", onThemeColorPromptConfirmed);
 
 /**
  * Handle open theme prompt (both builtin and user themes)
  */
-globalThis.onThemeOpenPromptConfirmed = async function(args: {
+async function onThemeOpenPromptConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -1058,12 +1059,13 @@ globalThis.onThemeOpenPromptConfirmed = async function(args: {
   }
 
   return true;
-};
+}
+registerHandler("onThemeOpenPromptConfirmed", onThemeOpenPromptConfirmed);
 
 /**
  * Handle save as prompt
  */
-globalThis.onThemeSaveAsPromptConfirmed = async function(args: {
+async function onThemeSaveAsPromptConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -1075,7 +1077,7 @@ globalThis.onThemeSaveAsPromptConfirmed = async function(args: {
     // Reject names that match a built-in theme
     if (state.builtinThemes.includes(name)) {
       editor.setStatus(editor.t("error.name_is_builtin", { name }));
-      globalThis.theme_editor_save_as();
+      theme_editor_save_as();
       return true;
     }
 
@@ -1102,12 +1104,13 @@ globalThis.onThemeSaveAsPromptConfirmed = async function(args: {
   }
 
   return true;
-};
+}
+registerHandler("onThemeSaveAsPromptConfirmed", onThemeSaveAsPromptConfirmed);
 
 /**
  * Handle prompt cancellation
  */
-globalThis.onThemePromptCancelled = function(args: { prompt_type: string }): boolean {
+function onThemePromptCancelled(args: { prompt_type: string }) : boolean {
   if (!args.prompt_type.startsWith("theme-")) return true;
 
   // Clear saved state on cancellation
@@ -1117,12 +1120,13 @@ globalThis.onThemePromptCancelled = function(args: { prompt_type: string }): boo
 
   editor.debug(editor.t("status.cancelled"));
   return true;
-};
+}
+registerHandler("onThemePromptCancelled", onThemePromptCancelled);
 
 /**
  * Handle initial theme selection prompt (when opening editor)
  */
-globalThis.onThemeSelectInitialPromptConfirmed = async function(args: {
+async function onThemeSelectInitialPromptConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -1172,7 +1176,8 @@ globalThis.onThemeSelectInitialPromptConfirmed = async function(args: {
   editor.debug(`[theme_editor] doOpenThemeEditor() completed`);
 
   return true;
-};
+}
+registerHandler("onThemeSelectInitialPromptConfirmed", onThemeSelectInitialPromptConfirmed);
 
 // Register prompt handlers
 editor.on("prompt_confirmed", "onThemeSelectInitialPromptConfirmed");
@@ -1329,7 +1334,7 @@ function createDefaultTheme(): Record<string, unknown> {
 // Cursor Movement Handler
 // =============================================================================
 
-globalThis.onThemeEditorCursorMoved = function(data: {
+function onThemeEditorCursorMoved(data: {
   buffer_id: number;
   cursor_id: number;
   old_position: number;
@@ -1343,14 +1348,15 @@ globalThis.onThemeEditorCursorMoved = function(data: {
   if (field) {
     editor.debug(field.def.description);
   }
-};
+}
+registerHandler("onThemeEditorCursorMoved", onThemeEditorCursorMoved);
 
 editor.on("cursor_moved", "onThemeEditorCursorMoved");
 
 /**
  * Handle buffer_closed event to reset state when buffer is closed by any means
  */
-globalThis.onThemeEditorBufferClosed = function(data: {
+function onThemeEditorBufferClosed(data: {
   buffer_id: number;
 }): void {
   if (state.bufferId !== null && data.buffer_id === state.bufferId) {
@@ -1361,14 +1367,15 @@ globalThis.onThemeEditorBufferClosed = function(data: {
     state.originalThemeData = {};
     state.hasChanges = false;
   }
-};
+}
+registerHandler("onThemeEditorBufferClosed", onThemeEditorBufferClosed);
 
 editor.on("buffer_closed", "onThemeEditorBufferClosed");
 
 /**
  * Handle theme_inspect_key hook: open the theme editor at a specific key
  */
-globalThis.onThemeInspectKey = async function(data: {
+async function onThemeInspectKey(data: {
   theme_name: string;
   key: string;
 }): Promise<void> {
@@ -1413,7 +1420,8 @@ globalThis.onThemeInspectKey = async function(data: {
   // Open editor and navigate
   await doOpenThemeEditor();
   moveCursorToField(data.key);
-};
+}
+registerHandler("onThemeInspectKey", onThemeInspectKey);
 
 editor.on("theme_inspect_key", "onThemeInspectKey");
 
@@ -1515,7 +1523,7 @@ function moveCursorToField(path: string): void {
 /**
  * Navigate to the next selectable field/section
  */
-globalThis.theme_editor_nav_down = function(): void {
+function theme_editor_nav_down() : void {
   if (state.bufferId === null) return;
 
   const selectableEntries = getSelectableEntries();
@@ -1533,12 +1541,13 @@ globalThis.theme_editor_nav_down = function(): void {
 
   // Already at last selectable, stay there
   editor.debug(editor.t("status.at_last_field"));
-};
+}
+registerHandler("theme_editor_nav_down", theme_editor_nav_down);
 
 /**
  * Navigate to the previous selectable field/section
  */
-globalThis.theme_editor_nav_up = function(): void {
+function theme_editor_nav_up() : void {
   if (state.bufferId === null) return;
 
   const selectableEntries = getSelectableEntries();
@@ -1557,12 +1566,13 @@ globalThis.theme_editor_nav_up = function(): void {
 
   // Already at first selectable, stay there
   editor.debug(editor.t("status.at_first_field"));
-};
+}
+registerHandler("theme_editor_nav_up", theme_editor_nav_up);
 
 /**
  * Navigate to next element (Tab) - includes both fields and sections
  */
-globalThis.theme_editor_nav_next_section = function(): void {
+function theme_editor_nav_next_section() : void {
   if (state.bufferId === null) return;
 
   const selectableEntries = getSelectableEntries();
@@ -1584,12 +1594,13 @@ globalThis.theme_editor_nav_next_section = function(): void {
     const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
     editor.setBufferCursor(state.bufferId, targetOffset);
   }
-};
+}
+registerHandler("theme_editor_nav_next_section", theme_editor_nav_next_section);
 
 /**
  * Navigate to previous element (Shift+Tab) - includes both fields and sections
  */
-globalThis.theme_editor_nav_prev_section = function(): void {
+function theme_editor_nav_prev_section() : void {
   if (state.bufferId === null) return;
 
   const selectableEntries = getSelectableEntries();
@@ -1612,7 +1623,8 @@ globalThis.theme_editor_nav_prev_section = function(): void {
     const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
     editor.setBufferCursor(state.bufferId, targetOffset);
   }
-};
+}
+registerHandler("theme_editor_nav_prev_section", theme_editor_nav_prev_section);
 
 // =============================================================================
 // Public Commands
@@ -1621,7 +1633,7 @@ globalThis.theme_editor_nav_prev_section = function(): void {
 /**
  * Open the theme editor - prompts user to select theme first
  */
-globalThis.open_theme_editor = async function(): Promise<void> {
+async function open_theme_editor() : Promise<void> {
   editor.debug("[theme_editor] open_theme_editor called");
   if (isThemeEditorOpen()) {
     editor.debug("[theme_editor] already open, focusing");
@@ -1691,7 +1703,8 @@ globalThis.open_theme_editor = async function(): Promise<void> {
   });
 
   editor.setPromptSuggestions(suggestions);
-};
+}
+registerHandler("open_theme_editor", open_theme_editor);
 
 /**
  * Actually open the theme editor with loaded theme data
@@ -1736,7 +1749,7 @@ async function doOpenThemeEditor(): Promise<void> {
 /**
  * Close the theme editor
  */
-globalThis.theme_editor_close = function(): void {
+function theme_editor_close() : void {
   if (!isThemeEditorOpen()) return;
 
   if (state.hasChanges) {
@@ -1752,7 +1765,8 @@ globalThis.theme_editor_close = function(): void {
   }
 
   doCloseEditor();
-};
+}
+registerHandler("theme_editor_close", theme_editor_close);
 
 /**
  * Actually close the editor (called after confirmation or when no changes)
@@ -1776,7 +1790,7 @@ function doCloseEditor(): void {
 /**
  * Handle discard confirmation prompt
  */
-globalThis.onThemeDiscardPromptConfirmed = function(args: {
+function onThemeDiscardPromptConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -1789,18 +1803,19 @@ globalThis.onThemeDiscardPromptConfirmed = function(args: {
     doCloseEditor();
   } else if (response === "save" || args.selected_index === 1) {
     state.closeAfterSave = true;
-    globalThis.theme_editor_save();
+    theme_editor_save();
   } else {
     editor.debug(editor.t("status.cancelled"));
   }
 
   return false;
-};
+}
+registerHandler("onThemeDiscardPromptConfirmed", onThemeDiscardPromptConfirmed);
 
 /**
  * Edit color at cursor
  */
-globalThis.theme_editor_edit_color = function(): void {
+function theme_editor_edit_color() : void {
   const field = getFieldAtCursor();
   if (!field) {
     editor.debug(editor.t("status.no_field"));
@@ -1808,17 +1823,18 @@ globalThis.theme_editor_edit_color = function(): void {
   }
 
   if (field.isSection) {
-    globalThis.theme_editor_toggle_section();
+    theme_editor_toggle_section();
     return;
   }
 
   editColorField(field);
-};
+}
+registerHandler("theme_editor_edit_color", theme_editor_edit_color);
 
 /**
  * Toggle section expansion
  */
-globalThis.theme_editor_toggle_section = function(): void {
+function theme_editor_toggle_section() : void {
   const field = getFieldAtCursor();
   if (!field || !field.isSection) {
     editor.debug(editor.t("status.not_section"));
@@ -1832,12 +1848,13 @@ globalThis.theme_editor_toggle_section = function(): void {
   }
 
   updateDisplay();
-};
+}
+registerHandler("theme_editor_toggle_section", theme_editor_toggle_section);
 
 /**
  * Open a theme (builtin or user) for editing
  */
-globalThis.theme_editor_open = function(): void {
+function theme_editor_open() : void {
   editor.startPrompt(editor.t("prompt.open_theme"), "theme-open");
 
   const suggestions: PromptSuggestion[] = [];
@@ -1870,25 +1887,26 @@ globalThis.theme_editor_open = function(): void {
   }
 
   editor.setPromptSuggestions(suggestions);
-};
+}
+registerHandler("theme_editor_open", theme_editor_open);
 
 /**
  * Save theme
  */
-globalThis.theme_editor_save = async function(): Promise<void> {
+async function theme_editor_save() : Promise<void> {
   // Save cursor path for restoration after save
   state.savedCursorPath = getCurrentFieldPath();
 
   // Built-in themes require Save As
   if (state.isBuiltin) {
     editor.setStatus(editor.t("status.builtin_requires_save_as"));
-    globalThis.theme_editor_save_as();
+    theme_editor_save_as();
     return;
   }
 
   // If theme has never been saved (no path), trigger "Save As" instead
   if (!state.themePath) {
-    globalThis.theme_editor_save_as();
+    theme_editor_save_as();
     return;
   }
 
@@ -1912,12 +1930,13 @@ globalThis.theme_editor_save = async function(): Promise<void> {
   }
 
   await saveTheme(undefined, state.savedCursorPath);
-};
+}
+registerHandler("theme_editor_save", theme_editor_save);
 
 /**
  * Handle overwrite confirmation prompt
  */
-globalThis.onThemeOverwritePromptConfirmed = async function(args: {
+async function onThemeOverwritePromptConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -1942,12 +1961,13 @@ globalThis.onThemeOverwritePromptConfirmed = async function(args: {
   }
 
   return false;
-};
+}
+registerHandler("onThemeOverwritePromptConfirmed", onThemeOverwritePromptConfirmed);
 
 /**
  * Save theme as (new name)
  */
-globalThis.theme_editor_save_as = function(): void {
+function theme_editor_save_as() : void {
   // Save cursor path for restoration after save (if not already saved by theme_editor_save)
   if (!state.savedCursorPath) {
     state.savedCursorPath = getCurrentFieldPath();
@@ -1960,12 +1980,13 @@ globalThis.theme_editor_save_as = function(): void {
     description: editor.t("suggestion.current"),
     value: state.themeName,
   }]);
-};
+}
+registerHandler("theme_editor_save_as", theme_editor_save_as);
 
 /**
  * Reload theme
  */
-globalThis.theme_editor_reload = async function(): Promise<void> {
+async function theme_editor_reload() : Promise<void> {
   if (state.themePath) {
     const themeName = state.themeName;
     const themeData = loadThemeFile(themeName);
@@ -1983,19 +2004,21 @@ globalThis.theme_editor_reload = async function(): Promise<void> {
     updateDisplay();
     editor.setStatus(editor.t("status.reset"));
   }
-};
+}
+registerHandler("theme_editor_reload", theme_editor_reload);
 
 /**
  * Show help
  */
-globalThis.theme_editor_show_help = function(): void {
+function theme_editor_show_help() : void {
   editor.debug(editor.t("status.help"));
-};
+}
+registerHandler("theme_editor_show_help", theme_editor_show_help);
 
 /**
  * Delete the current user theme
  */
-globalThis.theme_editor_delete = function(): void {
+function theme_editor_delete() : void {
   // Can only delete saved user themes
   if (!state.themePath) {
     editor.setStatus(editor.t("status.cannot_delete_unsaved"));
@@ -2009,12 +2032,13 @@ globalThis.theme_editor_delete = function(): void {
     { text: editor.t("prompt.delete_no"), description: "", value: "cancel" },
   ];
   editor.setPromptSuggestions(suggestions);
-};
+}
+registerHandler("theme_editor_delete", theme_editor_delete);
 
 /**
  * Handle delete confirmation prompt
  */
-globalThis.onThemeDeletePromptConfirmed = async function(args: {
+async function onThemeDeletePromptConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -2047,7 +2071,8 @@ globalThis.onThemeDeletePromptConfirmed = async function(args: {
   }
 
   return true;
-};
+}
+registerHandler("onThemeDeletePromptConfirmed", onThemeDeletePromptConfirmed);
 
 // =============================================================================
 // Command Registration

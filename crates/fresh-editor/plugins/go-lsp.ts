@@ -46,7 +46,7 @@ let goLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for Go
  */
-globalThis.on_go_lsp_server_error = function (data: LspServerErrorData): void {
+function on_go_lsp_server_error(data: LspServerErrorData) : void {
   // Only handle Go language errors
   if (data.language !== "go") {
     return;
@@ -68,7 +68,8 @@ globalThis.on_go_lsp_server_error = function (data: LspServerErrorData): void {
   } else {
     editor.setStatus(`Go LSP error: ${data.message}`);
   }
-};
+}
+registerHandler("on_go_lsp_server_error", on_go_lsp_server_error);
 
 // Register hook for LSP server errors
 editor.on("lsp_server_error", "on_go_lsp_server_error");
@@ -76,7 +77,7 @@ editor.on("lsp_server_error", "on_go_lsp_server_error");
 /**
  * Handle status bar click when there's a Go LSP error
  */
-globalThis.on_go_lsp_status_clicked = function (
+function on_go_lsp_status_clicked(
   data: LspStatusClickedData
 ): void {
   // Only handle Go language clicks when there's an error
@@ -97,7 +98,8 @@ globalThis.on_go_lsp_status_clicked = function (
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-};
+}
+registerHandler("on_go_lsp_status_clicked", on_go_lsp_status_clicked);
 
 // Register hook for status bar clicks
 editor.on("lsp_status_clicked", "on_go_lsp_status_clicked");
@@ -105,7 +107,7 @@ editor.on("lsp_status_clicked", "on_go_lsp_status_clicked");
 /**
  * Handle action popup results for Go LSP help
  */
-globalThis.on_go_lsp_action_result = function (
+function on_go_lsp_action_result(
   data: ActionPopupResultData
 ): void {
   // Only handle our popup
@@ -135,7 +137,8 @@ globalThis.on_go_lsp_action_result = function (
     default:
       editor.debug(`go-lsp: Unknown action: ${data.action_id}`);
   }
-};
+}
+registerHandler("on_go_lsp_action_result", on_go_lsp_action_result);
 
 // Register hook for action popup results
 editor.on("action_popup_result", "on_go_lsp_action_result");

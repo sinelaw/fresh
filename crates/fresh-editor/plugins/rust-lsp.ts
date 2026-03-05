@@ -48,7 +48,7 @@ let rustLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for Rust
  */
-globalThis.on_rust_lsp_server_error = function (
+function on_rust_lsp_server_error(
   data: LspServerErrorData
 ): void {
   // Only handle Rust language errors
@@ -72,7 +72,8 @@ globalThis.on_rust_lsp_server_error = function (
   } else {
     editor.setStatus(`Rust LSP error: ${data.message}`);
   }
-};
+}
+registerHandler("on_rust_lsp_server_error", on_rust_lsp_server_error);
 
 // Register hook for LSP server errors
 editor.on("lsp_server_error", "on_rust_lsp_server_error");
@@ -80,7 +81,7 @@ editor.on("lsp_server_error", "on_rust_lsp_server_error");
 /**
  * Handle status bar click when there's a Rust LSP error
  */
-globalThis.on_rust_lsp_status_clicked = function (
+function on_rust_lsp_status_clicked(
   data: LspStatusClickedData
 ): void {
   editor.debug(
@@ -110,7 +111,8 @@ globalThis.on_rust_lsp_status_clicked = function (
     ],
   });
   editor.debug(`rust-lsp: showActionPopup returned ${result}`);
-};
+}
+registerHandler("on_rust_lsp_status_clicked", on_rust_lsp_status_clicked);
 
 // Register hook for status bar clicks
 editor.on("lsp_status_clicked", "on_rust_lsp_status_clicked");
@@ -118,7 +120,7 @@ editor.on("lsp_status_clicked", "on_rust_lsp_status_clicked");
 /**
  * Handle action popup results for Rust LSP help
  */
-globalThis.on_rust_lsp_action_result = function (
+function on_rust_lsp_action_result(
   data: ActionPopupResultData
 ): void {
   editor.debug(
@@ -158,7 +160,8 @@ globalThis.on_rust_lsp_action_result = function (
     default:
       editor.debug(`rust-lsp: Unknown action: ${data.action_id}`);
   }
-};
+}
+registerHandler("on_rust_lsp_action_result", on_rust_lsp_action_result);
 
 // Register hook for action popup results
 editor.on("action_popup_result", "on_rust_lsp_action_result");

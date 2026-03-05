@@ -123,7 +123,7 @@ interface ActionPopupResultData {
   action_id: string;
 }
 
-globalThis.tour_on_action_popup_result = function (data: ActionPopupResultData): void {
+function tour_on_action_popup_result(data: ActionPopupResultData) : void {
   if (data.popup_id !== TOUR_POPUP_ID) return;
 
   switch (data.action_id) {
@@ -137,7 +137,8 @@ globalThis.tour_on_action_popup_result = function (data: ActionPopupResultData):
       exitTour();
       break;
   }
-};
+}
+registerHandler("tour_on_action_popup_result", tour_on_action_popup_result);
 
 // ============================================================================
 // Overlay Rendering
@@ -337,26 +338,30 @@ async function prevStep(): Promise<void> {
 // Command Handlers
 // ============================================================================
 
-globalThis.tour_load = async function (): Promise<void> {
+async function tour_load() : Promise<void> {
   // Prompt for tour file
   const result = await editor.prompt("Enter tour file path:", ".fresh-tour.json");
 
   if (result) {
     await loadTour(result);
   }
-};
+}
+registerHandler("tour_load", tour_load);
 
-globalThis.tour_next = async function (): Promise<void> {
+async function tour_next() : Promise<void> {
   await nextStep();
-};
+}
+registerHandler("tour_next", tour_next);
 
-globalThis.tour_prev = async function (): Promise<void> {
+async function tour_prev() : Promise<void> {
   await prevStep();
-};
+}
+registerHandler("tour_prev", tour_prev);
 
-globalThis.tour_exit = function (): void {
+function tour_exit() : void {
   exitTour();
-};
+}
+registerHandler("tour_exit", tour_exit);
 
 // ============================================================================
 // Registration

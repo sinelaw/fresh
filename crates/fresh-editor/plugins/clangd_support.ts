@@ -50,7 +50,7 @@ function setClangdStatus(message: string): void {
   editor.setStatus(message);
 }
 
-globalThis.clangdSwitchSourceHeader = async function(): Promise<void> {
+async function clangdSwitchSourceHeader() : Promise<void> {
   const bufferId = editor.getActiveBufferId();
   const path = editor.getBufferPath(bufferId);
   if (!path) {
@@ -82,7 +82,8 @@ globalThis.clangdSwitchSourceHeader = async function(): Promise<void> {
     setClangdStatus(editor.t("status.switch_failed", { error: String(err) }));
     editor.debug(`clangdSwitchSourceHeader error: ${err}`);
   }
-};
+}
+registerHandler("clangdSwitchSourceHeader", clangdSwitchSourceHeader);
 
 const projectPanel = new PanelManager(editor, "Clangd project setup", "clangd-project-setup");
 
@@ -226,7 +227,7 @@ function analyzeProject(root: string | null) {
   return status;
 }
 
-globalThis.clangdProjectSetup = async function (): Promise<void> {
+async function clangdProjectSetup() : Promise<void> {
   const projectRoot = detectProjectRoot();
   const summary = analyzeProject(projectRoot);
   const entries = summary.map((line) => ({
@@ -237,7 +238,8 @@ globalThis.clangdProjectSetup = async function (): Promise<void> {
     entries,
     ratio: 0.3,
   });
-};
+}
+registerHandler("clangdProjectSetup", clangdProjectSetup);
 
 editor.registerCommand(
   "%cmd.project_setup",
@@ -246,7 +248,7 @@ editor.registerCommand(
   null
 );
 
-globalThis.clangdOpenProjectConfig = function(): void {
+function clangdOpenProjectConfig() : void {
   const bufferId = editor.getActiveBufferId();
   const targets = new Set<string>();
   const bufferPath = editor.getBufferPath(bufferId);
@@ -273,7 +275,8 @@ globalThis.clangdOpenProjectConfig = function(): void {
   if (!opened) {
     setClangdStatus(editor.t("status.config_not_found"));
   }
-};
+}
+registerHandler("clangdOpenProjectConfig", clangdOpenProjectConfig);
 
 editor.registerCommand(
   "%cmd.switch_source_header",
@@ -290,7 +293,7 @@ editor.registerCommand(
 );
 
 
-globalThis.onClangdCustomNotification = function(payload: {
+function onClangdCustomNotification(payload: {
   language: string;
   method: string;
   params: Record<string, unknown> | null;
@@ -311,6 +314,7 @@ globalThis.onClangdCustomNotification = function(payload: {
     const usage = (payload.params as any).used ?? "unknown";
     editor.debug(`Clangd memory usage: ${usage}`);
   }
-};
+}
+registerHandler("onClangdCustomNotification", onClangdCustomNotification);
 
 editor.on("lsp/custom_notification", "onClangdCustomNotification");

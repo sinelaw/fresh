@@ -317,7 +317,7 @@ async function updateGitGutter(bufferId: number): Promise<void> {
 /**
  * Handle after file open - initialize git state and update indicators
  */
-globalThis.onGitGutterAfterFileOpen = function (args: {
+function onGitGutterAfterFileOpen(args: {
   buffer_id: number;
   path: string;
 }): boolean {
@@ -339,12 +339,13 @@ globalThis.onGitGutterAfterFileOpen = function (args: {
   updateGitGutter(bufferId);
 
   return true;
-};
+}
+registerHandler("onGitGutterAfterFileOpen", onGitGutterAfterFileOpen);
 
 /**
  * Handle buffer activation - update if we have state but indicators might be stale
  */
-globalThis.onGitGutterBufferActivated = function (args: {
+function onGitGutterBufferActivated(args: {
   buffer_id: number;
 }): boolean {
   const bufferId = args.buffer_id;
@@ -365,12 +366,13 @@ globalThis.onGitGutterBufferActivated = function (args: {
   // (they update on file open and save)
 
   return true;
-};
+}
+registerHandler("onGitGutterBufferActivated", onGitGutterBufferActivated);
 
 /**
  * Handle after file save - refresh indicators
  */
-globalThis.onGitGutterAfterSave = function (args: {
+function onGitGutterAfterSave(args: {
   buffer_id: number;
   path: string;
 }): boolean {
@@ -392,7 +394,8 @@ globalThis.onGitGutterAfterSave = function (args: {
   updateGitGutter(bufferId);
 
   return true;
-};
+}
+registerHandler("onGitGutterAfterSave", onGitGutterAfterSave);
 
 // Note: Git diff compares the file on disk, not the in-memory buffer.
 // Line indicators automatically track position changes via byte-position markers.
@@ -401,12 +404,13 @@ globalThis.onGitGutterAfterSave = function (args: {
 /**
  * Handle buffer closed - cleanup state
  */
-globalThis.onGitGutterBufferClosed = function (args: {
+function onGitGutterBufferClosed(args: {
   buffer_id: number;
 }): boolean {
   bufferStates.delete(args.buffer_id);
   return true;
-};
+}
+registerHandler("onGitGutterBufferClosed", onGitGutterBufferClosed);
 
 // =============================================================================
 // Commands
@@ -415,7 +419,7 @@ globalThis.onGitGutterBufferClosed = function (args: {
 /**
  * Manually refresh git gutter for the current buffer
  */
-globalThis.git_gutter_refresh = function (): void {
+function git_gutter_refresh() : void {
   const bufferId = editor.getActiveBufferId();
   const filePath = editor.getBufferPath(bufferId);
 
@@ -439,7 +443,8 @@ globalThis.git_gutter_refresh = function (): void {
     const count = state?.hunks.length || 0;
     editor.setStatus(editor.t("status.changes", { count: String(count) }));
   });
-};
+}
+registerHandler("git_gutter_refresh", git_gutter_refresh);
 
 // =============================================================================
 // Registration

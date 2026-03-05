@@ -148,7 +148,7 @@ async function readRestOfLine(bufferId: number, cursorPos: number): Promise<stri
 // Enter handler: auto-continue list items or match indentation
 // ---------------------------------------------------------------------------
 
-globalThis.md_src_enter = async function (): Promise<void> {
+async function md_src_enter() : Promise<void> {
   const bufferId = editor.getActiveBufferId();
   if (!bufferId) {
     editor.executeAction("insert_newline");
@@ -203,13 +203,14 @@ globalThis.md_src_enter = async function (): Promise<void> {
     }
   }
   editor.insertAtCursor("\n" + indent);
-};
+}
+registerHandler("md_src_enter", md_src_enter);
 
 // ---------------------------------------------------------------------------
 // Tab handler: indent + cycle bullet on blank list items, else insert spaces
 // ---------------------------------------------------------------------------
 
-globalThis.md_src_tab = async function (): Promise<void> {
+async function md_src_tab() : Promise<void> {
   const bufferId = editor.getActiveBufferId();
   if (!bufferId) {
     editor.insertAtCursor(" ".repeat(TAB_SIZE));
@@ -249,13 +250,14 @@ globalThis.md_src_tab = async function (): Promise<void> {
 
   // Default: insert spaces
   editor.insertAtCursor(" ".repeat(TAB_SIZE));
-};
+}
+registerHandler("md_src_tab", md_src_tab);
 
 // ---------------------------------------------------------------------------
 // Shift+Tab handler: de-indent + reverse-cycle bullet on blank list items
 // ---------------------------------------------------------------------------
 
-globalThis.md_src_shift_tab = async function (): Promise<void> {
+async function md_src_shift_tab() : Promise<void> {
   const bufferId = editor.getActiveBufferId();
   if (!bufferId) {
     editor.executeAction("dedent_selection");
@@ -300,7 +302,8 @@ globalThis.md_src_shift_tab = async function (): Promise<void> {
 
   // Default: fall through to built-in dedent
   editor.executeAction("dedent_selection");
-};
+}
+registerHandler("md_src_shift_tab", md_src_shift_tab);
 
 // ---------------------------------------------------------------------------
 // Mode definition
@@ -340,13 +343,15 @@ function updateMarkdownMode(): void {
   }
 }
 
-globalThis.md_src_on_buffer_activated = function (): void {
+function md_src_on_buffer_activated() : void {
   updateMarkdownMode();
-};
+}
+registerHandler("md_src_on_buffer_activated", md_src_on_buffer_activated);
 
-globalThis.md_src_on_language_changed = function (): void {
+function md_src_on_language_changed() : void {
   updateMarkdownMode();
-};
+}
+registerHandler("md_src_on_language_changed", md_src_on_language_changed);
 
 editor.on("buffer_activated", "md_src_on_buffer_activated");
 editor.on("language_changed", "md_src_on_language_changed");

@@ -2559,7 +2559,7 @@ function getCurrentFocusIndex(): number {
 }
 
 // Navigation commands
-globalThis.pkg_nav_up = function(): void {
+function pkg_nav_up() : void {
   if (!pkgState.isOpen) return;
 
   const items = getFilteredItems();
@@ -2569,9 +2569,10 @@ globalThis.pkg_nav_up = function(): void {
   pkgState.selectedIndex = Math.max(0, pkgState.selectedIndex - 1);
   pkgState.focus = { type: "list" };
   updatePkgManagerView();
-};
+}
+registerHandler("pkg_nav_up", pkg_nav_up);
 
-globalThis.pkg_nav_down = function(): void {
+function pkg_nav_down() : void {
   if (!pkgState.isOpen) return;
 
   const items = getFilteredItems();
@@ -2581,9 +2582,10 @@ globalThis.pkg_nav_down = function(): void {
   pkgState.selectedIndex = Math.min(items.length - 1, pkgState.selectedIndex + 1);
   pkgState.focus = { type: "list" };
   updatePkgManagerView();
-};
+}
+registerHandler("pkg_nav_down", pkg_nav_down);
 
-globalThis.pkg_next_button = function(): void {
+function pkg_next_button() : void {
   if (!pkgState.isOpen) return;
 
   const order = getFocusOrder();
@@ -2591,9 +2593,10 @@ globalThis.pkg_next_button = function(): void {
   const nextIdx = (currentIdx + 1) % order.length;
   pkgState.focus = order[nextIdx];
   updatePkgManagerView();
-};
+}
+registerHandler("pkg_next_button", pkg_next_button);
 
-globalThis.pkg_prev_button = function(): void {
+function pkg_prev_button() : void {
   if (!pkgState.isOpen) return;
 
   const order = getFocusOrder();
@@ -2601,9 +2604,10 @@ globalThis.pkg_prev_button = function(): void {
   const prevIdx = (currentIdx - 1 + order.length) % order.length;
   pkgState.focus = order[prevIdx];
   updatePkgManagerView();
-};
+}
+registerHandler("pkg_prev_button", pkg_prev_button);
 
-globalThis.pkg_activate = async function(): Promise<void> {
+async function pkg_activate() : Promise<void> {
   if (!pkgState.isOpen) return;
 
   const focus = pkgState.focus;
@@ -2628,7 +2632,7 @@ globalThis.pkg_activate = async function(): Promise<void> {
 
   // Handle search button - open search prompt with current query
   if (focus.type === "search") {
-    globalThis.pkg_search();
+    pkg_search();
     return;
   }
 
@@ -2679,9 +2683,10 @@ globalThis.pkg_activate = async function(): Promise<void> {
       updatePkgManagerView();
     }
   }
-};
+}
+registerHandler("pkg_activate", pkg_activate);
 
-globalThis.pkg_back_or_close = function(): void {
+function pkg_back_or_close() : void {
   if (!pkgState.isOpen) return;
 
   // If focus is on action buttons, go back to list
@@ -2693,19 +2698,22 @@ globalThis.pkg_back_or_close = function(): void {
 
   // Otherwise close
   closePackageManager();
-};
+}
+registerHandler("pkg_back_or_close", pkg_back_or_close);
 
-globalThis.pkg_scroll_up = function(): void {
+function pkg_scroll_up() : void {
   // Just move cursor up in detail view
   editor.executeAction("move_up");
-};
+}
+registerHandler("pkg_scroll_up", pkg_scroll_up);
 
-globalThis.pkg_scroll_down = function(): void {
+function pkg_scroll_down() : void {
   // Just move cursor down in detail view
   editor.executeAction("move_down");
-};
+}
+registerHandler("pkg_scroll_down", pkg_scroll_down);
 
-globalThis.pkg_search = function(): void {
+function pkg_search() : void {
   if (!pkgState.isOpen) return;
 
   // Pre-fill with current search query so typing replaces it
@@ -2714,9 +2722,10 @@ globalThis.pkg_search = function(): void {
   } else {
     editor.startPrompt("Search packages: ", "pkg-search");
   }
-};
+}
+registerHandler("pkg_search", pkg_search);
 
-globalThis.onPkgSearchConfirmed = function(args: {
+function onPkgSearchConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -2729,7 +2738,8 @@ globalThis.onPkgSearchConfirmed = function(args: {
   updatePkgManagerView();
 
   return true;
-};
+}
+registerHandler("onPkgSearchConfirmed", onPkgSearchConfirmed);
 
 editor.on("prompt_confirmed", "onPkgSearchConfirmed");
 
@@ -2755,7 +2765,7 @@ const registryFinder = new Finder<[string, RegistryEntry]>(editor, {
 /**
  * Browse and install plugins from registry
  */
-globalThis.pkg_install_plugin = async function(): Promise<void> {
+async function pkg_install_plugin() : Promise<void> {
   editor.debug("[pkg] pkg_install_plugin called");
   try {
     // Always sync registry to ensure latest plugins are available
@@ -2785,12 +2795,13 @@ globalThis.pkg_install_plugin = async function(): Promise<void> {
     editor.debug(`[pkg] Error in pkg_install_plugin: ${e}`);
     editor.setStatus(`Error: ${e}`);
   }
-};
+}
+registerHandler("pkg_install_plugin", pkg_install_plugin);
 
 /**
  * Browse and install themes from registry
  */
-globalThis.pkg_install_theme = async function(): Promise<void> {
+async function pkg_install_theme() : Promise<void> {
   editor.debug("[pkg] pkg_install_theme called");
   try {
     // Always sync registry to ensure latest themes are available
@@ -2816,16 +2827,18 @@ globalThis.pkg_install_theme = async function(): Promise<void> {
     editor.debug(`[pkg] Error in pkg_install_theme: ${e}`);
     editor.setStatus(`Error: ${e}`);
   }
-};
+}
+registerHandler("pkg_install_theme", pkg_install_theme);
 
 /**
  * Install from git URL or local path
  */
-globalThis.pkg_install_url = function(): void {
+function pkg_install_url() : void {
   editor.startPrompt("Git URL or local path:", "pkg-install-url");
-};
+}
+registerHandler("pkg_install_url", pkg_install_url);
 
-globalThis.onPkgInstallUrlConfirmed = async function(args: {
+async function onPkgInstallUrlConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -2840,28 +2853,31 @@ globalThis.onPkgInstallUrlConfirmed = async function(args: {
   }
 
   return true;
-};
+}
+registerHandler("onPkgInstallUrlConfirmed", onPkgInstallUrlConfirmed);
 
 editor.on("prompt_confirmed", "onPkgInstallUrlConfirmed");
 
 /**
  * Open the package manager UI
  */
-globalThis.pkg_list = async function(): Promise<void> {
+async function pkg_list() : Promise<void> {
   await openPackageManager();
-};
+}
+registerHandler("pkg_list", pkg_list);
 
 /**
  * Update all packages
  */
-globalThis.pkg_update_all = async function(): Promise<void> {
+async function pkg_update_all() : Promise<void> {
   await updateAllPackages();
-};
+}
+registerHandler("pkg_update_all", pkg_update_all);
 
 /**
  * Update a specific package
  */
-globalThis.pkg_update = function(): void {
+function pkg_update() : void {
   const plugins = getInstalledPackages("plugin");
   const themes = getInstalledPackages("theme");
   const all = [...plugins, ...themes];
@@ -2895,12 +2911,13 @@ globalThis.pkg_update = function(): void {
       load: async () => all
     }
   });
-};
+}
+registerHandler("pkg_update", pkg_update);
 
 /**
  * Remove a package
  */
-globalThis.pkg_remove = function(): void {
+function pkg_remove() : void {
   const plugins = getInstalledPackages("plugin");
   const themes = getInstalledPackages("theme");
   const all = [...plugins, ...themes];
@@ -2930,19 +2947,21 @@ globalThis.pkg_remove = function(): void {
       load: async () => all
     }
   });
-};
+}
+registerHandler("pkg_remove", pkg_remove);
 
 /**
  * Sync registry
  */
-globalThis.pkg_sync = async function(): Promise<void> {
+async function pkg_sync() : Promise<void> {
   await syncRegistry();
-};
+}
+registerHandler("pkg_sync", pkg_sync);
 
 /**
  * Show outdated packages
  */
-globalThis.pkg_outdated = async function(): Promise<void> {
+async function pkg_outdated() : Promise<void> {
   const plugins = getInstalledPackages("plugin");
   const themes = getInstalledPackages("theme");
   const all = [...plugins, ...themes];
@@ -2996,21 +3015,24 @@ globalThis.pkg_outdated = async function(): Promise<void> {
       load: async () => outdated
     }
   });
-};
+}
+registerHandler("pkg_outdated", pkg_outdated);
 
 /**
  * Generate lockfile
  */
-globalThis.pkg_lock = async function(): Promise<void> {
+async function pkg_lock() : Promise<void> {
   await generateLockfile();
-};
+}
+registerHandler("pkg_lock", pkg_lock);
 
 /**
  * Install from lockfile
  */
-globalThis.pkg_install_lock = async function(): Promise<void> {
+async function pkg_install_lock() : Promise<void> {
   await installFromLockfile();
-};
+}
+registerHandler("pkg_install_lock", pkg_install_lock);
 
 // =============================================================================
 // Command Registration

@@ -10,7 +10,7 @@
  */
 
 // Global action: Display buffer information
-globalThis.show_buffer_info = function (): void {
+function show_buffer_info() : void {
   const bufferId = editor.getActiveBufferId();
   const path = editor.getBufferPath(bufferId);
   const length = editor.getBufferLength(bufferId);
@@ -23,10 +23,11 @@ globalThis.show_buffer_info = function (): void {
 
   editor.setStatus(status);
   editor.debug(`Buffer info: ${status}`);
-};
+}
+registerHandler("show_buffer_info", show_buffer_info);
 
 // Global action: Insert timestamp at cursor
-globalThis.insert_timestamp = function (): void {
+function insert_timestamp() : void {
   const bufferId = editor.getActiveBufferId();
   const cursorPos = editor.getCursorPosition();
   const timestamp = new Date().toISOString();
@@ -37,10 +38,11 @@ globalThis.insert_timestamp = function (): void {
   } else {
     editor.setStatus("Failed to insert timestamp");
   }
-};
+}
+registerHandler("insert_timestamp", insert_timestamp);
 
 // Global action: Highlight current line (demo overlay)
-globalThis.highlight_region = function (): void {
+function highlight_region() : void {
   const bufferId = editor.getActiveBufferId();
   const cursorPos = editor.getCursorPosition();
 
@@ -56,20 +58,22 @@ globalThis.highlight_region = function (): void {
   if (success) {
     editor.setStatus(`Highlighted region ${start}-${end}`);
   }
-};
+}
+registerHandler("highlight_region", highlight_region);
 
 // Global action: Remove highlight
-globalThis.clear_highlight = function (): void {
+function clear_highlight() : void {
   const bufferId = editor.getActiveBufferId();
   // Clear all overlays in the "demo" namespace
   const success = editor.clearNamespace(bufferId, "demo");
   if (success) {
     editor.setStatus("Cleared highlight");
   }
-};
+}
+registerHandler("clear_highlight", clear_highlight);
 
 // Global async action: Demonstrate async/await
-globalThis.async_demo = async function (): Promise<void> {
+async function async_demo() : Promise<void> {
   editor.setStatus("Starting async operation...");
 
   // Simulate some async work
@@ -79,7 +83,8 @@ globalThis.async_demo = async function (): Promise<void> {
   const length = editor.getBufferLength(bufferId);
 
   editor.setStatus(`Async operation complete! Buffer has ${length} bytes`);
-};
+}
+registerHandler("async_demo", async_demo);
 
 // Log that plugin loaded
 editor.debug("Hello World plugin loaded!");

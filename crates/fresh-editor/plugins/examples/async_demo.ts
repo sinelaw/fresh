@@ -6,7 +6,7 @@
  */
 
 // Git status
-globalThis.async_git_status = async function(): Promise<void> {
+async function async_git_status() : Promise<void> {
   editor.setStatus("Running git status...");
 
   try {
@@ -24,7 +24,8 @@ globalThis.async_git_status = async function(): Promise<void> {
   } catch (e) {
     editor.setStatus(`Git status error: ${e}`);
   }
-};
+}
+registerHandler("async_git_status", async_git_status);
 
 editor.registerCommand(
   "Async Demo: Git Status",
@@ -34,7 +35,7 @@ editor.registerCommand(
 );
 
 // Current directory
-globalThis.async_pwd = async function(): Promise<void> {
+async function async_pwd() : Promise<void> {
   try {
     const result = await editor.spawnProcess("pwd");
     if (result.exit_code === 0) {
@@ -46,7 +47,8 @@ globalThis.async_pwd = async function(): Promise<void> {
   } catch (e) {
     editor.setStatus(`pwd error: ${e}`);
   }
-};
+}
+registerHandler("async_pwd", async_pwd);
 
 editor.registerCommand(
   "Async Demo: Current Directory",
@@ -56,7 +58,7 @@ editor.registerCommand(
 );
 
 // List files
-globalThis.async_ls = async function(): Promise<void> {
+async function async_ls() : Promise<void> {
   editor.setStatus("Listing files...");
 
   try {
@@ -70,7 +72,8 @@ globalThis.async_ls = async function(): Promise<void> {
   } catch (e) {
     editor.setStatus(`ls error: ${e}`);
   }
-};
+}
+registerHandler("async_ls", async_ls);
 
 editor.registerCommand(
   "Async Demo: List Files",
@@ -80,7 +83,7 @@ editor.registerCommand(
 );
 
 // Git branch
-globalThis.async_git_branch = async function(): Promise<void> {
+async function async_git_branch() : Promise<void> {
   try {
     const result = await editor.spawnProcess("git", ["branch", "--show-current"]);
     if (result.exit_code === 0) {
@@ -96,7 +99,8 @@ globalThis.async_git_branch = async function(): Promise<void> {
   } catch (e) {
     editor.setStatus(`Git branch error: ${e}`);
   }
-};
+}
+registerHandler("async_git_branch", async_git_branch);
 
 editor.registerCommand(
   "Async Demo: Git Branch",
@@ -106,14 +110,15 @@ editor.registerCommand(
 );
 
 // Echo test
-globalThis.async_echo = async function(): Promise<void> {
+async function async_echo() : Promise<void> {
   try {
     const result = await editor.spawnProcess("echo", ["Hello from async process!"]);
     editor.setStatus(`Echo output: ${result.stdout.trim()}`);
   } catch (e) {
     editor.setStatus(`Echo error: ${e}`);
   }
-};
+}
+registerHandler("async_echo", async_echo);
 
 editor.registerCommand(
   "Async Demo: Echo Test",
@@ -123,7 +128,7 @@ editor.registerCommand(
 );
 
 // With working directory
-globalThis.async_with_cwd = async function(): Promise<void> {
+async function async_with_cwd() : Promise<void> {
   try {
     const result = await editor.spawnProcess("pwd", [], "/tmp");
     const dir = result.stdout.trim();
@@ -131,7 +136,8 @@ globalThis.async_with_cwd = async function(): Promise<void> {
   } catch (e) {
     editor.setStatus(`pwd error: ${e}`);
   }
-};
+}
+registerHandler("async_with_cwd", async_with_cwd);
 
 editor.registerCommand(
   "Async Demo: With Working Dir",
@@ -141,7 +147,7 @@ editor.registerCommand(
 );
 
 // Error handling
-globalThis.async_error = async function(): Promise<void> {
+async function async_error() : Promise<void> {
   try {
     const result = await editor.spawnProcess("this_command_does_not_exist");
     if (result.exit_code !== 0) {
@@ -152,7 +158,8 @@ globalThis.async_error = async function(): Promise<void> {
   } catch (e) {
     editor.setStatus(`Command failed with error: ${e}`);
   }
-};
+}
+registerHandler("async_error", async_error);
 
 editor.registerCommand(
   "Async Demo: Error Handling",

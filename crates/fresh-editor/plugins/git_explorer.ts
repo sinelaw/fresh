@@ -141,17 +141,20 @@ async function refreshGitExplorerDecorations() {
   }
 }
 
-globalThis.onGitExplorerAfterFileOpen = () => {
+function onGitExplorerAfterFileOpen() {
   refreshGitExplorerDecorations();
-};
+}
+registerHandler("onGitExplorerAfterFileOpen", onGitExplorerAfterFileOpen);
 
-globalThis.onGitExplorerAfterFileSave = () => {
+function onGitExplorerAfterFileSave() {
   refreshGitExplorerDecorations();
-};
+}
+registerHandler("onGitExplorerAfterFileSave", onGitExplorerAfterFileSave);
 
-globalThis.onGitExplorerEditorInitialized = () => {
+function onGitExplorerEditorInitialized() {
   refreshGitExplorerDecorations();
-};
+}
+registerHandler("onGitExplorerEditorInitialized", onGitExplorerEditorInitialized);
 
 editor.on("after_file_open", "onGitExplorerAfterFileOpen");
 editor.on("after_file_save", "onGitExplorerAfterFileSave");

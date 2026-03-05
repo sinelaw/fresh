@@ -46,7 +46,7 @@ let jsonLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for JSON
  */
-globalThis.on_json_lsp_server_error = function (
+function on_json_lsp_server_error(
   data: LspServerErrorData
 ): void {
   // Only handle JSON language errors
@@ -70,7 +70,8 @@ globalThis.on_json_lsp_server_error = function (
   } else {
     editor.setStatus(`JSON LSP error: ${data.message}`);
   }
-};
+}
+registerHandler("on_json_lsp_server_error", on_json_lsp_server_error);
 
 // Register hook for LSP server errors
 editor.on("lsp_server_error", "on_json_lsp_server_error");
@@ -78,7 +79,7 @@ editor.on("lsp_server_error", "on_json_lsp_server_error");
 /**
  * Handle status bar click when there's a JSON LSP error
  */
-globalThis.on_json_lsp_status_clicked = function (
+function on_json_lsp_status_clicked(
   data: LspStatusClickedData
 ): void {
   // Only handle JSON language clicks when there's an error
@@ -99,7 +100,8 @@ globalThis.on_json_lsp_status_clicked = function (
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-};
+}
+registerHandler("on_json_lsp_status_clicked", on_json_lsp_status_clicked);
 
 // Register hook for status bar clicks
 editor.on("lsp_status_clicked", "on_json_lsp_status_clicked");
@@ -107,7 +109,7 @@ editor.on("lsp_status_clicked", "on_json_lsp_status_clicked");
 /**
  * Handle action popup results for JSON LSP help
  */
-globalThis.on_json_lsp_action_result = function (
+function on_json_lsp_action_result(
   data: ActionPopupResultData
 ): void {
   // Only handle our popup
@@ -137,7 +139,8 @@ globalThis.on_json_lsp_action_result = function (
     default:
       editor.debug(`json-lsp: Unknown action: ${data.action_id}`);
   }
-};
+}
+registerHandler("on_json_lsp_action_result", on_json_lsp_action_result);
 
 // Register hook for action popup results
 editor.on("action_popup_result", "on_json_lsp_action_result");

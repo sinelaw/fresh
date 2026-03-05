@@ -23,7 +23,7 @@ editor.defineMode(
 );
 
 // Register actions for the mode
-globalThis.demo_goto_item = () => {
+function demo_goto_item() {
   const bufferId = editor.getActiveBufferId();
   const props = editor.getTextPropertiesAtCursor(bufferId);
 
@@ -38,22 +38,26 @@ globalThis.demo_goto_item = () => {
   } else {
     editor.setStatus("No properties at cursor position");
   }
-};
+}
+registerHandler("demo_goto_item", demo_goto_item);
 
-globalThis.demo_next_item = () => {
+function demo_next_item() {
   editor.setStatus("Next item (not implemented in demo)");
-};
+}
+registerHandler("demo_next_item", demo_next_item);
 
-globalThis.demo_prev_item = () => {
+function demo_prev_item() {
   editor.setStatus("Previous item (not implemented in demo)");
-};
+}
+registerHandler("demo_prev_item", demo_prev_item);
 
-globalThis.demo_close_buffer = () => {
+function demo_close_buffer() {
   editor.setStatus("Close buffer (not implemented in demo)");
-};
+}
+registerHandler("demo_close_buffer", demo_close_buffer);
 
 // Main action: show the virtual buffer
-globalThis.show_virtual_buffer_demo = async () => {
+async function show_virtual_buffer_demo() {
   editor.setStatus("Creating virtual buffer demo...");
 
   // Create sample diagnostic entries
@@ -110,7 +114,8 @@ globalThis.show_virtual_buffer_demo = async () => {
     const errorMessage = error instanceof Error ? error.message : String(error);
     editor.setStatus(`Failed to create virtual buffer: ${errorMessage}`);
   }
-};
+}
+registerHandler("show_virtual_buffer_demo", show_virtual_buffer_demo);
 
 // Log that the plugin loaded
 editor.debug("Virtual buffer demo plugin loaded");

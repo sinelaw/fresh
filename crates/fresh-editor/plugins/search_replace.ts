@@ -320,21 +320,22 @@ async function executeReplacements(): Promise<void> {
   }
 
   // Close panel after replacement
-  globalThis.search_replace_close();
+  search_replace_close();
 }
 
 // Start search/replace workflow
-globalThis.start_search_replace = function(): void {
+function start_search_replace() : void {
   searchResults = [];
   searchPattern = "";
   replaceText = "";
 
   editor.startPrompt(editor.t("prompt.search"), "search-replace-search");
   editor.setStatus(editor.t("status.enter_pattern"));
-};
+}
+registerHandler("start_search_replace", start_search_replace);
 
 // Handle search prompt confirmation
-globalThis.onSearchReplaceSearchConfirmed = function(args: {
+function onSearchReplaceSearchConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -354,10 +355,11 @@ globalThis.onSearchReplaceSearchConfirmed = function(args: {
   // Ask for replacement text
   editor.startPrompt(editor.t("prompt.replace"), "search-replace-replace");
   return true;
-};
+}
+registerHandler("onSearchReplaceSearchConfirmed", onSearchReplaceSearchConfirmed);
 
 // Handle replace prompt confirmation
-globalThis.onSearchReplaceReplaceConfirmed = async function(args: {
+async function onSearchReplaceReplaceConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -373,10 +375,11 @@ globalThis.onSearchReplaceReplaceConfirmed = async function(args: {
   await showResultsPanel();
 
   return true;
-};
+}
+registerHandler("onSearchReplaceReplaceConfirmed", onSearchReplaceReplaceConfirmed);
 
 // Handle prompt cancellation
-globalThis.onSearchReplacePromptCancelled = function(args: {
+function onSearchReplacePromptCancelled(args: {
   prompt_type: string;
 }): boolean {
   if (args.prompt_type !== "search-replace-search" &&
@@ -386,10 +389,11 @@ globalThis.onSearchReplacePromptCancelled = function(args: {
 
   editor.setStatus(editor.t("status.cancelled"));
   return true;
-};
+}
+registerHandler("onSearchReplacePromptCancelled", onSearchReplacePromptCancelled);
 
 // Toggle selection of current item
-globalThis.search_replace_toggle_item = function(): void {
+function search_replace_toggle_item() : void {
   if (resultsBufferId === null || searchResults.length === 0) return;
 
   const props = editor.getTextPropertiesAtCursor(resultsBufferId);
@@ -402,28 +406,31 @@ globalThis.search_replace_toggle_item = function(): void {
       editor.setStatus(editor.t("status.selected_count", { selected: String(selected), total: String(searchResults.length) }));
     }
   }
-};
+}
+registerHandler("search_replace_toggle_item", search_replace_toggle_item);
 
 // Select all items
-globalThis.search_replace_select_all = function(): void {
+function search_replace_select_all() : void {
   for (const result of searchResults) {
     result.selected = true;
   }
   updatePanelContent();
   editor.setStatus(editor.t("status.selected_count", { selected: String(searchResults.length), total: String(searchResults.length) }));
-};
+}
+registerHandler("search_replace_select_all", search_replace_select_all);
 
 // Select no items
-globalThis.search_replace_select_none = function(): void {
+function search_replace_select_none() : void {
   for (const result of searchResults) {
     result.selected = false;
   }
   updatePanelContent();
   editor.setStatus(editor.t("status.selected_count", { selected: "0", total: String(searchResults.length) }));
-};
+}
+registerHandler("search_replace_select_none", search_replace_select_none);
 
 // Execute replacement
-globalThis.search_replace_execute = function(): void {
+function search_replace_execute() : void {
   const selected = searchResults.filter(r => r.selected).length;
   if (selected === 0) {
     editor.setStatus(editor.t("status.no_items_selected"));
@@ -432,10 +439,11 @@ globalThis.search_replace_execute = function(): void {
 
   editor.setStatus(editor.t("status.replacing", { count: String(selected) }));
   executeReplacements();
-};
+}
+registerHandler("search_replace_execute", search_replace_execute);
 
 // Preview current item (jump to location)
-globalThis.search_replace_preview = function(): void {
+function search_replace_preview() : void {
   if (sourceSplitId === null || resultsBufferId === null) return;
 
   const props = editor.getTextPropertiesAtCursor(resultsBufferId);
@@ -446,10 +454,11 @@ globalThis.search_replace_preview = function(): void {
       editor.setStatus(editor.t("status.preview", { file: getRelativePath(location.file), line: String(location.line) }));
     }
   }
-};
+}
+registerHandler("search_replace_preview", search_replace_preview);
 
 // Close the panel
-globalThis.search_replace_close = function(): void {
+function search_replace_close() : void {
   if (!panelOpen) return;
 
   if (resultsBufferId !== null) {
@@ -466,7 +475,8 @@ globalThis.search_replace_close = function(): void {
   resultsSplitId = null;
   searchResults = [];
   editor.setStatus(editor.t("status.closed"));
-};
+}
+registerHandler("search_replace_close", search_replace_close);
 
 // Register event handlers
 editor.on("prompt_confirmed", "onSearchReplaceSearchConfirmed");

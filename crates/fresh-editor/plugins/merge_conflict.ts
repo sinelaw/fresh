@@ -1164,7 +1164,7 @@ function computeResultConflictOffset(conflictIndex: number): number {
 /**
  * Start merge conflict resolution for current buffer
  */
-globalThis.start_merge_conflict = async function(): Promise<void> {
+async function start_merge_conflict() : Promise<void> {
   if (mergeState.isActive) {
     editor.setStatus(editor.t("status.already_active"));
     return;
@@ -1304,7 +1304,8 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
   } else {
     editor.setStatus(editor.t("status.all_auto_resolved", { total: String(mergeState.conflicts.length) }));
   }
-};
+}
+registerHandler("start_merge_conflict", start_merge_conflict);
 
 /**
  * Create the multi-panel merge UI (JetBrains-style: OURS | RESULT | THEIRS)
@@ -1393,7 +1394,7 @@ async function createMergePanels(): Promise<void> {
 // Public Commands - Navigation
 // =============================================================================
 
-globalThis.merge_next_conflict = function(): void {
+function merge_next_conflict() : void {
   editor.debug(`merge_next_conflict called, isActive=${mergeState.isActive}, conflicts=${mergeState.conflicts.length}`);
 
   if (!mergeState.isActive) {
@@ -1432,9 +1433,10 @@ globalThis.merge_next_conflict = function(): void {
   editor.setStatus(editor.t("status.conflict_all_resolved", { current: String(mergeState.selectedIndex + 1), total: String(mergeState.conflicts.length) }));
   updateViews();
   scrollToSelectedConflict();
-};
+}
+registerHandler("merge_next_conflict", merge_next_conflict);
 
-globalThis.merge_prev_conflict = function(): void {
+function merge_prev_conflict() : void {
   editor.debug(`merge_prev_conflict called, isActive=${mergeState.isActive}, conflicts=${mergeState.conflicts.length}`);
 
   if (!mergeState.isActive) {
@@ -1473,13 +1475,14 @@ globalThis.merge_prev_conflict = function(): void {
   editor.setStatus(editor.t("status.conflict_all_resolved", { current: String(mergeState.selectedIndex + 1), total: String(mergeState.conflicts.length) }));
   updateViews();
   scrollToSelectedConflict();
-};
+}
+registerHandler("merge_prev_conflict", merge_prev_conflict);
 
 // =============================================================================
 // Public Commands - Resolution
 // =============================================================================
 
-globalThis.merge_use_ours = function(): void {
+function merge_use_ours() : void {
   if (!mergeState.isActive) {
     editor.setStatus(editor.t("status.no_active_merge"));
     return;
@@ -1497,9 +1500,10 @@ globalThis.merge_use_ours = function(): void {
   // Move to next unresolved conflict
   moveToNextUnresolved();
   updateViews();
-};
+}
+registerHandler("merge_use_ours", merge_use_ours);
 
-globalThis.merge_take_theirs = function(): void {
+function merge_take_theirs() : void {
   if (!mergeState.isActive) {
     editor.setStatus(editor.t("status.no_active_merge"));
     return;
@@ -1517,9 +1521,10 @@ globalThis.merge_take_theirs = function(): void {
   // Move to next unresolved conflict
   moveToNextUnresolved();
   updateViews();
-};
+}
+registerHandler("merge_take_theirs", merge_take_theirs);
 
-globalThis.merge_use_both = function(): void {
+function merge_use_both() : void {
   if (!mergeState.isActive) {
     editor.setStatus(editor.t("status.no_active_merge"));
     return;
@@ -1537,7 +1542,8 @@ globalThis.merge_use_both = function(): void {
   // Move to next unresolved conflict
   moveToNextUnresolved();
   updateViews();
-};
+}
+registerHandler("merge_use_both", merge_use_both);
 
 /**
  * Move selection to the next unresolved conflict
@@ -1561,7 +1567,7 @@ function moveToNextUnresolved(): void {
 // Public Commands - Completion
 // =============================================================================
 
-globalThis.merge_save_and_exit = async function(): Promise<void> {
+async function merge_save_and_exit() : Promise<void> {
   if (!mergeState.isActive) {
     editor.setStatus(editor.t("status.no_active_merge"));
     return;
@@ -1609,9 +1615,10 @@ globalThis.merge_save_and_exit = async function(): Promise<void> {
   closeMergePanels();
 
   editor.setStatus(editor.t("status.complete"));
-};
+}
+registerHandler("merge_save_and_exit", merge_save_and_exit);
 
-globalThis.merge_abort = function(): void {
+function merge_abort() : void {
   if (!mergeState.isActive) {
     editor.setStatus(editor.t("status.nothing_to_abort"));
     return;
@@ -1623,7 +1630,8 @@ globalThis.merge_abort = function(): void {
   closeMergePanels();
 
   editor.setStatus(editor.t("status.aborted"));
-};
+}
+registerHandler("merge_abort", merge_abort);
 
 /**
  * Close all merge panels and reset state
@@ -1682,9 +1690,10 @@ function closeMergePanels(): void {
 // Public Commands - Help
 // =============================================================================
 
-globalThis.merge_show_help = function(): void {
+function merge_show_help() : void {
   editor.setStatus(editor.t("status.help"));
-};
+}
+registerHandler("merge_show_help", merge_show_help);
 
 // =============================================================================
 // Hook Handlers - Auto-Detection
@@ -1693,7 +1702,7 @@ globalThis.merge_show_help = function(): void {
 /**
  * Handle buffer activation - check for conflict markers
  */
-globalThis.onMergeBufferActivated = async function(data: { buffer_id: number }): Promise<void> {
+async function onMergeBufferActivated(data: { buffer_id: number }) : Promise<void> {
   // Don't trigger if already in merge mode
   if (mergeState.isActive) return;
 
@@ -1717,12 +1726,13 @@ globalThis.onMergeBufferActivated = async function(data: { buffer_id: number }):
   } catch (e) {
     // Not in git repo or other error, ignore
   }
-};
+}
+registerHandler("onMergeBufferActivated", onMergeBufferActivated);
 
 /**
  * Handle file open - check for conflict markers
  */
-globalThis.onMergeAfterFileOpen = async function(data: { buffer_id: number; path: string }): Promise<void> {
+async function onMergeAfterFileOpen(data: { buffer_id: number; path: string }) : Promise<void> {
   // Don't trigger if already in merge mode
   if (mergeState.isActive) return;
 
@@ -1742,7 +1752,8 @@ globalThis.onMergeAfterFileOpen = async function(data: { buffer_id: number; path
   } catch (e) {
     // Not in git repo or other error, ignore
   }
-};
+}
+registerHandler("onMergeAfterFileOpen", onMergeAfterFileOpen);
 
 // =============================================================================
 // Hook Registration

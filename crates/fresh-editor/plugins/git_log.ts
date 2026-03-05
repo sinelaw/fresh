@@ -628,7 +628,7 @@ function applyCommitDetailHighlighting(): void {
 // Public Commands - Git Log
 // =============================================================================
 
-globalThis.show_git_log = async function(): Promise<void> {
+async function show_git_log() : Promise<void> {
   if (gitLogState.isOpen) {
     editor.setStatus(editor.t("status.already_open"));
     return;
@@ -678,9 +678,10 @@ globalThis.show_git_log = async function(): Promise<void> {
     gitLogState.splitId = null;
     editor.setStatus(editor.t("status.failed_open"));
   }
-};
+}
+registerHandler("show_git_log", show_git_log);
 
-globalThis.git_log_close = function(): void {
+function git_log_close() : void {
   if (!gitLogState.isOpen) {
     return;
   }
@@ -701,10 +702,11 @@ globalThis.git_log_close = function(): void {
   gitLogState.sourceBufferId = null;
   gitLogState.commits = [];
   editor.setStatus(editor.t("status.closed"));
-};
+}
+registerHandler("git_log_close", git_log_close);
 
 // Cursor moved handler for git log - update highlighting and status
-globalThis.on_git_log_cursor_moved = function(data: {
+function on_git_log_cursor_moved(data: {
   buffer_id: number;
   cursor_id: number;
   old_position: number;
@@ -726,19 +728,21 @@ globalThis.on_git_log_cursor_moved = function(data: {
   if (commitIndex >= 0 && commitIndex < gitLogState.commits.length) {
     editor.setStatus(editor.t("status.commit_position", { current: String(commitIndex + 1), total: String(gitLogState.commits.length) }));
   }
-};
+}
+registerHandler("on_git_log_cursor_moved", on_git_log_cursor_moved);
 
 // Register cursor movement handler
 editor.on("cursor_moved", "on_git_log_cursor_moved");
 
-globalThis.git_log_refresh = async function(): Promise<void> {
+async function git_log_refresh() : Promise<void> {
   if (!gitLogState.isOpen) return;
 
   editor.setStatus(editor.t("status.refreshing"));
   gitLogState.commits = await fetchGitLog();
   updateGitLogView();
   editor.setStatus(editor.t("status.refreshed", { count: String(gitLogState.commits.length) }));
-};
+}
+registerHandler("git_log_refresh", git_log_refresh);
 
 // Helper function to get commit at current cursor position
 function getCommitAtCursor(): GitCommit | null {
@@ -766,7 +770,7 @@ function getCommitAtCursor(): GitCommit | null {
   return null;
 }
 
-globalThis.git_log_show_commit = async function(): Promise<void> {
+async function git_log_show_commit() : Promise<void> {
   if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
   if (gitLogState.splitId === null) return;
 
@@ -812,9 +816,10 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
   } else {
     editor.setStatus(editor.t("status.failed_open_details"));
   }
-};
+}
+registerHandler("git_log_show_commit", git_log_show_commit);
 
-globalThis.git_log_copy_hash = function(): void {
+function git_log_copy_hash() : void {
   if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
 
   const commit = getCommitAtCursor();
@@ -826,13 +831,14 @@ globalThis.git_log_copy_hash = function(): void {
   // Copy hash to clipboard
   editor.copyToClipboard(commit.hash);
   editor.setStatus(editor.t("status.hash_copied", { short: commit.shortHash, full: commit.hash }));
-};
+}
+registerHandler("git_log_copy_hash", git_log_copy_hash);
 
 // =============================================================================
 // Public Commands - Commit Detail
 // =============================================================================
 
-globalThis.git_commit_detail_close = function(): void {
+function git_commit_detail_close() : void {
   if (!commitDetailState.isOpen) {
     return;
   }
@@ -855,10 +861,11 @@ globalThis.git_commit_detail_close = function(): void {
   commitDetailState.commit = null;
 
   editor.setStatus(editor.t("status.log_ready", { count: String(gitLogState.commits.length) }));
-};
+}
+registerHandler("git_commit_detail_close", git_commit_detail_close);
 
 // Close file view and go back to commit detail
-globalThis.git_file_view_close = function(): void {
+function git_file_view_close() : void {
   if (!fileViewState.isOpen) {
     return;
   }
@@ -884,7 +891,8 @@ globalThis.git_file_view_close = function(): void {
   if (commitDetailState.commit) {
     editor.setStatus(editor.t("status.commit_ready", { hash: commitDetailState.commit.shortHash }));
   }
-};
+}
+registerHandler("git_file_view_close", git_file_view_close);
 
 // Fetch file content at a specific commit
 async function fetchFileAtCommit(commitHash: string, filePath: string): Promise<string | null> {
@@ -1074,7 +1082,7 @@ function applyFileViewHighlighting(bufferId: number, content: string, filePath: 
 }
 
 // Open file at the current diff line position - shows file as it was at that commit
-globalThis.git_commit_detail_open_file = async function(): Promise<void> {
+async function git_commit_detail_open_file() : Promise<void> {
   if (!commitDetailState.isOpen || commitDetailState.bufferId === null) {
     return;
   }
@@ -1148,7 +1156,8 @@ globalThis.git_commit_detail_open_file = async function(): Promise<void> {
   } else {
     editor.setStatus(editor.t("status.move_to_diff"));
   }
-};
+}
+registerHandler("git_commit_detail_open_file", git_commit_detail_open_file);
 
 // =============================================================================
 // Command Registration

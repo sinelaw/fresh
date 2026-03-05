@@ -421,7 +421,7 @@ function disableMarkdownCompose(bufferId: number): void {
 }
 
 // Toggle markdown compose mode for current buffer
-globalThis.markdownToggleCompose = function(): void {
+function markdownToggleCompose() : void {
   const bufferId = editor.getActiveBufferId();
   const info = editor.getBufferInfo(bufferId);
 
@@ -442,7 +442,8 @@ globalThis.markdownToggleCompose = function(): void {
     editor.refreshLines(bufferId);
     editor.setStatus(editor.t("status.compose_on"));
   }
-};
+}
+registerHandler("markdownToggleCompose", markdownToggleCompose);
 
 /**
  * Extract text content from incoming tokens
@@ -1360,7 +1361,7 @@ function processTableAlignment(
 }
 
 // lines_changed: called for newly visible or invalidated lines
-globalThis.onMarkdownLinesChanged = function(data: {
+function onMarkdownLinesChanged(data: {
   buffer_id: number;
   lines: Array<{
     line_number: number;
@@ -1394,7 +1395,8 @@ globalThis.onMarkdownLinesChanged = function(data: {
   if (tableWidthsGrew) {
     editor.refreshLines(data.buffer_id);
   }
-};
+}
+registerHandler("onMarkdownLinesChanged", onMarkdownLinesChanged);
 
 // after_insert: no-op for conceals/overlays.
 // The edit automatically invalidates seen_byte_ranges for affected lines,
@@ -1402,7 +1404,7 @@ globalThis.onMarkdownLinesChanged = function(data: {
 // handles clearing and rebuilding atomically.
 // Marker-based positions auto-adjust with buffer edits, so existing conceals
 // remain visually correct until lines_changed rebuilds them.
-globalThis.onMarkdownAfterInsert = function(data: {
+function onMarkdownAfterInsert(data: {
   buffer_id: number;
   position: number;
   text: string;
@@ -1411,10 +1413,11 @@ globalThis.onMarkdownAfterInsert = function(data: {
 }): void {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_insert: pos=${data.position} text="${data.text.replace(/\n/g,'\\n')}" affected=${data.affected_start}..${data.affected_end}`);
-};
+}
+registerHandler("onMarkdownAfterInsert", onMarkdownAfterInsert);
 
 // after_delete: no-op for conceals/overlays (same reasoning as after_insert).
-globalThis.onMarkdownAfterDelete = function(data: {
+function onMarkdownAfterDelete(data: {
   buffer_id: number;
   start: number;
   end: number;
@@ -1424,10 +1427,11 @@ globalThis.onMarkdownAfterDelete = function(data: {
 }): void {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_delete: start=${data.start} end=${data.end} deleted="${data.deleted_text.replace(/\n/g,'\\n')}" affected_start=${data.affected_start} deleted_len=${data.deleted_len}`);
-};
+}
+registerHandler("onMarkdownAfterDelete", onMarkdownAfterDelete);
 
 // cursor_moved: update cursor-aware reveal/conceal for old and new cursor lines
-globalThis.onMarkdownCursorMoved = function(data: {
+function onMarkdownCursorMoved(data: {
   buffer_id: number;
   cursor_id: number;
   old_position: number;
@@ -1445,7 +1449,8 @@ globalThis.onMarkdownCursorMoved = function(data: {
   // auto-expose is span-level (cursor entering/leaving an emphasis or link
   // span within the same line must toggle its syntax markers).
   editor.refreshLines(data.buffer_id);
-};
+}
+registerHandler("onMarkdownCursorMoved", onMarkdownCursorMoved);
 
 // view_transform_request is no longer needed — soft wrapping is handled by
 // marker-based soft breaks (computed in lines_changed), and layout hints
@@ -1453,12 +1458,13 @@ globalThis.onMarkdownCursorMoved = function(data: {
 // caused by the async view_transform round-trip.
 
 // Handle buffer close events - clean up compose mode tracking
-globalThis.onMarkdownBufferClosed = function(data: { buffer_id: number }): void {
+function onMarkdownBufferClosed(data: { buffer_id: number }) : void {
   // View state is cleaned up automatically when the buffer is removed from keyed_states
-};
+}
+registerHandler("onMarkdownBufferClosed", onMarkdownBufferClosed);
 
 // viewport_changed: recalculate table column widths on terminal resize
-globalThis.onMarkdownViewportChanged = function(data: {
+function onMarkdownViewportChanged(data: {
   split_id: number;
   buffer_id: number;
   top_byte: number;
@@ -1485,12 +1491,13 @@ globalThis.onMarkdownViewportChanged = function(data: {
     setTableWidths(data.buffer_id, bufWidths);
   }
   editor.refreshLines(data.buffer_id);
-};
+}
+registerHandler("onMarkdownViewportChanged", onMarkdownViewportChanged);
 
 // Re-enable compose mode for buffers restored from a saved session.
 // The Rust side restores ViewMode::Compose and compose_width, but the plugin
 // needs to re-apply line numbers, line wrap, and layout hints when activated.
-globalThis.onMarkdownBufferActivated = function(data: { buffer_id: number }): void {
+function onMarkdownBufferActivated(data: { buffer_id: number }) : void {
   const bufferId = data.buffer_id;
 
   const info = editor.getBufferInfo(bufferId);
@@ -1505,7 +1512,8 @@ globalThis.onMarkdownBufferActivated = function(data: { buffer_id: number }): vo
     }
     enableMarkdownCompose(bufferId);
   }
-};
+}
+registerHandler("onMarkdownBufferActivated", onMarkdownBufferActivated);
 
 // Register hooks
 editor.on("lines_changed", "onMarkdownLinesChanged");
@@ -1519,7 +1527,7 @@ editor.on("prompt_confirmed", "onMarkdownComposeWidthConfirmed");
 editor.on("buffer_activated", "onMarkdownBufferActivated");
 
 // Set compose width command - starts interactive prompt
-globalThis.markdownSetComposeWidth = function(): void {
+function markdownSetComposeWidth() : void {
   const currentValue = config.composeWidth === null ? "None" : String(config.composeWidth);
   editor.startPromptWithInitial(editor.t("prompt.compose_width"), "markdown-compose-width", currentValue);
   editor.setPromptInputSync(true);
@@ -1527,10 +1535,11 @@ globalThis.markdownSetComposeWidth = function(): void {
     { text: "None", description: editor.t("suggestion.none") },
     { text: "120", description: editor.t("suggestion.default") },
   ]);
-};
+}
+registerHandler("markdownSetComposeWidth", markdownSetComposeWidth);
 
 // Handle compose width prompt confirmation
-globalThis.onMarkdownComposeWidthConfirmed = function(args: {
+function onMarkdownComposeWidthConfirmed(args: {
   prompt_type: string;
   input: string;
 }): void {
@@ -1563,7 +1572,8 @@ globalThis.onMarkdownComposeWidthConfirmed = function(args: {
   } else {
     editor.setStatus(editor.t("status.invalid_width"));
   }
-};
+}
+registerHandler("onMarkdownComposeWidthConfirmed", onMarkdownComposeWidthConfirmed);
 
 // Register commands
 editor.registerCommand(

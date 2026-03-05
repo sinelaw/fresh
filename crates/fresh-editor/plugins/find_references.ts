@@ -80,7 +80,7 @@ async function loadLineContent(
 }
 
 // Handle lsp_references hook
-globalThis.on_lsp_references = async function (data: {
+async function on_lsp_references(data: {
   symbol: string;
   locations: ReferenceLocation[];
 }): Promise<void> {
@@ -104,14 +104,16 @@ globalThis.on_lsp_references = async function (data: {
       load: async () => pendingRefs,
     },
   });
-};
+}
+registerHandler("on_lsp_references", on_lsp_references);
 
 // Register the hook handler
 editor.on("lsp_references", "on_lsp_references");
 
 // Close function for command palette
-globalThis.close_references = function (): void {
+function close_references() : void {
   finder.close();
-};
+}
+registerHandler("close_references", close_references);
 
 editor.debug("Find References plugin loaded (using Finder abstraction)");

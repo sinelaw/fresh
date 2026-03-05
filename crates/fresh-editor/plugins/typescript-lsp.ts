@@ -51,7 +51,7 @@ let tsLspError: { serverCommand: string; message: string; language: string } | n
 /**
  * Handle LSP server errors for TypeScript/JavaScript
  */
-globalThis.on_typescript_lsp_server_error = function (
+function on_typescript_lsp_server_error(
   data: LspServerErrorData
 ): void {
   // Only handle TypeScript/JavaScript language errors
@@ -78,7 +78,8 @@ globalThis.on_typescript_lsp_server_error = function (
   } else {
     editor.setStatus(`TypeScript LSP error: ${data.message}`);
   }
-};
+}
+registerHandler("on_typescript_lsp_server_error", on_typescript_lsp_server_error);
 
 // Register hook for LSP server errors
 editor.on("lsp_server_error", "on_typescript_lsp_server_error");
@@ -86,7 +87,7 @@ editor.on("lsp_server_error", "on_typescript_lsp_server_error");
 /**
  * Handle status bar click when there's a TypeScript LSP error
  */
-globalThis.on_typescript_lsp_status_clicked = function (
+function on_typescript_lsp_status_clicked(
   data: LspStatusClickedData
 ): void {
   // Only handle TypeScript/JavaScript language clicks when there's an error
@@ -109,7 +110,8 @@ globalThis.on_typescript_lsp_status_clicked = function (
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-};
+}
+registerHandler("on_typescript_lsp_status_clicked", on_typescript_lsp_status_clicked);
 
 // Register hook for status bar clicks
 editor.on("lsp_status_clicked", "on_typescript_lsp_status_clicked");
@@ -117,7 +119,7 @@ editor.on("lsp_status_clicked", "on_typescript_lsp_status_clicked");
 /**
  * Handle action popup results for TypeScript LSP help
  */
-globalThis.on_typescript_lsp_action_result = function (
+function on_typescript_lsp_action_result(
   data: ActionPopupResultData
 ): void {
   // Only handle our popup
@@ -159,7 +161,8 @@ globalThis.on_typescript_lsp_action_result = function (
     default:
       editor.debug(`typescript-lsp: Unknown action: ${data.action_id}`);
   }
-};
+}
+registerHandler("on_typescript_lsp_action_result", on_typescript_lsp_action_result);
 
 // Register hook for action popup results
 editor.on("action_popup_result", "on_typescript_lsp_action_result");

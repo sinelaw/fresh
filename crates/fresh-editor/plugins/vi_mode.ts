@@ -324,132 +324,157 @@ function handleMotionWithOperator(motionAction: string): void {
 // ============================================================================
 
 // Navigation (all support count prefix, e.g., 5j moves down 5 lines)
-globalThis.vi_left = function (): void {
+function vi_left() : void {
   executeWithCount("move_left");
-};
+}
+registerHandler("vi_left", vi_left);
 
-globalThis.vi_down = function (): void {
+function vi_down() : void {
   executeWithCount("move_down");
-};
+}
+registerHandler("vi_down", vi_down);
 
-globalThis.vi_up = function (): void {
+function vi_up() : void {
   executeWithCount("move_up");
-};
+}
+registerHandler("vi_up", vi_up);
 
-globalThis.vi_right = function (): void {
+function vi_right() : void {
   executeWithCount("move_right");
-};
+}
+registerHandler("vi_right", vi_right);
 
-globalThis.vi_word = function (): void {
+function vi_word() : void {
   executeWithCount("move_word_right");
-};
+}
+registerHandler("vi_word", vi_word);
 
-globalThis.vi_word_back = function (): void {
+function vi_word_back() : void {
   executeWithCount("move_word_left");
-};
+}
+registerHandler("vi_word_back", vi_word_back);
 
-globalThis.vi_word_end = function (): void {
+function vi_word_end() : void {
   // Move to end of word - for count, repeat the whole operation
   const count = consumeCount();
   for (let i = 0; i < count; i++) {
     editor.executeAction("move_word_right");
     editor.executeAction("move_left");
   }
-};
+}
+registerHandler("vi_word_end", vi_word_end);
 
-globalThis.vi_line_start = function (): void {
+function vi_line_start() : void {
   consumeCount(); // Count doesn't apply to line start
   editor.executeAction("move_line_start");
-};
+}
+registerHandler("vi_line_start", vi_line_start);
 
-globalThis.vi_line_end = function (): void {
+function vi_line_end() : void {
   consumeCount(); // Count doesn't apply to line end
   editor.executeAction("move_line_end");
-};
+}
+registerHandler("vi_line_end", vi_line_end);
 
-globalThis.vi_first_non_blank = function (): void {
+function vi_first_non_blank() : void {
   consumeCount(); // Count doesn't apply
   editor.executeAction("move_line_start");
   // TODO: skip whitespace
-};
+}
+registerHandler("vi_first_non_blank", vi_first_non_blank);
 
-globalThis.vi_doc_start = function (): void {
+function vi_doc_start() : void {
   consumeCount(); // Count doesn't apply
   editor.executeAction("move_document_start");
-};
+}
+registerHandler("vi_doc_start", vi_doc_start);
 
-globalThis.vi_doc_end = function (): void {
+function vi_doc_end() : void {
   consumeCount(); // Count doesn't apply
   editor.executeAction("move_document_end");
-};
+}
+registerHandler("vi_doc_end", vi_doc_end);
 
-globalThis.vi_page_down = function (): void {
+function vi_page_down() : void {
   executeWithCount("page_down");
-};
+}
+registerHandler("vi_page_down", vi_page_down);
 
-globalThis.vi_page_up = function (): void {
+function vi_page_up() : void {
   executeWithCount("page_up");
-};
+}
+registerHandler("vi_page_up", vi_page_up);
 
-globalThis.vi_matching_bracket = function (): void {
+function vi_matching_bracket() : void {
   editor.executeAction("go_to_matching_bracket");
-};
+}
+registerHandler("vi_matching_bracket", vi_matching_bracket);
 
 // Mode switching
-globalThis.vi_insert_before = function (): void {
+function vi_insert_before() : void {
   switchMode("insert");
-};
+}
+registerHandler("vi_insert_before", vi_insert_before);
 
-globalThis.vi_insert_after = function (): void {
+function vi_insert_after() : void {
   editor.executeAction("move_right");
   switchMode("insert");
-};
+}
+registerHandler("vi_insert_after", vi_insert_after);
 
-globalThis.vi_insert_line_start = function (): void {
+function vi_insert_line_start() : void {
   editor.executeAction("move_line_start");
   switchMode("insert");
-};
+}
+registerHandler("vi_insert_line_start", vi_insert_line_start);
 
-globalThis.vi_insert_line_end = function (): void {
+function vi_insert_line_end() : void {
   editor.executeAction("move_line_end");
   switchMode("insert");
-};
+}
+registerHandler("vi_insert_line_end", vi_insert_line_end);
 
-globalThis.vi_open_below = function (): void {
+function vi_open_below() : void {
   editor.executeAction("move_line_end");
   editor.executeAction("insert_newline");
   switchMode("insert");
-};
+}
+registerHandler("vi_open_below", vi_open_below);
 
-globalThis.vi_open_above = function (): void {
+function vi_open_above() : void {
   editor.executeAction("move_line_start");
   editor.executeAction("insert_newline");
   editor.executeAction("move_up");
   switchMode("insert");
-};
+}
+registerHandler("vi_open_above", vi_open_above);
 
-globalThis.vi_escape = function (): void {
+function vi_escape() : void {
   switchMode("normal");
-};
+}
+registerHandler("vi_escape", vi_escape);
 
 // Operators
-globalThis.vi_delete_operator = function (): void {
+function vi_delete_operator() : void {
   state.pendingOperator = "d";
   switchMode("operator-pending");
-};
+}
+registerHandler("vi_delete_operator", vi_delete_operator);
 
-globalThis.vi_change_operator = function (): void {
+function vi_change_operator() : void {
   state.pendingOperator = "c";
   switchMode("operator-pending");
-};
+}
+registerHandler("vi_change_operator", vi_change_operator);
 
-globalThis.vi_yank_operator = function (): void {
+function vi_yank_operator() : void {
   state.pendingOperator = "y";
   switchMode("operator-pending");
-};
+}
+registerHandler("vi_yank_operator", vi_yank_operator);
 
 // Line operations (dd, cc, yy) - support count prefix (3dd = delete 3 lines)
-globalThis.vi_delete_line = function (): void {
+function vi_delete_line() : void {
   const count = consumeCount();
   state.lastChange = { type: "line-op", action: "delete_line", count };
   if (count === 1) {
@@ -458,9 +483,10 @@ globalThis.vi_delete_line = function (): void {
     editor.executeActions([{ action: "delete_line", count }]);
   }
   switchMode("normal");
-};
+}
+registerHandler("vi_delete_line", vi_delete_line);
 
-globalThis.vi_change_line = function (): void {
+function vi_change_line() : void {
   const count = consumeCount();
   state.lastChange = { type: "line-op", action: "change_line", count };
   editor.executeAction("move_line_start");
@@ -471,9 +497,10 @@ globalThis.vi_change_line = function (): void {
     editor.deleteRange(editor.getActiveBufferId(), start, end);
   }
   switchMode("insert");
-};
+}
+registerHandler("vi_change_line", vi_change_line);
 
-globalThis.vi_yank_line = function (): void {
+function vi_yank_line() : void {
   const count = consumeCount();
   // select_line selects current line and moves cursor to next line
   if (count === 1) {
@@ -489,28 +516,32 @@ globalThis.vi_yank_line = function (): void {
   state.lastYankWasLinewise = true;
   editor.setStatus(editor.t("status.yanked_lines", { count: String(count) }));
   switchMode("normal");
-};
+}
+registerHandler("vi_yank_line", vi_yank_line);
 
 // Single character operations - support count prefix (3x = delete 3 chars)
-globalThis.vi_delete_char = function (): void {
+function vi_delete_char() : void {
   const count = consumeCount();
   state.lastChange = { type: "simple", action: "delete_forward", count };
   executeWithCount("delete_forward", count);
-};
+}
+registerHandler("vi_delete_char", vi_delete_char);
 
-globalThis.vi_delete_char_before = function (): void {
+function vi_delete_char_before() : void {
   const count = consumeCount();
   state.lastChange = { type: "simple", action: "delete_backward", count };
   executeWithCount("delete_backward", count);
-};
+}
+registerHandler("vi_delete_char_before", vi_delete_char_before);
 
-globalThis.vi_replace_char = function (): void {
+function vi_replace_char() : void {
   // TODO: implement character replacement (need to read next char)
   editor.setStatus(editor.t("status.replace_not_implemented"));
-};
+}
+registerHandler("vi_replace_char", vi_replace_char);
 
 // Substitute (delete char and enter insert mode)
-globalThis.vi_substitute = function (): void {
+function vi_substitute() : void {
   const count = consumeCount();
   state.lastChange = { type: "simple", action: "substitute", count };
   if (count > 1) {
@@ -519,10 +550,11 @@ globalThis.vi_substitute = function (): void {
     editor.executeAction("delete_forward");
   }
   switchMode("insert");
-};
+}
+registerHandler("vi_substitute", vi_substitute);
 
 // Delete to end of line
-globalThis.vi_delete_to_end = function (): void {
+function vi_delete_to_end() : void {
   state.lastChange = { type: "operator-motion", operator: "d", motion: "move_line_end" };
   const start = editor.getCursorPosition();
   editor.executeAction("move_line_end");
@@ -530,10 +562,11 @@ globalThis.vi_delete_to_end = function (): void {
   if (start !== null && end !== null && end > start) {
     editor.deleteRange(editor.getActiveBufferId(), start, end);
   }
-};
+}
+registerHandler("vi_delete_to_end", vi_delete_to_end);
 
 // Change to end of line
-globalThis.vi_change_to_end = function (): void {
+function vi_change_to_end() : void {
   state.lastChange = { type: "operator-motion", operator: "c", motion: "move_line_end" };
   const start = editor.getCursorPosition();
   editor.executeAction("move_line_end");
@@ -542,10 +575,11 @@ globalThis.vi_change_to_end = function (): void {
     editor.deleteRange(editor.getActiveBufferId(), start, end);
   }
   switchMode("insert");
-};
+}
+registerHandler("vi_change_to_end", vi_change_to_end);
 
 // Clipboard
-globalThis.vi_paste_after = function (): void {
+function vi_paste_after() : void {
   if (state.lastYankWasLinewise) {
     // Line-wise paste: go to next line start and paste there
     // The yanked text includes trailing \n which pushes subsequent lines down
@@ -559,9 +593,10 @@ globalThis.vi_paste_after = function (): void {
     editor.executeAction("move_right");
     editor.executeAction("paste");
   }
-};
+}
+registerHandler("vi_paste_after", vi_paste_after);
 
-globalThis.vi_paste_before = function (): void {
+function vi_paste_before() : void {
   if (state.lastYankWasLinewise) {
     // Line-wise paste: paste at current line start
     // The yanked text includes trailing \n which pushes current line down
@@ -573,19 +608,22 @@ globalThis.vi_paste_before = function (): void {
     // Character-wise paste: insert at cursor
     editor.executeAction("paste");
   }
-};
+}
+registerHandler("vi_paste_before", vi_paste_before);
 
 // Undo/Redo
-globalThis.vi_undo = function (): void {
+function vi_undo() : void {
   editor.executeAction("undo");
-};
+}
+registerHandler("vi_undo", vi_undo);
 
-globalThis.vi_redo = function (): void {
+function vi_redo() : void {
   editor.executeAction("redo");
-};
+}
+registerHandler("vi_redo", vi_redo);
 
 // Repeat last change (. command)
-globalThis.vi_repeat = async function (): Promise<void> {
+async function vi_repeat() : Promise<void> {
   if (!state.lastChange) {
     editor.setStatus(editor.t("status.no_change_to_repeat"));
     return;
@@ -680,106 +718,128 @@ globalThis.vi_repeat = async function (): Promise<void> {
       break;
     }
   }
-};
+}
+registerHandler("vi_repeat", vi_repeat);
 
 // Join lines
-globalThis.vi_join = function (): void {
+function vi_join() : void {
   editor.executeAction("move_line_end");
   editor.executeAction("delete_forward");
   editor.executeAction("insert_text_at_cursor");
-};
+}
+registerHandler("vi_join", vi_join);
 
 // Search
-globalThis.vi_search_forward = function (): void {
+function vi_search_forward() : void {
   editor.executeAction("search");
-};
+}
+registerHandler("vi_search_forward", vi_search_forward);
 
-globalThis.vi_search_backward = function (): void {
+function vi_search_backward() : void {
   // Use same search dialog, user can search backward manually
   editor.executeAction("search");
-};
+}
+registerHandler("vi_search_backward", vi_search_backward);
 
-globalThis.vi_find_next = function (): void {
+function vi_find_next() : void {
   editor.executeAction("find_next");
-};
+}
+registerHandler("vi_find_next", vi_find_next);
 
-globalThis.vi_find_prev = function (): void {
+function vi_find_prev() : void {
   editor.executeAction("find_previous");
-};
+}
+registerHandler("vi_find_prev", vi_find_prev);
 
 // Center view
-globalThis.vi_center_cursor = function (): void {
+function vi_center_cursor() : void {
   editor.executeAction("center_cursor");
-};
+}
+registerHandler("vi_center_cursor", vi_center_cursor);
 
 // Half page movements
-globalThis.vi_half_page_down = function (): void {
+function vi_half_page_down() : void {
   // Approximate half page with multiple down movements
   const count = consumeCount();
   editor.executeActions([{ action: "move_down", count: 10 * count }]);
-};
+}
+registerHandler("vi_half_page_down", vi_half_page_down);
 
-globalThis.vi_half_page_up = function (): void {
+function vi_half_page_up() : void {
   const count = consumeCount();
   editor.executeActions([{ action: "move_up", count: 10 * count }]);
-};
+}
+registerHandler("vi_half_page_up", vi_half_page_up);
 
 // ============================================================================
 // Count Prefix (digit keys 1-9, and 0 after initial digit)
 // ============================================================================
 
 // Digit handlers for count prefix
-globalThis.vi_digit_1 = function (): void { accumulateCount(1); };
-globalThis.vi_digit_2 = function (): void { accumulateCount(2); };
-globalThis.vi_digit_3 = function (): void { accumulateCount(3); };
-globalThis.vi_digit_4 = function (): void { accumulateCount(4); };
-globalThis.vi_digit_5 = function (): void { accumulateCount(5); };
-globalThis.vi_digit_6 = function (): void { accumulateCount(6); };
-globalThis.vi_digit_7 = function (): void { accumulateCount(7); };
-globalThis.vi_digit_8 = function (): void { accumulateCount(8); };
-globalThis.vi_digit_9 = function (): void { accumulateCount(9); };
+function vi_digit_1() : void { accumulateCount(1); }
+registerHandler("vi_digit_1", vi_digit_1);
+function vi_digit_2() : void { accumulateCount(2); }
+registerHandler("vi_digit_2", vi_digit_2);
+function vi_digit_3() : void { accumulateCount(3); }
+registerHandler("vi_digit_3", vi_digit_3);
+function vi_digit_4() : void { accumulateCount(4); }
+registerHandler("vi_digit_4", vi_digit_4);
+function vi_digit_5() : void { accumulateCount(5); }
+registerHandler("vi_digit_5", vi_digit_5);
+function vi_digit_6() : void { accumulateCount(6); }
+registerHandler("vi_digit_6", vi_digit_6);
+function vi_digit_7() : void { accumulateCount(7); }
+registerHandler("vi_digit_7", vi_digit_7);
+function vi_digit_8() : void { accumulateCount(8); }
+registerHandler("vi_digit_8", vi_digit_8);
+function vi_digit_9() : void { accumulateCount(9); }
+registerHandler("vi_digit_9", vi_digit_9);
 
 // 0 is special: if count is already started, it appends; otherwise it's "go to line start"
-globalThis.vi_digit_0_or_line_start = function (): void {
+function vi_digit_0_or_line_start() : void {
   if (state.count !== null) {
     accumulateCount(0);
   } else {
     editor.executeAction("move_line_start");
   }
-};
+}
+registerHandler("vi_digit_0_or_line_start", vi_digit_0_or_line_start);
 
 // 0 in operator-pending mode: if count is started, append; otherwise apply operator to line start
-globalThis.vi_op_digit_0_or_line_start = function (): void {
+function vi_op_digit_0_or_line_start() : void {
   if (state.count !== null) {
     accumulateCount(0);
   } else {
     handleMotionWithOperator("move_line_start");
   }
-};
+}
+registerHandler("vi_op_digit_0_or_line_start", vi_op_digit_0_or_line_start);
 
 // ============================================================================
 // Visual Mode
 // ============================================================================
 
 // Enter character-wise visual mode
-globalThis.vi_visual_char = function (): void {
+function vi_visual_char() : void {
   state.visualAnchor = editor.getCursorPosition();
   // Select current character to start visual selection
   editor.executeAction("select_right");
   switchMode("visual");
-};
+}
+registerHandler("vi_visual_char", vi_visual_char);
 
 // Enter line-wise visual mode
-globalThis.vi_visual_line = function (): void {
+function vi_visual_line() : void {
   state.visualAnchor = editor.getCursorPosition();
   // Select current line
   editor.executeAction("move_line_start");
   editor.executeAction("select_line");
   switchMode("visual-line");
-};
+}
+registerHandler("vi_visual_line", vi_visual_line);
 
 // Toggle between visual and visual-line modes
-globalThis.vi_visual_toggle_line = function (): void {
+function vi_visual_toggle_line() : void {
   if (state.mode === "visual") {
     // Switch to line mode - extend selection to full lines
     editor.executeAction("select_line");
@@ -792,10 +852,11 @@ globalThis.vi_visual_toggle_line = function (): void {
     editor.setEditorMode("vi-visual");
     editor.setStatus(getModeIndicator("visual"));
   }
-};
+}
+registerHandler("vi_visual_toggle_line", vi_visual_toggle_line);
 
 // Enter visual block mode (Ctrl-v)
-globalThis.vi_visual_block = async function (): Promise<void> {
+async function vi_visual_block() : Promise<void> {
   // Store anchor position for block selection
   state.visualAnchor = editor.getCursorPosition();
 
@@ -811,190 +872,222 @@ globalThis.vi_visual_block = async function (): Promise<void> {
   // Select current character to start
   editor.executeAction("select_right");
   switchMode("visual-block");
-};
+}
+registerHandler("vi_visual_block", vi_visual_block);
 
 // Visual block mode motions - these extend the rectangular selection
-globalThis.vi_vblock_left = function (): void {
+function vi_vblock_left() : void {
   executeWithCount("select_left");
-};
+}
+registerHandler("vi_vblock_left", vi_vblock_left);
 
-globalThis.vi_vblock_down = function (): void {
+function vi_vblock_down() : void {
   executeWithCount("select_down");
-};
+}
+registerHandler("vi_vblock_down", vi_vblock_down);
 
-globalThis.vi_vblock_up = function (): void {
+function vi_vblock_up() : void {
   executeWithCount("select_up");
-};
+}
+registerHandler("vi_vblock_up", vi_vblock_up);
 
-globalThis.vi_vblock_right = function (): void {
+function vi_vblock_right() : void {
   executeWithCount("select_right");
-};
+}
+registerHandler("vi_vblock_right", vi_vblock_right);
 
-globalThis.vi_vblock_line_start = function (): void {
+function vi_vblock_line_start() : void {
   consumeCount();
   editor.executeAction("select_line_start");
-};
+}
+registerHandler("vi_vblock_line_start", vi_vblock_line_start);
 
-globalThis.vi_vblock_line_end = function (): void {
+function vi_vblock_line_end() : void {
   consumeCount();
   editor.executeAction("select_line_end");
-};
+}
+registerHandler("vi_vblock_line_end", vi_vblock_line_end);
 
 // Visual block delete - delete the selected block
-globalThis.vi_vblock_delete = function (): void {
+function vi_vblock_delete() : void {
   editor.executeAction("cut");
   state.lastYankWasLinewise = false;
   switchMode("normal");
-};
+}
+registerHandler("vi_vblock_delete", vi_vblock_delete);
 
 // Visual block change - delete and enter insert mode
-globalThis.vi_vblock_change = function (): void {
+function vi_vblock_change() : void {
   editor.executeAction("cut");
   switchMode("insert");
-};
+}
+registerHandler("vi_vblock_change", vi_vblock_change);
 
 // Visual block yank
-globalThis.vi_vblock_yank = function (): void {
+function vi_vblock_yank() : void {
   editor.executeAction("copy");
   state.lastYankWasLinewise = false;
   // Move cursor to start of selection
   editor.executeAction("move_left");
   switchMode("normal");
-};
+}
+registerHandler("vi_vblock_yank", vi_vblock_yank);
 
 // Exit visual block mode
-globalThis.vi_vblock_escape = function (): void {
+function vi_vblock_escape() : void {
   switchMode("normal");
-};
+}
+registerHandler("vi_vblock_escape", vi_vblock_escape);
 
 // Toggle from visual block to other visual modes
-globalThis.vi_vblock_toggle_char = function (): void {
+function vi_vblock_toggle_char() : void {
   // Switch to character visual mode
   state.mode = "visual";
   editor.setEditorMode("vi-visual");
   editor.setStatus(getModeIndicator("visual"));
-};
+}
+registerHandler("vi_vblock_toggle_char", vi_vblock_toggle_char);
 
-globalThis.vi_vblock_toggle_line = function (): void {
+function vi_vblock_toggle_line() : void {
   // Switch to line visual mode
   editor.executeAction("select_line");
   state.mode = "visual-line";
   editor.setEditorMode("vi-visual-line");
   editor.setStatus(getModeIndicator("visual-line"));
-};
+}
+registerHandler("vi_vblock_toggle_line", vi_vblock_toggle_line);
 
 // Visual mode motions - these extend the selection
-globalThis.vi_vis_left = function (): void {
+function vi_vis_left() : void {
   executeWithCount("select_left");
-};
+}
+registerHandler("vi_vis_left", vi_vis_left);
 
-globalThis.vi_vis_down = function (): void {
+function vi_vis_down() : void {
   executeWithCount("select_down");
-};
+}
+registerHandler("vi_vis_down", vi_vis_down);
 
-globalThis.vi_vis_up = function (): void {
+function vi_vis_up() : void {
   executeWithCount("select_up");
-};
+}
+registerHandler("vi_vis_up", vi_vis_up);
 
-globalThis.vi_vis_right = function (): void {
+function vi_vis_right() : void {
   executeWithCount("select_right");
-};
+}
+registerHandler("vi_vis_right", vi_vis_right);
 
-globalThis.vi_vis_word = function (): void {
+function vi_vis_word() : void {
   executeWithCount("select_word_right");
-};
+}
+registerHandler("vi_vis_word", vi_vis_word);
 
-globalThis.vi_vis_word_back = function (): void {
+function vi_vis_word_back() : void {
   executeWithCount("select_word_left");
-};
+}
+registerHandler("vi_vis_word_back", vi_vis_word_back);
 
-globalThis.vi_vis_word_end = function (): void {
+function vi_vis_word_end() : void {
   const count = consumeCount();
   for (let i = 0; i < count; i++) {
     editor.executeAction("select_word_right");
     editor.executeAction("select_left");
   }
-};
+}
+registerHandler("vi_vis_word_end", vi_vis_word_end);
 
-globalThis.vi_vis_line_start = function (): void {
+function vi_vis_line_start() : void {
   consumeCount();
   editor.executeAction("select_line_start");
-};
+}
+registerHandler("vi_vis_line_start", vi_vis_line_start);
 
-globalThis.vi_vis_line_end = function (): void {
+function vi_vis_line_end() : void {
   consumeCount();
   editor.executeAction("select_line_end");
-};
+}
+registerHandler("vi_vis_line_end", vi_vis_line_end);
 
-globalThis.vi_vis_doc_start = function (): void {
+function vi_vis_doc_start() : void {
   consumeCount();
   editor.executeAction("select_document_start");
-};
+}
+registerHandler("vi_vis_doc_start", vi_vis_doc_start);
 
-globalThis.vi_vis_doc_end = function (): void {
+function vi_vis_doc_end() : void {
   consumeCount();
   editor.executeAction("select_document_end");
-};
+}
+registerHandler("vi_vis_doc_end", vi_vis_doc_end);
 
 // Visual line mode motions - extend selection by whole lines
-globalThis.vi_vline_down = function (): void {
+function vi_vline_down() : void {
   executeWithCount("select_down");
   // Ensure full line selection
   editor.executeAction("select_line_end");
-};
+}
+registerHandler("vi_vline_down", vi_vline_down);
 
-globalThis.vi_vline_up = function (): void {
+function vi_vline_up() : void {
   executeWithCount("select_up");
   // Ensure full line selection
   editor.executeAction("select_line_start");
-};
+}
+registerHandler("vi_vline_up", vi_vline_up);
 
 // Visual mode operators - act on selection
-globalThis.vi_vis_delete = function (): void {
+function vi_vis_delete() : void {
   const wasLinewise = state.mode === "visual-line";
   editor.executeAction("cut");
   state.lastYankWasLinewise = wasLinewise;
   switchMode("normal");
-};
+}
+registerHandler("vi_vis_delete", vi_vis_delete);
 
-globalThis.vi_vis_change = function (): void {
+function vi_vis_change() : void {
   editor.executeAction("cut");
   switchMode("insert");
-};
+}
+registerHandler("vi_vis_change", vi_vis_change);
 
-globalThis.vi_vis_yank = function (): void {
+function vi_vis_yank() : void {
   const wasLinewise = state.mode === "visual-line";
   editor.executeAction("copy");
   state.lastYankWasLinewise = wasLinewise;
   // Move cursor to start of selection (vim behavior)
   editor.executeAction("move_left");
   switchMode("normal");
-};
+}
+registerHandler("vi_vis_yank", vi_vis_yank);
 
 // Exit visual mode without doing anything
-globalThis.vi_vis_escape = function (): void {
+function vi_vis_escape() : void {
   switchMode("normal");
-};
+}
+registerHandler("vi_vis_escape", vi_vis_escape);
 
 // ============================================================================
 // Text Objects (iw, aw, i", a", etc.)
 // ============================================================================
 
 // Enter text-object mode with "inner" modifier
-globalThis.vi_text_object_inner = function (): void {
+function vi_text_object_inner() : void {
   state.pendingTextObject = "inner";
   state.mode = "text-object";
   editor.setEditorMode("vi-text-object");
   editor.setStatus(getModeIndicator("text-object"));
-};
+}
+registerHandler("vi_text_object_inner", vi_text_object_inner);
 
 // Enter text-object mode with "around" modifier
-globalThis.vi_text_object_around = function (): void {
+function vi_text_object_around() : void {
   state.pendingTextObject = "around";
   state.mode = "text-object";
   editor.setEditorMode("vi-text-object");
   editor.setStatus(getModeIndicator("text-object"));
-};
+}
+registerHandler("vi_text_object_around", vi_text_object_around);
 
 // Apply text object selection and then the pending operator
 async function applyTextObject(objectType: string): Promise<void> {
@@ -1255,20 +1348,29 @@ function findMatchingPair(text: string, pos: number, openChar: string, closeChar
 }
 
 // Text object handlers
-globalThis.vi_to_word = async function (): Promise<void> { await applyTextObject("word"); };
-globalThis.vi_to_WORD = async function (): Promise<void> { await applyTextObject("WORD"); };
-globalThis.vi_to_dquote = async function (): Promise<void> { await applyTextObject("\""); };
-globalThis.vi_to_squote = async function (): Promise<void> { await applyTextObject("'"); };
-globalThis.vi_to_backtick = async function (): Promise<void> { await applyTextObject("`"); };
-globalThis.vi_to_paren = async function (): Promise<void> { await applyTextObject("("); };
-globalThis.vi_to_brace = async function (): Promise<void> { await applyTextObject("{"); };
-globalThis.vi_to_bracket = async function (): Promise<void> { await applyTextObject("["); };
-globalThis.vi_to_angle = async function (): Promise<void> { await applyTextObject("<"); };
+async function vi_to_word() : Promise<void> { await applyTextObject("word"); }
+registerHandler("vi_to_word", vi_to_word);
+async function vi_to_WORD() : Promise<void> { await applyTextObject("WORD"); }
+registerHandler("vi_to_WORD", vi_to_WORD);
+async function vi_to_dquote() : Promise<void> { await applyTextObject("\""); }
+registerHandler("vi_to_dquote", vi_to_dquote);
+async function vi_to_squote() : Promise<void> { await applyTextObject("'"); }
+registerHandler("vi_to_squote", vi_to_squote);
+async function vi_to_backtick() : Promise<void> { await applyTextObject("`"); }
+registerHandler("vi_to_backtick", vi_to_backtick);
+async function vi_to_paren() : Promise<void> { await applyTextObject("("); }
+registerHandler("vi_to_paren", vi_to_paren);
+async function vi_to_brace() : Promise<void> { await applyTextObject("{"); };
+async function vi_to_bracket(): Promise<void> { await applyTextObject("["); }
+registerHandler("vi_to_bracket", vi_to_bracket);
+async function vi_to_angle(): Promise<void> { await applyTextObject("<"); }
+registerHandler("vi_to_angle", vi_to_angle);
 
 // Cancel text object mode
-globalThis.vi_to_cancel = function (): void {
+function vi_to_cancel(): void {
   switchMode("normal");
-};
+}
+registerHandler("vi_to_cancel", vi_to_cancel);
 
 // ============================================================================
 // Find Character Motions (f/t/F/T)
@@ -1363,41 +1465,47 @@ async function executeFindChar(findType: FindCharType, char: string): Promise<vo
 }
 
 // Handler for when a character is typed in find-char mode (async)
-globalThis.vi_find_char_handler = async function (char: string): Promise<void> {
+async function vi_find_char_handler(char: string): Promise<void> {
   if (state.pendingFindChar) {
     await executeFindChar(state.pendingFindChar, char);
   }
   // Return to normal mode
   state.pendingFindChar = null;
   switchMode("normal");
-};
+}
+registerHandler("vi_find_char_handler", vi_find_char_handler);
 
 // Commands to enter find-char mode
-globalThis.vi_find_char_f = function (): void {
+function vi_find_char_f(): void {
   enterFindCharMode("f");
-};
+}
+registerHandler("vi_find_char_f", vi_find_char_f);
 
-globalThis.vi_find_char_t = function (): void {
+function vi_find_char_t(): void {
   enterFindCharMode("t");
-};
+}
+registerHandler("vi_find_char_t", vi_find_char_t);
 
-globalThis.vi_find_char_F = function (): void {
+function vi_find_char_F(): void {
   enterFindCharMode("F");
-};
+}
+registerHandler("vi_find_char_F", vi_find_char_F);
 
-globalThis.vi_find_char_T = function (): void {
+function vi_find_char_T(): void {
   enterFindCharMode("T");
-};
+}
+registerHandler("vi_find_char_T", vi_find_char_T);
 
 // Repeat last find char (async)
-globalThis.vi_find_char_repeat = async function (): Promise<void> {
+async function vi_find_char_repeat(): Promise<void> {
   if (state.lastFindChar) {
     await executeFindChar(state.lastFindChar.type, state.lastFindChar.char);
   }
-};
+}
+registerHandler("vi_find_char_repeat", vi_find_char_repeat);
 
 // Repeat last find char in opposite direction (async)
-globalThis.vi_find_char_repeat_reverse = async function (): Promise<void> {
+async function vi_find_char_repeat_reverse(): Promise<void> {
   if (state.lastFindChar) {
     const reversedType: FindCharType =
       state.lastFindChar.type === "f" ? "F" :
@@ -1405,65 +1513,79 @@ globalThis.vi_find_char_repeat_reverse = async function (): Promise<void> {
       state.lastFindChar.type === "t" ? "T" : "t";
     await executeFindChar(reversedType, state.lastFindChar.char);
   }
-};
+}
+registerHandler("vi_find_char_repeat_reverse", vi_find_char_repeat_reverse);
 
 // Cancel find-char mode
-globalThis.vi_find_char_cancel = function (): void {
+function vi_find_char_cancel(): void {
   state.pendingFindChar = null;
   switchMode("normal");
-};
+}
+registerHandler("vi_find_char_cancel", vi_find_char_cancel);
 
 // ============================================================================
 // Operator-Pending Mode Commands
 // ============================================================================
 
-globalThis.vi_op_left = function (): void {
+function vi_op_left(): void {
   handleMotionWithOperator("move_left");
-};
+}
+registerHandler("vi_op_left", vi_op_left);
 
-globalThis.vi_op_down = function (): void {
+function vi_op_down(): void {
   handleMotionWithOperator("move_down");
-};
+}
+registerHandler("vi_op_down", vi_op_down);
 
-globalThis.vi_op_up = function (): void {
+function vi_op_up(): void {
   handleMotionWithOperator("move_up");
-};
+}
+registerHandler("vi_op_up", vi_op_up);
 
-globalThis.vi_op_right = function (): void {
+function vi_op_right(): void {
   handleMotionWithOperator("move_right");
-};
+}
+registerHandler("vi_op_right", vi_op_right);
 
-globalThis.vi_op_word = function (): void {
+function vi_op_word(): void {
   handleMotionWithOperator("move_word_right");
-};
+}
+registerHandler("vi_op_word", vi_op_word);
 
-globalThis.vi_op_word_back = function (): void {
+function vi_op_word_back(): void {
   handleMotionWithOperator("move_word_left");
-};
+}
+registerHandler("vi_op_word_back", vi_op_word_back);
 
-globalThis.vi_op_line_start = function (): void {
+function vi_op_line_start(): void {
   handleMotionWithOperator("move_line_start");
-};
+}
+registerHandler("vi_op_line_start", vi_op_line_start);
 
-globalThis.vi_op_line_end = function (): void {
+function vi_op_line_end(): void {
   handleMotionWithOperator("move_line_end");
-};
+}
+registerHandler("vi_op_line_end", vi_op_line_end);
 
-globalThis.vi_op_doc_start = function (): void {
+function vi_op_doc_start(): void {
   handleMotionWithOperator("move_document_start");
-};
+}
+registerHandler("vi_op_doc_start", vi_op_doc_start);
 
-globalThis.vi_op_doc_end = function (): void {
+function vi_op_doc_end(): void {
   handleMotionWithOperator("move_document_end");
-};
+}
+registerHandler("vi_op_doc_end", vi_op_doc_end);
 
-globalThis.vi_op_matching_bracket = function (): void {
+function vi_op_matching_bracket(): void {
   handleMotionWithOperator("go_to_matching_bracket");
-};
+}
+registerHandler("vi_op_matching_bracket", vi_op_matching_bracket);
 
-globalThis.vi_cancel = function (): void {
+function vi_cancel(): void {
   switchMode("normal");
-};
+}
+registerHandler("vi_cancel", vi_cancel);
 
 // ============================================================================
 // Mode Definitions
@@ -1580,69 +1702,132 @@ editor.defineMode("vi-insert", null, [
 
 // Explicitly define handlers for each character to ensure they're accessible
 // These return Promises so the runtime can await them
-globalThis.vi_fc_a = async function(): Promise<void> { return globalThis.vi_find_char_handler("a"); };
-globalThis.vi_fc_b = async function(): Promise<void> { return globalThis.vi_find_char_handler("b"); };
-globalThis.vi_fc_c = async function(): Promise<void> { return globalThis.vi_find_char_handler("c"); };
-globalThis.vi_fc_d = async function(): Promise<void> { return globalThis.vi_find_char_handler("d"); };
-globalThis.vi_fc_e = async function(): Promise<void> { return globalThis.vi_find_char_handler("e"); };
-globalThis.vi_fc_f = async function(): Promise<void> { return globalThis.vi_find_char_handler("f"); };
-globalThis.vi_fc_g = async function(): Promise<void> { return globalThis.vi_find_char_handler("g"); };
-globalThis.vi_fc_h = async function(): Promise<void> { return globalThis.vi_find_char_handler("h"); };
-globalThis.vi_fc_i = async function(): Promise<void> { return globalThis.vi_find_char_handler("i"); };
-globalThis.vi_fc_j = async function(): Promise<void> { return globalThis.vi_find_char_handler("j"); };
-globalThis.vi_fc_k = async function(): Promise<void> { return globalThis.vi_find_char_handler("k"); };
-globalThis.vi_fc_l = async function(): Promise<void> { return globalThis.vi_find_char_handler("l"); };
-globalThis.vi_fc_m = async function(): Promise<void> { return globalThis.vi_find_char_handler("m"); };
-globalThis.vi_fc_n = async function(): Promise<void> { return globalThis.vi_find_char_handler("n"); };
-globalThis.vi_fc_o = async function(): Promise<void> { return globalThis.vi_find_char_handler("o"); };
-globalThis.vi_fc_p = async function(): Promise<void> { return globalThis.vi_find_char_handler("p"); };
-globalThis.vi_fc_q = async function(): Promise<void> { return globalThis.vi_find_char_handler("q"); };
-globalThis.vi_fc_r = async function(): Promise<void> { return globalThis.vi_find_char_handler("r"); };
-globalThis.vi_fc_s = async function(): Promise<void> { return globalThis.vi_find_char_handler("s"); };
-globalThis.vi_fc_t = async function(): Promise<void> { return globalThis.vi_find_char_handler("t"); };
-globalThis.vi_fc_u = async function(): Promise<void> { return globalThis.vi_find_char_handler("u"); };
-globalThis.vi_fc_v = async function(): Promise<void> { return globalThis.vi_find_char_handler("v"); };
-globalThis.vi_fc_w = async function(): Promise<void> { return globalThis.vi_find_char_handler("w"); };
-globalThis.vi_fc_x = async function(): Promise<void> { return globalThis.vi_find_char_handler("x"); };
-globalThis.vi_fc_y = async function(): Promise<void> { return globalThis.vi_find_char_handler("y"); };
-globalThis.vi_fc_z = async function(): Promise<void> { return globalThis.vi_find_char_handler("z"); };
-globalThis.vi_fc_A = async function(): Promise<void> { return globalThis.vi_find_char_handler("A"); };
-globalThis.vi_fc_B = async function(): Promise<void> { return globalThis.vi_find_char_handler("B"); };
-globalThis.vi_fc_C = async function(): Promise<void> { return globalThis.vi_find_char_handler("C"); };
-globalThis.vi_fc_D = async function(): Promise<void> { return globalThis.vi_find_char_handler("D"); };
-globalThis.vi_fc_E = async function(): Promise<void> { return globalThis.vi_find_char_handler("E"); };
-globalThis.vi_fc_F = async function(): Promise<void> { return globalThis.vi_find_char_handler("F"); };
-globalThis.vi_fc_G = async function(): Promise<void> { return globalThis.vi_find_char_handler("G"); };
-globalThis.vi_fc_H = async function(): Promise<void> { return globalThis.vi_find_char_handler("H"); };
-globalThis.vi_fc_I = async function(): Promise<void> { return globalThis.vi_find_char_handler("I"); };
-globalThis.vi_fc_J = async function(): Promise<void> { return globalThis.vi_find_char_handler("J"); };
-globalThis.vi_fc_K = async function(): Promise<void> { return globalThis.vi_find_char_handler("K"); };
-globalThis.vi_fc_L = async function(): Promise<void> { return globalThis.vi_find_char_handler("L"); };
-globalThis.vi_fc_M = async function(): Promise<void> { return globalThis.vi_find_char_handler("M"); };
-globalThis.vi_fc_N = async function(): Promise<void> { return globalThis.vi_find_char_handler("N"); };
-globalThis.vi_fc_O = async function(): Promise<void> { return globalThis.vi_find_char_handler("O"); };
-globalThis.vi_fc_P = async function(): Promise<void> { return globalThis.vi_find_char_handler("P"); };
-globalThis.vi_fc_Q = async function(): Promise<void> { return globalThis.vi_find_char_handler("Q"); };
-globalThis.vi_fc_R = async function(): Promise<void> { return globalThis.vi_find_char_handler("R"); };
-globalThis.vi_fc_S = async function(): Promise<void> { return globalThis.vi_find_char_handler("S"); };
-globalThis.vi_fc_T = async function(): Promise<void> { return globalThis.vi_find_char_handler("T"); };
-globalThis.vi_fc_U = async function(): Promise<void> { return globalThis.vi_find_char_handler("U"); };
-globalThis.vi_fc_V = async function(): Promise<void> { return globalThis.vi_find_char_handler("V"); };
-globalThis.vi_fc_W = async function(): Promise<void> { return globalThis.vi_find_char_handler("W"); };
-globalThis.vi_fc_X = async function(): Promise<void> { return globalThis.vi_find_char_handler("X"); };
-globalThis.vi_fc_Y = async function(): Promise<void> { return globalThis.vi_find_char_handler("Y"); };
-globalThis.vi_fc_Z = async function(): Promise<void> { return globalThis.vi_find_char_handler("Z"); };
-globalThis.vi_fc_0 = async function(): Promise<void> { return globalThis.vi_find_char_handler("0"); };
-globalThis.vi_fc_1 = async function(): Promise<void> { return globalThis.vi_find_char_handler("1"); };
-globalThis.vi_fc_2 = async function(): Promise<void> { return globalThis.vi_find_char_handler("2"); };
-globalThis.vi_fc_3 = async function(): Promise<void> { return globalThis.vi_find_char_handler("3"); };
-globalThis.vi_fc_4 = async function(): Promise<void> { return globalThis.vi_find_char_handler("4"); };
-globalThis.vi_fc_5 = async function(): Promise<void> { return globalThis.vi_find_char_handler("5"); };
-globalThis.vi_fc_6 = async function(): Promise<void> { return globalThis.vi_find_char_handler("6"); };
-globalThis.vi_fc_7 = async function(): Promise<void> { return globalThis.vi_find_char_handler("7"); };
-globalThis.vi_fc_8 = async function(): Promise<void> { return globalThis.vi_find_char_handler("8"); };
-globalThis.vi_fc_9 = async function(): Promise<void> { return globalThis.vi_find_char_handler("9"); };
-globalThis.vi_fc_space = async function(): Promise<void> { return globalThis.vi_find_char_handler(" "); };
+async function vi_fc_a(): Promise<void> { return vi_find_char_handler("a"); }
+registerHandler("vi_fc_a", vi_fc_a);
+async function vi_fc_b(): Promise<void> { return vi_find_char_handler("b"); }
+registerHandler("vi_fc_b", vi_fc_b);
+async function vi_fc_c(): Promise<void> { return vi_find_char_handler("c"); }
+registerHandler("vi_fc_c", vi_fc_c);
+async function vi_fc_d(): Promise<void> { return vi_find_char_handler("d"); }
+registerHandler("vi_fc_d", vi_fc_d);
+async function vi_fc_e(): Promise<void> { return vi_find_char_handler("e"); }
+registerHandler("vi_fc_e", vi_fc_e);
+async function vi_fc_f(): Promise<void> { return vi_find_char_handler("f"); }
+registerHandler("vi_fc_f", vi_fc_f);
+async function vi_fc_g(): Promise<void> { return vi_find_char_handler("g"); }
+registerHandler("vi_fc_g", vi_fc_g);
+async function vi_fc_h(): Promise<void> { return vi_find_char_handler("h"); }
+registerHandler("vi_fc_h", vi_fc_h);
+async function vi_fc_i(): Promise<void> { return vi_find_char_handler("i"); }
+registerHandler("vi_fc_i", vi_fc_i);
+async function vi_fc_j(): Promise<void> { return vi_find_char_handler("j"); }
+registerHandler("vi_fc_j", vi_fc_j);
+async function vi_fc_k(): Promise<void> { return vi_find_char_handler("k"); }
+registerHandler("vi_fc_k", vi_fc_k);
+async function vi_fc_l(): Promise<void> { return vi_find_char_handler("l"); }
+registerHandler("vi_fc_l", vi_fc_l);
+async function vi_fc_m(): Promise<void> { return vi_find_char_handler("m"); }
+registerHandler("vi_fc_m", vi_fc_m);
+async function vi_fc_n(): Promise<void> { return vi_find_char_handler("n"); }
+registerHandler("vi_fc_n", vi_fc_n);
+async function vi_fc_o(): Promise<void> { return vi_find_char_handler("o"); }
+registerHandler("vi_fc_o", vi_fc_o);
+async function vi_fc_p(): Promise<void> { return vi_find_char_handler("p"); }
+registerHandler("vi_fc_p", vi_fc_p);
+async function vi_fc_q(): Promise<void> { return vi_find_char_handler("q"); }
+registerHandler("vi_fc_q", vi_fc_q);
+async function vi_fc_r(): Promise<void> { return vi_find_char_handler("r"); }
+registerHandler("vi_fc_r", vi_fc_r);
+async function vi_fc_s(): Promise<void> { return vi_find_char_handler("s"); }
+registerHandler("vi_fc_s", vi_fc_s);
+async function vi_fc_t(): Promise<void> { return vi_find_char_handler("t"); }
+registerHandler("vi_fc_t", vi_fc_t);
+async function vi_fc_u(): Promise<void> { return vi_find_char_handler("u"); }
+registerHandler("vi_fc_u", vi_fc_u);
+async function vi_fc_v(): Promise<void> { return vi_find_char_handler("v"); }
+registerHandler("vi_fc_v", vi_fc_v);
+async function vi_fc_w(): Promise<void> { return vi_find_char_handler("w"); }
+registerHandler("vi_fc_w", vi_fc_w);
+async function vi_fc_x(): Promise<void> { return vi_find_char_handler("x"); }
+registerHandler("vi_fc_x", vi_fc_x);
+async function vi_fc_y(): Promise<void> { return vi_find_char_handler("y"); }
+registerHandler("vi_fc_y", vi_fc_y);
+async function vi_fc_z(): Promise<void> { return vi_find_char_handler("z"); }
+registerHandler("vi_fc_z", vi_fc_z);
+async function vi_fc_A(): Promise<void> { return vi_find_char_handler("A"); }
+registerHandler("vi_fc_A", vi_fc_A);
+async function vi_fc_B(): Promise<void> { return vi_find_char_handler("B"); }
+registerHandler("vi_fc_B", vi_fc_B);
+async function vi_fc_C(): Promise<void> { return vi_find_char_handler("C"); }
+registerHandler("vi_fc_C", vi_fc_C);
+async function vi_fc_D(): Promise<void> { return vi_find_char_handler("D"); }
+registerHandler("vi_fc_D", vi_fc_D);
+async function vi_fc_E(): Promise<void> { return vi_find_char_handler("E"); }
+registerHandler("vi_fc_E", vi_fc_E);
+async function vi_fc_F(): Promise<void> { return vi_find_char_handler("F"); }
+registerHandler("vi_fc_F", vi_fc_F);
+async function vi_fc_G(): Promise<void> { return vi_find_char_handler("G"); }
+registerHandler("vi_fc_G", vi_fc_G);
+async function vi_fc_H(): Promise<void> { return vi_find_char_handler("H"); }
+registerHandler("vi_fc_H", vi_fc_H);
+async function vi_fc_I(): Promise<void> { return vi_find_char_handler("I"); }
+registerHandler("vi_fc_I", vi_fc_I);
+async function vi_fc_J(): Promise<void> { return vi_find_char_handler("J"); }
+registerHandler("vi_fc_J", vi_fc_J);
+async function vi_fc_K(): Promise<void> { return vi_find_char_handler("K"); }
+registerHandler("vi_fc_K", vi_fc_K);
+async function vi_fc_L(): Promise<void> { return vi_find_char_handler("L"); }
+registerHandler("vi_fc_L", vi_fc_L);
+async function vi_fc_M(): Promise<void> { return vi_find_char_handler("M"); }
+registerHandler("vi_fc_M", vi_fc_M);
+async function vi_fc_N(): Promise<void> { return vi_find_char_handler("N"); }
+registerHandler("vi_fc_N", vi_fc_N);
+async function vi_fc_O(): Promise<void> { return vi_find_char_handler("O"); }
+registerHandler("vi_fc_O", vi_fc_O);
+async function vi_fc_P(): Promise<void> { return vi_find_char_handler("P"); }
+registerHandler("vi_fc_P", vi_fc_P);
+async function vi_fc_Q(): Promise<void> { return vi_find_char_handler("Q"); }
+registerHandler("vi_fc_Q", vi_fc_Q);
+async function vi_fc_R(): Promise<void> { return vi_find_char_handler("R"); }
+registerHandler("vi_fc_R", vi_fc_R);
+async function vi_fc_S(): Promise<void> { return vi_find_char_handler("S"); }
+registerHandler("vi_fc_S", vi_fc_S);
+async function vi_fc_T(): Promise<void> { return vi_find_char_handler("T"); }
+registerHandler("vi_fc_T", vi_fc_T);
+async function vi_fc_U(): Promise<void> { return vi_find_char_handler("U"); }
+registerHandler("vi_fc_U", vi_fc_U);
+async function vi_fc_V(): Promise<void> { return vi_find_char_handler("V"); }
+registerHandler("vi_fc_V", vi_fc_V);
+async function vi_fc_W(): Promise<void> { return vi_find_char_handler("W"); }
+registerHandler("vi_fc_W", vi_fc_W);
+async function vi_fc_X(): Promise<void> { return vi_find_char_handler("X"); }
+registerHandler("vi_fc_X", vi_fc_X);
+async function vi_fc_Y(): Promise<void> { return vi_find_char_handler("Y"); }
+registerHandler("vi_fc_Y", vi_fc_Y);
+async function vi_fc_Z(): Promise<void> { return vi_find_char_handler("Z"); }
+registerHandler("vi_fc_Z", vi_fc_Z);
+async function vi_fc_0(): Promise<void> { return vi_find_char_handler("0"); }
+registerHandler("vi_fc_0", vi_fc_0);
+async function vi_fc_1(): Promise<void> { return vi_find_char_handler("1"); }
+registerHandler("vi_fc_1", vi_fc_1);
+async function vi_fc_2(): Promise<void> { return vi_find_char_handler("2"); }
+registerHandler("vi_fc_2", vi_fc_2);
+async function vi_fc_3(): Promise<void> { return vi_find_char_handler("3"); }
+registerHandler("vi_fc_3", vi_fc_3);
+async function vi_fc_4(): Promise<void> { return vi_find_char_handler("4"); }
+registerHandler("vi_fc_4", vi_fc_4);
+async function vi_fc_5(): Promise<void> { return vi_find_char_handler("5"); }
+registerHandler("vi_fc_5", vi_fc_5);
+async function vi_fc_6(): Promise<void> { return vi_find_char_handler("6"); }
+registerHandler("vi_fc_6", vi_fc_6);
+async function vi_fc_7(): Promise<void> { return vi_find_char_handler("7"); }
+registerHandler("vi_fc_7", vi_fc_7);
+async function vi_fc_8(): Promise<void> { return vi_find_char_handler("8"); }
+registerHandler("vi_fc_8", vi_fc_8);
+async function vi_fc_9(): Promise<void> { return vi_find_char_handler("9"); }
+registerHandler("vi_fc_9", vi_fc_9);
+async function vi_fc_space(): Promise<void> { return vi_find_char_handler(" "); }
+registerHandler("vi_fc_space", vi_fc_space);
 
 // Define vi-find-char mode with all the character bindings
 editor.defineMode("vi-find-char", null, [
@@ -1944,12 +2129,13 @@ for (const [name, key] of opCommands) {
 // ============================================================================
 
 // Start command mode - shows ":" prompt at the bottom
-globalThis.vi_command_mode = function (): void {
+function vi_command_mode(): void {
   editor.startPrompt(":", "vi-command");
-};
+}
+registerHandler("vi_command_mode", vi_command_mode);
 
 // Handle command execution when user presses Enter
-globalThis.vi_command_handler = async function (args: { prompt_type: string; input: string }): Promise<boolean> {
+async function vi_command_handler(args: { prompt_type: string; input: string }): Promise<boolean> {
   if (args.prompt_type !== "vi-command") {
     return false; // Not our prompt, let other handlers process it
   }
@@ -1969,7 +2155,8 @@ globalThis.vi_command_handler = async function (args: { prompt_type: string; inp
   }
 
   return true; // We handled it
-};
+}
+registerHandler("vi_command_handler", vi_command_handler);
 
 interface CommandResult {
   error?: string;
@@ -2772,7 +2959,7 @@ editor.on("prompt_confirmed", "vi_command_handler");
 
 let viModeEnabled = false;
 
-globalThis.vi_mode_toggle = function (): void {
+function vi_mode_toggle(): void {
   editor.debug("[vi_mode_toggle] called, viModeEnabled was: " + viModeEnabled);
   viModeEnabled = !viModeEnabled;
   editor.debug("[vi_mode_toggle] viModeEnabled now: " + viModeEnabled);
@@ -2790,7 +2977,8 @@ globalThis.vi_mode_toggle = function (): void {
     editor.setStatus(editor.t("status.disabled"));
   }
   editor.debug("[vi_mode_toggle] done");
-};
+}
+registerHandler("vi_mode_toggle", vi_mode_toggle);
 
 editor.registerCommand(
   "%cmd.toggle_vi_mode",
@@ -2803,3 +2991,5 @@ editor.registerCommand(
 // Initialization
 // ============================================================================
 
+
+registerHandler("vi_to_brace", vi_to_brace);

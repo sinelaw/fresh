@@ -404,7 +404,7 @@ function addBlameHeaders(): void {
 /**
  * Show git blame for the current file
  */
-globalThis.show_git_blame = async function(): Promise<void> {
+async function show_git_blame() : Promise<void> {
   if (blameState.isOpen) {
     editor.setStatus(editor.t("status.already_open"));
     return;
@@ -502,7 +502,8 @@ globalThis.show_git_blame = async function(): Promise<void> {
     resetState();
     editor.setStatus(editor.t("status.failed_open"));
   }
-};
+}
+registerHandler("show_git_blame", show_git_blame);
 
 /**
  * Reset blame state
@@ -521,7 +522,7 @@ function resetState(): void {
 /**
  * Close the git blame view
  */
-globalThis.git_blame_close = function(): void {
+function git_blame_close() : void {
   if (!blameState.isOpen) {
     return;
   }
@@ -541,7 +542,8 @@ globalThis.git_blame_close = function(): void {
   resetState();
 
   editor.setStatus(editor.t("status.closed"));
-};
+}
+registerHandler("git_blame_close", git_blame_close);
 
 /**
  * Get the commit hash at the current cursor position
@@ -564,7 +566,7 @@ function getCommitAtCursor(): string | null {
 /**
  * Navigate to blame at the parent commit of the current line's commit
  */
-globalThis.git_blame_go_back = async function(): Promise<void> {
+async function git_blame_go_back() : Promise<void> {
   if (!blameState.isOpen || !blameState.sourceFilePath) {
     return;
   }
@@ -644,12 +646,13 @@ globalThis.git_blame_go_back = async function(): Promise<void> {
 
   const depth = blameState.commitStack.length;
   editor.setStatus(editor.t("status.blame_at_parent", { hash: currentHash.slice(0, 7), depth: String(depth) }));
-};
+}
+registerHandler("git_blame_go_back", git_blame_go_back);
 
 /**
  * Copy the commit hash at cursor to clipboard
  */
-globalThis.git_blame_copy_hash = function(): void {
+function git_blame_copy_hash() : void {
   if (!blameState.isOpen) return;
 
   const hash = getCommitAtCursor();
@@ -667,7 +670,8 @@ globalThis.git_blame_copy_hash = function(): void {
   // Copy hash to clipboard
   editor.copyToClipboard(hash);
   editor.setStatus(editor.t("status.hash_copied", { short: hash.slice(0, 7), full: hash }));
-};
+}
+registerHandler("git_blame_copy_hash", git_blame_copy_hash);
 
 // =============================================================================
 // Command Registration

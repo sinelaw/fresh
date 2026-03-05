@@ -73,7 +73,7 @@ function getCurrentLineCol(): { line: number; column: number } {
 }
 
 // Action: Add bookmark at current position
-globalThis.bookmark_add = function (): void {
+function bookmark_add() : void {
   const { path, position, splitId } = getCurrentLocation();
   const { line, column } = getCurrentLineCol();
 
@@ -105,10 +105,11 @@ globalThis.bookmark_add = function (): void {
 
   editor.setStatus(`Added ${name} at ${path}:${line}:${column}`);
   editor.debug(`Bookmark ${id} created: ${JSON.stringify(bookmark)}`);
-};
+}
+registerHandler("bookmark_add", bookmark_add);
 
 // Action: List all bookmarks
-globalThis.bookmark_list = function (): void {
+function bookmark_list() : void {
   if (bookmarks.size === 0) {
     editor.setStatus("No bookmarks");
     return;
@@ -121,10 +122,11 @@ globalThis.bookmark_list = function (): void {
 
   editor.setStatus(`Bookmarks: ${list.join(" | ")}`);
   editor.debug(`All bookmarks: ${JSON.stringify([...bookmarks.values()])}`);
-};
+}
+registerHandler("bookmark_list", bookmark_list);
 
 // Action: Jump to bookmark by ID
-globalThis.bookmark_goto = function (): void {
+function bookmark_goto() : void {
   if (bookmarks.size === 0) {
     editor.setStatus("No bookmarks to jump to");
     return;
@@ -147,10 +149,11 @@ globalThis.bookmark_goto = function (): void {
       editor.setStatus(`Failed to open ${firstBookmark.path}`);
     }
   }
-};
+}
+registerHandler("bookmark_goto", bookmark_goto);
 
 // Action: Jump to bookmark in same split (split-aware)
-globalThis.bookmark_goto_split = function (): void {
+function bookmark_goto_split() : void {
   if (bookmarks.size === 0) {
     editor.setStatus("No bookmarks");
     return;
@@ -176,10 +179,11 @@ globalThis.bookmark_goto_split = function (): void {
       editor.setStatus(`Failed to open in split ${currentSplit}`);
     }
   }
-};
+}
+registerHandler("bookmark_goto_split", bookmark_goto_split);
 
 // Action: Remove all bookmarks
-globalThis.bookmark_clear = function (): void {
+function bookmark_clear() : void {
   const bufferId = editor.getActiveBufferId();
 
   // Remove all bookmark overlays using namespace
@@ -189,21 +193,23 @@ globalThis.bookmark_clear = function (): void {
   bookmarks.clear();
 
   editor.setStatus(`Cleared ${count} bookmark(s)`);
-};
+}
+registerHandler("bookmark_clear", bookmark_clear);
 
 // Action: Show current split info
-globalThis.show_split_info = function (): void {
+function show_split_info() : void {
   const splitId = editor.getActiveSplitId();
   const bufferId = editor.getActiveBufferId();
   const path = editor.getBufferPath(bufferId);
 
   editor.setStatus(`Split ${splitId} | Buffer ${bufferId} | ${path || "[untitled]"}`);
-};
+}
+registerHandler("show_split_info", show_split_info);
 
 // Interactive bookmark selection using prompt API
 let bookmarkSuggestionIds: number[] = [];
 
-globalThis.bookmark_select = function (): void {
+function bookmark_select() : void {
   if (bookmarks.size === 0) {
     editor.setStatus("No bookmarks to select");
     return;
@@ -227,10 +233,11 @@ globalThis.bookmark_select = function (): void {
   editor.startPrompt("Select bookmark: ", "bookmark-select");
   editor.setPromptSuggestions(suggestions);
   editor.setStatus(`${bookmarks.size} bookmark(s) available`);
-};
+}
+registerHandler("bookmark_select", bookmark_select);
 
 // Handle bookmark selection confirmation
-globalThis.onBookmarkSelectConfirmed = function (args: {
+function onBookmarkSelectConfirmed(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
@@ -252,17 +259,19 @@ globalThis.onBookmarkSelectConfirmed = function (args: {
   }
 
   return true;
-};
+}
+registerHandler("onBookmarkSelectConfirmed", onBookmarkSelectConfirmed);
 
 // Handle bookmark selection cancellation
-globalThis.onBookmarkSelectCancelled = function (args: { prompt_type: string }): boolean {
+function onBookmarkSelectCancelled(args: { prompt_type: string }) : boolean {
   if (args.prompt_type !== "bookmark-select") {
     return true;
   }
 
   editor.setStatus("Bookmark selection cancelled");
   return true;
-};
+}
+registerHandler("onBookmarkSelectCancelled", onBookmarkSelectCancelled);
 
 // Register bookmark event handlers
 editor.on("prompt_confirmed", "onBookmarkSelectConfirmed");

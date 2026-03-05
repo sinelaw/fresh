@@ -22,6 +22,7 @@ ERRORS=0
 for file in "${FILES[@]}"; do
   if ! npx -p typescript tsc \
     --noEmit \
+    --strict \
     --target esnext \
     --moduleResolution node \
     --lib esnext,dom \

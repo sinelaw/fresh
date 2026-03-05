@@ -18,11 +18,21 @@
 declare function getEditor(): EditorAPI;
 /**
 * Register a function as a named handler on the global scope.
-* Use this instead of assigning to globalThis directly for strict-mode compatibility.
+*
+* Handler functions registered this way can be referenced by name in
+* `editor.registerCommand()`, `editor.on()`, and mode keybindings.
+*
+* The `fn` parameter is typed as `Function` because the runtime passes
+* different argument shapes depending on the caller: command handlers
+* receive no arguments, event handlers receive an event-specific data
+* object (e.g. `{ buffer_id: number }`), and prompt handlers receive
+* `{ prompt_type: string, input: string }`. Type-annotate your handler
+* parameters to match the event you are handling.
+*
 * @param name - Handler name (referenced by registerCommand, on, etc.)
 * @param fn - The handler function
 */
-declare function registerHandler(name: string, fn: (...args: unknown[]) => void): void;
+declare function registerHandler(name: string, fn: Function): void;
 /** Handle for a cancellable async operation */
 interface ProcessHandle<T> extends PromiseLike<T> {
 	/** Promise that resolves to the result when complete */

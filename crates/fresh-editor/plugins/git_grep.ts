@@ -54,7 +54,7 @@ async function searchWithGitGrep(query: string): Promise<GrepMatch[]> {
 }
 
 // Global function to start git grep
-globalThis.start_git_grep = function (): void {
+function start_git_grep() : void {
   finder.prompt({
     title: editor.t("prompt.grep"),
     source: {
@@ -64,7 +64,8 @@ globalThis.start_git_grep = function (): void {
       minQueryLength: 1,
     },
   });
-};
+}
+registerHandler("start_git_grep", start_git_grep);
 
 // Register command
 editor.registerCommand("%cmd.grep", "%cmd.grep_desc", "start_git_grep", null);
