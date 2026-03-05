@@ -655,15 +655,23 @@ impl JsEditorApi {
 
     // === Command Registration ===
 
-    /// Register a command - reads plugin name from __pluginName__ global
-    /// context is optional - can be omitted, null, undefined, or a string
+    /// Register a command in the command palette (Ctrl+P).
+    ///
+    /// Usually you should omit `context` so the command is always visible.
+    /// If provided, the command is **hidden** unless your plugin has activated
+    /// that context with `editor.setContext(name, true)` or the focused buffer's
+    /// virtual mode (from `defineMode()`) matches. This is for plugin-defined
+    /// contexts only (e.g. `"tour-active"`, `"review-mode"`), not built-in
+    /// editor modes.
     pub fn register_command<'js>(
         &self,
         _ctx: rquickjs::Ctx<'js>,
         name: String,
         description: String,
         handler_name: String,
-        context: rquickjs::function::Opt<rquickjs::Value<'js>>,
+        #[plugin_api(ts_type = "string | null")] context: rquickjs::function::Opt<
+            rquickjs::Value<'js>,
+        >,
     ) -> rquickjs::Result<bool> {
         // Use stored plugin name instead of global lookup
         let plugin_name = self.plugin_name.clone();

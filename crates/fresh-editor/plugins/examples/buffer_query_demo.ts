@@ -23,8 +23,7 @@ globalThis.show_buffer_info_demo = function(): void {
 editor.registerCommand(
   "Query Demo: Show Buffer Info",
   "Display information about the current buffer",
-  "show_buffer_info_demo",
-  "normal"
+  "show_buffer_info_demo"
 );
 
 // Show cursor position with selection info
@@ -49,8 +48,7 @@ globalThis.show_cursor_info_demo = function(): void {
 editor.registerCommand(
   "Query Demo: Show Cursor Position",
   "Display cursor position and selection info",
-  "show_cursor_info_demo",
-  "normal"
+  "show_cursor_info_demo"
 );
 
 // Count all cursors (multi-cursor support)
@@ -62,8 +60,7 @@ globalThis.count_cursors_demo = function(): void {
 editor.registerCommand(
   "Query Demo: Count All Cursors",
   "Display the number of active cursors",
-  "count_cursors_demo",
-  "normal"
+  "count_cursors_demo"
 );
 
 // List all buffers
@@ -83,8 +80,7 @@ globalThis.list_all_buffers_demo = function(): void {
 editor.registerCommand(
   "Query Demo: List All Buffers",
   "Show count of open buffers",
-  "list_all_buffers_demo",
-  "normal"
+  "list_all_buffers_demo"
 );
 
 // Show viewport info
@@ -102,8 +98,7 @@ globalThis.show_viewport_demo = function(): void {
 editor.registerCommand(
   "Query Demo: Show Viewport Info",
   "Display viewport dimensions and scroll position",
-  "show_viewport_demo",
-  "normal"
+  "show_viewport_demo"
 );
 
 editor.setStatus("Buffer Query Demo plugin loaded! Try the 'Query Demo' commands.");

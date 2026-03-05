@@ -29,8 +29,7 @@ globalThis.async_git_status = async function(): Promise<void> {
 editor.registerCommand(
   "Async Demo: Git Status",
   "Run git status and show output",
-  "async_git_status",
-  "normal"
+  "async_git_status"
 );
 
 // Current directory
@@ -51,8 +50,7 @@ globalThis.async_pwd = async function(): Promise<void> {
 editor.registerCommand(
   "Async Demo: Current Directory",
   "Show current directory using pwd",
-  "async_pwd",
-  "normal"
+  "async_pwd"
 );
 
 // List files
@@ -75,8 +73,7 @@ globalThis.async_ls = async function(): Promise<void> {
 editor.registerCommand(
   "Async Demo: List Files",
   "List files in current directory",
-  "async_ls",
-  "normal"
+  "async_ls"
 );
 
 // Git branch
@@ -101,8 +98,7 @@ globalThis.async_git_branch = async function(): Promise<void> {
 editor.registerCommand(
   "Async Demo: Git Branch",
   "Show current git branch",
-  "async_git_branch",
-  "normal"
+  "async_git_branch"
 );
 
 // Echo test
@@ -118,8 +114,7 @@ globalThis.async_echo = async function(): Promise<void> {
 editor.registerCommand(
   "Async Demo: Echo Test",
   "Test with simple echo command",
-  "async_echo",
-  "normal"
+  "async_echo"
 );
 
 // With working directory
@@ -136,8 +131,7 @@ globalThis.async_with_cwd = async function(): Promise<void> {
 editor.registerCommand(
   "Async Demo: With Working Dir",
   "Run command in /tmp directory",
-  "async_with_cwd",
-  "normal"
+  "async_with_cwd"
 );
 
 // Error handling
@@ -157,8 +151,7 @@ globalThis.async_error = async function(): Promise<void> {
 editor.registerCommand(
   "Async Demo: Error Handling",
   "Demonstrate error handling with non-existent command",
-  "async_error",
-  "normal"
+  "async_error"
 );
 
 editor.setStatus("Async Demo plugin loaded! Try the 'Async Demo' commands.");

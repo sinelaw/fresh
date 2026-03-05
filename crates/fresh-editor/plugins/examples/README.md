@@ -71,8 +71,7 @@ globalThis.my_command = function(): void {
 editor.registerCommand(
   "My Custom Command",
   "Does something cool",
-  "my_command",
-  "normal"
+  "my_command"
 );
 
 // Initialization message

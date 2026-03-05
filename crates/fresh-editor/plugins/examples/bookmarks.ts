@@ -272,50 +272,43 @@ editor.on("prompt_cancelled", "onBookmarkSelectCancelled");
 editor.registerCommand(
   "Add Bookmark",
   "Add a bookmark at the current cursor position",
-  "bookmark_add",
-  "normal"
+  "bookmark_add"
 );
 
 editor.registerCommand(
   "List Bookmarks",
   "Show all bookmarks",
-  "bookmark_list",
-  "normal"
+  "bookmark_list"
 );
 
 editor.registerCommand(
   "Go to Bookmark",
   "Jump to the first bookmark",
-  "bookmark_goto",
-  "normal"
+  "bookmark_goto"
 );
 
 editor.registerCommand(
   "Go to Bookmark (Current Split)",
   "Jump to bookmark in current split",
-  "bookmark_goto_split",
-  "normal"
+  "bookmark_goto_split"
 );
 
 editor.registerCommand(
   "Clear Bookmarks",
   "Remove all bookmarks",
-  "bookmark_clear",
-  "normal"
+  "bookmark_clear"
 );
 
 editor.registerCommand(
   "Show Split Info",
   "Display current split and buffer information",
-  "show_split_info",
-  "" // Available in all contexts
+  "show_split_info"
 );
 
 editor.registerCommand(
   "Select Bookmark",
   "Interactively select and jump to a bookmark",
-  "bookmark_select",
-  "normal"
+  "bookmark_select"
 );
 
 // Plugin initialized

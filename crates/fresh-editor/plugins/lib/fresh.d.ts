@@ -683,10 +683,16 @@ interface EditorAPI {
 	copyToClipboard(text: string): void;
 	setClipboard(text: string): void;
 	/**
-	* Register a command - reads plugin name from __pluginName__ global
-	* context is optional - can be omitted, null, undefined, or a string
+	* Register a command in the command palette (Ctrl+P).
+	* 
+	* Usually you should omit `context` so the command is always visible.
+	* If provided, the command is **hidden** unless your plugin has activated
+	* that context with `editor.setContext(name, true)` or the focused buffer's
+	* virtual mode (from `defineMode()`) matches. This is for plugin-defined
+	* contexts only (e.g. `"tour-active"`, `"review-mode"`), not built-in
+	* editor modes.
 	*/
-	registerCommand(name: string, description: string, handlerName: string, context?: unknown): boolean;
+	registerCommand(name: string, description: string, handlerName: string, context?: string | null): boolean;
 	/**
 	* Unregister a command by name
 	*/

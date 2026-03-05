@@ -5,8 +5,7 @@
 editor.registerCommand(
   "Virtual Buffer Demo",
   "Show a demo virtual buffer with sample diagnostics",
-  "show_virtual_buffer_demo",
-  "normal"
+  "show_virtual_buffer_demo"
 );
 
 // Define a custom mode for the demo buffer

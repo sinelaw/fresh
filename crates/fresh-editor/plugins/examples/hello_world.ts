@@ -81,6 +81,37 @@ globalThis.async_demo = async function (): Promise<void> {
   editor.setStatus(`Async operation complete! Buffer has ${length} bytes`);
 };
 
+// Register commands so they appear in the command palette (Ctrl+P)
+editor.registerCommand(
+  "Hello: Show Buffer Info",
+  "Display active buffer information",
+  "show_buffer_info"
+);
+
+editor.registerCommand(
+  "Hello: Insert Timestamp",
+  "Insert an ISO timestamp at the cursor",
+  "insert_timestamp"
+);
+
+editor.registerCommand(
+  "Hello: Highlight Region",
+  "Highlight 10 characters around cursor",
+  "highlight_region"
+);
+
+editor.registerCommand(
+  "Hello: Clear Highlight",
+  "Remove demo highlights",
+  "clear_highlight"
+);
+
+editor.registerCommand(
+  "Hello: Async Demo",
+  "Demonstrate async/await",
+  "async_demo"
+);
+
 // Log that plugin loaded
 editor.debug("Hello World plugin loaded!");
 editor.setStatus("Hello World plugin ready");
