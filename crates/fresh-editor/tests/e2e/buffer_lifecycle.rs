@@ -500,6 +500,8 @@ fn test_next_buffer_skips_hidden_buffers() {
         entries: vec![TextPropertyEntry {
             text: "HIDDEN_BUFFER_CONTENT".to_string(),
             properties: HashMap::new(),
+            style: None,
+            inline_overlays: Vec::new(),
         }],
         show_line_numbers: true,
         show_cursors: true,

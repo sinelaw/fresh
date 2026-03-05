@@ -530,7 +530,35 @@ fn parse_text_property_entry(
             map
         })
         .unwrap_or_default();
-    Some(TextPropertyEntry { text, properties })
+
+    // Parse optional style field
+    let style: Option<fresh_core::api::OverlayOptions> =
+        obj.get::<_, Object>("style").ok().and_then(|style_obj| {
+            let json_val = js_to_json(ctx, Value::from_object(style_obj));
+            serde_json::from_value(json_val).ok()
+        });
+
+    // Parse optional inlineOverlays array
+    let inline_overlays: Vec<fresh_core::text_property::InlineOverlay> = obj
+        .get::<_, rquickjs::Array>("inlineOverlays")
+        .ok()
+        .map(|arr| {
+            arr.iter::<Object>()
+                .flatten()
+                .filter_map(|item| {
+                    let json_val = js_to_json(ctx, Value::from_object(item));
+                    serde_json::from_value(json_val).ok()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(TextPropertyEntry {
+        text,
+        properties,
+        style,
+        inline_overlays,
+    })
 }
 
 /// Pending response senders type alias
@@ -2810,6 +2838,8 @@ impl JsEditorApi {
             .map(|e| TextPropertyEntry {
                 text: e.text,
                 properties: e.properties.unwrap_or_default(),
+                style: e.style,
+                inline_overlays: e.inline_overlays.unwrap_or_default(),
             })
             .collect();
 
@@ -2868,6 +2898,8 @@ impl JsEditorApi {
             .map(|e| TextPropertyEntry {
                 text: e.text,
                 properties: e.properties.unwrap_or_default(),
+                style: e.style,
+                inline_overlays: e.inline_overlays.unwrap_or_default(),
             })
             .collect();
 
@@ -2926,6 +2958,8 @@ impl JsEditorApi {
             .map(|e| TextPropertyEntry {
                 text: e.text,
                 properties: e.properties.unwrap_or_default(),
+                style: e.style,
+                inline_overlays: e.inline_overlays.unwrap_or_default(),
             })
             .collect();
 

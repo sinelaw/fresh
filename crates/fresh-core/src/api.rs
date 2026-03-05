@@ -1842,8 +1842,8 @@ pub struct BackgroundProcessResult {
 
 /// Entry for virtual buffer content with optional text properties (JS API version)
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(deny_unknown_fields)]
-#[ts(export, rename = "TextPropertyEntry")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename = "TextPropertyEntry", rename_all = "camelCase")]
 pub struct JsTextPropertyEntry {
     /// Text content for this entry
     pub text: String,
@@ -1851,6 +1851,14 @@ pub struct JsTextPropertyEntry {
     #[serde(default)]
     #[ts(optional, type = "Record<string, unknown>")]
     pub properties: Option<HashMap<String, JsonValue>>,
+    /// Optional whole-entry styling
+    #[serde(default)]
+    #[ts(optional, type = "Partial<OverlayOptions>")]
+    pub style: Option<OverlayOptions>,
+    /// Optional sub-range styling within this entry
+    #[serde(default)]
+    #[ts(optional)]
+    pub inline_overlays: Option<Vec<crate::text_property::InlineOverlay>>,
 }
 
 /// Directory entry returned by readDir

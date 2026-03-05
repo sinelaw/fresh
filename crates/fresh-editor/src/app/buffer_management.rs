@@ -1327,7 +1327,7 @@ impl Editor {
             .ok_or_else(|| "Buffer not found".to_string())?;
 
         // Build text and properties from entries
-        let (text, properties) =
+        let (text, properties, collected_overlays) =
             crate::primitives::text_property::TextPropertyManager::from_entries(entries);
 
         // Replace buffer content
@@ -1342,6 +1342,33 @@ impl Editor {
 
         // Set text properties
         state.text_properties = properties;
+
+        // Atomically apply inline overlays: clear the _inline namespace, then create
+        // new overlays — all within this single function call, before the next render.
+        {
+            use crate::view::overlay::{Overlay, OverlayFace};
+            use fresh_core::overlay::OverlayNamespace;
+
+            let inline_ns = OverlayNamespace::from_string("_inline".to_string());
+            state
+                .overlays
+                .clear_namespace(&inline_ns, &mut state.marker_list);
+
+            for co in collected_overlays {
+                let face = OverlayFace::from_options(&co.options);
+                let mut overlay = Overlay::with_namespace(
+                    &mut state.marker_list,
+                    co.range,
+                    face,
+                    inline_ns.clone(),
+                );
+                overlay.extend_to_line_end = co.options.extend_to_line_end;
+                if let Some(url) = co.options.url {
+                    overlay.url = Some(url);
+                }
+                state.overlays.add(overlay);
+            }
+        }
 
         // Preserve cursor position (clamped to new content length and snapped to char boundary)
         let new_len = state.buffer.len();

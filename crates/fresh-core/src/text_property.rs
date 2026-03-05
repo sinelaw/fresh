@@ -5,6 +5,7 @@
 //! specific ranges of text. This is essential for virtual buffers where
 //! each line might represent a diagnostic, search result, or other structured data.
 
+use crate::api::OverlayOptions;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -67,15 +68,37 @@ impl TextProperty {
     }
 }
 
+/// An inline overlay specifying styling for a sub-range within a text entry
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct InlineOverlay {
+    /// Start byte offset within the entry's text
+    pub start: usize,
+    /// End byte offset within the entry's text (exclusive)
+    pub end: usize,
+    /// Styling options for this range
+    #[ts(type = "Partial<OverlayOptions>")]
+    pub style: OverlayOptions,
+}
+
 /// An entry with text and its properties
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
-#[ts(export)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct TextPropertyEntry {
     /// The text content
     pub text: String,
     /// Properties for this text
     #[ts(type = "Record<string, any>")]
+    #[serde(default)]
     pub properties: HashMap<String, serde_json::Value>,
+    /// Optional whole-entry styling
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<OverlayOptions>,
+    /// Optional sub-range styling within this entry
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inline_overlays: Vec<InlineOverlay>,
 }
 
 impl TextPropertyEntry {
@@ -84,6 +107,8 @@ impl TextPropertyEntry {
         Self {
             text: text.into(),
             properties: HashMap::new(),
+            style: None,
+            inline_overlays: Vec::new(),
         }
     }
 
@@ -96,6 +121,19 @@ impl TextPropertyEntry {
     /// Set multiple properties
     pub fn with_properties(mut self, props: HashMap<String, serde_json::Value>) -> Self {
         self.properties = props;
+        self
+    }
+
+    /// Set whole-entry styling
+    pub fn with_style(mut self, style: OverlayOptions) -> Self {
+        self.style = Some(style);
+        self
+    }
+
+    /// Add a sub-range inline overlay
+    pub fn with_inline_overlay(mut self, start: usize, end: usize, style: OverlayOptions) -> Self {
+        self.inline_overlays
+            .push(InlineOverlay { start, end, style });
         self
     }
 }

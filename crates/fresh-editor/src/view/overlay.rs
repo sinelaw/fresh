@@ -31,6 +31,68 @@ pub enum OverlayFace {
     },
 }
 
+impl OverlayFace {
+    /// Create an OverlayFace from OverlayOptions
+    ///
+    /// If the options contain theme key references, creates a ThemedStyle
+    /// for runtime resolution. Otherwise creates a fully resolved Style.
+    pub fn from_options(options: &fresh_core::api::OverlayOptions) -> Self {
+        use ratatui::style::Modifier;
+
+        let mut style = Style::default();
+
+        if let Some(ref fg) = options.fg {
+            if let Some((r, g, b)) = fg.as_rgb() {
+                style = style.fg(Color::Rgb(r, g, b));
+            }
+        }
+
+        if let Some(ref bg) = options.bg {
+            if let Some((r, g, b)) = bg.as_rgb() {
+                style = style.bg(Color::Rgb(r, g, b));
+            }
+        }
+
+        let mut modifiers = Modifier::empty();
+        if options.bold {
+            modifiers |= Modifier::BOLD;
+        }
+        if options.italic {
+            modifiers |= Modifier::ITALIC;
+        }
+        if options.underline {
+            modifiers |= Modifier::UNDERLINED;
+        }
+        if options.strikethrough {
+            modifiers |= Modifier::CROSSED_OUT;
+        }
+        if !modifiers.is_empty() {
+            style = style.add_modifier(modifiers);
+        }
+
+        let fg_theme = options
+            .fg
+            .as_ref()
+            .and_then(|c| c.as_theme_key())
+            .map(String::from);
+        let bg_theme = options
+            .bg
+            .as_ref()
+            .and_then(|c| c.as_theme_key())
+            .map(String::from);
+
+        if fg_theme.is_some() || bg_theme.is_some() {
+            OverlayFace::ThemedStyle {
+                fallback_style: style,
+                fg_theme,
+                bg_theme,
+            }
+        } else {
+            OverlayFace::Style { style }
+        }
+    }
+}
+
 /// Style of underline
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnderlineStyle {

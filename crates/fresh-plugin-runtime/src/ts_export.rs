@@ -21,11 +21,13 @@ use fresh_core::api::{
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
     CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, JsDiagnostic,
     JsPosition, JsRange, JsTextPropertyEntry, LanguagePackConfig, LayoutHints, LspServerPackConfig,
-    SpawnResult, TerminalResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle,
-    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
+    OverlayColorSpec, OverlayOptions, SpawnResult, TerminalResult, TextPropertiesAtCursor,
+    TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
+    VirtualBufferResult,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
+use fresh_core::text_property::InlineOverlay;
 
 /// Get the TypeScript declaration for a type by name
 ///
@@ -102,6 +104,11 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "LspServerPackConfig" => Some(LspServerPackConfig::decl(&cfg)),
         "FormatterPackConfig" => Some(FormatterPackConfig::decl(&cfg)),
 
+        // Overlay/inline styling types
+        "OverlayOptions" => Some(OverlayOptions::decl()),
+        "OverlayColorSpec" => Some(OverlayColorSpec::decl()),
+        "InlineOverlay" => Some(InlineOverlay::decl()),
+
         _ => None,
     }
 }
@@ -135,6 +142,9 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TerminalResult",                 // Used by createTerminal return type
     "CreateTerminalOptions",          // Used by createTerminal opts parameter
     "CursorInfo",                     // Used by getPrimaryCursor, getAllCursors
+    "OverlayOptions",                 // Used by TextPropertyEntry.style and InlineOverlay
+    "OverlayColorSpec",               // Used by OverlayOptions.fg/bg
+    "InlineOverlay",                  // Used by TextPropertyEntry.inlineOverlays
 ];
 
 /// Collect TypeScript type declarations based on referenced types from proc macro

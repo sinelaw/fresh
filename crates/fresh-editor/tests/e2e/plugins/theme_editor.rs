@@ -513,9 +513,9 @@ fn test_theme_editor_displays_correct_colors() {
         screen
     );
 
-    // Check that the screen contains color field labels
+    // Check that the screen contains color field key names (two-panel layout shows short keys)
     assert!(
-        screen.contains("Background") || screen.contains("Foreground") || screen.contains("Cursor"),
+        screen.contains("bg") || screen.contains("fg") || screen.contains("cursor"),
         "Theme editor should show color field labels. Screen:\n{}",
         screen
     );
@@ -873,41 +873,18 @@ fn test_comments_appear_before_fields() {
     // Open theme editor using helper (handles theme selection prompt)
     open_theme_editor(&mut harness);
 
+    // In the two-panel layout, field descriptions appear in the right-side picker panel
+    // when a field is selected. The Editor section starts expanded by default, so just
+    // press Down to navigate from the section header to the first field (bg).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
     let screen = harness.screen_to_string();
-    let lines: Vec<&str> = screen.lines().collect();
 
-    // Find the "Background" field line and check that the description/comment is BEFORE it
-    let mut found_description_before_field = false;
-    for i in 1..lines.len() {
-        let prev_line = lines[i - 1];
-        let curr_line = lines[i];
-
-        // If current line contains a field name like "Background:"
-        if curr_line.contains("Background:") && curr_line.contains("#") {
-            // The previous line should contain the description comment
-            if prev_line.contains("//") && prev_line.contains("background") {
-                found_description_before_field = true;
-                break;
-            }
-        }
-    }
-
-    // BUG: Currently the comment appears AFTER the field
-    // Check that we don't have the pattern: field line followed by comment
-    let mut found_field_before_description = false;
-    for i in 0..lines.len() - 1 {
-        let curr_line = lines[i];
-        let next_line = lines[i + 1];
-
-        if curr_line.contains("Background:") && next_line.contains("//") {
-            found_field_before_description = true;
-            break;
-        }
-    }
-
+    // The picker panel should show the field path and description for the selected field
     assert!(
-        found_description_before_field && !found_field_before_description,
-        "Comments should appear BEFORE fields, not after. Screen:\n{}",
+        screen.contains("editor.bg") || screen.contains("editor.fg"),
+        "Picker panel should show field path when a field is selected. Screen:\n{}",
         screen
     );
 }
@@ -1477,12 +1454,11 @@ fn test_theme_editor_color_values_no_internal_spaces() {
     // Open theme editor using helper (handles theme selection prompt)
     open_theme_editor(&mut harness);
 
-    // Wait for swatches to appear (indicated by "X" character used for fg preview)
+    // Wait for swatches to appear (indicated by "██" swatch blocks)
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            // Theme editor shows "X" as swatch character before hex values
-            screen.contains(": X ") || screen.contains("Background")
+            screen.contains("██") || screen.contains("Theme Editor")
         })
         .unwrap();
 
@@ -1496,10 +1472,10 @@ fn test_theme_editor_color_values_no_internal_spaces() {
     // Check for the bug pattern: # followed by spaces then hex digits
     let broken_pattern = Regex::new(r"#\s+[0-9A-Fa-f]").unwrap();
 
-    // Find lines that have color fields (contain ":" and "#")
+    // Find lines that have color fields (contain "██" swatch and "#" hex value)
     let color_lines: Vec<&str> = screen
         .lines()
-        .filter(|line| line.contains(":") && line.contains("#"))
+        .filter(|line| line.contains("██") && line.contains("#"))
         .collect();
 
     assert!(
@@ -2037,10 +2013,9 @@ fn test_color_swatches_displayed() {
 
     let screen = harness.screen_to_string();
 
-    // Color swatches should be displayed as "X" characters (fg preview)
-    // followed by space (bg preview) before the hex value
+    // Color swatches should be displayed as "██" blocks next to field values
     assert!(
-        screen.contains(": X ") || screen.contains("Background"),
+        screen.contains("██"),
         "Color swatches should be displayed next to color values. Screen:\n{}",
         screen
     );
@@ -3093,7 +3068,15 @@ fn test_inspect_after_saving_custom_theme() {
         })
         .unwrap();
 
-    // Edit a color field
+    // Expand Editor section and navigate to the first color field (bg)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Edit the color field
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();

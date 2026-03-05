@@ -18,6 +18,8 @@ fn reproduce_cursor_panic() {
         entries: vec![TextPropertyEntry {
             text: "Hello World".to_string(),
             properties: HashMap::new(),
+            style: None,
+            inline_overlays: Vec::new(),
         }],
         show_line_numbers: true,
         show_cursors: false, // <--- The trigger: hiding cursors

@@ -53,6 +53,14 @@ type TextPropertyEntry = {
 	* Optional properties attached to this text (e.g., file path, line number)
 	*/
 	properties?: Record<string, unknown>;
+	/**
+	* Optional whole-entry styling
+	*/
+	style?: Partial<OverlayOptions>;
+	/**
+	* Optional sub-range styling within this entry
+	*/
+	inlineOverlays?: Array<InlineOverlay>;
 };
 type TsCompositeLayoutConfig = {
 	/**
@@ -447,6 +455,57 @@ type CursorInfo = {
 		start: number;
 		end: number;
 	} | null;
+};
+type OverlayOptions = {
+	/**
+	* Foreground color - RGB array or theme key string
+	*/
+	fg?: OverlayColorSpec | null;
+	/**
+	* Background color - RGB array or theme key string
+	*/
+	bg?: OverlayColorSpec | null;
+	/**
+	* Whether to render with underline
+	*/
+	underline: boolean;
+	/**
+	* Whether to render in bold
+	*/
+	bold: boolean;
+	/**
+	* Whether to render in italic
+	*/
+	italic: boolean;
+	/**
+	* Whether to render with strikethrough
+	*/
+	strikethrough: boolean;
+	/**
+	* Whether to extend background color to end of line
+	*/
+	extendToLineEnd: boolean;
+	/**
+	* Optional URL for OSC 8 terminal hyperlinks.
+	* When set, the overlay text becomes a clickable hyperlink in terminals
+	* that support OSC 8 escape sequences.
+	*/
+	url?: string | null;
+};
+type OverlayColorSpec = [number, number, number] | string;
+type InlineOverlay = {
+	/**
+	* Start byte offset within the entry's text
+	*/
+	start: number;
+	/**
+	* End byte offset within the entry's text (exclusive)
+	*/
+	end: number;
+	/**
+	* Styling options for this range
+	*/
+	style: Partial<OverlayOptions>;
 };
 type BackgroundProcessResult = {
 	/**

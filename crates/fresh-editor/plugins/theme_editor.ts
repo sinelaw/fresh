@@ -57,6 +57,130 @@ const ALL_COLOR_NAMES = [...NAMED_COLOR_LIST, ...SPECIAL_COLORS];
  */
 type ColorValue = RGB | string;
 
+// =============================================================================
+// Layout Constants & Panel Types
+// =============================================================================
+
+const LEFT_WIDTH = 38;
+const RIGHT_WIDTH = 61;
+
+type PickerFocusTarget =
+  | { type: "hex-input" }
+  | { type: "named-colors"; index: number }
+  | { type: "palette"; row: number; col: number };
+
+// =============================================================================
+// Named Color Grid (for picker panel)
+// =============================================================================
+
+const NAMED_COLORS_PER_ROW = 6;
+const NAMED_COLOR_GRID: Array<Array<{ display: string; value: string; rgb: RGB | null }>> = [
+  [
+    { display: "Black", value: "Black", rgb: [0, 0, 0] },
+    { display: "Red", value: "Red", rgb: [255, 0, 0] },
+    { display: "Green", value: "Green", rgb: [0, 128, 0] },
+    { display: "Yellow", value: "Yellow", rgb: [255, 255, 0] },
+    { display: "Blue", value: "Blue", rgb: [0, 0, 255] },
+    { display: "Magenta", value: "Magenta", rgb: [255, 0, 255] },
+  ],
+  [
+    { display: "Cyan", value: "Cyan", rgb: [0, 255, 255] },
+    { display: "Gray", value: "Gray", rgb: [128, 128, 128] },
+    { display: "DkGray", value: "DarkGray", rgb: [169, 169, 169] },
+    { display: "LtRed", value: "LightRed", rgb: [255, 128, 128] },
+    { display: "LtGreen", value: "LightGreen", rgb: [144, 238, 144] },
+    { display: "LtYellw", value: "LightYellow", rgb: [255, 255, 224] },
+  ],
+  [
+    { display: "LtBlue", value: "LightBlue", rgb: [173, 216, 230] },
+    { display: "LtMag", value: "LightMagenta", rgb: [255, 128, 255] },
+    { display: "LtCyan", value: "LightCyan", rgb: [224, 255, 255] },
+    { display: "White", value: "White", rgb: [255, 255, 255] },
+    { display: "Default", value: "Default", rgb: null },
+    { display: "Reset", value: "Reset", rgb: null },
+  ],
+];
+
+// =============================================================================
+// Extended Color Palette
+// =============================================================================
+
+const PALETTE_COLS = 12;
+const PALETTE_ROWS = 4;
+const PALETTE_LIGHTNESSES = [25, 40, 60, 75];
+
+function hslToRgb(h: number, s: number, l: number): RGB {
+  s /= 100;
+  l /= 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+  const m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; }
+  else if (h < 120) { r = x; g = c; }
+  else if (h < 180) { g = c; b = x; }
+  else if (h < 240) { g = x; b = c; }
+  else if (h < 300) { r = x; b = c; }
+  else { r = c; b = x; }
+  return [
+    Math.round((r + m) * 255),
+    Math.round((g + m) * 255),
+    Math.round((b + m) * 255),
+  ];
+}
+
+let cachedPalette: RGB[][] | null = null;
+
+function getExtendedPalette(): RGB[][] {
+  if (cachedPalette) return cachedPalette;
+  const palette: RGB[][] = [];
+  for (let row = 0; row < PALETTE_ROWS; row++) {
+    const rowColors: RGB[] = [];
+    for (let col = 0; col < PALETTE_COLS; col++) {
+      const hue = col * 30;
+      rowColors.push(hslToRgb(hue, 80, PALETTE_LIGHTNESSES[row]));
+    }
+    palette.push(rowColors);
+  }
+  cachedPalette = palette;
+  return palette;
+}
+
+// =============================================================================
+// Preview Tokens
+// =============================================================================
+
+const PREVIEW_LINES: Array<Array<{ text: string; syntaxType: string }>> = [
+  [
+    { text: "fn", syntaxType: "keyword" },
+    { text: " ", syntaxType: "" },
+    { text: "main", syntaxType: "function" },
+    { text: "() {", syntaxType: "operator" },
+  ],
+  [
+    { text: "  ", syntaxType: "" },
+    { text: "let", syntaxType: "keyword" },
+    { text: " greeting = ", syntaxType: "" },
+    { text: "\"Hello\"", syntaxType: "string" },
+    { text: ";", syntaxType: "" },
+  ],
+  [
+    { text: "  ", syntaxType: "" },
+    { text: "// A comment", syntaxType: "comment" },
+  ],
+  [
+    { text: "  ", syntaxType: "" },
+    { text: "println!", syntaxType: "function" },
+    { text: "(", syntaxType: "" },
+    { text: "\"{}\", ", syntaxType: "string" },
+    { text: "greeting", syntaxType: "variable" },
+    { text: ");", syntaxType: "" },
+  ],
+  [
+    { text: "}", syntaxType: "" },
+  ],
+];
+
 /**
  * Theme section definition
  */
@@ -231,6 +355,14 @@ interface ThemeEditorState {
   savedCursorPath: string | null;
   /** Whether to close the editor after a successful save */
   closeAfterSave: boolean;
+  /** Which panel has focus */
+  focusPanel: "tree" | "picker";
+  /** Focus target within picker panel */
+  pickerFocus: PickerFocusTarget;
+  /** Filter text for tree */
+  filterText: string;
+  /** Whether filter input is active */
+  filterActive: boolean;
 }
 
 /**
@@ -254,6 +386,10 @@ function isThemeEditorOpen(): boolean {
     state.themeData = {};
     state.originalThemeData = {};
     state.hasChanges = false;
+    state.focusPanel = "tree";
+    state.selectedIndex = 0;
+    state.filterText = "";
+    state.filterActive = false;
   }
 
   return exists;
@@ -277,6 +413,10 @@ const state: ThemeEditorState = {
   isBuiltin: false,
   savedCursorPath: null,
   closeAfterSave: false,
+  focusPanel: "tree",
+  pickerFocus: { type: "hex-input" },
+  filterText: "",
+  filterActive: false,
 };
 
 // =============================================================================
@@ -293,6 +433,13 @@ const colors = {
   footer: [100, 100, 100] as RGB,          // Gray
   colorBlock: [200, 200, 200] as RGB,      // Light gray for color swatch outline
   selectionBg: [50, 50, 80] as RGB,        // Dark blue-gray for selected field
+  divider: [60, 60, 80] as RGB,            // Muted divider color
+  header: [100, 180, 255] as RGB,          // Header blue
+  pickerLabel: [180, 180, 200] as RGB,     // Picker section labels
+  pickerValue: [255, 255, 255] as RGB,     // Picker value text
+  pickerFocusBg: [40, 60, 100] as RGB,     // Picker focused item bg
+  filterText: [200, 200, 100] as RGB,      // Filter input text
+  previewBg: [25, 25, 30] as RGB,          // Preview background
 };
 
 // =============================================================================
@@ -321,14 +468,17 @@ editor.defineMode(
   "theme-editor",
   "normal",
   [
-    // Navigation (standard keys that don't conflict with typing)
-    ["Return", "theme_editor_edit_color"],
-    ["Space", "theme_editor_edit_color"],
-    ["Tab", "theme_editor_nav_next_section"],
-    ["S-Tab", "theme_editor_nav_prev_section"],
+    // Navigation
+    ["Return", "theme_editor_enter"],
+    ["Space", "theme_editor_enter"],
+    ["Tab", "theme_editor_focus_tab"],
+    ["S-Tab", "theme_editor_focus_shift_tab"],
     ["Up", "theme_editor_nav_up"],
     ["Down", "theme_editor_nav_down"],
-    ["Escape", "theme_editor_close"],
+    ["Left", "theme_editor_nav_left"],
+    ["Right", "theme_editor_nav_right"],
+    ["Escape", "theme_editor_escape"],
+    ["/", "theme_editor_filter"],
     [SHORTCUTS.help, "theme_editor_show_help"],
 
     // Ctrl+ shortcuts (match common editor conventions)
@@ -525,11 +675,21 @@ function loadThemeFile(name: string): Record<string, unknown> | null {
 function buildVisibleFields(): ThemeField[] {
   const fields: ThemeField[] = [];
   const themeSections = getThemeSections();
+  const filter = state.filterText.toLowerCase();
 
   for (const section of themeSections) {
     const expanded = state.expandedSections.has(section.name);
 
-    // Section header - displayName and description are already translated in getThemeSections()
+    // When filtering, check if section or any of its fields match
+    if (filter) {
+      const sectionMatches = section.name.toLowerCase().includes(filter) ||
+        section.displayName.toLowerCase().includes(filter);
+      const anyFieldMatches = section.fields.some(f =>
+        f.key.toLowerCase().includes(filter) || f.displayName.toLowerCase().includes(filter));
+      if (!sectionMatches && !anyFieldMatches) continue;
+    }
+
+    // Section header
     fields.push({
       def: {
         key: section.name,
@@ -547,10 +707,16 @@ function buildVisibleFields(): ThemeField[] {
     // Section fields
     if (expanded) {
       for (const fieldDef of section.fields) {
+        // Filter individual fields
+        if (filter) {
+          const fieldMatches = fieldDef.key.toLowerCase().includes(filter) ||
+            fieldDef.displayName.toLowerCase().includes(filter);
+          if (!fieldMatches) continue;
+        }
+
         const path = `${section.name}.${fieldDef.key}`;
         const value = getNestedValue(state.themeData, path) as ColorValue || [128, 128, 128];
 
-        // fieldDef displayName and description are already translated in getThemeSections()
         fields.push({
           def: fieldDef,
           value,
@@ -569,109 +735,385 @@ function buildVisibleFields(): ThemeField[] {
 // UI Building
 // =============================================================================
 
-/**
- * Build display entries for virtual buffer
- */
-function buildDisplayEntries(): TextPropertyEntry[] {
-  const entries: TextPropertyEntry[] = [];
+// =============================================================================
+// Tree Panel Builder (Left)
+// =============================================================================
 
-  // Title
-  const modifiedMarker = state.hasChanges ? " " + editor.t("panel.modified") : "";
-  entries.push({
-    text: `━━━ ${editor.t("panel.title", { name: state.themeName })}${modifiedMarker} ━━━\n`,
-    properties: { type: "title" },
+interface TreeLine {
+  text: string;
+  type: string;
+  index?: number;
+  path?: string;
+  selected?: boolean;
+  colorValue?: ColorValue;
+}
+
+function buildTreeLines(): TreeLine[] {
+  const lines: TreeLine[] = [];
+
+  // Header
+  const modMarker = state.hasChanges ? " [*]" : "";
+  lines.push({
+    text: `Theme Editor: ${state.themeName}${modMarker}`,
+    type: "header",
   });
 
-  if (state.themePath) {
-    entries.push({
-      text: `${editor.t("panel.file", { path: state.themePath })}\n`,
-      properties: { type: "file-path" },
+  // Separator
+  lines.push({ text: "─".repeat(36), type: "separator" });
+
+  // Filter
+  if (state.filterText) {
+    lines.push({
+      text: `Filter: [${state.filterText}]`,
+      type: "filter",
     });
-  } else {
-    entries.push({
-      text: editor.t("panel.new_theme") + "\n",
-      properties: { type: "file-path" },
-    });
+    lines.push({ text: "─".repeat(36), type: "separator" });
   }
 
-  // Key hints at the top (moved from footer)
-  entries.push({
-    text: editor.t("panel.nav_hint") + "\n",
-    properties: { type: "footer" },
-  });
-  entries.push({
-    text: editor.t("panel.action_hint", SHORTCUTS) + "\n",
-    properties: { type: "footer" },
-  });
-
-  entries.push({
-    text: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-    properties: { type: "separator" },
-  });
-
-  entries.push({
-    text: "\n",
-    properties: { type: "blank" },
-  });
-
-  // Fields
+  // Build visible fields
   state.visibleFields = buildVisibleFields();
+
+  // Clamp selectedIndex
+  if (state.selectedIndex >= state.visibleFields.length) {
+    state.selectedIndex = Math.max(0, state.visibleFields.length - 1);
+  }
 
   for (let i = 0; i < state.visibleFields.length; i++) {
     const field = state.visibleFields[i];
-    const indent = "  ".repeat(field.depth);
+    const isSelected = i === state.selectedIndex;
 
     if (field.isSection) {
-      // Section header
       const icon = field.expanded ? "▼" : ">";
-      entries.push({
-        text: `${indent}${icon} ${field.def.displayName}\n`,
-        properties: {
-          type: "section",
-          path: field.path,
-          index: i,
-          expanded: field.expanded,
-        },
-      });
-
-      // Section description
-      entries.push({
-        text: `${indent}  // ${field.def.description}\n`,
-        properties: { type: "description", path: field.path },
+      const sel = isSelected && state.focusPanel === "tree" ? "▸" : " ";
+      lines.push({
+        text: `${sel}${icon} ${field.def.displayName}`,
+        type: "tree-section",
+        index: i,
+        path: field.path,
+        selected: isSelected,
       });
     } else {
-      // Field description (before the field)
-      entries.push({
-        text: `${indent}    // ${field.def.description}\n`,
-        properties: { type: "description", path: field.path },
-      });
-
-      // Color field with swatch characters (X for fg preview, space for bg preview)
+      const sel = isSelected && state.focusPanel === "tree" ? "▸" : " ";
+      const name = field.def.key.length > 13 ? field.def.key.slice(0, 12) + "…" : field.def.key;
       const colorStr = formatColorValue(field.value);
-
-      entries.push({
-        text: `${indent}  ${field.path} - ${field.def.displayName}: X  ${colorStr}\n`,
-        properties: {
-          type: "field",
-          path: field.path,
-          index: i,
-          colorValue: field.value,
-        },
+      const valueStr = colorStr.length > 9 ? colorStr.slice(0, 8) + "…" : colorStr;
+      lines.push({
+        text: `  ${sel} ${name.padEnd(13)} ██ ${valueStr}`,
+        type: "tree-field",
+        index: i,
+        path: field.path,
+        selected: isSelected,
+        colorValue: field.value,
       });
     }
-
-    entries.push({
-      text: "\n",
-      properties: { type: "blank" },
-    });
   }
+
+  return lines;
+}
+
+// =============================================================================
+// Picker Panel Builder (Right)
+// =============================================================================
+
+interface PickerLine {
+  text: string;
+  type: string;
+  namedRow?: number;
+  paletteRow?: number;
+  previewLineIdx?: number;
+}
+
+function buildPickerLines(): PickerLine[] {
+  const lines: PickerLine[] = [];
+  const field = state.visibleFields[state.selectedIndex];
+
+  if (!field || field.isSection) {
+    // Section selected - show section info
+    if (field) {
+      lines.push({ text: `${field.def.displayName}`, type: "picker-title" });
+      lines.push({ text: `"${field.def.description}"`, type: "picker-desc" });
+    } else {
+      lines.push({ text: "No field selected", type: "picker-title" });
+    }
+    lines.push({ text: "─".repeat(RIGHT_WIDTH - 2), type: "picker-separator" });
+    lines.push({ text: "Select a color field to edit", type: "picker-desc" });
+    return lines;
+  }
+
+  // Field title
+  lines.push({ text: `${field.path} - ${field.def.displayName}`, type: "picker-title" });
+  lines.push({ text: `"${field.def.description}"`, type: "picker-desc" });
+  lines.push({ text: "─".repeat(RIGHT_WIDTH - 2), type: "picker-separator" });
+
+  // Hex / RGB value
+  const colorStr = formatColorValue(field.value);
+  const rgb = parseColorToRgb(field.value);
+  let valueLine = `Hex: ${colorStr}`;
+  if (rgb) {
+    valueLine += `     RGB: ${rgb[0]}, ${rgb[1]}, ${rgb[2]}`;
+  }
+  lines.push({ text: valueLine, type: "picker-hex" });
+
+  lines.push({ text: "", type: "picker-blank" });
+
+  // Named Colors section
+  lines.push({ text: "Named Colors:", type: "picker-label" });
+  for (let row = 0; row < NAMED_COLOR_GRID.length; row++) {
+    let rowText = "";
+    for (const item of NAMED_COLOR_GRID[row]) {
+      rowText += " " + item.display.padEnd(8);
+    }
+    lines.push({ text: rowText, type: "picker-named-row", namedRow: row });
+  }
+
+  lines.push({ text: "", type: "picker-blank" });
+
+  // Extended Color Palette section
+  lines.push({ text: "Color Palette:", type: "picker-label" });
+  const palette = getExtendedPalette();
+  for (let row = 0; row < PALETTE_ROWS; row++) {
+    let rowText = "";
+    for (let col = 0; col < PALETTE_COLS; col++) {
+      rowText += (col === 0 ? " " : " ") + "██";
+    }
+    lines.push({ text: rowText, type: "picker-palette-row", paletteRow: row });
+  }
+
+  lines.push({ text: "─".repeat(RIGHT_WIDTH - 2), type: "picker-separator" });
+
+  // Preview section
+  lines.push({ text: "Preview:", type: "picker-label" });
+  for (let i = 0; i < PREVIEW_LINES.length; i++) {
+    let lineText = " ";
+    for (const token of PREVIEW_LINES[i]) {
+      lineText += token.text;
+    }
+    lines.push({ text: lineText, type: "picker-preview-line", previewLineIdx: i });
+  }
+
+  return lines;
+}
+
+// =============================================================================
+// UI Building - Two Panel Merge
+// =============================================================================
+
+/**
+ * Compute inline style for a left-panel tree entry
+ */
+function styleForLeftEntry(item: TreeLine | undefined): { style?: Partial<OverlayOptions>; inlineOverlays?: InlineOverlay[] } {
+  if (!item) return {};
+  const type = item.type;
+  if (type === "header") {
+    return { style: { fg: colors.header, bold: true } };
+  } else if (type === "separator") {
+    return { style: { fg: colors.divider } };
+  } else if (type === "filter") {
+    return { style: { fg: colors.filterText } };
+  } else if (type === "tree-section") {
+    return { style: { fg: colors.sectionHeader, bold: true } };
+  } else if (type === "tree-field") {
+    const inlines: InlineOverlay[] = [];
+    // Base foreground for the whole entry
+    const baseStyle: Partial<OverlayOptions> = { fg: colors.fieldName };
+
+    // Color the ██ swatch with the field's actual color
+    const text = " " + item.text; // matches leftText construction below
+    const colorValue = item.colorValue;
+    if (colorValue !== undefined) {
+      const rgb = parseColorToRgb(colorValue);
+      if (rgb) {
+        const swatchIdx = text.indexOf("██");
+        if (swatchIdx >= 0) {
+          const swatchStart = getUtf8ByteLength(text.substring(0, swatchIdx));
+          const swatchEnd = swatchStart + getUtf8ByteLength("██");
+          inlines.push({ start: swatchStart, end: swatchEnd, style: { fg: rgb, bg: rgb } });
+          // Value text after the swatch
+          const afterSwatch = swatchIdx + 2;
+          if (afterSwatch < text.length) {
+            const valueStart = swatchEnd + getUtf8ByteLength(" ");
+            const paddedLen = getUtf8ByteLength(text.padEnd(LEFT_WIDTH));
+            inlines.push({ start: valueStart, end: paddedLen, style: { fg: colors.customValue } });
+          }
+        }
+      }
+    }
+    return { style: baseStyle, inlineOverlays: inlines.length > 0 ? inlines : undefined };
+  }
+  return {};
+}
+
+/**
+ * Compute inline style for a right-panel picker entry
+ */
+function styleForRightEntry(item: PickerLine | undefined): { style?: Partial<OverlayOptions>; inlineOverlays?: InlineOverlay[] } {
+  if (!item) return {};
+  const type = item.type;
+  if (type === "picker-title") {
+    return { style: { fg: colors.header, bold: true } };
+  } else if (type === "picker-desc") {
+    return { style: { fg: colors.description } };
+  } else if (type === "picker-separator") {
+    return { style: { fg: colors.divider } };
+  } else if (type === "picker-hex") {
+    return { style: { fg: colors.pickerValue } };
+  } else if (type === "picker-label") {
+    return { style: { fg: colors.pickerLabel } };
+  } else if (type === "picker-named-row") {
+    const namedRow = item.namedRow!;
+    const gridRow = NAMED_COLOR_GRID[namedRow];
+    if (!gridRow) return {};
+    const inlines: InlineOverlay[] = [];
+    // Entry text is " " + item.text. Byte positions are relative to that.
+    const bytePos = getUtf8ByteLength(" "); // the prepended " "
+    let innerPos = 0;
+    for (let col = 0; col < gridRow.length; col++) {
+      const cellItem = gridRow[col];
+      const cellText = " " + cellItem.display.padEnd(8);
+      const cellLen = getUtf8ByteLength(cellText);
+      const cellStart = bytePos + getUtf8ByteLength(item.text.substring(0, innerPos));
+      const cellEnd = cellStart + cellLen;
+      if (cellItem.rgb) {
+        inlines.push({ start: cellStart, end: cellEnd, style: { fg: cellItem.rgb } });
+      } else {
+        inlines.push({ start: cellStart, end: cellEnd, style: { fg: colors.pickerLabel } });
+      }
+      innerPos += cellText.length;
+    }
+    return { inlineOverlays: inlines.length > 0 ? inlines : undefined };
+  } else if (type === "picker-palette-row") {
+    const paletteRow = item.paletteRow!;
+    const palette = getExtendedPalette();
+    const rowColors = palette[paletteRow];
+    if (!rowColors) return {};
+    const inlines: InlineOverlay[] = [];
+    // entry text = " " + item.text
+    // item.text = " ██ ██ ██..." (starts with " " then "██" pairs)
+    let bytePos = getUtf8ByteLength(" "); // prepended " "
+    let innerPos = 0;
+    for (let col = 0; col < PALETTE_COLS; col++) {
+      const prefix = col === 0 ? " " : " ";
+      innerPos += prefix.length;
+      bytePos = getUtf8ByteLength(" ") + getUtf8ByteLength(item.text.substring(0, innerPos));
+      const swatchLen = getUtf8ByteLength("██");
+      const rgb = rowColors[col];
+      inlines.push({ start: bytePos, end: bytePos + swatchLen, style: { fg: rgb, bg: rgb } });
+      innerPos += 2; // "██" is 2 JS chars
+    }
+    return { inlineOverlays: inlines.length > 0 ? inlines : undefined };
+  } else if (type === "picker-preview-line") {
+    const previewLineIdx = item.previewLineIdx!;
+    const tokens = PREVIEW_LINES[previewLineIdx];
+    if (!tokens) return {};
+    const inlines: InlineOverlay[] = [];
+    // entry text = " " + item.text
+    // item.text = " " + token texts concatenated
+    const editorBg = getNestedValue(state.themeData, "editor.bg") as ColorValue;
+    const bgRgb = parseColorToRgb(editorBg);
+    const entryText = " " + item.text;
+    const entryLen = getUtf8ByteLength(entryText);
+    const baseStyle: Partial<OverlayOptions> | undefined = bgRgb ? { bg: bgRgb } : undefined;
+
+    // Skip the leading " " + " " (from entry " " prefix + item.text leading " ")
+    let charPos = 2; // " " prefix + " " in item.text
+    let bytePos = getUtf8ByteLength("  ");
+    for (const token of tokens) {
+      const tokenLen = getUtf8ByteLength(token.text);
+      if (token.syntaxType) {
+        const syntaxPath = `syntax.${token.syntaxType}`;
+        const syntaxColor = getNestedValue(state.themeData, syntaxPath) as ColorValue;
+        const syntaxRgb = parseColorToRgb(syntaxColor);
+        if (syntaxRgb) {
+          inlines.push({ start: bytePos, end: bytePos + tokenLen, style: { fg: syntaxRgb } });
+        }
+      } else {
+        const fgColor = getNestedValue(state.themeData, "editor.fg") as ColorValue;
+        const fgRgb = parseColorToRgb(fgColor);
+        if (fgRgb) {
+          inlines.push({ start: bytePos, end: bytePos + tokenLen, style: { fg: fgRgb } });
+        }
+      }
+      bytePos += tokenLen;
+    }
+    return { style: baseStyle, inlineOverlays: inlines.length > 0 ? inlines : undefined };
+  }
+  return {};
+}
+
+function buildDisplayEntries(): TextPropertyEntry[] {
+  const entries: TextPropertyEntry[] = [];
+
+  const leftLines = buildTreeLines();
+  const rightLines = buildPickerLines();
+  const maxRows = Math.max(leftLines.length, rightLines.length, 8);
+
+  for (let i = 0; i < maxRows; i++) {
+    const leftItem = leftLines[i];
+    const rightItem = rightLines[i];
+
+    // Left side (padded to LEFT_WIDTH)
+    const leftText = leftItem ? (" " + leftItem.text) : "";
+    const leftStyle = styleForLeftEntry(leftItem);
+    entries.push({
+      text: leftText.padEnd(LEFT_WIDTH),
+      properties: {
+        type: leftItem?.type || "blank",
+        index: leftItem?.index,
+        path: leftItem?.path,
+        selected: leftItem?.selected,
+        colorValue: leftItem?.colorValue,
+      },
+      style: leftStyle.style,
+      inlineOverlays: leftStyle.inlineOverlays,
+    });
+
+    // Divider
+    entries.push({ text: "│", properties: { type: "divider" }, style: { fg: colors.divider } });
+
+    // Right side
+    const rightText = rightItem ? (" " + rightItem.text) : "";
+    const rightStyle = styleForRightEntry(rightItem);
+    entries.push({
+      text: rightText,
+      properties: {
+        type: rightItem?.type || "blank",
+        namedRow: rightItem?.namedRow,
+        paletteRow: rightItem?.paletteRow,
+        previewLineIdx: rightItem?.previewLineIdx,
+      },
+      style: rightStyle.style,
+      inlineOverlays: rightStyle.inlineOverlays,
+    });
+
+    // Newline
+    entries.push({ text: "\n", properties: { type: "newline" } });
+  }
+
+  // Status bar (full width)
+  entries.push({
+    text: "─".repeat(100) + "\n",
+    properties: { type: "status-separator" },
+    style: { fg: colors.divider },
+  });
+
+  // Context-sensitive key hints
+  let hints: string;
+  if (state.focusPanel === "tree") {
+    hints = " ↑↓ Navigate  Tab Switch Panel  Enter Edit  /Filter  Ctrl+S Save  Esc Close";
+  } else {
+    hints = " ↑↓←→ Navigate  Tab Switch Panel  Enter Apply  Esc Back to Tree";
+  }
+  entries.push({
+    text: hints + "\n",
+    properties: { type: "status-bar" },
+    style: { fg: colors.footer },
+  });
 
   return entries;
 }
 
 /**
  * Helper to add a colored overlay (foreground color)
- * addOverlay signature: (bufferId, namespace, start, end, r, g, b, underline, bold, italic, bg_r, bg_g, bg_b, extend_to_line_end)
  */
 function addColorOverlay(
   bufferId: number,
@@ -692,7 +1134,7 @@ function addBackgroundHighlight(
   end: number,
   bgColor: RGB
 ): void {
-  editor.addOverlay(bufferId, "theme-selection", start, end, { bg: bgColor, extendToLineEnd: true });
+  editor.addOverlay(bufferId, "theme-sel", start, end, { bg: bgColor, extendToLineEnd: true });
 }
 
 /**
@@ -712,96 +1154,109 @@ function isSpecialColor(value: ColorValue): boolean {
 }
 
 /**
- * Apply syntax highlighting
+ * Apply selection-only highlighting (cheap — just the selected row background
+ * and picker focus highlights). Only touches the "theme-selection" namespace.
  */
-function applyHighlighting(): void {
+function applySelectionHighlighting(cachedEntries?: TextPropertyEntry[]): void {
   if (state.bufferId === null) return;
 
   const bufferId = state.bufferId;
-  editor.clearNamespace(bufferId, "theme");
-  editor.clearNamespace(bufferId, "theme-selection");
+  editor.clearNamespace(bufferId, "theme-sel");
 
-  const entries = buildDisplayEntries();
+  const entries = cachedEntries || buildDisplayEntries();
   let byteOffset = 0;
-
-  // Get current field at cursor to highlight it
-  const currentField = getFieldAtCursor();
-  const currentFieldPath = currentField?.path;
 
   for (const entry of entries) {
     const text = entry.text;
     const textLen = getUtf8ByteLength(text);
     const props = entry.properties as Record<string, unknown>;
     const entryType = props.type as string;
-    const entryPath = props.path as string | undefined;
 
-    // Add selection highlight for current field/section
-    if (currentFieldPath && entryPath === currentFieldPath && (entryType === "field" || entryType === "section")) {
-      addBackgroundHighlight(bufferId, byteOffset, byteOffset + textLen, colors.selectionBg);
-    }
-
-    if (entryType === "title") {
-      addColorOverlay(bufferId, byteOffset, byteOffset + textLen, colors.sectionHeader, true);
-    } else if (entryType === "file-path") {
-      addColorOverlay(bufferId, byteOffset, byteOffset + textLen, colors.description);
-    } else if (entryType === "description") {
-      addColorOverlay(bufferId, byteOffset, byteOffset + textLen, colors.description);
-    } else if (entryType === "section") {
-      addColorOverlay(bufferId, byteOffset, byteOffset + textLen, colors.sectionHeader, true);
-    } else if (entryType === "field") {
-      // Field name - light blue
-      const colonPos = text.indexOf(":");
-      if (colonPos > 0) {
-        const nameEnd = byteOffset + getUtf8ByteLength(text.substring(0, colonPos));
-        addColorOverlay(bufferId, byteOffset, nameEnd, colors.fieldName);
-
-        // Color the swatch characters with the field's actual color
-        // Text format: "FieldName: X  #RRGGBB" (X=fg, space=bg)
-        const colorValue = props.colorValue as ColorValue;
-        const rgb = parseColorToRgb(colorValue);
-        if (rgb) {
-          // "X" is at colon + 2 (": " = 2 bytes), and is 1 byte
-          const swatchFgStart = nameEnd + getUtf8ByteLength(": ");
-          const swatchFgEnd = swatchFgStart + 1; // "X" is 1 byte
-          addColorOverlay(bufferId, swatchFgStart, swatchFgEnd, rgb);
-
-          // First space after "X" is the bg swatch, 1 byte
-          const swatchBgStart = swatchFgEnd;
-          const swatchBgEnd = swatchBgStart + 1;
-          // Use background color for the space
-          editor.addOverlay(bufferId, "theme", swatchBgStart, swatchBgEnd, { bg: rgb });
-        }
-
-        // Value (hex code) - custom color (green)
-        // Format: ": X  #RRGGBB" - value starts after "X  " (X + 2 spaces)
-        const valueStart = nameEnd + getUtf8ByteLength(": X  ");
-        addColorOverlay(bufferId, valueStart, byteOffset + textLen, colors.customValue);
+    if (entryType === "tree-section" || entryType === "tree-field") {
+      if (props.selected as boolean) {
+        addBackgroundHighlight(bufferId, byteOffset, byteOffset + textLen, colors.selectionBg);
       }
-    } else if (entryType === "separator" || entryType === "footer") {
-      addColorOverlay(bufferId, byteOffset, byteOffset + textLen, colors.footer);
+    } else if (entryType === "picker-hex") {
+      if (state.focusPanel === "picker" && state.pickerFocus.type === "hex-input") {
+        addBackgroundHighlight(bufferId, byteOffset, byteOffset + textLen, colors.pickerFocusBg);
+      }
+    } else if (entryType === "picker-named-row") {
+      if (state.focusPanel === "picker" && state.pickerFocus.type === "named-colors") {
+        const namedRow = props.namedRow as number;
+        const gridRow = NAMED_COLOR_GRID[namedRow];
+        if (gridRow) {
+          let pos = byteOffset + getUtf8ByteLength(" ");
+          for (let col = 0; col < gridRow.length; col++) {
+            const item = gridRow[col];
+            const cellText = " " + item.display.padEnd(8);
+            const cellLen = getUtf8ByteLength(cellText);
+            const flatIdx = namedRow * NAMED_COLORS_PER_ROW + col;
+            if (state.pickerFocus.index === flatIdx) {
+              editor.addOverlay(bufferId, "theme-sel", pos, pos + cellLen, { bg: colors.pickerFocusBg });
+            }
+            pos += cellLen;
+          }
+        }
+      }
+    } else if (entryType === "picker-palette-row") {
+      if (state.focusPanel === "picker" && state.pickerFocus.type === "palette") {
+        const paletteRow = props.paletteRow as number;
+        const palette = getExtendedPalette();
+        const rowColors = palette[paletteRow];
+        if (rowColors) {
+          let pos = byteOffset + getUtf8ByteLength(" ");
+          for (let col = 0; col < PALETTE_COLS; col++) {
+            const prefix = col === 0 ? " " : " ";
+            pos += getUtf8ByteLength(prefix);
+            const swatchLen = getUtf8ByteLength("██");
+            if (state.pickerFocus.row === paletteRow && state.pickerFocus.col === col) {
+              editor.addOverlay(bufferId, "theme-sel", pos, pos + swatchLen, {
+                bg: [255, 255, 255],
+                fg: rowColors[col],
+              });
+            }
+            pos += swatchLen;
+          }
+        }
+      }
     }
 
     byteOffset += textLen;
   }
+
 }
 
+// Guard to suppress cursor_moved handler during programmatic updates
+let isUpdatingDisplay = false;
+
 /**
- * Update display (preserves cursor position)
+ * Full display update — rebuilds content and all overlays.
+ * Use for structural changes (open, section toggle, color edit, filter).
  */
 function updateDisplay(): void {
   if (state.bufferId === null) return;
-
-  // Save current field path before updating
-  const currentPath = getCurrentFieldPath();
+  isUpdatingDisplay = true;
 
   const entries = buildDisplayEntries();
   editor.setVirtualBufferContent(state.bufferId, entries);
-  applyHighlighting();
 
-  // Restore cursor to the same field if possible
-  if (currentPath) {
-    moveCursorToField(currentPath);
+  // Selection highlights use a separate namespace via addOverlay (dynamic, position-dependent)
+  applySelectionHighlighting(entries);
+
+  // Move cursor to the selected field's byte offset and scroll to keep it visible.
+  // Compute byte offset directly from entries rather than rebuilding them.
+  if (state.focusPanel === "tree") {
+    let byteOffset = 0;
+    for (const entry of entries) {
+      const props = entry.properties as Record<string, unknown>;
+      if ((props.type === "tree-field" || props.type === "tree-section") && props.selected) {
+        editor.setBufferCursor(state.bufferId!, byteOffset);
+        break;
+      }
+      byteOffset += getUtf8ByteLength(entry.text);
+    }
   }
+  isUpdatingDisplay = false;
 }
 
 // =============================================================================
@@ -809,19 +1264,12 @@ function updateDisplay(): void {
 // =============================================================================
 
 /**
- * Get field at cursor position
+ * Get field at cursor position (uses state.selectedIndex)
  */
 function getFieldAtCursor(): ThemeField | null {
-  if (state.bufferId === null) return null;
-
-  const props = editor.getTextPropertiesAtCursor(state.bufferId);
-  if (props.length > 0 && typeof props[0].index === "number") {
-    const index = props[0].index as number;
-    if (index >= 0 && index < state.visibleFields.length) {
-      return state.visibleFields[index];
-    }
+  if (state.selectedIndex >= 0 && state.selectedIndex < state.visibleFields.length) {
+    return state.visibleFields[state.selectedIndex];
   }
-
   return null;
 }
 
@@ -979,7 +1427,7 @@ function onThemeColorPromptConfirmed(args: {
     const entries = buildDisplayEntries();
     if (state.bufferId !== null) {
       editor.setVirtualBufferContent(state.bufferId, entries);
-      applyHighlighting();
+      applySelectionHighlighting(entries);
     }
     moveCursorToField(path);
     editor.setStatus(editor.t("status.updated", { path }));
@@ -1117,6 +1565,7 @@ function onThemePromptCancelled(args: { prompt_type: string }) : boolean {
   state.savedCursorPath = null;
   state.pendingSaveName = null;
   state.closeAfterSave = false;
+  state.filterActive = false;
 
   editor.debug(editor.t("status.cancelled"));
   return true;
@@ -1234,7 +1683,7 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
     const entries = buildDisplayEntries();
     if (state.bufferId !== null) {
       editor.setVirtualBufferContent(state.bufferId, entries);
-      applyHighlighting();
+      applySelectionHighlighting(entries);
     }
 
     // Restore cursor position if provided
@@ -1341,13 +1790,18 @@ function onThemeEditorCursorMoved(data: {
   new_position: number;
 }): void {
   if (state.bufferId === null || data.buffer_id !== state.bufferId) return;
+  if (isUpdatingDisplay) return;
 
-  applyHighlighting();
-
-  const field = getFieldAtCursor();
-  if (field) {
-    editor.debug(field.def.description);
+  // Sync selectedIndex from cursor position
+  const props = editor.getTextPropertiesAtCursor(state.bufferId);
+  if (props.length > 0 && typeof props[0].index === "number") {
+    const index = props[0].index as number;
+    if (index >= 0 && index < state.visibleFields.length && index !== state.selectedIndex) {
+      state.selectedIndex = index;
+    }
   }
+
+  applySelectionHighlighting();
 }
 registerHandler("onThemeEditorCursorMoved", onThemeEditorCursorMoved);
 
@@ -1366,6 +1820,11 @@ function onThemeEditorBufferClosed(data: {
     state.themeData = {};
     state.originalThemeData = {};
     state.hasChanges = false;
+    state.focusPanel = "tree";
+    state.pickerFocus = { type: "hex-input" };
+    state.filterText = "";
+    state.filterActive = false;
+    state.selectedIndex = 0;
   }
 }
 registerHandler("onThemeEditorBufferClosed", onThemeEditorBufferClosed);
@@ -1388,7 +1847,6 @@ async function onThemeInspectKey(data: {
     if (!state.expandedSections.has(section)) {
       state.expandedSections.add(section);
     }
-    updateDisplay();
     moveCursorToField(data.key);
     return;
   }
@@ -1450,23 +1908,13 @@ function getSelectableEntries(): SelectableEntry[] {
     const entryType = props.type as string;
     const path = (props.path as string) || "";
 
-    // Only fields and sections are selectable (they have index property)
-    if ((entryType === "field" || entryType === "section") && typeof props.index === "number") {
-      // For fields, calculate position at the color value (after "FieldName: X  ")
-      let valueByteOffset = byteOffset;
-      if (entryType === "field") {
-        const colonIdx = entry.text.indexOf(":");
-        if (colonIdx >= 0) {
-          // Position at the hex value, after ": X  " (colon + space + X + 2 spaces = 5 chars)
-          valueByteOffset = byteOffset + getUtf8ByteLength(entry.text.substring(0, colonIdx + 5));
-        }
-      }
-
+    // Only tree fields and sections are selectable (they have index property)
+    if ((entryType === "tree-field" || entryType === "tree-section") && typeof props.index === "number") {
       selectableEntries.push({
         byteOffset,
-        valueByteOffset,
+        valueByteOffset: byteOffset,
         index: props.index as number,
-        isSection: entryType === "section",
+        isSection: entryType === "tree-section",
         path,
       });
     }
@@ -1509,122 +1957,262 @@ function getCurrentFieldPath(): string | null {
 function moveCursorToField(path: string): void {
   if (state.bufferId === null) return;
 
-  const selectableEntries = getSelectableEntries();
-  for (const entry of selectableEntries) {
-    if (entry.path === path) {
-      // Use valueByteOffset for fields, byteOffset for sections
-      const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
-      editor.setBufferCursor(state.bufferId, targetOffset);
+  // Find the field by path in visibleFields and update selectedIndex
+  for (let i = 0; i < state.visibleFields.length; i++) {
+    if (state.visibleFields[i].path === path) {
+      state.selectedIndex = i;
+      updateDisplay();
       return;
     }
   }
 }
 
 /**
- * Navigate to the next selectable field/section
+ * Navigate up - context-dependent on focus panel
  */
 function theme_editor_nav_down() : void {
   if (state.bufferId === null) return;
 
-  const selectableEntries = getSelectableEntries();
-  const currentIndex = getCurrentSelectableIndex();
-
-  // Find next selectable entry after current
-  for (const entry of selectableEntries) {
-    if (entry.index > currentIndex) {
-      // Use valueByteOffset for fields, byteOffset for sections
-      const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
-      editor.setBufferCursor(state.bufferId, targetOffset);
-      return;
+  if (state.focusPanel === "tree") {
+    if (state.selectedIndex < state.visibleFields.length - 1) {
+      state.selectedIndex++;
+      updateDisplay();
     }
+  } else {
+    navigatePickerVertical(1);
   }
-
-  // Already at last selectable, stay there
-  editor.debug(editor.t("status.at_last_field"));
 }
 registerHandler("theme_editor_nav_down", theme_editor_nav_down);
 
-/**
- * Navigate to the previous selectable field/section
- */
 function theme_editor_nav_up() : void {
   if (state.bufferId === null) return;
 
-  const selectableEntries = getSelectableEntries();
-  const currentIndex = getCurrentSelectableIndex();
-
-  // Find previous selectable entry before current
-  for (let i = selectableEntries.length - 1; i >= 0; i--) {
-    const entry = selectableEntries[i];
-    if (entry.index < currentIndex) {
-      // Use valueByteOffset for fields, byteOffset for sections
-      const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
-      editor.setBufferCursor(state.bufferId, targetOffset);
-      return;
+  if (state.focusPanel === "tree") {
+    if (state.selectedIndex > 0) {
+      state.selectedIndex--;
+      updateDisplay();
     }
+  } else {
+    navigatePickerVertical(-1);
   }
-
-  // Already at first selectable, stay there
-  editor.debug(editor.t("status.at_first_field"));
 }
 registerHandler("theme_editor_nav_up", theme_editor_nav_up);
 
 /**
- * Navigate to next element (Tab) - includes both fields and sections
+ * Navigate left/right - for picker grid navigation
  */
-function theme_editor_nav_next_section() : void {
-  if (state.bufferId === null) return;
-
-  const selectableEntries = getSelectableEntries();
-  const currentIndex = getCurrentSelectableIndex();
-
-  // Find next selectable entry after current
-  for (const entry of selectableEntries) {
-    if (entry.index > currentIndex) {
-      // Use valueByteOffset for fields, byteOffset for sections
-      const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
-      editor.setBufferCursor(state.bufferId, targetOffset);
-      return;
-    }
-  }
-
-  // Wrap to first entry
-  if (selectableEntries.length > 0) {
-    const entry = selectableEntries[0];
-    const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
-    editor.setBufferCursor(state.bufferId, targetOffset);
+function theme_editor_nav_left() : void {
+  if (state.focusPanel === "picker") {
+    navigatePickerHorizontal(-1);
   }
 }
-registerHandler("theme_editor_nav_next_section", theme_editor_nav_next_section);
+registerHandler("theme_editor_nav_left", theme_editor_nav_left);
+
+function theme_editor_nav_right() : void {
+  if (state.focusPanel === "picker") {
+    navigatePickerHorizontal(1);
+  }
+}
+registerHandler("theme_editor_nav_right", theme_editor_nav_right);
 
 /**
- * Navigate to previous element (Shift+Tab) - includes both fields and sections
+ * Tab - switch focus between panels
  */
-function theme_editor_nav_prev_section() : void {
-  if (state.bufferId === null) return;
+function theme_editor_focus_tab() : void {
+  if (state.focusPanel === "tree") {
+    state.focusPanel = "picker";
+    state.pickerFocus = { type: "hex-input" };
+  } else {
+    state.focusPanel = "tree";
+  }
+  updateDisplay();
+}
+registerHandler("theme_editor_focus_tab", theme_editor_focus_tab);
 
-  const selectableEntries = getSelectableEntries();
-  const currentIndex = getCurrentSelectableIndex();
+/**
+ * Shift-Tab - reverse switch focus
+ */
+function theme_editor_focus_shift_tab() : void {
+  if (state.focusPanel === "picker") {
+    state.focusPanel = "tree";
+  } else {
+    state.focusPanel = "picker";
+    state.pickerFocus = { type: "hex-input" };
+  }
+  updateDisplay();
+}
+registerHandler("theme_editor_focus_shift_tab", theme_editor_focus_shift_tab);
 
-  // Find previous selectable entry before current
-  for (let i = selectableEntries.length - 1; i >= 0; i--) {
-    const entry = selectableEntries[i];
-    if (entry.index < currentIndex) {
-      // Use valueByteOffset for fields, byteOffset for sections
-      const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
-      editor.setBufferCursor(state.bufferId, targetOffset);
-      return;
+/**
+ * Enter key - context-dependent action
+ */
+function theme_editor_enter() : void {
+  if (state.focusPanel === "tree") {
+    const field = getFieldAtCursor();
+    if (!field) return;
+    if (field.isSection) {
+      theme_editor_toggle_section();
+    } else {
+      editColorField(field);
+    }
+  } else {
+    applyPickerColor();
+  }
+}
+registerHandler("theme_editor_enter", theme_editor_enter);
+
+/**
+ * Escape - context-dependent
+ */
+function theme_editor_escape() : void {
+  if (state.focusPanel === "picker") {
+    state.focusPanel = "tree";
+    updateDisplay();
+  } else if (state.filterText) {
+    state.filterText = "";
+    state.filterActive = false;
+    updateDisplay();
+  } else {
+    theme_editor_close();
+  }
+}
+registerHandler("theme_editor_escape", theme_editor_escape);
+
+/**
+ * / key - activate filter
+ */
+function theme_editor_filter() : void {
+  state.filterActive = true;
+  editor.startPromptWithInitial(
+    "Filter fields:",
+    "theme-filter",
+    state.filterText
+  );
+}
+registerHandler("theme_editor_filter", theme_editor_filter);
+
+/**
+ * Handle filter prompt confirmation
+ */
+function onThemeFilterPromptConfirmed(args: {
+  prompt_type: string;
+  selected_index: number | null;
+  input: string;
+}): boolean {
+  if (args.prompt_type !== "theme-filter") return true;
+
+  state.filterText = args.input.trim();
+  state.filterActive = false;
+  state.selectedIndex = 0;
+  updateDisplay();
+  return true;
+}
+registerHandler("onThemeFilterPromptConfirmed", onThemeFilterPromptConfirmed);
+
+editor.on("prompt_confirmed", "onThemeFilterPromptConfirmed");
+
+/**
+ * Navigate picker vertically (between sections: hex, named-colors, palette)
+ */
+function navigatePickerVertical(dir: number): void {
+  const pf = state.pickerFocus;
+  if (dir > 0) {
+    if (pf.type === "hex-input") {
+      state.pickerFocus = { type: "named-colors", index: 0 };
+    } else if (pf.type === "named-colors") {
+      const row = Math.floor(pf.index / NAMED_COLORS_PER_ROW);
+      const col = pf.index % NAMED_COLORS_PER_ROW;
+      if (row < NAMED_COLOR_GRID.length - 1) {
+        state.pickerFocus = { type: "named-colors", index: (row + 1) * NAMED_COLORS_PER_ROW + col };
+      } else {
+        state.pickerFocus = { type: "palette", row: 0, col: Math.min(col, PALETTE_COLS - 1) };
+      }
+    } else if (pf.type === "palette") {
+      if (pf.row < PALETTE_ROWS - 1) {
+        state.pickerFocus = { type: "palette", row: pf.row + 1, col: pf.col };
+      }
+    }
+  } else {
+    if (pf.type === "palette") {
+      if (pf.row > 0) {
+        state.pickerFocus = { type: "palette", row: pf.row - 1, col: pf.col };
+      } else {
+        const col = Math.min(pf.col, NAMED_COLORS_PER_ROW - 1);
+        state.pickerFocus = { type: "named-colors", index: (NAMED_COLOR_GRID.length - 1) * NAMED_COLORS_PER_ROW + col };
+      }
+    } else if (pf.type === "named-colors") {
+      const row = Math.floor(pf.index / NAMED_COLORS_PER_ROW);
+      const col = pf.index % NAMED_COLORS_PER_ROW;
+      if (row > 0) {
+        state.pickerFocus = { type: "named-colors", index: (row - 1) * NAMED_COLORS_PER_ROW + col };
+      } else {
+        state.pickerFocus = { type: "hex-input" };
+      }
+    }
+  }
+  updateDisplay();
+}
+
+/**
+ * Navigate picker horizontally (within named-colors or palette grids)
+ */
+function navigatePickerHorizontal(dir: number): void {
+  const pf = state.pickerFocus;
+  if (pf.type === "named-colors") {
+    const row = Math.floor(pf.index / NAMED_COLORS_PER_ROW);
+    const col = pf.index % NAMED_COLORS_PER_ROW;
+    const newCol = col + dir;
+    if (newCol >= 0 && newCol < NAMED_COLORS_PER_ROW) {
+      const totalItems = NAMED_COLOR_GRID.length * NAMED_COLORS_PER_ROW;
+      const newIdx = row * NAMED_COLORS_PER_ROW + newCol;
+      if (newIdx < totalItems) {
+        state.pickerFocus = { type: "named-colors", index: newIdx };
+      }
+    }
+  } else if (pf.type === "palette") {
+    const newCol = pf.col + dir;
+    if (newCol >= 0 && newCol < PALETTE_COLS) {
+      state.pickerFocus = { type: "palette", row: pf.row, col: newCol };
+    }
+  }
+  updateDisplay();
+}
+
+/**
+ * Apply the currently focused picker color to the selected field
+ */
+function applyPickerColor(): void {
+  const field = getFieldAtCursor();
+  if (!field || field.isSection) return;
+
+  const pf = state.pickerFocus;
+  let newColor: ColorValue | null = null;
+
+  if (pf.type === "hex-input") {
+    editColorField(field);
+    return;
+  } else if (pf.type === "named-colors") {
+    const row = Math.floor(pf.index / NAMED_COLORS_PER_ROW);
+    const col = pf.index % NAMED_COLORS_PER_ROW;
+    if (row < NAMED_COLOR_GRID.length && col < NAMED_COLOR_GRID[row].length) {
+      const item = NAMED_COLOR_GRID[row][col];
+      newColor = item.value;
+    }
+  } else if (pf.type === "palette") {
+    const palette = getExtendedPalette();
+    if (pf.row < PALETTE_ROWS && pf.col < PALETTE_COLS) {
+      newColor = palette[pf.row][pf.col];
     }
   }
 
-  // Wrap to last entry
-  if (selectableEntries.length > 0) {
-    const entry = selectableEntries[selectableEntries.length - 1];
-    const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
-    editor.setBufferCursor(state.bufferId, targetOffset);
+  if (newColor !== null) {
+    setNestedValue(state.themeData, field.path, newColor);
+    state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
+    updateDisplay();
+    editor.setStatus(editor.t("status.updated", { path: field.path }));
   }
 }
-registerHandler("theme_editor_nav_prev_section", theme_editor_nav_prev_section);
+
 
 // =============================================================================
 // Public Commands
@@ -1735,9 +2323,9 @@ async function doOpenThemeEditor(): Promise<void> {
     state.bufferId = bufferId;
     state.splitId = null;
 
-    editor.debug(`[theme_editor] doOpenThemeEditor: calling applyHighlighting...`);
-    applyHighlighting();
-    editor.debug(`[theme_editor] doOpenThemeEditor: applyHighlighting completed`);
+    editor.debug(`[theme_editor] doOpenThemeEditor: calling applySelectionHighlighting...`);
+    applySelectionHighlighting();
+    editor.debug(`[theme_editor] doOpenThemeEditor: applySelectionHighlighting completed`);
     editor.debug(`[theme_editor] doOpenThemeEditor: calling setStatus...`);
     editor.debug(editor.t("status.ready"));
     editor.debug(`[theme_editor] doOpenThemeEditor: completed successfully`);
@@ -1783,6 +2371,11 @@ function doCloseEditor(): void {
   state.themeData = {};
   state.originalThemeData = {};
   state.hasChanges = false;
+  state.focusPanel = "tree";
+  state.pickerFocus = { type: "hex-input" };
+  state.filterText = "";
+  state.filterActive = false;
+  state.selectedIndex = 0;
 
   editor.debug(editor.t("status.closed"));
 }
@@ -2098,8 +2691,13 @@ editor.registerCommand("%cmd.show_help", "%cmd.show_help_desc", "theme_editor_sh
 editor.registerCommand("%cmd.delete_theme", "%cmd.delete_theme_desc", "theme_editor_delete", "theme-editor");
 editor.registerCommand("%cmd.nav_up", "%cmd.nav_up_desc", "theme_editor_nav_up", "theme-editor");
 editor.registerCommand("%cmd.nav_down", "%cmd.nav_down_desc", "theme_editor_nav_down", "theme-editor");
-editor.registerCommand("%cmd.nav_next", "%cmd.nav_next_desc", "theme_editor_nav_next_section", "theme-editor");
-editor.registerCommand("%cmd.nav_prev", "%cmd.nav_prev_desc", "theme_editor_nav_prev_section", "theme-editor");
+editor.registerCommand("%cmd.nav_left", "%cmd.nav_left_desc", "theme_editor_nav_left", "theme-editor");
+editor.registerCommand("%cmd.nav_right", "%cmd.nav_right_desc", "theme_editor_nav_right", "theme-editor");
+editor.registerCommand("%cmd.focus_tab", "%cmd.focus_tab_desc", "theme_editor_focus_tab", "theme-editor");
+editor.registerCommand("%cmd.focus_shift_tab", "%cmd.focus_shift_tab_desc", "theme_editor_focus_shift_tab", "theme-editor");
+editor.registerCommand("%cmd.enter", "%cmd.enter_desc", "theme_editor_enter", "theme-editor");
+editor.registerCommand("%cmd.escape", "%cmd.escape_desc", "theme_editor_escape", "theme-editor");
+editor.registerCommand("%cmd.filter", "%cmd.filter_desc", "theme_editor_filter", "theme-editor");
 
 // =============================================================================
 // Plugin Initialization

@@ -10,6 +10,16 @@ use std::ops::Range;
 // Re-export types from fresh-core for shared type usage
 pub use fresh_core::text_property::{TextProperty, TextPropertyEntry};
 
+/// A collected overlay from inline styling in TextPropertyEntry,
+/// with byte offsets converted to absolute positions in the full text.
+#[derive(Debug, Clone)]
+pub struct CollectedOverlay {
+    /// Absolute byte range in the assembled text
+    pub range: Range<usize>,
+    /// The overlay styling options
+    pub options: fresh_core::api::OverlayOptions,
+}
+
 /// Manager for text properties in a buffer
 ///
 /// Stores and queries text properties efficiently. Properties can overlap
@@ -86,16 +96,20 @@ impl TextPropertyManager {
 
     /// Merge properties from another source
     ///
-    /// This is useful when setting buffer content with properties
-    pub fn from_entries(entries: Vec<TextPropertyEntry>) -> (String, Self) {
+    /// This is useful when setting buffer content with properties.
+    /// Returns the assembled text, the property manager, and any collected
+    /// inline overlay specifications (with absolute byte offsets).
+    pub fn from_entries(entries: Vec<TextPropertyEntry>) -> (String, Self, Vec<CollectedOverlay>) {
         let mut text = String::new();
         let mut manager = Self::new();
+        let mut collected_overlays = Vec::new();
         let mut offset = 0;
 
         for entry in entries {
             let start = offset;
+            let entry_len = entry.text.len();
             text.push_str(&entry.text);
-            let end = offset + entry.text.len();
+            let end = offset + entry_len;
 
             if !entry.properties.is_empty() {
                 let property = TextProperty {
@@ -106,10 +120,30 @@ impl TextPropertyManager {
                 manager.add(property);
             }
 
+            // Collect whole-entry style
+            if let Some(style) = entry.style {
+                collected_overlays.push(CollectedOverlay {
+                    range: start..end,
+                    options: style,
+                });
+            }
+
+            // Collect sub-range inline overlays, converting to absolute offsets
+            for inline in entry.inline_overlays {
+                let abs_start = start + inline.start.min(entry_len);
+                let abs_end = start + inline.end.min(entry_len);
+                if abs_start < abs_end {
+                    collected_overlays.push(CollectedOverlay {
+                        range: abs_start..abs_end,
+                        options: inline.style,
+                    });
+                }
+            }
+
             offset = end;
         }
 
-        (text, manager)
+        (text, manager, collected_overlays)
     }
 }
 
@@ -248,7 +282,7 @@ mod tests {
                 .with_property("line", json!(100)),
         ];
 
-        let (text, manager) = TextPropertyManager::from_entries(entries);
+        let (text, manager, _overlays) = TextPropertyManager::from_entries(entries);
 
         assert_eq!(text, "Error at line 42\nWarning at line 100\n");
         assert_eq!(manager.len(), 2);
