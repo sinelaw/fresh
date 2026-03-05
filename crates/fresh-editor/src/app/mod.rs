@@ -293,6 +293,11 @@ pub struct Editor {
     /// When true, `flush_pending_grammars()` defers work until the build completes.
     grammar_build_in_progress: bool,
 
+    /// Plugin callback IDs waiting for the grammar build to complete.
+    /// Multiple reloadGrammars() calls may accumulate here; all are resolved
+    /// when the background build finishes.
+    pending_grammar_callbacks: Vec<fresh_core::api::JsCallbackId>,
+
     /// Active theme
     theme: crate::view::theme::Theme,
 
@@ -1293,6 +1298,7 @@ impl Editor {
                     drop(grammar_sender.send(
                         crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
                             registry,
+                            callback_ids: Vec::new(),
                         },
                     ));
                 })
@@ -1336,6 +1342,7 @@ impl Editor {
             pending_grammars: Vec::new(),
             grammar_reload_pending: false,
             grammar_build_in_progress,
+            pending_grammar_callbacks: Vec::new(),
             theme,
             theme_registry,
             theme_cache,
@@ -4667,7 +4674,10 @@ impl Editor {
                         exit_code,
                     );
                 }
-                AsyncMessage::GrammarRegistryBuilt { registry } => {
+                AsyncMessage::GrammarRegistryBuilt {
+                    registry,
+                    callback_ids,
+                } => {
                     tracing::info!(
                         "Background grammar build completed ({} syntaxes)",
                         registry.available_syntaxes().len()
@@ -4697,6 +4707,13 @@ impl Editor {
                                 state.apply_language(detected);
                             }
                         }
+                    }
+
+                    // Resolve plugin callbacks that were waiting for this build
+                    #[cfg(feature = "plugins")]
+                    for cb_id in callback_ids {
+                        self.plugin_manager
+                            .resolve_callback(cb_id, "null".to_string());
                     }
 
                     // Flush any plugin grammars that arrived during the build
@@ -5370,8 +5387,8 @@ impl Editor {
             PluginCommand::RegisterLspServer { language, config } => {
                 self.handle_register_lsp_server(language, config);
             }
-            PluginCommand::ReloadGrammars => {
-                self.handle_reload_grammars();
+            PluginCommand::ReloadGrammars { callback_id } => {
+                self.handle_reload_grammars(callback_id);
             }
             PluginCommand::StartPrompt { label, prompt_type } => {
                 self.handle_start_prompt(label, prompt_type);

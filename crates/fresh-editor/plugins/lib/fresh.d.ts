@@ -942,7 +942,7 @@ interface EditorAPI {
 	* Reload the grammar registry to apply registered grammars
 	* Call this after registering one or more grammars
 	*/
-	reloadGrammars(): void;
+	reloadGrammars(): Promise<void>;
 	/**
 	* Get config directory path
 	*/

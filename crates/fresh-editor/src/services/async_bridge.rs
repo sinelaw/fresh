@@ -242,9 +242,12 @@ pub enum AsyncMessage {
         message: Option<String>,
     },
 
-    /// Background grammar build completed — swap in the new registry
+    /// Background grammar build completed — swap in the new registry.
+    /// `callback_ids` contains plugin callbacks to resolve (empty for the
+    /// initial startup build).
     GrammarRegistryBuilt {
         registry: std::sync::Arc<crate::primitives::grammar::GrammarRegistry>,
+        callback_ids: Vec<fresh_core::api::JsCallbackId>,
     },
 }
 

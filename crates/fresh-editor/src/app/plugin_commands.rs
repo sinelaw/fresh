@@ -1512,12 +1512,17 @@ impl Editor {
     /// Handle ReloadGrammars command
     /// Defers the actual rebuild — sets a flag so all pending grammars from the
     /// current command batch are collected before a single rebuild.
-    pub(super) fn handle_reload_grammars(&mut self) {
+    /// The callback_id will be resolved when the background build completes.
+    pub(super) fn handle_reload_grammars(
+        &mut self,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
         tracing::debug!(
             "ReloadGrammars requested, pending_grammars count: {}",
             self.pending_grammars.len()
         );
         self.grammar_reload_pending = true;
+        self.pending_grammar_callbacks.push(callback_id);
     }
 
     /// Flush pending grammars: spawn a background rebuild if any ReloadGrammars
@@ -1577,6 +1582,9 @@ impl Editor {
             }
         }
 
+        // Collect pending callback IDs to resolve when build completes
+        let callback_ids: Vec<_> = self.pending_grammar_callbacks.drain(..).collect();
+
         // Spawn background rebuild
         let base_registry = std::sync::Arc::clone(&self.grammar_registry);
         if let Some(bridge) = &self.async_bridge {
@@ -1592,11 +1600,19 @@ impl Editor {
                             drop(sender.send(
                                 crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
                                     registry: std::sync::Arc::new(new_registry),
+                                    callback_ids,
                                 },
                             ));
                         }
                         None => {
                             tracing::error!("Failed to rebuild grammar registry in background");
+                            // Still send the message so callbacks get resolved (even on failure)
+                            drop(sender.send(
+                                crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
+                                    registry: base_registry,
+                                    callback_ids,
+                                },
+                            ));
                         }
                     }
                 })

@@ -1630,9 +1630,12 @@ pub enum PluginCommand {
         config: LspServerPackConfig,
     },
 
-    /// Reload the grammar registry to apply registered grammars
-    /// Call this after registering one or more grammars to rebuild the syntax set
-    ReloadGrammars,
+    /// Reload the grammar registry to apply registered grammars (async)
+    /// Call this after registering one or more grammars to rebuild the syntax set.
+    /// The callback is resolved when the background grammar build completes.
+    ReloadGrammars {
+        callback_id: JsCallbackId,
+    },
 
     // ==================== Terminal Commands ====================
     /// Create a new terminal in a split (async, returns TerminalResult)

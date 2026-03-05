@@ -1125,7 +1125,7 @@ impl Editor {
                         extensions
                     );
                 }
-                fresh_core::api::PluginCommand::ReloadGrammars => {
+                fresh_core::api::PluginCommand::ReloadGrammars { .. } => {
                     tracing::info!("[SYNTAX DEBUG] processing ReloadGrammars command");
                 }
                 _ => {}

@@ -1393,10 +1393,25 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Reload the grammar registry to apply registered grammars
-    /// Call this after registering one or more grammars
-    pub fn reload_grammars(&self) {
-        let _ = self.command_sender.send(PluginCommand::ReloadGrammars);
+    /// Reload the grammar registry to apply registered grammars (async)
+    /// Call this after registering one or more grammars.
+    /// Returns a Promise that resolves when the grammar rebuild completes.
+    #[plugin_api(async_promise, js_name = "reloadGrammars", ts_return = "void")]
+    #[qjs(rename = "_reloadGrammarsStart")]
+    pub fn reload_grammars_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        let _ = self.command_sender.send(PluginCommand::ReloadGrammars {
+            callback_id: fresh_core::api::JsCallbackId::new(id),
+        });
+        id
     }
 
     /// Get config directory path
@@ -3628,6 +3643,7 @@ impl QuickJsBackend {
                 editor.getLineStartPosition = _wrapAsync("_getLineStartPositionStart", "getLineStartPosition");
                 editor.getLineEndPosition = _wrapAsync("_getLineEndPositionStart", "getLineEndPosition");
                 editor.createTerminal = _wrapAsync("_createTerminalStart", "createTerminal");
+                editor.reloadGrammars = _wrapAsync("_reloadGrammarsStart", "reloadGrammars");
 
                 // Wrapper for deleteTheme - wraps sync function in Promise
                 editor.deleteTheme = function(name) {
