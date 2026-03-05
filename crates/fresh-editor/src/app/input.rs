@@ -1377,11 +1377,17 @@ impl Editor {
         row: u16,
         delta: i32,
     ) -> AnyhowResult<()> {
-        // Sync viewport from EditorState to SplitViewState before scrolling.
-        // This is necessary because rendering updates EditorState.viewport via ensure_visible,
-        // but that change isn't automatically synced to SplitViewState. Without this sync,
-        // mouse scroll would use a stale viewport position after keyboard navigation.
-        // (Bug #248: Mouse wheel stopped working properly after keyboard use)
+        // Emit mouse_scroll event so plugins can handle scroll for virtual buffers
+        let buffer_id = self.active_buffer();
+        self.emit_event(
+            "mouse_scroll",
+            serde_json::json!({
+                "buffer_id": buffer_id,
+                "delta": delta,
+                "col": col,
+                "row": row,
+            }),
+        );
 
         // Check if scroll is over the file explorer
         if let Some(explorer_area) = self.cached_layout.file_explorer_area {

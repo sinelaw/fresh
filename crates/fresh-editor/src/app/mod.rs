@@ -3301,6 +3301,15 @@ impl Editor {
 
         // Resize visible terminal PTYs to match new dimensions
         self.resize_visible_terminals();
+
+        // Notify plugins of the resize so they can adjust layouts
+        self.emit_event(
+            "resize",
+            serde_json::json!({
+                "width": width,
+                "height": height,
+            }),
+        );
     }
 
     // Prompt/Minibuffer control methods
@@ -5739,6 +5748,11 @@ impl Editor {
                 );
 
                 // Apply view options to the buffer
+                // TODO: show_line_numbers is duplicated between EditorState.margins and
+                // BufferViewState. The renderer reads BufferViewState and overwrites
+                // margins each frame via configure_for_line_numbers(), making the margin
+                // setting here effectively write-only. Consider removing the margin call
+                // and only setting BufferViewState.show_line_numbers.
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     state.margins.configure_for_line_numbers(show_line_numbers);
                     state.show_cursors = show_cursors;
@@ -5750,6 +5764,10 @@ impl Editor {
                         show_cursors,
                         editing_disabled
                     );
+                }
+                let active_split = self.split_manager.active_split();
+                if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+                    view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
                 }
 
                 // Apply hidden_from_tabs to buffer metadata
@@ -5916,6 +5934,9 @@ impl Editor {
                             self.config.editor.wrap_indent,
                             self.config.editor.rulers.clone(),
                         );
+                        // Override with plugin-requested show_line_numbers
+                        view_state.ensure_buffer_state(buffer_id).show_line_numbers =
+                            show_line_numbers;
                         self.split_view_states.insert(new_split_id, view_state);
 
                         // Focus the new split (the diagnostics panel)
@@ -6026,6 +6047,7 @@ impl Editor {
                 if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
                     view_state.switch_buffer(buffer_id);
                     view_state.add_buffer(buffer_id);
+                    view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
 
                     // Apply line_wrap setting if provided
                     if let Some(wrap) = line_wrap {

@@ -363,6 +363,12 @@ interface ThemeEditorState {
   filterText: string;
   /** Whether filter input is active */
   filterActive: boolean;
+  /** First visible tree line index for virtual scrolling */
+  treeScrollOffset: number;
+  /** Cached viewport height */
+  viewportHeight: number;
+  /** Cached viewport width */
+  viewportWidth: number;
 }
 
 /**
@@ -388,6 +394,7 @@ function isThemeEditorOpen(): boolean {
     state.hasChanges = false;
     state.focusPanel = "tree";
     state.selectedIndex = 0;
+    state.treeScrollOffset = 0;
     state.filterText = "";
     state.filterActive = false;
   }
@@ -417,6 +424,9 @@ const state: ThemeEditorState = {
   pickerFocus: { type: "hex-input" },
   filterText: "",
   filterActive: false,
+  treeScrollOffset: 0,
+  viewportHeight: 40,
+  viewportWidth: 120,
 };
 
 // =============================================================================
@@ -1043,8 +1053,41 @@ function styleForRightEntry(item: PickerLine | undefined): { style?: Partial<Ove
 function buildDisplayEntries(): TextPropertyEntry[] {
   const entries: TextPropertyEntry[] = [];
 
-  const leftLines = buildTreeLines();
+  const allLeftLines = buildTreeLines();
   const rightLines = buildPickerLines();
+
+  // Virtual scrolling: only show a viewport-sized slice of tree lines
+  // Reserve 2 rows for status bar + hints, 1 for possible scroll indicator
+  const treeVisibleRows = Math.max(8, state.viewportHeight - 2);
+
+  // Adjust scroll offset to keep selectedIndex visible
+  // Find which line index in allLeftLines corresponds to selectedIndex
+  let selectedLineIdx = -1;
+  for (let i = 0; i < allLeftLines.length; i++) {
+    if (allLeftLines[i].index === state.selectedIndex && allLeftLines[i].selected) {
+      selectedLineIdx = i;
+      break;
+    }
+  }
+  if (selectedLineIdx >= 0) {
+    if (selectedLineIdx < state.treeScrollOffset) {
+      state.treeScrollOffset = selectedLineIdx;
+    }
+    if (selectedLineIdx >= state.treeScrollOffset + treeVisibleRows) {
+      state.treeScrollOffset = selectedLineIdx - treeVisibleRows + 1;
+    }
+  }
+  // Clamp scroll offset
+  const maxOffset = Math.max(0, allLeftLines.length - treeVisibleRows);
+  if (state.treeScrollOffset > maxOffset) state.treeScrollOffset = maxOffset;
+  if (state.treeScrollOffset < 0) state.treeScrollOffset = 0;
+
+  const leftLines = allLeftLines.slice(state.treeScrollOffset, state.treeScrollOffset + treeVisibleRows);
+
+  // Add scroll indicators if tree is scrollable
+  const canScrollUp = state.treeScrollOffset > 0;
+  const canScrollDown = state.treeScrollOffset + treeVisibleRows < allLeftLines.length;
+
   const maxRows = Math.max(leftLines.length, rightLines.length, 8);
 
   for (let i = 0; i < maxRows; i++) {
@@ -1098,10 +1141,13 @@ function buildDisplayEntries(): TextPropertyEntry[] {
 
   // Context-sensitive key hints
   let hints: string;
+  const scrollHint = canScrollUp || canScrollDown
+    ? ` [${canScrollUp ? "▲" : " "}${canScrollDown ? "▼" : " "}]`
+    : "";
   if (state.focusPanel === "tree") {
-    hints = " ↑↓ Navigate  Tab Switch Panel  Enter Edit  /Filter  Ctrl+S Save  Esc Close";
+    hints = " ↑↓ Navigate  Tab Switch Panel  Enter Edit  /Filter  Ctrl+S Save  Esc Close" + scrollHint;
   } else {
-    hints = " ↑↓←→ Navigate  Tab Switch Panel  Enter Apply  Esc Back to Tree";
+    hints = " ↑↓←→ Navigate  Tab Switch Panel  Enter Apply  Esc Back to Tree" + scrollHint;
   }
   entries.push({
     text: hints + "\n",
@@ -1242,20 +1288,6 @@ function updateDisplay(): void {
 
   // Selection highlights use a separate namespace via addOverlay (dynamic, position-dependent)
   applySelectionHighlighting(entries);
-
-  // Move cursor to the selected field's byte offset and scroll to keep it visible.
-  // Compute byte offset directly from entries rather than rebuilding them.
-  if (state.focusPanel === "tree") {
-    let byteOffset = 0;
-    for (const entry of entries) {
-      const props = entry.properties as Record<string, unknown>;
-      if ((props.type === "tree-field" || props.type === "tree-section") && props.selected) {
-        editor.setBufferCursor(state.bufferId!, byteOffset);
-        break;
-      }
-      byteOffset += getUtf8ByteLength(entry.text);
-    }
-  }
   isUpdatingDisplay = false;
 }
 
@@ -1792,13 +1824,51 @@ function onThemeEditorCursorMoved(data: {
   if (state.bufferId === null || data.buffer_id !== state.bufferId) return;
   if (isUpdatingDisplay) return;
 
-  // Sync selectedIndex from cursor position
   const props = editor.getTextPropertiesAtCursor(state.bufferId);
-  if (props.length > 0 && typeof props[0].index === "number") {
+  if (props.length === 0) return;
+
+  const entryType = props[0].type as string | undefined;
+
+  // Tree field/section click — update selection and refresh display
+  if ((entryType === "tree-field" || entryType === "tree-section") && typeof props[0].index === "number") {
     const index = props[0].index as number;
-    if (index >= 0 && index < state.visibleFields.length && index !== state.selectedIndex) {
+    if (index >= 0 && index < state.visibleFields.length) {
       state.selectedIndex = index;
+      state.focusPanel = "tree";
+      // Click on section header always toggles expand/collapse
+      if (entryType === "tree-section") {
+        theme_editor_toggle_section();
+        return;
+      }
+      updateDisplay();
+      return;
     }
+  }
+
+  // Picker named color click — focus that row in picker
+  if (entryType === "picker-named-row" && typeof props[0].namedRow === "number") {
+    const namedRow = props[0].namedRow as number;
+    state.focusPanel = "picker";
+    state.pickerFocus = { type: "named-colors", index: namedRow * NAMED_COLORS_PER_ROW };
+    updateDisplay();
+    return;
+  }
+
+  // Picker palette click — focus that row in picker
+  if (entryType === "picker-palette-row" && typeof props[0].paletteRow === "number") {
+    const paletteRow = props[0].paletteRow as number;
+    state.focusPanel = "picker";
+    state.pickerFocus = { type: "palette", row: paletteRow, col: 0 };
+    updateDisplay();
+    return;
+  }
+
+  // Picker hex click — focus hex input
+  if (entryType === "picker-hex") {
+    state.focusPanel = "picker";
+    state.pickerFocus = { type: "hex-input" };
+    updateDisplay();
+    return;
   }
 
   applySelectionHighlighting();
@@ -1806,6 +1876,29 @@ function onThemeEditorCursorMoved(data: {
 registerHandler("onThemeEditorCursorMoved", onThemeEditorCursorMoved);
 
 editor.on("cursor_moved", "onThemeEditorCursorMoved");
+
+function onThemeEditorResize(data: { width: number; height: number }): void {
+  if (state.bufferId === null) return;
+  state.viewportHeight = data.height;
+  state.viewportWidth = data.width;
+  updateDisplay();
+}
+registerHandler("onThemeEditorResize", onThemeEditorResize);
+editor.on("resize", "onThemeEditorResize");
+
+function onThemeEditorMouseScroll(data: { buffer_id: number; delta: number; col: number; row: number }): void {
+  if (state.bufferId === null || data.buffer_id !== state.bufferId) return;
+
+  // Only scroll the tree when mouse is over the left panel area (col < LEFT_WIDTH)
+  if (data.col >= LEFT_WIDTH) return;
+
+  // delta > 0 = scroll down, delta < 0 = scroll up
+  const scrollAmount = data.delta > 0 ? 3 : -3;
+  state.treeScrollOffset = Math.max(0, state.treeScrollOffset + scrollAmount);
+  updateDisplay();
+}
+registerHandler("onThemeEditorMouseScroll", onThemeEditorMouseScroll);
+editor.on("mouse_scroll", "onThemeEditorMouseScroll");
 
 /**
  * Handle buffer_closed event to reset state when buffer is closed by any means
@@ -1825,6 +1918,7 @@ function onThemeEditorBufferClosed(data: {
     state.filterText = "";
     state.filterActive = false;
     state.selectedIndex = 0;
+    state.treeScrollOffset = 0;
   }
 }
 registerHandler("onThemeEditorBufferClosed", onThemeEditorBufferClosed);
@@ -2104,6 +2198,7 @@ function onThemeFilterPromptConfirmed(args: {
   state.filterText = args.input.trim();
   state.filterActive = false;
   state.selectedIndex = 0;
+  state.treeScrollOffset = 0;
   updateDisplay();
   return true;
 }
@@ -2298,6 +2393,14 @@ registerHandler("open_theme_editor", open_theme_editor);
  * Actually open the theme editor with loaded theme data
  */
 async function doOpenThemeEditor(): Promise<void> {
+  // Initialize viewport dimensions
+  const vp = editor.getViewport();
+  if (vp) {
+    state.viewportHeight = vp.height;
+    state.viewportWidth = vp.width;
+  }
+  state.treeScrollOffset = 0;
+
   editor.debug("[theme_editor] doOpenThemeEditor: building display entries");
   // Build initial entries
   const entries = buildDisplayEntries();
@@ -2311,7 +2414,7 @@ async function doOpenThemeEditor(): Promise<void> {
     readOnly: true,
     entries: entries,
     showLineNumbers: false,
-    showCursors: true,
+    showCursors: false,
     editingDisabled: true,
   });
   const bufferId = result.bufferId;
@@ -2322,6 +2425,9 @@ async function doOpenThemeEditor(): Promise<void> {
     editor.debug(`[theme_editor] doOpenThemeEditor: bufferId is not null, setting state...`);
     state.bufferId = bufferId;
     state.splitId = null;
+
+    // Disable line wrapping — our layout is fixed-width
+    editor.setLineWrap(bufferId, null, false);
 
     editor.debug(`[theme_editor] doOpenThemeEditor: calling applySelectionHighlighting...`);
     applySelectionHighlighting();

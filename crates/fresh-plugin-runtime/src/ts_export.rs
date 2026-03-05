@@ -105,9 +105,9 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "FormatterPackConfig" => Some(FormatterPackConfig::decl(&cfg)),
 
         // Overlay/inline styling types
-        "OverlayOptions" => Some(OverlayOptions::decl()),
-        "OverlayColorSpec" => Some(OverlayColorSpec::decl()),
-        "InlineOverlay" => Some(InlineOverlay::decl()),
+        "OverlayOptions" => Some(OverlayOptions::decl(&cfg)),
+        "OverlayColorSpec" => Some(OverlayColorSpec::decl(&cfg)),
+        "InlineOverlay" => Some(InlineOverlay::decl(&cfg)),
 
         _ => None,
     }
