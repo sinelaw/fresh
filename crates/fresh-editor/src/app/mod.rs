@@ -981,7 +981,7 @@ impl Editor {
         filesystem: Arc<dyn FileSystem + Send + Sync>,
     ) -> AnyhowResult<Self> {
         let grammar_registry = crate::primitives::grammar::GrammarRegistry::defaults_only();
-        Self::with_options(
+        let mut editor = Self::with_options(
             config,
             width,
             height,
@@ -992,7 +992,9 @@ impl Editor {
             None,
             color_capability,
             grammar_registry,
-        )
+        )?;
+        editor.start_background_grammar_build();
+        Ok(editor)
     }
 
     /// Create a new editor for testing with custom backends
@@ -1282,29 +1284,6 @@ impl Editor {
             }
         }
 
-        // Spawn background thread to build the full grammar registry
-        // (includes embedded grammars, user grammars, and language packs).
-        // The defaults-only registry is used until this completes.
-        let grammar_build_in_progress = enable_plugins; // only needed when plugins may register grammars
-        {
-            let grammar_sender = async_bridge.sender();
-            let grammar_config_dir = dir_context.config_dir.clone();
-            std::thread::Builder::new()
-                .name("grammar-build".to_string())
-                .spawn(move || {
-                    let registry =
-                        crate::primitives::grammar::GrammarRegistry::for_editor(grammar_config_dir);
-                    // Ok to ignore: receiver may be gone if app is shutting down.
-                    drop(grammar_sender.send(
-                        crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
-                            registry,
-                            callback_ids: Vec::new(),
-                        },
-                    ));
-                })
-                .ok();
-        }
-
         // Extract config values before moving config into the struct
         let file_explorer_width = config.file_explorer.width;
         let recovery_enabled = config.editor.recovery_enabled;
@@ -1341,7 +1320,7 @@ impl Editor {
             grammar_registry,
             pending_grammars: Vec::new(),
             grammar_reload_pending: false,
-            grammar_build_in_progress,
+            grammar_build_in_progress: false,
             pending_grammar_callbacks: Vec::new(),
             theme,
             theme_registry,
@@ -1564,6 +1543,31 @@ impl Editor {
     /// Get a reference to the event broadcaster
     pub fn event_broadcaster(&self) -> &crate::model::control_event::EventBroadcaster {
         &self.event_broadcaster
+    }
+
+    /// Spawn a background thread to build the full grammar registry
+    /// (embedded grammars, user grammars, and language packs).
+    /// Called by production entry points after construction; tests skip this
+    /// since they provide their own registry and don't need the expensive build.
+    fn start_background_grammar_build(&mut self) {
+        let Some(bridge) = &self.async_bridge else {
+            return;
+        };
+        self.grammar_build_in_progress = true;
+        let sender = bridge.sender();
+        let config_dir = self.dir_context.config_dir.clone();
+        std::thread::Builder::new()
+            .name("grammar-build".to_string())
+            .spawn(move || {
+                let registry = crate::primitives::grammar::GrammarRegistry::for_editor(config_dir);
+                drop(sender.send(
+                    crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
+                        registry,
+                        callback_ids: Vec::new(),
+                    },
+                ));
+            })
+            .ok();
     }
 
     /// Get a reference to the async bridge (if available)
