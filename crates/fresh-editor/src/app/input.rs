@@ -1108,6 +1108,7 @@ impl Editor {
             Action::LoadPluginFromBuffer => {
                 #[cfg(feature = "plugins")]
                 {
+                    let buffer_id = self.active_buffer();
                     let state = self.active_state();
                     let buffer = &state.buffer;
                     let total = buffer.total_bytes();
@@ -1145,6 +1146,9 @@ impl Editor {
                             tracing::error!("LoadPluginFromBuffer error: {}", e);
                         }
                     }
+
+                    // Set up plugin dev workspace for LSP support
+                    self.setup_plugin_dev_lsp(buffer_id, &content);
                 }
                 #[cfg(not(feature = "plugins"))]
                 {

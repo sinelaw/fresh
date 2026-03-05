@@ -16,6 +16,7 @@ pub mod manager;
 
 #[cfg(feature = "embed-plugins")]
 pub mod embedded;
+pub mod plugin_dev_workspace;
 
 // Re-export the main interface
 pub use manager::PluginManager;

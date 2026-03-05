@@ -598,6 +598,12 @@ pub struct Editor {
     /// Plugin manager (handles both enabled and disabled cases)
     plugin_manager: PluginManager,
 
+    /// Active plugin development workspaces (buffer_id → workspace)
+    /// These provide LSP support for plugin buffers by creating temp directories
+    /// with fresh.d.ts and tsconfig.json
+    plugin_dev_workspaces:
+        HashMap<BufferId, crate::services::plugins::plugin_dev_workspace::PluginDevWorkspace>,
+
     /// Track which byte ranges have been seen per buffer (for lines_changed optimization)
     /// Maps buffer_id -> set of (byte_start, byte_end) ranges that have been processed
     /// Using byte ranges instead of line numbers makes this agnostic to line number shifts
@@ -1421,6 +1427,7 @@ impl Editor {
             quick_open_registry,
             file_provider,
             plugin_manager,
+            plugin_dev_workspaces: HashMap::new(),
             seen_byte_ranges: HashMap::new(),
             panel_ids: HashMap::new(),
             background_process_handles: HashMap::new(),

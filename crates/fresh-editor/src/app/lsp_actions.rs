@@ -581,4 +581,93 @@ impl Editor {
         // Schedule folding range refresh
         self.schedule_folding_ranges_refresh(buffer_id);
     }
+
+    /// Set up a plugin development workspace for LSP support on a buffer.
+    ///
+    /// Creates a temp directory with `fresh.d.ts` + `tsconfig.json` so that
+    /// `typescript-language-server` can provide autocomplete and type checking
+    /// for plugin buffers (including unsaved/unnamed ones).
+    pub(crate) fn setup_plugin_dev_lsp(&mut self, buffer_id: BufferId, content: &str) {
+        use crate::services::plugins::plugin_dev_workspace::PluginDevWorkspace;
+
+        // Use the exact cached extraction location for fresh.d.ts
+        #[cfg(feature = "embed-plugins")]
+        let fresh_dts_path = {
+            let Some(embedded_dir) = crate::services::plugins::embedded::get_embedded_plugins_dir()
+            else {
+                tracing::warn!(
+                    "Cannot set up plugin dev LSP: embedded plugins directory not available"
+                );
+                return;
+            };
+            let path = embedded_dir.join("lib").join("fresh.d.ts");
+            if !path.exists() {
+                tracing::warn!(
+                    "Cannot set up plugin dev LSP: fresh.d.ts not found at {:?}",
+                    path
+                );
+                return;
+            }
+            path
+        };
+
+        #[cfg(not(feature = "embed-plugins"))]
+        let fresh_dts_path = {
+            // In non-embedded builds (development), use the source tree path
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("plugins")
+                .join("lib")
+                .join("fresh.d.ts");
+            if !path.exists() {
+                tracing::warn!(
+                    "Cannot set up plugin dev LSP: fresh.d.ts not found at {:?}",
+                    path
+                );
+                return;
+            }
+            path
+        };
+
+        // Create the workspace
+        let buffer_id_num: usize = buffer_id.0;
+        match PluginDevWorkspace::create(buffer_id_num, content, &fresh_dts_path) {
+            Ok(workspace) => {
+                let plugin_file = workspace.plugin_file.clone();
+
+                // Update buffer metadata to point at the temp file, enabling LSP
+                if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                    if let Some(uri) = super::types::file_path_to_lsp_uri(&plugin_file) {
+                        metadata.kind = super::types::BufferKind::File {
+                            path: plugin_file.clone(),
+                            uri: Some(uri),
+                        };
+                        metadata.lsp_enabled = true;
+                        metadata.lsp_disabled_reason = None;
+                        // Clear any previous LSP opened state so didOpen is sent fresh
+                        metadata.lsp_opened_with.clear();
+
+                        tracing::info!(
+                            "Plugin dev LSP enabled for buffer {} via {:?}",
+                            buffer_id_num,
+                            plugin_file
+                        );
+                    }
+                }
+
+                // Allow TypeScript language so LSP auto-spawns
+                if let Some(lsp) = &mut self.lsp {
+                    lsp.allow_language("typescript");
+                }
+
+                // Store workspace for cleanup
+                self.plugin_dev_workspaces.insert(buffer_id, workspace);
+
+                // Actually spawn the LSP server and send didOpen for this buffer
+                self.send_lsp_did_open_for_buffer(buffer_id, "typescript");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create plugin dev workspace: {}", e);
+            }
+        }
+    }
 }
