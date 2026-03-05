@@ -564,7 +564,24 @@ pub struct PluginTrackedState {
     pub file_explorer_namespaces: Vec<String>,
     /// Context names set by the plugin
     pub contexts_set: Vec<String>,
+    // --- Phase 3: Resource cleanup ---
+    /// Background process IDs spawned by this plugin
+    pub background_process_ids: Vec<u64>,
+    /// Scroll sync group IDs created by this plugin
+    pub scroll_sync_group_ids: Vec<u32>,
+    /// Virtual buffer IDs created by this plugin
+    pub virtual_buffer_ids: Vec<BufferId>,
+    /// Composite buffer IDs created by this plugin
+    pub composite_buffer_ids: Vec<BufferId>,
+    /// Terminal IDs created by this plugin
+    pub terminal_ids: Vec<fresh_core::TerminalId>,
 }
+
+/// Type alias for the shared async resource owner map.
+/// Maps request_id → plugin_name for pending async resource creations
+/// (virtual buffers, composite buffers, terminals).
+/// Shared between QuickJsBackend (plugin thread) and PluginThreadHandle (main thread).
+pub type AsyncResourceOwners = Arc<std::sync::Mutex<HashMap<u64, String>>>;
 
 #[derive(Debug, Clone)]
 pub struct PluginHandler {
@@ -593,6 +610,8 @@ pub struct JsEditorApi {
     services: Arc<dyn fresh_core::services::PluginServiceBridge>,
     #[qjs(skip_trace)]
     plugin_tracked_state: Rc<RefCell<HashMap<String, PluginTrackedState>>>,
+    #[qjs(skip_trace)]
+    async_resource_owners: AsyncResourceOwners,
     pub plugin_name: String,
 }
 
@@ -1609,6 +1628,10 @@ impl JsEditorApi {
             id
         };
 
+        // Track request_id → plugin_name for async resource tracking
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
         let _ = self
             .command_sender
             .send(PluginCommand::CreateCompositeBuffer {
@@ -2612,6 +2635,13 @@ impl JsEditorApi {
         left_split: u32,
         right_split: u32,
     ) -> bool {
+        // Track group ID for cleanup on unload
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .scroll_sync_group_ids
+            .push(group_id);
         self.command_sender
             .send(PluginCommand::CreateScrollSyncGroup {
                 group_id,
@@ -2787,6 +2817,10 @@ impl JsEditorApi {
             "_createVirtualBufferStart: sending CreateVirtualBufferWithContent command, request_id={}",
             id
         );
+        // Track request_id → plugin_name for async resource tracking
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
         let _ = self
             .command_sender
             .send(PluginCommand::CreateVirtualBufferWithContent {
@@ -2837,6 +2871,10 @@ impl JsEditorApi {
             })
             .collect();
 
+        // Track request_id → plugin_name for async resource tracking
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
         let _ = self
             .command_sender
             .send(PluginCommand::CreateVirtualBufferInSplit {
@@ -2891,6 +2929,10 @@ impl JsEditorApi {
             })
             .collect();
 
+        // Track request_id → plugin_name for async resource tracking
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
         let _ = self
             .command_sender
             .send(PluginCommand::CreateVirtualBufferInExistingSplit {
@@ -3115,6 +3157,13 @@ impl JsEditorApi {
         };
         // Use id as process_id for simplicity
         let process_id = id;
+        // Track process ID for cleanup on unload
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .background_process_ids
+            .push(process_id);
         let _ = self
             .command_sender
             .send(PluginCommand::SpawnBackgroundProcess {
@@ -3165,6 +3214,10 @@ impl JsEditorApi {
             focus: None,
         });
 
+        // Track request_id → plugin_name for async resource tracking
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
         let _ = self.command_sender.send(PluginCommand::CreateTerminal {
             cwd: opts.cwd,
             direction: opts.direction,
@@ -3490,7 +3543,10 @@ pub struct QuickJsBackend {
     /// Bridge for editor services (i18n, theme, etc.)
     pub services: Arc<dyn fresh_core::services::PluginServiceBridge>,
     /// Per-plugin tracking of created state (namespaces, IDs) for cleanup on unload
-    plugin_tracked_state: Rc<RefCell<HashMap<String, PluginTrackedState>>>,
+    pub(crate) plugin_tracked_state: Rc<RefCell<HashMap<String, PluginTrackedState>>>,
+    /// Shared map of request_id → plugin_name for async resource creations.
+    /// Used by PluginThreadHandle to track buffer/terminal IDs when responses arrive.
+    async_resource_owners: AsyncResourceOwners,
 }
 
 impl QuickJsBackend {
@@ -3518,6 +3574,26 @@ impl QuickJsBackend {
         command_sender: mpsc::Sender<PluginCommand>,
         pending_responses: PendingResponses,
         services: Arc<dyn fresh_core::services::PluginServiceBridge>,
+    ) -> Result<Self> {
+        let async_resource_owners: AsyncResourceOwners =
+            Arc::new(std::sync::Mutex::new(HashMap::new()));
+        Self::with_state_responses_and_resources(
+            state_snapshot,
+            command_sender,
+            pending_responses,
+            services,
+            async_resource_owners,
+        )
+    }
+
+    /// Create a new QuickJS backend with editor state, shared pending responses,
+    /// and a shared async resource owner map
+    pub fn with_state_responses_and_resources(
+        state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
+        command_sender: mpsc::Sender<PluginCommand>,
+        pending_responses: PendingResponses,
+        services: Arc<dyn fresh_core::services::PluginServiceBridge>,
+        async_resource_owners: AsyncResourceOwners,
     ) -> Result<Self> {
         tracing::debug!("QuickJsBackend::new: creating QuickJS runtime");
 
@@ -3574,6 +3650,7 @@ impl QuickJsBackend {
             callback_contexts,
             services,
             plugin_tracked_state,
+            async_resource_owners,
         };
 
         // Initialize main context (for internal utilities if needed)
@@ -3608,6 +3685,7 @@ impl QuickJsBackend {
                 callback_contexts: Rc::clone(&self.callback_contexts),
                 services: self.services.clone(),
                 plugin_tracked_state: Rc::clone(&self.plugin_tracked_state),
+                async_resource_owners: Arc::clone(&self.async_resource_owners),
                 plugin_name: plugin_name.to_string(),
             };
             let editor = rquickjs::Class::<JsEditorApi>::instance(ctx.clone(), js_api)?;
@@ -3888,7 +3966,9 @@ impl QuickJsBackend {
         plugin_name: &str,
         is_typescript: bool,
     ) -> Result<()> {
-        use fresh_parser_js::{has_es_module_syntax, strip_imports_and_exports, transpile_typescript, has_es_imports};
+        use fresh_parser_js::{
+            has_es_imports, has_es_module_syntax, strip_imports_and_exports, transpile_typescript,
+        };
 
         if has_es_imports(source) {
             tracing::warn!(
@@ -3911,7 +3991,11 @@ impl QuickJsBackend {
         };
 
         // Use plugin_name as the source_name so execute_js extracts the right name
-        let source_name = format!("{}.{}", plugin_name, if is_typescript { "ts" } else { "js" });
+        let source_name = format!(
+            "{}.{}",
+            plugin_name,
+            if is_typescript { "ts" } else { "js" }
+        );
         self.execute_js(&js_code, &source_name)
     }
 
@@ -3990,12 +4074,10 @@ impl QuickJsBackend {
                 std::collections::HashSet::new();
             for (buf_id, vt_id) in &tracked.virtual_text_ids {
                 if seen_vt.insert((buf_id.0, vt_id.clone())) {
-                    let _ = self
-                        .command_sender
-                        .send(PluginCommand::RemoveVirtualText {
-                            buffer_id: *buf_id,
-                            virtual_text_id: vt_id.clone(),
-                        });
+                    let _ = self.command_sender.send(PluginCommand::RemoveVirtualText {
+                        buffer_id: *buf_id,
+                        virtual_text_id: vt_id.clone(),
+                    });
                 }
             }
 
@@ -4013,8 +4095,7 @@ impl QuickJsBackend {
             }
 
             // Deactivate contexts set by this plugin
-            let mut seen_ctx: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+            let mut seen_ctx: std::collections::HashSet<String> = std::collections::HashSet::new();
             for ctx_name in &tracked.contexts_set {
                 if seen_ctx.insert(ctx_name.clone()) {
                     let _ = self.command_sender.send(PluginCommand::SetContext {
@@ -4023,6 +4104,54 @@ impl QuickJsBackend {
                     });
                 }
             }
+
+            // --- Phase 3: Resource cleanup ---
+
+            // Kill background processes spawned by this plugin
+            for process_id in &tracked.background_process_ids {
+                let _ = self
+                    .command_sender
+                    .send(PluginCommand::KillBackgroundProcess {
+                        process_id: *process_id,
+                    });
+            }
+
+            // Remove scroll sync groups created by this plugin
+            for group_id in &tracked.scroll_sync_group_ids {
+                let _ = self
+                    .command_sender
+                    .send(PluginCommand::RemoveScrollSyncGroup {
+                        group_id: *group_id,
+                    });
+            }
+
+            // Close virtual buffers created by this plugin
+            for buffer_id in &tracked.virtual_buffer_ids {
+                let _ = self.command_sender.send(PluginCommand::CloseBuffer {
+                    buffer_id: *buffer_id,
+                });
+            }
+
+            // Close composite buffers created by this plugin
+            for buffer_id in &tracked.composite_buffer_ids {
+                let _ = self
+                    .command_sender
+                    .send(PluginCommand::CloseCompositeBuffer {
+                        buffer_id: *buffer_id,
+                    });
+            }
+
+            // Close terminals created by this plugin
+            for terminal_id in &tracked.terminal_ids {
+                let _ = self.command_sender.send(PluginCommand::CloseTerminal {
+                    terminal_id: *terminal_id,
+                });
+            }
+        }
+
+        // Clean up any pending async resource owner entries for this plugin
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.retain(|_, name| name != plugin_name);
         }
 
         tracing::debug!(

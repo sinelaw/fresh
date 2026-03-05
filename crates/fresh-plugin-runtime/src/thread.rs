@@ -9,7 +9,7 @@
 //! - Results are sent back via the existing PluginCommand channel
 //! - Async operations complete naturally without runtime destruction
 
-use crate::backend::quickjs_backend::{PendingResponses, TsPluginInfo};
+use crate::backend::quickjs_backend::{AsyncResourceOwners, PendingResponses, TsPluginInfo};
 use crate::backend::QuickJsBackend;
 use anyhow::{anyhow, Result};
 use fresh_core::api::{EditorStateSnapshot, PluginCommand};
@@ -101,8 +101,24 @@ pub enum PluginRequest {
         response: oneshot::Sender<Vec<TsPluginInfo>>,
     },
 
+    /// Track an async resource (buffer/terminal) that was just created.
+    /// Sent by deliver_response when the editor confirms resource creation.
+    TrackAsyncResource {
+        plugin_name: String,
+        resource: TrackedAsyncResource,
+    },
+
     /// Shutdown the plugin thread
     Shutdown,
+}
+
+/// An async resource whose creation was confirmed by the editor.
+/// Used to update plugin_tracked_state for cleanup on unload.
+#[derive(Debug)]
+pub enum TrackedAsyncResource {
+    VirtualBuffer(fresh_core::BufferId),
+    CompositeBuffer(fresh_core::BufferId),
+    Terminal(fresh_core::TerminalId),
 }
 
 /// Simple oneshot channel implementation
@@ -173,6 +189,11 @@ pub struct PluginThreadHandle {
 
     /// Receiver for plugin commands (polled by editor directly)
     command_receiver: std::sync::mpsc::Receiver<PluginCommand>,
+
+    /// Shared map of request_id → plugin_name for async resource creations.
+    /// JsEditorApi inserts entries at creation time; deliver_response reads them
+    /// when the editor confirms resource creation to track the actual IDs.
+    async_resource_owners: AsyncResourceOwners,
 }
 
 impl PluginThreadHandle {
@@ -190,6 +211,11 @@ impl PluginThreadHandle {
         let pending_responses: PendingResponses =
             Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         let thread_pending_responses = Arc::clone(&pending_responses);
+
+        // Create async resource owners map (shared between handle and runtime)
+        let async_resource_owners: AsyncResourceOwners =
+            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let thread_async_resource_owners = Arc::clone(&async_resource_owners);
 
         // Create channel for requests (unbounded allows sync send, async recv)
         let (request_sender, request_receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -218,11 +244,12 @@ impl PluginThreadHandle {
 
             // Create QuickJS runtime with state
             tracing::debug!("Plugin thread: creating QuickJS runtime");
-            let runtime = match QuickJsBackend::with_state_and_responses(
+            let runtime = match QuickJsBackend::with_state_responses_and_resources(
                 Arc::clone(&thread_state_snapshot),
                 command_sender,
                 thread_pending_responses,
                 services.clone(),
+                thread_async_resource_owners,
             ) {
                 Ok(rt) => {
                     tracing::debug!("Plugin thread: QuickJS runtime created successfully");
@@ -259,6 +286,7 @@ impl PluginThreadHandle {
             state_snapshot,
             pending_responses,
             command_receiver,
+            async_resource_owners,
         })
     }
 
@@ -313,6 +341,11 @@ impl PluginThreadHandle {
                 buffer_id,
                 split_id,
             } => {
+                // Track the created buffer for cleanup on plugin unload
+                self.track_async_resource(
+                    request_id,
+                    TrackedAsyncResource::VirtualBuffer(buffer_id),
+                );
                 // Return an object with bufferId and splitId (camelCase for JS)
                 let result = serde_json::json!({
                     "bufferId": buffer_id.0,
@@ -347,6 +380,11 @@ impl PluginThreadHandle {
                 request_id,
                 buffer_id,
             } => {
+                // Track the created buffer for cleanup on plugin unload
+                self.track_async_resource(
+                    request_id,
+                    TrackedAsyncResource::CompositeBuffer(buffer_id),
+                );
                 // Return just the buffer_id number, not an object
                 self.resolve_callback(JsCallbackId(request_id), buffer_id.0.to_string());
             }
@@ -379,6 +417,8 @@ impl PluginThreadHandle {
                 terminal_id,
                 split_id,
             } => {
+                // Track the created terminal for cleanup on plugin unload
+                self.track_async_resource(request_id, TrackedAsyncResource::Terminal(terminal_id));
                 let result = serde_json::json!({
                     "bufferId": buffer_id.0,
                     "terminalId": terminal_id.0,
@@ -393,6 +433,24 @@ impl PluginThreadHandle {
                 let result = serde_json::to_string(&split_id.map(|s| s.0))
                     .unwrap_or_else(|_| "null".to_string());
                 self.resolve_callback(JsCallbackId(request_id), result);
+            }
+        }
+    }
+
+    /// Look up the plugin that owns a request_id and send a TrackAsyncResource
+    /// request to the plugin thread so it can update plugin_tracked_state.
+    fn track_async_resource(&self, request_id: u64, resource: TrackedAsyncResource) {
+        let plugin_name = self
+            .async_resource_owners
+            .lock()
+            .ok()
+            .and_then(|mut owners| owners.remove(&request_id));
+        if let Some(plugin_name) = plugin_name {
+            if let Some(sender) = self.request_sender.as_ref() {
+                let _ = sender.send(PluginRequest::TrackAsyncResource {
+                    plugin_name,
+                    resource,
+                });
             }
         }
     }
@@ -1078,6 +1136,26 @@ async fn handle_request(
             // reject_callback now runs execute_pending_job() internally
         }
 
+        PluginRequest::TrackAsyncResource {
+            plugin_name,
+            resource,
+        } => {
+            let rt = runtime.borrow();
+            let mut tracked = rt.plugin_tracked_state.borrow_mut();
+            let state = tracked.entry(plugin_name).or_default();
+            match resource {
+                TrackedAsyncResource::VirtualBuffer(buffer_id) => {
+                    state.virtual_buffer_ids.push(buffer_id);
+                }
+                TrackedAsyncResource::CompositeBuffer(buffer_id) => {
+                    state.composite_buffer_ids.push(buffer_id);
+                }
+                TrackedAsyncResource::Terminal(terminal_id) => {
+                    state.terminal_ids.push(terminal_id);
+                }
+            }
+        }
+
         PluginRequest::Shutdown => {
             tracing::info!("Plugin thread received shutdown request");
             return true;
@@ -1328,7 +1406,10 @@ fn load_plugin_from_source_internal(
 ) -> Result<()> {
     // Hot-reload: unload previous version if it exists
     if plugins.contains_key(name) {
-        tracing::info!("Hot-reloading buffer plugin '{}' — unloading previous version", name);
+        tracing::info!(
+            "Hot-reloading buffer plugin '{}' — unloading previous version",
+            name
+        );
         unload_plugin_internal(Rc::clone(&runtime), plugins, name)?;
     }
 

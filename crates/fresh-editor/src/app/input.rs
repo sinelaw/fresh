@@ -1130,9 +1130,15 @@ impl Editor {
                         .map(|s| format!("buffer-{}", s))
                         .unwrap_or_else(|| "buffer-plugin".to_string());
 
-                    match self.plugin_manager.load_plugin_from_source(&content, &name, is_ts) {
+                    match self
+                        .plugin_manager
+                        .load_plugin_from_source(&content, &name, is_ts)
+                    {
                         Ok(()) => {
-                            self.set_status_message(format!("Plugin '{}' loaded from buffer", name));
+                            self.set_status_message(format!(
+                                "Plugin '{}' loaded from buffer",
+                                name
+                            ));
                         }
                         Err(e) => {
                             self.set_status_message(format!("Failed to load plugin: {}", e));
