@@ -358,8 +358,7 @@ plugins/
 editor.registerCommand(
   "tour:load",
   "Tour: Load Definition...",
-  "handleLoadTour",
-  "normal"  // Available in normal editing context
+  "handleLoadTour"  // No context = always visible
 );
 
 editor.registerCommand(

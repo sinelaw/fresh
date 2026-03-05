@@ -637,21 +637,23 @@ pluginTranslate(plugin_name: string, key: string, args: Record<string, unknown>)
 
 #### `registerCommand`
 
-Register a custom command that can be triggered by keybindings or the command palette
+Register a command in the command palette (Ctrl+P).
+
+Usually you should omit `context` so the command is always visible.
+If provided, the command is hidden unless your plugin has activated that context with `editor.setContext(name, true)` or the focused buffer's virtual mode (from `defineMode()`) matches.
 
 ```typescript
-registerCommand(name: string, description: string, action: string, contexts: string, source: string): boolean
+registerCommand(name: string, description: string, handlerName: string, context?: string | null): boolean
 ```
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `name` | `string` | - |
-| `description` | `string` | - |
-| `action` | `string` | - |
-| `contexts` | `string` | - |
-| `source` | `string` | - |
+| `name` | `string` | Display name shown in the command palette |
+| `description` | `string` | Description shown alongside the command |
+| `handlerName` | `string` | Name of the `globalThis` function to call |
+| `context` | `string \| null` | Optional custom context for visibility filtering |
 
 #### `unregisterCommand`
 

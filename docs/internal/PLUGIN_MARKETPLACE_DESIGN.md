@@ -576,9 +576,9 @@ globalThis.pkg_install_url_confirm = async function(): Promise<void> {
 };
 
 // Register commands
-editor.registerCommand("pkg_install", "pkg: Install Plugin", "pkg_install", "normal");
-editor.registerCommand("pkg_install_url", "pkg: Install from URL", "pkg_install_url", "normal");
-editor.registerCommand("pkg_update_all", "pkg: Update All", "pkg_update_all", "normal");
+editor.registerCommand("pkg_install", "pkg: Install Plugin", "pkg_install");
+editor.registerCommand("pkg_install_url", "pkg: Install from URL", "pkg_install_url");
+editor.registerCommand("pkg_update_all", "pkg: Update All", "pkg_update_all");
 // ... more commands
 ```
 

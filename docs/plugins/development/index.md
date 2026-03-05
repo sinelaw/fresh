@@ -39,8 +39,7 @@ Let's start by creating a simple "Hello, World!" plugin.
     editor.registerCommand(
       "my_plugin_say_hello",
       "Inserts a greeting from my plugin",
-      "my_plugin_say_hello",
-      "normal"
+      "my_plugin_say_hello"
     );
 
     editor.setStatus("My first plugin loaded!");
@@ -78,12 +77,33 @@ globalThis.my_action = function(): void {
 };
 
 editor.registerCommand(
-  "my_command_name",      // Internal command name
+  "my_command_name",      // Display name in command palette
   "Human readable desc",   // Description for command palette
-  "my_action",            // Global function to call
-  "normal"                // Context: "normal", "insert", "prompt", etc.
+  "my_action"             // Global function to call
 );
 ```
+
+#### Conditional visibility with `context`
+
+`registerCommand` accepts an optional 4th parameter to control when the command is visible in the palette. When omitted, the command is always visible — this is what you want for most commands.
+
+If you provide a context string, the command is **hidden** unless that context is currently active. Contexts are activated by your plugin via `editor.setContext(name, true)` or by matching the focused buffer's virtual mode (from `defineMode()`). This is useful for commands that only make sense in a specific plugin state:
+
+```typescript
+// Always visible — no context needed
+editor.registerCommand("My Plugin: Start", "Start a review session", "start_review");
+
+// Only visible while a review session is active
+editor.registerCommand("My Plugin: Next Item", "Go to next review item", "next_item", "review-active");
+
+// Activate/deactivate the context from your plugin logic
+editor.setContext("review-active", true);   // "Next Item" now appears in palette
+editor.setContext("review-active", false);  // "Next Item" is hidden again
+```
+
+::: warning
+The context parameter is for **plugin-defined** contexts only. Values like `"normal"` or `"insert"` do not correspond to built-in editor modes and will make your command permanently invisible.
+:::
 
 ### Asynchronous Operations
 
