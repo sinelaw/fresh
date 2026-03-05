@@ -8,6 +8,7 @@ pub mod find_file;
 pub mod git;
 pub mod gutter;
 pub mod language_pack;
+pub mod load_from_buffer;
 pub mod lsp_find_references;
 pub mod markdown_source;
 pub mod package_manager;

@@ -108,6 +108,8 @@ All items below are **implemented and tested**:
 - [x] `from_str` mapping: `"load_plugin_from_buffer"` in keybindings
 - [x] **Hot-reload cleanup (Phase 1)**: `QuickJsBackend::cleanup_plugin()` cleans up plugin context, event handlers, registered actions, callback contexts
 - [x] **Hot-reload cleanup (Phase 2)**: `PluginTrackedState` tracks namespaces/IDs per plugin; compensating `PluginCommand`s sent on unload for overlays, conceals, soft breaks, line indicators, virtual text, file explorer decorations, and custom contexts
+- [x] **Hot-reload cleanup (Phase 3)**: Resource cleanup on unload — kills background processes, closes virtual/composite buffers, closes terminals, removes scroll sync groups. Uses shared `AsyncResourceOwners` map for tracking async resource IDs across threads.
+- [x] **E2E tests**: `test_load_plugin_from_buffer_registers_command` and `test_load_plugin_from_buffer_hot_reload_cleanup` in `tests/e2e/plugins/load_from_buffer.rs`
 
 ## Detailed Design
 
