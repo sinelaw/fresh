@@ -274,6 +274,20 @@ pub enum HookArgs {
         /// The theme key to inspect (e.g. "editor.bg")
         key: String,
     },
+
+    /// Mouse scroll event (wheel up/down)
+    MouseScroll {
+        buffer_id: BufferId,
+        /// Scroll delta: negative = up, positive = down (typically ±3)
+        delta: i32,
+        /// Mouse column (0-based, terminal origin top-left)
+        col: u16,
+        /// Mouse row (0-based, terminal origin top-left)
+        row: u16,
+    },
+
+    /// Terminal was resized
+    Resize { width: u16, height: u16 },
 }
 
 /// Information about a single line for the LinesChanged hook
@@ -718,6 +732,25 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             serde_json::json!({
                 "theme_name": theme_name,
                 "key": key,
+            })
+        }
+        HookArgs::MouseScroll {
+            buffer_id,
+            delta,
+            col,
+            row,
+        } => {
+            serde_json::json!({
+                "buffer_id": buffer_id.0,
+                "delta": delta,
+                "col": col,
+                "row": row,
+            })
+        }
+        HookArgs::Resize { width, height } => {
+            serde_json::json!({
+                "width": width,
+                "height": height,
             })
         }
     };

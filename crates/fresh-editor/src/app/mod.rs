@@ -3303,12 +3303,9 @@ impl Editor {
         self.resize_visible_terminals();
 
         // Notify plugins of the resize so they can adjust layouts
-        self.emit_event(
+        self.plugin_manager.run_hook(
             "resize",
-            serde_json::json!({
-                "width": width,
-                "height": height,
-            }),
+            fresh_core::hooks::HookArgs::Resize { width, height },
         );
     }
 

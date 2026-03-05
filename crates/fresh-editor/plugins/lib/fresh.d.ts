@@ -998,8 +998,9 @@ interface EditorAPI {
 	*/
 	registerLspServer(language: string, config: LspServerPackConfig): boolean;
 	/**
-	* Reload the grammar registry to apply registered grammars
-	* Call this after registering one or more grammars
+	* Reload the grammar registry to apply registered grammars (async)
+	* Call this after registering one or more grammars.
+	* Returns a Promise that resolves when the grammar rebuild completes.
 	*/
 	reloadGrammars(): Promise<void>;
 	/**

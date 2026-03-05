@@ -1377,16 +1377,16 @@ impl Editor {
         row: u16,
         delta: i32,
     ) -> AnyhowResult<()> {
-        // Emit mouse_scroll event so plugins can handle scroll for virtual buffers
+        // Notify plugins of mouse scroll so they can handle it for virtual buffers
         let buffer_id = self.active_buffer();
-        self.emit_event(
+        self.plugin_manager.run_hook(
             "mouse_scroll",
-            serde_json::json!({
-                "buffer_id": buffer_id,
-                "delta": delta,
-                "col": col,
-                "row": row,
-            }),
+            fresh_core::hooks::HookArgs::MouseScroll {
+                buffer_id,
+                delta,
+                col,
+                row,
+            },
         );
 
         // Check if scroll is over the file explorer
