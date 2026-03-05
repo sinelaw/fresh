@@ -1513,10 +1513,7 @@ impl Editor {
     /// Defers the actual rebuild — sets a flag so all pending grammars from the
     /// current command batch are collected before a single rebuild.
     /// The callback_id will be resolved when the background build completes.
-    pub(super) fn handle_reload_grammars(
-        &mut self,
-        callback_id: fresh_core::api::JsCallbackId,
-    ) {
+    pub(super) fn handle_reload_grammars(&mut self, callback_id: fresh_core::api::JsCallbackId) {
         tracing::debug!(
             "ReloadGrammars requested, pending_grammars count: {}",
             self.pending_grammars.len()

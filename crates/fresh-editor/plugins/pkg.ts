@@ -1188,7 +1188,7 @@ async function loadLanguagePack(packageDir: string, manifest: PackageManifest): 
   }
 
   // Apply changes
-  editor.reloadGrammars();
+  await editor.reloadGrammars();
 }
 
 /**
@@ -1271,7 +1271,7 @@ async function loadBundle(packageDir: string, manifest: PackageManifest): Promis
   }
 
   // Apply grammar changes
-  editor.reloadGrammars();
+  await editor.reloadGrammars();
   editor.debug(`[pkg] Bundle loaded: ${bundleName}`);
 }
 

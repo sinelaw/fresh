@@ -46,15 +46,17 @@ contexts:
         r###"
 const editor = getEditor();
 
-// Register the test grammar
-const grammarPath = "{}";
-const result = editor.registerGrammar("testlang", grammarPath, ["tl"]);
-editor.debug(`registerGrammar result: ${{result}}`);
+(async function() {{
+  // Register the test grammar
+  const grammarPath = "{}";
+  const result = editor.registerGrammar("testlang", grammarPath, ["tl"]);
+  editor.debug(`registerGrammar result: ${{result}}`);
 
-// Reload to apply
-editor.reloadGrammars();
+  // Reload to apply (async — waits for background grammar build)
+  await editor.reloadGrammars();
 
-editor.setStatus("Test language registered!");
+  editor.setStatus("Test language registered!");
+}})();
 "###,
         grammar_path.to_string_lossy().replace('\\', "\\\\")
     );
@@ -174,8 +176,10 @@ contexts:
     let test_plugin = format!(
         r###"
 const editor = getEditor();
-editor.registerGrammar("customscript", "{}", ["cscript", "cs2"]);
-editor.reloadGrammars();
+(async function() {{
+  editor.registerGrammar("customscript", "{}", ["cscript", "cs2"]);
+  await editor.reloadGrammars();
+}})();
 "###,
         grammar_path.to_string_lossy().replace('\\', "\\\\")
     );
