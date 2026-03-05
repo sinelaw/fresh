@@ -5517,6 +5517,12 @@ mod tests {
         #[test]
         #[cfg(unix)]
         fn test_save_to_unwritable_file() -> anyhow::Result<()> {
+            // Root (uid 0) bypasses Unix file permission checks, so these
+            // permission-denied tests are meaningless when running as root.
+            if unsafe { libc::getuid() } == 0 {
+                eprintln!("Skipping test: root bypasses file permission checks");
+                return Ok(());
+            }
             use std::fs::Permissions;
             use std::os::unix::fs::PermissionsExt;
             use tempfile::TempDir;
@@ -5555,6 +5561,12 @@ mod tests {
         #[test]
         #[cfg(unix)]
         fn test_save_to_unwritable_directory() -> anyhow::Result<()> {
+            // Root (uid 0) bypasses Unix file permission checks, so these
+            // permission-denied tests are meaningless when running as root.
+            if unsafe { libc::getuid() } == 0 {
+                eprintln!("Skipping test: root bypasses file permission checks");
+                return Ok(());
+            }
             use std::fs::Permissions;
             use std::os::unix::fs::PermissionsExt;
             use tempfile::TempDir;

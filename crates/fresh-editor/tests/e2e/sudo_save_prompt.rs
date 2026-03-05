@@ -40,6 +40,12 @@ use std::os::unix::fs::PermissionsExt;
 #[test]
 #[cfg(unix)]
 fn test_save_permission_denied_shows_sudo_prompt() {
+    // Root (uid 0) bypasses Unix file permission checks, so these
+    // permission-denied tests are meaningless when running as root.
+    if unsafe { libc::getuid() } == 0 {
+        eprintln!("Skipping test: root bypasses file permission checks");
+        return;
+    }
     let temp_dir = TempDir::new().unwrap();
     let unwritable_dir = temp_dir.path().join("unwritable_dir");
     std::fs::create_dir(&unwritable_dir).unwrap();
@@ -91,6 +97,12 @@ fn test_save_permission_denied_shows_sudo_prompt() {
 #[test]
 #[cfg(unix)]
 fn test_save_readonly_file_shows_sudo_prompt() {
+    // Root (uid 0) bypasses Unix file permission checks, so these
+    // permission-denied tests are meaningless when running as root.
+    if unsafe { libc::getuid() } == 0 {
+        eprintln!("Skipping test: root bypasses file permission checks");
+        return;
+    }
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("readonly.txt");
 
