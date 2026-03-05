@@ -3495,6 +3495,9 @@ impl QuickJsBackend {
             // Define getEditor() globally
             ctx.eval::<(), _>("globalThis.getEditor = function() { return editor; };")?;
 
+            // Define registerHandler() for strict-mode-compatible handler registration
+            ctx.eval::<(), _>("globalThis.registerHandler = function(name, fn) { globalThis[name] = fn; };")?;
+
             // Provide console.log for debugging
             // Use Rest<T> to handle variadic arguments like console.log('a', 'b', obj)
             let console = Object::new(ctx.clone())?;

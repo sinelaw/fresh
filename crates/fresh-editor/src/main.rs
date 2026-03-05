@@ -1690,18 +1690,25 @@ fn create_plugin_package(
     let plugin_ts = r#"// Fresh Plugin
 // Documentation: https://github.com/user/fresh/blob/main/docs/plugins.md
 
-// Register a command that users can invoke
-editor.registerCommand("hello", "Say Hello", async () => {
-  editor.showStatusMessage("Hello from your plugin!");
-});
+const editor = getEditor();
+
+// Define a command handler and register it
+function hello(): void {
+  editor.setStatus("Hello from your plugin!");
+}
+registerHandler("hello", hello);
+editor.registerCommand("hello", "Say Hello", "hello");
 
 // React to editor events
-editor.on("buffer_opened", (event) => {
-  const info = editor.getBufferInfo();
+function onBufferOpened(): void {
+  const bufferId = editor.getActiveBufferId();
+  const info = editor.getBufferInfo(bufferId);
   if (info) {
-    console.log(`Opened: ${info.path}`);
+    editor.debug(`Opened: ${info.path}`);
   }
-});
+}
+registerHandler("on_buffer_opened", onBufferOpened);
+editor.on("buffer_opened", "on_buffer_opened");
 
 // Example: Add a keybinding in your Fresh config:
 // {

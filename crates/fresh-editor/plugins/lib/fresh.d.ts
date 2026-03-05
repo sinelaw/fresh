@@ -16,6 +16,13 @@
 * Plugins must call this at the top of their file to get a scoped editor object.
 */
 declare function getEditor(): EditorAPI;
+/**
+* Register a function as a named handler on the global scope.
+* Use this instead of assigning to globalThis directly for strict-mode compatibility.
+* @param name - Handler name (referenced by registerCommand, on, etc.)
+* @param fn - The handler function
+*/
+declare function registerHandler(name: string, fn: (...args: unknown[]) => void): void;
 /** Handle for a cancellable async operation */
 interface ProcessHandle<T> extends PromiseLike<T> {
 	/** Promise that resolves to the result when complete */
