@@ -411,6 +411,20 @@ type FormatterPackConfig = {
 	*/
 	args: Array<string>;
 };
+type ProcessLimitsPackConfig = {
+	/**
+	* Maximum memory usage as percentage of total system memory (null = no limit)
+	*/
+	maxMemoryPercent: number | null;
+	/**
+	* Maximum CPU usage as percentage of total CPU (null = no limit)
+	*/
+	maxCpuPercent: number | null;
+	/**
+	* Enable resource limiting
+	*/
+	enabled: boolean | null;
+};
 type TerminalResult = {
 	/**
 	* The created buffer ID (for use with setSplitBuffer, etc.)
@@ -701,6 +715,10 @@ type LspServerPackConfig = {
 	* LSP initialization options
 	*/
 	initializationOptions: Record<string, unknown> | null;
+	/**
+	* Process resource limits (memory and CPU)
+	*/
+	processLimits: ProcessLimitsPackConfig | null;
 };
 type SpawnResult = {
 	/**

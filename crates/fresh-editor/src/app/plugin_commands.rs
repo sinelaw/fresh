@@ -1492,12 +1492,23 @@ impl Editor {
         config: fresh_core::api::LspServerPackConfig,
     ) {
         // Convert LspServerPackConfig to the internal LspServerConfig format
+        let process_limits = match config.process_limits {
+            Some(pl) => crate::types::ProcessLimits {
+                max_memory_percent: pl.max_memory_percent,
+                max_cpu_percent: pl.max_cpu_percent,
+                enabled: pl
+                    .enabled
+                    .unwrap_or(pl.max_memory_percent.is_some() || pl.max_cpu_percent.is_some()),
+            },
+            None => Default::default(),
+        };
         let lsp_config = crate::types::LspServerConfig {
             command: config.command,
             args: config.args,
             enabled: true, // Explicitly enable - Default::default() gives false
             auto_start: config.auto_start.unwrap_or(true),
             initialization_options: config.initialization_options,
+            process_limits,
             ..Default::default()
         };
         // Update LSP manager if available

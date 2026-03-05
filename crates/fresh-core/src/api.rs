@@ -1733,6 +1733,24 @@ pub struct FormatterPackConfig {
     pub args: Vec<String>,
 }
 
+/// Process resource limits for LSP servers
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProcessLimitsPackConfig {
+    /// Maximum memory usage as percentage of total system memory (null = no limit)
+    #[serde(default)]
+    pub max_memory_percent: Option<u32>,
+
+    /// Maximum CPU usage as percentage of total CPU (null = no limit)
+    #[serde(default)]
+    pub max_cpu_percent: Option<u32>,
+
+    /// Enable resource limiting
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
 /// LSP server configuration for language packs
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -1753,6 +1771,10 @@ pub struct LspServerPackConfig {
     #[serde(default)]
     #[ts(type = "Record<string, unknown> | null")]
     pub initialization_options: Option<JsonValue>,
+
+    /// Process resource limits (memory and CPU)
+    #[serde(default)]
+    pub process_limits: Option<ProcessLimitsPackConfig>,
 }
 
 /// Hunk status for Review Diff
@@ -2229,6 +2251,16 @@ mod fromjs_impls {
             rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
                 from: "object",
                 to: "LspServerPackConfig",
+                message: Some(e.to_string()),
+            })
+        }
+    }
+
+    impl<'js> FromJs<'js> for ProcessLimitsPackConfig {
+        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+                from: "object",
+                to: "ProcessLimitsPackConfig",
                 message: Some(e.to_string()),
             })
         }

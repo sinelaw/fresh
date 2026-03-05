@@ -21,9 +21,9 @@ use fresh_core::api::{
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
     CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, JsDiagnostic,
     JsPosition, JsRange, JsTextPropertyEntry, LanguagePackConfig, LayoutHints, LspServerPackConfig,
-    OverlayColorSpec, OverlayOptions, SpawnResult, TerminalResult, TextPropertiesAtCursor,
-    TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
-    VirtualBufferResult,
+    OverlayColorSpec, OverlayOptions, ProcessLimitsPackConfig, SpawnResult, TerminalResult,
+    TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind,
+    ViewportInfo, VirtualBufferResult,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
@@ -102,6 +102,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // Language pack types
         "LanguagePackConfig" => Some(LanguagePackConfig::decl(&cfg)),
         "LspServerPackConfig" => Some(LspServerPackConfig::decl(&cfg)),
+        "ProcessLimitsPackConfig" => Some(ProcessLimitsPackConfig::decl(&cfg)),
         "FormatterPackConfig" => Some(FormatterPackConfig::decl(&cfg)),
 
         // Overlay/inline styling types
@@ -139,6 +140,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "ActionPopupOptions",             // Used by showActionPopup
     "FileExplorerDecoration",         // Used by setFileExplorerDecorations
     "FormatterPackConfig",            // Used by LanguagePackConfig.formatter
+    "ProcessLimitsPackConfig",        // Used by LspServerPackConfig.process_limits
     "TerminalResult",                 // Used by createTerminal return type
     "CreateTerminalOptions",          // Used by createTerminal opts parameter
     "CursorInfo",                     // Used by getPrimaryCursor, getAllCursors
@@ -382,6 +384,7 @@ mod tests {
             "JsPosition",
             "LanguagePackConfig",
             "LspServerPackConfig",
+            "ProcessLimitsPackConfig",
             "FormatterPackConfig",
         ];
 
