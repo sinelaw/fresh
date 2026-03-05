@@ -3234,26 +3234,9 @@ impl Config {
 
     #[cfg(feature = "runtime")]
     fn populate_lsp_config(lsp: &mut HashMap<String, LspServerConfig>, ra_log_path: String) {
-        // Minimal performance config for rust-analyzer:
-        // - checkOnSave: false - disables cargo check on every save (the #1 cause of slowdowns)
-        // - cachePriming.enable: false - disables background indexing of entire crate graph
-        // - procMacro.enable: false - disables proc-macro expansion (saves CPU/RAM)
-        // - cargo.buildScripts.enable: false - prevents running build.rs automatically
-        // - cargo.autoreload: false - only reload manually
-        // - diagnostics.enable: true - keeps basic syntax error reporting
-        // - files.watcher: "server" - more efficient than editor-side watchers
-        let ra_init_options = serde_json::json!({
-            "checkOnSave": false,
-            "cachePriming": { "enable": false },
-            "procMacro": { "enable": false },
-            "cargo": {
-                "buildScripts": { "enable": false },
-                "autoreload": false
-            },
-            "diagnostics": { "enable": true },
-            "files": { "watcher": "server" }
-        });
-
+        // rust-analyzer: full mode by default (no init param restrictions, no process limits).
+        // Users can switch to reduced-memory mode via the "Rust LSP: Reduced Memory Mode"
+        // command palette command (provided by the rust-lsp plugin).
         lsp.insert(
             "rust".to_string(),
             LspServerConfig {
@@ -3261,8 +3244,8 @@ impl Config {
                 args: vec!["--log-file".to_string(), ra_log_path],
                 enabled: true,
                 auto_start: false,
-                process_limits: ProcessLimits::default(),
-                initialization_options: Some(ra_init_options),
+                process_limits: ProcessLimits::unlimited(),
+                initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
             },

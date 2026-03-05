@@ -166,4 +166,97 @@ registerHandler("on_rust_lsp_action_result", on_rust_lsp_action_result);
 // Register hook for action popup results
 editor.on("action_popup_result", "on_rust_lsp_action_result");
 
+// =====================================================================
+// Rust LSP mode switching (Full vs Reduced Memory)
+// =====================================================================
+
+// Reduced-memory init options for rust-analyzer:
+// - checkOnSave: false - disables cargo check on every save (#1 cause of slowdowns)
+// - cachePriming.enable: false - no background indexing of entire crate graph
+// - procMacro.enable: false - no proc-macro expansion (saves CPU/RAM)
+// - cargo.buildScripts.enable: false - no build.rs
+// - cargo.autoreload: false - manual reload only
+const REDUCED_MEMORY_INIT_OPTIONS = {
+  checkOnSave: false,
+  cachePriming: { enable: false },
+  procMacro: { enable: false },
+  cargo: {
+    buildScripts: { enable: false },
+    autoreload: false,
+  },
+  diagnostics: { enable: true },
+  files: { watcher: "server" },
+};
+
+const REDUCED_MEMORY_PROCESS_LIMITS: ProcessLimitsPackConfig = {
+  maxMemoryPercent: 50,
+  maxCpuPercent: 90,
+  enabled: true,
+};
+
+const NO_PROCESS_LIMITS: ProcessLimitsPackConfig = {
+  maxMemoryPercent: null,
+  maxCpuPercent: null,
+  enabled: false,
+};
+
+function on_rust_lsp_configure(): void {
+  editor.showActionPopup({
+    id: "rust-lsp-mode",
+    title: "Rust LSP Mode",
+    message: "This will override your Rust LSP config and restart the server.",
+    actions: [
+      { id: "full", label: "Full Mode (all features, no process limits)" },
+      { id: "reduced", label: "Reduced Memory (restricted features, 50% RAM / 90% CPU limits)" },
+      { id: "dismiss", label: "Cancel (ESC)" },
+    ],
+  });
+}
+registerHandler("on_rust_lsp_configure", on_rust_lsp_configure);
+
+editor.registerCommand(
+  "Rust LSP: Configure Mode",
+  "Switch rust-analyzer between full and reduced memory modes",
+  "on_rust_lsp_configure",
+  null
+);
+
+function on_rust_lsp_mode_selected(data: ActionPopupResultData): void {
+  if (data.popup_id !== "rust-lsp-mode") {
+    return;
+  }
+
+  switch (data.action_id) {
+    case "full":
+      editor.registerLspServer("rust", {
+        command: "rust-analyzer",
+        args: [],
+        autoStart: true,
+        initializationOptions: null,
+        processLimits: NO_PROCESS_LIMITS,
+      });
+      editor.restartLspForLanguage("rust");
+      editor.setStatus("Rust LSP: Full mode — all features enabled, no process limits");
+      break;
+
+    case "reduced":
+      editor.registerLspServer("rust", {
+        command: "rust-analyzer",
+        args: [],
+        autoStart: true,
+        initializationOptions: REDUCED_MEMORY_INIT_OPTIONS,
+        processLimits: REDUCED_MEMORY_PROCESS_LIMITS,
+      });
+      editor.restartLspForLanguage("rust");
+      editor.setStatus("Rust LSP: Reduced Memory mode — checkOnSave, procMacro, cachePriming disabled");
+      break;
+
+    case "dismiss":
+    case "dismissed":
+      break;
+  }
+}
+registerHandler("on_rust_lsp_mode_selected", on_rust_lsp_mode_selected);
+editor.on("action_popup_result", "on_rust_lsp_mode_selected");
+
 editor.debug("rust-lsp: Plugin loaded");
