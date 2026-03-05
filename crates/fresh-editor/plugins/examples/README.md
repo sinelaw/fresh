@@ -2,7 +2,7 @@
 
 This directory contains example plugins demonstrating the editor's plugin system. These are educational examples showing specific API features.
 
-For the complete API reference, see **[docs/development/plugin-api.md](../../docs/development/plugin-api.md)**.
+For the complete API reference, see **[docs/plugins/api/index.md](../../../../docs/plugins/api/index.md)**.
 
 ## Available Examples
 
@@ -80,5 +80,5 @@ editor.debug("My custom plugin loaded");
 
 ## Further Reading
 
-- **Getting Started:** [docs/development/plugin-development.md](../../docs/development/plugin-development.md)
-- **API Reference:** [docs/development/plugin-api.md](../../docs/development/plugin-api.md)
+- **Getting Started:** [docs/development/plugin-development.md](../../../../docs/plugins/development/index.md)
+- **API Reference:** [docs/plugins/api/index.md](../../../../docs/plugins/api/index.md)
