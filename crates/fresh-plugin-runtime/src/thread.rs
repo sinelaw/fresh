@@ -61,6 +61,14 @@ pub enum PluginRequest {
         response: oneshot::Sender<(Vec<String>, HashMap<String, PluginConfig>)>,
     },
 
+    /// Load a plugin from source code (no file I/O)
+    LoadPluginFromSource {
+        source: String,
+        name: String,
+        is_typescript: bool,
+        response: oneshot::Sender<Result<()>>,
+    },
+
     /// Unload a plugin by name
     UnloadPlugin {
         name: String,
@@ -452,6 +460,31 @@ impl PluginThreadHandle {
 
         rx.recv()
             .unwrap_or_else(|_| (vec!["Plugin thread closed".to_string()], HashMap::new()))
+    }
+
+    /// Load a plugin from source code directly (blocking).
+    ///
+    /// If a plugin with the same name is already loaded, it will be unloaded first
+    /// (hot-reload semantics).
+    pub fn load_plugin_from_source(
+        &self,
+        source: &str,
+        name: &str,
+        is_typescript: bool,
+    ) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.request_sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Plugin thread shut down"))?
+            .send(PluginRequest::LoadPluginFromSource {
+                source: source.to_string(),
+                name: name.to_string(),
+                is_typescript,
+                response: tx,
+            })
+            .map_err(|_| anyhow!("Plugin thread not responding"))?;
+
+        rx.recv().map_err(|_| anyhow!("Plugin thread closed"))?
     }
 
     /// Unload a plugin (blocking)
@@ -934,6 +967,22 @@ async fn handle_request(
             let _ = response.send((errors, discovered));
         }
 
+        PluginRequest::LoadPluginFromSource {
+            source,
+            name,
+            is_typescript,
+            response,
+        } => {
+            let result = load_plugin_from_source_internal(
+                Rc::clone(&runtime),
+                plugins,
+                &source,
+                &name,
+                is_typescript,
+            );
+            let _ = response.send(result);
+        }
+
         PluginRequest::UnloadPlugin { name, response } => {
             let result = unload_plugin_internal(Rc::clone(&runtime), plugins, &name);
             let _ = response.send(result);
@@ -1266,6 +1315,48 @@ async fn load_plugins_from_dir_with_config_internal(
     (errors, discovered_plugins)
 }
 
+/// Load a plugin from source code directly (no file I/O).
+///
+/// If a plugin with the same name is already loaded, it will be unloaded first
+/// (hot-reload semantics).
+fn load_plugin_from_source_internal(
+    runtime: Rc<RefCell<QuickJsBackend>>,
+    plugins: &mut HashMap<String, TsPluginInfo>,
+    source: &str,
+    name: &str,
+    is_typescript: bool,
+) -> Result<()> {
+    // Hot-reload: unload previous version if it exists
+    if plugins.contains_key(name) {
+        tracing::info!("Hot-reloading buffer plugin '{}' — unloading previous version", name);
+        unload_plugin_internal(Rc::clone(&runtime), plugins, name)?;
+    }
+
+    tracing::info!("Loading plugin from source: {}", name);
+
+    runtime
+        .borrow_mut()
+        .execute_source(source, name, is_typescript)?;
+
+    // Register in plugins map with a synthetic path
+    plugins.insert(
+        name.to_string(),
+        TsPluginInfo {
+            name: name.to_string(),
+            path: PathBuf::from(format!("<buffer:{}>", name)),
+            enabled: true,
+        },
+    );
+
+    tracing::info!(
+        "Buffer plugin '{}' loaded successfully, total plugins: {}",
+        name,
+        plugins.len()
+    );
+
+    Ok(())
+}
+
 /// Unload a plugin
 fn unload_plugin_internal(
     runtime: Rc<RefCell<QuickJsBackend>>,
@@ -1286,6 +1377,9 @@ fn unload_plugin_internal(
             .borrow()
             .services
             .unregister_commands_by_plugin(name);
+
+        // Clean up plugin runtime state (context, event handlers, actions, callbacks)
+        runtime.borrow().cleanup_plugin(name);
 
         Ok(())
     } else {

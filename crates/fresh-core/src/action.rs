@@ -364,6 +364,9 @@ pub enum Action {
     // Plugin custom actions
     PluginAction(String),
 
+    // Load the current buffer's contents as a plugin
+    LoadPluginFromBuffer,
+
     // Settings operations
     OpenSettings,        // Open the settings modal
     CloseSettings,       // Close the settings modal

@@ -2846,6 +2846,7 @@ pub fn action_to_events(
         | Action::ShellCommandReplace
         | Action::CalibrateInput
         | Action::EventDebug
+        | Action::LoadPluginFromBuffer
         | Action::OpenKeybindingEditor
         | Action::AddRuler
         | Action::RemoveRuler => return None,

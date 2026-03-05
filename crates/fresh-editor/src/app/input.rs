@@ -1105,6 +1105,48 @@ impl Editor {
                     );
                 }
             }
+            Action::LoadPluginFromBuffer => {
+                #[cfg(feature = "plugins")]
+                {
+                    let state = self.active_state();
+                    let buffer = &state.buffer;
+                    let total = buffer.total_bytes();
+                    let content =
+                        String::from_utf8_lossy(&buffer.slice_bytes(0..total)).to_string();
+
+                    // Determine if TypeScript from file extension, default to TS
+                    let is_ts = buffer
+                        .file_path()
+                        .and_then(|p| p.extension())
+                        .and_then(|e| e.to_str())
+                        .map(|e| e == "ts" || e == "tsx")
+                        .unwrap_or(true);
+
+                    // Derive plugin name from filename or use generic name
+                    let name = buffer
+                        .file_path()
+                        .and_then(|p| p.file_stem())
+                        .and_then(|s| s.to_str())
+                        .map(|s| format!("buffer-{}", s))
+                        .unwrap_or_else(|| "buffer-plugin".to_string());
+
+                    match self.plugin_manager.load_plugin_from_source(&content, &name, is_ts) {
+                        Ok(()) => {
+                            self.set_status_message(format!("Plugin '{}' loaded from buffer", name));
+                        }
+                        Err(e) => {
+                            self.set_status_message(format!("Failed to load plugin: {}", e));
+                            tracing::error!("LoadPluginFromBuffer error: {}", e);
+                        }
+                    }
+                }
+                #[cfg(not(feature = "plugins"))]
+                {
+                    self.set_status_message(
+                        "Plugins not available (compiled without plugin support)".to_string(),
+                    );
+                }
+            }
             Action::OpenTerminal => {
                 self.open_terminal();
             }

@@ -93,6 +93,22 @@ Expose this as a JS API so plugins themselves can load other plugin source code.
 
 Alternative A is the cleanest. It follows the existing architecture patterns, avoids filesystem hacks, and is straightforward to implement. Alternative C is a nice follow-up but not needed for v1.
 
+## Implementation Status
+
+All items below are **implemented and tested**:
+
+- [x] `PluginRequest::LoadPluginFromSource` variant added to `thread.rs`
+- [x] `load_plugin_from_source_internal()` function with hot-reload (unload-then-load)
+- [x] `QuickJsBackend::execute_source()` — transpile + execute source code without file I/O
+- [x] `PluginThreadHandle::load_plugin_from_source()` — blocking public API
+- [x] `PluginManager::load_plugin_from_source()` — editor-level API with `#[cfg(feature = "plugins")]`
+- [x] `Action::LoadPluginFromBuffer` in both `fresh-core` and `fresh-editor` Action enums
+- [x] Handler in `app/input.rs` — reads buffer content, detects TS/JS, calls plugin manager
+- [x] Command palette entry: `cmd.load_plugin_from_buffer` in `COMMAND_DEFS`
+- [x] `from_str` mapping: `"load_plugin_from_buffer"` in keybindings
+- [x] **Hot-reload cleanup (Phase 1)**: `QuickJsBackend::cleanup_plugin()` cleans up plugin context, event handlers, registered actions, callback contexts
+- [x] **Hot-reload cleanup (Phase 2)**: `PluginTrackedState` tracks namespaces/IDs per plugin; compensating `PluginCommand`s sent on unload for overlays, conceals, soft breaks, line indicators, virtual text, file explorer decorations, and custom contexts
+
 ## Detailed Design
 
 ### 1. Plugin Runtime Layer (`fresh-plugin-runtime`)

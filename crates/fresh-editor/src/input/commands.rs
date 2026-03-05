@@ -1248,6 +1248,14 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[],
         custom_contexts: &[],
     },
+    // Plugin development
+    CommandDef {
+        name_key: "cmd.load_plugin_from_buffer",
+        desc_key: "cmd.load_plugin_from_buffer_desc",
+        action: || Action::LoadPluginFromBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
 ];
 
 /// Get all available commands for the command palette

@@ -546,6 +546,26 @@ pub struct TsPluginInfo {
 }
 
 /// Handler information for events and actions
+/// Tracks state created by a plugin for cleanup on unload.
+///
+/// Each field records identifiers (namespaces, IDs, names) so that we can send
+/// compensating `PluginCommand`s when the plugin is unloaded.
+#[derive(Debug, Clone, Default)]
+pub struct PluginTrackedState {
+    /// (buffer_id, namespace) pairs used for overlays, conceals, soft breaks
+    pub overlay_namespaces: Vec<(BufferId, String)>,
+    /// (buffer_id, namespace) pairs used for virtual lines
+    pub virtual_line_namespaces: Vec<(BufferId, String)>,
+    /// (buffer_id, namespace) pairs used for line indicators
+    pub line_indicator_namespaces: Vec<(BufferId, String)>,
+    /// (buffer_id, virtual_text_id) pairs
+    pub virtual_text_ids: Vec<(BufferId, String)>,
+    /// File explorer decoration namespaces
+    pub file_explorer_namespaces: Vec<String>,
+    /// Context names set by the plugin
+    pub contexts_set: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct PluginHandler {
     pub plugin_name: String,
@@ -571,6 +591,8 @@ pub struct JsEditorApi {
     callback_contexts: Rc<RefCell<HashMap<u64, String>>>,
     #[qjs(skip_trace)]
     services: Arc<dyn fresh_core::services::PluginServiceBridge>,
+    #[qjs(skip_trace)]
+    plugin_tracked_state: Rc<RefCell<HashMap<String, PluginTrackedState>>>,
     pub plugin_name: String,
 }
 
@@ -724,6 +746,15 @@ impl JsEditorApi {
 
     /// Set a context (for keybinding conditions)
     pub fn set_context(&self, name: String, active: bool) -> bool {
+        // Track context name for cleanup on unload
+        if active {
+            self.plugin_tracked_state
+                .borrow_mut()
+                .entry(self.plugin_name.clone())
+                .or_default()
+                .contexts_set
+                .push(name.clone());
+        }
         self.command_sender
             .send(PluginCommand::SetContext { name, active })
             .is_ok()
@@ -1718,6 +1749,14 @@ impl JsEditorApi {
             url,
         };
 
+        // Track namespace for cleanup on unload
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .overlay_namespaces
+            .push((BufferId(buffer_id as usize), namespace.clone()));
+
         let _ = self.command_sender.send(PluginCommand::AddOverlay {
             buffer_id: BufferId(buffer_id as usize),
             namespace: Some(OverlayNamespace::from_string(namespace)),
@@ -1780,6 +1819,14 @@ impl JsEditorApi {
         end: u32,
         replacement: Option<String>,
     ) -> bool {
+        // Track namespace for cleanup on unload
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .overlay_namespaces
+            .push((BufferId(buffer_id as usize), namespace.clone()));
+
         self.command_sender
             .send(PluginCommand::AddConceal {
                 buffer_id: BufferId(buffer_id as usize),
@@ -1822,6 +1869,14 @@ impl JsEditorApi {
         position: u32,
         indent: u32,
     ) -> bool {
+        // Track namespace for cleanup on unload
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .overlay_namespaces
+            .push((BufferId(buffer_id as usize), namespace.clone()));
+
         self.command_sender
             .send(PluginCommand::AddSoftBreak {
                 buffer_id: BufferId(buffer_id as usize),
@@ -1989,6 +2044,14 @@ impl JsEditorApi {
             })
             .collect::<rquickjs::Result<Vec<_>>>()?;
 
+        // Track namespace for cleanup on unload
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .file_explorer_namespaces
+            .push(namespace.clone());
+
         Ok(self
             .command_sender
             .send(PluginCommand::SetFileExplorerDecorations {
@@ -2021,6 +2084,14 @@ impl JsEditorApi {
         before: bool,
         use_bg: bool,
     ) -> bool {
+        // Track virtual text ID for cleanup on unload
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .virtual_text_ids
+            .push((BufferId(buffer_id as usize), virtual_text_id.clone()));
+
         self.command_sender
             .send(PluginCommand::AddVirtualText {
                 buffer_id: BufferId(buffer_id as usize),
@@ -2090,6 +2161,14 @@ impl JsEditorApi {
         namespace: String,
         priority: i32,
     ) -> bool {
+        // Track namespace for cleanup on unload
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .virtual_line_namespaces
+            .push((BufferId(buffer_id as usize), namespace.clone()));
+
         self.command_sender
             .send(PluginCommand::AddVirtualLine {
                 buffer_id: BufferId(buffer_id as usize),
@@ -2364,6 +2443,14 @@ impl JsEditorApi {
         b: u8,
         priority: i32,
     ) -> bool {
+        // Track namespace for cleanup on unload
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .line_indicator_namespaces
+            .push((BufferId(buffer_id as usize), namespace.clone()));
+
         self.command_sender
             .send(PluginCommand::SetLineIndicator {
                 buffer_id: BufferId(buffer_id as usize),
@@ -2389,6 +2476,14 @@ impl JsEditorApi {
         b: u8,
         priority: i32,
     ) -> bool {
+        // Track namespace for cleanup on unload
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .line_indicator_namespaces
+            .push((BufferId(buffer_id as usize), namespace.clone()));
+
         self.command_sender
             .send(PluginCommand::SetLineIndicators {
                 buffer_id: BufferId(buffer_id as usize),
@@ -3394,6 +3489,8 @@ pub struct QuickJsBackend {
     callback_contexts: Rc<RefCell<HashMap<u64, String>>>,
     /// Bridge for editor services (i18n, theme, etc.)
     pub services: Arc<dyn fresh_core::services::PluginServiceBridge>,
+    /// Per-plugin tracking of created state (namespaces, IDs) for cleanup on unload
+    plugin_tracked_state: Rc<RefCell<HashMap<String, PluginTrackedState>>>,
 }
 
 impl QuickJsBackend {
@@ -3462,6 +3559,7 @@ impl QuickJsBackend {
         let registered_actions = Rc::new(RefCell::new(HashMap::new()));
         let next_request_id = Rc::new(RefCell::new(1u64));
         let callback_contexts = Rc::new(RefCell::new(HashMap::new()));
+        let plugin_tracked_state = Rc::new(RefCell::new(HashMap::new()));
 
         let backend = Self {
             runtime,
@@ -3475,6 +3573,7 @@ impl QuickJsBackend {
             next_request_id,
             callback_contexts,
             services,
+            plugin_tracked_state,
         };
 
         // Initialize main context (for internal utilities if needed)
@@ -3508,6 +3607,7 @@ impl QuickJsBackend {
                 next_request_id: Rc::clone(&next_request_id),
                 callback_contexts: Rc::clone(&self.callback_contexts),
                 services: self.services.clone(),
+                plugin_tracked_state: Rc::clone(&self.plugin_tracked_state),
                 plugin_name: plugin_name.to_string(),
             };
             let editor = rquickjs::Class::<JsEditorApi>::instance(ctx.clone(), js_api)?;
@@ -3775,6 +3875,160 @@ impl QuickJsBackend {
 
             result
         })
+    }
+
+    /// Execute JavaScript source code directly as a plugin (no file I/O).
+    ///
+    /// This is the entry point for "load plugin from buffer" — the source code
+    /// goes through the same transpile/strip pipeline as file-based plugins, but
+    /// without reading from disk or resolving imports.
+    pub fn execute_source(
+        &mut self,
+        source: &str,
+        plugin_name: &str,
+        is_typescript: bool,
+    ) -> Result<()> {
+        use fresh_parser_js::{has_es_module_syntax, strip_imports_and_exports, transpile_typescript, has_es_imports};
+
+        if has_es_imports(source) {
+            tracing::warn!(
+                "Buffer plugin '{}' has ES imports which cannot be resolved (no filesystem path). Stripping them.",
+                plugin_name
+            );
+        }
+
+        let js_code = if has_es_module_syntax(source) {
+            let stripped = strip_imports_and_exports(source);
+            if is_typescript {
+                transpile_typescript(&stripped, &format!("{}.ts", plugin_name))?
+            } else {
+                stripped
+            }
+        } else if is_typescript {
+            transpile_typescript(source, &format!("{}.ts", plugin_name))?
+        } else {
+            source.to_string()
+        };
+
+        // Use plugin_name as the source_name so execute_js extracts the right name
+        let source_name = format!("{}.{}", plugin_name, if is_typescript { "ts" } else { "js" });
+        self.execute_js(&js_code, &source_name)
+    }
+
+    /// Clean up all runtime state owned by a plugin.
+    ///
+    /// This removes the plugin's JS context, event handlers, registered actions,
+    /// callback contexts, and sends compensating commands to the editor to clear
+    /// namespaced visual state (overlays, conceals, virtual text, etc.).
+    pub fn cleanup_plugin(&self, plugin_name: &str) {
+        // 1. Remove plugin's JS context (CRITICAL — without this, execute_js reuses old context)
+        self.plugin_contexts.borrow_mut().remove(plugin_name);
+
+        // 2. Remove event handlers for this plugin
+        for handlers in self.event_handlers.borrow_mut().values_mut() {
+            handlers.retain(|h| h.plugin_name != plugin_name);
+        }
+
+        // 3. Remove registered actions for this plugin
+        self.registered_actions
+            .borrow_mut()
+            .retain(|_, h| h.plugin_name != plugin_name);
+
+        // 4. Remove callback contexts for this plugin
+        self.callback_contexts
+            .borrow_mut()
+            .retain(|_, pname| pname != plugin_name);
+
+        // 5. Send compensating commands for editor-side state
+        if let Some(tracked) = self.plugin_tracked_state.borrow_mut().remove(plugin_name) {
+            // Deduplicate (buffer_id, namespace) pairs before sending
+            let mut seen_overlay_ns: std::collections::HashSet<(usize, String)> =
+                std::collections::HashSet::new();
+            for (buf_id, ns) in &tracked.overlay_namespaces {
+                if seen_overlay_ns.insert((buf_id.0, ns.clone())) {
+                    // ClearNamespace clears overlays for this namespace
+                    let _ = self.command_sender.send(PluginCommand::ClearNamespace {
+                        buffer_id: *buf_id,
+                        namespace: OverlayNamespace::from_string(ns.clone()),
+                    });
+                    // Also clear conceals and soft breaks (same namespace system)
+                    let _ = self
+                        .command_sender
+                        .send(PluginCommand::ClearConcealNamespace {
+                            buffer_id: *buf_id,
+                            namespace: OverlayNamespace::from_string(ns.clone()),
+                        });
+                    let _ = self
+                        .command_sender
+                        .send(PluginCommand::ClearSoftBreakNamespace {
+                            buffer_id: *buf_id,
+                            namespace: OverlayNamespace::from_string(ns.clone()),
+                        });
+                }
+            }
+
+            // Note: Virtual lines have no namespace-based clear command in the API.
+            // They will persist until the buffer is closed. This is acceptable for now
+            // since most plugins re-create virtual lines on init anyway.
+
+            // Clear line indicator namespaces
+            let mut seen_li_ns: std::collections::HashSet<(usize, String)> =
+                std::collections::HashSet::new();
+            for (buf_id, ns) in &tracked.line_indicator_namespaces {
+                if seen_li_ns.insert((buf_id.0, ns.clone())) {
+                    let _ = self
+                        .command_sender
+                        .send(PluginCommand::ClearLineIndicators {
+                            buffer_id: *buf_id,
+                            namespace: ns.clone(),
+                        });
+                }
+            }
+
+            // Remove virtual text items
+            let mut seen_vt: std::collections::HashSet<(usize, String)> =
+                std::collections::HashSet::new();
+            for (buf_id, vt_id) in &tracked.virtual_text_ids {
+                if seen_vt.insert((buf_id.0, vt_id.clone())) {
+                    let _ = self
+                        .command_sender
+                        .send(PluginCommand::RemoveVirtualText {
+                            buffer_id: *buf_id,
+                            virtual_text_id: vt_id.clone(),
+                        });
+                }
+            }
+
+            // Clear file explorer decoration namespaces
+            let mut seen_fe_ns: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for ns in &tracked.file_explorer_namespaces {
+                if seen_fe_ns.insert(ns.clone()) {
+                    let _ = self
+                        .command_sender
+                        .send(PluginCommand::ClearFileExplorerDecorations {
+                            namespace: ns.clone(),
+                        });
+                }
+            }
+
+            // Deactivate contexts set by this plugin
+            let mut seen_ctx: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for ctx_name in &tracked.contexts_set {
+                if seen_ctx.insert(ctx_name.clone()) {
+                    let _ = self.command_sender.send(PluginCommand::SetContext {
+                        name: ctx_name.clone(),
+                        active: false,
+                    });
+                }
+            }
+        }
+
+        tracing::debug!(
+            "cleanup_plugin: cleaned up runtime state for plugin '{}'",
+            plugin_name
+        );
     }
 
     /// Emit an event to all registered handlers

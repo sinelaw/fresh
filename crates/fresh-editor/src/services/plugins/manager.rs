@@ -189,6 +189,30 @@ impl PluginManager {
         }
     }
 
+    /// Load a plugin from source code directly (no file I/O).
+    ///
+    /// If a plugin with the same name is already loaded, it will be unloaded first
+    /// (hot-reload semantics). This is used for "Load Plugin from Buffer".
+    pub fn load_plugin_from_source(
+        &self,
+        source: &str,
+        name: &str,
+        is_typescript: bool,
+    ) -> anyhow::Result<()> {
+        #[cfg(feature = "plugins")]
+        {
+            self.inner
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Plugin system not active"))?
+                .load_plugin_from_source(source, name, is_typescript)
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            let _ = (source, name, is_typescript);
+            Ok(())
+        }
+    }
+
     /// Run a hook (fire-and-forget).
     pub fn run_hook(&self, hook_name: &str, args: super::hooks::HookArgs) {
         #[cfg(feature = "plugins")]

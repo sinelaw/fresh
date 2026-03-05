@@ -619,6 +619,9 @@ pub enum Action {
     // Keybinding editor
     OpenKeybindingEditor, // Open the keybinding editor modal
 
+    // Plugin development
+    LoadPluginFromBuffer, // Load current buffer as a plugin
+
     // No-op
     None,
 }
@@ -955,6 +958,7 @@ impl Action {
 
             "calibrate_input" => CalibrateInput,
             "event_debug" => EventDebug,
+            "load_plugin_from_buffer" => LoadPluginFromBuffer,
             "open_keybinding_editor" => OpenKeybindingEditor,
 
             "noop" => None,
@@ -2048,6 +2052,7 @@ impl KeybindingResolver {
             Action::SortLines => t!("action.sort_lines"),
             Action::CalibrateInput => t!("action.calibrate_input"),
             Action::EventDebug => t!("action.event_debug"),
+            Action::LoadPluginFromBuffer => "Load Plugin from Buffer".into(),
             Action::OpenKeybindingEditor => "Keybinding Editor".into(),
             Action::None => t!("action.none"),
         }
