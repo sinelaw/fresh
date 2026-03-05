@@ -6,6 +6,11 @@ slow-timeout = { period = "30s", terminate-after = 3 }
 # Show output immediately for failing tests (including timeouts)
 failure-output = "immediate"
 
+# Property-based / fuzz tests need more time (many iterations of EditorTestHarness)
+[[profile.default.overrides]]
+filter = "test(/prop_/) | test(/random_ops/)"
+slow-timeout = { period = "120s", terminate-after = 3 }
+
 # Store failure output in JUnit reports
 [profile.default.junit]
 store-failure-output = true
