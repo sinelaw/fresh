@@ -1695,8 +1695,8 @@ async function open_theme_editor() : Promise<void> {
 
   // Sort suggestions to put current theme first
   suggestions.sort((a, b) => {
-    const aIsCurrent = a.description.includes("current");
-    const bIsCurrent = b.description.includes("current");
+    const aIsCurrent = (a.description ?? "").includes("current");
+    const bIsCurrent = (b.description ?? "").includes("current");
     if (aIsCurrent && !bIsCurrent) return -1;
     if (!aIsCurrent && bIsCurrent) return 1;
     return 0;

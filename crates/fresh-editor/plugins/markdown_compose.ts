@@ -390,7 +390,7 @@ function enableMarkdownCompose(bufferId: number): void {
   editor.setLineWrap(bufferId, null, true);
 
   // Set layout hints for centered margins
-  editor.setLayoutHints(bufferId, null, { composeWidth: config.composeWidth });
+  editor.setLayoutHints(bufferId, null, { composeWidth: config.composeWidth ?? undefined });
 
   // Trigger a refresh so lines_changed hooks fire for visible content
   editor.refreshLines(bufferId);
@@ -1552,7 +1552,7 @@ function onMarkdownComposeWidthConfirmed(args: {
 
     const bufferId = editor.getActiveBufferId();
     if (isComposing(bufferId)) {
-      editor.setLayoutHints(bufferId, null, { composeWidth: null });
+      editor.setLayoutHints(bufferId, null, {});
       editor.refreshLines(bufferId);
     }
     return;
@@ -1566,7 +1566,7 @@ function onMarkdownComposeWidthConfirmed(args: {
     // Re-process active buffer if in compose mode
     const bufferId = editor.getActiveBufferId();
     if (isComposing(bufferId)) {
-      editor.setLayoutHints(bufferId, null, { composeWidth: config.composeWidth });
+      editor.setLayoutHints(bufferId, null, { composeWidth: config.composeWidth ?? undefined });
       editor.refreshLines(bufferId);  // Trigger soft break recomputation
     }
   } else {

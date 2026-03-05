@@ -253,7 +253,7 @@ async function fetchFileContent(filePath: string, commit: string | null): Promis
 
   // Get current file content using editor API (cross-platform)
   try {
-    return await editor.readFile(filePath);
+    return await editor.readFile(filePath) ?? "";
   } catch {
     return "";
   }

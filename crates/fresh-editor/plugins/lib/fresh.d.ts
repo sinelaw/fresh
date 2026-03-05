@@ -62,7 +62,7 @@ type TsCompositeLayoutConfig = {
 	/**
 	* Width ratios for side-by-side (e.g., [0.5, 0.5])
 	*/
-	ratios: Array<number> | null;
+	ratios?: Array<number>;
 	/**
 	* Show separator between panes
 	*/
@@ -70,7 +70,7 @@ type TsCompositeLayoutConfig = {
 	/**
 	* Spacing for stacked layout
 	*/
-	spacing: number | null;
+	spacing?: number;
 };
 type TsCompositeSourceConfig = {
 	/**
@@ -95,19 +95,19 @@ type TsCompositePaneStyle = {
 	* Background color for added lines (RGB)
 	* Using [u8; 3] instead of (u8, u8, u8) for better rquickjs_serde compatibility
 	*/
-	addBg: [number, number, number] | null;
+	addBg?: [number, number, number];
 	/**
 	* Background color for removed lines (RGB)
 	*/
-	removeBg: [number, number, number] | null;
+	removeBg?: [number, number, number];
 	/**
 	* Background color for modified lines (RGB)
 	*/
-	modifyBg: [number, number, number] | null;
+	modifyBg?: [number, number, number];
 	/**
 	* Gutter style: "line-numbers", "diff-markers", "both", or "none"
 	*/
-	gutterStyle: string | null;
+	gutterStyle?: string;
 };
 type TsCompositeHunk = {
 	/**
@@ -175,11 +175,11 @@ type LayoutHints = {
 	/**
 	* Optional compose width for centering/wrapping
 	*/
-	composeWidth: number | null;
+	composeWidth?: number;
 	/**
 	* Optional column guides for aligned tables
 	*/
-	columnGuides: Array<number> | null;
+	columnGuides?: Array<number>;
 };
 type ViewTokenWire = {
 	/**

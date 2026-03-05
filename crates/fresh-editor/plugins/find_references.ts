@@ -62,7 +62,7 @@ async function loadLineContent(
     } else {
       try {
         const content = await editor.readFile(ref.file);
-        lines = content.split("\n");
+        lines = content ? content.split("\n") : [];
       } catch {
         lines = [];
       }

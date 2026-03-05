@@ -1055,10 +1055,8 @@ async function review_drill_down() {
         const oldContent = gitShow.stdout;
 
         // Read new file content (use absolute path for readFile)
-        let newContent: string;
-        try {
-            newContent = await editor.readFile(absoluteFilePath);
-        } catch (e) {
+        const newContent = await editor.readFile(absoluteFilePath);
+        if (newContent === null) {
             editor.setStatus(editor.t("status.failed_new_version"));
             return;
         }
@@ -1636,10 +1634,8 @@ async function side_by_side_diff_current_file() {
     const oldContent = gitShow.stdout;
 
     // Read new file content (use absolute path for readFile)
-    let newContent: string;
-    try {
-        newContent = await editor.readFile(absolutePath);
-    } catch (e) {
+    const newContent = await editor.readFile(absolutePath);
+    if (newContent === null) {
         editor.setStatus(editor.t("status.failed_new_version"));
         return;
     }

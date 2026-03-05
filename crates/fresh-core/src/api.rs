@@ -407,8 +407,10 @@ pub struct ViewportInfo {
 #[ts(export, rename_all = "camelCase")]
 pub struct LayoutHints {
     /// Optional compose width for centering/wrapping
+    #[ts(optional)]
     pub compose_width: Option<u16>,
     /// Optional column guides for aligned tables
+    #[ts(optional)]
     pub column_guides: Option<Vec<u16>>,
 }
 
@@ -524,6 +526,7 @@ pub struct CompositeLayoutConfig {
     pub layout_type: String,
     /// Width ratios for side-by-side (e.g., [0.5, 0.5])
     #[serde(default)]
+    #[ts(optional)]
     pub ratios: Option<Vec<f32>>,
     /// Show separator between panes
     #[serde(default = "default_true", rename = "showSeparator")]
@@ -531,6 +534,7 @@ pub struct CompositeLayoutConfig {
     pub show_separator: bool,
     /// Spacing for stacked layout
     #[serde(default)]
+    #[ts(optional)]
     pub spacing: Option<u16>,
 }
 
@@ -565,19 +569,19 @@ pub struct CompositePaneStyle {
     /// Background color for added lines (RGB)
     /// Using [u8; 3] instead of (u8, u8, u8) for better rquickjs_serde compatibility
     #[serde(default, rename = "addBg")]
-    #[ts(rename = "addBg", type = "[number, number, number] | null")]
+    #[ts(optional, rename = "addBg", type = "[number, number, number]")]
     pub add_bg: Option<[u8; 3]>,
     /// Background color for removed lines (RGB)
     #[serde(default, rename = "removeBg")]
-    #[ts(rename = "removeBg", type = "[number, number, number] | null")]
+    #[ts(optional, rename = "removeBg", type = "[number, number, number]")]
     pub remove_bg: Option<[u8; 3]>,
     /// Background color for modified lines (RGB)
     #[serde(default, rename = "modifyBg")]
-    #[ts(rename = "modifyBg", type = "[number, number, number] | null")]
+    #[ts(optional, rename = "modifyBg", type = "[number, number, number]")]
     pub modify_bg: Option<[u8; 3]>,
     /// Gutter style: "line-numbers", "diff-markers", "both", or "none"
     #[serde(default, rename = "gutterStyle")]
-    #[ts(rename = "gutterStyle")]
+    #[ts(optional, rename = "gutterStyle")]
     pub gutter_style: Option<String>,
 }
 

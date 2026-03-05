@@ -274,6 +274,7 @@ async function executeReplacements(): Promise<void> {
     try {
       // Read file
       const content = await editor.readFile(filePath);
+      if (!content) continue;
       const lines = content.split("\n");
 
       // Sort results by line (descending) to avoid offset issues

@@ -584,7 +584,7 @@ function getInstalledPackages(type: "plugin" | "theme" | "language" | "bundle"):
           type,
           source,
           version: manifest?.version || "unknown",
-          manifest,
+          manifest: manifest ?? undefined,
           localSource,
         });
       }

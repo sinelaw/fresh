@@ -883,6 +883,7 @@ export class Finder<T> {
 
     try {
       const content = await this.editor.readFile(entry.location.file);
+      if (!content) return;
       const lines = content.split("\n");
 
       const contextLines = this.getContextLines();

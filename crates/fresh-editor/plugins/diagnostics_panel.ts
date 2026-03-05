@@ -92,7 +92,7 @@ function getDiagnostics(): DiagnosticItem[] {
     const lineDiff = a.range.start.line - b.range.start.line;
     if (lineDiff !== 0) return lineDiff;
     // Severity comparison
-    return a.severity - b.severity;
+    return (a.severity ?? 4) - (b.severity ?? 4);
   });
 
   // Convert to DiagnosticItem
@@ -102,7 +102,7 @@ function getDiagnostics(): DiagnosticItem[] {
     line: diag.range.start.line + 1,
     column: diag.range.start.character + 1,
     message: diag.message.split("\n")[0], // First line only
-    severity: diag.severity,
+    severity: diag.severity ?? 4,
     source: diag.source ?? undefined,
   }));
 }
