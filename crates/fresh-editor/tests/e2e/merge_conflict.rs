@@ -1032,69 +1032,71 @@ fn test_diff3_conflict_resolution() {
 fn setup_crlf_merge_conflict(project_root: &std::path::Path) -> std::path::PathBuf {
     use std::process::Command;
 
+    /// Run a git command and assert it succeeds
+    fn git(project_root: &std::path::Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(project_root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     let conflict_file = project_root.join("crlf_conflict.c");
 
-    // Configure diff3 merge conflict style
-    Command::new("git")
-        .args(["config", "merge.conflictstyle", "diff3"])
-        .current_dir(project_root)
-        .output()
-        .unwrap();
+    // Configure diff3 merge conflict style and disable commit signing
+    git(project_root, &["config", "merge.conflictstyle", "diff3"]);
+    git(project_root, &["config", "commit.gpgsign", "false"]);
 
     // Create base version with CRLF line endings
     fs::write(&conflict_file, "static int showdf(const char *uuid)\r\n").unwrap();
-    Command::new("git")
-        .args(["add", "."])
-        .current_dir(project_root)
-        .output()
-        .unwrap();
-    Command::new("git")
-        .args(["commit", "-m", "base"])
-        .current_dir(project_root)
-        .output()
-        .unwrap();
+    git(project_root, &["add", "."]);
+    git(project_root, &["commit", "-m", "base"]);
 
     // Create feature branch with one change (keep CRLF)
-    Command::new("git")
-        .args(["checkout", "-b", "feature"])
-        .current_dir(project_root)
-        .output()
-        .unwrap();
+    git(project_root, &["checkout", "-b", "feature"]);
     fs::write(&conflict_file, "static int showdf(char *uuid)\r\n").unwrap();
-    Command::new("git")
-        .args(["commit", "-am", "feature"])
-        .current_dir(project_root)
-        .output()
-        .unwrap();
+    git(project_root, &["commit", "-am", "feature"]);
 
-    // Go back to main and make different change (keep CRLF)
-    // Try both master and main since git version varies
-    let _ = Command::new("git")
+    // Go back to the default branch (try both master and main)
+    let master = Command::new("git")
         .args(["checkout", "master"])
         .current_dir(project_root)
         .output();
-    let _ = Command::new("git")
-        .args(["checkout", "main"])
-        .current_dir(project_root)
-        .output();
+    if !master.map_or(false, |o| o.status.success()) {
+        git(project_root, &["checkout", "main"]);
+    }
 
     fs::write(
         &conflict_file,
         "static int showdf(const char *uuid, int extra)\r\n",
     )
     .unwrap();
-    Command::new("git")
-        .args(["commit", "-am", "main change"])
-        .current_dir(project_root)
-        .output()
-        .unwrap();
+    git(project_root, &["commit", "-am", "main change"]);
 
-    // Merge - this will fail and leave conflict markers
-    Command::new("git")
+    // Merge - this will fail (exit code 1) and leave conflict markers
+    let merge_output = Command::new("git")
         .args(["merge", "feature"])
         .current_dir(project_root)
         .output()
         .unwrap();
+    // Merge should fail with conflicts (exit code 1), not succeed cleanly
+    assert!(
+        !merge_output.status.success(),
+        "git merge should have produced conflicts"
+    );
+
+    // Verify conflict markers are present in the file
+    let content = fs::read_to_string(&conflict_file).unwrap();
+    assert!(
+        content.contains("<<<<<<<"),
+        "File should contain conflict markers after failed merge"
+    );
 
     conflict_file
 }

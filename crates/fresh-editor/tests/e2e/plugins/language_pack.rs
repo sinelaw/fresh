@@ -79,7 +79,13 @@ editor.setStatus("Test language registered!");
     harness.open_file(&test_file).unwrap();
     harness.render().unwrap();
 
-    // Verify the language was detected
+    // Grammar rebuild happens asynchronously in a background thread after
+    // reloadGrammars() fires.  Wait for the async GrammarRegistryBuilt
+    // message to be processed, which re-detects syntax for open buffers.
+    harness
+        .wait_until(|h| h.editor().active_state().language == "testlang")
+        .unwrap();
+
     let language = &harness.editor().active_state().language;
     assert_eq!(
         language, "testlang",
@@ -191,14 +197,23 @@ editor.reloadGrammars();
     )
     .unwrap();
 
-    // Test first extension
+    // Test first extension - wait for async grammar rebuild to complete
     harness.open_file(&test_file1).unwrap();
     harness.render().unwrap();
+
+    // Grammar rebuild happens asynchronously in a background thread after
+    // reloadGrammars() fires.  Wait for the async GrammarRegistryBuilt
+    // message to be processed, which re-detects syntax for open buffers.
+    harness
+        .wait_until(|h| h.editor().active_state().language == "customscript")
+        .unwrap();
     let lang1 = harness.editor().active_state().language.clone();
 
     // Test second extension
     harness.open_file(&test_file2).unwrap();
-    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.editor().active_state().language == "customscript")
+        .unwrap();
     let lang2 = harness.editor().active_state().language.clone();
 
     assert_eq!(
