@@ -1331,6 +1331,11 @@ impl Editor {
             crate::primitives::text_property::TextPropertyManager::from_entries(entries);
 
         // Replace buffer content
+        // Note: we use buffer.delete_bytes/insert directly (not state.delete_range/insert_text_at)
+        // which bypasses marker_list adjustment. Clear ALL overlays first so no stale markers
+        // remain pointing at invalid positions in the new content.
+        state.overlays.clear(&mut state.marker_list);
+
         let current_len = state.buffer.len();
         if current_len > 0 {
             state.buffer.delete_bytes(0, current_len);
@@ -1343,16 +1348,12 @@ impl Editor {
         // Set text properties
         state.text_properties = properties;
 
-        // Atomically apply inline overlays: clear the _inline namespace, then create
-        // new overlays — all within this single function call, before the next render.
+        // Create inline overlays for the new content
         {
             use crate::view::overlay::{Overlay, OverlayFace};
             use fresh_core::overlay::OverlayNamespace;
 
             let inline_ns = OverlayNamespace::from_string("_inline".to_string());
-            state
-                .overlays
-                .clear_namespace(&inline_ns, &mut state.marker_list);
 
             for co in collected_overlays {
                 let face = OverlayFace::from_options(&co.options);

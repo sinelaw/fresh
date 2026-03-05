@@ -123,8 +123,17 @@ fn js_to_json(ctx: &rquickjs::Ctx<'_>, val: Value<'_>) -> serde_json::Value {
             .unwrap_or(serde_json::Value::Null),
         Type::Float => val
             .as_float()
-            .and_then(serde_json::Number::from_f64)
-            .map(serde_json::Value::Number)
+            .map(|f| {
+                // Emit whole-number floats as integers so serde deserializes
+                // them into u8/i32/etc. (QuickJS promotes ints to float in some ops)
+                if f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+                    serde_json::Value::Number((f as i64).into())
+                } else {
+                    serde_json::Number::from_f64(f)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null)
+                }
+            })
             .unwrap_or(serde_json::Value::Null),
         Type::String => val
             .as_string()

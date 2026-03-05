@@ -924,31 +924,26 @@ function styleForLeftEntry(item: TreeLine | undefined): { style?: Partial<Overla
     return { style: { fg: colors.sectionHeader, bold: true } };
   } else if (type === "tree-field") {
     const inlines: InlineOverlay[] = [];
-    // Base foreground for the whole entry
-    const baseStyle: Partial<OverlayOptions> = { fg: colors.fieldName };
-
-    // Color the ██ swatch with the field's actual color
     const text = " " + item.text; // matches leftText construction below
+    const paddedLen = getUtf8ByteLength(text.padEnd(LEFT_WIDTH));
     const colorValue = item.colorValue;
-    if (colorValue !== undefined) {
-      const rgb = parseColorToRgb(colorValue);
-      if (rgb) {
-        const swatchIdx = text.indexOf("██");
-        if (swatchIdx >= 0) {
-          const swatchStart = getUtf8ByteLength(text.substring(0, swatchIdx));
-          const swatchEnd = swatchStart + getUtf8ByteLength("██");
-          inlines.push({ start: swatchStart, end: swatchEnd, style: { fg: rgb, bg: rgb } });
-          // Value text after the swatch
-          const afterSwatch = swatchIdx + 2;
-          if (afterSwatch < text.length) {
-            const valueStart = swatchEnd + getUtf8ByteLength(" ");
-            const paddedLen = getUtf8ByteLength(text.padEnd(LEFT_WIDTH));
-            inlines.push({ start: valueStart, end: paddedLen, style: { fg: colors.customValue } });
-          }
-        }
+    const swatchIdx = colorValue !== undefined ? text.indexOf("██") : -1;
+    const rgb = colorValue !== undefined ? parseColorToRgb(colorValue) : null;
+
+    if (rgb && swatchIdx >= 0) {
+      const swatchStart = getUtf8ByteLength(text.substring(0, swatchIdx));
+      const swatchEnd = swatchStart + getUtf8ByteLength("██");
+      // Non-overlapping segments: fieldName | swatch | value
+      inlines.push({ start: 0, end: swatchStart, style: { fg: colors.fieldName } });
+      inlines.push({ start: swatchStart, end: swatchEnd, style: { fg: rgb, bg: rgb } });
+      const valueStart = swatchEnd + getUtf8ByteLength(" ");
+      if (valueStart < paddedLen) {
+        inlines.push({ start: valueStart, end: paddedLen, style: { fg: colors.customValue } });
       }
+      return { inlineOverlays: inlines };
     }
-    return { style: baseStyle, inlineOverlays: inlines.length > 0 ? inlines : undefined };
+    // No swatch — use entry-level style
+    return { style: { fg: colors.fieldName } };
   }
   return {};
 }
@@ -1180,7 +1175,7 @@ function addBackgroundHighlight(
   end: number,
   bgColor: RGB
 ): void {
-  editor.addOverlay(bufferId, "theme-sel", start, end, { bg: bgColor, extendToLineEnd: true });
+  editor.addOverlay(bufferId, "theme-sel", start, end, { bg: bgColor });
 }
 
 /**
@@ -1220,7 +1215,17 @@ function applySelectionHighlighting(cachedEntries?: TextPropertyEntry[]): void {
 
     if (entryType === "tree-section" || entryType === "tree-field") {
       if (props.selected as boolean) {
-        addBackgroundHighlight(bufferId, byteOffset, byteOffset + textLen, colors.selectionBg);
+        // For tree-field entries, split the highlight around the swatch (██) bytes
+        // so the inline swatch color overlay (fg+bg) isn't overridden by selection bg
+        const swatchIdx = text.indexOf("██");
+        if (entryType === "tree-field" && swatchIdx >= 0) {
+          const swatchByteStart = byteOffset + getUtf8ByteLength(text.substring(0, swatchIdx));
+          const swatchByteEnd = swatchByteStart + getUtf8ByteLength("██");
+          addBackgroundHighlight(bufferId, byteOffset, swatchByteStart, colors.selectionBg);
+          addBackgroundHighlight(bufferId, swatchByteEnd, byteOffset + textLen, colors.selectionBg);
+        } else {
+          addBackgroundHighlight(bufferId, byteOffset, byteOffset + textLen, colors.selectionBg);
+        }
       }
     } else if (entryType === "picker-hex") {
       if (state.focusPanel === "picker" && state.pickerFocus.type === "hex-input") {
@@ -1284,6 +1289,11 @@ function updateDisplay(): void {
   isUpdatingDisplay = true;
 
   const entries = buildDisplayEntries();
+
+  // Clear selection overlays BEFORE replacing content to prevent stale
+  // theme-sel markers from having wrong positions after the buffer replace
+  editor.clearNamespace(state.bufferId, "theme-sel");
+
   editor.setVirtualBufferContent(state.bufferId, entries);
 
   // Selection highlights use a separate namespace via addOverlay (dynamic, position-dependent)
@@ -1845,29 +1855,31 @@ function onThemeEditorCursorMoved(data: {
     }
   }
 
-  // Picker named color click — focus that row in picker
+  // Picker named color click — focus row, apply on Enter
   if (entryType === "picker-named-row" && typeof props[0].namedRow === "number") {
     const namedRow = props[0].namedRow as number;
     state.focusPanel = "picker";
     state.pickerFocus = { type: "named-colors", index: namedRow * NAMED_COLORS_PER_ROW };
-    updateDisplay();
+    // Apply immediately on click
+    applyPickerColor();
     return;
   }
 
-  // Picker palette click — focus that row in picker
+  // Picker palette click — focus row, apply on Enter
   if (entryType === "picker-palette-row" && typeof props[0].paletteRow === "number") {
     const paletteRow = props[0].paletteRow as number;
     state.focusPanel = "picker";
     state.pickerFocus = { type: "palette", row: paletteRow, col: 0 };
-    updateDisplay();
+    // Apply immediately on click
+    applyPickerColor();
     return;
   }
 
-  // Picker hex click — focus hex input
+  // Picker hex click — open hex editing prompt
   if (entryType === "picker-hex") {
     state.focusPanel = "picker";
     state.pickerFocus = { type: "hex-input" };
-    updateDisplay();
+    applyPickerColor();
     return;
   }
 
