@@ -3179,6 +3179,7 @@ fn test_inspect_after_saving_custom_theme() {
 #[test]
 fn test_palette_swatch_click_targets_correct_column() {
     init_tracing_from_env();
+    fresh::services::signal_handler::install_signal_handlers();
 
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
@@ -3215,6 +3216,10 @@ fn test_palette_swatch_click_targets_correct_column() {
 
     harness.render().unwrap();
     open_theme_editor(&mut harness);
+
+    // Navigate down from section header to first color field (bg)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
 
     // Wait for theme editor to fully render with color palette
     harness
@@ -3273,9 +3278,10 @@ fn test_palette_swatch_click_targets_correct_column() {
     // Wait for click to be processed and display updated
     harness
         .wait_until(|h| {
-            // The hex value should change from the initial bg color (#1E1E1E)
+            // The Hex: line should change from the initial bg color (#1E1E1E)
             let s = h.screen_to_string();
-            s.contains("Hex:") && !s.contains("#1E1E1E")
+            s.lines()
+                .any(|l| l.contains("Hex:") && !l.contains("#1E1E1E"))
         })
         .unwrap();
 
