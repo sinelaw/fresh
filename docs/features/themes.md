@@ -16,7 +16,8 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
 2. **The Theme Editor Interface**:
    - Color fields show a preview swatch next to each value
    - Sections can be collapsed/expanded with `Enter`
-   - Navigate with `Up/Down` arrows or `Tab/Shift+Tab`
+   - Navigate with `Up/Down` arrows, `Tab/Shift+Tab`, or mouse scroll
+   - Click color swatches to edit them directly
 
 3. **Editing Colors**:
    - Press `Enter` on any color field to edit it
@@ -67,4 +68,8 @@ Themes are stored as JSON files. You can also edit them directly at `~/.config/f
 ```
 
 Colors are specified as `[R, G, B]` arrays with values from 0-255.
+
+## Inspecting Theme Colors
+
+Use "Inspect Theme at Cursor" from the command palette to see which theme colors apply at the cursor position. You can also `Ctrl+Right-Click` on any text to see theme info in a popup.
 

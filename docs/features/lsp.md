@@ -10,6 +10,12 @@ Fresh has native support for the Language Server Protocol (LSP), providing featu
 
 Open the diagnostics panel with "Show Diagnostics Panel" or "Toggle Diagnostics Panel" from the command palette. In the panel, Up/Down scrolls the editor to preview each diagnostic's location; Enter jumps to the diagnostic and focuses the editor. `F8` and `Shift+F8` jump to next/previous diagnostic without the panel.
 
+Diagnostics can also be shown inline at the end of each line — see [Editing — Inline Diagnostics](./editing.md#inline-diagnostics).
+
+## Signature Help
+
+Signature help popups render markdown with proper formatting, hanging indent, and paragraph spacing.
+
 ## Code Folding
 
 When the LSP server provides `foldingRange`, fold indicators appear in the gutter. See [Editing — Code Folding](./editing.md#code-folding).
@@ -120,6 +126,45 @@ For example, to add C# support:
 ```
 
 The language name (e.g., `"csharp"`) must match in both sections. Fresh includes built-in language definitions for Rust, JavaScript, TypeScript, and Python.
+
+### Environment Variables
+
+Pass environment variables to LSP server binaries:
+
+```json
+{
+  "lsp": {
+    "rust": {
+      "command": "rust-analyzer",
+      "env": { "RUST_LOG": "info" },
+      "enabled": true
+    }
+  }
+}
+```
+
+### Language ID Overrides
+
+Some LSP servers expect a different `languageId` than Fresh's internal language name. Use `language_id_overrides` to map them:
+
+```json
+{
+  "lsp": {
+    "typescript": {
+      "command": "typescript-language-server",
+      "args": ["--stdio"],
+      "language_id_overrides": {
+        "typescriptreact": "typescriptreact",
+        "javascriptreact": "javascriptreact"
+      }
+    }
+  }
+}
+```
+
+### Rust LSP Mode Switching
+
+Use "Switch Rust Analyzer Mode" from the command palette to toggle between Full and Reduced Memory modes for rust-analyzer.
 
 ## Configuring Language Detection via Settings UI
 

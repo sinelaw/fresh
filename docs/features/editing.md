@@ -9,6 +9,9 @@ Some keybindings may not work or may differ on your system due to differences in
 - **Smart Home** — Home toggles between first non-whitespace character and column 0.
 - **Smart Backspace** — Backspace in leading whitespace removes one indent level instead of a single character.
 - **Auto-indent** — Enter preserves the current indentation level. After `{`, `(`, or `:`, an extra indent level is added.
+- **Auto-close** — Typing an opening bracket or quote inserts the closing pair. Controlled by `auto_close` (default: on), independent of `auto_indent`. Per-language overrides via `languages.<lang>.auto_close`.
+- **Surround selection** — With text selected, typing an opening delimiter wraps the selection (e.g. select `hello`, type `(` → `(hello)`). Controlled by `auto_surround` (default: on) with per-language overrides.
+- **Smart quote suppression** — Quotes typed inside an existing string don't auto-close.
 - **Bracket matching** — Matching brackets are highlighted. Use "Go to Matching Bracket" from the command palette to jump. Enabled by default; toggle via `highlight_matching_brackets` in settings.
 
 ## Vertical Rulers
@@ -21,7 +24,26 @@ Enable `auto_save_enabled` in settings to automatically save modified buffers to
 
 ## Code Folding
 
-Fold and unfold code blocks using LSP `foldingRange`. Click the gutter indicator to collapse a range; click again to expand. Use "Toggle Fold" from the command palette. Up/Down navigation skips over folded regions. Each split view maintains its own fold state.
+Fold and unfold code blocks via gutter indicators or "Toggle Fold" from the command palette. Up/Down navigation skips folded regions. Each split view maintains its own fold state. Folding works in two modes:
+
+- **LSP folding** — uses `foldingRange` from the language server when available.
+- **Indent-based folding** — fallback for files without LSP support and large file mode. Fold from any line within an indented block.
+
+## Read-Only Mode
+
+Files without write permission and known library paths (rustup toolchains, `/usr/include`, `/nix/store`, Homebrew Cellar, `.nuget`, Xcode SDKs) open as read-only automatically. The status bar shows `[RO]`. Use "Toggle Read Only" from the command palette to override.
+
+## Whitespace Indicators
+
+Control visibility of space (`·`) and tab (`→`) characters. Configure independently for leading, inner, and trailing positions via the Settings UI or `whitespace_indicators` in config. A master toggle and per-language overrides are supported. Theme color: `whitespace_indicator_fg`.
+
+## Inline Diagnostics
+
+Diagnostic messages can be displayed at the end of each line, right-aligned, with version-aware staleness dimming. Disabled by default — enable "diagnostics inline text" in the Settings UI or set `diagnostics_inline_text` in config.
+
+## Line Wrap
+
+When line wrap is enabled (`line_wrap` in settings), wrapped continuation lines preserve the indentation of their parent line (hanging indent).
 
 ## Multiple Cursors
 

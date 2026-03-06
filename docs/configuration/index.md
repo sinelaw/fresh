@@ -237,12 +237,17 @@ All settings can be changed via the Settings UI (command palette → "Open Setti
 | Horizontal scrollbar | Show horizontal scrollbar | off |
 | Terminal background | Let terminal background show through | off |
 | Bracket matching | Highlight matching bracket pairs | on |
+| Status bar | Show/hide the status bar | on |
+| Whitespace indicators | Show space/tab characters (leading, inner, trailing) | off |
+| Diagnostics inline text | Show diagnostics at end of line | off |
 
 ### Editing
 
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Tab size | Spaces per indent level | 4 |
+| Auto-close | Auto-close brackets and quotes | on |
+| Auto-surround | Wrap selection when typing a delimiter | on |
 | Trim trailing whitespace on save | Remove trailing whitespace when saving | off |
 | Ensure final newline on save | Add trailing newline when saving | off |
 
