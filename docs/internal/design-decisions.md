@@ -457,6 +457,109 @@ enables immediate read-back within the same hook execution — the plugin
 doesn't have to wait a frame to read state it just wrote. State persists
 across sessions via workspace serialization.
 
+### Plugin Best Practices (Lessons from Theme Editor & Others)
+
+These patterns were learned the hard way across the theme editor, markdown
+compose, git blame, and git gutter plugins.
+
+#### Frame Lag & the Async Hook Round-Trip
+
+Because hooks fire asynchronously, any plugin response (overlay updates,
+conceal changes, `refreshLines()`) arrives *at least one frame late*. This is
+the root cause of most visual glitches.
+
+**Mitigation strategies proven in production:**
+
+1. **Proactive `refreshLines()` in Rust** (`mod.rs:2887–2899`): For
+   inter-line cursor movement, the editor calls `handle_refresh_lines()`
+   synchronously *before* the async `cursor_moved` hook fires. This means
+   cursor-dependent conceals (e.g. table row auto-expose in compose mode)
+   update in the same frame as the cursor move, eliminating the round-trip
+   lag. Intra-line moves skip this (the plugin's async `refreshLines()` is
+   fast enough for span-level changes).
+
+2. **Atomic clear+rebuild batching** (`markdown_compose.ts:832–838`):
+   `clearConcealsInRange()` and `clearOverlaysInRange()` are called
+   immediately before adding new conceals/overlays for the same range.
+   Because all commands in a single hook execution are processed in one
+   `process_commands()` batch, the clear and rebuild are atomic from the
+   render loop's perspective — no frame shows the cleared-but-not-rebuilt
+   state.
+
+3. **Avoid `view_transform_request` when possible**: The markdown compose
+   plugin originally used view transforms for soft wrapping, causing
+   one-frame flicker on every keystroke. It was rewritten to use
+   marker-based soft breaks (`setLayoutHints`) computed in `lines_changed`,
+   eliminating the async round-trip entirely
+   (`markdown_compose.ts:1455–1458`). Git blame similarly avoids view
+   transforms by using `addVirtualLine` — persistent state the render loop
+   reads synchronously.
+
+4. **Namespace separation for static vs. dynamic overlays** (theme editor):
+   Use separate namespaces (e.g. `"theme"` for static content, `"theme-sel"`
+   for selection highlights) so that frequent dynamic updates only clear and
+   rebuild the dynamic namespace. Static overlays survive untouched,
+   reducing both command volume and visual flicker.
+
+#### Programmatic Update Guards
+
+When a plugin programmatically updates buffer content or cursor position, it
+triggers the same hooks (e.g. `cursor_moved`) that the plugin itself
+handles. Without a guard, this causes infinite recursion or wasted work.
+
+**Pattern** (theme editor, `theme_editor.ts:1287–1308`):
+```
+let isUpdatingDisplay = false;
+
+function updateDisplay() {
+  isUpdatingDisplay = true;
+  // ... rebuild content, clear/add overlays ...
+  isUpdatingDisplay = false;
+}
+
+function onCursorMoved(data) {
+  if (isUpdatingDisplay) return;  // skip programmatic moves
+  // ... handle user-initiated cursor moves ...
+}
+```
+
+This is simpler and more reliable than debouncing — it prevents re-entrance
+during the exact window where programmatic updates happen.
+
+#### Clear-Before-Replace Ordering
+
+When replacing virtual buffer content, clear position-dependent overlays
+*before* the content replace, not after. After `setVirtualBufferContent()`,
+byte offsets change and stale overlay positions point to wrong locations.
+
+**Pattern** (theme editor, `theme_editor.ts:1300–1307`):
+```
+editor.clearNamespace(bufferId, "theme-sel");      // clear old overlays
+editor.setVirtualBufferContent(bufferId, entries);  // replace content
+applySelectionHighlighting(entries);                // add new overlays
+```
+
+#### Cleanup on Buffer Close
+
+Always register a `buffer_closed` handler that resets all plugin state when
+the buffer is closed by any means (user action, split close, etc.). The
+theme editor resets 10+ state fields. Additionally, validate state with
+`editor.listBuffers()` rather than trusting internal flags alone — the
+buffer may have been closed externally.
+
+#### Debouncing Conventions
+
+- **Search/filter plugins**: Use `DebouncedSearch` from `search-utils.ts`
+  (default 150ms) to avoid overwhelming `spawnProcess` during rapid typing
+- **File-open handlers** (git gutter, git blame): No debounce — respond
+  immediately since file opens are infrequent
+- **After-save handlers**: No debounce — respond immediately since saves are
+  user-initiated and infrequent
+- **Cursor-dependent highlights**: 150ms debounce (reference highlighting in
+  Rust: `reference_highlight_overlay.rs`)
+- **LSP requests**: 50–500ms debounce depending on cost (semantic tokens
+  500ms, range tokens 50ms, folding ranges 300ms)
+
 ---
 
 ## 14. Vi Mode
