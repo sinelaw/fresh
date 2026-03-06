@@ -136,6 +136,36 @@ pub fn run_client_relay(
     return relay_windows::relay_loop(&mut conn);
 }
 
+/// Set the system clipboard on the client side
+///
+/// Uses both OSC 52 (for terminals that support it) and arboard (for native
+/// X11/Wayland/macOS clipboard). This maximizes compatibility since the client
+/// has access to both the terminal and the display server.
+fn set_client_clipboard(text: &str) {
+    use crossterm::clipboard::CopyToClipboard;
+    use crossterm::execute;
+    use std::io::Write;
+
+    // OSC 52: works in terminals that support it (Alacritty, iTerm2, WezTerm, etc.)
+    if let Err(e) = execute!(io::stdout(), CopyToClipboard::to_clipboard_from(text)) {
+        tracing::debug!("Client OSC 52 clipboard copy failed: {}", e);
+    }
+    #[allow(clippy::let_underscore_must_use)]
+    let _ = io::stdout().flush();
+
+    // arboard: works via X11/Wayland/macOS APIs (covers terminals without OSC 52)
+    match arboard::Clipboard::new() {
+        Ok(mut clipboard) => {
+            if let Err(e) = clipboard.set_text(text) {
+                tracing::debug!("Client arboard clipboard copy failed: {}", e);
+            }
+        }
+        Err(e) => {
+            tracing::debug!("Client arboard clipboard init failed: {}", e);
+        }
+    }
+}
+
 /// Get current terminal size
 pub fn get_terminal_size() -> io::Result<TermSize> {
     #[cfg(unix)]

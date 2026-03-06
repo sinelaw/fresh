@@ -341,6 +341,7 @@ pub struct Editor {
     /// These get prepended to the next render output
     pending_escape_sequences: Vec<u8>,
 
+
     /// If set, the editor should restart with this new working directory
     /// This is used by Open Folder to do a clean context switch
     restart_with_dir: Option<PathBuf>,
@@ -3171,6 +3172,7 @@ impl Editor {
     /// Set session mode (use hardware cursor only, no REVERSED style for software cursor)
     pub fn set_session_mode(&mut self, session_mode: bool) {
         self.session_mode = session_mode;
+        self.clipboard.set_session_mode(session_mode);
         // Also set custom context for command palette filtering
         if session_mode {
             self.active_custom_contexts
@@ -3210,6 +3212,11 @@ impl Editor {
     /// Take pending escape sequences, clearing the queue
     pub fn take_pending_escape_sequences(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.pending_escape_sequences)
+    }
+
+    /// Take pending clipboard text queued in session mode, clearing the request
+    pub fn take_pending_clipboard(&mut self) -> Option<String> {
+        self.clipboard.take_pending_clipboard()
     }
 
     /// Check if the editor should restart with a new working directory

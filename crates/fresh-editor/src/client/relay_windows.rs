@@ -140,6 +140,9 @@ pub fn relay_loop(conn: &mut ClientConnection) -> io::Result<ClientExitReason> {
                                     tracing::debug!("[loop] Server sent quit");
                                     return Ok(ClientExitReason::ServerQuit);
                                 }
+                                ServerControl::SetClipboard { text } => {
+                                    super::set_client_clipboard(&text);
+                                }
                                 _ => {}
                             }
                         }

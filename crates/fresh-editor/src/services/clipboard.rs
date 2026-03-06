@@ -28,6 +28,11 @@ pub struct Clipboard {
     use_osc52: bool,
     /// When true, system clipboard (arboard/X11/Wayland) is used for copy/paste
     use_system_clipboard: bool,
+    /// When true, skip direct stdout writes (OSC 52 / arboard) and queue text
+    /// for the server to send to clients via control messages instead
+    session_mode: bool,
+    /// Text pending delivery to clients (session mode only)
+    pending_clipboard: Option<String>,
 }
 
 impl Clipboard {
@@ -38,6 +43,8 @@ impl Clipboard {
             internal_only: false,
             use_osc52: true,
             use_system_clipboard: true,
+            session_mode: false,
+            pending_clipboard: None,
         }
     }
 
@@ -52,6 +59,18 @@ impl Clipboard {
     /// When enabled, paste() uses internal clipboard only, ignoring system clipboard
     pub fn set_internal_only(&mut self, enabled: bool) {
         self.internal_only = enabled;
+    }
+
+    /// Enable session mode (server/daemon operation)
+    /// When enabled, copy() skips stdout/arboard and queues text for the server
+    /// to deliver to clients via control messages
+    pub fn set_session_mode(&mut self, enabled: bool) {
+        self.session_mode = enabled;
+    }
+
+    /// Take pending clipboard text queued in session mode, clearing the request
+    pub fn take_pending_clipboard(&mut self) -> Option<String> {
+        self.pending_clipboard.take()
     }
 
     /// Copy HTML-formatted text to the system clipboard
@@ -104,6 +123,13 @@ impl Clipboard {
     /// Methods can be disabled via clipboard configuration.
     pub fn copy(&mut self, text: String) {
         self.internal = text.clone();
+
+        // In session mode, the server process has no terminal or display server.
+        // Queue the text for delivery to clients via a control message instead.
+        if self.session_mode {
+            self.pending_clipboard = Some(text);
+            return;
+        }
 
         // Try OSC 52 first (works in modern terminals)
         // Note: This doesn't "fail" in a detectable way - it just sends escape sequences

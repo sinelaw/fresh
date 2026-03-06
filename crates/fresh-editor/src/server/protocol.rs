@@ -157,6 +157,9 @@ pub enum ServerControl {
     Error { message: String },
     /// Signal that a --wait operation has completed
     WaitComplete,
+    /// Set the system clipboard on the client side
+    /// The client should use OSC 52 or native clipboard APIs to copy the text
+    SetClipboard { text: String },
 }
 
 /// Wrapper for control channel messages (used for JSON serialization)
@@ -309,6 +312,9 @@ mod tests {
                 message: "error".to_string(),
             },
             ServerControl::WaitComplete,
+            ServerControl::SetClipboard {
+                text: "hello".to_string(),
+            },
         ];
 
         for variant in variants {

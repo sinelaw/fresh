@@ -157,20 +157,22 @@ Disable OSC 52 in session mode entirely and rely on arboard in the server.
 
 ---
 
-## Recommendation
+## Chosen Approach: Control Message with Client-Side OSC 52 + Arboard
 
-**Start with the direct fix** (route OSC 52 through `queue_escape_sequences`).
-It is:
+We implemented **Alternative 1** (control message) combined with the hybrid
+client strategy from **Alternative 2**:
 
-- Minimal code change (~10 lines)
-- Uses existing, proven infrastructure
-- Matches the design doc's intent exactly
-- Unblocks the common case (modern terminals all support OSC 52)
+1. **Server side**: `Clipboard::copy()` detects `session_mode`, skips stdout
+   writes, and queues the text in `pending_clipboard`. The server polls this
+   and broadcasts a `SetClipboard` control message to all clients.
 
-If broader clipboard compatibility becomes important later, layer on
-Alternative 2 (add a `SetClipboard` control message so the client can
-additionally try native clipboard methods). But that's a separate, additive
-change — not a prerequisite.
+2. **Client side**: On receiving `SetClipboard`, the client uses **both**
+   OSC 52 (for terminals that support it) and arboard (for native X11/Wayland/
+   macOS clipboard). This maximizes compatibility.
+
+This gives clean separation (data stream = rendering, control stream =
+side-effects) and lets the client — which has access to both the terminal and
+the display server — use the best clipboard method available.
 
 ### Open Questions
 

@@ -343,6 +343,16 @@ impl EditorServer {
                     }
                 }
 
+                // Send pending clipboard text to clients via control message
+                if let Some(text) = editor.take_pending_clipboard() {
+                    let msg = serde_json::to_string(&ServerControl::SetClipboard { text })
+                        .unwrap_or_default();
+                    for client in &mut self.clients {
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = client.conn.write_control(&msg);
+                    }
+                }
+
                 if editor.check_mouse_hover_timer() {
                     needs_render = true;
                 }
