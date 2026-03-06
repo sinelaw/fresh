@@ -17,6 +17,14 @@ use std::sync::Mutex;
 /// On X11, the clipboard owner must stay alive to respond to paste requests from other apps.
 static SYSTEM_CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
 
+/// Pending clipboard data to deliver to clients in session mode
+#[derive(Debug, Clone)]
+pub struct PendingClipboard {
+    pub text: String,
+    pub use_osc52: bool,
+    pub use_system_clipboard: bool,
+}
+
 /// Clipboard manager that handles both internal and system clipboard
 #[derive(Debug, Clone, Default)]
 pub struct Clipboard {
@@ -31,8 +39,8 @@ pub struct Clipboard {
     /// When true, skip direct stdout writes (OSC 52 / arboard) and queue text
     /// for the server to send to clients via control messages instead
     session_mode: bool,
-    /// Text pending delivery to clients (session mode only)
-    pending_clipboard: Option<String>,
+    /// Clipboard data pending delivery to clients (session mode only)
+    pending_clipboard: Option<PendingClipboard>,
 }
 
 impl Clipboard {
@@ -68,8 +76,8 @@ impl Clipboard {
         self.session_mode = enabled;
     }
 
-    /// Take pending clipboard text queued in session mode, clearing the request
-    pub fn take_pending_clipboard(&mut self) -> Option<String> {
+    /// Take pending clipboard data queued in session mode, clearing the request
+    pub fn take_pending_clipboard(&mut self) -> Option<PendingClipboard> {
         self.pending_clipboard.take()
     }
 
@@ -127,7 +135,11 @@ impl Clipboard {
         // In session mode, the server process has no terminal or display server.
         // Queue the text for delivery to clients via a control message instead.
         if self.session_mode {
-            self.pending_clipboard = Some(text);
+            self.pending_clipboard = Some(PendingClipboard {
+                text,
+                use_osc52: self.use_osc52,
+                use_system_clipboard: self.use_system_clipboard,
+            });
             return;
         }
 

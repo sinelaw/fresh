@@ -343,10 +343,14 @@ impl EditorServer {
                     }
                 }
 
-                // Send pending clipboard text to clients via control message
-                if let Some(text) = editor.take_pending_clipboard() {
-                    let msg = serde_json::to_string(&ServerControl::SetClipboard { text })
-                        .unwrap_or_default();
+                // Send pending clipboard data to clients via control message
+                if let Some(cb) = editor.take_pending_clipboard() {
+                    let msg = serde_json::to_string(&ServerControl::SetClipboard {
+                        text: cb.text,
+                        use_osc52: cb.use_osc52,
+                        use_system_clipboard: cb.use_system_clipboard,
+                    })
+                    .unwrap_or_default();
                     for client in &mut self.clients {
                         #[allow(clippy::let_underscore_must_use)]
                         let _ = client.conn.write_control(&msg);

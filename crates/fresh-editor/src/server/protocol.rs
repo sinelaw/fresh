@@ -158,8 +158,14 @@ pub enum ServerControl {
     /// Signal that a --wait operation has completed
     WaitComplete,
     /// Set the system clipboard on the client side
-    /// The client should use OSC 52 or native clipboard APIs to copy the text
-    SetClipboard { text: String },
+    /// The client should use the specified methods to copy the text
+    SetClipboard {
+        text: String,
+        /// Whether to use OSC 52 escape sequences
+        use_osc52: bool,
+        /// Whether to use native system clipboard (arboard)
+        use_system_clipboard: bool,
+    },
 }
 
 /// Wrapper for control channel messages (used for JSON serialization)
@@ -314,6 +320,8 @@ mod tests {
             ServerControl::WaitComplete,
             ServerControl::SetClipboard {
                 text: "hello".to_string(),
+                use_osc52: true,
+                use_system_clipboard: true,
             },
         ];
 

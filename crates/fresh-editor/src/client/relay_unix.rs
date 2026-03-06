@@ -113,8 +113,12 @@ pub fn relay_loop(
                             tracing::debug!("Server sent quit: {}", reason);
                             return Ok(ClientExitReason::ServerQuit);
                         }
-                        crate::server::protocol::ServerControl::SetClipboard { text } => {
-                            super::set_client_clipboard(&text);
+                        crate::server::protocol::ServerControl::SetClipboard {
+                            text,
+                            use_osc52,
+                            use_system_clipboard,
+                        } => {
+                            super::set_client_clipboard(&text, use_osc52, use_system_clipboard);
                         }
                         crate::server::protocol::ServerControl::Pong => {
                             // Ignore pong responses

@@ -341,7 +341,6 @@ pub struct Editor {
     /// These get prepended to the next render output
     pending_escape_sequences: Vec<u8>,
 
-
     /// If set, the editor should restart with this new working directory
     /// This is used by Open Folder to do a clean context switch
     restart_with_dir: Option<PathBuf>,
@@ -3214,8 +3213,10 @@ impl Editor {
         std::mem::take(&mut self.pending_escape_sequences)
     }
 
-    /// Take pending clipboard text queued in session mode, clearing the request
-    pub fn take_pending_clipboard(&mut self) -> Option<String> {
+    /// Take pending clipboard data queued in session mode, clearing the request
+    pub fn take_pending_clipboard(
+        &mut self,
+    ) -> Option<crate::services::clipboard::PendingClipboard> {
         self.clipboard.take_pending_clipboard()
     }
 
