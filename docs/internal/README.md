@@ -1,14 +1,19 @@
 # Internal Documentation
 
-This directory contains pending work tracking. Completed plans have been removed.
+This directory contains design documents, pending work tracking, and
+architectural decision records for Fresh development.
 
-## Documents
+## Key Documents
 
 | Document | Description |
 |----------|-------------|
+| [design-decisions.md](design-decisions.md) | Unified audit trail of all major design decisions and trade-offs |
+| [docs-audit-0.2.13.md](docs-audit-0.2.13.md) | Documentation gap analysis for 0.2.9–0.2.13 with validation checklist |
 | [markdown.md](markdown.md) | Markdown compose mode remaining work |
 | [code-review.md](code-review.md) | Code quality improvements to address |
-| [timesource-design.md](timesource-design.md) | TimeSource abstraction notes (implemented) |
+
+Individual design documents for specific features are preserved alongside
+the unified summary for deep-dive reference.
 
 ## User-Facing Documentation
 

@@ -7,47 +7,100 @@ manual/thresh validation before the documentation can be considered correct.
 
 ---
 
-## 1. Documents to MOVE to `docs/internal/`
+## 1. Internal docs reorganization
 
-These are developer-focused or obsolete and should not be in the user-facing
-docs tree.
+### `docs/architecture.md` — KEEP at top level
 
-| File | Reason |
+This is the main entry point for developers who want to learn how Fresh is
+built. It's developer-facing but intentionally prominent. It may need updates
+(e.g. for the plugin `registerHandler()` pattern, hanging line wrap in the
+rendering pipeline, `BulkEdit` in the event model) but should stay where it is.
+
+### Unified design decisions document — CREATED
+
+`docs/internal/design-decisions.md` coalesces the key decisions, trade-offs,
+and rationale from all shipped design docs into a single audit trail. This
+preserves the *why* behind architectural choices without requiring readers to
+find and cross-reference 20+ individual files.
+
+The original design documents are **kept in place** — they contain
+implementation details and context that the summary intentionally omits.
+The unified doc serves as an index and quick reference; the originals are
+the deep-dive source of truth.
+
+### Duplicate files — RESOLVED
+
+Removed exact byte-for-byte duplicates (confirmed identical):
+- `SSH_REMOTE_EDITING_DESIGN.md` (removed) — kept `ssh-remote-editing-design.md`
+- `PLUGIN_MARKETPLACE_DESIGN.md` (removed) — kept `plugin-marketplace-design.md`
+
+### Internal docs status classification
+
+**Shipped designs (preserved as historical record, summarized in design-decisions.md):**
+
+| File | Status | Value for future work |
+|------|--------|----------------------|
+| `timesource-design.md` | Implemented | Explains test determinism approach; reference for new time-based code |
+| `bulk-edit-optimization.md` | Implemented | Documents 500× perf win; explains when/why to use BulkEdit |
+| `cli-redesign.md` | Implemented (Experimental) | CLI design patterns, deprecation strategy |
+| `FUZZY_FILE_FINDER_UX.md` | Implemented | Comparative UX research across 5 editors; frecency ranking rationale |
+| `finder-abstraction.md` | Design (active) | Plans 87% code reduction across finder plugins — still actionable |
+| `encoding-support-design.md` | Implemented | Normalize-on-load rationale; chunk boundary analysis |
+| `diff-view.md` | Partially implemented | CompositeBuffer architecture; marker-based alignment |
+| `scroll-sync-design.md` | Partially implemented | Why markers beat async hooks; known debugging state |
+| `paste-handling.md` | Implemented | Two-tier paste strategy; burst coalescing heuristic |
+| `session-persistence-design.md` | Implemented (Experimental) | Dual-socket rationale; ultra-light client principle |
+| `i18n-design.md` | Implemented | Library choice rationale; 6-phase migration prioritization |
+| `per-buffer-view-state-design.md` | Implemented | Solved multi-split cursor sync; plugin state API design |
+| `search-next-occurrence.md` | Design (not yet shipped) | Cross-editor research; Ctrl+F3 rationale |
+| `editor-state-refactoring.md` | Partially complete | Sub-struct grouping logic; dependency analysis |
+| `theme-consolidation-plan.md` | Design (not yet shipped) | Embedded JSON approach; CI validation |
+| `config-design.md` | Implemented | 4-layer overlay semantics; merge strategy rationale |
+| `config-implementation-plan.md` | Implemented | Phase dependencies; risk mitigation; backward compatibility |
+
+**Active design/planning docs (still in progress, leave as-is):**
+
+| File | Status |
 |------|--------|
-| `docs/architecture.md` | Developer internals (runtime model, event loop, state ownership). Not user-facing. |
+| `code-tour-design.md` | Implementation phase; needs 4 new plugin API methods |
+| `config-editor-design.md` | Design phase; built-in settings UI to replace plugin |
+| `UNIFIED_UI_FRAMEWORK_PLAN.md` | In progress; extract shared controls library |
+| `ISSUES_IMPLEMENTATION_PLAN.md` | Active; 14 prioritized bugs/improvements |
+| `markdown.md` | Remaining compose mode work (column guides, context-sensitive Enter) |
+| `io-separation-plan.md` | In progress; WASM compatibility refactoring |
+| `visual-layout-unification.md` | Design complete; awaiting prioritization |
+| `input-calibration-wizard.md` | Design complete; implementation pending |
+| `plugin-marketplace-design.md` | Phase 1 done; Phase 2+ pending |
+| `ssh-remote-editing-design.md` | Design complete; implementation phases pending |
 
-### Already correctly in `docs/internal/`
+**Process & quality docs (keep as-is):**
 
-The following are design docs for **already-shipped features** and could be
-pruned or archived per the README's policy ("Completed plans have been
-removed"):
+| File | Purpose |
+|------|---------|
+| `code-review.md` | Code quality issues list (31+ items); refactoring debt tracker |
+| `testing.md` | Testing guidelines; EditorTestHarness docs |
+| `usability-test-plan.md` | Usability testing methodology |
+| `plugin-usability-review.md` | Plugin UX bugs and improvements (P0-P2) |
+| `settings-controls-usability-report.md` | Settings UI bugs; critical data loss issue |
+| `settings-modified-indicator-design.md` | Modified indicator semantics fix |
+| `INPUT_LAYOUT_RENDERING_SUMMARY.md` | Architecture analysis; identifies refactoring opportunities |
 
-| File | Shipped in |
-|------|-----------|
-| `timesource-design.md` | Pre-0.2; doc self-declares "now implemented" |
-| `bulk-edit-optimization.md` | 0.2.x; migration tracking complete |
-| `cli-redesign.md` | 0.2.0; marked "Implemented (Experimental)" |
-| `FUZZY_FILE_FINDER_UX.md` | 0.2.x; doc self-declares implemented |
-| `finder-abstraction.md` | Implemented |
-| `encoding-support-design.md` | 0.1.99 |
-| `diff-view.md` | 0.2.x |
-| `scroll-sync-design.md` | 0.2.4 |
-| `paste-handling.md` | 0.2.x |
-| `session-persistence-design.md` | 0.2.0 |
-| `i18n-design.md` | 0.1.x |
-| `per-buffer-view-state-design.md` | 0.2.4 |
-| `search-next-occurrence.md` | 0.2.x |
-| `editor-state-refactoring.md` | 0.2.x |
-| `theme-consolidation-plan.md` | 0.2.x |
-| `config-design.md` | 0.2.x (4-layer config is live) |
-| `config-implementation-plan.md` | 0.2.x (config layers are live) |
+**Reference docs (keep as-is):**
 
-### Duplicate internal docs (pick one, delete the other)
-
-| Pair | Notes |
-|------|-------|
-| `SSH_REMOTE_EDITING_DESIGN.md` ↔ `ssh-remote-editing-design.md` | Same topic, different filenames |
-| `PLUGIN_MARKETPLACE_DESIGN.md` ↔ `plugin-marketplace-design.md` | Same topic, different filenames |
+| File | Purpose |
+|------|---------|
+| `plugin-architecture-plan.md` | Provider pattern rationale; ResultsPanel/QuickPick API |
+| `event-dispatch-architecture.md` | Hit testing evolution plan (3 phases) |
+| `warning-notification-ux.md` | Two-tier notification design (implemented) |
+| `terminal.md` | Incremental scrollback architecture |
+| `vi-mode-design.md` | Plugin-based modal editing; atomic actions rationale |
+| `markdown-compose-vs-glow.md` | Tool comparison for markdown rendering |
+| `typora-seamless-canvas-plan.md` | Cursor-aware concealment; token pipeline design |
+| `theme-user-flows.md` | User flow documentation for theme system |
+| `theme-usability-improvements.md` | Priority matrix from usability testing |
+| `unicode-width.md` | Unicode width handling reference |
+| `remote-filesystem-optimization.md` | Remote FS optimization strategies |
+| `per-buffer-view-state-design.md` | Multi-split state separation |
 
 ---
 
@@ -148,6 +201,14 @@ Minor:
 
 - Could benefit from `path:line:col` syntax examples and a mention of session
   mode (`fresh -a`)
+
+### `docs/architecture.md` — LOW priority
+
+May need updates for:
+- `registerHandler()` plugin pattern (replacing `globalThis`)
+- `BulkEdit` event type in the Action → Event section
+- Hanging line wrap in rendering pipeline description
+- Non-blocking grammar builds (background thread)
 
 ### Blog posts — NO ACTION NEEDED
 
@@ -255,8 +316,6 @@ document) before publishing updated docs.
 |----------|----------|-------|
 | **High** | Doc updates | `features/lsp.md`, `features/editing.md`, `plugins/index.md` |
 | **Medium** | Doc updates | `features/themes.md`, `features/command-palette.md`, `configuration/index.md` |
-| **Low** | Doc updates | `features/file-explorer.md`, `features/terminal.md`, `getting-started/index.md` |
-| **Housekeeping** | Move to internal | `architecture.md` |
-| **Housekeeping** | Archive shipped designs | ~17 completed design docs in `docs/internal/` |
-| **Housekeeping** | Deduplicate | 2 pairs of duplicate internal docs |
+| **Low** | Doc updates | `features/file-explorer.md`, `features/terminal.md`, `getting-started/index.md`, `architecture.md` |
+| **Done** | Internal reorg | Unified `design-decisions.md` created; duplicates removed |
 | **Validation** | Thresh/manual | 25 test items across 5 categories |
