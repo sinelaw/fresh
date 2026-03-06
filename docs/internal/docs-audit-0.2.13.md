@@ -23,42 +23,27 @@ and rationale from all shipped design docs into a single audit trail. This
 preserves the *why* behind architectural choices without requiring readers to
 find and cross-reference 20+ individual files.
 
-The original design documents are **kept in place** — they contain
-implementation details and context that the summary intentionally omits.
-The unified doc serves as an index and quick reference; the originals are
-the deep-dive source of truth.
+### Shipped design docs — REMOVED
 
-### Duplicate files — RESOLVED
+15 shipped design documents have been removed. Their key decisions,
+trade-offs, and rationale are preserved in `design-decisions.md`:
 
-Removed exact byte-for-byte duplicates (confirmed identical):
+`timesource-design.md`, `bulk-edit-optimization.md`, `cli-redesign.md`,
+`FUZZY_FILE_FINDER_UX.md`, `encoding-support-design.md`, `paste-handling.md`,
+`session-persistence-design.md`, `i18n-design.md`,
+`per-buffer-view-state-design.md`, `config-design.md`,
+`config-implementation-plan.md`, `plugin-architecture-plan.md`,
+`vi-mode-design.md`, `warning-notification-ux.md`,
+`markdown-compose-vs-glow.md`
+
+### Duplicate files — REMOVED
+
 - `SSH_REMOTE_EDITING_DESIGN.md` (removed) — kept `ssh-remote-editing-design.md`
 - `PLUGIN_MARKETPLACE_DESIGN.md` (removed) — kept `plugin-marketplace-design.md`
 
-### Internal docs status classification
+### Remaining internal docs
 
-**Shipped designs (preserved as historical record, summarized in design-decisions.md):**
-
-| File | Status | Value for future work |
-|------|--------|----------------------|
-| `timesource-design.md` | Implemented | Explains test determinism approach; reference for new time-based code |
-| `bulk-edit-optimization.md` | Implemented | Documents 500× perf win; explains when/why to use BulkEdit |
-| `cli-redesign.md` | Implemented (Experimental) | CLI design patterns, deprecation strategy |
-| `FUZZY_FILE_FINDER_UX.md` | Implemented | Comparative UX research across 5 editors; frecency ranking rationale |
-| `finder-abstraction.md` | Design (active) | Plans 87% code reduction across finder plugins — still actionable |
-| `encoding-support-design.md` | Implemented | Normalize-on-load rationale; chunk boundary analysis |
-| `diff-view.md` | Partially implemented | CompositeBuffer architecture; marker-based alignment |
-| `scroll-sync-design.md` | Partially implemented | Why markers beat async hooks; known debugging state |
-| `paste-handling.md` | Implemented | Two-tier paste strategy; burst coalescing heuristic |
-| `session-persistence-design.md` | Implemented (Experimental) | Dual-socket rationale; ultra-light client principle |
-| `i18n-design.md` | Implemented | Library choice rationale; 6-phase migration prioritization |
-| `per-buffer-view-state-design.md` | Implemented | Solved multi-split cursor sync; plugin state API design |
-| `search-next-occurrence.md` | Design (not yet shipped) | Cross-editor research; Ctrl+F3 rationale |
-| `editor-state-refactoring.md` | Partially complete | Sub-struct grouping logic; dependency analysis |
-| `theme-consolidation-plan.md` | Design (not yet shipped) | Embedded JSON approach; CI validation |
-| `config-design.md` | Implemented | 4-layer overlay semantics; merge strategy rationale |
-| `config-implementation-plan.md` | Implemented | Phase dependencies; risk mitigation; backward compatibility |
-
-**Active design/planning docs (still in progress, leave as-is):**
+**Active design/planning docs (in progress):**
 
 | File | Status |
 |------|--------|
@@ -72,8 +57,15 @@ Removed exact byte-for-byte duplicates (confirmed identical):
 | `input-calibration-wizard.md` | Design complete; implementation pending |
 | `plugin-marketplace-design.md` | Phase 1 done; Phase 2+ pending |
 | `ssh-remote-editing-design.md` | Design complete; implementation phases pending |
+| `finder-abstraction.md` | Plans 87% code reduction across finder plugins |
+| `diff-view.md` | Partially implemented; CompositeBuffer architecture |
+| `scroll-sync-design.md` | Partially implemented; marker-based sync |
+| `editor-state-refactoring.md` | Partially complete; remaining extractions |
+| `search-next-occurrence.md` | Design (not yet shipped) |
+| `theme-consolidation-plan.md` | Design (not yet shipped) |
+| `typora-seamless-canvas-plan.md` | Remaining compose implementation details |
 
-**Process & quality docs (keep as-is):**
+**Process & quality docs:**
 
 | File | Purpose |
 |------|---------|
@@ -83,24 +75,18 @@ Removed exact byte-for-byte duplicates (confirmed identical):
 | `plugin-usability-review.md` | Plugin UX bugs and improvements (P0-P2) |
 | `settings-controls-usability-report.md` | Settings UI bugs; critical data loss issue |
 | `settings-modified-indicator-design.md` | Modified indicator semantics fix |
-| `INPUT_LAYOUT_RENDERING_SUMMARY.md` | Architecture analysis; identifies refactoring opportunities |
+| `INPUT_LAYOUT_RENDERING_SUMMARY.md` | Architecture analysis; refactoring opportunities |
 
-**Reference docs (keep as-is):**
+**Reference docs:**
 
 | File | Purpose |
 |------|---------|
-| `plugin-architecture-plan.md` | Provider pattern rationale; ResultsPanel/QuickPick API |
 | `event-dispatch-architecture.md` | Hit testing evolution plan (3 phases) |
-| `warning-notification-ux.md` | Two-tier notification design (implemented) |
 | `terminal.md` | Incremental scrollback architecture |
-| `vi-mode-design.md` | Plugin-based modal editing; atomic actions rationale |
-| `markdown-compose-vs-glow.md` | Tool comparison for markdown rendering |
-| `typora-seamless-canvas-plan.md` | Cursor-aware concealment; token pipeline design |
 | `theme-user-flows.md` | User flow documentation for theme system |
 | `theme-usability-improvements.md` | Priority matrix from usability testing |
 | `unicode-width.md` | Unicode width handling reference |
 | `remote-filesystem-optimization.md` | Remote FS optimization strategies |
-| `per-buffer-view-state-design.md` | Multi-split state separation |
 
 ---
 

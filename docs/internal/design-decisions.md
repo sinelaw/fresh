@@ -5,8 +5,9 @@ from Fresh's development history. It serves as an audit trail so future
 contributors can understand *why* things are the way they are without needing
 to rediscover the reasoning.
 
-For the full original design documents, see the individual files in this
-directory where they still exist as active/in-progress work.
+The original per-feature design documents for shipped features have been
+removed — this file is now the canonical record. In-progress designs
+remain in their own files in this directory.
 
 > **Scope**: Covers decisions that have been **implemented and shipped**.
 > In-progress designs remain in their own files.
@@ -55,7 +56,7 @@ with `RealTimeSource` for production and `TestTimeSource` for tests.
 **Key principle**: Services receive `SharedTimeSource` through composition.
 Future time-based code should use this abstraction.
 
-*Original doc: `timesource-design.md` (self-declares "now implemented")*
+*Previously: `timesource-design.md`*
 
 ---
 
@@ -75,7 +76,7 @@ use `BulkEdit`.
 **Key principle**: Converting N sequential operations into 1 structural
 operation. Arc snapshots are cheap — exploit that for undo.
 
-*Original doc: `bulk-edit-optimization.md`*
+*Previously: `bulk-edit-optimization.md`*
 
 ---
 
@@ -94,7 +95,7 @@ Deprecated flags produce warnings rather than breaking.
 - Progressive disclosure: `fresh file.txt` (simple) vs
   `fresh session attach --name dev` (explicit)
 
-*Original doc: `cli-redesign.md` (marked "Implemented (Experimental)")*
+*Previously: `cli-redesign.md`*
 
 ---
 
@@ -119,7 +120,7 @@ JetBrains, and Emacs. Key takeaways:
 planned for further deduplication (see `finder-abstraction.md` for the
 in-progress design that targets 87% code reduction across 5 finder plugins).
 
-*Original doc: `FUZZY_FILE_FINDER_UX.md`*
+*Previously: `FUZZY_FILE_FINDER_UX.md`*
 
 ---
 
@@ -140,7 +141,7 @@ original encoding, convert back on save. Mirrors the CR/LF architecture
 **Open questions preserved**: Invalid byte handling strategy, mixed-encoding
 detection, chunk boundary alignment for multi-byte encodings.
 
-*Original doc: `encoding-support-design.md`*
+*Previously: `encoding-support-design.md`*
 
 ---
 
@@ -161,7 +162,7 @@ space, derived positions for the right pane. Synchronous sync at render time
 eliminates race conditions and jitter. Leverages existing `MarkerList` /
 `IntervalTree` infrastructure.
 
-*Original docs: `diff-view.md`, `scroll-sync-design.md`*
+*See also: `diff-view.md`, `scroll-sync-design.md` (partially implemented)*
 
 ---
 
@@ -178,7 +179,7 @@ indistinguishable from fast typing, causing unwanted auto-close/auto-indent.
 Both paths produce a single "atomic insert" for consistent undo behavior.
 Auto-close and skip-over are suppressed during paste.
 
-*Original doc: `paste-handling.md`*
+*Previously: `paste-handling.md`*
 
 ---
 
@@ -206,7 +207,7 @@ crate.
 **Known limitations** (documented for future work): single client at a time,
 no crash resurrection, no multi-client broadcast.
 
-*Original doc: `session-persistence-design.md`*
+*Previously: `session-persistence-design.md`*
 
 ---
 
@@ -227,7 +228,7 @@ locale.
 status bar → menus → dialogs → errors → internal. ~170 strings categorized
 across 10 UI components.
 
-*Original doc: `i18n-design.md`*
+*Previously: `i18n-design.md`*
 
 ---
 
@@ -248,7 +249,7 @@ same hook execution.
 **Workspace persistence**: `file_states: HashMap<PathBuf, SerializedFileState>`
 stores per-file state that survives session restarts.
 
-*Original doc: `per-buffer-view-state-design.md` (implemented Feb 2026)*
+*Previously: `per-buffer-view-state-design.md`*
 
 ---
 
@@ -269,7 +270,7 @@ skip `BufferFlags` (only 3 fields, marginal benefit).
 **Status**: `ComposeState` extracted as proof-of-concept. Remaining extractions
 identified but deferred.
 
-*Original doc: `editor-state-refactoring.md`*
+*See also: `editor-state-refactoring.md` (remaining extractions pending)*
 
 ---
 
@@ -294,11 +295,114 @@ a value equal to the inherited value prunes the key, preventing config drift.
 **Conditional layers**: Platform-specific (`config_linux.json`) and
 language-specific overrides injected dynamically.
 
-*Original docs: `config-design.md`, `config-implementation-plan.md`*
+*Previously: `config-design.md`, `config-implementation-plan.md`*
 
 ---
 
-## 13. Plugin Architecture (Provider Pattern)
+## 13. Plugin Architecture & Runtime
+
+### Runtime Model
+
+Plugins run in a sandboxed **QuickJS** JavaScript runtime on a **dedicated
+thread**, separate from the main editor thread. Communication is fully
+asynchronous and non-blocking:
+
+```
+Main thread                    Plugin thread (QuickJS)
+───────────                    ──────────────────────
+run_hook(name, args) ──────►   Hook handlers execute
+                               │
+                               ▼
+                         PluginCommand sent back
+                               │
+◄───────────────────────────────
+process_commands() drains
+commands in next frame
+```
+
+**Key implementation details** (from `manager.rs`, `hooks.rs`, `api.rs`):
+
+- `PluginManager::run_hook()` is **fire-and-forget**: it serializes
+  `HookArgs` to JSON and sends to the plugin thread via channel. The main
+  thread never waits for hook completion.
+- Plugins respond by sending `PluginCommand` variants back through a channel.
+- The main thread drains all pending `PluginCommand`s once per frame in
+  `Editor::process_async_messages()`.
+- **Timing consequence**: Effects from hooks (overlays, view transforms,
+  virtual text, status messages) become visible on the **next render frame**,
+  not the current one. This is by design — it keeps the render loop
+  deterministic and prevents plugins from blocking the UI.
+
+### Plugin API Entry Points
+
+Plugins obtain the editor API via `getEditor()` (returns an `EditorAPI`
+instance scoped to the calling plugin) and register handlers via
+`registerHandler(name, fn)` which replaces the older `globalThis` pattern.
+
+Handler functions registered this way can be referenced by name in
+`editor.registerCommand()`, `editor.on()`, and mode keybindings.
+
+### Hook System
+
+Hooks are the editor's way of notifying plugins about state changes. Plugins
+subscribe with `editor.on(eventName, handlerName)`. The full set of hooks
+(from `crates/fresh-core/src/hooks.rs`):
+
+**File lifecycle**: `before_file_open`, `after_file_open`, `before_file_save`,
+`after_file_save`, `buffer_closed`
+
+**Text mutations**: `before_insert`, `after_insert`, `before_delete`,
+`after_delete` — include byte positions, line numbers, affected ranges, and
+(for after-hooks) line counts added/removed
+
+**Cursor & focus**: `cursor_moved` (with line number and text properties at
+new position), `buffer_activated`, `buffer_deactivated`
+
+**Rendering**: `render_start` (once per buffer per frame), `render_line`
+(per visible line), `lines_changed` (batched line updates),
+`view_transform_request` (provides base tokens for plugin-driven rendering
+like markdown compose mode)
+
+**UI interaction**: `prompt_changed`, `prompt_confirmed`, `prompt_cancelled`,
+`prompt_selection_changed`, `mouse_click`, `mouse_move`, `mouse_scroll`
+
+**LSP events**: `diagnostics_updated`, `lsp_references`,
+`lsp_server_request`, `lsp_server_error`, `lsp_status_clicked`
+
+**Editor lifecycle**: `editor_initialized`, `idle`, `resize`,
+`viewport_changed`, `language_changed`, `pre_command`, `post_command`
+
+**Process management**: `process_output` (streaming from background processes),
+`action_popup_result`
+
+### PluginCommand — How Plugins Affect the Editor
+
+When plugins call API methods like `editor.insertText()` or
+`editor.addOverlay()`, the QuickJS runtime translates these into
+`PluginCommand` enum variants sent back to the main thread. Key command
+categories:
+
+- **Buffer mutations**: `InsertText`, `DeleteRange`, `InsertAtCursor`
+- **Visual decorations**: `AddOverlay`, `ClearNamespace`,
+  `ClearOverlaysInRange`, `AddVirtualText`, `AddVirtualLine`,
+  `SubmitViewTransform`, `ClearViewTransform`
+- **Concealment & layout**: `AddConceal`, `ClearConcealNamespace`,
+  `AddSoftBreak`, `SetLayoutHints`, `SetViewMode`, `SetLineWrap`
+- **UI**: `SetStatus`, `RegisterCommand`, `UnregisterCommand`,
+  `ShowActionPopup`, `StartPrompt`, `SetPromptSuggestions`
+- **Process management**: `SpawnProcess`, `SpawnBackgroundProcess`,
+  `KillBackgroundProcess`, `Delay`
+- **State management**: `SetViewState` (per-buffer-per-split plugin state,
+  persisted across sessions)
+- **LSP**: `DisableLspForLanguage`, `RestartLspForLanguage`, `SetLspRootUri`,
+  `SendLspRequest`
+
+Async commands (process spawning, `getBufferText`, `delay`, `prompt`,
+`sendLspRequest`) use a `JsCallbackId` that the main thread resolves or
+rejects when the operation completes. The plugin thread handles
+`resolve_callback`/`reject_callback` to resume the suspended JS promise.
+
+### Provider vs Controller Pattern
 
 **Problem**: Plugins that "own the UI" (Controller pattern via virtual buffers)
 must reimplement navigation, selection, and keybindings, leading to
@@ -308,16 +412,50 @@ inconsistent UX.
 the editor handles UI rendering.
 
 **Two-tier API**:
-- `QuickPick`: transient searches (Live Grep, Git Grep)
+- `QuickPick`: transient searches (Live Grep, Git Grep) — plugin provides
+  results, editor renders the picker with standard navigation
 - `ResultsPanel`: persistent panels (Find References, Diagnostics) with
   bidirectional cursor sync via `syncWithEditor`
 
-**Atomic actions** preferred over selection-based for operator+motion
-combinations to avoid async timing issues.
+### Atomic Actions vs Selection-Based
 
-**Event system**: `EventEmitter<T>` with typed events and `Disposable` cleanup.
+For operator+motion combinations (like `dw` in vi mode), two approaches exist:
 
-*Original doc: `plugin-architecture-plan.md`*
+1. **Atomic Rust actions** (preferred): Single action like `delete_word_right`
+   executed synchronously in the core — avoids async timing issues
+2. **Selection-based fallback**: Plugin sets selection, then calls delete —
+   works for complex motions but requires the selection and delete to happen
+   atomically within the same plugin action execution
+
+The `executeActions()` batch API with count support enables efficient `3dw`
+patterns without round-trips.
+
+### View Transform Pipeline
+
+The most sophisticated plugin-editor interaction. Used by markdown compose
+mode and other content-transforming plugins:
+
+1. Editor fires `view_transform_request` hook with base tokens for the
+   visible viewport
+2. Plugin processes tokens (adds conceals, injects annotations, reorders)
+3. Plugin calls `submitViewTransform()` with modified token stream
+4. Editor renders the transformed tokens instead of the raw buffer
+
+**Known timing issue**: Because hooks are async, the transformed tokens arrive
+one frame late. During rapid scrolling or typing, this causes brief flicker
+where stale/raw content is visible before the plugin's transform arrives.
+Mitigation strategies identified: hold previous frame's content during scroll,
+use atomic conceal swaps for single-character edits.
+
+### Plugin State
+
+`setViewState(bufferId, key, value)` / `getViewState(bufferId, key)` provides
+per-buffer-per-split state stored as `HashMap<String, serde_json::Value>`.
+
+**Write-through cache**: `EditorStateSnapshot` (shared via `Arc<RwLock>`)
+enables immediate read-back within the same hook execution — the plugin
+doesn't have to wait a frame to read state it just wrote. State persists
+across sessions via workspace serialization.
 
 ---
 
@@ -336,7 +474,7 @@ logic in TypeScript, core provides atomic actions.
 colon command mode (30+ commands), repeat (`.`), find char (`f`/`t`/`F`/`T`).
 Missing: registers and macros (low priority).
 
-*Original doc: `vi-mode-design.md` (fully implemented, ~900 lines TypeScript)*
+*Previously: `vi-mode-design.md` (~900 lines TypeScript)*
 
 ---
 
@@ -356,8 +494,8 @@ transforms with conceal ranges and overlays at the token level.
 state — plugin transforms arrive 1 frame late, showing stale content briefly.
 Proposed fixes: hold old content during scroll, atomic conceal swap for typing.
 
-*Original docs: `markdown.md`, `markdown-compose-vs-glow.md`,
-`typora-seamless-canvas-plan.md`*
+*See also: `markdown.md` (remaining work), `typora-seamless-canvas-plan.md`
+(implementation details). Previously also: `markdown-compose-vs-glow.md`.*
 
 ---
 
@@ -375,7 +513,7 @@ others hardcode coordinates (menu bar).
 **Key principle**: Retained-mode hit testing — rendering produces layout
 objects (cached `Rect`s) consumed by input handling on the next frame.
 
-*Original doc: `event-dispatch-architecture.md`*
+*See also: `event-dispatch-architecture.md` (phases 2-3 pending)*
 
 ---
 
@@ -397,7 +535,7 @@ bundled (Python, Rust, TypeScript), user-extensible.
 **UX principles**: Nielsen Norman heuristics — user control/freedom,
 progressive disclosure.
 
-*Original doc: `warning-notification-ux.md` (fully implemented)*
+*Previously: `warning-notification-ux.md`*
 
 ---
 
@@ -417,7 +555,7 @@ view with editor navigation).
 screen snapshot. On restore, load as read-only buffer immediately; replay only
 if user re-enters terminal mode (deferred).
 
-*Original doc: `terminal.md`*
+*See also: `terminal.md` (implementation details)*
 
 ---
 
@@ -438,8 +576,8 @@ test, expose `getBuiltinThemes()` API for plugins.
 - Navigation inconsistency (arrows navigate all lines, Enter only works on
   field lines)
 
-*Original docs: `theme-consolidation-plan.md`, `theme-user-flows.md`,
-`theme-usability-improvements.md`*
+*See also: `theme-consolidation-plan.md` (not yet shipped),
+`theme-user-flows.md`, `theme-usability-improvements.md`*
 
 ---
 
@@ -459,7 +597,7 @@ mappings), O(n) navigation (walk characters per line).
 clicks reuse that mapping, but MoveUp/Down uses `str_width()` on raw buffer
 (doesn't understand ANSI, tabs).
 
-*Original doc: `visual-layout-unification.md`*
+*See also: `visual-layout-unification.md` (awaiting implementation)*
 
 ---
 
