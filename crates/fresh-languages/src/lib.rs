@@ -557,7 +557,7 @@ impl Language {
             Self::Go => "go",
             Self::Json => "json",
             Self::Java => "java",
-            Self::CSharp => "c_sharp",
+            Self::CSharp => "csharp",
             Self::Php => "php",
             Self::Ruby => "ruby",
             Self::Bash => "bash",
@@ -762,6 +762,12 @@ mod tests {
     }
 
     #[test]
+    fn test_lsp_language_id_csharp() {
+        let lang = Language::CSharp;
+        assert_eq!(lang.lsp_language_id(Path::new("main.cs")), "csharp");
+    }
+
+    #[test]
     fn test_lsp_language_id_other_languages() {
         assert_eq!(Language::Rust.lsp_language_id(Path::new("main.rs")), "rust");
         assert_eq!(
@@ -769,5 +775,12 @@ mod tests {
             "python"
         );
         assert_eq!(Language::Go.lsp_language_id(Path::new("main.go")), "go");
+    }
+
+    #[test]
+    fn test_csharp_id_matches_config_key() {
+        // Language::id() must return "csharp" to match the config key
+        // used for LSP server lookup and language detection.
+        assert_eq!(Language::CSharp.id(), "csharp");
     }
 }

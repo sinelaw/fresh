@@ -168,8 +168,13 @@ pub struct EditorState {
     /// Last-known LSP folding ranges for this buffer
     pub folding_ranges: Vec<FoldingRange>,
 
-    /// The detected language for this buffer (e.g., "rust", "python", "text")
+    /// The detected language ID for this buffer (e.g., "rust", "csharp", "text").
+    /// Used for LSP config lookup and internal identification.
     pub language: String,
+
+    /// Human-readable language display name (e.g., "Rust", "C#", "Plain Text").
+    /// Shown in the status bar and Set Language prompt.
+    pub language_display_name: String,
 }
 
 impl EditorState {
@@ -181,6 +186,7 @@ impl EditorState {
     /// for changing the language of a buffer after creation.
     pub fn apply_language(&mut self, detected: DetectedLanguage) {
         self.language = detected.name;
+        self.language_display_name = detected.display_name;
         self.highlighter = detected.highlighter;
         if let Some(lang) = &detected.ts_language {
             self.reference_highlighter.set_language(lang);
@@ -220,6 +226,7 @@ impl EditorState {
             semantic_tokens: None,
             folding_ranges: Vec::new(),
             language: "text".to_string(),
+            language_display_name: "Text".to_string(),
         }
     }
 

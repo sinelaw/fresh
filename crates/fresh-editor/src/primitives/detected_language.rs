@@ -11,13 +11,15 @@ use crate::primitives::GrammarRegistry;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// The result of language detection — groups the three things that must stay in sync
-/// on an `EditorState`: the language name, the highlighting engine, and the
+/// The result of language detection — groups the things that must stay in sync
+/// on an `EditorState`: the language ID, display name, highlighting engine, and
 /// tree-sitter `Language` (used for reference highlighting, indentation, etc.).
 pub struct DetectedLanguage {
-    /// The language name for LSP, status bar, and config lookup
-    /// (e.g., "Rust", "Python", "text", "Plain Text").
+    /// The canonical language ID for LSP and config lookup (e.g., "csharp", "rust", "text").
     pub name: String,
+    /// Human-readable display name shown in the status bar and Set Language prompt
+    /// (e.g., "C#", "Rust", "Plain Text"). Matches the syntect syntax name where available.
+    pub display_name: String,
     /// The highlighting engine to use for this buffer.
     pub highlighter: HighlightEngine,
     /// The tree-sitter Language, if available (used for reference highlighting,
@@ -42,14 +44,24 @@ impl DetectedLanguage {
     ) -> Self {
         let highlighter = HighlightEngine::for_file_with_languages(path, registry, languages);
         let ts_language = Language::from_path(path);
-        let name = if let Some(lang) = &ts_language {
-            lang.to_string()
-        } else {
-            crate::services::lsp::manager::detect_language(path, languages)
-                .unwrap_or_else(|| "text".to_string())
-        };
+        // Prefer config-based language name (e.g., "csharp") so it matches
+        // the LSP config key. Fall back to tree-sitter name (e.g., "c_sharp")
+        // or "text" if neither is available.
+        let name =
+            crate::services::lsp::manager::detect_language(path, languages).unwrap_or_else(|| {
+                ts_language
+                    .as_ref()
+                    .map(|l| l.to_string())
+                    .unwrap_or_else(|| "text".to_string())
+            });
+        // Resolve display name from the syntax matched for this file.
+        let display_name = registry
+            .find_syntax_for_file_with_languages(path, languages)
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| name.clone());
         Self {
             name,
+            display_name,
             highlighter,
             ts_language,
         }
@@ -66,8 +78,13 @@ impl DetectedLanguage {
             .as_ref()
             .map(|l| l.to_string())
             .unwrap_or_else(|| "text".to_string());
+        let display_name = registry
+            .find_syntax_for_file(path)
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| name.clone());
         Self {
             name,
+            display_name,
             highlighter,
             ts_language,
         }
@@ -92,6 +109,7 @@ impl DetectedLanguage {
                 resolve_language_id(name, registry, languages).unwrap_or_else(|| name.to_string());
             Some(Self {
                 name: language_id,
+                display_name: name.to_string(),
                 highlighter,
                 ts_language,
             })
@@ -104,6 +122,7 @@ impl DetectedLanguage {
     pub fn plain_text() -> Self {
         Self {
             name: "text".to_string(),
+            display_name: "Text".to_string(),
             highlighter: HighlightEngine::None,
             ts_language: None,
         }
@@ -128,16 +147,19 @@ impl DetectedLanguage {
 ///
 /// The config `[languages]` section is the single authoritative registry of
 /// language IDs. Each entry has a `grammar` field that is resolved to a
-/// syntect syntax via `GrammarRegistry::find_syntax_by_name`. This function
-/// performs the reverse lookup: for each config entry, resolve its grammar
-/// through the registry and check whether the resulting syntax matches.
+/// syntect syntax via the grammar registry. This function performs the reverse
+/// lookup: for each config entry, resolve its grammar through the registry
+/// and check whether the resulting syntax matches.
 pub fn resolve_language_id(
     syntax_name: &str,
     registry: &GrammarRegistry,
     languages: &HashMap<String, LanguageConfig>,
 ) -> Option<String> {
     for (lang_id, lang_config) in languages {
-        if let Some(syntax) = registry.find_syntax_by_name(&lang_config.grammar) {
+        // Use find_syntax_for_lang_config which also tries extension fallback,
+        // needed when the grammar name doesn't match syntect's name
+        // (e.g., grammar "c_sharp" → syntect syntax "C#").
+        if let Some(syntax) = registry.find_syntax_for_lang_config(lang_config) {
             if syntax.name == syntax_name {
                 return Some(lang_id.clone());
             }

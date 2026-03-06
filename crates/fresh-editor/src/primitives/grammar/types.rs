@@ -444,8 +444,12 @@ impl GrammarRegistry {
         result
     }
 
-    /// Helper: given a language config, find the syntax reference for it.
-    fn find_syntax_for_lang_config(
+    /// Given a language config, find the syntax reference for it.
+    ///
+    /// Tries grammar name first, then falls back to extension-based lookup.
+    /// This handles cases where the grammar name doesn't match syntect's name
+    /// (e.g., grammar `"c_sharp"` maps to syntect syntax `"C#"` via `.cs` extension).
+    pub fn find_syntax_for_lang_config(
         &self,
         lang_config: &crate::config::LanguageConfig,
     ) -> Option<&SyntaxReference> {

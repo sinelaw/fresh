@@ -648,7 +648,7 @@ impl StatusBarRenderer {
         let encoding_width = str_width(&encoding_text);
 
         // Language indicator (clickable to change language)
-        let language_text = format!(" {} ", &state.language);
+        let language_text = format!(" {} ", &state.language_display_name);
         let language_width = str_width(&language_text);
 
         // LSP indicator (right-aligned, with colored background if warning/error)
