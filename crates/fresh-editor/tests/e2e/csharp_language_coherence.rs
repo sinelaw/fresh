@@ -76,7 +76,7 @@ fn test_cs_file_detected_as_csharp() {
     let display = harness
         .editor()
         .active_state()
-        .language_display_name
+        .display_name
         .clone();
     assert_eq!(
         display, "C#",
