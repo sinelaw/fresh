@@ -73,11 +73,7 @@ fn test_cs_file_detected_as_csharp() {
     );
 
     // The display name should be "C#"
-    let display = harness
-        .editor()
-        .active_state()
-        .display_name
-        .clone();
+    let display = harness.editor().active_state().display_name.clone();
     assert_eq!(
         display, "C#",
         "Display name should be 'C#', got '{}'",

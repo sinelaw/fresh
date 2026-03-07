@@ -174,6 +174,8 @@ pub struct EditorState {
 
     /// Human-readable language display name (e.g., "Rust", "C#", "Plain Text").
     /// Shown in the status bar and Set Language prompt.
+    // TODO: Consider embedding `DetectedLanguage` directly in `EditorState`
+    // instead of copying its fields, to avoid duplication between the two structs.
     pub display_name: String,
 }
 
