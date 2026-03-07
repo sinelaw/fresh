@@ -70,8 +70,8 @@ editor.setStatus("Test i18n plugin loaded");
 
     // Semantic wait for plugin to load and initialize
     println!("Waiting for plugin load...");
-    let wait_result = harness.wait_for_async(
-        |h| {
+    harness
+        .wait_until(|h| {
             let status = h.get_status_bar();
             println!("Status bar: {:?}", status);
             if status.contains("Test i18n plugin loaded") {
@@ -84,20 +84,8 @@ editor.setStatus("Test i18n plugin loaded");
                 return true;
             }
             false
-        },
-        10000,
-    ); // 10s timeout for load
-
-    println!("wait_result: {:?}", wait_result);
-
-    if wait_result.is_err() {
-        println!("wait_for_async returned error: {:?}", wait_result.err());
-        panic!("Plugin failed to load (error)");
-    }
-    if !wait_result.unwrap() {
-        println!("STATUS BAR: {:?}", harness.get_status_bar());
-        panic!("Plugin failed to load or set status message within 10s");
-    }
+        })
+        .unwrap();
     println!("Plugin loaded successfully!");
 
     // Open command palette and check for English command

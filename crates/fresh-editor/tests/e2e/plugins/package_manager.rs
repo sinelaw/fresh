@@ -345,14 +345,11 @@ fn test_pkg_install_plugin_empty_registry() {
 
     // Wait for package manager UI to appear - may show syncing or empty state
     harness
-        .wait_for_async(
-            |h| {
-                let screen = h.screen_to_string();
-                // Package manager UI opened or showing empty/syncing state
-                screen.contains("Packages") || screen.contains("Syncing")
-            },
-            5000,
-        )
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Package manager UI opened or showing empty/syncing state
+            screen.contains("Packages") || screen.contains("Syncing")
+        })
         .unwrap();
 
     let screen = harness.screen_to_string();
@@ -483,17 +480,14 @@ fn test_pkg_install_plugin_auto_syncs_stale_registry() {
 
     // Wait for the package manager UI - with auto-sync it should pull the updated registry
     harness
-        .wait_for_async(
-            |h| {
-                let screen = h.screen_to_string();
-                // Package manager opened, may show syncing or already have plugin list
-                screen.contains("test-plugin")
-                    || screen.contains("Packages")
-                    || screen.contains("Syncing")
-                    || screen.contains("Updating")
-            },
-            10000,
-        )
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Package manager opened, may show syncing or already have plugin list
+            screen.contains("test-plugin")
+                || screen.contains("Packages")
+                || screen.contains("Syncing")
+                || screen.contains("Updating")
+        })
         .unwrap();
 
     let screen = harness.screen_to_string();
@@ -816,16 +810,13 @@ globalThis.beta_cmd = function() { editor.setStatus("Beta plugin works!"); };
 
     // Wait for installation to complete
     harness
-        .wait_for_async(
-            |h| {
-                let screen = h.screen_to_string();
-                screen.contains("Installed")
-                    || screen.contains("Failed")
-                    || screen.contains("already")
-                    || screen.contains("activated")
-            },
-            15000,
-        )
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Installed")
+                || screen.contains("Failed")
+                || screen.contains("already")
+                || screen.contains("activated")
+        })
         .unwrap();
 
     let screen = harness.screen_to_string();

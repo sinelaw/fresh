@@ -358,29 +358,15 @@ fn test_symlink_directory_shows_git_status_indicators() -> anyhow::Result<()> {
     harness.render()?;
 
     // Wait for modified.txt to appear inside the expanded symlink
-    let found_file = harness
-        .wait_for_async(
-            |h| {
-                let screen = h.screen_to_string();
-                // Look for modified.txt with M indicator on the same line
-                screen
-                    .lines()
-                    .any(|line| line.contains("modified.txt") && line.contains("M"))
-            },
-            3000,
-        )
-        .unwrap_or(false);
-
-    let final_screen = harness.screen_to_string();
-    println!("Screen after expanding symlink dir:\n{}", final_screen);
-
-    assert!(
-        found_file,
-        "Files inside expanded symlink directory should show git status indicators.\n\
-         Expected: modified.txt with M indicator.\n\
-         Screen:\n{}",
-        final_screen
-    );
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Look for modified.txt with M indicator on the same line
+            screen
+                .lines()
+                .any(|line| line.contains("modified.txt") && line.contains("M"))
+        })
+        .unwrap();
 
     Ok(())
 }

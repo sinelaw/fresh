@@ -39,16 +39,9 @@ fn markdown_source_harness(width: u16, height: u16) -> (EditorTestHarness, tempf
     // Wait for the plugin to be fully loaded.
     // The plugin registers the "markdown-source" mode at load time via defineMode.
     // process_async_and_render picks up the DefineMode command from the plugin thread.
-    let loaded = harness
-        .wait_for_async(
-            |h| h.editor().mode_registry().has_mode("markdown-source"),
-            10_000,
-        )
+    harness
+        .wait_until(|h| h.editor().mode_registry().has_mode("markdown-source"))
         .unwrap();
-    assert!(
-        loaded,
-        "markdown_source plugin did not load within 10 seconds"
-    );
 
     (harness, temp_dir)
 }
@@ -59,18 +52,9 @@ fn open_md_and_wait_for_mode(harness: &mut EditorTestHarness, path: &std::path::
     harness.render().unwrap();
 
     // Wait for the plugin's buffer_activated handler to set the mode
-    let activated = harness
-        .wait_for_async(
-            |h| h.editor().editor_mode() == Some("markdown-source".to_string()),
-            5_000,
-        )
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("markdown-source".to_string()))
         .unwrap();
-    assert!(
-        activated,
-        "markdown-source mode did not activate for {:?}. Current mode: {:?}",
-        path,
-        harness.editor().editor_mode(),
-    );
 }
 
 /// Helper: get buffer content, panicking if unavailable.
@@ -147,22 +131,12 @@ fn test_enter_continues_unordered_list() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    let ok = harness
-        .wait_for_async(
-            |h| {
-                h.get_buffer_content()
-                    .map_or(false, |c| c.contains("  - nested\n  - "))
-            },
-            5_000,
-        )
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.contains("  - nested\n  - "))
+        })
         .unwrap();
-
-    let content = buf(&harness);
-    assert!(
-        ok && content.contains("  - nested\n  - "),
-        "Expected newline with continued bullet '  - ' after '  - nested'. Got:\n{:?}",
-        content,
-    );
     harness.assert_no_plugin_errors();
 }
 
@@ -185,22 +159,12 @@ fn test_enter_continues_ordered_list() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    let ok = harness
-        .wait_for_async(
-            |h| {
-                h.get_buffer_content()
-                    .map_or(false, |c| c.contains("2. second\n3. "))
-            },
-            5_000,
-        )
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.contains("2. second\n3. "))
+        })
         .unwrap();
-
-    let content = buf(&harness);
-    assert!(
-        ok && content.contains("2. second\n3. "),
-        "Expected '3. ' after '2. second'. Got:\n{:?}",
-        content,
-    );
     harness.assert_no_plugin_errors();
 }
 
@@ -221,22 +185,12 @@ fn test_enter_continues_checkbox() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    let ok = harness
-        .wait_for_async(
-            |h| {
-                h.get_buffer_content()
-                    .map_or(false, |c| c.contains("- [x] done task\n- [ ] "))
-            },
-            5_000,
-        )
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.contains("- [x] done task\n- [ ] "))
+        })
         .unwrap();
-
-    let content = buf(&harness);
-    assert!(
-        ok && content.contains("- [x] done task\n- [ ] "),
-        "Expected unchecked checkbox continuation. Got:\n{:?}",
-        content,
-    );
     harness.assert_no_plugin_errors();
 }
 
@@ -259,22 +213,12 @@ fn test_enter_clears_empty_bullet() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    let ok = harness
-        .wait_for_async(
-            |h| {
-                h.get_buffer_content()
-                    .map_or(false, |c| c.contains("- item\n\n"))
-            },
-            5_000,
-        )
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.contains("- item\n\n"))
+        })
         .unwrap();
-
-    let content = buf(&harness);
-    assert!(
-        ok && content.contains("- item\n\n"),
-        "Expected empty bullet to be cleared. Got:\n{:?}",
-        content,
-    );
     harness.assert_no_plugin_errors();
 }
 
@@ -300,16 +244,12 @@ fn test_enter_no_indent_on_unindented_line() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    let ok = harness
-        .wait_for_async(
-            |h| {
-                h.get_buffer_content()
-                    .map_or(false, |c| c.contains("Hello world\n\n"))
-            },
-            5_000,
-        )
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.contains("Hello world\n\n"))
+        })
         .unwrap();
-    assert!(ok, "Enter should have been processed");
 
     let content = buf(&harness);
     let lines: Vec<&str> = content.lines().collect();
@@ -346,22 +286,12 @@ fn test_enter_deep_indent() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    let ok = harness
-        .wait_for_async(
-            |h| {
-                h.get_buffer_content()
-                    .map_or(false, |c| c.contains("deep indent text\n        "))
-            },
-            5_000,
-        )
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.contains("deep indent text\n        "))
+        })
         .unwrap();
-
-    let content = buf(&harness);
-    assert!(
-        ok && content.contains("deep indent text\n        "),
-        "Expected 8-space indent on new line. Got:\n{:?}",
-        content,
-    );
     harness.assert_no_plugin_errors();
 }
 
@@ -385,22 +315,12 @@ fn test_tab_inserts_spaces() {
     // Press Tab — should insert 4 spaces before "text"
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
 
-    let ok = harness
-        .wait_for_async(
-            |h| {
-                h.get_buffer_content()
-                    .map_or(false, |c| c.starts_with("    text"))
-            },
-            5_000,
-        )
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.starts_with("    text"))
+        })
         .unwrap();
-
-    let content = buf(&harness);
-    assert!(
-        ok && content.starts_with("    text"),
-        "Expected 4 spaces before 'text' after Tab. Got:\n{:?}",
-        content,
-    );
     harness.assert_no_plugin_errors();
 }
 
@@ -420,22 +340,12 @@ fn test_multiple_tabs() {
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
 
-    let ok = harness
-        .wait_for_async(
-            |h| {
-                h.get_buffer_content()
-                    .map_or(false, |c| c.starts_with("        x"))
-            },
-            5_000,
-        )
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.starts_with("        x"))
+        })
         .unwrap();
-
-    let content = buf(&harness);
-    assert!(
-        ok && content.starts_with("        x"),
-        "Expected 8 spaces (two tabs) before 'x'. Got:\n{:?}",
-        content,
-    );
     harness.assert_no_plugin_errors();
 }
 
@@ -459,22 +369,12 @@ fn test_tab_cycles_bullet_on_blank_item() {
     // Tab: * -> - (indented by 4)
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
 
-    let ok = harness
-        .wait_for_async(
-            |h| {
-                h.get_buffer_content()
-                    .map_or(false, |c| c.starts_with("    - "))
-            },
-            5_000,
-        )
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.starts_with("    - "))
+        })
         .unwrap();
-
-    let content = buf(&harness);
-    assert!(
-        ok && content.starts_with("    - "),
-        "Expected '    - ' after Tab on '* '. Got:\n{:?}",
-        content,
-    );
     harness.assert_no_plugin_errors();
 }
 
@@ -663,15 +563,9 @@ fn test_mode_deactivates_on_buffer_switch() {
     harness.render().unwrap();
 
     // Wait for mode to deactivate
-    let deactivated = harness
-        .wait_for_async(|h| h.editor().editor_mode().is_none(), 5_000)
+    harness
+        .wait_until(|h| h.editor().editor_mode().is_none())
         .unwrap();
-
-    assert!(
-        deactivated,
-        "markdown-source mode should deactivate when switching to a non-md file. Current mode: {:?}",
-        harness.editor().editor_mode(),
-    );
     harness.assert_no_plugin_errors();
 }
 
@@ -733,16 +627,12 @@ fn test_enter_then_type_workflow() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    let ok = harness
-        .wait_for_async(
-            |h| {
-                h.get_buffer_content()
-                    .map_or(false, |c| c.contains("- item\n- "))
-            },
-            5_000,
-        )
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .map_or(false, |c| c.contains("- item\n- "))
+        })
         .unwrap();
-    assert!(ok, "Enter should continue bullet");
 
     // Type continuation text
     harness.type_text("next").unwrap();

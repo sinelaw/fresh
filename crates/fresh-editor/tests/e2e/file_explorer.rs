@@ -544,51 +544,29 @@ fn test_file_explorer_git_change_indicator() {
     let mut harness = EditorTestHarness::with_working_dir(120, 40, repo.path.clone()).unwrap();
 
     harness.editor_mut().toggle_file_explorer();
-    let explorer_visible = harness
-        .wait_for_async(|h| h.screen_to_string().contains("File Explorer"), 2000)
-        .unwrap();
-    assert!(
-        explorer_visible,
-        "Expected File Explorer to appear.\nScreen:\n{}",
-        harness.screen_to_string()
-    );
-
-    let found_file = harness
-        .wait_for_async(
-            |h| {
-                let screen = h.screen_to_string();
-                // Status indicator is now right-aligned, so look for both on same line
-                screen
-                    .lines()
-                    .any(|line| line.contains("changed.txt") && line.contains("M"))
-            },
-            2000,
-        )
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
         .unwrap();
 
-    assert!(
-        found_file,
-        "Expected git change indicator for changed.txt.\nScreen:\n{}",
-        harness.screen_to_string()
-    );
-
-    let found_folder = harness
-        .wait_for_async(
-            |h| {
-                let screen = h.screen_to_string();
-                screen
-                    .lines()
-                    .any(|line| line.contains("subdir") && line.contains("●"))
-            },
-            2000,
-        )
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Status indicator is now right-aligned, so look for both on same line
+            screen
+                .lines()
+                .any(|line| line.contains("changed.txt") && line.contains("M"))
+        })
         .unwrap();
 
-    assert!(
-        found_folder,
-        "Expected bubbled git indicator for subdir.\nScreen:\n{}",
-        harness.screen_to_string()
-    );
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen
+                .lines()
+                .any(|line| line.contains("subdir") && line.contains("●"))
+        })
+        .unwrap();
+
 }
 
 /// Test that file_explorer_new_file can be called (smoke test)
