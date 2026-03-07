@@ -13,9 +13,67 @@ use crossterm::execute;
 use std::io::{stdout, Write};
 use std::sync::Mutex;
 
-/// Global clipboard holder to maintain X11 clipboard ownership for the application lifetime.
-/// On X11, the clipboard owner must stay alive to respond to paste requests from other apps.
+/// Global clipboard holder to maintain X11/Wayland clipboard ownership.
+///
+/// On X11, the clipboard owner must stay alive to respond to paste requests.
+/// On Wayland, the data-source is destroyed when dropped.
+/// This static keeps the handle alive for the process lifetime.
 static SYSTEM_CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
+
+/// Copy text to the system clipboard using OSC 52 and/or arboard.
+///
+/// This is the shared implementation used by both direct-mode clipboard
+/// operations and the client relay in session mode. It:
+/// - Sends OSC 52 escape sequences to stdout (if `use_osc52`)
+/// - Sets arboard clipboard via a persistent static handle (if `use_system_clipboard`)
+///
+/// The persistent handle is critical: a temporary arboard::Clipboard would take
+/// selection ownership from the terminal (clobbering OSC 52) then destroy the
+/// selection/data-source on drop, leaving the clipboard empty.
+pub fn copy_to_system_clipboard(text: &str, use_osc52: bool, use_system_clipboard: bool) {
+    if use_osc52 {
+        if let Err(e) = execute!(stdout(), CopyToClipboard::to_clipboard_from(text)) {
+            tracing::debug!("OSC 52 clipboard copy failed: {}", e);
+        }
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = stdout().flush();
+    }
+
+    if use_system_clipboard {
+        set_system_clipboard_text(text);
+    }
+}
+
+/// Set text on the arboard system clipboard, creating it if needed.
+fn set_system_clipboard_text(text: &str) {
+    if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
+        if guard.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(cb) => *guard = Some(cb),
+                Err(e) => {
+                    tracing::debug!("arboard clipboard init failed: {}", e);
+                    return;
+                }
+            }
+        }
+        if let Some(clipboard) = guard.as_mut() {
+            if let Err(e) = clipboard.set_text(text) {
+                tracing::debug!("arboard copy failed: {}, recreating clipboard", e);
+                // If set_text fails, try recreating the clipboard
+                drop(guard);
+                if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
+                    if let Ok(new_clipboard) = arboard::Clipboard::new() {
+                        *guard = Some(new_clipboard);
+                        if let Some(cb) = guard.as_mut() {
+                            #[allow(clippy::let_underscore_must_use)]
+                            let _ = cb.set_text(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Pending clipboard data to deliver to clients in session mode
 #[derive(Debug, Clone)]
@@ -143,56 +201,7 @@ impl Clipboard {
             return;
         }
 
-        // Try OSC 52 first (works in modern terminals)
-        // Note: This doesn't "fail" in a detectable way - it just sends escape sequences
-        // that the terminal may or may not handle
-        if self.use_osc52 {
-            let osc52_result = execute!(stdout(), CopyToClipboard::to_clipboard_from(&text));
-            if let Err(e) = &osc52_result {
-                tracing::debug!("Crossterm OSC 52 clipboard copy failed: {}", e);
-            }
-            // Best-effort flush — if stdout is broken, we can't recover.
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = stdout().flush();
-        }
-
-        // Also try arboard (works via X11/Wayland in terminals without OSC 52 support)
-        // This provides coverage for Gnome Console, XFCE Terminal, and similar
-        //
-        // Important: On X11, the clipboard owner must stay alive to respond to paste requests.
-        // We store the clipboard in a static so it lives for the application lifetime.
-        if self.use_system_clipboard {
-            if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
-                // Create clipboard if it doesn't exist yet
-                if guard.is_none() {
-                    match arboard::Clipboard::new() {
-                        Ok(cb) => *guard = Some(cb),
-                        Err(e) => {
-                            tracing::debug!("arboard clipboard init failed: {}", e);
-                        }
-                    }
-                }
-
-                // Try to set text on the clipboard
-                if let Some(clipboard) = guard.as_mut() {
-                    if let Err(e) = clipboard.set_text(&text) {
-                        tracing::debug!("arboard copy failed: {}, recreating clipboard", e);
-                        // If set_text fails, try recreating the clipboard
-                        drop(guard);
-                        if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
-                            if let Ok(new_clipboard) = arboard::Clipboard::new() {
-                                *guard = Some(new_clipboard);
-                                if let Some(cb) = guard.as_mut() {
-                                    // Best-effort retry; first attempt already failed.
-                                    #[allow(clippy::let_underscore_must_use)]
-                                    let _ = cb.set_text(&text);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        copy_to_system_clipboard(&text, self.use_osc52, self.use_system_clipboard);
     }
 
     /// Get text from clipboard, preferring system clipboard

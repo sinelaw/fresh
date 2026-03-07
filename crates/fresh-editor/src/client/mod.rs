@@ -139,37 +139,12 @@ pub fn run_client_relay(
     return relay_windows::relay_loop(&mut conn);
 }
 
-/// Set the system clipboard on the client side
+/// Set the system clipboard on the client side.
 ///
-/// Respects the server's clipboard configuration:
-/// - `use_osc52`: send OSC 52 escape sequences to the terminal
-/// - `use_system_clipboard`: use native clipboard via arboard (X11/Wayland/macOS)
+/// Delegates to the shared clipboard implementation which uses a persistent
+/// arboard handle (critical on X11/Wayland where the owner must stay alive).
 fn set_client_clipboard(text: &str, use_osc52: bool, use_system_clipboard: bool) {
-    use std::io::Write;
-
-    if use_osc52 {
-        use crossterm::clipboard::CopyToClipboard;
-        use crossterm::execute;
-
-        if let Err(e) = execute!(io::stdout(), CopyToClipboard::to_clipboard_from(text)) {
-            tracing::debug!("Client OSC 52 clipboard copy failed: {}", e);
-        }
-        #[allow(clippy::let_underscore_must_use)]
-        let _ = io::stdout().flush();
-    }
-
-    if use_system_clipboard {
-        match arboard::Clipboard::new() {
-            Ok(mut clipboard) => {
-                if let Err(e) = clipboard.set_text(text) {
-                    tracing::debug!("Client arboard clipboard copy failed: {}", e);
-                }
-            }
-            Err(e) => {
-                tracing::debug!("Client arboard clipboard init failed: {}", e);
-            }
-        }
-    }
+    crate::services::clipboard::copy_to_system_clipboard(text, use_osc52, use_system_clipboard);
 }
 
 /// Get current terminal size
