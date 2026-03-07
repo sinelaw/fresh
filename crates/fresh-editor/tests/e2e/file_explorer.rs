@@ -566,7 +566,6 @@ fn test_file_explorer_git_change_indicator() {
                 .any(|line| line.contains("subdir") && line.contains("●"))
         })
         .unwrap();
-
 }
 
 /// Test that file_explorer_new_file can be called (smoke test)

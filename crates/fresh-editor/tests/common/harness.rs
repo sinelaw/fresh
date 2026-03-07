@@ -1930,28 +1930,6 @@ impl EditorTestHarness {
         self.render()?;
         Ok(())
     }
-
-    /// Wait for async operations with timeout
-    /// Repeatedly processes async messages until condition is met or timeout
-    pub fn wait_for_async<F>(&mut self, mut condition: F, timeout_ms: u64) -> anyhow::Result<bool>
-    where
-        F: FnMut(&Self) -> bool,
-    {
-        let start = std::time::Instant::now();
-        let timeout = std::time::Duration::from_millis(timeout_ms);
-
-        tracing::info!("waiting...");
-        while start.elapsed() < timeout {
-            self.process_async_and_render()?;
-            if condition(self) {
-                return Ok(true);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-
-        Ok(false)
-    }
-
     /// Wait indefinitely for async operations until condition is met
     /// Repeatedly processes async messages until condition is met (no timeout)
     /// Use this for semantic events that must eventually occur

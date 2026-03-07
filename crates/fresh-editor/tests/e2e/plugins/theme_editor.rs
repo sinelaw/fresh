@@ -1292,10 +1292,12 @@ fn test_color_suggestions_show_hex_format() {
     assert!(prompt_opened, "Color prompt should appear");
 
     // Wait for the prompt to fully render (screen stops changing)
-    harness.wait_until_stable(|h| {
-        // Condition: prompt is visible
-        h.screen_to_string().contains("#RRGGBB")
-    }).unwrap();
+    harness
+        .wait_until_stable(|h| {
+            // Condition: prompt is visible
+            h.screen_to_string().contains("#RRGGBB")
+        })
+        .unwrap();
 
     let screen = harness.screen_to_string();
     // Check whether suggestions appeared
