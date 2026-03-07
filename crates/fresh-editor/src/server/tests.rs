@@ -1199,15 +1199,6 @@ mod integration_tests {
         teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
     }
 
-    /// E2E test: Copy in session mode sends SetClipboard control message to client
-    ///
-    /// Verifies the full clipboard path in client-server mode:
-    /// 1. Editor runs in session mode (clipboard.session_mode = true)
-    /// 2. User types text, selects it, and copies (Ctrl+A, Ctrl+C)
-    /// 3. Clipboard queues a PendingClipboard instead of writing to stdout
-    /// 4. Server main loop picks it up and broadcasts SetClipboard control message
-    /// 5. Client receives SetClipboard with the correct text and config flags
-    #[test]
     /// Poll the control socket (non-blocking) for newline-delimited JSON messages.
     /// Appends to `ctrl_buf` across calls to handle partial reads.
     /// Returns parsed lines (may be empty if no complete line is available yet).
@@ -1261,6 +1252,15 @@ mod integration_tests {
         }
     }
 
+    /// E2E test: Copy in session mode sends SetClipboard control message to client
+    ///
+    /// Verifies the full clipboard path in client-server mode:
+    /// 1. Editor runs in session mode (clipboard.session_mode = true)
+    /// 2. User types text, selects it, and copies (Ctrl+A, Ctrl+C)
+    /// 3. Clipboard queues a PendingClipboard instead of writing to stdout
+    /// 4. Server main loop picks it up and broadcasts SetClipboard control message
+    /// 5. Client receives SetClipboard with the correct text and config flags
+    #[test]
     fn test_copy_sends_set_clipboard_control_message() {
         let (conn, mut output, shutdown_handle, server_handle, socket_paths, temp_dir) =
             setup_editor_server_e2e("clipboard-ctrl");
