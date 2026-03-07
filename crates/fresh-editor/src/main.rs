@@ -2876,8 +2876,107 @@ fn run_event_loop(
     )
 }
 
-/// Main event loop (non-Linux version without GPM)
-#[cfg(not(target_os = "linux"))]
+/// Main event loop (Windows version with VT input for bracketed paste support)
+#[cfg(windows)]
+fn run_event_loop(
+    editor: &mut Editor,
+    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    workspace_enabled: bool,
+    key_translator: &KeyTranslator,
+) -> AnyhowResult<()> {
+    use fresh::client::win_vt_input::{self, VtInputEvent};
+    use fresh::server::input_parser::InputParser;
+
+    // Try to enable VT input mode for bracketed paste support.
+    // If it fails (e.g., legacy Windows), fall back to crossterm.
+    let vt_mode = win_vt_input::enable_vt_input();
+    if let Err(ref e) = vt_mode {
+        tracing::warn!("VT input not available ({}), using crossterm fallback", e);
+        return run_event_loop_common(
+            editor,
+            terminal,
+            workspace_enabled,
+            key_translator,
+            |timeout| {
+                if event_poll(timeout)? {
+                    Ok(Some(event_read()?))
+                } else {
+                    Ok(None)
+                }
+            },
+        );
+    }
+    let old_console_mode = vt_mode.unwrap();
+
+    let mut input_parser = InputParser::new();
+    let mut event_buffer: std::collections::VecDeque<CrosstermEvent> =
+        std::collections::VecDeque::new();
+
+    let result = run_event_loop_common(
+        editor,
+        terminal,
+        workspace_enabled,
+        key_translator,
+        |timeout| -> AnyhowResult<Option<CrosstermEvent>> {
+            // Return buffered events first
+            if let Some(event) = event_buffer.pop_front() {
+                return Ok(Some(event));
+            }
+
+            // Check for timed-out escape sequences
+            let flushed = input_parser.flush_timeout();
+            if !flushed.is_empty() {
+                for event in flushed {
+                    event_buffer.push_back(event);
+                }
+                return Ok(event_buffer.pop_front());
+            }
+
+            // Wait for input with timeout
+            if !win_vt_input::poll_vt_input(timeout)? {
+                return Ok(None);
+            }
+
+            // Read VT input events
+            let vt_events = win_vt_input::read_vt_input()?;
+            for vt_event in vt_events {
+                match vt_event {
+                    VtInputEvent::VtBytes(bytes) => {
+                        // Parse raw VT bytes into crossterm events
+                        let parsed = input_parser.parse(&bytes);
+                        for event in parsed {
+                            event_buffer.push_back(event);
+                        }
+                    }
+                    VtInputEvent::Resize => {
+                        // Query actual terminal size
+                        if let Ok((cols, rows)) = crossterm::terminal::size() {
+                            event_buffer.push_back(CrosstermEvent::Resize(cols, rows));
+                        }
+                    }
+                    VtInputEvent::FocusGained => {
+                        event_buffer.push_back(CrosstermEvent::FocusGained);
+                    }
+                    VtInputEvent::FocusLost => {
+                        event_buffer.push_back(CrosstermEvent::FocusLost);
+                    }
+                }
+            }
+
+            Ok(event_buffer.pop_front())
+        },
+    );
+
+    // Restore console mode
+    if let Err(e) = win_vt_input::restore_console_mode(old_console_mode) {
+        tracing::warn!("Failed to restore console mode: {}", e);
+    }
+
+    result
+}
+
+/// Main event loop (non-Linux, non-Windows version — e.g., macOS)
+#[cfg(not(any(target_os = "linux", windows)))]
 fn run_event_loop(
     editor: &mut Editor,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
