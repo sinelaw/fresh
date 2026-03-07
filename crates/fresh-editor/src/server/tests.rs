@@ -1198,4 +1198,122 @@ mod integration_tests {
 
         teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
     }
+
+    /// E2E test: Copy in session mode sends SetClipboard control message to client
+    ///
+    /// Verifies the full clipboard path in client-server mode:
+    /// 1. Editor runs in session mode (clipboard.session_mode = true)
+    /// 2. User types text, selects it, and copies (Ctrl+A, Ctrl+C)
+    /// 3. Clipboard queues a PendingClipboard instead of writing to stdout
+    /// 4. Server main loop picks it up and broadcasts SetClipboard control message
+    /// 5. Client receives SetClipboard with the correct text and config flags
+    #[test]
+    fn test_copy_sends_set_clipboard_control_message() {
+        let (conn, mut output, shutdown_handle, server_handle, socket_paths, temp_dir) =
+            setup_editor_server_e2e("clipboard-ctrl");
+
+        // Type some text
+        conn.write_data(b"CLIPTEST").unwrap();
+        read_until_contains(&conn, &mut output, "CLIPTEST");
+
+        // Spawn a thread to read control messages (read_control is blocking)
+        let control_clone = conn.control.clone();
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel::<String>();
+        let ctrl_reader = thread::spawn(move || {
+            // Read control messages until channel is dropped or EOF
+            loop {
+                // Set blocking mode for reads
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = control_clone.set_nonblocking(false);
+                let mut reader = std::io::BufReader::new(&control_clone);
+                let mut line = String::new();
+                match std::io::BufRead::read_line(&mut reader, &mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        if ctrl_tx.send(line).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        // Select all (Ctrl+A) then copy (Ctrl+C)
+        // Ctrl+A = 0x01, Ctrl+C = 0x03
+        conn.write_data(&[0x01]).unwrap(); // Select all
+                                           // Brief sync: wait for selection to be applied by doing a ping/pong round-trip
+        conn.write_control(&serde_json::to_string(&ClientControl::Ping).unwrap())
+            .unwrap();
+
+        // Drain pong and any other control messages until we get the pong
+        let mut got_pong = false;
+        while !got_pong {
+            if let Ok(msg) = ctrl_rx.recv_timeout(Duration::from_secs(5)) {
+                if let Ok(ctrl) = serde_json::from_str::<ServerControl>(&msg) {
+                    if matches!(ctrl, ServerControl::Pong) {
+                        got_pong = true;
+                    }
+                }
+            } else {
+                panic!("Timed out waiting for Pong after Ctrl+A");
+            }
+        }
+
+        // Now copy
+        conn.write_data(&[0x03]).unwrap(); // Ctrl+C = copy
+
+        // Wait for SetClipboard control message
+        let mut clipboard_text = None;
+        let mut clipboard_osc52 = None;
+        let mut clipboard_sys = None;
+        loop {
+            match ctrl_rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(msg) => {
+                    if let Ok(ctrl) = serde_json::from_str::<ServerControl>(&msg) {
+                        match ctrl {
+                            ServerControl::SetClipboard {
+                                text,
+                                use_osc52,
+                                use_system_clipboard,
+                            } => {
+                                clipboard_text = Some(text);
+                                clipboard_osc52 = Some(use_osc52);
+                                clipboard_sys = Some(use_system_clipboard);
+                                break;
+                            }
+                            _ => {
+                                // Ignore other control messages (e.g. SetTitle)
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    panic!("Timed out waiting for SetClipboard control message after Ctrl+C copy");
+                }
+            }
+        }
+
+        // Verify the clipboard content matches what was typed
+        let text = clipboard_text.expect("Should have received SetClipboard");
+        assert_eq!(
+            text, "CLIPTEST",
+            "SetClipboard should contain the copied text"
+        );
+        // Default config has both methods enabled
+        assert!(
+            clipboard_osc52.unwrap(),
+            "use_osc52 should be true by default"
+        );
+        assert!(
+            clipboard_sys.unwrap(),
+            "use_system_clipboard should be true by default"
+        );
+
+        // Clean up the control reader thread
+        drop(ctrl_rx);
+        drop(ctrl_reader);
+
+        teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
+    }
 }
