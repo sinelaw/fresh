@@ -145,6 +145,9 @@ struct ApiMethod {
     return_type: String,
     /// Documentation from doc comments
     doc: String,
+    /// Raw TypeScript signature override (from `ts_raw = "..."`)
+    /// When set, replaces the entire auto-generated signature line.
+    ts_raw: Option<String>,
 }
 
 /// Parsed parameter information
@@ -558,12 +561,16 @@ fn parse_method(method: &ImplItemFn) -> Option<ApiMethod> {
         }
     };
 
+    // Check for raw TS signature override
+    let ts_raw = get_plugin_api_value(&method.attrs, "ts_raw");
+
     Some(ApiMethod {
         js_name,
         kind,
         params,
         return_type,
         doc,
+        ts_raw,
     })
 }
 
@@ -584,20 +591,25 @@ fn generate_ts_method(method: &ApiMethod) -> String {
         lines.push("   */".to_string());
     }
 
-    // Method signature
-    let params: String = method
-        .params
-        .iter()
-        .map(ParamInfo::to_typescript)
-        .collect::<Vec<_>>()
-        .join(", ");
+    // Use raw TS override if provided, otherwise auto-generate
+    if let Some(raw) = &method.ts_raw {
+        lines.push(format!("  {};", raw));
+    } else {
+        // Method signature
+        let params: String = method
+            .params
+            .iter()
+            .map(ParamInfo::to_typescript)
+            .collect::<Vec<_>>()
+            .join(", ");
 
-    let return_type = method.kind.wrap_return_type(&method.return_type);
+        let return_type = method.kind.wrap_return_type(&method.return_type);
 
-    lines.push(format!(
-        "  {}({}): {};",
-        method.js_name, params, return_type
-    ));
+        lines.push(format!(
+            "  {}({}): {};",
+            method.js_name, params, return_type
+        ));
+    }
 
     lines.join("\n")
 }
@@ -913,6 +925,7 @@ pub fn plugin_api_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `async_thenable` - Method returns `ProcessHandle<T>` (cancellable)
 /// - `ts_type = "..."` - Custom TypeScript type for a parameter
 /// - `ts_return = "..."` - Custom TypeScript return type
+/// - `ts_raw = "..."` - Raw TypeScript signature (replaces auto-generated signature)
 ///
 /// # Examples
 ///

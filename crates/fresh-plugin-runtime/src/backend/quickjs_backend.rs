@@ -2325,6 +2325,7 @@ impl JsEditorApi {
         parent: Option<String>,
         bindings_arr: Vec<Vec<String>>,
         read_only: rquickjs::function::Opt<bool>,
+        allow_text_input: rquickjs::function::Opt<bool>,
     ) -> bool {
         let bindings: Vec<(String, String)> = bindings_arr
             .into_iter()
@@ -2352,12 +2353,27 @@ impl JsEditorApi {
             }
         }
 
+        // If allow_text_input is set, register a wildcard handler for text input
+        // so the plugin can receive arbitrary character input
+        let allow_text = allow_text_input.0.unwrap_or(false);
+        if allow_text {
+            let mut registered = self.registered_actions.borrow_mut();
+            registered.insert(
+                "mode_text_input".to_string(),
+                PluginHandler {
+                    plugin_name: self.plugin_name.clone(),
+                    handler_name: "mode_text_input".to_string(),
+                },
+            );
+        }
+
         self.command_sender
             .send(PluginCommand::DefineMode {
                 name,
                 parent,
                 bindings,
                 read_only: read_only.0.unwrap_or(false),
+                allow_text_input: allow_text,
             })
             .is_ok()
     }
@@ -3147,6 +3163,112 @@ impl JsEditorApi {
         id
     }
 
+    /// Project-wide grep search (async)
+    /// Searches all files in the project, respecting .gitignore.
+    /// Open buffers with dirty edits are searched in-memory.
+    #[plugin_api(async_promise, js_name = "grepProject", ts_return = "GrepMatch[]")]
+    #[qjs(rename = "_grepProjectStart")]
+    pub fn grep_project_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        pattern: String,
+        fixed_string: Option<bool>,
+        case_sensitive: Option<bool>,
+        max_results: Option<u32>,
+        whole_words: Option<bool>,
+    ) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        let _ = self.command_sender.send(PluginCommand::GrepProject {
+            pattern,
+            fixed_string: fixed_string.unwrap_or(true),
+            case_sensitive: case_sensitive.unwrap_or(true),
+            max_results: max_results.unwrap_or(200) as usize,
+            whole_words: whole_words.unwrap_or(false),
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
+    /// Streaming project-wide grep search
+    /// Returns a thenable with a searchId property. The progressCallback is called
+    /// with batches of matches as they are found.
+    #[plugin_api(js_name = "grepProjectStreaming", ts_raw = "grepProjectStreaming(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean }, progressCallback?: (matches: GrepMatch[], done: boolean) => void): PromiseLike<GrepMatch[]> & { searchId: number }")]
+    #[qjs(rename = "_grepProjectStreamingStart")]
+    pub fn grep_project_streaming_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        pattern: String,
+        fixed_string: bool,
+        case_sensitive: bool,
+        max_results: u32,
+        whole_words: bool,
+    ) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        let _ = self
+            .command_sender
+            .send(PluginCommand::GrepProjectStreaming {
+                pattern,
+                fixed_string,
+                case_sensitive,
+                max_results: max_results as usize,
+                whole_words,
+                search_id: id,
+                callback_id: JsCallbackId::new(id),
+            });
+        id
+    }
+
+    /// Replace matches in a file's buffer (async)
+    /// Opens the file if not already in a buffer, applies edits via the buffer model,
+    /// and saves. All edits are grouped as a single undo action.
+    #[plugin_api(async_promise, js_name = "replaceInFile", ts_return = "ReplaceResult")]
+    #[qjs(rename = "_replaceInFileStart")]
+    pub fn replace_in_file_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        file_path: String,
+        matches: Vec<Vec<u32>>,
+        replacement: String,
+    ) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        // Convert [[offset, length], ...] to Vec<(usize, usize)>
+        let match_pairs: Vec<(usize, usize)> = matches
+            .iter()
+            .map(|m| (m[0] as usize, m[1] as usize))
+            .collect();
+        let _ = self.command_sender.send(PluginCommand::ReplaceInBuffer {
+            file_path: PathBuf::from(file_path),
+            matches: match_pairs,
+            replacement,
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
     /// Send LSP request (async, returns request_id)
     #[plugin_api(async_promise, js_name = "sendLspRequest", ts_return = "unknown")]
     #[qjs(rename = "_sendLspRequestStart")]
@@ -3794,6 +3916,20 @@ impl QuickJsBackend {
                     }
                 };
 
+                // Streaming callbacks: called multiple times with partial results
+                globalThis._streamingCallbacks = new Map();
+
+                // Called from Rust with partial data. When done=true, cleans up.
+                globalThis._callStreamingCallback = function(callbackId, result, done) {
+                    const cb = globalThis._streamingCallbacks.get(callbackId);
+                    if (cb) {
+                        cb(result, done);
+                        if (done) {
+                            globalThis._streamingCallbacks.delete(callbackId);
+                        }
+                    }
+                };
+
                 // Generic async wrapper decorator
                 // Wraps a function that returns a callbackId into a promise-returning function
                 // Usage: editor.foo = _wrapAsync("_fooStart", "foo");
@@ -3872,6 +4008,47 @@ impl QuickJsBackend {
                 editor.getLineEndPosition = _wrapAsync("_getLineEndPositionStart", "getLineEndPosition");
                 editor.createTerminal = _wrapAsync("_createTerminalStart", "createTerminal");
                 editor.reloadGrammars = _wrapAsync("_reloadGrammarsStart", "reloadGrammars");
+                editor.grepProject = _wrapAsync("_grepProjectStart", "grepProject");
+                editor.replaceInFile = _wrapAsync("_replaceInFileStart", "replaceInFile");
+
+                // Streaming grep: takes a progress callback, returns a thenable with searchId
+                editor.grepProjectStreaming = function(pattern, opts, progressCallback) {
+                    opts = opts || {};
+                    const fixedString = opts.fixedString !== undefined ? opts.fixedString : true;
+                    const caseSensitive = opts.caseSensitive !== undefined ? opts.caseSensitive : true;
+                    const maxResults = opts.maxResults || 10000;
+                    const wholeWords = opts.wholeWords || false;
+
+                    const searchId = editor._grepProjectStreamingStart(
+                        pattern, fixedString, caseSensitive, maxResults, wholeWords
+                    );
+
+                    // Register streaming callback
+                    if (progressCallback) {
+                        globalThis._streamingCallbacks.set(searchId, progressCallback);
+                    }
+
+                    // Create completion promise (resolved via _resolveCallback when search finishes)
+                    const resultPromise = new Promise(function(resolve, reject) {
+                        globalThis._pendingCallbacks.set(searchId, {
+                            resolve: function(result) {
+                                globalThis._streamingCallbacks.delete(searchId);
+                                resolve(result);
+                            },
+                            reject: function(err) {
+                                globalThis._streamingCallbacks.delete(searchId);
+                                reject(err);
+                            }
+                        });
+                    });
+
+                    return {
+                        searchId: searchId,
+                        get result() { return resultPromise; },
+                        then: function(f, r) { return resultPromise.then(f, r); },
+                        catch: function(r) { return resultPromise.catch(r); }
+                    };
+                };
 
                 // Wrapper for deleteTheme - wraps sync function in Promise
                 editor.deleteTheme = function(name) {
@@ -4247,10 +4424,23 @@ impl QuickJsBackend {
     /// This is useful when the calling thread needs to continue processing
     /// ResolveCallback requests that the action may be waiting for.
     pub fn start_action(&mut self, action_name: &str) -> Result<()> {
-        let pair = self.registered_actions.borrow().get(action_name).cloned();
+        // Handle mode_text_input:<char> — route to the plugin that registered
+        // "mode_text_input" and pass the character as an argument.
+        let (lookup_name, text_input_char) =
+            if let Some(ch) = action_name.strip_prefix("mode_text_input:") {
+                ("mode_text_input", Some(ch.to_string()))
+            } else {
+                (action_name, None)
+            };
+
+        let pair = self
+            .registered_actions
+            .borrow()
+            .get(lookup_name)
+            .cloned();
         let (plugin_name, function_name) = match pair {
             Some(handler) => (handler.plugin_name, handler.handler_name),
-            None => ("main".to_string(), action_name.to_string()),
+            None => ("main".to_string(), lookup_name.to_string()),
         };
 
         let plugin_contexts = self.plugin_contexts.borrow();
@@ -4269,6 +4459,14 @@ impl QuickJsBackend {
         );
 
         // Just call the function - don't try to await or drive Promises
+        // For mode_text_input, pass the character as a JSON-encoded argument
+        let call_args = if let Some(ref ch) = text_input_char {
+            let escaped = ch.replace('\\', "\\\\").replace('\"', "\\\"");
+            format!("({{text:\"{}\"}})", escaped)
+        } else {
+            "()".to_string()
+        };
+
         let code = format!(
             r#"
             (function() {{
@@ -4276,7 +4474,7 @@ impl QuickJsBackend {
                 try {{
                     if (typeof globalThis.{fn} === 'function') {{
                         console.log('[JS] start_action: {fn} is a function, invoking...');
-                        globalThis.{fn}();
+                        globalThis.{fn}{args};
                         console.log('[JS] start_action: {fn} invoked (may be async)');
                     }} else {{
                         console.error('[JS] Action {action} is not defined as a global function');
@@ -4287,7 +4485,8 @@ impl QuickJsBackend {
             }})();
             "#,
             fn = function_name,
-            action = action_name
+            action = action_name,
+            args = call_args
         );
 
         tracing::info!("start_action: evaluating JS code");
@@ -4552,6 +4751,92 @@ impl QuickJsBackend {
             run_pending_jobs_checked(&ctx, &format!("reject_callback {}", id));
         });
     }
+
+    /// Call a streaming callback with partial data.
+    /// Unlike resolve_callback, this does NOT remove the callback from the context map.
+    /// When `done` is true, the JS side cleans up the streaming callback.
+    pub fn call_streaming_callback(
+        &mut self,
+        callback_id: fresh_core::api::JsCallbackId,
+        result_json: &str,
+        done: bool,
+    ) {
+        let id = callback_id.as_u64();
+
+        // Find the plugin name WITHOUT removing it (unlike resolve_callback)
+        let plugin_name = {
+            let contexts = self.callback_contexts.borrow();
+            contexts.get(&id).cloned()
+        };
+
+        let Some(name) = plugin_name else {
+            tracing::warn!(
+                "call_streaming_callback: No plugin found for callback_id={}",
+                id
+            );
+            return;
+        };
+
+        // If done, remove the callback context entry
+        if done {
+            self.callback_contexts.borrow_mut().remove(&id);
+        }
+
+        let plugin_contexts = self.plugin_contexts.borrow();
+        let Some(context) = plugin_contexts.get(&name) else {
+            tracing::warn!("call_streaming_callback: Context lost for plugin {}", name);
+            return;
+        };
+
+        context.with(|ctx| {
+            let json_value: serde_json::Value = match serde_json::from_str(result_json) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(
+                        "call_streaming_callback: failed to parse JSON for callback_id={}: {}",
+                        id,
+                        e
+                    );
+                    return;
+                }
+            };
+
+            let js_value = match rquickjs_serde::to_value(ctx.clone(), &json_value) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(
+                        "call_streaming_callback: failed to convert to JS value for callback_id={}: {}",
+                        id,
+                        e
+                    );
+                    return;
+                }
+            };
+
+            let globals = ctx.globals();
+            let call_fn: rquickjs::Function = match globals.get("_callStreamingCallback") {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!(
+                        "call_streaming_callback: _callStreamingCallback not found for callback_id={}: {:?}",
+                        id,
+                        e
+                    );
+                    return;
+                }
+            };
+
+            if let Err(e) = call_fn.call::<_, ()>((id, js_value, done)) {
+                log_js_error(
+                    &ctx,
+                    e,
+                    &format!("calling streaming callback {}", id),
+                );
+            }
+
+            run_pending_jobs_checked(&ctx, &format!("call_streaming_callback {}", id));
+        });
+    }
 }
 
 #[cfg(test)]
@@ -4741,6 +5026,7 @@ mod tests {
                 parent,
                 bindings,
                 read_only,
+                allow_text_input,
             } => {
                 assert_eq!(name, "test-mode");
                 assert!(parent.is_none());
@@ -4748,6 +5034,7 @@ mod tests {
                 assert_eq!(bindings[0], ("a".to_string(), "action_a".to_string()));
                 assert_eq!(bindings[1], ("b".to_string(), "action_b".to_string()));
                 assert!(!read_only);
+                assert!(!allow_text_input);
             }
             _ => panic!("Expected DefineMode, got {:?}", cmd),
         }

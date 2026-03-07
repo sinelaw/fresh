@@ -8,7 +8,8 @@ use crate::view::overlay::{OverlayHandle, OverlayNamespace};
 use crate::view::split::SplitViewState;
 use anyhow::Result as AnyhowResult;
 use fresh_core::api::{
-    LayoutHints, MenuPosition, OverlayOptions, PluginResponse, ViewTransformPayload,
+    GrepMatch, JsCallbackId, LayoutHints, MenuPosition, OverlayOptions, PluginResponse,
+    ReplaceResult, ViewTransformPayload,
 };
 
 use super::Editor;
@@ -1343,11 +1344,14 @@ impl Editor {
         parent: Option<String>,
         bindings: Vec<(String, String)>,
         read_only: bool,
+        allow_text_input: bool,
     ) {
         use super::parse_key_string;
         use crate::input::buffer_mode::BufferMode;
 
-        let mut mode = BufferMode::new(name.clone()).with_read_only(read_only);
+        let mut mode = BufferMode::new(name.clone())
+            .with_read_only(read_only)
+            .with_allow_text_input(allow_text_input);
 
         if let Some(parent_name) = parent {
             mode = mode.with_parent(parent_name);
@@ -1626,5 +1630,710 @@ impl Editor {
                 })
                 .ok();
         }
+    }
+
+    // ==================== Project Grep ====================
+
+    /// Handle GrepProject command: walk files, search buffers/disk, collect matches
+    pub(super) fn handle_grep_project(
+        &mut self,
+        pattern: String,
+        fixed_string: bool,
+        case_sensitive: bool,
+        max_results: usize,
+        whole_words: bool,
+        callback_id: JsCallbackId,
+    ) {
+        if pattern.is_empty() {
+            let json = serde_json::to_string(&Vec::<GrepMatch>::new())
+                .unwrap_or_else(|_| "[]".to_string());
+            self.plugin_manager.resolve_callback(callback_id, json);
+            return;
+        }
+
+        // Build case-insensitive pattern bytes if needed
+        let pattern_bytes = pattern.as_bytes().to_vec();
+
+        // Compile regex if not fixed_string
+        let regex = if !fixed_string {
+            let re_pattern = if case_sensitive {
+                pattern.clone()
+            } else {
+                format!("(?i){}", pattern)
+            };
+            match regex::bytes::Regex::new(&re_pattern) {
+                Ok(re) => Some(re),
+                Err(e) => {
+                    self.plugin_manager
+                        .reject_callback(callback_id, format!("Invalid regex: {}", e));
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        let mut results: Vec<GrepMatch> = Vec::new();
+
+        // Build a map of open buffer paths -> (BufferId, is_modified)
+        let mut open_buffer_paths: std::collections::HashMap<std::path::PathBuf, (BufferId, bool)> =
+            std::collections::HashMap::new();
+        for (bid, state) in &self.buffers {
+            if let Some(path) = state.buffer.file_path() {
+                open_buffer_paths.insert(path.to_path_buf(), (*bid, state.buffer.is_modified()));
+            }
+        }
+
+        // Collect all project files using the `ignore` crate's WalkBuilder,
+        // which respects .gitignore, skips hidden files, and handles nested
+        // ignore files correctly.
+        let cwd = self.working_dir.clone();
+        let mut file_paths: Vec<std::path::PathBuf> = Vec::new();
+
+        for entry in ignore::WalkBuilder::new(&cwd)
+            .hidden(true) // skip hidden files
+            .git_ignore(true) // respect .gitignore
+            .git_global(true) // respect global gitignore
+            .git_exclude(true) // respect .git/info/exclude
+            .build()
+        {
+            match entry {
+                Ok(entry) => {
+                    if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+                        file_paths.push(entry.into_path());
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("GrepProject: walk error: {}", e);
+                }
+            }
+        }
+
+        // Search each file
+        for file_path in &file_paths {
+            if results.len() >= max_results {
+                break;
+            }
+
+            // Check if file is open in a buffer
+            if let Some(&(buffer_id, _)) = open_buffer_paths.get(file_path) {
+                // Search the buffer's piece tree (includes unsaved edits)
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let buf_len = state.buffer.len();
+                    if buf_len == 0 {
+                        continue;
+                    }
+                    // Read buffer content (handles lazy loading)
+                    if let Ok(content) = state.buffer.get_text_range_mut(0, buf_len) {
+                        Self::collect_matches_from_bytes(
+                            &content,
+                            file_path,
+                            buffer_id,
+                            &pattern_bytes,
+                            regex.as_ref(),
+                            case_sensitive,
+                            max_results,
+                            whole_words,
+                            &mut results,
+                        );
+                    }
+                }
+            } else {
+                // Not open — read from filesystem
+                match self.filesystem.read_file(file_path) {
+                    Ok(content) => {
+                        // Skip binary files (check for null bytes in first 8KB)
+                        let check_len = content.len().min(8192);
+                        if content[..check_len].contains(&0) {
+                            continue;
+                        }
+
+                        Self::collect_matches_from_bytes(
+                            &content,
+                            file_path,
+                            BufferId(0),
+                            &pattern_bytes,
+                            regex.as_ref(),
+                            case_sensitive,
+                            max_results,
+                            whole_words,
+                            &mut results,
+                        );
+                    }
+                    Err(e) => {
+                        tracing::debug!("GrepProject: failed to read file {:?}: {}", file_path, e);
+                    }
+                }
+            }
+        }
+
+        let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
+        self.plugin_manager.resolve_callback(callback_id, json);
+    }
+
+    /// Check if a byte is a "word character" for whole-word matching.
+    /// ASCII alphanumeric or underscore, plus any byte >= 0x80 (part of a
+    /// UTF-8 multi-byte sequence, likely an identifier character).
+    #[inline]
+    fn is_word_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80
+    }
+
+    /// Check whole-word boundaries around a match in `content`.
+    /// Returns `true` if the byte before the match and the byte after the
+    /// match are both non-word characters (or the match is at the
+    /// start/end of the content).
+    #[inline]
+    fn is_whole_word_match(content: &[u8], start: usize, end: usize) -> bool {
+        if start > 0 && Self::is_word_byte(content[start - 1]) {
+            return false;
+        }
+        if end < content.len() && Self::is_word_byte(content[end]) {
+            return false;
+        }
+        true
+    }
+
+    /// Collect grep matches from raw bytes (used for both buffers and disk files)
+    fn collect_matches_from_bytes(
+        content: &[u8],
+        file_path: &std::path::Path,
+        buffer_id: BufferId,
+        pattern_bytes: &[u8],
+        regex: Option<&regex::bytes::Regex>,
+        case_sensitive: bool,
+        max_results: usize,
+        whole_words: bool,
+        results: &mut Vec<GrepMatch>,
+    ) {
+        let file_str = file_path.to_string_lossy().to_string();
+
+        if let Some(re) = regex {
+            // Regex search
+            for mat in re.find_iter(content) {
+                if results.len() >= max_results {
+                    break;
+                }
+                let byte_offset = mat.start();
+                let length = mat.end() - mat.start();
+                if whole_words && !Self::is_whole_word_match(content, byte_offset, mat.end()) {
+                    continue;
+                }
+                let (line, column, context) = Self::compute_line_col_context(content, byte_offset);
+                results.push(GrepMatch {
+                    file: file_str.clone(),
+                    buffer_id: buffer_id.0,
+                    byte_offset,
+                    length,
+                    line,
+                    column,
+                    context,
+                });
+            }
+        } else if !case_sensitive {
+            // Case-insensitive fixed string search with Unicode case folding.
+            // We convert to &str and use str::to_lowercase() which handles
+            // non-ASCII characters (e.g., "Ü" -> "ü") unlike to_ascii_lowercase().
+            // Because to_lowercase() can change byte lengths (e.g., ß -> ss),
+            // we map character indices in the lowercased string back to byte
+            // offsets in the original content.
+            let content_str = String::from_utf8_lossy(content);
+            let needle_str = String::from_utf8_lossy(pattern_bytes);
+            let needle_lower = needle_str.to_lowercase();
+            let content_lower = content_str.to_lowercase();
+
+            // Build a mapping from character index in the lowercased string
+            // to (original_byte_offset, original_byte_len) per character.
+            // Both the original and lowercased strings have the same number
+            // of characters (to_lowercase maps char-to-char(s)), so we walk
+            // them in lockstep by character.
+            let mut orig_byte_offsets: Vec<usize> = Vec::new(); // byte offset per lowercased char
+            let mut orig_char_byte_lens: Vec<usize> = Vec::new(); // original byte len per char
+            let mut orig_byte_pos = 0usize;
+            for orig_ch in content_str.chars() {
+                let orig_ch_len = orig_ch.len_utf8();
+                let lower_ch_count = orig_ch.to_lowercase().count();
+                for _ in 0..lower_ch_count {
+                    orig_byte_offsets.push(orig_byte_pos);
+                    orig_char_byte_lens.push(orig_ch_len);
+                }
+                orig_byte_pos += orig_ch_len;
+            }
+
+            let needle_lower_bytes = needle_lower.as_bytes();
+            let content_lower_bytes = content_lower.as_bytes();
+            let mut pos = 0usize;
+            while pos + needle_lower_bytes.len() <= content_lower_bytes.len() {
+                if results.len() >= max_results {
+                    break;
+                }
+                if let Some(offset) = content_lower_bytes[pos..]
+                    .windows(needle_lower_bytes.len())
+                    .position(|w| w == needle_lower_bytes)
+                {
+                    let lower_byte_offset = pos + offset;
+                    let lower_byte_end = lower_byte_offset + needle_lower_bytes.len();
+
+                    // Map lowercased byte offset to character index, then to original byte offset.
+                    let lower_char_start = content_lower[..lower_byte_offset].chars().count();
+                    let lower_char_end = content_lower[..lower_byte_end].chars().count();
+
+                    if lower_char_start < orig_byte_offsets.len()
+                        && lower_char_end > 0
+                        && lower_char_end <= orig_byte_offsets.len()
+                    {
+                        let orig_start = orig_byte_offsets[lower_char_start];
+                        // End = start of last matched char + its original byte length
+                        let last_char_idx = lower_char_end - 1;
+                        let orig_end =
+                            orig_byte_offsets[last_char_idx] + orig_char_byte_lens[last_char_idx];
+                        let length = orig_end - orig_start;
+
+                        if whole_words
+                            && !Self::is_whole_word_match(content, orig_start, orig_end)
+                        {
+                            pos = lower_byte_offset + 1;
+                            continue;
+                        }
+                        let (line, column, context) =
+                            Self::compute_line_col_context(content, orig_start);
+                        results.push(GrepMatch {
+                            file: file_str.clone(),
+                            buffer_id: buffer_id.0,
+                            byte_offset: orig_start,
+                            length,
+                            line,
+                            column,
+                            context,
+                        });
+                    }
+                    pos = lower_byte_offset + 1; // advance past start of match
+                } else {
+                    break;
+                }
+            }
+        } else {
+            // Case-sensitive fixed string search (byte-level, no case folding needed)
+            let needle = pattern_bytes;
+            let mut pos = 0;
+            while pos + needle.len() <= content.len() {
+                if results.len() >= max_results {
+                    break;
+                }
+                if let Some(offset) = content[pos..]
+                    .windows(needle.len())
+                    .position(|w| w == needle)
+                {
+                    let byte_offset = pos + offset;
+                    let match_end = byte_offset + needle.len();
+                    if whole_words && !Self::is_whole_word_match(content, byte_offset, match_end) {
+                        pos = byte_offset + 1;
+                        continue;
+                    }
+                    let (line, column, context) =
+                        Self::compute_line_col_context(content, byte_offset);
+                    results.push(GrepMatch {
+                        file: file_str.clone(),
+                        buffer_id: buffer_id.0,
+                        byte_offset,
+                        length: needle.len(),
+                        line,
+                        column,
+                        context,
+                    });
+                    pos = byte_offset + 1; // advance past start of match
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Compute 1-indexed line number, column, and line content for a byte offset
+    fn compute_line_col_context(content: &[u8], byte_offset: usize) -> (usize, usize, String) {
+        let mut line = 1usize;
+        let mut line_start = 0usize;
+        for (i, &b) in content[..byte_offset].iter().enumerate() {
+            if b == b'\n' {
+                line += 1;
+                line_start = i + 1;
+            }
+        }
+        let column = byte_offset - line_start + 1;
+
+        // Extract the line content
+        let line_end = content[byte_offset..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|p| byte_offset + p)
+            .unwrap_or(content.len());
+        let line_bytes = &content[line_start..line_end];
+        let context = String::from_utf8_lossy(line_bytes).to_string();
+
+        (line, column, context)
+    }
+
+    // ==================== Streaming Grep ====================
+
+    /// Handle GrepProjectStreaming: parallel, non-blocking search with incremental results.
+    ///
+    /// - Snapshots dirty buffers on the main thread (piece tree isn't Send)
+    /// - Spawns a tokio task that walks the directory tree and fans out file searches
+    /// - Each file's matches are sent back immediately via AsyncBridge
+    /// - Supports cancellation via AtomicBool when a new search starts
+    pub(super) fn handle_grep_project_streaming(
+        &mut self,
+        pattern: String,
+        fixed_string: bool,
+        case_sensitive: bool,
+        max_results: usize,
+        whole_words: bool,
+        search_id: u64,
+        callback_id: JsCallbackId,
+    ) {
+        // Cancel any previous streaming search
+        if let Some(prev_cancel) = self.streaming_grep_cancellation.take() {
+            prev_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        tracing::info!(
+            "handle_grep_project_streaming: pattern={:?} search_id={} has_runtime={}",
+            pattern,
+            search_id,
+            self.tokio_runtime.is_some()
+        );
+
+        // Handle empty pattern
+        if pattern.is_empty() {
+            self.plugin_manager.resolve_callback(
+                callback_id,
+                format!(r#"{{"searchId":{},"totalMatches":0}}"#, search_id),
+            );
+            return;
+        }
+
+        // Compile regex on main thread (fast, catches errors early)
+        let regex = if !fixed_string {
+            let re_pattern = if case_sensitive {
+                pattern.clone()
+            } else {
+                format!("(?i){}", pattern)
+            };
+            match regex::bytes::Regex::new(&re_pattern) {
+                Ok(re) => Some(re),
+                Err(e) => {
+                    self.plugin_manager
+                        .reject_callback(callback_id, format!("Invalid regex: {}", e));
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        // Snapshot dirty buffer contents on the main thread
+        let mut dirty_snapshots: std::collections::HashMap<
+            std::path::PathBuf,
+            (BufferId, Vec<u8>),
+        > = std::collections::HashMap::new();
+        for (bid, state) in &mut self.buffers {
+            if let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) {
+                if state.buffer.is_modified() {
+                    let buf_len = state.buffer.len();
+                    if buf_len > 0 {
+                        if let Ok(content) = state.buffer.get_text_range_mut(0, buf_len) {
+                            dirty_snapshots.insert(path, (*bid, content));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Set up cancellation
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.streaming_grep_cancellation = Some(cancel.clone());
+
+        let filesystem = self.filesystem.clone();
+        let cwd = self.working_dir.clone();
+        let pattern_bytes = pattern.as_bytes().to_vec();
+
+        let Some(bridge) = &self.async_bridge else {
+            self.plugin_manager
+                .reject_callback(callback_id, "No async bridge available".to_string());
+            return;
+        };
+        let sender = bridge.sender();
+
+        let Some(runtime) = &self.tokio_runtime else {
+            self.plugin_manager
+                .reject_callback(callback_id, "No tokio runtime available".to_string());
+            return;
+        };
+
+        runtime.spawn(async move {
+            // Channel from walker to searchers
+            let (path_tx, mut path_rx) = tokio::sync::mpsc::channel::<std::path::PathBuf>(256);
+
+            let cancel_walker = cancel.clone();
+
+            // Walker task: uses `ignore` crate's WalkBuilder to respect .gitignore
+            tokio::task::spawn_blocking(move || {
+                tracing::info!(
+                    "GrepStreaming walker: starting from {:?} search_id={}",
+                    cwd,
+                    search_id
+                );
+                let mut file_count = 0usize;
+
+                for entry in ignore::WalkBuilder::new(&cwd)
+                    .hidden(true)
+                    .git_ignore(true)
+                    .git_global(true)
+                    .git_exclude(true)
+                    .build()
+                {
+                    if cancel_walker.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    match entry {
+                        Ok(entry) => {
+                            if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+                                file_count += 1;
+                                if path_tx.blocking_send(entry.into_path()).is_err() {
+                                    return; // receiver dropped
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                "GrepProjectStreaming: walk error: {}",
+                                e
+                            );
+                        }
+                    }
+                }
+                tracing::info!(
+                    "GrepStreaming walker: done, sent {} files (search_id={})",
+                    file_count,
+                    search_id
+                );
+                // path_tx dropped here, signalling completion to consumers
+            });
+
+            // Searcher coordinator: reads from channel, spawns parallel searchers
+            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+            let match_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+            // Collect join handles so we can wait for all searchers to finish
+            let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+            while let Some(file_path) = path_rx.recv().await {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                if match_count.load(std::sync::atomic::Ordering::Relaxed) >= max_results {
+                    break;
+                }
+
+                let permit = match semaphore.clone().acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+
+                let fs = filesystem.clone();
+                let sender = sender.clone();
+                let cancel = cancel.clone();
+                let match_count = match_count.clone();
+                let pattern_bytes = pattern_bytes.clone();
+                let regex = regex.clone();
+                let dirty_snapshot = dirty_snapshots.remove(&file_path);
+
+                let handle = tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
+
+                    let current_count = match_count.load(std::sync::atomic::Ordering::Relaxed);
+                    if current_count >= max_results {
+                        return;
+                    }
+                    let remaining = max_results - current_count;
+
+                    let mut file_matches = Vec::new();
+
+                    if let Some((buffer_id, content)) = dirty_snapshot {
+                        // Search dirty buffer snapshot
+                        Self::collect_matches_from_bytes(
+                            &content,
+                            &file_path,
+                            buffer_id,
+                            &pattern_bytes,
+                            regex.as_ref(),
+                            case_sensitive,
+                            remaining,
+                            whole_words,
+                            &mut file_matches,
+                        );
+                    } else {
+                        // Read from disk
+                        match fs.read_file(&file_path) {
+                            Ok(content) => {
+                                // Skip binary files
+                                let check_len = content.len().min(8192);
+                                if content[..check_len].contains(&0) {
+                                    return;
+                                }
+                                Self::collect_matches_from_bytes(
+                                    &content,
+                                    &file_path,
+                                    BufferId(0),
+                                    &pattern_bytes,
+                                    regex.as_ref(),
+                                    case_sensitive,
+                                    remaining,
+                                    whole_words,
+                                    &mut file_matches,
+                                );
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    "GrepProjectStreaming: failed to read {:?}: {}",
+                                    file_path,
+                                    e
+                                );
+                                return;
+                            }
+                        }
+                    }
+
+                    if !file_matches.is_empty() {
+                        match_count
+                            .fetch_add(file_matches.len(), std::sync::atomic::Ordering::Relaxed);
+                        let json = serde_json::to_string(&file_matches)
+                            .unwrap_or_else(|_| "[]".to_string());
+                        drop(
+                            sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                                fresh_core::api::PluginAsyncMessage::GrepStreamingProgress {
+                                    search_id,
+                                    matches_json: json,
+                                },
+                            )),
+                        );
+                    }
+                });
+
+                handles.push(handle);
+            }
+
+            // Wait for all searchers to complete
+            tracing::info!(
+                "GrepStreaming coordinator: waiting for {} searchers",
+                handles.len()
+            );
+            for handle in handles {
+                drop(handle.await);
+            }
+
+            let total = match_count.load(std::sync::atomic::Ordering::Relaxed);
+            tracing::info!(
+                "GrepStreaming coordinator: complete, total_matches={}",
+                total
+            );
+            drop(
+                sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                    fresh_core::api::PluginAsyncMessage::GrepStreamingComplete {
+                        search_id,
+                        callback_id: callback_id.as_u64(),
+                        total_matches: total,
+                    },
+                )),
+            );
+        });
+    }
+
+    // ==================== Replace In Buffer ====================
+
+    /// Handle ReplaceInBuffer: open file if needed, apply edits, save
+    pub(super) fn handle_replace_in_buffer(
+        &mut self,
+        file_path: std::path::PathBuf,
+        matches: Vec<(usize, usize)>,
+        replacement: String,
+        callback_id: JsCallbackId,
+    ) {
+        if matches.is_empty() {
+            let result = ReplaceResult {
+                replacements: 0,
+                buffer_id: 0,
+            };
+            let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
+            self.plugin_manager.resolve_callback(callback_id, json);
+            return;
+        }
+
+        // Find or open the buffer for this file
+        let buffer_id = if let Some((&bid, _)) = self
+            .buffers
+            .iter()
+            .find(|(_, state)| state.buffer.file_path() == Some(&file_path))
+        {
+            bid
+        } else {
+            // Open the file — creates a buffer via FileSystem trait
+            match self.open_file_no_focus(&file_path) {
+                Ok(bid) => {
+                    // Mark as hidden from tabs so it doesn't clutter the UI
+                    if let Some(meta) = self.buffer_metadata.get_mut(&bid) {
+                        meta.hidden_from_tabs = true;
+                    }
+                    bid
+                }
+                Err(e) => {
+                    self.plugin_manager.reject_callback(
+                        callback_id,
+                        format!("Failed to open file {:?}: {}", file_path, e),
+                    );
+                    return;
+                }
+            }
+        };
+
+        // Sort matches by byte offset descending — editing from end backwards
+        // prevents earlier edits from shifting later offsets
+        let mut sorted_matches = matches;
+        sorted_matches.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // Build bulk edits: (start, del_len, replacement)
+        let edits: Vec<(usize, usize, &str)> = sorted_matches
+            .iter()
+            .map(|&(offset, len)| (offset, len, replacement.as_str()))
+            .collect();
+
+        let replacements = edits.len();
+
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            // Apply all edits as a single bulk operation (single undo action)
+            state.buffer.apply_bulk_edits(&edits);
+
+            // Save the buffer via the FileSystem trait
+            if let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) {
+                if let Err(e) = state.buffer.save_to_file(&path) {
+                    self.plugin_manager.reject_callback(
+                        callback_id,
+                        format!("Failed to save file {:?}: {}", path, e),
+                    );
+                    return;
+                }
+            }
+        }
+
+        let result = ReplaceResult {
+            replacements,
+            buffer_id: buffer_id.0,
+        };
+        let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager.resolve_callback(callback_id, json);
     }
 }

@@ -118,9 +118,12 @@ impl Editor {
         );
 
         if should_check_mode_bindings {
-            // If we're in a global editor mode, handle chords and keybindings
-            if let Some(ref mode_name) = self.editor_mode {
-                // First, try to resolve as a chord (multi-key sequence like "gg")
+            // effective_mode() returns buffer-local mode if present, else global mode.
+            // This ensures virtual buffer modes aren't hijacked by global modes.
+            let effective_mode = self.effective_mode().map(|s| s.to_owned());
+
+            if let Some(ref mode_name) = effective_mode {
+                // Try to resolve as a chord (multi-key sequence like "gg")
                 if let Some(action_name) = self.mode_registry.resolve_chord_keybinding(
                     mode_name,
                     &self.chord_state,
@@ -135,16 +138,11 @@ impl Editor {
                 }
 
                 // Check if this could be the start of a chord sequence
-                let is_potential_chord = self.mode_registry.is_chord_prefix(
-                    mode_name,
-                    &self.chord_state,
-                    code,
-                    modifiers,
-                );
-
-                if is_potential_chord {
-                    // This could be the start of a chord - add to state and wait
-                    tracing::debug!("Potential chord prefix in editor mode");
+                if self
+                    .mode_registry
+                    .is_chord_prefix(mode_name, &self.chord_state, code, modifiers)
+                {
+                    tracing::debug!("Potential chord prefix in mode '{}'", mode_name);
                     self.chord_state.push((code, modifiers));
                     return Ok(());
                 }
@@ -156,30 +154,40 @@ impl Editor {
                 }
             }
 
-            // Check buffer mode keybindings (for virtual buffers with custom modes)
-            // Mode keybindings resolve to Action names (see Action::from_str)
+            // Check mode keybindings (buffer-local first, then global fallback)
             if let Some(action_name) = self.resolve_mode_keybinding(code, modifiers) {
                 let action = Action::from_str(&action_name, &std::collections::HashMap::new())
                     .unwrap_or_else(|| Action::PluginAction(action_name.clone()));
                 return self.handle_action(action);
             }
 
-            // If we're in a global editor mode, check if we should block unbound keys
-            if let Some(ref mode_name) = self.editor_mode {
-                // Check if this mode is read-only
-                // read_only=true (like vi-normal): unbound keys should be ignored
-                // read_only=false (like vi-insert): unbound keys should insert characters
+            // Block unbound keys if the effective mode is read-only
+            if let Some(ref mode_name) = effective_mode {
                 if self.mode_registry.is_read_only(mode_name) {
-                    tracing::debug!(
-                        "Ignoring unbound key in read-only mode {:?}",
-                        self.editor_mode
-                    );
+                    // If the mode allows text input, dispatch character keys
+                    // as mode_text_input events instead of dropping them.
+                    if self.mode_registry.allows_text_input(mode_name) {
+                        if let KeyCode::Char(c) = code {
+                            // Reconstruct the actual character (apply shift)
+                            let ch = if modifiers.contains(KeyModifiers::SHIFT) {
+                                c.to_uppercase().next().unwrap_or(c)
+                            } else {
+                                c
+                            };
+                            // Only dispatch plain chars or shift+chars (not ctrl/alt combos)
+                            if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+                                let action_name = format!("mode_text_input:{}", ch);
+                                return self
+                                    .handle_action(Action::PluginAction(action_name));
+                            }
+                        }
+                    }
+                    tracing::debug!("Ignoring unbound key in read-only mode '{}'", mode_name);
                     return Ok(());
                 }
-                // Mode is not read-only, fall through to normal key handling
                 tracing::debug!(
-                    "Mode {:?} is not read-only, allowing key through",
-                    self.editor_mode
+                    "Mode '{}' is not read-only, allowing key through",
+                    mode_name
                 );
             }
         }

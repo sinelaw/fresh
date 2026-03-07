@@ -367,4 +367,29 @@ impl PluginManager {
     pub fn reject_callback(&self, callback_id: fresh_core::api::JsCallbackId, error: String) {
         let _ = (callback_id, error);
     }
+
+    /// Call a streaming callback with partial data (does not consume the callback).
+    /// When `done` is true, the JS side cleans up.
+    #[cfg(feature = "plugins")]
+    pub fn call_streaming_callback(
+        &self,
+        callback_id: fresh_core::api::JsCallbackId,
+        result_json: String,
+        done: bool,
+    ) {
+        if let Some(inner) = &self.inner {
+            inner.call_streaming_callback(callback_id, result_json, done);
+        }
+    }
+
+    /// Call a streaming callback (no-op when plugins disabled)
+    #[cfg(not(feature = "plugins"))]
+    pub fn call_streaming_callback(
+        &self,
+        callback_id: fresh_core::api::JsCallbackId,
+        result_json: String,
+        done: bool,
+    ) {
+        let _ = (callback_id, result_json, done);
+    }
 }

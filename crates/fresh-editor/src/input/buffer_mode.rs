@@ -7,6 +7,35 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::collections::HashMap;
 
+/// Map a shifted punctuation character back to its base key (US keyboard layout).
+/// Returns `Some(base)` if the character is a shifted variant, `None` otherwise.
+fn shifted_punct_to_base(c: char) -> Option<char> {
+    match c {
+        '!' => Some('1'),
+        '@' => Some('2'),
+        '#' => Some('3'),
+        '$' => Some('4'),
+        '%' => Some('5'),
+        '^' => Some('6'),
+        '&' => Some('7'),
+        '*' => Some('8'),
+        '(' => Some('9'),
+        ')' => Some('0'),
+        '_' => Some('-'),
+        '+' => Some('='),
+        '{' => Some('['),
+        '}' => Some(']'),
+        '|' => Some('\\'),
+        ':' => Some(';'),
+        '"' => Some('\''),
+        '<' => Some(','),
+        '>' => Some('.'),
+        '?' => Some('/'),
+        '~' => Some('`'),
+        _ => None,
+    }
+}
+
 /// A buffer mode that defines keybindings and behavior for a type of buffer
 #[derive(Debug, Clone)]
 pub struct BufferMode {
@@ -24,6 +53,12 @@ pub struct BufferMode {
 
     /// Whether buffers with this mode are read-only by default
     pub read_only: bool,
+
+    /// When true, unbound character keys in a read-only mode are dispatched as
+    /// `PluginAction("mode_text_input:<char>")` instead of being silently dropped.
+    /// This allows plugins to handle inline text editing (e.g. search fields)
+    /// without registering individual bindings for every character.
+    pub allow_text_input: bool,
 }
 
 impl BufferMode {
@@ -35,6 +70,7 @@ impl BufferMode {
             keybindings: HashMap::new(),
             chord_keybindings: HashMap::new(),
             read_only: false,
+            allow_text_input: false,
         }
     }
 
@@ -68,6 +104,12 @@ impl BufferMode {
     /// Set whether this mode is read-only by default
     pub fn with_read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
+        self
+    }
+
+    /// Set whether unbound character keys should be dispatched as text input events
+    pub fn with_allow_text_input(mut self, allow: bool) -> Self {
+        self.allow_text_input = allow;
         self
     }
 
@@ -140,6 +182,12 @@ impl ModeRegistry {
                     modifiers | KeyModifiers::SHIFT,
                 );
             }
+            // Shifted punctuation: terminals may send e.g. Char('_') instead of
+            // Shift+Char('-'). Normalize to base key + SHIFT so bindings like
+            // "S--" match correctly.
+            if let Some(base) = shifted_punct_to_base(c) {
+                return (KeyCode::Char(base), modifiers | KeyModifiers::SHIFT);
+            }
             // Lowercase chars: keep as-is (SHIFT modifier preserved if present)
         }
         (code, modifiers)
@@ -186,6 +234,24 @@ impl ModeRegistry {
         while let Some(name) = current_mode_name {
             if let Some(mode) = self.modes.get(name) {
                 if mode.read_only {
+                    return true;
+                }
+                current_mode_name = mode.parent.as_deref();
+            } else {
+                break;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a mode allows text input passthrough (checking inheritance)
+    pub fn allows_text_input(&self, mode_name: &str) -> bool {
+        let mut current_mode_name = Some(mode_name);
+
+        while let Some(name) = current_mode_name {
+            if let Some(mode) = self.modes.get(name) {
+                if mode.allow_text_input {
                     return true;
                 }
                 current_mode_name = mode.parent.as_deref();

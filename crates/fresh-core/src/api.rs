@@ -266,6 +266,24 @@ pub enum PluginAsyncMessage {
     },
     /// Generic plugin response (e.g., GetBufferText result)
     PluginResponse(crate::api::PluginResponse),
+
+    /// Streaming grep: partial results for one file
+    GrepStreamingProgress {
+        /// Search ID to route to the correct progress callback
+        search_id: u64,
+        /// Matches from a single file
+        matches_json: String,
+    },
+
+    /// Streaming grep: search complete
+    GrepStreamingComplete {
+        /// Search ID
+        search_id: u64,
+        /// Callback ID for the completion promise
+        callback_id: u64,
+        /// Total number of matches found
+        total_matches: usize,
+    },
 }
 
 /// Information about a cursor in the editor
@@ -1283,6 +1301,8 @@ pub enum PluginCommand {
         parent: Option<String>,
         bindings: Vec<(String, String)>, // (key_string, command_name)
         read_only: bool,
+        /// When true, unbound character keys dispatch as `mode_text_input:<char>`.
+        allow_text_input: bool,
     },
 
     /// Switch the current split to display a buffer
@@ -1670,6 +1690,59 @@ pub enum PluginCommand {
         /// The terminal ID to close
         terminal_id: TerminalId,
     },
+
+    /// Project-wide grep search (async)
+    /// Searches all project files via FileSystem trait, respecting .gitignore.
+    /// For open buffers with dirty edits, searches the buffer's piece tree.
+    GrepProject {
+        /// Search pattern (literal string)
+        pattern: String,
+        /// Whether the pattern is a fixed string (true) or regex (false)
+        fixed_string: bool,
+        /// Whether the search is case-sensitive
+        case_sensitive: bool,
+        /// Maximum number of results to return
+        max_results: usize,
+        /// Whether to match whole words only
+        whole_words: bool,
+        /// Callback ID for async response
+        callback_id: JsCallbackId,
+    },
+
+    /// Project-wide streaming grep search (async, parallel)
+    /// Like GrepProject but streams results incrementally via progress callback.
+    /// Searches files in parallel using tokio tasks, sending per-file results
+    /// back to the plugin as they complete.
+    GrepProjectStreaming {
+        /// Search pattern
+        pattern: String,
+        /// Whether the pattern is a fixed string (true) or regex (false)
+        fixed_string: bool,
+        /// Whether the search is case-sensitive
+        case_sensitive: bool,
+        /// Maximum number of results to return
+        max_results: usize,
+        /// Whether to match whole words only
+        whole_words: bool,
+        /// Search ID — used to route progress callbacks and for cancellation
+        search_id: u64,
+        /// Callback ID for the completion promise
+        callback_id: JsCallbackId,
+    },
+
+    /// Replace matches in a buffer (async)
+    /// Opens the file if not already open, applies edits through the buffer model,
+    /// groups as a single undo action, and saves via FileSystem trait.
+    ReplaceInBuffer {
+        /// File path to edit (will open if not already in a buffer)
+        file_path: PathBuf,
+        /// Matches to replace, each is (byte_offset, length)
+        matches: Vec<(usize, usize)>,
+        /// Replacement text
+        replacement: String,
+        /// Callback ID for async response
+        callback_id: JsCallbackId,
+    },
 }
 
 impl PluginCommand {
@@ -1866,6 +1939,45 @@ pub struct BackgroundProcessResult {
     /// Process exit code (0 usually means success, -1 if killed)
     /// Only present when the process has exited
     pub exit_code: i32,
+}
+
+/// A single match from project-wide grep
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct GrepMatch {
+    /// Absolute file path
+    pub file: String,
+    /// Buffer ID if the file is open (0 if not)
+    #[ts(type = "number")]
+    pub buffer_id: usize,
+    /// Byte offset of match start in the file/buffer content
+    #[ts(type = "number")]
+    pub byte_offset: usize,
+    /// Match length in bytes
+    #[ts(type = "number")]
+    pub length: usize,
+    /// 1-indexed line number
+    #[ts(type = "number")]
+    pub line: usize,
+    /// 1-indexed column number
+    #[ts(type = "number")]
+    pub column: usize,
+    /// The matched line content (for display)
+    pub context: String,
+}
+
+/// Result from replacing matches in a buffer
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct ReplaceResult {
+    /// Number of replacements made
+    #[ts(type = "number")]
+    pub replacements: usize,
+    /// Buffer ID of the edited buffer
+    #[ts(type = "number")]
+    pub buffer_id: usize,
 }
 
 /// Entry for virtual buffer content with optional text properties (JS API version)
@@ -2573,12 +2685,14 @@ impl PluginApi {
         parent: Option<String>,
         bindings: Vec<(String, String)>,
         read_only: bool,
+        allow_text_input: bool,
     ) -> Result<(), String> {
         self.send_command(PluginCommand::DefineMode {
             name,
             parent,
             bindings,
             read_only,
+            allow_text_input,
         })
     }
 

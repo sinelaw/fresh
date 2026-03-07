@@ -293,6 +293,9 @@ pub struct Editor {
     /// When true, `flush_pending_grammars()` defers work until the build completes.
     grammar_build_in_progress: bool,
 
+    /// Cancellation flag for the current streaming grep search.
+    streaming_grep_cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+
     /// Plugin callback IDs waiting for the grammar build to complete.
     /// Multiple reloadGrammars() calls may accumulate here; all are resolved
     /// when the background build finishes.
@@ -1328,6 +1331,7 @@ impl Editor {
             pending_grammars: Vec::new(),
             grammar_reload_pending: false,
             grammar_build_in_progress: false,
+            streaming_grep_cancellation: None,
             pending_grammar_callbacks: Vec::new(),
             theme,
             theme_registry,
@@ -1709,18 +1713,33 @@ impl Editor {
         }
     }
 
-    /// Resolve a keybinding for the current mode
+    /// Get the effective mode for the active buffer.
     ///
-    /// First checks the global editor mode (for vi mode and other modal editing).
-    /// If no global mode is set or no binding is found, falls back to the
-    /// active buffer's mode (for virtual buffers with custom modes).
-    /// Returns the command name if found.
+    /// Buffer-local mode (virtual buffers) takes precedence over the global
+    /// editor mode, so that e.g. a search-replace panel isn't hijacked by
+    /// a markdown-source or vi-mode global mode.
+    pub fn effective_mode(&self) -> Option<&str> {
+        self.active_buffer_mode().or(self.editor_mode.as_deref())
+    }
+
+    /// Resolve a keybinding for the current mode.
+    ///
+    /// Checks buffer-local mode first (for virtual buffers), then falls back
+    /// to the global editor mode. Returns the command name if found.
     pub fn resolve_mode_keybinding(
         &self,
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Option<String> {
-        // First check global editor mode (e.g., "vi-normal", "vi-operator-pending")
+        if let Some(mode_name) = self.active_buffer_mode() {
+            if let Some(binding) = self
+                .mode_registry
+                .resolve_keybinding(mode_name, code, modifiers)
+            {
+                return Some(binding);
+            }
+        }
+
         if let Some(ref global_mode) = self.editor_mode {
             if let Some(binding) =
                 self.mode_registry
@@ -1730,10 +1749,7 @@ impl Editor {
             }
         }
 
-        // Fall back to buffer-local mode (for virtual buffers)
-        let mode_name = self.active_buffer_mode()?;
-        self.mode_registry
-            .resolve_keybinding(mode_name, code, modifiers)
+        None
     }
 
     /// Check if LSP has any active progress tasks (e.g., indexing)
@@ -4570,6 +4586,32 @@ impl Editor {
                         PluginAsyncMessage::PluginResponse(response) => {
                             self.handle_plugin_response(response);
                         }
+                        PluginAsyncMessage::GrepStreamingProgress {
+                            search_id,
+                            matches_json,
+                        } => {
+                            tracing::info!(
+                                "GrepStreamingProgress: search_id={} json_len={}",
+                                search_id,
+                                matches_json.len()
+                            );
+                            self.plugin_manager.call_streaming_callback(
+                                JsCallbackId::from(search_id),
+                                matches_json,
+                                false,
+                            );
+                        }
+                        PluginAsyncMessage::GrepStreamingComplete {
+                            search_id: _,
+                            callback_id,
+                            total_matches,
+                        } => {
+                            self.streaming_grep_cancellation = None;
+                            self.plugin_manager.resolve_callback(
+                                JsCallbackId::from(callback_id),
+                                format!(r#"{{"totalMatches":{}}}"#, total_matches),
+                            );
+                        }
                     }
                 }
                 AsyncMessage::LspProgress {
@@ -5469,8 +5511,9 @@ impl Editor {
                 parent,
                 bindings,
                 read_only,
+                allow_text_input,
             } => {
-                self.handle_define_mode(name, parent, bindings, read_only);
+                self.handle_define_mode(name, parent, bindings, read_only, allow_text_input);
             }
 
             // ==================== File/Navigation Commands ====================
@@ -6552,6 +6595,53 @@ impl Editor {
                     self.terminal_manager.close(terminal_id);
                     tracing::info!("Plugin closed terminal {:?} (no buffer found)", terminal_id);
                 }
+            }
+
+            PluginCommand::GrepProject {
+                pattern,
+                fixed_string,
+                case_sensitive,
+                max_results,
+                whole_words,
+                callback_id,
+            } => {
+                self.handle_grep_project(
+                    pattern,
+                    fixed_string,
+                    case_sensitive,
+                    max_results,
+                    whole_words,
+                    callback_id,
+                );
+            }
+
+            PluginCommand::GrepProjectStreaming {
+                pattern,
+                fixed_string,
+                case_sensitive,
+                max_results,
+                whole_words,
+                search_id,
+                callback_id,
+            } => {
+                self.handle_grep_project_streaming(
+                    pattern,
+                    fixed_string,
+                    case_sensitive,
+                    max_results,
+                    whole_words,
+                    search_id,
+                    callback_id,
+                );
+            }
+
+            PluginCommand::ReplaceInBuffer {
+                file_path,
+                matches,
+                replacement,
+                callback_id,
+            } => {
+                self.handle_replace_in_buffer(file_path, matches, replacement, callback_id);
             }
         }
         Ok(())

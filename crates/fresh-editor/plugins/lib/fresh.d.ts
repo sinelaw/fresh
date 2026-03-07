@@ -663,6 +663,36 @@ type CreateVirtualBufferOptions = {
 	*/
 	entries?: Array<TextPropertyEntry>;
 };
+type GrepMatch = {
+	/**
+	* Absolute file path
+	*/
+	file: string;
+	/**
+	* Buffer ID if the file is open (0 if not)
+	*/
+	bufferId: number;
+	/**
+	* Byte offset of match start in the file/buffer content
+	*/
+	byteOffset: number;
+	/**
+	* Match length in bytes
+	*/
+	length: number;
+	/**
+	* 1-indexed line number
+	*/
+	line: number;
+	/**
+	* 1-indexed column number
+	*/
+	column: number;
+	/**
+	* The matched line content (for display)
+	*/
+	context: string;
+};
 type LanguagePackConfig = {
 	/**
 	* Comment prefix for line comments (e.g., "//" or "#")
@@ -719,6 +749,16 @@ type LspServerPackConfig = {
 	* Process resource limits (memory and CPU)
 	*/
 	processLimits: ProcessLimitsPackConfig | null;
+};
+type ReplaceResult = {
+	/**
+	* Number of replacements made
+	*/
+	replacements: number;
+	/**
+	* Buffer ID of the edited buffer
+	*/
+	bufferId: number;
 };
 type SpawnResult = {
 	/**
@@ -1234,7 +1274,7 @@ interface EditorAPI {
 	/**
 	* Define a buffer mode (takes bindings as array of [key, command] pairs)
 	*/
-	defineMode(name: string, parent: string | null, bindingsArr: string[][], readOnly?: boolean): boolean;
+	defineMode(name: string, parent: string | null, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean): boolean;
 	/**
 	* Set the global editor mode
 	*/
@@ -1398,6 +1438,31 @@ interface EditorAPI {
 	* Delay/sleep (async, returns request_id)
 	*/
 	delay(durationMs: number): Promise<void>;
+	/**
+	* Project-wide grep search (async)
+	* Searches all files in the project, respecting .gitignore.
+	* Open buffers with dirty edits are searched in-memory.
+	*/
+	grepProject(pattern: string, fixedString: boolean | null, caseSensitive: boolean | null, maxResults: number | null, wholeWords: boolean | null): Promise<GrepMatch[]>;
+	/**
+	* Streaming project-wide grep search
+	* Returns a thenable with a searchId property. The progressCallback is called
+	* with batches of matches as they are found.
+	*/
+	grepProjectStreaming(pattern: string, opts?: {
+		fixedString?: boolean;
+		caseSensitive?: boolean;
+		maxResults?: number;
+		wholeWords?: boolean;
+	}, progressCallback?: (matches: GrepMatch[], done: boolean) => void): PromiseLike<GrepMatch[]> & {
+		searchId: number;
+	};
+	/**
+	* Replace matches in a file's buffer (async)
+	* Opens the file if not already in a buffer, applies edits via the buffer model,
+	* and saves. All edits are grouped as a single undo action.
+	*/
+	replaceInFile(filePath: string, matches: number[][], replacement: string): Promise<ReplaceResult>;
 	/**
 	* Send LSP request (async, returns request_id)
 	*/
