@@ -86,7 +86,7 @@ fn test_close_terminal() {
 /// Test terminal mode switching
 #[test]
 fn test_terminal_mode_toggle() {
-    let mut harness = harness_or_return!(80, 24);
+    let mut harness = harness_or_return!(120, 24);
 
     // Open a terminal (should enter terminal mode automatically)
     harness.editor_mut().open_terminal();

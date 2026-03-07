@@ -837,7 +837,7 @@ fn test_line_scan_progress_updates() {
     fs::write(&file_path, &content).unwrap();
 
     let mut harness =
-        EditorTestHarness::with_working_dir(80, 24, temp_dir.path().to_path_buf()).unwrap();
+        EditorTestHarness::with_working_dir(120, 24, temp_dir.path().to_path_buf()).unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 

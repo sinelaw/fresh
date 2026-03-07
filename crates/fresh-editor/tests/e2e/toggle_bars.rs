@@ -197,7 +197,7 @@ fn test_both_bars_hidden() {
 /// Test that tab bar toggle works correctly when opening multiple files
 #[test]
 fn test_tab_bar_toggle_with_multiple_buffers() {
-    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let mut harness = EditorTestHarness::with_temp_project(120, 24).unwrap();
 
     // Create test files
     let project_dir = harness.project_dir().unwrap().to_path_buf();
