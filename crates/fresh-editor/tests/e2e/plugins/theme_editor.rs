@@ -720,26 +720,28 @@ fn test_color_prompt_shows_suggestions() {
         .wait_until(|h| h.screen_to_string().contains("Background:"))
         .unwrap();
 
-    // Keep pressing Down until we're on a field that opens a prompt
-    // Try pressing Enter and check if prompt appears
+    // Keep pressing Down until we're on a field that opens a prompt.
+    // After each Enter we wait for the screen to change (no timeout) and
+    // then check whether a color prompt appeared.
     let mut prompt_opened = false;
     for _ in 0..10 {
+        let before = harness.screen_to_string();
         harness
             .send_key(KeyCode::Enter, KeyModifiers::NONE)
             .unwrap();
 
-        // Wait for either prompt to appear or a short timeout
-        let found = harness
-            .wait_for_async(
-                |h| {
-                    let screen = h.screen_to_string();
-                    screen.contains("#RRGGBB") || screen.contains("(#RRGGBB or named)")
-                },
-                500,
-            )
+        // Wait for the Enter to take effect (screen must change)
+        harness
+            .wait_until(|h| {
+                let screen = h.screen_to_string();
+                screen != before
+                    || screen.contains("#RRGGBB")
+                    || screen.contains("(#RRGGBB or named)")
+            })
             .unwrap();
 
-        if found {
+        let screen = harness.screen_to_string();
+        if screen.contains("#RRGGBB") || screen.contains("(#RRGGBB or named)") {
             prompt_opened = true;
             break;
         }
@@ -1249,23 +1251,30 @@ fn test_color_suggestions_show_hex_format() {
     // Open theme editor using helper (handles theme selection prompt)
     open_theme_editor(&mut harness);
 
-    // Navigate down to a color field and open the prompt
-    // Use wait_for_async for robustness against async loading on slower systems (Windows CI)
+    // Navigate down to a color field and open the prompt.
+    // After each Down+Enter we wait for the screen to change (no timeout).
     let mut prompt_opened = false;
     for _ in 0..30 {
-        // Navigate down - give time for the UI to update
+        // Navigate down and wait for the UI to settle
+        let before_down = harness.screen_to_string();
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness
-            .wait_for_async(|h| h.screen_to_string().contains("Theme Editor"), 500)
-            .ok();
+            .wait_until(|h| h.screen_to_string() != before_down)
+            .unwrap();
 
         // Try to open a prompt
+        let before_enter = harness.screen_to_string();
         harness
             .send_key(KeyCode::Enter, KeyModifiers::NONE)
             .unwrap();
-        // Wait for prompt to potentially open
-        harness.sleep(std::time::Duration::from_millis(100));
-        harness.process_async_and_render().unwrap();
+        harness
+            .wait_until(|h| {
+                let screen = h.screen_to_string();
+                screen != before_enter
+                    || screen.contains("#RRGGBB")
+                    || screen.contains("(#RRGGBB or named)")
+            })
+            .unwrap();
 
         let screen = harness.screen_to_string();
         if screen.contains("#RRGGBB") || screen.contains("(#RRGGBB or named)") {
@@ -1276,29 +1285,26 @@ fn test_color_suggestions_show_hex_format() {
         // If we opened something that's not a color prompt, close it and try next field
         if screen.contains("Enter:") || screen.contains("select") {
             harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-            harness.sleep(std::time::Duration::from_millis(50));
             harness.process_async_and_render().unwrap();
         }
     }
 
     assert!(prompt_opened, "Color prompt should appear");
 
-    // Wait for suggestions to appear using wait_for_async for robustness
-    let has_suggestions = harness
-        .wait_for_async(
-            |h| {
-                let screen = h.screen_to_string();
-                // Look for any color suggestions (hex or bracket format)
-                screen.contains("#000000")
-                    || screen.contains("#FF0000")
-                    || screen.contains("[0, 0, 0]")
-                    || screen.contains("[255, 0, 0]")
-                    || screen.contains("black")
-                    || screen.contains("white")
-            },
-            2000,
-        )
-        .unwrap_or(false);
+    // Wait for the prompt to fully render (screen stops changing)
+    harness.wait_until_stable(|h| {
+        // Condition: prompt is visible
+        h.screen_to_string().contains("#RRGGBB")
+    }).unwrap();
+
+    let screen = harness.screen_to_string();
+    // Check whether suggestions appeared
+    let has_suggestions = screen.contains("#000000")
+        || screen.contains("#FF0000")
+        || screen.contains("[0, 0, 0]")
+        || screen.contains("[255, 0, 0]")
+        || screen.contains("black")
+        || screen.contains("white");
 
     let screen = harness.screen_to_string();
 
@@ -1930,21 +1936,19 @@ fn test_builtin_theme_requires_save_as() {
 
     // Try to open a color prompt and make a change
     for _ in 0..10 {
+        let before = harness.screen_to_string();
         harness
             .send_key(KeyCode::Enter, KeyModifiers::NONE)
             .unwrap();
 
-        let found = harness
-            .wait_for_async(
-                |h| {
-                    let screen = h.screen_to_string();
-                    screen.contains("#RRGGBB")
-                },
-                300,
-            )
+        harness
+            .wait_until(|h| {
+                let screen = h.screen_to_string();
+                screen != before || screen.contains("#RRGGBB")
+            })
             .unwrap();
 
-        if found {
+        if harness.screen_to_string().contains("#RRGGBB") {
             break;
         }
 

@@ -618,7 +618,7 @@ impl EditorTestHarness {
     /// - Rate limiting based on time
     ///
     /// Do NOT use this for waiting on async I/O operations (file changes, LSP responses).
-    /// For those, use `wait_for_async` or real `std::thread::sleep`.
+    /// For those, use `wait_until` or real `std::thread::sleep`.
     pub fn advance_time(&self, duration: std::time::Duration) {
         self.time_source.advance(duration);
     }
