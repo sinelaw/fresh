@@ -1208,6 +1208,59 @@ mod integration_tests {
     /// 4. Server main loop picks it up and broadcasts SetClipboard control message
     /// 5. Client receives SetClipboard with the correct text and config flags
     #[test]
+    /// Poll the control socket (non-blocking) for newline-delimited JSON messages.
+    /// Appends to `ctrl_buf` across calls to handle partial reads.
+    /// Returns parsed lines (may be empty if no complete line is available yet).
+    fn poll_control_lines(conn: &ClientConnection, ctrl_buf: &mut Vec<u8>) -> Vec<String> {
+        let mut tmp = [0u8; 4096];
+        loop {
+            match conn.control.try_read(&mut tmp) {
+                Ok(0) => break,
+                Ok(n) => ctrl_buf.extend_from_slice(&tmp[..n]),
+                Err(_) => break,
+            }
+        }
+        // Extract complete newline-delimited lines
+        let mut lines = Vec::new();
+        while let Some(pos) = ctrl_buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = ctrl_buf.drain(..=pos).collect();
+            if let Ok(s) = String::from_utf8(line) {
+                lines.push(s);
+            }
+        }
+        lines
+    }
+
+    /// Wait (with timeout) for a control message matching the predicate.
+    /// Drains and ignores non-matching messages.
+    fn wait_for_control<F, T>(
+        conn: &ClientConnection,
+        ctrl_buf: &mut Vec<u8>,
+        timeout: Duration,
+        mut pred: F,
+    ) -> Option<T>
+    where
+        F: FnMut(&ServerControl) -> Option<T>,
+    {
+        let deadline = std::time::Instant::now() + timeout;
+        // Must set non-blocking so poll_control_lines doesn't hang
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = conn.control.set_nonblocking(true);
+        loop {
+            for line in poll_control_lines(conn, ctrl_buf) {
+                if let Ok(ctrl) = serde_json::from_str::<ServerControl>(&line) {
+                    if let Some(val) = pred(&ctrl) {
+                        return Some(val);
+                    }
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return None;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     fn test_copy_sends_set_clipboard_control_message() {
         let (conn, mut output, shutdown_handle, server_handle, socket_paths, temp_dir) =
             setup_editor_server_e2e("clipboard-ctrl");
@@ -1216,103 +1269,50 @@ mod integration_tests {
         conn.write_data(b"CLIPTEST").unwrap();
         read_until_contains(&conn, &mut output, "CLIPTEST");
 
-        // Spawn a thread to read control messages (read_control is blocking)
-        let control_clone = conn.control.clone();
-        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel::<String>();
-        let ctrl_reader = thread::spawn(move || {
-            // Read control messages until channel is dropped or EOF
-            loop {
-                // Set blocking mode for reads
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = control_clone.set_nonblocking(false);
-                let mut reader = std::io::BufReader::new(&control_clone);
-                let mut line = String::new();
-                match std::io::BufRead::read_line(&mut reader, &mut line) {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        if ctrl_tx.send(line).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
+        // Buffer for accumulating partial control reads
+        let mut ctrl_buf = Vec::new();
 
-        // Select all (Ctrl+A) then copy (Ctrl+C)
-        // Ctrl+A = 0x01, Ctrl+C = 0x03
-        conn.write_data(&[0x01]).unwrap(); // Select all
-                                           // Brief sync: wait for selection to be applied by doing a ping/pong round-trip
+        // Select all (Ctrl+A = 0x01)
+        conn.write_data(&[0x01]).unwrap();
+
+        // Sync: ping/pong round-trip to ensure select-all has been processed
         conn.write_control(&serde_json::to_string(&ClientControl::Ping).unwrap())
             .unwrap();
 
-        // Drain pong and any other control messages until we get the pong
-        let mut got_pong = false;
-        while !got_pong {
-            if let Ok(msg) = ctrl_rx.recv_timeout(Duration::from_secs(5)) {
-                if let Ok(ctrl) = serde_json::from_str::<ServerControl>(&msg) {
-                    if matches!(ctrl, ServerControl::Pong) {
-                        got_pong = true;
-                    }
-                }
-            } else {
-                panic!("Timed out waiting for Pong after Ctrl+A");
-            }
-        }
+        wait_for_control(&conn, &mut ctrl_buf, Duration::from_secs(5), |ctrl| {
+            matches!(ctrl, ServerControl::Pong).then_some(())
+        })
+        .expect("Timed out waiting for Pong after Ctrl+A");
 
-        // Now copy
-        conn.write_data(&[0x03]).unwrap(); // Ctrl+C = copy
+        // Copy (Ctrl+C = 0x03)
+        conn.write_data(&[0x03]).unwrap();
 
         // Wait for SetClipboard control message
-        let mut clipboard_text = None;
-        let mut clipboard_osc52 = None;
-        let mut clipboard_sys = None;
-        loop {
-            match ctrl_rx.recv_timeout(Duration::from_secs(5)) {
-                Ok(msg) => {
-                    if let Ok(ctrl) = serde_json::from_str::<ServerControl>(&msg) {
-                        match ctrl {
-                            ServerControl::SetClipboard {
-                                text,
-                                use_osc52,
-                                use_system_clipboard,
-                            } => {
-                                clipboard_text = Some(text);
-                                clipboard_osc52 = Some(use_osc52);
-                                clipboard_sys = Some(use_system_clipboard);
-                                break;
-                            }
-                            _ => {
-                                // Ignore other control messages (e.g. SetTitle)
-                            }
-                        }
-                    }
-                }
-                Err(_) => {
-                    panic!("Timed out waiting for SetClipboard control message after Ctrl+C copy");
-                }
-            }
-        }
+        let (text, use_osc52, use_sys) = wait_for_control(
+            &conn,
+            &mut ctrl_buf,
+            Duration::from_secs(5),
+            |ctrl| match ctrl {
+                ServerControl::SetClipboard {
+                    text,
+                    use_osc52,
+                    use_system_clipboard,
+                } => Some((text.clone(), *use_osc52, *use_system_clipboard)),
+                _ => None,
+            },
+        )
+        .expect("Timed out waiting for SetClipboard control message after Ctrl+C copy");
 
-        // Verify the clipboard content matches what was typed
-        let text = clipboard_text.expect("Should have received SetClipboard");
         assert_eq!(
             text, "CLIPTEST",
             "SetClipboard should contain the copied text"
         );
-        // Default config has both methods enabled
-        assert!(
-            clipboard_osc52.unwrap(),
-            "use_osc52 should be true by default"
-        );
-        assert!(
-            clipboard_sys.unwrap(),
-            "use_system_clipboard should be true by default"
-        );
+        assert!(use_osc52, "use_osc52 should be true by default");
+        assert!(use_sys, "use_system_clipboard should be true by default");
 
-        // Clean up the control reader thread
-        drop(ctrl_rx);
-        drop(ctrl_reader);
+        // Restore blocking mode before teardown writes Quit
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = conn.control.set_nonblocking(false);
 
         teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
     }
