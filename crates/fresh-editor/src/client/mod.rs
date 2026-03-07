@@ -11,7 +11,9 @@
 //! All complexity (input parsing, rendering, editor logic) lives server-side.
 
 use std::io;
+#[cfg(unix)]
 use std::sync::atomic::AtomicBool;
+#[cfg(unix)]
 use std::sync::Arc;
 
 use crate::server::ipc::{ClientConnection, SocketPaths};
@@ -24,7 +26,7 @@ mod relay_unix;
 #[cfg(windows)]
 mod relay_windows;
 #[cfg(windows)]
-pub(crate) mod win_vt_input;
+pub mod win_vt_input;
 
 /// Client configuration
 pub struct ClientConfig {
@@ -125,14 +127,13 @@ pub fn run_client_relay(
     #[cfg(not(windows))]
     conn.set_data_nonblocking(true)?;
 
-    // Set up signal handler for resize (Unix)
-    let resize_flag = Arc::new(AtomicBool::new(false));
-    #[cfg(unix)]
-    relay_unix::setup_resize_handler(resize_flag.clone())?;
-
     // Run the platform-specific relay loop
     #[cfg(unix)]
-    return relay_unix::relay_loop(&mut conn, resize_flag);
+    {
+        let resize_flag = Arc::new(AtomicBool::new(false));
+        relay_unix::setup_resize_handler(resize_flag.clone())?;
+        return relay_unix::relay_loop(&mut conn, resize_flag);
+    }
 
     #[cfg(windows)]
     return relay_windows::relay_loop(&mut conn);

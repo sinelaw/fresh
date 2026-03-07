@@ -11,7 +11,7 @@
 use std::io;
 use std::time::Duration;
 
-use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
+use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
 use windows_sys::Win32::System::Console::{
     GetConsoleMode, GetStdHandle, ReadConsoleInputW, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_INPUT,
     ENABLE_WINDOW_INPUT, FOCUS_EVENT, INPUT_RECORD, KEY_EVENT, MOUSE_EVENT, STD_INPUT_HANDLE,
