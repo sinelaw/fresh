@@ -64,7 +64,12 @@ pub fn relay_loop(conn: &mut ClientConnection) -> io::Result<ClientExitReason> {
                     }
                     Ok(Event::Paste(text)) => {
                         tracing::debug!("[loop] Paste event: {} bytes", text.len());
+                        // Wrap in bracketed paste markers so the server-side
+                        // InputParser recognizes this as a paste event (not
+                        // individual key presses).
+                        conn.write_data(b"\x1b[200~")?;
                         conn.write_data(text.as_bytes())?;
+                        conn.write_data(b"\x1b[201~")?;
                     }
                     Ok(Event::Resize(cols, rows)) => {
                         tracing::debug!("[loop] Resize event: {}x{}", cols, rows);
