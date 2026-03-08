@@ -512,7 +512,7 @@ impl FileSystem for RemoteFileSystem {
         pattern: &str,
         opts: &crate::model::filesystem::FileSearchOptions,
         cursor: &mut crate::model::filesystem::FileSearchCursor,
-    ) -> io::Result<Vec<crate::model::filesystem::FileSearchMatch>> {
+    ) -> io::Result<Vec<crate::model::filesystem::SearchMatch>> {
         if cursor.done {
             return Ok(vec![]);
         }
@@ -544,13 +544,13 @@ impl FileSystem for RemoteFileSystem {
             .unwrap_or(1) as usize;
         cursor.done = result.get("done").and_then(|v| v.as_bool()).unwrap_or(true);
 
-        let matches: Vec<crate::model::filesystem::FileSearchMatch> = result
+        let matches: Vec<crate::model::filesystem::SearchMatch> = result
             .get("matches")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
                     .filter_map(|m| {
-                        Some(crate::model::filesystem::FileSearchMatch {
+                        Some(crate::model::filesystem::SearchMatch {
                             byte_offset: m.get("byte_offset")?.as_u64()? as usize,
                             length: m.get("length")?.as_u64()? as usize,
                             line: m.get("line")?.as_u64()? as usize,

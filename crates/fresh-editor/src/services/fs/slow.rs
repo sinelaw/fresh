@@ -320,7 +320,7 @@ impl FileSystem for SlowFileSystem {
         pattern: &str,
         opts: &crate::model::filesystem::FileSearchOptions,
         cursor: &mut crate::model::filesystem::FileSearchCursor,
-    ) -> io::Result<Vec<crate::model::filesystem::FileSearchMatch>> {
+    ) -> io::Result<Vec<crate::model::filesystem::SearchMatch>> {
         self.add_delay(self.config.search_file_delay);
         self.metrics
             .search_file_calls

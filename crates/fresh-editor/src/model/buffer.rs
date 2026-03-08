@@ -89,23 +89,19 @@ pub struct LineScanChunk {
     pub already_known: bool,
 }
 
-/// A single match from a chunked search, with line/column/context computed
-/// on the fly as each chunk is processed.
-#[derive(Clone, Debug)]
-pub struct SearchMatch {
-    /// Byte offset in the document.
-    pub byte_offset: usize,
-    /// Length of the match in bytes.
-    pub length: usize,
-    /// 1-based line number.
-    pub line: usize,
-    /// 1-based byte column within the line.
-    pub column: usize,
-    /// Content of the line containing the match (no trailing newline).
-    pub context: String,
-}
+// Re-export SearchMatch from filesystem — same type is used by both
+// FileSystem::search_file (project grep on disk) and the piece-tree
+// search below (in-editor Ctrl+F and dirty buffers).
+pub use crate::model::filesystem::SearchMatch;
 
-/// Mutable state for an incremental chunked search over a TextBuffer.
+/// Mutable state for an incremental chunked search over a TextBuffer's
+/// piece tree.  This is the in-editor search path — it reads chunks via
+/// `get_text_range_mut` which loads lazily from disk and works with the
+/// piece tree's edit history.
+///
+/// For searching files on disk (project-wide grep), see
+/// `FileSystem::search_file` which uses `read_range` and doesn't need
+/// a TextBuffer at all.
 ///
 /// Created by `TextBuffer::search_scan_init`, advanced by
 /// `TextBuffer::search_scan_next_chunk`.  The same struct is used by
@@ -2723,11 +2719,11 @@ impl TextBuffer {
         (chunks, total_bytes)
     }
 
-    /// Initialize a chunked search scan over this buffer.
+    /// Initialize a chunked search scan over this buffer's piece tree.
     ///
-    /// Splits the piece tree into leaf-aligned chunks via `prepare_line_scan`
-    /// and returns a `ChunkedSearchState` ready for iteration with
-    /// `search_scan_next_chunk`.
+    /// Used for in-editor Ctrl+F (incremental, yields to the event loop
+    /// between chunks) and for searching dirty buffers during project grep.
+    /// For searching files on disk, use `FileSystem::search_file` instead.
     pub fn search_scan_init(
         &mut self,
         regex: regex::bytes::Regex,
@@ -2869,10 +2865,10 @@ impl TextBuffer {
         Ok(!state.is_done())
     }
 
-    /// Run a complete chunked search, processing all chunks.
+    /// Run a complete chunked search over the piece tree (all chunks).
     ///
-    /// This is the synchronous variant of the incremental scan — suitable
-    /// for use in `spawn_blocking` (project-wide search) or tests.
+    /// Synchronous variant — used for dirty buffer snapshots in project
+    /// grep and in tests.  For on-disk files, use `FileSystem::search_file`.
     pub fn search_scan_all(
         &mut self,
         regex: regex::bytes::Regex,

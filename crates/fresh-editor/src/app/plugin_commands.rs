@@ -1765,7 +1765,7 @@ impl Editor {
         let mut file_paths: Vec<std::path::PathBuf> = Vec::new();
         walk_files_recursive(&*self.filesystem, &cwd, &mut file_paths);
 
-        // Search each file via TextBuffer::search_scan_all
+        // Search each file: open buffers via piece tree, others via fs.search_file
         for file_path in &file_paths {
             if results.len() >= max_results {
                 break;

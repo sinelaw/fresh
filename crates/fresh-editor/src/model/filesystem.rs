@@ -295,6 +295,15 @@ impl FileReader for StdFileReader {}
 // ============================================================================
 // File Search Types
 // ============================================================================
+//
+// Used by `FileSystem::search_file` for project-wide search.  The search
+// runs where the data lives: `StdFileSystem` scans locally, `RemoteFileSystem`
+// delegates to the remote agent so only matches cross the network.
+//
+// For searching an already-open buffer's piece tree (in-editor Ctrl+F and
+// dirty buffers in project search), see `TextBuffer::search_scan_*` in
+// `buffer.rs` which uses the same `SearchMatch` type but reads from the
+// in-memory piece tree rather than from disk.
 
 /// Options for searching within a file via `FileSystem::search_file`.
 #[derive(Clone, Debug)]
@@ -309,11 +318,8 @@ pub struct FileSearchOptions {
     pub max_matches: usize,
 }
 
-/// Cursor state for incremental `search_file` calls.
-///
-/// Created with `FileSearchCursor::new()`, then passed to repeated
-/// `search_file` calls.  The implementation updates `offset` and
-/// `running_line`; the caller loops until `done` is true.
+/// Cursor for incremental `search_file` calls.  Each call searches one
+/// chunk and advances the cursor; the caller loops until `done`.
 #[derive(Clone, Debug)]
 pub struct FileSearchCursor {
     /// Byte offset to resume searching from.
@@ -334,10 +340,13 @@ impl FileSearchCursor {
     }
 }
 
-/// A single match result from `search_file`.
+/// A single search match with position and context.
+///
+/// Shared between `FileSystem::search_file` (project grep on disk) and
+/// `TextBuffer::search_scan_*` (in-editor search on piece tree).
 #[derive(Clone, Debug)]
-pub struct FileSearchMatch {
-    /// Byte offset of the match in the file.
+pub struct SearchMatch {
+    /// Byte offset of the match in the file/buffer.
     pub byte_offset: usize,
     /// Length of the match in bytes.
     pub length: usize,
@@ -572,22 +581,25 @@ pub trait FileSystem: Send + Sync {
     // Search Operations
     // ========================================================================
 
-    /// Search a file for a pattern, returning one batch of matches.
+    /// Search a file on disk for a pattern, returning one batch of matches.
     ///
     /// Call repeatedly with the same cursor until `cursor.done` is true.
-    /// Each call reads one chunk from the file, searches it, and returns
-    /// matches found.  The cursor tracks position and line numbers across
-    /// calls.
+    /// Each call searches one chunk; the cursor tracks position and line
+    /// numbers across calls.
     ///
-    /// The default implementation reads a chunk via `read_range`, builds
-    /// a regex from the pattern and options, and scans incrementally.
+    /// The search runs where the data lives: `StdFileSystem` reads and
+    /// scans locally; `RemoteFileSystem` sends a stateless RPC to the
+    /// remote agent.  Only matches cross the network.
+    ///
+    /// For searching an already-open buffer with unsaved edits, use
+    /// `TextBuffer::search_scan_all` which reads from the piece tree.
     fn search_file(
         &self,
         path: &Path,
         pattern: &str,
         opts: &FileSearchOptions,
         cursor: &mut FileSearchCursor,
-    ) -> io::Result<Vec<FileSearchMatch>>
+    ) -> io::Result<Vec<SearchMatch>>
     where
         Self: Sized,
     {
@@ -756,7 +768,7 @@ pub fn default_search_file(
     pattern: &str,
     opts: &FileSearchOptions,
     cursor: &mut FileSearchCursor,
-) -> io::Result<Vec<FileSearchMatch>> {
+) -> io::Result<Vec<SearchMatch>> {
     if cursor.done {
         return Ok(vec![]);
     }
@@ -831,7 +843,7 @@ pub fn default_search_file(
         let column = m.start() - line_start + 1;
         let context = String::from_utf8_lossy(&chunk[line_start..line_end]).into_owned();
 
-        matches.push(FileSearchMatch {
+        matches.push(SearchMatch {
             byte_offset: read_start + m.start(),
             length: m.end() - m.start(),
             line: line_at,
@@ -1230,7 +1242,7 @@ impl FileSystem for NoopFileSystem {
         _pattern: &str,
         _opts: &FileSearchOptions,
         _cursor: &mut FileSearchCursor,
-    ) -> io::Result<Vec<FileSearchMatch>> {
+    ) -> io::Result<Vec<SearchMatch>> {
         Self::unsupported()
     }
 
