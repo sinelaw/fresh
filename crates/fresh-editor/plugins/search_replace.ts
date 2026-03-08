@@ -56,7 +56,7 @@ interface PanelState {
 }
 let panel: PanelState | null = null;
 
-const MAX_RESULTS = 200;
+const MAX_RESULTS = 10000;
 const MIN_WIDTH = 60;
 const DEFAULT_WIDTH = 100;
 const SEARCH_DEBOUNCE_MS = 150;
