@@ -387,7 +387,10 @@ fn test_hot_exit_restores_without_workspace() {
         "File on disk should be unchanged"
     );
 
-    // Second session: open file directly (as CLI would), then apply hot exit recovery
+    // Second session: open file directly (as CLI would) WITHOUT workspace restore.
+    // Without apply_hot_exit_recovery, the modifications would be lost because
+    // workspace restore (which contains the hot exit recovery logic) is disabled
+    // when files are passed on the CLI.
     {
         let mut config = Config::default();
         config.editor.hot_exit = true;
@@ -405,15 +408,20 @@ fn test_hot_exit_restores_without_workspace() {
 
         // Open file directly (as CLI would, without workspace restore)
         harness.open_file(&file1).unwrap();
+        harness.render().unwrap();
 
-        // Apply hot exit recovery for open buffers
+        // Without hot exit recovery, the buffer shows on-disk content only
+        harness.assert_screen_contains("original content");
+
+        // Apply hot exit recovery — this is what schedule_hot_exit_recovery
+        // triggers via process_pending_file_opens in the real app
         let recovered = harness
             .editor_mut()
             .apply_hot_exit_recovery()
             .unwrap();
         assert!(recovered > 0, "Should have recovered at least one buffer");
 
-        // The unsaved changes should be visible on screen
+        // Now the unsaved changes should be visible
         harness.render().unwrap();
         harness.assert_screen_contains("EDITED");
     }
