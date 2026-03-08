@@ -89,6 +89,7 @@ interface BundleLanguage {
     args?: string[];
     autoStart?: boolean;
     initializationOptions?: Record<string, unknown>;
+    processLimits?: ProcessLimitsPackConfig;
   };
 }
 
@@ -154,6 +155,7 @@ interface PackageManifest {
       args?: string[];
       autoStart?: boolean;
       initializationOptions?: Record<string, unknown>;
+      processLimits?: ProcessLimitsPackConfig;
     };
 
     // Bundle fields
@@ -1184,6 +1186,7 @@ async function loadLanguagePack(packageDir: string, manifest: PackageManifest): 
       args: lsp.args ?? [],
       autoStart: lsp.autoStart ?? null,
       initializationOptions: lsp.initializationOptions ?? null,
+      processLimits: lsp.processLimits ?? null,
     });
   }
 
@@ -1237,6 +1240,7 @@ async function loadBundle(packageDir: string, manifest: PackageManifest): Promis
           args: lsp.args ?? [],
           autoStart: lsp.autoStart ?? null,
           initializationOptions: lsp.initializationOptions ?? null,
+          processLimits: lsp.processLimits ?? null,
         });
       }
     }
