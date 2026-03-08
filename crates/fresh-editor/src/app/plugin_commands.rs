@@ -1773,18 +1773,21 @@ impl Editor {
             let remaining = max_results - results.len();
 
             if let Some(&bid) = open_buffer_paths.get(file_path) {
-                // Search the open buffer's piece tree (includes unsaved edits)
+                // Search the open buffer — hybrid search uses fs.search_file
+                // for unloaded regions (avoids transferring large files)
                 if let Some(state) = self.buffers.get_mut(&bid) {
-                    let scan =
-                        match state
-                            .buffer
-                            .search_scan_all(regex.clone(), remaining, query_len)
-                        {
-                            Ok(s) => s,
-                            Err(_) => continue,
-                        };
+                    let matches = match state.buffer.search_hybrid(
+                        &pattern,
+                        &fs_opts,
+                        regex.clone(),
+                        remaining,
+                        query_len,
+                    ) {
+                        Ok(m) => m,
+                        Err(_) => continue,
+                    };
                     let file_str = file_path.to_string_lossy().to_string();
-                    for m in &scan.matches {
+                    for m in &matches {
                         results.push(GrepMatch {
                             file: file_str.clone(),
                             buffer_id: bid.0,
@@ -1895,19 +1898,18 @@ impl Editor {
             }
         };
 
-        // Snapshot dirty buffer contents on the main thread
-        let mut dirty_snapshots: std::collections::HashMap<
+        // Extract hybrid search plans for dirty buffers on the main thread.
+        // This only copies the small loaded/edited regions — unloaded regions
+        // are represented as file range coordinates, avoiding full-file transfer.
+        let mut dirty_plans: std::collections::HashMap<
             std::path::PathBuf,
-            (BufferId, Vec<u8>),
+            (BufferId, crate::model::buffer::HybridSearchPlan),
         > = std::collections::HashMap::new();
         for (bid, state) in &mut self.buffers {
             if let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) {
                 if state.buffer.is_modified() {
-                    let buf_len = state.buffer.len();
-                    if buf_len > 0 {
-                        if let Ok(content) = state.buffer.get_text_range_mut(0, buf_len) {
-                            dirty_snapshots.insert(path, (*bid, content));
-                        }
+                    if let Some(plan) = state.buffer.search_hybrid_plan() {
+                        dirty_plans.insert(path, (*bid, plan));
                     }
                 }
             }
@@ -1989,7 +1991,8 @@ impl Editor {
                 let match_count = match_count.clone();
                 let regex = regex.clone();
                 let pattern = pattern.clone();
-                let dirty_snapshot = dirty_snapshots.remove(&file_path);
+                let fs_opts = fs_opts.clone();
+                let dirty_plan = dirty_plans.remove(&file_path);
 
                 let handle = tokio::task::spawn_blocking(move || {
                     let _permit = permit;
@@ -2004,15 +2007,16 @@ impl Editor {
                     }
                     let remaining = max_results - current_count;
 
-                    if let Some((bid, content)) = dirty_snapshot {
-                        // Dirty buffer snapshot — wrap in TextBuffer and search with regex
-                        let mut buffer =
-                            crate::model::buffer::TextBuffer::from_bytes(content, fs.clone());
-                        let scan = match buffer.search_scan_all(regex, remaining, query_len) {
-                            Ok(s) => s,
+                    if let Some((bid, plan)) = dirty_plan {
+                        // Dirty buffer — execute hybrid search plan (searches
+                        // unloaded regions via fs.search_file, loaded in memory)
+                        let matches = match plan.execute(
+                            &*fs, &pattern, &fs_opts, &regex, remaining, query_len,
+                        ) {
+                            Ok(m) => m,
                             Err(e) => {
                                 tracing::debug!(
-                                    "GrepProjectStreaming: scan failed {:?}: {}",
+                                    "GrepProjectStreaming: hybrid search failed {:?}: {}",
                                     file_path,
                                     e
                                 );
@@ -2020,10 +2024,9 @@ impl Editor {
                             }
                         };
 
-                        if !scan.matches.is_empty() {
+                        if !matches.is_empty() {
                             let file_str = file_path.to_string_lossy().to_string();
-                            let file_matches: Vec<GrepMatch> = scan
-                                .matches
+                            let file_matches: Vec<GrepMatch> = matches
                                 .iter()
                                 .map(|m| GrepMatch {
                                     file: file_str.clone(),
