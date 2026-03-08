@@ -157,6 +157,78 @@ pub fn scroll_to_show_tab(
     result
 }
 
+/// Resolve display names for tab buffers, disambiguating duplicates by appending a number.
+/// For example, if there are three unnamed buffers, they become "[No Name]", "[No Name] 2", "[No Name] 3".
+/// Similarly, duplicate filenames get numbered: "main.rs", "main.rs 2".
+fn resolve_tab_names(
+    split_buffers: &[BufferId],
+    buffers: &HashMap<BufferId, EditorState>,
+    buffer_metadata: &HashMap<BufferId, BufferMetadata>,
+    composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
+) -> HashMap<BufferId, String> {
+    let mut names: Vec<(BufferId, String)> = Vec::new();
+
+    for id in split_buffers.iter() {
+        let is_regular_buffer = buffers.contains_key(id);
+        let is_composite_buffer = composite_buffers.contains_key(id);
+        if !is_regular_buffer && !is_composite_buffer {
+            continue;
+        }
+        if let Some(meta) = buffer_metadata.get(id) {
+            if meta.hidden_from_tabs {
+                continue;
+            }
+        }
+
+        let meta = buffer_metadata.get(id);
+        let is_terminal = meta
+            .and_then(|m| m.virtual_mode())
+            .map(|mode| mode == "terminal")
+            .unwrap_or(false);
+
+        let name = if is_composite_buffer {
+            meta.map(|m| m.display_name.as_str())
+        } else if is_terminal {
+            meta.map(|m| m.display_name.as_str())
+        } else {
+            buffers
+                .get(id)
+                .and_then(|state| state.buffer.file_path())
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .or_else(|| meta.map(|m| m.display_name.as_str()))
+        }
+        .unwrap_or("[No Name]");
+
+        names.push((*id, name.to_string()));
+    }
+
+    // Count occurrences of each name
+    let mut name_counts: HashMap<&str, usize> = HashMap::new();
+    for (_, name) in &names {
+        *name_counts.entry(name.as_str()).or_insert(0) += 1;
+    }
+
+    // Assign disambiguated names
+    let mut result = HashMap::new();
+    let mut name_indices: HashMap<String, usize> = HashMap::new();
+    for (id, name) in &names {
+        if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
+            let idx = name_indices.entry(name.clone()).or_insert(0);
+            *idx += 1;
+            if *idx == 1 {
+                result.insert(*id, name.clone());
+            } else {
+                result.insert(*id, format!("{} {}", name, idx));
+            }
+        } else {
+            result.insert(*id, name.clone());
+        }
+    }
+
+    result
+}
+
 /// Calculate tab widths for scroll offset calculations.
 /// Returns (tab_widths, rendered_buffer_ids) where tab_widths includes separators.
 /// This uses the same logic as render_for_split to ensure consistency.
@@ -168,6 +240,8 @@ pub fn calculate_tab_widths(
 ) -> (Vec<usize>, Vec<BufferId>) {
     let mut tab_widths: Vec<usize> = Vec::new();
     let mut rendered_buffer_ids: Vec<BufferId> = Vec::new();
+    let resolved_names =
+        resolve_tab_names(split_buffers, buffers, buffer_metadata, composite_buffers);
 
     for id in split_buffers.iter() {
         // Check if this is a regular buffer or a composite buffer
@@ -185,26 +259,10 @@ pub fn calculate_tab_widths(
             }
         }
 
-        let meta = buffer_metadata.get(id);
-        let is_terminal = meta
-            .and_then(|m| m.virtual_mode())
-            .map(|mode| mode == "terminal")
-            .unwrap_or(false);
-
-        // Use same name resolution logic as render_for_split
-        let name = if is_composite_buffer {
-            meta.map(|m| m.display_name.as_str())
-        } else if is_terminal {
-            meta.map(|m| m.display_name.as_str())
-        } else {
-            buffers
-                .get(id)
-                .and_then(|state| state.buffer.file_path())
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .or_else(|| meta.map(|m| m.display_name.as_str()))
-        }
-        .unwrap_or("[No Name]");
+        let name = resolved_names
+            .get(id)
+            .map(|s| s.as_str())
+            .unwrap_or("[No Name]");
 
         // Calculate modified indicator
         let modified = if is_composite_buffer {
@@ -280,6 +338,8 @@ impl TabsRenderer {
         let mut all_tab_spans: Vec<(Span, usize)> = Vec::new(); // Store (Span, display_width)
         let mut tab_ranges: Vec<(usize, usize, usize)> = Vec::new(); // (start, end, close_start) positions for each tab
         let mut rendered_buffer_ids: Vec<BufferId> = Vec::new(); // Track which buffers actually got rendered
+        let resolved_names =
+            resolve_tab_names(split_buffers, buffers, buffer_metadata, composite_buffers);
 
         // First, build all spans and calculate their display widths
         for id in split_buffers.iter() {
@@ -299,27 +359,10 @@ impl TabsRenderer {
             }
             rendered_buffer_ids.push(*id);
 
-            let meta = buffer_metadata.get(id);
-            let is_terminal = meta
-                .and_then(|m| m.virtual_mode())
-                .map(|mode| mode == "terminal")
-                .unwrap_or(false);
-
-            // For composite buffers, use display_name from metadata
-            // For regular buffers, try file_path first, then display_name
-            let name = if is_composite_buffer {
-                meta.map(|m| m.display_name.as_str())
-            } else if is_terminal {
-                meta.map(|m| m.display_name.as_str())
-            } else {
-                buffers
-                    .get(id)
-                    .and_then(|state| state.buffer.file_path())
-                    .and_then(|p| p.file_name())
-                    .and_then(|n| n.to_str())
-                    .or_else(|| meta.map(|m| m.display_name.as_str()))
-            }
-            .unwrap_or("[No Name]");
+            let name = resolved_names
+                .get(id)
+                .map(|s| s.as_str())
+                .unwrap_or("[No Name]");
 
             // For composite buffers, never show as modified (they're read-only views)
             let modified = if is_composite_buffer {
