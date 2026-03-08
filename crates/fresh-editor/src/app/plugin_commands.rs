@@ -1504,18 +1504,22 @@ impl Editor {
         self.mode_registry.register(mode);
 
         // Update keybinding labels in plugin state snapshot for getKeybindingLabel API
-        let all_bindings = self.mode_registry.get_all_keybindings(&name);
-        if let Some(snapshot_handle) = self.plugin_manager.state_snapshot_handle() {
-            if let Ok(mut snapshot) = snapshot_handle.write() {
-                // Remove old labels for this mode
-                snapshot
-                    .keybinding_labels
-                    .retain(|k, _| !k.ends_with(&format!("\0{}", name)));
-                // Add current labels
-                for ((key_code, modifiers), command) in &all_bindings {
-                    let label = crate::input::keybindings::format_keybinding(key_code, modifiers);
-                    let key = format!("{}\0{}", command, name);
-                    snapshot.keybinding_labels.insert(key, label);
+        #[cfg(feature = "plugins")]
+        {
+            let all_bindings = self.mode_registry.get_all_keybindings(&name);
+            if let Some(snapshot_handle) = self.plugin_manager.state_snapshot_handle() {
+                if let Ok(mut snapshot) = snapshot_handle.write() {
+                    // Remove old labels for this mode
+                    snapshot
+                        .keybinding_labels
+                        .retain(|k, _| !k.ends_with(&format!("\0{}", name)));
+                    // Add current labels
+                    for ((key_code, modifiers), command) in &all_bindings {
+                        let label =
+                            crate::input::keybindings::format_keybinding(key_code, modifiers);
+                        let key = format!("{}\0{}", command, name);
+                        snapshot.keybinding_labels.insert(key, label);
+                    }
                 }
             }
         }

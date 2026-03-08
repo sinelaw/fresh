@@ -821,6 +821,11 @@ interface EditorAPI {
 	copyToClipboard(text: string): void;
 	setClipboard(text: string): void;
 	/**
+	* Get the display label for a keybinding by action name and optional mode.
+	* Returns null if no binding is found.
+	*/
+	getKeybindingLabel(action: string, mode: string | null): string | null;
+	/**
 	* Register a command in the command palette (Ctrl+P).
 	* 
 	* Usually you should omit `context` so the command is always visible.
@@ -843,12 +848,6 @@ interface EditorAPI {
 	* Execute a built-in action
 	*/
 	executeAction(actionName: string): boolean;
-	/**
-	* Get the display label for a keybinding by action name and optional mode context.
-	* Returns the platform-formatted label (e.g. "Alt+Enter" on Linux, "⌥⏎" on macOS),
-	* or null if no binding is found.
-	*/
-	getKeybindingLabel(action: string, mode?: string): string | null;
 	/**
 	* Translate a string - reads plugin name from __pluginName__ global
 	* Args is optional - can be omitted, undefined, null, or an object
