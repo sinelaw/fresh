@@ -1239,7 +1239,7 @@ impl Editor {
 
             registry.filter(
                 query,
-                self.key_context,
+                self.key_context.clone(),
                 &self.keybindings,
                 selection_active,
                 &self.active_custom_contexts,

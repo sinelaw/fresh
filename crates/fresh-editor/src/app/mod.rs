@@ -1640,7 +1640,7 @@ impl Editor {
     /// Returns None if no keybinding is found for the action
     pub fn get_keybinding_for_action(&self, action_name: &str) -> Option<String> {
         self.keybindings
-            .find_keybinding_for_action(action_name, self.key_context)
+            .find_keybinding_for_action(action_name, self.key_context.clone())
     }
 
     /// Get mutable access to the mode registry
@@ -3537,7 +3537,7 @@ impl Editor {
             };
             self.command_registry.read().unwrap().filter(
                 query,
-                self.key_context,
+                self.key_context.clone(),
                 &self.keybindings,
                 self.has_active_selection(),
                 &self.active_custom_contexts,
@@ -3675,7 +3675,7 @@ impl Editor {
                 .file_path()
                 .map(|p| p.display().to_string()),
             has_selection: self.has_active_selection(),
-            key_context: self.key_context,
+            key_context: self.key_context.clone(),
             custom_contexts: self.active_custom_contexts.clone(),
             buffer_mode: self
                 .buffer_metadata
@@ -4250,7 +4250,7 @@ impl Editor {
                     // Use the underlying context (not Prompt context) for filtering
                     prompt.suggestions = self.command_registry.read().unwrap().filter(
                         &input,
-                        self.key_context,
+                        self.key_context.clone(),
                         &self.keybindings,
                         selection_active,
                         &self.active_custom_contexts,

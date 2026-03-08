@@ -201,6 +201,7 @@ impl CommandRegistry {
         };
 
         // Helper to create a suggestion from a command
+        let current_context_ref = &current_context;
         let make_suggestion =
             |cmd: &Command, score: i32, localized_name: String, localized_desc: String| {
                 let mut available = is_available(cmd);
@@ -213,8 +214,8 @@ impl CommandRegistry {
                 {
                     available = false;
                 }
-                let keybinding =
-                    keybinding_resolver.get_keybinding_for_action(&cmd.action, current_context);
+                let keybinding = keybinding_resolver
+                    .get_keybinding_for_action(&cmd.action, current_context_ref.clone());
                 let history_pos = self.history_position(&cmd.name);
 
                 let suggestion = Suggestion::with_source(

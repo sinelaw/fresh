@@ -60,7 +60,7 @@ impl QuickOpenProvider for CommandProvider {
 
         registry.filter(
             query,
-            context.key_context,
+            context.key_context.clone(),
             &keybindings,
             context.has_selection,
             &context.custom_contexts,
@@ -80,7 +80,7 @@ impl QuickOpenProvider for CommandProvider {
 
         let suggestions = registry.filter(
             query,
-            context.key_context,
+            context.key_context.clone(),
             &keybindings,
             context.has_selection,
             &context.custom_contexts,

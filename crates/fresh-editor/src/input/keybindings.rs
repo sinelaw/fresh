@@ -190,7 +190,7 @@ pub fn terminal_key_equivalents(
 }
 
 /// Context in which a keybinding is active
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum KeyContext {
     /// Global bindings that work in all contexts (checked first with highest priority)
     Global,
@@ -208,6 +208,8 @@ pub enum KeyContext {
     Terminal,
     /// Settings modal is active
     Settings,
+    /// Buffer-local mode context (e.g. "search-replace-list")
+    Mode(String),
 }
 
 impl KeyContext {
@@ -218,7 +220,11 @@ impl KeyContext {
 
     /// Parse context from a "when" string
     pub fn from_when_clause(when: &str) -> Option<Self> {
-        Some(match when.trim() {
+        let trimmed = when.trim();
+        if let Some(mode_name) = trimmed.strip_prefix("mode:") {
+            return Some(Self::Mode(mode_name.to_string()));
+        }
+        Some(match trimmed {
             "global" => Self::Global,
             "prompt" => Self::Prompt,
             "popup" => Self::Popup,
@@ -232,16 +238,17 @@ impl KeyContext {
     }
 
     /// Convert context to "when" clause string
-    pub fn to_when_clause(self) -> &'static str {
+    pub fn to_when_clause(&self) -> String {
         match self {
-            Self::Global => "global",
-            Self::Normal => "normal",
-            Self::Prompt => "prompt",
-            Self::Popup => "popup",
-            Self::FileExplorer => "fileExplorer",
-            Self::Menu => "menu",
-            Self::Terminal => "terminal",
-            Self::Settings => "settings",
+            Self::Global => "global".to_string(),
+            Self::Normal => "normal".to_string(),
+            Self::Prompt => "prompt".to_string(),
+            Self::Popup => "popup".to_string(),
+            Self::FileExplorer => "fileExplorer".to_string(),
+            Self::Menu => "menu".to_string(),
+            Self::Terminal => "terminal".to_string(),
+            Self::Settings => "settings".to_string(),
+            Self::Mode(name) => format!("mode:{}", name),
         }
     }
 }
@@ -1116,6 +1123,10 @@ pub struct KeybindingResolver {
     /// Default bindings for each context (single key bindings)
     default_bindings: HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>>,
 
+    /// Plugin default bindings (third tier, after custom and keymap defaults)
+    /// Used for mode bindings registered by plugins via defineMode()
+    plugin_defaults: HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>>,
+
     /// Chord bindings (multi-key sequences)
     /// Maps context -> sequence -> action
     chord_bindings: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
@@ -1130,6 +1141,7 @@ impl KeybindingResolver {
         let mut resolver = Self {
             bindings: HashMap::new(),
             default_bindings: HashMap::new(),
+            plugin_defaults: HashMap::new(),
             chord_bindings: HashMap::new(),
             default_chord_bindings: HashMap::new(),
         };
@@ -1203,7 +1215,7 @@ impl KeybindingResolver {
         action: Action,
         key_name: &str,
     ) {
-        let context_bindings = self.default_bindings.entry(context).or_default();
+        let context_bindings = self.default_bindings.entry(context.clone()).or_default();
 
         // Insert the primary binding
         context_bindings.insert((key_code, modifiers), action.clone());
@@ -1278,6 +1290,33 @@ impl KeybindingResolver {
                 }
             }
         }
+    }
+
+    /// Load a plugin default binding (for mode bindings registered via defineMode)
+    pub fn load_plugin_default(
+        &mut self,
+        context: KeyContext,
+        key_code: KeyCode,
+        modifiers: KeyModifiers,
+        action: Action,
+    ) {
+        self.plugin_defaults
+            .entry(context)
+            .or_default()
+            .insert((key_code, modifiers), action);
+    }
+
+    /// Clear all plugin default bindings for a specific mode
+    pub fn clear_plugin_defaults_for_mode(&mut self, mode_name: &str) {
+        let context = KeyContext::Mode(mode_name.to_string());
+        self.plugin_defaults.remove(&context);
+    }
+
+    /// Get all plugin default bindings (for keybinding editor display)
+    pub fn get_plugin_defaults(
+        &self,
+    ) -> &HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>> {
+        &self.plugin_defaults
     }
 
     /// Check if an action is application-wide (should be accessible in all contexts)
@@ -1442,6 +1481,18 @@ impl KeybindingResolver {
             if let Some(action) = context_bindings.get(&(event.code, event.modifiers)) {
                 tracing::trace!(
                     "  -> Found in default {} bindings: {:?}",
+                    context.to_when_clause(),
+                    action
+                );
+                return action.clone();
+            }
+        }
+
+        // Try plugin default bindings (mode bindings from defineMode)
+        if let Some(plugin_bindings) = self.plugin_defaults.get(&context) {
+            if let Some(action) = plugin_bindings.get(&(event.code, event.modifiers)) {
+                tracing::trace!(
+                    "  -> Found in plugin default {} bindings: {:?}",
                     context.to_when_clause(),
                     action
                 );
@@ -2496,8 +2547,8 @@ mod tests {
 
         for (key_code, modifiers, context) in test_cases {
             let event = KeyEvent::new(key_code, modifiers);
-            let action1 = resolver.resolve(&event, context);
-            let action2 = resolver.resolve(&event, context);
+            let action1 = resolver.resolve(&event, context.clone());
+            let action2 = resolver.resolve(&event, context.clone());
             let action3 = resolver.resolve(&event, context);
 
             assert_eq!(action1, action2, "Resolve should be deterministic");

@@ -203,7 +203,7 @@ impl Editor {
                     &files_with_unsaved_changes,
                     &self.file_explorer_decoration_cache,
                     &self.keybindings,
-                    self.key_context,
+                    self.key_context.clone(),
                     &self.theme,
                     close_button_hovered,
                     remote_connection.as_deref(),

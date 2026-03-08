@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Context in which a keybinding is active
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub enum KeyContext {
     /// Global bindings that work in all contexts (checked first with highest priority)
@@ -20,6 +20,8 @@ pub enum KeyContext {
     Terminal,
     /// Settings modal is active
     Settings,
+    /// Buffer-local mode context (e.g. "search-replace-list")
+    Mode(String),
 }
 
 impl KeyContext {
@@ -30,7 +32,11 @@ impl KeyContext {
 
     /// Parse context from a "when" string
     pub fn from_when_clause(when: &str) -> Option<Self> {
-        Some(match when.trim() {
+        let trimmed = when.trim();
+        if let Some(mode_name) = trimmed.strip_prefix("mode:") {
+            return Some(Self::Mode(mode_name.to_string()));
+        }
+        Some(match trimmed {
             "global" => Self::Global,
             "prompt" => Self::Prompt,
             "popup" => Self::Popup,
@@ -44,16 +50,17 @@ impl KeyContext {
     }
 
     /// Convert context to "when" clause string
-    pub fn to_when_clause(self) -> &'static str {
+    pub fn to_when_clause(&self) -> String {
         match self {
-            Self::Global => "global",
-            Self::Normal => "normal",
-            Self::Prompt => "prompt",
-            Self::Popup => "popup",
-            Self::FileExplorer => "fileExplorer",
-            Self::Menu => "menu",
-            Self::Terminal => "terminal",
-            Self::Settings => "settings",
+            Self::Global => "global".to_string(),
+            Self::Normal => "normal".to_string(),
+            Self::Prompt => "prompt".to_string(),
+            Self::Popup => "popup".to_string(),
+            Self::FileExplorer => "fileExplorer".to_string(),
+            Self::Menu => "menu".to_string(),
+            Self::Terminal => "terminal".to_string(),
+            Self::Settings => "settings".to_string(),
+            Self::Mode(name) => format!("mode:{}", name),
         }
     }
 }

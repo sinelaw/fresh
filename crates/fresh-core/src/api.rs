@@ -778,6 +778,12 @@ pub struct EditorStateSnapshot {
     #[serde(skip)]
     #[ts(skip)]
     pub plugin_view_states_split: usize,
+
+    /// Keybinding labels for plugin modes, keyed by "action\0mode" for fast lookup.
+    /// Updated when modes are registered via defineMode().
+    #[serde(skip)]
+    #[ts(skip)]
+    pub keybinding_labels: HashMap<String, String>,
 }
 
 impl EditorStateSnapshot {
@@ -802,6 +808,7 @@ impl EditorStateSnapshot {
             editor_mode: None,
             plugin_view_states: HashMap::new(),
             plugin_view_states_split: 0,
+            keybinding_labels: HashMap::new(),
         }
     }
 }

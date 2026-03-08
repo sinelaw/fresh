@@ -731,6 +731,20 @@ impl JsEditorApi {
             .send(PluginCommand::SetClipboard { text });
     }
 
+    // === Keybinding Queries ===
+
+    /// Get the display label for a keybinding by action name and optional mode.
+    /// Returns null if no binding is found.
+    pub fn get_keybinding_label(&self, action: String, mode: Option<String>) -> Option<String> {
+        if let Some(mode_name) = mode {
+            let key = format!("{}\0{}", action, mode_name);
+            if let Ok(snapshot) = self.state_snapshot.read() {
+                return snapshot.keybinding_labels.get(&key).cloned();
+            }
+        }
+        None
+    }
+
     // === Command Registration ===
 
     /// Register a command in the command palette (Ctrl+P).

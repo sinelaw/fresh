@@ -19,7 +19,7 @@ impl Editor {
             KeyContext::Popup
         } else {
             // Use the current context (can be FileExplorer or Normal)
-            self.key_context
+            self.key_context.clone()
         }
     }
 
@@ -154,6 +154,16 @@ impl Editor {
                 }
             }
 
+            // Check for user overrides of mode bindings via the main keybinding system
+            if let Some(ref mode_name) = effective_mode {
+                let mode_ctx = crate::input::keybindings::KeyContext::Mode(mode_name.to_string());
+                let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+                let resolved = self.keybindings.resolve(&key_event, mode_ctx);
+                if resolved != Action::None {
+                    return self.handle_action(resolved);
+                }
+            }
+
             // Check mode keybindings (buffer-local first, then global fallback)
             if let Some(action_name) = self.resolve_mode_keybinding(code, modifiers) {
                 let action = Action::from_str(&action_name, &std::collections::HashMap::new())
@@ -203,9 +213,9 @@ impl Editor {
 
         // Check for chord sequence matches first
         let key_event = crossterm::event::KeyEvent::new(code, modifiers);
-        let chord_result = self
-            .keybindings
-            .resolve_chord(&self.chord_state, &key_event, context);
+        let chord_result =
+            self.keybindings
+                .resolve_chord(&self.chord_state, &key_event, context.clone());
 
         match chord_result {
             crate::input::keybindings::ChordResolution::Complete(action) => {
@@ -230,7 +240,7 @@ impl Editor {
         }
 
         // Regular single-key resolution
-        let action = self.keybindings.resolve(&key_event, context);
+        let action = self.keybindings.resolve(&key_event, context.clone());
 
         tracing::trace!("Context: {:?} -> Action: {:?}", context, action);
 
@@ -502,7 +512,7 @@ impl Editor {
                 };
                 let suggestions = self.command_registry.read().unwrap().filter(
                     "",
-                    self.key_context,
+                    self.key_context.clone(),
                     &self.keybindings,
                     self.has_active_selection(),
                     &self.active_custom_contexts,

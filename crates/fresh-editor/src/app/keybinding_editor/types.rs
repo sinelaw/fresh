@@ -10,6 +10,8 @@ pub enum BindingSource {
     Keymap,
     /// User custom override (in config keybindings array)
     Custom,
+    /// From a plugin mode (registered via defineMode)
+    Plugin,
     /// Action exists but has no keybinding
     Unbound,
 }
@@ -101,7 +103,25 @@ pub struct EditBindingState {
 }
 
 impl EditBindingState {
+    fn base_context_options() -> Vec<String> {
+        vec![
+            "global".to_string(),
+            "normal".to_string(),
+            "prompt".to_string(),
+            "popup".to_string(),
+            "file_explorer".to_string(),
+            "menu".to_string(),
+            "terminal".to_string(),
+        ]
+    }
+
     pub fn new_add() -> Self {
+        Self::new_add_with_modes(&[])
+    }
+
+    pub fn new_add_with_modes(mode_contexts: &[String]) -> Self {
+        let mut context_options = Self::base_context_options();
+        context_options.extend(mode_contexts.iter().cloned());
         Self {
             mode: EditMode::RecordingKey,
             key_code: None,
@@ -112,15 +132,7 @@ impl EditBindingState {
             context: "normal".to_string(),
             editing_index: None,
             conflicts: Vec::new(),
-            context_options: vec![
-                "global".to_string(),
-                "normal".to_string(),
-                "prompt".to_string(),
-                "popup".to_string(),
-                "file_explorer".to_string(),
-                "menu".to_string(),
-                "terminal".to_string(),
-            ],
+            context_options,
             context_option_index: 1, // default to "normal"
             context_dropdown_open: false,
             selected_button: 0,
@@ -133,15 +145,16 @@ impl EditBindingState {
     }
 
     pub fn new_edit(index: usize, binding: &ResolvedBinding) -> Self {
-        let context_options = vec![
-            "global".to_string(),
-            "normal".to_string(),
-            "prompt".to_string(),
-            "popup".to_string(),
-            "file_explorer".to_string(),
-            "menu".to_string(),
-            "terminal".to_string(),
-        ];
+        Self::new_edit_with_modes(index, binding, &[])
+    }
+
+    pub fn new_edit_with_modes(
+        index: usize,
+        binding: &ResolvedBinding,
+        mode_contexts: &[String],
+    ) -> Self {
+        let mut context_options = Self::base_context_options();
+        context_options.extend(mode_contexts.iter().cloned());
         let context_option_index = context_options
             .iter()
             .position(|c| c == &binding.context)
@@ -192,6 +205,7 @@ pub enum SourceFilter {
     All,
     KeymapOnly,
     CustomOnly,
+    PluginOnly,
 }
 
 /// Layout information for mouse hit testing

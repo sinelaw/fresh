@@ -395,15 +395,19 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &mut KeybindingEditor, th
             })
             .bg(row_bg);
         let source_style = Style::default()
-            .fg(if binding.source == BindingSource::Custom {
-                if is_selected {
-                    theme.popup_text_fg
+            .fg(
+                if binding.source == BindingSource::Custom
+                    || binding.source == BindingSource::Plugin
+                {
+                    if is_selected {
+                        theme.popup_text_fg
+                    } else {
+                        theme.diagnostic_info_fg
+                    }
                 } else {
-                    theme.diagnostic_info_fg
-                }
-            } else {
-                context_style.fg.unwrap_or(theme.popup_text_fg)
-            })
+                    context_style.fg.unwrap_or(theme.popup_text_fg)
+                },
+            )
             .bg(row_bg);
 
         let indicator = if is_selected { ">" } else { " " };
@@ -435,6 +439,9 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &mut KeybindingEditor, th
                     &match binding.source {
                         BindingSource::Custom => t!("keybinding_editor.source_custom").to_string(),
                         BindingSource::Keymap => t!("keybinding_editor.source_keymap").to_string(),
+                        BindingSource::Plugin => {
+                            t!("keybinding_editor.source_plugin", default = "Plugin").to_string()
+                        }
                         BindingSource::Unbound => String::new(),
                     },
                     source_col_width as usize,

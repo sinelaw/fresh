@@ -3,6 +3,7 @@
 use super::helpers::{format_chord_keys, key_code_to_config_name, modifiers_to_config_names};
 use super::types::*;
 use crate::config::{Config, Keybinding};
+use crate::input::buffer_mode::ModeRegistry;
 use crate::input::keybindings::{format_keybinding, Action, KeybindingResolver};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rust_i18n::t;
@@ -69,22 +70,48 @@ pub struct KeybindingEditor {
     /// Available action names (for autocomplete)
     pub available_actions: Vec<String>,
 
+    /// Mode context names (from plugins) for context filter cycling
+    pub mode_contexts: Vec<String>,
+
     /// Layout info for mouse hit testing (updated during render)
     pub layout: KeybindingEditorLayout,
 }
 
 impl KeybindingEditor {
-    /// Create a new keybinding editor from config and resolver
-    pub fn new(config: &Config, resolver: &KeybindingResolver, config_file_path: String) -> Self {
-        let bindings = Self::resolve_all_bindings(config, resolver);
+    /// Create a new keybinding editor from config, resolver, and mode registry
+    pub fn new(
+        config: &Config,
+        resolver: &KeybindingResolver,
+        mode_registry: &ModeRegistry,
+        config_file_path: String,
+    ) -> Self {
+        let bindings = Self::resolve_all_bindings(config, resolver, mode_registry);
         let filtered_indices: Vec<usize> = (0..bindings.len()).collect();
 
-        // Collect available action names
-        let available_actions = Self::collect_action_names();
+        // Collect available action names (include plugin action names from modes)
+        let mut available_actions = Self::collect_action_names();
+        for mode_name in mode_registry.list_modes() {
+            let mode_bindings = mode_registry.get_all_keybindings(&mode_name);
+            for command in mode_bindings.values() {
+                if !available_actions.contains(command) {
+                    available_actions.push(command.clone());
+                }
+            }
+        }
+        available_actions.sort();
+        available_actions.dedup();
 
         // Collect keymap names
         let mut keymap_names: Vec<String> = config.keybinding_maps.keys().cloned().collect();
         keymap_names.sort();
+
+        // Collect mode context names for filter cycling
+        let mut mode_contexts: Vec<String> = mode_registry
+            .list_modes()
+            .into_iter()
+            .map(|m| format!("mode:{}", m))
+            .collect();
+        mode_contexts.sort();
 
         let mut editor = Self {
             bindings,
@@ -111,6 +138,7 @@ impl KeybindingEditor {
             confirm_selection: 0,
             keymap_names,
             available_actions,
+            mode_contexts,
             layout: KeybindingEditorLayout::default(),
         };
 
@@ -118,10 +146,11 @@ impl KeybindingEditor {
         editor
     }
 
-    /// Resolve all bindings from the active keymap + custom overrides
+    /// Resolve all bindings from the active keymap + custom overrides + plugin modes
     fn resolve_all_bindings(
         config: &Config,
         resolver: &KeybindingResolver,
+        mode_registry: &ModeRegistry,
     ) -> Vec<ResolvedBinding> {
         let mut bindings = Vec::new();
         let mut seen: HashMap<(String, String), usize> = HashMap::new(); // (key_display, context) -> index
@@ -149,6 +178,33 @@ impl KeybindingEditor {
                     seen.insert(key, idx);
                     bindings.push(entry);
                 }
+            }
+        }
+
+        // Load plugin mode bindings from ModeRegistry
+        for mode_name in mode_registry.list_modes() {
+            let context_str = format!("mode:{}", mode_name);
+            let mode_bindings = mode_registry.get_all_keybindings(&mode_name);
+            for ((key_code, modifiers), command) in &mode_bindings {
+                let key_display = format_keybinding(key_code, modifiers);
+                let seen_key = (key_display.clone(), context_str.clone());
+                // Skip if already overridden by a user custom binding
+                if seen.contains_key(&seen_key) {
+                    continue;
+                }
+                let action_display = KeybindingResolver::format_action_from_str(command);
+                let idx = bindings.len();
+                seen.insert(seen_key, idx);
+                bindings.push(ResolvedBinding {
+                    key_display,
+                    action: command.clone(),
+                    action_display,
+                    context: context_str.clone(),
+                    source: BindingSource::Plugin,
+                    key_code: *key_code,
+                    modifiers: *modifiers,
+                    is_chord: false,
+                });
             }
         }
 
@@ -292,6 +348,7 @@ impl KeybindingEditor {
             match self.source_filter {
                 SourceFilter::KeymapOnly if binding.source != BindingSource::Keymap => continue,
                 SourceFilter::CustomOnly if binding.source != BindingSource::Custom => continue,
+                SourceFilter::PluginOnly if binding.source != BindingSource::Plugin => continue,
                 _ => {}
             }
 
@@ -430,7 +487,7 @@ impl KeybindingEditor {
 
     /// Cycle context filter
     pub fn cycle_context_filter(&mut self) {
-        let contexts = vec![
+        let mut contexts = vec![
             ContextFilter::All,
             ContextFilter::Specific("global".to_string()),
             ContextFilter::Specific("normal".to_string()),
@@ -440,6 +497,10 @@ impl KeybindingEditor {
             ContextFilter::Specific("menu".to_string()),
             ContextFilter::Specific("terminal".to_string()),
         ];
+        // Add mode contexts dynamically
+        for mode_ctx in &self.mode_contexts {
+            contexts.push(ContextFilter::Specific(mode_ctx.clone()));
+        }
 
         let current_idx = contexts
             .iter()
@@ -455,21 +516,26 @@ impl KeybindingEditor {
         self.source_filter = match self.source_filter {
             SourceFilter::All => SourceFilter::CustomOnly,
             SourceFilter::CustomOnly => SourceFilter::KeymapOnly,
-            SourceFilter::KeymapOnly => SourceFilter::All,
+            SourceFilter::KeymapOnly => SourceFilter::PluginOnly,
+            SourceFilter::PluginOnly => SourceFilter::All,
         };
         self.apply_filters();
     }
 
     /// Open the add binding dialog
     pub fn open_add_dialog(&mut self) {
-        self.edit_dialog = Some(EditBindingState::new_add());
+        self.edit_dialog = Some(EditBindingState::new_add_with_modes(&self.mode_contexts));
     }
 
     /// Open the edit binding dialog for the selected binding
     pub fn open_edit_dialog(&mut self) {
         if let Some(binding) = self.selected_binding().cloned() {
             let idx = self.filtered_indices[self.selected];
-            self.edit_dialog = Some(EditBindingState::new_edit(idx, &binding));
+            self.edit_dialog = Some(EditBindingState::new_edit_with_modes(
+                idx,
+                &binding,
+                &self.mode_contexts,
+            ));
         }
     }
 
@@ -579,6 +645,64 @@ impl KeybindingEditor {
                 self.has_changes = true;
 
                 // The original action may now be unbound
+                let still_bound = self.bindings.iter().any(|b| b.action == action_name);
+                if !still_bound {
+                    let action_display = KeybindingResolver::format_action_from_str(&action_name);
+                    self.bindings.push(ResolvedBinding {
+                        key_display: String::new(),
+                        action: action_name,
+                        action_display,
+                        context: String::new(),
+                        source: BindingSource::Unbound,
+                        key_code: KeyCode::Null,
+                        modifiers: KeyModifiers::NONE,
+                        is_chord: false,
+                    });
+                }
+
+                self.apply_filters();
+                DeleteResult::KeymapOverridden
+            }
+            BindingSource::Plugin => {
+                // Plugin bindings behave like keymap bindings - create a noop override
+                let binding = &self.bindings[idx];
+                let action_name = binding.action.clone();
+
+                let noop_kb = Keybinding {
+                    key: if binding.is_chord {
+                        String::new()
+                    } else {
+                        key_code_to_config_name(binding.key_code)
+                    },
+                    modifiers: if binding.is_chord {
+                        Vec::new()
+                    } else {
+                        modifiers_to_config_names(binding.modifiers)
+                    },
+                    keys: Vec::new(),
+                    action: "noop".to_string(),
+                    args: HashMap::new(),
+                    when: if binding.context.is_empty() {
+                        None
+                    } else {
+                        Some(binding.context.clone())
+                    },
+                };
+                self.pending_adds.push(noop_kb);
+
+                let noop_display = KeybindingResolver::format_action_from_str("noop");
+                self.bindings[idx] = ResolvedBinding {
+                    key_display: self.bindings[idx].key_display.clone(),
+                    action: "noop".to_string(),
+                    action_display: noop_display,
+                    context: self.bindings[idx].context.clone(),
+                    source: BindingSource::Custom,
+                    key_code: self.bindings[idx].key_code,
+                    modifiers: self.bindings[idx].modifiers,
+                    is_chord: self.bindings[idx].is_chord,
+                };
+                self.has_changes = true;
+
                 let still_bound = self.bindings.iter().any(|b| b.action == action_name);
                 if !still_bound {
                     let action_display = KeybindingResolver::format_action_from_str(&action_name);
@@ -722,10 +846,10 @@ impl KeybindingEditor {
                     "{} ({}, {})",
                     binding.action_display,
                     binding.context,
-                    if binding.source == BindingSource::Custom {
-                        "custom"
-                    } else {
-                        "keymap"
+                    match binding.source {
+                        BindingSource::Custom => "custom",
+                        BindingSource::Plugin => "plugin",
+                        _ => "keymap",
                     }
                 ));
             }
@@ -758,6 +882,7 @@ impl KeybindingEditor {
             SourceFilter::All => "All",
             SourceFilter::KeymapOnly => "Keymap",
             SourceFilter::CustomOnly => "Custom",
+            SourceFilter::PluginOnly => "Plugin",
         }
     }
 }

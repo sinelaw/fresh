@@ -1442,6 +1442,7 @@ impl Editor {
     ) {
         use super::parse_key_string;
         use crate::input::buffer_mode::BufferMode;
+        use crate::input::keybindings::{Action, KeyContext};
 
         let mut mode = BufferMode::new(name.clone())
             .with_read_only(read_only)
@@ -1451,6 +1452,11 @@ impl Editor {
             mode = mode.with_parent(parent_name);
         }
 
+        // Clear any existing plugin defaults for this mode before re-registering
+        self.keybindings.clear_plugin_defaults_for_mode(&name);
+
+        let mode_context = KeyContext::Mode(name.clone());
+
         // Parse key bindings from strings
         // Key strings can be single keys ("g", "C-f") or chord sequences ("g g", "z z")
         for (key_str, command) in bindings {
@@ -1459,7 +1465,17 @@ impl Editor {
             if parts.len() == 1 {
                 // Single key binding
                 if let Some((code, modifiers)) = parse_key_string(&key_str) {
-                    mode = mode.with_binding(code, modifiers, command);
+                    mode = mode.with_binding(code, modifiers, command.clone());
+
+                    // Dual-register into KeybindingResolver as plugin default
+                    let action = Action::from_str(&command, &std::collections::HashMap::new())
+                        .unwrap_or_else(|| Action::PluginAction(command));
+                    self.keybindings.load_plugin_default(
+                        mode_context.clone(),
+                        code,
+                        modifiers,
+                        action,
+                    );
                 } else {
                     tracing::warn!("Failed to parse key binding: {}", key_str);
                 }
@@ -1486,6 +1502,24 @@ impl Editor {
         }
 
         self.mode_registry.register(mode);
+
+        // Update keybinding labels in plugin state snapshot for getKeybindingLabel API
+        let all_bindings = self.mode_registry.get_all_keybindings(&name);
+        if let Some(snapshot_handle) = self.plugin_manager.state_snapshot_handle() {
+            if let Ok(mut snapshot) = snapshot_handle.write() {
+                // Remove old labels for this mode
+                snapshot
+                    .keybinding_labels
+                    .retain(|k, _| !k.ends_with(&format!("\0{}", name)));
+                // Add current labels
+                for ((key_code, modifiers), command) in &all_bindings {
+                    let label = crate::input::keybindings::format_keybinding(key_code, modifiers);
+                    let key = format!("{}\0{}", command, name);
+                    snapshot.keybinding_labels.insert(key, label);
+                }
+            }
+        }
+
         tracing::info!("Registered buffer mode '{}'", name);
     }
 

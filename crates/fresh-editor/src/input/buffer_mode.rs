@@ -59,6 +59,9 @@ pub struct BufferMode {
     /// This allows plugins to handle inline text editing (e.g. search fields)
     /// without registering individual bindings for every character.
     pub allow_text_input: bool,
+
+    /// Name of the plugin that registered this mode (for attribution in keybinding editor)
+    pub plugin_name: Option<String>,
 }
 
 impl BufferMode {
@@ -71,6 +74,7 @@ impl BufferMode {
             chord_keybindings: HashMap::new(),
             read_only: false,
             allow_text_input: false,
+            plugin_name: None,
         }
     }
 
