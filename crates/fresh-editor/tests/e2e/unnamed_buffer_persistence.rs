@@ -38,10 +38,8 @@ fn test_unnamed_buffer_survives_save_restore_cycle() {
         // Verify content appears on screen
         harness.assert_screen_contains("scratch notes here");
 
-        // End recovery session (flushes dirty buffers + assigns recovery IDs),
-        // then save workspace (captures those IDs).
-        harness.editor_mut().end_recovery_session().unwrap();
-        harness.editor_mut().save_workspace().unwrap();
+        // Clean shutdown (mirrors production exit path)
+        harness.shutdown(true).unwrap();
     }
 
     // Second session: restore and verify unnamed buffer content
@@ -60,11 +58,9 @@ fn test_unnamed_buffer_survives_save_restore_cycle() {
         )
         .unwrap();
 
-        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        // Startup without CLI args (mirrors production startup path)
+        let restored = harness.startup(true, &[]).unwrap();
         assert!(restored, "Session should have been restored");
-
-        // The unnamed buffer content should be visible on screen
-        harness.render().unwrap();
         harness.assert_screen_contains("scratch notes here");
     }
 }
@@ -106,8 +102,8 @@ fn test_unnamed_and_file_buffers_restored_together() {
         harness.render().unwrap();
         harness.assert_screen_contains("unnamed content");
 
-        harness.editor_mut().save_workspace().unwrap();
-        harness.editor_mut().end_recovery_session().unwrap();
+        // Clean shutdown (mirrors production exit path)
+        harness.shutdown(true).unwrap();
     }
 
     // Second session: restore both
@@ -126,7 +122,8 @@ fn test_unnamed_and_file_buffers_restored_together() {
         )
         .unwrap();
 
-        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        // Startup without CLI args (mirrors production startup path)
+        let restored = harness.startup(true, &[]).unwrap();
         assert!(restored, "Session should have been restored");
 
         // Switch to the file buffer and verify it's visible
@@ -300,9 +297,8 @@ fn test_hot_exit_restores_unsaved_file_changes() {
         harness.render().unwrap();
         harness.assert_screen_contains("EDITED");
 
-        // Save workspace and end recovery session (simulating clean exit)
-        harness.editor_mut().save_workspace().unwrap();
-        harness.editor_mut().end_recovery_session().unwrap();
+        // Clean shutdown (mirrors production exit path)
+        harness.shutdown(true).unwrap();
     }
 
     // Verify file on disk is unchanged
@@ -328,11 +324,9 @@ fn test_hot_exit_restores_unsaved_file_changes() {
         )
         .unwrap();
 
-        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        // Startup without CLI args (mirrors production startup path)
+        let restored = harness.startup(true, &[]).unwrap();
         assert!(restored, "Session should have been restored");
-
-        // The unsaved changes should be visible on screen
-        harness.render().unwrap();
         harness.assert_screen_contains("EDITED");
     }
 }
@@ -376,8 +370,9 @@ fn test_hot_exit_restores_without_workspace() {
         harness.render().unwrap();
         harness.assert_screen_contains("EDITED");
 
-        // Only end recovery session (no workspace save - simulates CLI file workflow)
-        harness.editor_mut().end_recovery_session().unwrap();
+        // Shutdown without workspace save (simulates CLI file workflow where
+        // user quits without saving workspace)
+        harness.shutdown(false).unwrap();
     }
 
     // Verify file on disk is unchanged
@@ -387,10 +382,9 @@ fn test_hot_exit_restores_without_workspace() {
         "File on disk should be unchanged"
     );
 
-    // Second session: open file directly (as CLI would) WITHOUT workspace restore.
-    // Without apply_hot_exit_recovery, the modifications would be lost because
-    // workspace restore (which contains the hot exit recovery logic) is disabled
-    // when files are passed on the CLI.
+    // Second session: open file via CLI arg WITHOUT workspace restore.
+    // The startup() method will queue the file, schedule hot exit recovery,
+    // and process pending opens — mirroring the real production path.
     {
         let mut config = Config::default();
         config.editor.hot_exit = true;
@@ -406,20 +400,8 @@ fn test_hot_exit_restores_without_workspace() {
         )
         .unwrap();
 
-        // Open file directly (as CLI would, without workspace restore)
-        harness.open_file(&file1).unwrap();
-        harness.render().unwrap();
-
-        // Without hot exit recovery, the buffer shows on-disk content only
-        harness.assert_screen_contains("original content");
-
-        // Apply hot exit recovery — this is what schedule_hot_exit_recovery
-        // triggers via process_pending_file_opens in the real app
-        let recovered = harness.editor_mut().apply_hot_exit_recovery().unwrap();
-        assert!(recovered > 0, "Should have recovered at least one buffer");
-
-        // Now the unsaved changes should be visible
-        harness.render().unwrap();
+        // Startup with CLI file, no workspace restore (mirrors `fresh hello.txt`)
+        harness.startup(false, &[file1.clone()]).unwrap();
         harness.assert_screen_contains("EDITED");
     }
 }

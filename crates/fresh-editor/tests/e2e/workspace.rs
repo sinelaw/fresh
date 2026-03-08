@@ -1578,9 +1578,8 @@ fn test_reopen_without_args_restores_session_no_extra_buffer() {
         harness.type_text(" MODIFIED").unwrap();
         harness.render().unwrap();
 
-        // Hot exit: save workspace + end recovery
-        harness.editor_mut().end_recovery_session().unwrap();
-        harness.editor_mut().save_workspace().unwrap();
+        // Clean shutdown (mirrors production exit path)
+        harness.shutdown(true).unwrap();
     }
 
     // Second session: reopen without CLI args — should restore both files
@@ -1599,11 +1598,9 @@ fn test_reopen_without_args_restores_session_no_extra_buffer() {
         )
         .unwrap();
 
-        // Simulate startup without CLI args: just restore workspace
-        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        // Startup without CLI args (mirrors production startup path)
+        let restored = harness.startup(true, &[]).unwrap();
         assert!(restored, "Session should have been restored");
-
-        harness.render().unwrap();
 
         // Both files should be visible in tabs
         harness.assert_screen_contains("a.txt");
@@ -1666,13 +1663,12 @@ fn test_reopen_with_file_arg_restores_session_and_opens_new_file() {
         harness.type_text(" MODIFIED").unwrap();
         harness.render().unwrap();
 
-        // Hot exit: save workspace + end recovery
-        harness.editor_mut().end_recovery_session().unwrap();
-        harness.editor_mut().save_workspace().unwrap();
+        // Clean shutdown (mirrors production exit path)
+        harness.shutdown(true).unwrap();
     }
 
     // Second session: reopen with file3 as CLI arg
-    // Simulates: `fresh c.txt` — should restore session + open c.txt (focused)
+    // `fresh c.txt` — should restore session + open c.txt (focused)
     {
         let mut config = Config::default();
         config.editor.hot_exit = true;
@@ -1688,15 +1684,9 @@ fn test_reopen_with_file_arg_restores_session_and_opens_new_file() {
         )
         .unwrap();
 
-        // Simulate startup with CLI args:
-        // 1. Restore workspace (always, unless --no-session)
-        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        // Startup with CLI file arg (mirrors production startup path)
+        let restored = harness.startup(true, &[file3.clone()]).unwrap();
         assert!(restored, "Session should have been restored");
-
-        // 2. Open CLI file (this is what queue_file_open + process_pending_file_opens does)
-        harness.open_file(&file3).unwrap();
-
-        harness.render().unwrap();
 
         // All three files should be visible in tabs
         harness.assert_screen_contains("a.txt");

@@ -1338,6 +1338,65 @@ impl EditorTestHarness {
         self.editor.should_quit()
     }
 
+    // =========================================================================
+    // Session lifecycle helpers — mirrors the real startup/shutdown flows
+    // in main.rs so tests exercise the actual production code paths.
+    // =========================================================================
+
+    /// Perform a clean shutdown, mirroring `run_event_loop_common` exit path.
+    ///
+    /// Calls auto-save (if enabled), `end_recovery_session`, and `save_workspace`
+    /// in the same order as the production shutdown code.
+    pub fn shutdown(&mut self, workspace_enabled: bool) -> anyhow::Result<()> {
+        if self.editor.config().editor.auto_save_enabled {
+            self.editor.save_all_on_exit()?;
+        }
+        self.editor.end_recovery_session()?;
+        if workspace_enabled {
+            self.editor.save_workspace()?;
+        }
+        Ok(())
+    }
+
+    /// Perform startup, mirroring `handle_first_run_setup` in main.rs.
+    ///
+    /// Restores the workspace (if enabled), queues CLI file opens, processes
+    /// them, schedules hot-exit recovery, and runs crash recovery — all in the
+    /// same order as production.  Returns whether workspace restore succeeded.
+    pub fn startup(
+        &mut self,
+        workspace_enabled: bool,
+        cli_files: &[std::path::PathBuf],
+    ) -> anyhow::Result<bool> {
+        let mut restored = false;
+        if workspace_enabled {
+            restored = self.editor.try_restore_workspace().unwrap_or(false);
+        }
+
+        let has_cli_files = !cli_files.is_empty();
+        for path in cli_files {
+            self.editor
+                .queue_file_open(path.clone(), None, None, None, None, None, None);
+        }
+
+        if has_cli_files {
+            self.editor.schedule_hot_exit_recovery();
+        }
+
+        // Process pending file opens (in production this happens on first
+        // iteration of the event loop).
+        self.editor.process_pending_file_opens();
+
+        if self.editor.has_recovery_files().unwrap_or(false) {
+            let _ = self.editor.recover_all_buffers();
+        }
+
+        self.editor.start_recovery_session()?;
+
+        self.render()?;
+        Ok(restored)
+    }
+
     /// Update shadow string to mirror key operations
     /// This helps catch discrepancies between piece tree and simple string operations
     fn update_shadow_for_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
