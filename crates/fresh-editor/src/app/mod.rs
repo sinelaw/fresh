@@ -893,29 +893,14 @@ pub struct PendingFileOpen {
 #[allow(dead_code)] // Fields are used across module files via self.search_scan_state
 struct SearchScanState {
     buffer_id: BufferId,
-    /// Snapshot of the (pre-split) leaves.
+    /// Snapshot of the (pre-split) leaves (needed for refresh_saved_root).
     leaves: Vec<crate::model::piece_tree::LeafData>,
-    /// One work item per leaf.
-    chunks: Vec<crate::model::buffer::LineScanChunk>,
-    next_chunk: usize,
-    /// Running document byte offset for the next chunk (avoids O(N²) recomputation).
-    next_doc_offset: usize,
-    total_bytes: usize,
-    scanned_bytes: usize,
-    /// Compiled regex for searching.
-    regex: regex::Regex,
+    /// The chunked search state (lives on TextBuffer, driven from here).
+    scan: crate::model::buffer::ChunkedSearchState,
     /// The original query string.
     query: String,
-    /// Accumulated match results: (byte_offset, match_len).
-    match_ranges: Vec<(usize, usize)>,
-    /// Tail bytes from the previous chunk for cross-boundary matching.
-    overlap_tail: Vec<u8>,
-    /// Byte offset of the overlap_tail's first byte in the document.
-    overlap_doc_offset: usize,
     /// Search range restriction (from selection search).
     search_range: Option<std::ops::Range<usize>>,
-    /// Whether the match count was capped.
-    capped: bool,
     /// Search settings captured at scan start.
     case_sensitive: bool,
     whole_word: bool,
@@ -8088,7 +8073,7 @@ mod tests {
         // Manually create a search scan state that is already capped but not
         // at the last chunk (simulating early cap at ~15%).
         let buffer_id = editor.active_buffer();
-        let regex = regex::Regex::new("test").unwrap();
+        let regex = regex::bytes::Regex::new("test").unwrap();
         let fake_chunks = vec![
             crate::model::buffer::LineScanChunk {
                 leaf_index: 0,
@@ -8105,18 +8090,38 @@ mod tests {
         editor.search_scan_state = Some(SearchScanState {
             buffer_id,
             leaves: Vec::new(),
-            chunks: fake_chunks,
-            next_chunk: 1, // Only processed 1 of 2 chunks
-            next_doc_offset: 100,
-            total_bytes: 200,
-            scanned_bytes: 100,
-            regex,
+            scan: crate::model::buffer::ChunkedSearchState {
+                chunks: fake_chunks,
+                next_chunk: 1, // Only processed 1 of 2 chunks
+                next_doc_offset: 100,
+                total_bytes: 200,
+                scanned_bytes: 100,
+                regex,
+                matches: vec![
+                    crate::model::buffer::SearchMatch {
+                        byte_offset: 10,
+                        length: 4,
+                        line: 1,
+                        column: 11,
+                        context: String::new(),
+                    },
+                    crate::model::buffer::SearchMatch {
+                        byte_offset: 50,
+                        length: 4,
+                        line: 1,
+                        column: 51,
+                        context: String::new(),
+                    },
+                ],
+                overlap_tail: Vec::new(),
+                overlap_doc_offset: 0,
+                max_matches: 10_000,
+                capped: true, // Capped early — this is the key condition
+                query_len: 4,
+                running_line: 1,
+            },
             query: "test".to_string(),
-            match_ranges: vec![(10, 4), (50, 4)],
-            overlap_tail: Vec::new(),
-            overlap_doc_offset: 0,
             search_range: None,
-            capped: true, // Capped early — this is the key condition
             case_sensitive: false,
             whole_word: false,
             use_regex: false,

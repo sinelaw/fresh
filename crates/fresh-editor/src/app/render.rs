@@ -2770,23 +2770,23 @@ impl Editor {
     fn start_search_scan(&mut self, query: &str, regex: regex::Regex) {
         let buffer_id = self.active_buffer();
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            let (chunks, total_bytes) = state.buffer.prepare_line_scan();
             let leaves = state.buffer.piece_tree_leaves();
+            // Build a bytes::Regex from the same pattern for the chunked scanner
+            let bytes_regex = regex::bytes::RegexBuilder::new(regex.as_str())
+                .case_insensitive(!self.search_case_sensitive)
+                .build()
+                .expect("regex already validated");
+            let scan = state.buffer.search_scan_init(
+                bytes_regex,
+                super::SearchState::MAX_MATCHES,
+                query.len(),
+            );
             self.search_scan_state = Some(super::SearchScanState {
                 buffer_id,
                 leaves,
-                chunks,
-                next_chunk: 0,
-                next_doc_offset: 0,
-                total_bytes,
-                scanned_bytes: 0,
-                regex,
+                scan,
                 query: query.to_string(),
-                match_ranges: Vec::new(),
-                overlap_tail: Vec::new(),
-                overlap_doc_offset: 0,
                 search_range: None,
-                capped: false,
                 case_sensitive: self.search_case_sensitive,
                 whole_word: self.search_whole_word,
                 use_regex: self.search_use_regex,

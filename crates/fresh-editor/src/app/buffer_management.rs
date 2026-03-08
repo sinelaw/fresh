@@ -13,7 +13,6 @@ use rust_i18n::t;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::app::types::SearchState;
 use crate::app::warning_domains::WarningDomain;
 use crate::model::event::{BufferId, Event, LeafId};
 use crate::state::EditorState;
@@ -2696,15 +2695,11 @@ impl Editor {
         }
 
         let scan = self.search_scan_state.as_ref().unwrap();
-        if scan.next_chunk >= scan.chunks.len() || scan.capped {
+        if scan.scan.is_done() {
             self.finish_search_scan();
         } else {
-            let pct = if scan.total_bytes > 0 {
-                (scan.scanned_bytes * 100) / scan.total_bytes
-            } else {
-                100
-            };
-            let match_count = scan.match_ranges.len();
+            let pct = scan.scan.progress_percent();
+            let match_count = scan.scan.matches.len();
             self.set_status_message(format!(
                 "Searching... {}% ({} matches so far)",
                 pct, match_count
@@ -2713,14 +2708,8 @@ impl Editor {
         true
     }
 
-    /// Process a batch of search chunks.  For each chunk, loads (or reads
-    /// in-memory) the leaf data, prepends any overlap tail from the previous
-    /// chunk to handle cross-boundary matches, runs the regex, and
-    /// accumulates results.
-    ///
-    /// To avoid double-mutable-borrow issues (scan state + buffer state are
-    /// both on `self`), each iteration first extracts the work item from the
-    /// scan state, then accesses the buffer, then writes results back.
+    /// Process a batch of search chunks by delegating to
+    /// `TextBuffer::search_scan_next_chunk`.
     fn process_search_scan_batch(
         &mut self,
         buffer_id: crate::model::event::BufferId,
@@ -2728,85 +2717,32 @@ impl Editor {
         let concurrency = self.config.editor.read_concurrency.max(1);
 
         for _ in 0..concurrency {
-            // --- Phase 1: Extract next work item from scan state ---
-            let (doc_offset, byte_len, overlap_tail, overlap_doc_offset, query_len) = {
-                let scan = match self.search_scan_state.as_mut() {
+            let is_done = {
+                let scan_state = match self.search_scan_state.as_ref() {
                     Some(s) => s,
                     None => return Ok(()),
                 };
-                if scan.next_chunk >= scan.chunks.len() || scan.capped {
-                    break;
-                }
-                let chunk = scan.chunks[scan.next_chunk].clone();
-                scan.next_chunk += 1;
-                scan.scanned_bytes += chunk.byte_len;
-
-                let doc_offset = scan.next_doc_offset;
-                scan.next_doc_offset += chunk.byte_len;
-
-                let overlap_tail = scan.overlap_tail.clone();
-                let overlap_doc_offset = scan.overlap_doc_offset;
-                let query_len = scan.query.len();
-
-                (
-                    doc_offset,
-                    chunk.byte_len,
-                    overlap_tail,
-                    overlap_doc_offset,
-                    query_len,
-                )
+                scan_state.scan.is_done()
             };
-
-            // --- Phase 2: Load the chunk bytes from the buffer ---
-            let chunk_bytes: Vec<u8> = if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                match state.buffer.get_text_range_mut(doc_offset, byte_len) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        tracing::warn!("Failed to read chunk at offset {}: {}", doc_offset, e);
-                        continue;
-                    }
-                }
-            } else {
-                continue;
-            };
-
-            // --- Phase 3: Search and write results back to scan state ---
-            let scan = self.search_scan_state.as_mut().unwrap();
-
-            let overlap_len = overlap_tail.len();
-            let mut search_buf = Vec::with_capacity(overlap_len + chunk_bytes.len());
-            search_buf.extend_from_slice(&overlap_tail);
-            search_buf.extend_from_slice(&chunk_bytes);
-
-            let buf_doc_offset = if overlap_len > 0 {
-                overlap_doc_offset
-            } else {
-                doc_offset
-            };
-
-            let search_text = String::from_utf8_lossy(&search_buf);
-            for m in scan.regex.find_iter(&search_text) {
-                let match_doc_offset = buf_doc_offset + m.start();
-                let match_len = m.end() - m.start();
-
-                // Skip matches entirely within the overlap (already found)
-                if overlap_len > 0 && m.end() <= overlap_len {
-                    continue;
-                }
-
-                if scan.match_ranges.len() >= SearchState::MAX_MATCHES {
-                    scan.capped = true;
-                    break;
-                }
-
-                scan.match_ranges.push((match_doc_offset, match_len));
+            if is_done {
+                break;
             }
 
-            // Save overlap tail for next chunk
-            let max_overlap = query_len.max(256).min(chunk_bytes.len());
-            let tail_start = chunk_bytes.len().saturating_sub(max_overlap);
-            scan.overlap_tail = chunk_bytes[tail_start..].to_vec();
-            scan.overlap_doc_offset = doc_offset + tail_start;
+            // Extract the ChunkedSearchState, run one chunk on the buffer,
+            // then put it back.  This avoids double-mutable-borrow of self.
+            let mut scan = self.search_scan_state.take().unwrap();
+            let result = if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                state.buffer.search_scan_next_chunk(&mut scan.scan)
+            } else {
+                Ok(false)
+            };
+            self.search_scan_state = Some(scan);
+
+            match result {
+                Ok(false) => break, // scan complete
+                Ok(true) => {}      // more chunks
+                Err(e) => return Err(e),
+            }
         }
 
         Ok(())
@@ -2818,8 +2754,13 @@ impl Editor {
     fn finish_search_scan(&mut self) {
         let scan = self.search_scan_state.take().unwrap();
         let buffer_id = scan.buffer_id;
-        let match_ranges = scan.match_ranges;
-        let capped = scan.capped;
+        let match_ranges: Vec<(usize, usize)> = scan
+            .scan
+            .matches
+            .iter()
+            .map(|m| (m.byte_offset, m.length))
+            .collect();
+        let capped = scan.scan.capped;
         let query = scan.query;
 
         // The search scan loaded chunks via chunk_split_and_load, which

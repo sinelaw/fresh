@@ -177,8 +177,7 @@ impl Editor {
                             // Only dispatch plain chars or shift+chars (not ctrl/alt combos)
                             if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
                                 let action_name = format!("mode_text_input:{}", ch);
-                                return self
-                                    .handle_action(Action::PluginAction(action_name));
+                                return self.handle_action(Action::PluginAction(action_name));
                             }
                         }
                     }

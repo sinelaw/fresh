@@ -1,165 +1,128 @@
 # Project-Wide Search & Replace
 
-> **Status**: Implementation Plan
+> **Status**: Feature-complete — needs tests and polish
 > **Date**: March 2026
 
 ## Motivation
 
-The current `search_replace` plugin shells out to `git grep` for search and uses `std::fs::read_to_string` / `std::fs::write` for replacement. This has several critical problems:
+The original `search_replace` plugin shelled out to `git grep` for search and used raw `std::fs` for replacement. This bypassed the `FileSystem` trait (broken on SSH), bypassed the buffer model (no undo, stale results, encoding mangling), and had no large-file support.
 
-1. **Bypasses the `FileSystem` trait** — both search and replace use local-only I/O. The editor's SSH/remote filesystem abstraction is completely sidestepped. The plugin is broken on remote connections.
-2. **Bypasses the buffer model** — replacements read/write raw files instead of editing through the piece tree. Open buffers with unsaved changes are silently overwritten. There is no undo. Encoding and line endings are mangled (`split("\n")` destroys CRLF).
-3. **Search results can be stale** — `git grep` searches on-disk content. If a buffer has unsaved edits, the results show the saved state, not what the user sees. Line numbers and byte offsets don't match the live buffer, so replacements target the wrong locations.
-4. **No large-file support** — unopened files are read entirely into memory for replacement. There is no streaming, no chunked processing.
+The editor already has all the machinery to solve these problems: piece tree chunked search, lazy loading through the `FileSystem` trait, and incremental non-blocking scanning.
 
-The editor already has all the machinery to solve these problems. The buffer's piece tree supports chunked streaming search (`OverlappingChunks`, `process_search_scan_batch`), lazy loading through the `FileSystem` trait, and incremental non-blocking scanning. The goal is to reuse this infrastructure for project-wide search, adding only the file-tree dispatch layer.
+## Architecture
 
-## Architectural Principles
+### Principles
 
-**1. Everything goes through existing abstractions**
+1. **Everything goes through existing abstractions** — `FileSystem` trait for I/O, `TextBuffer` for search/edit, plugin API for UI.
+2. **Search the content the user sees** — dirty buffers search the piece tree; unopened files search via `FileSystem`.
+3. **Large files are not special-cased** — same `TextBuffer` code path handles small and large files. `load_large_file` creates lazy piece tree nodes; `get_text_range_mut` loads chunks on demand; chunks are searched and can be discarded.
+4. **The plugin is UI-only** — panel, keybindings, selection, display. No file I/O.
 
-The `FileSystem` trait handles local, remote (SSH), and test filesystem backends. The `TextBuffer` handles encoding, line endings, lazy loading, piece tree editing, and undo. The plugin API exposes `deleteRange`, `insertText`, and `openFile`. New code should compose these — not reimplement them.
-
-**2. Search the content the user sees**
-
-If a file is open with dirty edits, search must run against the buffer's piece tree (which reflects the unsaved state). If a file is not open, search runs against the on-disk content via the `FileSystem` trait. This matches VS Code's behavior and eliminates stale-result bugs.
-
-**3. Large files are not special-cased**
-
-The same code path handles small and large files. `TextBuffer::load_large_file` creates a piece tree with unloaded chunks (file offset references, no I/O). `get_text_range_mut` lazy-loads chunks on demand through the `FileSystem` trait. `process_search_scan_batch` processes a few chunks per `editor_tick`. The file is never fully in memory. This already works — project-wide search just needs to create these lightweight buffers for unopened files.
-
-**4. The plugin is UI-only**
-
-The plugin handles the panel, keybindings, selection checkboxes, and user prompts. Search and replace logic lives in Rust, exposed as two plugin API methods. The plugin never touches file I/O or buffer internals.
-
-## Design
-
-### Search: `editor.grepProject(pattern, opts)`
-
-New Rust-side API exposed to plugins.
-
-**Input:**
-```typescript
-interface GrepOpts {
-  fixedString?: boolean;   // -F (literal) vs regex
-  caseSensitive?: boolean;
-  maxResults?: number;
-  // Future: glob include/exclude filters
-}
-```
-
-**Output:**
-```typescript
-interface GrepMatch {
-  file: string;        // Absolute path
-  bufferId: number;    // >0 if file is open in a buffer, 0 if not
-  byteOffset: number;  // Match start in file/buffer content
-  length: number;      // Match length in bytes
-  line: number;        // 1-indexed line number
-  column: number;      // 1-indexed column
-  context: string;     // The matched line (for display)
-}
-```
-
-**Implementation (Rust side):**
-
-1. Walk the project file tree via `FileSystem::read_dir` (recursive). Respect `.gitignore` if available (reuse existing ignore infrastructure or call `git ls-files` as a fast path for git repos).
-
-2. For each file path, dispatch:
-
-| File state | Search strategy |
-|---|---|
-| Open in a buffer (dirty or clean) | Search the existing `TextBuffer`'s piece tree. Use `prepare_line_scan` + the same chunk-based regex scan that `process_search_scan_batch` uses. Dirty edits are automatically included. |
-| Not open, small file (< large-file threshold) | Read via `FileSystem::read_file`. Search the raw bytes using `TextBuffer::find_in_bytes` (literal) or `regex::find_iter` (regex). No buffer created. |
-| Not open, large file (>= threshold) | Create a lightweight `TextBuffer` via `load_large_file` — records piece tree references to the file, no I/O. Run `prepare_line_scan` + incremental chunk scan. Chunks are lazy-loaded via `FileSystem::read_range`, searched, and discarded. File is never fully in memory. Drop the temporary buffer after scanning. |
-
-3. Collect `GrepMatch` results up to `maxResults`. For each match, compute line/column by counting newlines in the scanned content (already available from the chunk processing).
-
-4. The scan is incremental and non-blocking — process a batch of files/chunks per `editor_tick`, report progress to the plugin via a callback or status update. This matches the existing single-buffer `SearchScanState` pattern.
-
-### Replace: `editor.replaceInBuffer(bufferId, matches, replacement)`
-
-New Rust-side API exposed to plugins.
-
-**Input:**
-```typescript
-interface ReplaceMatch {
-  byteOffset: number;
-  length: number;
-}
-```
-
-**Implementation (Rust side):**
-
-1. If the file is not open, `openFile` to create a buffer (lazy-loads via FS trait).
-
-2. Sort matches by `byteOffset` descending — editing from the end backwards prevents earlier edits from shifting later offsets.
-
-3. For each match: `delete_range(offset, offset + length)` then `insert_text(offset, replacement)`. These are the existing `TextBuffer` methods that update the piece tree, markers, and overlays.
-
-4. Group all edits as a single undo action (the buffer's undo system already supports grouping — same mechanism used by multi-cursor edits).
-
-5. Save the buffer via `executeAction("save")`, which goes through `FileSystem::write_patched` — the optimized path that sends only changed chunks to the remote host over SSH.
-
-### Plugin changes
-
-The `search_replace.ts` plugin becomes a thin UI layer:
+### Search flow
 
 ```
-User triggers command
-  → prompt for search pattern
-  → prompt for replacement text
-  → call editor.grepProject(pattern, opts)
-  → display results in virtual buffer panel (existing code)
-  → user selects/deselects matches, presses Enter
-  → for each file with selected matches:
-      call editor.replaceInBuffer(bufferId, selectedMatches, replacement)
-  → close panel, report results
+Plugin: editor.grepProjectStreaming(pattern, opts, progressCallback)
+  → Rust: snapshot dirty buffers on main thread
+  → Rust: spawn tokio task
+    → Walker: ignore::WalkBuilder respects .gitignore
+    → Per file (8 parallel via semaphore):
+        - If dirty snapshot exists → wrap in TextBuffer, search_scan_all()
+        - Else → fs.read_file(), wrap in TextBuffer, search_scan_all()
+        - SearchMatch results (byte_offset, length, line, column, context)
+          → convert to GrepMatch JSON → send via AsyncBridge
+  → Plugin receives streaming progress callbacks + final resolution
 ```
 
-The plugin no longer calls `spawnProcess`, `readFile`, or `writeFile`. It only manages the UI.
+### Replace flow
 
-## What's reused vs new
+```
+Plugin: editor.replaceInFile(filePath, matches, replacement)
+  → Rust: open file as buffer if needed (hidden_from_tabs)
+  → Sort matches descending by byte_offset
+  → Apply all edits as single bulk operation (single undo)
+  → Save via FileSystem trait
+```
 
-### Reused (zero modifications)
+## What's Done
 
-| Component | Location | What it does |
-|---|---|---|
-| `TextBuffer::find_in_bytes` | `buffer.rs:3287` | Literal byte pattern search |
-| `TextBuffer::find_pattern` | `buffer.rs:3256` | Chunked literal search via `OverlappingChunks` |
-| `TextBuffer::find_regex` | `buffer.rs:3338` | Chunked regex search via `OverlappingChunks` |
-| `OverlappingChunks` | `buffer.rs:3991` | Streaming piece tree iterator with cross-boundary overlap |
-| `TextBuffer::get_text_range_mut` | `buffer.rs:2175` | Lazy-loads unloaded chunks on demand via `FileSystem` trait |
-| `TextBuffer::load_large_file` | `buffer.rs:683` | Creates piece tree with unloaded chunk references (no I/O) |
-| `prepare_line_scan` | `buffer.rs:2638` | Splits piece tree into scan chunks |
-| `process_search_scan_batch` pattern | `buffer_management.rs:2724` | Incremental chunk-based regex scan with overlap handling |
-| `FileSystem::read_dir` | `filesystem.rs` | Directory listing (local + SSH) |
-| `FileSystem::read_file` | `filesystem.rs:314` | File reading (local + SSH) |
-| `FileSystem::read_range` | `filesystem.rs:317` | Partial file reading for lazy loading |
-| `FileSystem::write_patched` | `filesystem.rs:363` | Optimized save — sends only diffs to remote |
-| `TextBuffer::insert_text` | `buffer.rs` | Piece tree insert |
-| `TextBuffer::delete_range` | `buffer.rs` | Piece tree delete |
-| Buffer undo grouping | `buffer.rs` | Groups multiple edits as single undo action |
+### Search unified behind TextBuffer
 
-### New code
+All search — built-in single-buffer, synchronous project grep, and streaming project grep — now goes through the same code path:
 
-| Component | Estimated size | What it does |
-|---|---|---|
-| `grep_project` dispatcher | ~120 lines | Walks file tree, checks open buffers, dispatches to appropriate search strategy per file |
-| `GrepProjectScanState` | ~40 lines | Tracks incremental multi-file scan progress (analogous to existing `SearchScanState`) |
-| `replace_in_buffer` | ~30 lines | Sorts matches descending, applies `delete_range` + `insert_text` in undo group |
-| Plugin API bindings | ~60 lines | `ts_export.rs` + `quickjs_backend.rs` glue for the two new methods |
-| Plugin rewrite | ~-100 lines (net reduction) | Remove `git grep`/`readFile`/`writeFile` logic, call new APIs instead |
+- **`SearchMatch`** struct — `byte_offset`, `length`, `line`, `column`, `context`
+- **`ChunkedSearchState`** — mutable scan state with incremental `running_line` counter
+- **`search_scan_init(regex, max_matches, query_len)`** — creates state from `prepare_line_scan()`
+- **`search_scan_next_chunk(&mut state)`** — processes one chunk, computes line/col/context on the fly. O(chunk_size) line counting via incremental cursor.
+- **`search_scan_all(regex, max_matches, query_len)`** — synchronous variant for `spawn_blocking`
 
-## Comparison with other editors
+Editor's `SearchScanState` wraps `ChunkedSearchState` + editor-specific fields. `process_search_scan_batch` delegates to `buffer.search_scan_next_chunk()`.
 
-| | VS Code | Vim/Neovim | JetBrains | fresh (proposed) |
-|---|---|---|---|---|
-| Search engine | ripgrep on extension host | External tool | PSI index | Reuse existing `TextBuffer` search infra via `FileSystem` trait |
-| Dirty buffer handling | Search in-memory document | Doesn't (user saves first) | PSI tree is always current | Search piece tree (dirty edits included) |
-| Large file search | ripgrep streams | External tool streams | Pre-built index | `load_large_file` + incremental chunk scan (existing code) |
-| Remote/SSH | Extension host runs on remote | Neovim remote | Gateway on remote | `FileSystem` trait (existing abstraction) |
-| Replace mechanism | `WorkspaceEdit` on document model | `:cdo s///` on buffer | Write action on PSI | `deleteRange` + `insertText` on buffer (existing ops) |
-| Undo | Single undo group | Per-buffer | Single action | Per-buffer undo group (existing infra) |
-| Encoding safety | Document model | Buffer `fileformat` | VFS | Buffer handles encoding on load (existing) |
-| Net new code | Large (WorkspaceEdit, TextSearchProvider) | Minimal (`:cdo` is built-in) | Large (PSI, index) | ~250 lines of Rust + plugin simplification |
+### Project grep migrated
+
+`handle_grep_project` and `handle_grep_project_streaming` create temporary `TextBuffer` instances and call `search_scan_all()`. The old `collect_matches_from_bytes` (with its duplicated regex/case-folding/whole-word logic) is deleted. Whole-word matching uses `\b...\b` in the regex, same as built-in search.
+
+### Plugin UI (`search_replace.ts`)
+
+- Compact inline-editing UX with search/replace fields, toggle buttons (case/regex/whole-word)
+- Virtual-scrolled hierarchical results tree with per-match checkboxes
+- Debounced search (150ms via `editor.delay()`)
+- Streaming results via `grepProjectStreaming` progress callback
+- Replace via `replaceInFile` — groups by file, applies edits, saves
+- i18n via `editor.t()` (~140 messages in `search_replace.i18n.json`)
+
+### Plugin API (`quickjs_backend.rs`)
+
+- `grepProjectStreaming` with custom JS wrapper, auto-generated d.ts via `ts_raw` proc macro attribute
+- `replaceInFile` returns `ReplaceResult { replacements, buffer_id }`
+- `GrepMatch` type with file, buffer_id, byte_offset, length, line, column, context
+
+## Known Limitations
+
+### Context truncation on very long lines
+
+The overlap window between chunks is `max(query_len, 256)` bytes. If a match sits on a line longer than the overlap, the reported `column` will be relative to the overlap start (not the true line start) and `context` will be truncated. This affects < 1% of real code. Increasing the overlap would increase redundant scanning.
+
+### Soft match cap in streaming grep
+
+The 8 parallel searchers check `match_count` with relaxed atomics, so the total can slightly exceed `max_results`. This is acceptable — it's a UI responsiveness limit, not a hard contract.
+
+### `\b` word boundaries are ASCII-centric
+
+Rust's `\b` matches ASCII word boundaries. For non-ASCII identifiers (e.g., `café`), whole-word matching may miss boundaries. Same limitation as built-in search.
+
+## Remaining Work
+
+### 1. Tests (high priority)
+
+**Unit tests for `search_scan_next_chunk`:**
+- Correct line/column/context for matches within a single chunk
+- Correct line numbers across multiple chunks (running_line tracking)
+- Overlap deduplication: matches in overlap region are skipped
+- Matches at chunk boundaries (spanning overlap)
+- Max matches cap triggers correctly
+
+**Unit tests for project grep handlers:**
+- `handle_grep_project` with open dirty buffers vs unopened files
+- Binary file skipping
+- Max results limit
+
+**E2E test gaps:**
+- Verify line/column accuracy in search results panel
+- Multi-file replace with some files failing
+
+### 2. Plugin polish (medium priority)
+
+- Invalid regex patterns silently fail — show error message to user
+- Replace errors are debug-logged but not surfaced in status bar
+- Remove leftover `editor.debug()` calls (search_replace_enter, search_replace_tab)
+- Selection state is lost when search re-runs (option toggle, pattern change)
+
+### 3. Future / nice-to-have
+
+- Search history (cycle through previous patterns)
+- "Replace next" — replace one match and advance to next
+- Replace preview — show replacement text inline before confirming
+- Glob include/exclude filters for file paths
+- Configurable max results (currently 200 in plugin)
+- Large file lazy loading for project grep (currently reads small files fully; could use `load_large_file` for files above a project-grep-specific threshold)
+- Concurrent search: chunks would need chunk-relative line numbers fixed up after completion

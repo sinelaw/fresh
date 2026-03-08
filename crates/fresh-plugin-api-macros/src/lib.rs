@@ -1081,6 +1081,7 @@ mod tests {
                 params: vec![],
                 return_type: "SpawnResult".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
             ApiMethod {
                 js_name: "listBuffers".to_string(),
@@ -1088,6 +1089,7 @@ mod tests {
                 params: vec![],
                 return_type: "BufferInfo[]".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
         ];
 
@@ -1104,6 +1106,7 @@ mod tests {
             params: vec![],
             return_type: "number".to_string(),
             doc: "Get the active buffer ID".to_string(),
+            ts_raw: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1124,6 +1127,7 @@ mod tests {
             }],
             return_type: "void".to_string(),
             doc: "".to_string(),
+            ts_raw: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1151,6 +1155,7 @@ mod tests {
             ],
             return_type: "SpawnResult".to_string(),
             doc: "Spawn a process".to_string(),
+            ts_raw: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1276,6 +1281,7 @@ mod tests {
             ],
             return_type: "boolean".to_string(),
             doc: "Update alignment hunks".to_string(),
+            ts_raw: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1292,6 +1298,7 @@ mod tests {
             params: vec![],
             return_type: "CursorInfo | null".to_string(),
             doc: "Get primary cursor".to_string(),
+            ts_raw: None,
         };
         let ts = generate_ts_method(&method);
         assert!(ts.contains("getPrimaryCursor(): CursorInfo | null;"));
@@ -1302,6 +1309,7 @@ mod tests {
             params: vec![],
             return_type: "CursorInfo[]".to_string(),
             doc: "Get all cursors".to_string(),
+            ts_raw: None,
         };
         let ts = generate_ts_method(&method);
         assert!(ts.contains("getAllCursors(): CursorInfo[];"));
@@ -1312,6 +1320,7 @@ mod tests {
             params: vec![],
             return_type: "number[]".to_string(),
             doc: "Get all cursor positions".to_string(),
+            ts_raw: None,
         };
         let ts = generate_ts_method(&method);
         assert!(ts.contains("getAllCursorPositions(): number[];"));
@@ -1330,6 +1339,7 @@ mod tests {
             }],
             return_type: "TerminalResult".to_string(),
             doc: "Create a terminal".to_string(),
+            ts_raw: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1352,6 +1362,7 @@ mod tests {
                 }],
                 return_type: "boolean".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
             ApiMethod {
                 js_name: "setSuggestions".to_string(),
@@ -1364,6 +1375,7 @@ mod tests {
                 }],
                 return_type: "boolean".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
             ApiMethod {
                 js_name: "getPrimaryCursor".to_string(),
@@ -1371,6 +1383,7 @@ mod tests {
                 params: vec![],
                 return_type: "CursorInfo | null".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
             ApiMethod {
                 js_name: "createTerminal".to_string(),
@@ -1383,6 +1396,7 @@ mod tests {
                 }],
                 return_type: "TerminalResult".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
         ];
 
