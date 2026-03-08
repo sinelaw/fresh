@@ -506,6 +506,65 @@ impl FileSystem for RemoteFileSystem {
         ))
     }
 
+    fn search_file(
+        &self,
+        path: &Path,
+        pattern: &str,
+        opts: &crate::model::filesystem::FileSearchOptions,
+        cursor: &mut crate::model::filesystem::FileSearchCursor,
+    ) -> io::Result<Vec<crate::model::filesystem::FileSearchMatch>> {
+        if cursor.done {
+            return Ok(vec![]);
+        }
+
+        let path_str = path.to_string_lossy();
+        let params = serde_json::json!({
+            "path": path_str,
+            "pattern": pattern,
+            "fixed_string": opts.fixed_string,
+            "case_sensitive": opts.case_sensitive,
+            "whole_word": opts.whole_word,
+            "max_matches": opts.max_matches,
+            "offset": cursor.offset,
+            "running_line": cursor.running_line,
+        });
+
+        let result = self
+            .channel
+            .request_blocking("search_file", params)
+            .map_err(Self::to_io_error)?;
+
+        cursor.offset = result
+            .get("next_offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        cursor.running_line = result
+            .get("running_line")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as usize;
+        cursor.done = result.get("done").and_then(|v| v.as_bool()).unwrap_or(true);
+
+        let matches: Vec<crate::model::filesystem::FileSearchMatch> = result
+            .get("matches")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| {
+                        Some(crate::model::filesystem::FileSearchMatch {
+                            byte_offset: m.get("byte_offset")?.as_u64()? as usize,
+                            length: m.get("length")?.as_u64()? as usize,
+                            line: m.get("line")?.as_u64()? as usize,
+                            column: m.get("column")?.as_u64()? as usize,
+                            context: m.get("context")?.as_str()?.to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(matches)
+    }
+
     fn sudo_write(
         &self,
         path: &Path,

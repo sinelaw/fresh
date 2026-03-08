@@ -25,6 +25,8 @@ pub struct SlowFsConfig {
     pub read_file_delay: Duration,
     /// Delay for write_file operations
     pub write_file_delay: Duration,
+    /// Delay for search_file operations
+    pub search_file_delay: Duration,
     /// Delay for other operations (exists, is_dir, etc.)
     pub other_delay: Duration,
 }
@@ -37,6 +39,7 @@ impl SlowFsConfig {
             metadata_delay: delay,
             read_file_delay: delay,
             write_file_delay: delay,
+            search_file_delay: delay,
             other_delay: delay,
         }
     }
@@ -53,6 +56,7 @@ impl SlowFsConfig {
             metadata_delay: Duration::from_millis(50),
             read_file_delay: Duration::from_millis(200),
             write_file_delay: Duration::from_millis(300),
+            search_file_delay: Duration::from_millis(200),
             other_delay: Duration::from_millis(30),
         }
     }
@@ -64,6 +68,7 @@ impl SlowFsConfig {
             metadata_delay: Duration::from_millis(20),
             read_file_delay: Duration::from_millis(100),
             write_file_delay: Duration::from_millis(150),
+            search_file_delay: Duration::from_millis(100),
             other_delay: Duration::from_millis(10),
         }
     }
@@ -86,6 +91,8 @@ pub struct BackendMetrics {
     pub read_file_calls: AtomicUsize,
     /// Number of write_file calls
     pub write_file_calls: AtomicUsize,
+    /// Number of search_file calls
+    pub search_file_calls: AtomicUsize,
     /// Number of other calls
     pub other_calls: AtomicUsize,
 }
@@ -102,6 +109,7 @@ impl BackendMetrics {
         self.metadata_calls.store(0, Ordering::SeqCst);
         self.read_file_calls.store(0, Ordering::SeqCst);
         self.write_file_calls.store(0, Ordering::SeqCst);
+        self.search_file_calls.store(0, Ordering::SeqCst);
         self.other_calls.store(0, Ordering::SeqCst);
     }
 
@@ -111,6 +119,7 @@ impl BackendMetrics {
             + self.metadata_calls.load(Ordering::SeqCst)
             + self.read_file_calls.load(Ordering::SeqCst)
             + self.write_file_calls.load(Ordering::SeqCst)
+            + self.search_file_calls.load(Ordering::SeqCst)
             + self.other_calls.load(Ordering::SeqCst)
     }
 }
@@ -303,6 +312,20 @@ impl FileSystem for SlowFileSystem {
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
         self.inner.sudo_write(path, data, mode, uid, gid)
+    }
+
+    fn search_file(
+        &self,
+        path: &Path,
+        pattern: &str,
+        opts: &crate::model::filesystem::FileSearchOptions,
+        cursor: &mut crate::model::filesystem::FileSearchCursor,
+    ) -> io::Result<Vec<crate::model::filesystem::FileSearchMatch>> {
+        self.add_delay(self.config.search_file_delay);
+        self.metrics
+            .search_file_calls
+            .fetch_add(1, Ordering::SeqCst);
+        crate::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
     }
 }
 

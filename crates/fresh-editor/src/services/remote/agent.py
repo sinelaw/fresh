@@ -7,6 +7,7 @@ import base64
 import stat
 import shutil
 import subprocess
+import re
 import threading
 import select
 from concurrent.futures import ThreadPoolExecutor
@@ -368,6 +369,99 @@ def cmd_info(id, p):
     })
 
 
+def cmd_search_file(id, p):
+    """Search for a pattern in a file, returning matches with line/column info."""
+    path = validate_path(p["path"])
+    pattern = p["pattern"]
+    fixed_string = p.get("fixed_string", False)
+    case_sensitive = p.get("case_sensitive", True)
+    whole_word = p.get("whole_word", False)
+    max_matches = p.get("max_matches", 100)
+    offset = p.get("offset", 0)
+    running_line = p.get("running_line", 1)
+
+    file_size = os.path.getsize(path)
+
+    # Binary detection: check first 8192 bytes for null byte
+    if offset == 0:
+        with open(path, "rb") as f:
+            header = f.read(8192)
+            if b"\x00" in header:
+                send(id, r={"matches": [], "next_offset": file_size,
+                             "running_line": running_line, "done": True})
+                return
+
+    # Build regex pattern (bytes)
+    pat = pattern
+    if fixed_string:
+        pat = re.escape(pat)
+    if whole_word:
+        pat = r"\b" + pat + r"\b"
+    pat_bytes = pat.encode("utf-8")
+
+    flags = 0
+    if not case_sensitive:
+        flags |= re.IGNORECASE
+    regex = re.compile(pat_bytes, flags)
+
+    # Read one chunk
+    CHUNK_SIZE = 1048576  # 1MB
+    overlap = max(len(pattern), 256)
+    read_start = max(0, offset - overlap)
+    read_end = min(read_start + CHUNK_SIZE, file_size)
+
+    with open(path, "rb") as f:
+        f.seek(read_start)
+        chunk = f.read(read_end - read_start)
+
+    overlap_len = offset - read_start
+
+    # Count newlines in the overlap region to adjust running_line
+    line_at = running_line - chunk[:overlap_len].count(b"\n")
+
+    # Scan for matches
+    matches = []
+    last_pos = 0
+    for m in regex.finditer(chunk):
+        if m.end() <= overlap_len:
+            continue
+        if len(matches) >= max_matches:
+            break
+
+        # Count newlines from last_pos to match start to track line number
+        line_at += chunk[last_pos:m.start()].count(b"\n")
+        last_pos = m.start()
+
+        # Find line boundaries for context
+        line_start = chunk.rfind(b"\n", 0, m.start())
+        line_start = line_start + 1 if line_start != -1 else 0
+        line_end = chunk.find(b"\n", m.end())
+        if line_end == -1:
+            line_end = len(chunk)
+
+        context = chunk[line_start:line_end].decode("utf-8", errors="replace")
+        col = m.start() - line_start + 1
+        byte_offset = read_start + m.start()
+
+        matches.append({
+            "byte_offset": byte_offset,
+            "length": m.end() - m.start(),
+            "line": line_at,
+            "column": col,
+            "context": context,
+        })
+
+    # Update running_line by counting newlines in new data
+    new_running_line = running_line + chunk[overlap_len:].count(b"\n")
+
+    send(id, r={
+        "matches": matches,
+        "next_offset": read_end,
+        "running_line": new_running_line,
+        "done": read_end >= file_size,
+    })
+
+
 # === Process Operations ===
 
 
@@ -487,6 +581,7 @@ METHODS = {
     "count_lf": cmd_count_lf,
     "exists": cmd_exists,
     "info": cmd_info,
+    "search_file": cmd_search_file,
     "exec": cmd_exec,
     "kill": cmd_kill,
     "cancel": cmd_cancel,

@@ -1730,23 +1730,16 @@ impl Editor {
             return;
         }
 
-        // Build regex — same logic as streaming variant
-        let re_pattern = if fixed_string {
-            regex::escape(&pattern)
-        } else {
-            pattern.clone()
+        // Build search options for FileSystem::search_file
+        let fs_opts = crate::model::filesystem::FileSearchOptions {
+            fixed_string,
+            case_sensitive,
+            whole_word: whole_words,
+            max_matches: max_results,
         };
-        let re_pattern = if whole_words {
-            format!(r"\b{}\b", re_pattern)
-        } else {
-            re_pattern
-        };
-        let re_pattern = if case_sensitive {
-            re_pattern
-        } else {
-            format!("(?i){}", re_pattern)
-        };
-        let regex = match regex::bytes::Regex::new(&re_pattern) {
+
+        // Build regex for open buffer searches (piece tree path still needs it)
+        let regex = match crate::model::filesystem::build_search_regex(&pattern, &fs_opts) {
             Ok(re) => re,
             Err(e) => {
                 self.plugin_manager
@@ -1779,54 +1772,67 @@ impl Editor {
             }
             let remaining = max_results - results.len();
 
-            let (buffer_id, scan) = if let Some(&bid) = open_buffer_paths.get(file_path) {
+            if let Some(&bid) = open_buffer_paths.get(file_path) {
                 // Search the open buffer's piece tree (includes unsaved edits)
                 if let Some(state) = self.buffers.get_mut(&bid) {
-                    match state
-                        .buffer
-                        .search_scan_all(regex.clone(), remaining, query_len)
-                    {
-                        Ok(s) => (bid, s),
-                        Err(_) => continue,
+                    let scan =
+                        match state
+                            .buffer
+                            .search_scan_all(regex.clone(), remaining, query_len)
+                        {
+                            Ok(s) => s,
+                            Err(_) => continue,
+                        };
+                    let file_str = file_path.to_string_lossy().to_string();
+                    for m in &scan.matches {
+                        results.push(GrepMatch {
+                            file: file_str.clone(),
+                            buffer_id: bid.0,
+                            byte_offset: m.byte_offset,
+                            length: m.length,
+                            line: m.line,
+                            column: m.column,
+                            context: m.context.clone(),
+                        });
                     }
-                } else {
-                    continue;
                 }
             } else {
-                // Not open — read from filesystem, wrap in temporary TextBuffer
-                match self.filesystem.read_file(file_path) {
-                    Ok(content) => {
-                        let check_len = content.len().min(8192);
-                        if content[..check_len].contains(&0) {
-                            continue; // skip binary
-                        }
-                        let mut buffer = crate::model::buffer::TextBuffer::from_bytes(
-                            content,
-                            self.filesystem.clone(),
-                        );
-                        match buffer.search_scan_all(regex.clone(), remaining, query_len) {
-                            Ok(s) => (BufferId(0), s),
-                            Err(_) => continue,
-                        }
-                    }
-                    Err(e) => {
-                        tracing::debug!("GrepProject: failed to read file {:?}: {}", file_path, e);
-                        continue;
+                // Not open — search via FileSystem trait
+                let fs_opts_file = crate::model::filesystem::FileSearchOptions {
+                    fixed_string,
+                    case_sensitive,
+                    whole_word: whole_words,
+                    max_matches: remaining,
+                };
+                let mut cursor = crate::model::filesystem::FileSearchCursor::new();
+                let mut file_matches = Vec::new();
+                while !cursor.done && file_matches.len() < remaining {
+                    match crate::model::filesystem::default_search_file(
+                        &*self.filesystem,
+                        file_path,
+                        &pattern,
+                        &fs_opts_file,
+                        &mut cursor,
+                    ) {
+                        Ok(batch) => file_matches.extend(batch),
+                        Err(_) => break,
                     }
                 }
-            };
-
-            let file_str = file_path.to_string_lossy().to_string();
-            for m in &scan.matches {
-                results.push(GrepMatch {
-                    file: file_str.clone(),
-                    buffer_id: buffer_id.0,
-                    byte_offset: m.byte_offset,
-                    length: m.length,
-                    line: m.line,
-                    column: m.column,
-                    context: m.context.clone(),
-                });
+                if file_matches.is_empty() {
+                    continue;
+                }
+                let file_str = file_path.to_string_lossy().to_string();
+                for m in file_matches {
+                    results.push(GrepMatch {
+                        file: file_str.clone(),
+                        buffer_id: 0,
+                        byte_offset: m.byte_offset,
+                        length: m.length,
+                        line: m.line,
+                        column: m.column,
+                        context: m.context,
+                    });
+                }
             }
         }
 
@@ -1873,24 +1879,15 @@ impl Editor {
             return;
         }
 
-        // Compile regex on main thread (fast, catches errors early).
-        // Always produce a regex — for fixed strings, escape the pattern.
-        let re_pattern = if fixed_string {
-            regex::escape(&pattern)
-        } else {
-            pattern.clone()
+        // Build search options and validate regex on main thread (catches errors early)
+        let fs_opts = crate::model::filesystem::FileSearchOptions {
+            fixed_string,
+            case_sensitive,
+            whole_word: whole_words,
+            max_matches: max_results,
         };
-        let re_pattern = if whole_words {
-            format!(r"\b{}\b", re_pattern)
-        } else {
-            re_pattern
-        };
-        let re_pattern = if case_sensitive {
-            re_pattern
-        } else {
-            format!("(?i){}", re_pattern)
-        };
-        let regex = match regex::bytes::Regex::new(&re_pattern) {
+        // Build regex for dirty buffer snapshots (piece tree path still needs it)
+        let regex = match crate::model::filesystem::build_search_regex(&pattern, &fs_opts) {
             Ok(re) => re,
             Err(e) => {
                 self.plugin_manager
@@ -1992,6 +1989,7 @@ impl Editor {
                 let cancel = cancel.clone();
                 let match_count = match_count.clone();
                 let regex = regex.clone();
+                let pattern = pattern.clone();
                 let dirty_snapshot = dirty_snapshots.remove(&file_path);
 
                 let handle = tokio::task::spawn_blocking(move || {
@@ -2007,78 +2005,113 @@ impl Editor {
                     }
                     let remaining = max_results - current_count;
 
-                    let buffer_id;
-                    let mut buffer;
-
                     if let Some((bid, content)) = dirty_snapshot {
-                        // Dirty buffer snapshot — wrap in TextBuffer (already in memory)
-                        buffer_id = bid;
-                        buffer = crate::model::buffer::TextBuffer::from_bytes(content, fs.clone());
-                    } else {
-                        // Read from disk
-                        buffer_id = BufferId(0);
-                        match fs.read_file(&file_path) {
-                            Ok(content) => {
-                                // Skip binary files
-                                let check_len = content.len().min(8192);
-                                if content[..check_len].contains(&0) {
-                                    return;
-                                }
-                                buffer = crate::model::buffer::TextBuffer::from_bytes(
-                                    content,
-                                    fs.clone(),
-                                );
-                            }
+                        // Dirty buffer snapshot — wrap in TextBuffer and search with regex
+                        let mut buffer =
+                            crate::model::buffer::TextBuffer::from_bytes(content, fs.clone());
+                        let scan = match buffer.search_scan_all(regex, remaining, query_len) {
+                            Ok(s) => s,
                             Err(e) => {
                                 tracing::debug!(
-                                    "GrepProjectStreaming: failed to read {:?}: {}",
+                                    "GrepProjectStreaming: scan failed {:?}: {}",
                                     file_path,
                                     e
                                 );
                                 return;
                             }
-                        }
-                    }
+                        };
 
-                    let scan = match buffer.search_scan_all(regex, remaining, query_len) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            tracing::debug!(
-                                "GrepProjectStreaming: scan failed {:?}: {}",
-                                file_path,
-                                e
+                        if !scan.matches.is_empty() {
+                            let file_str = file_path.to_string_lossy().to_string();
+                            let file_matches: Vec<GrepMatch> = scan
+                                .matches
+                                .iter()
+                                .map(|m| GrepMatch {
+                                    file: file_str.clone(),
+                                    buffer_id: bid.0,
+                                    byte_offset: m.byte_offset,
+                                    length: m.length,
+                                    line: m.line,
+                                    column: m.column,
+                                    context: m.context.clone(),
+                                })
+                                .collect();
+                            match_count.fetch_add(
+                                file_matches.len(),
+                                std::sync::atomic::Ordering::Relaxed,
                             );
-                            return;
+                            let json = serde_json::to_string(&file_matches)
+                                .unwrap_or_else(|_| "[]".to_string());
+                            drop(
+                                sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                                    fresh_core::api::PluginAsyncMessage::GrepStreamingProgress {
+                                        search_id,
+                                        matches_json: json,
+                                    },
+                                )),
+                            );
                         }
-                    };
+                    } else {
+                        // Search via FileSystem trait
+                        let fs_opts = crate::model::filesystem::FileSearchOptions {
+                            fixed_string,
+                            case_sensitive,
+                            whole_word: whole_words,
+                            max_matches: remaining,
+                        };
+                        let mut cursor = crate::model::filesystem::FileSearchCursor::new();
+                        while !cursor.done {
+                            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                                break;
+                            }
+                            let current = match_count.load(std::sync::atomic::Ordering::Relaxed);
+                            if current >= max_results {
+                                break;
+                            }
 
-                    if !scan.matches.is_empty() {
-                        let file_str = file_path.to_string_lossy().to_string();
-                        let file_matches: Vec<GrepMatch> = scan
-                            .matches
-                            .iter()
-                            .map(|m| GrepMatch {
-                                file: file_str.clone(),
-                                buffer_id: buffer_id.0,
-                                byte_offset: m.byte_offset,
-                                length: m.length,
-                                line: m.line,
-                                column: m.column,
-                                context: m.context.clone(),
-                            })
-                            .collect();
-                        match_count
-                            .fetch_add(file_matches.len(), std::sync::atomic::Ordering::Relaxed);
-                        let json = serde_json::to_string(&file_matches)
-                            .unwrap_or_else(|_| "[]".to_string());
-                        drop(
-                            sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
-                                fresh_core::api::PluginAsyncMessage::GrepStreamingProgress {
-                                    search_id,
-                                    matches_json: json,
-                                },
-                            )),
-                        );
+                            let batch = match crate::model::filesystem::default_search_file(
+                                &*fs,
+                                &file_path,
+                                &pattern,
+                                &fs_opts,
+                                &mut cursor,
+                            ) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    tracing::debug!("search_file failed {:?}: {}", file_path, e);
+                                    break;
+                                }
+                            };
+                            if batch.is_empty() {
+                                continue;
+                            }
+
+                            match_count
+                                .fetch_add(batch.len(), std::sync::atomic::Ordering::Relaxed);
+                            let file_str = file_path.to_string_lossy().to_string();
+                            let file_matches: Vec<GrepMatch> = batch
+                                .into_iter()
+                                .map(|m| GrepMatch {
+                                    file: file_str.clone(),
+                                    buffer_id: 0,
+                                    byte_offset: m.byte_offset,
+                                    length: m.length,
+                                    line: m.line,
+                                    column: m.column,
+                                    context: m.context,
+                                })
+                                .collect();
+                            let json = serde_json::to_string(&file_matches)
+                                .unwrap_or_else(|_| "[]".to_string());
+                            drop(
+                                sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                                    fresh_core::api::PluginAsyncMessage::GrepStreamingProgress {
+                                        search_id,
+                                        matches_json: json,
+                                    },
+                                )),
+                            );
+                        }
                     }
                 });
 

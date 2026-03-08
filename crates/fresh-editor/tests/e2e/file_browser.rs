@@ -1222,6 +1222,7 @@ fn test_file_open_shortcuts_load_async_issue_903() {
         metadata_delay: Duration::from_millis(200), // Slow - simulates network drive
         read_file_delay: Duration::from_millis(10),
         write_file_delay: Duration::from_millis(10),
+        search_file_delay: Duration::from_millis(10),
         other_delay: Duration::from_millis(200), // Slow - simulates network drive
     };
 
