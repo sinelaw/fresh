@@ -1534,3 +1534,182 @@ fn test_session_restores_split_labels() {
         );
     }
 }
+
+/// Test that reopening without CLI args restores previous session without creating
+/// an extra unnamed buffer. Reproduces issue #1231.
+#[test]
+fn test_reopen_without_args_restores_session_no_extra_buffer() {
+    use crate::common::harness::HarnessOptions;
+    use fresh::config_io::DirectoryContext;
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("a.txt");
+    let file2 = project_dir.join("b.txt");
+    std::fs::write(&file1, "Content A").unwrap();
+    std::fs::write(&file2, "Content B").unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // First session: open two files, modify one, then hot exit
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        harness.open_file(&file1).unwrap();
+        harness.open_file(&file2).unwrap();
+        harness.render().unwrap();
+
+        // Modify file2
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.type_text(" MODIFIED").unwrap();
+        harness.render().unwrap();
+
+        // Hot exit: save workspace + end recovery
+        harness.editor_mut().end_recovery_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Second session: reopen without CLI args — should restore both files
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        // Simulate startup without CLI args: just restore workspace
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        assert!(restored, "Session should have been restored");
+
+        harness.render().unwrap();
+
+        // Both files should be visible in tabs
+        harness.assert_screen_contains("a.txt");
+        harness.assert_screen_contains("b.txt");
+
+        // The modified content should be restored
+        harness.assert_screen_contains("MODIFIED");
+
+        // No extra unnamed buffer should exist — only the two files
+        let screen = harness.screen_to_string();
+        assert!(
+            !screen.contains("[No Name]"),
+            "Should not have an unnamed buffer after restore.\nScreen:\n{screen}"
+        );
+    }
+}
+
+/// Test that reopening with a CLI file arg restores previous session AND opens
+/// the new file (focused). Reproduces issue #1232.
+#[test]
+fn test_reopen_with_file_arg_restores_session_and_opens_new_file() {
+    use crate::common::harness::HarnessOptions;
+    use fresh::config_io::DirectoryContext;
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("a.txt");
+    let file2 = project_dir.join("b.txt");
+    let file3 = project_dir.join("c.txt");
+    std::fs::write(&file1, "Content A").unwrap();
+    std::fs::write(&file2, "Content B").unwrap();
+    std::fs::write(&file3, "Content C").unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // First session: open two files, modify one, then hot exit
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        harness.open_file(&file1).unwrap();
+        harness.open_file(&file2).unwrap();
+        harness.render().unwrap();
+
+        // Modify file2
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.type_text(" MODIFIED").unwrap();
+        harness.render().unwrap();
+
+        // Hot exit: save workspace + end recovery
+        harness.editor_mut().end_recovery_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Second session: reopen with file3 as CLI arg
+    // Simulates: `fresh c.txt` — should restore session + open c.txt (focused)
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        // Simulate startup with CLI args:
+        // 1. Restore workspace (always, unless --no-session)
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        assert!(restored, "Session should have been restored");
+
+        // 2. Open CLI file (this is what queue_file_open + process_pending_file_opens does)
+        harness.open_file(&file3).unwrap();
+
+        harness.render().unwrap();
+
+        // All three files should be visible in tabs
+        harness.assert_screen_contains("a.txt");
+        harness.assert_screen_contains("b.txt");
+        harness.assert_screen_contains("c.txt");
+
+        // The CLI file (c.txt) should be focused — its content should be in the editor
+        harness.assert_buffer_content("Content C");
+
+        // The modified content from file2 should still be preserved
+        // (switch to file2 and check)
+        harness.open_file(&file2).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("MODIFIED");
+    }
+}

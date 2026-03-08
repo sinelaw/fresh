@@ -2739,7 +2739,7 @@ fn real_main() -> AnyhowResult<()> {
     // Returns (loop_result, last_update_result) tuple
     let (result, last_update_result) = loop {
         let first_run = is_first_run;
-        let workspace_enabled = !args.no_session && file_locations.is_empty();
+        let workspace_enabled = !args.no_session;
 
         // Detect terminal color capability
         let color_capability = fresh::view::color_support::ColorCapability::detect();
