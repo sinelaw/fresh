@@ -3,7 +3,7 @@
 //! Renders the keybinding editor modal and handles input events.
 
 use crate::app::keybinding_editor::{
-    BindingSource, ContextFilter, DeleteResult, EditMode, KeybindingEditor, SearchMode,
+    BindingSource, ContextFilter, DeleteResult, DisplayRow, EditMode, KeybindingEditor, SearchMode,
     SourceFilter,
 };
 use crate::input::keybindings::{format_keybinding, KeybindingResolver};
@@ -346,13 +346,13 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &mut KeybindingEditor, th
     editor.scroll.set_viewport(table_area.height);
     editor
         .scroll
-        .set_content_height(editor.filtered_indices.len() as u16);
+        .set_content_height(editor.display_rows.len() as u16);
 
     let visible_rows = table_area.height as usize;
     let scroll_offset = editor.scroll.offset as usize;
 
-    for (display_idx, &binding_idx) in editor
-        .filtered_indices
+    for (display_idx, display_row) in editor
+        .display_rows
         .iter()
         .skip(scroll_offset)
         .take(visible_rows)
@@ -363,104 +363,148 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &mut KeybindingEditor, th
             break;
         }
 
-        let binding = &editor.bindings[binding_idx];
         let is_selected = scroll_offset + display_idx == editor.selected;
-
-        let (row_bg, row_fg) = if is_selected {
-            (theme.popup_selection_bg, theme.popup_text_fg)
-        } else {
-            (theme.popup_bg, theme.popup_text_fg)
-        };
-
-        let key_style = Style::default()
-            .fg(if is_selected {
-                theme.popup_text_fg
-            } else {
-                theme.help_key_fg
-            })
-            .bg(row_bg);
-        let action_name_style = Style::default()
-            .fg(if is_selected {
-                theme.popup_text_fg
-            } else {
-                theme.diagnostic_info_fg
-            })
-            .bg(row_bg);
-        let action_style = Style::default().fg(row_fg).bg(row_bg);
-        let context_style = Style::default()
-            .fg(if is_selected {
-                row_fg
-            } else {
-                theme.popup_text_fg
-            })
-            .bg(row_bg);
-        let source_style = Style::default()
-            .fg(
-                if binding.source == BindingSource::Custom
-                    || binding.source == BindingSource::Plugin
-                {
-                    if is_selected {
-                        theme.popup_text_fg
-                    } else {
-                        theme.diagnostic_info_fg
-                    }
-                } else {
-                    context_style.fg.unwrap_or(theme.popup_text_fg)
-                },
-            )
-            .bg(row_bg);
-
-        let indicator = if is_selected { ">" } else { " " };
-
-        let row = Line::from(vec![
-            Span::styled(indicator, Style::default().fg(theme.help_key_fg).bg(row_bg)),
-            Span::styled(
-                pad_right(&binding.key_display, key_col_width as usize),
-                key_style,
-            ),
-            Span::styled(" ", action_name_style),
-            Span::styled(
-                pad_right(&binding.action, action_name_col_width as usize),
-                action_name_style,
-            ),
-            Span::styled(" ", action_style),
-            Span::styled(
-                pad_right(&binding.action_display, description_col_width as usize),
-                action_style,
-            ),
-            Span::styled(" ", context_style),
-            Span::styled(
-                pad_right(&binding.context, context_col_width as usize),
-                context_style,
-            ),
-            Span::styled(" ", source_style),
-            Span::styled(
-                pad_right(
-                    &match binding.source {
-                        BindingSource::Custom => t!("keybinding_editor.source_custom").to_string(),
-                        BindingSource::Keymap => t!("keybinding_editor.source_keymap").to_string(),
-                        BindingSource::Plugin => {
-                            t!("keybinding_editor.source_plugin", default = "Plugin").to_string()
-                        }
-                        BindingSource::Unbound => String::new(),
-                    },
-                    source_col_width as usize,
-                ),
-                source_style,
-            ),
-        ]);
-
         let row_area = Rect {
             y: row_y,
             height: 1,
             ..table_area
         };
-        // Fill the row background
-        frame.render_widget(
-            Paragraph::new("").style(Style::default().bg(row_bg)),
-            row_area,
-        );
-        frame.render_widget(Paragraph::new(row), row_area);
+
+        match display_row {
+            DisplayRow::SectionHeader {
+                plugin_name,
+                collapsed,
+                binding_count,
+            } => {
+                let (row_bg, row_fg) = if is_selected {
+                    (theme.popup_selection_bg, theme.popup_text_fg)
+                } else {
+                    (theme.popup_bg, theme.help_key_fg)
+                };
+
+                let chevron = if *collapsed { "\u{25b6}" } else { "\u{25bc}" };
+                let label = match plugin_name {
+                    Some(name) => name.as_str(),
+                    None => "Builtin",
+                };
+
+                let header_text = format!("{} {} ({})", chevron, label, binding_count);
+                let header_style = Style::default()
+                    .fg(row_fg)
+                    .bg(row_bg)
+                    .add_modifier(Modifier::BOLD);
+
+                let indicator = if is_selected { ">" } else { " " };
+                let row = Line::from(vec![
+                    Span::styled(indicator, Style::default().fg(theme.help_key_fg).bg(row_bg)),
+                    Span::styled(header_text, header_style),
+                ]);
+
+                frame.render_widget(
+                    Paragraph::new("").style(Style::default().bg(row_bg)),
+                    row_area,
+                );
+                frame.render_widget(Paragraph::new(row), row_area);
+            }
+            DisplayRow::Binding(binding_idx) => {
+                let binding = &editor.bindings[*binding_idx];
+
+                let (row_bg, row_fg) = if is_selected {
+                    (theme.popup_selection_bg, theme.popup_text_fg)
+                } else {
+                    (theme.popup_bg, theme.popup_text_fg)
+                };
+
+                let key_style = Style::default()
+                    .fg(if is_selected {
+                        theme.popup_text_fg
+                    } else {
+                        theme.help_key_fg
+                    })
+                    .bg(row_bg);
+                let action_name_style = Style::default()
+                    .fg(if is_selected {
+                        theme.popup_text_fg
+                    } else {
+                        theme.diagnostic_info_fg
+                    })
+                    .bg(row_bg);
+                let action_style = Style::default().fg(row_fg).bg(row_bg);
+                let context_style = Style::default()
+                    .fg(if is_selected {
+                        row_fg
+                    } else {
+                        theme.popup_text_fg
+                    })
+                    .bg(row_bg);
+                let source_style = Style::default()
+                    .fg(
+                        if binding.source == BindingSource::Custom
+                            || binding.source == BindingSource::Plugin
+                        {
+                            if is_selected {
+                                theme.popup_text_fg
+                            } else {
+                                theme.diagnostic_info_fg
+                            }
+                        } else {
+                            context_style.fg.unwrap_or(theme.popup_text_fg)
+                        },
+                    )
+                    .bg(row_bg);
+
+                let indicator = if is_selected { ">" } else { " " };
+
+                let row = Line::from(vec![
+                    Span::styled(indicator, Style::default().fg(theme.help_key_fg).bg(row_bg)),
+                    Span::styled(
+                        pad_right(&binding.key_display, key_col_width as usize),
+                        key_style,
+                    ),
+                    Span::styled(" ", action_name_style),
+                    Span::styled(
+                        pad_right(&binding.action, action_name_col_width as usize),
+                        action_name_style,
+                    ),
+                    Span::styled(" ", action_style),
+                    Span::styled(
+                        pad_right(&binding.action_display, description_col_width as usize),
+                        action_style,
+                    ),
+                    Span::styled(" ", context_style),
+                    Span::styled(
+                        pad_right(&binding.context, context_col_width as usize),
+                        context_style,
+                    ),
+                    Span::styled(" ", source_style),
+                    Span::styled(
+                        pad_right(
+                            &match binding.source {
+                                BindingSource::Custom => {
+                                    t!("keybinding_editor.source_custom").to_string()
+                                }
+                                BindingSource::Keymap => {
+                                    t!("keybinding_editor.source_keymap").to_string()
+                                }
+                                BindingSource::Plugin => {
+                                    t!("keybinding_editor.source_plugin", default = "Plugin")
+                                        .to_string()
+                                }
+                                BindingSource::Unbound => String::new(),
+                            },
+                            source_col_width as usize,
+                        ),
+                        source_style,
+                    ),
+                ]);
+
+                frame.render_widget(
+                    Paragraph::new("").style(Style::default().bg(row_bg)),
+                    row_area,
+                );
+                frame.render_widget(Paragraph::new(row), row_area);
+            }
+        }
     }
 
     // Scrollbar
@@ -1215,7 +1259,7 @@ fn handle_main_input(editor: &mut KeybindingEditor, event: &KeyEvent) -> Keybind
             KeybindingEditorAction::Consumed
         }
         (KeyCode::End, _) => {
-            editor.selected = editor.filtered_indices.len().saturating_sub(1);
+            editor.selected = editor.display_rows.len().saturating_sub(1);
             editor.ensure_visible_public();
             KeybindingEditorAction::Consumed
         }
@@ -1244,9 +1288,13 @@ fn handle_main_input(editor: &mut KeybindingEditor, event: &KeyEvent) -> Keybind
             KeybindingEditorAction::Consumed
         }
 
-        // Edit binding
+        // Enter: toggle section header or edit binding
         (KeyCode::Enter, KeyModifiers::NONE) => {
-            editor.open_edit_dialog();
+            if editor.selected_is_section_header() {
+                editor.toggle_section_at_selected();
+            } else {
+                editor.open_edit_dialog();
+            }
             KeybindingEditorAction::Consumed
         }
 

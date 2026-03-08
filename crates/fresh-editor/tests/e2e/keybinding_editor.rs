@@ -10,6 +10,13 @@ fn open_keybinding_editor(harness: &mut EditorTestHarness) {
     harness.render().unwrap();
 }
 
+/// Helper to select the first binding row (skipping past section headers)
+fn select_first_binding(harness: &mut EditorTestHarness) {
+    // The first row is a section header; move down to the first actual binding
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+}
+
 // ========================
 // Opening and closing
 // ========================
@@ -333,6 +340,7 @@ fn test_help_overlay() {
 fn test_open_edit_dialog() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     open_keybinding_editor(&mut harness);
+    select_first_binding(&mut harness);
 
     // Press Enter to edit the selected binding
     harness
@@ -354,6 +362,7 @@ fn test_open_edit_dialog() {
 fn test_close_edit_dialog_with_escape() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     open_keybinding_editor(&mut harness);
+    select_first_binding(&mut harness);
 
     // Open edit dialog
     harness
@@ -376,6 +385,7 @@ fn test_close_edit_dialog_with_escape() {
 fn test_edit_dialog_tab_focus() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     open_keybinding_editor(&mut harness);
+    select_first_binding(&mut harness);
 
     // Open edit dialog
     harness
@@ -408,6 +418,7 @@ fn test_edit_dialog_tab_focus() {
 fn test_edit_dialog_tab_cycles_through_cancel() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     open_keybinding_editor(&mut harness);
+    select_first_binding(&mut harness);
 
     // Open edit dialog
     harness
@@ -1227,11 +1238,11 @@ fn test_edit_unbound_action() {
             .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
             .unwrap();
     }
-    // Press Enter to unfocus search, then navigate to first result
+    // Press Enter to unfocus search, then navigate past section header to first binding
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    select_first_binding(&mut harness);
 
     // Press Enter to open edit dialog on the unbound action
     harness

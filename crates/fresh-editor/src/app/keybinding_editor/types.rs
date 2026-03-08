@@ -48,6 +48,8 @@ pub struct ResolvedBinding {
     pub modifiers: KeyModifiers,
     /// Whether this is a chord (multi-key) binding
     pub is_chord: bool,
+    /// Plugin name this binding belongs to (None = builtin)
+    pub plugin_name: Option<String>,
 }
 
 /// Mode for the edit/add dialog
@@ -206,6 +208,22 @@ pub enum SourceFilter {
     KeymapOnly,
     CustomOnly,
     PluginOnly,
+}
+
+/// A row in the keybinding editor display list — either a section header or a binding
+#[derive(Debug, Clone)]
+pub enum DisplayRow {
+    /// A collapsible section header
+    SectionHeader {
+        /// Plugin name (None = builtin section)
+        plugin_name: Option<String>,
+        /// Whether this section is collapsed
+        collapsed: bool,
+        /// Number of bindings in this section (after filtering)
+        binding_count: usize,
+    },
+    /// A binding row (index into `bindings`)
+    Binding(usize),
 }
 
 /// Layout information for mouse hit testing

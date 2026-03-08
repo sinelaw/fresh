@@ -7,7 +7,7 @@ use crate::input::buffer_mode::ModeRegistry;
 use crate::input::keybindings::{format_keybinding, Action, KeybindingResolver};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rust_i18n::t;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The main keybinding editor state
 #[derive(Debug)]
@@ -73,6 +73,11 @@ pub struct KeybindingEditor {
     /// Mode context names (from plugins) for context filter cycling
     pub mode_contexts: Vec<String>,
 
+    /// Display rows (section headers + binding rows) after filtering
+    pub display_rows: Vec<DisplayRow>,
+    /// Sections that are manually collapsed (by plugin name, None = builtin)
+    pub collapsed_sections: HashSet<Option<String>>,
+
     /// Layout info for mouse hit testing (updated during render)
     pub layout: KeybindingEditorLayout,
 }
@@ -113,6 +118,14 @@ impl KeybindingEditor {
             .collect();
         mode_contexts.sort();
 
+        // Collapse plugin sections by default
+        let mut collapsed_sections: HashSet<Option<String>> = HashSet::new();
+        for b in &bindings {
+            if b.plugin_name.is_some() {
+                collapsed_sections.insert(b.plugin_name.clone());
+            }
+        }
+
         let mut editor = Self {
             bindings,
             filtered_indices,
@@ -139,6 +152,8 @@ impl KeybindingEditor {
             keymap_names,
             available_actions,
             mode_contexts,
+            display_rows: Vec::new(),
+            collapsed_sections,
             layout: KeybindingEditorLayout::default(),
         };
 
@@ -184,6 +199,10 @@ impl KeybindingEditor {
         // Load plugin mode bindings from ModeRegistry
         for mode_name in mode_registry.list_modes() {
             let context_str = format!("mode:{}", mode_name);
+            let section = mode_registry
+                .get(&mode_name)
+                .and_then(|m| m.plugin_name.clone())
+                .unwrap_or_else(|| mode_name.clone());
             let mode_bindings = mode_registry.get_all_keybindings(&mode_name);
             for ((key_code, modifiers), command) in &mode_bindings {
                 let key_display = format_keybinding(key_code, modifiers);
@@ -204,6 +223,7 @@ impl KeybindingEditor {
                     key_code: *key_code,
                     modifiers: *modifiers,
                     is_chord: false,
+                    plugin_name: Some(section.clone()),
                 });
             }
         }
@@ -223,14 +243,16 @@ impl KeybindingEditor {
                     key_code: KeyCode::Null,
                     modifiers: KeyModifiers::NONE,
                     is_chord: false,
+                    plugin_name: None,
                 });
             }
         }
 
-        // Sort by context, then by action name
+        // Sort by plugin_name (None/builtin first), then context, then action name
         bindings.sort_by(|a, b| {
-            a.context
-                .cmp(&b.context)
+            a.plugin_name
+                .cmp(&b.plugin_name)
+                .then(a.context.cmp(&b.context))
                 .then(a.action_display.cmp(&b.action_display))
         });
 
@@ -258,6 +280,7 @@ impl KeybindingEditor {
                 key_code: KeyCode::Null,
                 modifiers: KeyModifiers::NONE,
                 is_chord: true,
+                plugin_name: None,
             })
         } else if !kb.key.is_empty() {
             // Single key binding
@@ -274,6 +297,7 @@ impl KeybindingEditor {
                 key_code,
                 modifiers,
                 is_chord: false,
+                plugin_name: None,
             })
         } else {
             None
@@ -386,18 +410,106 @@ impl KeybindingEditor {
             self.filtered_indices.push(i);
         }
 
+        // Build display rows with section headers
+        self.build_display_rows();
+
         // Reset selection if it's out of bounds
-        if self.selected >= self.filtered_indices.len() {
-            self.selected = self.filtered_indices.len().saturating_sub(1);
+        if self.selected >= self.display_rows.len() {
+            self.selected = self.display_rows.len().saturating_sub(1);
         }
         self.ensure_visible();
     }
 
-    /// Get the currently selected binding
+    /// Build display rows from filtered indices, inserting section headers
+    fn build_display_rows(&mut self) {
+        self.display_rows.clear();
+
+        let has_active_filter = (self.search_active
+            && match self.search_mode {
+                SearchMode::Text => !self.search_query.is_empty(),
+                SearchMode::RecordKey => self.search_key_code.is_some(),
+            })
+            || !matches!(self.context_filter, ContextFilter::All)
+            || !matches!(self.source_filter, SourceFilter::All);
+
+        // Group filtered indices by section (plugin_name)
+        let mut sections: Vec<(Option<String>, Vec<usize>)> = Vec::new();
+        let mut current_section: Option<&Option<String>> = None;
+
+        for &idx in &self.filtered_indices {
+            let binding = &self.bindings[idx];
+            if current_section != Some(&binding.plugin_name) {
+                sections.push((binding.plugin_name.clone(), Vec::new()));
+                current_section = Some(&binding.plugin_name);
+            }
+            sections.last_mut().unwrap().1.push(idx);
+        }
+
+        for (plugin_name, indices) in sections {
+            // When filtering, hide sections with zero matches (already filtered out)
+            // When searching, auto-expand all sections that have matches
+            let collapsed = if has_active_filter {
+                false
+            } else {
+                self.collapsed_sections.contains(&plugin_name)
+            };
+
+            self.display_rows.push(DisplayRow::SectionHeader {
+                plugin_name: plugin_name.clone(),
+                collapsed,
+                binding_count: indices.len(),
+            });
+
+            if !collapsed {
+                for idx in indices {
+                    self.display_rows.push(DisplayRow::Binding(idx));
+                }
+            }
+        }
+    }
+
+    /// Toggle the collapsed state of the section at the current selection
+    pub fn toggle_section_at_selected(&mut self) {
+        if let Some(DisplayRow::SectionHeader { plugin_name, .. }) =
+            self.display_rows.get(self.selected)
+        {
+            let key = plugin_name.clone();
+            if self.collapsed_sections.contains(&key) {
+                self.collapsed_sections.remove(&key);
+            } else {
+                self.collapsed_sections.insert(key);
+            }
+            self.build_display_rows();
+            // Keep selected in bounds
+            if self.selected >= self.display_rows.len() {
+                self.selected = self.display_rows.len().saturating_sub(1);
+            }
+            self.ensure_visible();
+        }
+    }
+
+    /// Check if the currently selected display row is a section header
+    pub fn selected_is_section_header(&self) -> bool {
+        matches!(
+            self.display_rows.get(self.selected),
+            Some(DisplayRow::SectionHeader { .. })
+        )
+    }
+
+    /// Get the currently selected binding (None if a section header is selected)
     pub fn selected_binding(&self) -> Option<&ResolvedBinding> {
-        self.filtered_indices
-            .get(self.selected)
-            .and_then(|&i| self.bindings.get(i))
+        match self.display_rows.get(self.selected) {
+            Some(DisplayRow::Binding(idx)) => self.bindings.get(*idx),
+            _ => None,
+        }
+    }
+
+    /// Get the binding index in `self.bindings` for the current selection
+    fn selected_binding_index(&self) -> Option<usize> {
+        match self.display_rows.get(self.selected) {
+            Some(DisplayRow::Binding(idx)) => Some(*idx),
+            _ => None,
+        }
     }
 
     /// Move selection up
@@ -410,7 +522,7 @@ impl KeybindingEditor {
 
     /// Move selection down
     pub fn select_next(&mut self) {
-        if self.selected + 1 < self.filtered_indices.len() {
+        if self.selected + 1 < self.display_rows.len() {
             self.selected += 1;
             self.ensure_visible();
         }
@@ -430,7 +542,7 @@ impl KeybindingEditor {
     /// Page down
     pub fn page_down(&mut self) {
         let page = self.scroll.viewport as usize;
-        self.selected = (self.selected + page).min(self.filtered_indices.len().saturating_sub(1));
+        self.selected = (self.selected + page).min(self.display_rows.len().saturating_sub(1));
         self.ensure_visible();
     }
 
@@ -529,8 +641,8 @@ impl KeybindingEditor {
 
     /// Open the edit binding dialog for the selected binding
     pub fn open_edit_dialog(&mut self) {
-        if let Some(binding) = self.selected_binding().cloned() {
-            let idx = self.filtered_indices[self.selected];
+        if let Some(idx) = self.selected_binding_index() {
+            let binding = self.bindings[idx].clone();
             self.edit_dialog = Some(EditBindingState::new_edit_with_modes(
                 idx,
                 &binding,
@@ -554,7 +666,7 @@ impl KeybindingEditor {
     ///
     /// Returns `DeleteResult` indicating what happened.
     pub fn delete_selected(&mut self) -> DeleteResult {
-        let Some(&idx) = self.filtered_indices.get(self.selected) else {
+        let Some(idx) = self.selected_binding_index() else {
             return DeleteResult::NothingSelected;
         };
 
@@ -597,6 +709,7 @@ impl KeybindingEditor {
                         key_code: KeyCode::Null,
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
+                        plugin_name: None,
                     });
                 }
 
@@ -641,6 +754,7 @@ impl KeybindingEditor {
                     key_code: self.bindings[idx].key_code,
                     modifiers: self.bindings[idx].modifiers,
                     is_chord: self.bindings[idx].is_chord,
+                    plugin_name: self.bindings[idx].plugin_name.clone(),
                 };
                 self.has_changes = true;
 
@@ -657,6 +771,7 @@ impl KeybindingEditor {
                         key_code: KeyCode::Null,
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
+                        plugin_name: None,
                     });
                 }
 
@@ -700,6 +815,7 @@ impl KeybindingEditor {
                     key_code: self.bindings[idx].key_code,
                     modifiers: self.bindings[idx].modifiers,
                     is_chord: self.bindings[idx].is_chord,
+                    plugin_name: self.bindings[idx].plugin_name.clone(),
                 };
                 self.has_changes = true;
 
@@ -715,6 +831,7 @@ impl KeybindingEditor {
                         key_code: KeyCode::Null,
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
+                        plugin_name: None,
                     });
                 }
 
@@ -809,6 +926,7 @@ impl KeybindingEditor {
             key_code,
             modifiers,
             is_chord: false,
+            plugin_name: None,
         };
 
         if let Some(edit_idx) = dialog.editing_index {

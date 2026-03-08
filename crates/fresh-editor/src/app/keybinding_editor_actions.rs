@@ -224,14 +224,17 @@ impl Editor {
                     }
                 }
 
-                // Click on table row to select
+                // Click on table row to select (or toggle section header)
                 let table_area = layout.table_area;
                 let first_row_y = layout.table_first_row_y;
                 if point_in_rect(table_area, col, row) && row >= first_row_y {
                     let clicked_row = (row - first_row_y) as usize;
                     let new_selected = editor.scroll.offset as usize + clicked_row;
-                    if new_selected < editor.filtered_indices.len() {
+                    if new_selected < editor.display_rows.len() {
                         editor.selected = new_selected;
+                        if editor.selected_is_section_header() {
+                            editor.toggle_section_at_selected();
+                        }
                     }
                 }
             }
