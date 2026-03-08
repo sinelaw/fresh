@@ -2944,15 +2944,13 @@ impl TextBuffer {
                         let end = (leaf.offset + leaf.bytes).min(full.len());
                         full[leaf.offset..end].to_vec()
                     }
-                    None => {
-                        match self.get_text_range_mut(doc_offset, leaf.bytes) {
-                            Ok(d) => d,
-                            Err(_) => {
-                                doc_offset += leaf.bytes;
-                                continue;
-                            }
+                    None => match self.get_text_range_mut(doc_offset, leaf.bytes) {
+                        Ok(d) => d,
+                        Err(_) => {
+                            doc_offset += leaf.bytes;
+                            continue;
                         }
-                    }
+                    },
                 };
 
                 // Merge with previous loaded region
@@ -2964,19 +2962,13 @@ impl TextBuffer {
                     doc_offset += leaf.bytes;
                     continue;
                 }
-                regions.push(SearchRegion::Loaded {
-                    data,
-                    doc_offset,
-                });
+                regions.push(SearchRegion::Loaded { data, doc_offset });
             }
 
             doc_offset += leaf.bytes;
         }
 
-        Some(HybridSearchPlan {
-            file_path,
-            regions,
-        })
+        Some(HybridSearchPlan { file_path, regions })
     }
 
     /// Hybrid search: uses `fs.search_file` for unloaded piece-tree regions
@@ -4576,8 +4568,7 @@ impl HybridSearchPlan {
                 let mut cursor = FileSearchCursor::new();
                 let mut all_matches = Vec::new();
                 while !cursor.done && all_matches.len() < max_matches {
-                    let batch =
-                        fs.search_file(&self.file_path, pattern, opts, &mut cursor)?;
+                    let batch = fs.search_file(&self.file_path, pattern, opts, &mut cursor)?;
                     all_matches.extend(batch);
                 }
                 all_matches.truncate(max_matches);
@@ -4622,24 +4613,18 @@ impl HybridSearchPlan {
 
                     // Search unloaded range via fs.search_file
                     let mut opts_bounded = opts.clone();
-                    opts_bounded.max_matches =
-                        remaining.saturating_sub(all_matches.len());
+                    opts_bounded.max_matches = remaining.saturating_sub(all_matches.len());
                     let mut cursor = FileSearchCursor::for_range(
                         *file_offset,
                         *file_offset + *bytes,
                         running_line,
                     );
                     while !cursor.done && all_matches.len() < max_matches {
-                        let mut batch = fs.search_file(
-                            &self.file_path,
-                            pattern,
-                            &opts_bounded,
-                            &mut cursor,
-                        )?;
+                        let mut batch =
+                            fs.search_file(&self.file_path, pattern, &opts_bounded, &mut cursor)?;
                         // Remap byte_offset from file-relative to doc-relative
                         for m in &mut batch {
-                            m.byte_offset =
-                                *region_doc_offset + (m.byte_offset - *file_offset);
+                            m.byte_offset = *region_doc_offset + (m.byte_offset - *file_offset);
                         }
                         all_matches.extend(batch);
                     }
@@ -4662,8 +4647,7 @@ impl HybridSearchPlan {
                     doc_offset: region_doc_offset,
                 } => {
                     // Build search buffer: overlap tail + loaded data
-                    let mut search_buf =
-                        Vec::with_capacity(prev_tail.len() + data.len());
+                    let mut search_buf = Vec::with_capacity(prev_tail.len() + data.len());
                     search_buf.extend_from_slice(&prev_tail);
                     search_buf.extend_from_slice(data);
 
@@ -4678,8 +4662,7 @@ impl HybridSearchPlan {
                         .iter()
                         .filter(|&&b| b == b'\n')
                         .count();
-                    let mut line_at =
-                        running_line.saturating_sub(newlines_in_overlap);
+                    let mut line_at = running_line.saturating_sub(newlines_in_overlap);
                     let mut counted_to = 0usize;
 
                     for m in regex.find_iter(&search_buf) {
@@ -4709,10 +4692,8 @@ impl HybridSearchPlan {
 
                         let match_doc_offset = buf_doc_offset + m.start();
                         let column = m.start() - line_start + 1;
-                        let context = String::from_utf8_lossy(
-                            &search_buf[line_start..line_end],
-                        )
-                        .into_owned();
+                        let context =
+                            String::from_utf8_lossy(&search_buf[line_start..line_end]).into_owned();
 
                         all_matches.push(SearchMatch {
                             byte_offset: match_doc_offset,
@@ -4723,8 +4704,7 @@ impl HybridSearchPlan {
                         });
                     }
 
-                    running_line +=
-                        data.iter().filter(|&&b| b == b'\n').count();
+                    running_line += data.iter().filter(|&&b| b == b'\n').count();
 
                     let tail_start = data.len().saturating_sub(overlap_size);
                     prev_tail = data[tail_start..].to_vec();
@@ -6856,7 +6836,11 @@ mod tests {
                     cursor: &mut crate::model::filesystem::FileSearchCursor,
                 ) -> std::io::Result<Vec<SearchMatch>> {
                     crate::model::filesystem::default_search_file(
-                        &self.inner, path, pattern, opts, cursor,
+                        &self.inner,
+                        path,
+                        pattern,
+                        opts,
+                        cursor,
                     )
                 }
             }
@@ -7318,9 +7302,7 @@ mod tests {
 
             let regex = make_regex("line 050");
             let opts = make_opts();
-            let matches = buf
-                .search_hybrid("line 050", &opts, regex, 100, 8)
-                .unwrap();
+            let matches = buf.search_hybrid("line 050", &opts, regex, 100, 8).unwrap();
 
             assert_eq!(matches.len(), 1);
             assert_eq!(matches[0].line, 51); // 1-based
@@ -7351,9 +7333,7 @@ mod tests {
 
             let regex = make_regex("target");
             let opts = make_opts();
-            let matches = buf
-                .search_hybrid("target", &opts, regex, 200, 6)
-                .unwrap();
+            let matches = buf.search_hybrid("target", &opts, regex, 200, 6).unwrap();
 
             // Should find the inserted "target XX" plus all 50 original "target NN"
             assert_eq!(matches.len(), 51);
@@ -7408,42 +7388,23 @@ mod tests {
 
         #[test]
         fn empty_prev_tail_returns_nothing() {
-            let matches = search_boundary_overlap(
-                b"",
-                b"hello",
-                0,
-                1,
-                &make_regex("hello"),
-                100,
-            );
+            let matches = search_boundary_overlap(b"", b"hello", 0, 1, &make_regex("hello"), 100);
             assert!(matches.is_empty());
         }
 
         #[test]
         fn pure_tail_match_skipped() {
             // "foo" is entirely in prev_tail — should NOT be returned
-            let matches = search_boundary_overlap(
-                b"foo bar",
-                b" baz",
-                0,
-                1,
-                &make_regex("foo"),
-                100,
-            );
+            let matches =
+                search_boundary_overlap(b"foo bar", b" baz", 0, 1, &make_regex("foo"), 100);
             assert!(matches.is_empty());
         }
 
         #[test]
         fn cross_boundary_match_found() {
             // "SPLIT" spans: prev_tail="...SPL", next_head="IT..."
-            let matches = search_boundary_overlap(
-                b"xxSPL",
-                b"ITyy",
-                0,
-                1,
-                &make_regex("SPLIT"),
-                100,
-            );
+            let matches =
+                search_boundary_overlap(b"xxSPL", b"ITyy", 0, 1, &make_regex("SPLIT"), 100);
             assert_eq!(matches.len(), 1);
             assert_eq!(matches[0].byte_offset, 2);
             assert_eq!(matches[0].length, 5);
@@ -7453,14 +7414,7 @@ mod tests {
         fn pure_head_match_skipped() {
             // "baz" is entirely in next_head — should NOT be returned
             // (it starts at offset 4 which is >= overlap_len 3)
-            let matches = search_boundary_overlap(
-                b"foo",
-                b" baz",
-                0,
-                1,
-                &make_regex("baz"),
-                100,
-            );
+            let matches = search_boundary_overlap(b"foo", b" baz", 0, 1, &make_regex("baz"), 100);
             assert!(matches.is_empty());
         }
 
@@ -7469,14 +7423,8 @@ mod tests {
             // prev_tail has a newline; running_line=5 means "line 5 at
             // the boundary".  The newline in the tail means SPLIT starts
             // on line 5 (the boundary line).
-            let matches = search_boundary_overlap(
-                b"line1\nSPL",
-                b"IT end",
-                0,
-                5,
-                &make_regex("SPLIT"),
-                100,
-            );
+            let matches =
+                search_boundary_overlap(b"line1\nSPL", b"IT end", 0, 5, &make_regex("SPLIT"), 100);
             assert_eq!(matches.len(), 1);
             assert_eq!(matches[0].line, 5);
         }
@@ -7484,14 +7432,7 @@ mod tests {
         #[test]
         fn max_matches_respected() {
             // Two cross-boundary matches but max is 1
-            let matches = search_boundary_overlap(
-                b"aXb",
-                b"Xc",
-                0,
-                1,
-                &make_regex("X"),
-                1,
-            );
+            let matches = search_boundary_overlap(b"aXb", b"Xc", 0, 1, &make_regex("X"), 1);
             assert!(matches.len() <= 1);
         }
     }

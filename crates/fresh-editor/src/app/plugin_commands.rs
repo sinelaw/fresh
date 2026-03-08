@@ -1811,7 +1811,8 @@ impl Editor {
                 }
             } else {
                 // Not open — search via FileSystem trait
-                let fs_opts_file = make_search_opts(fixed_string, case_sensitive, whole_words, remaining);
+                let fs_opts_file =
+                    make_search_opts(fixed_string, case_sensitive, whole_words, remaining);
                 let mut cursor = crate::model::filesystem::FileSearchCursor::new();
                 let mut file_matches = Vec::new();
                 while !cursor.done && file_matches.len() < remaining {
@@ -2010,9 +2011,9 @@ impl Editor {
                     if let Some((bid, plan)) = dirty_plan {
                         // Dirty buffer — execute hybrid search plan (searches
                         // unloaded regions via fs.search_file, loaded in memory)
-                        let matches = match plan.execute(
-                            &*fs, &pattern, &fs_opts, &regex, remaining, query_len,
-                        ) {
+                        let matches = match plan
+                            .execute(&*fs, &pattern, &fs_opts, &regex, remaining, query_len)
+                        {
                             Ok(m) => m,
                             Err(e) => {
                                 tracing::debug!(
@@ -2071,18 +2072,18 @@ impl Editor {
                                 break;
                             }
 
-                            let batch = match fs.search_file(
-                                &file_path,
-                                &pattern,
-                                &fs_opts,
-                                &mut cursor,
-                            ) {
-                                Ok(b) => b,
-                                Err(e) => {
-                                    tracing::debug!("search_file failed {:?}: {}", file_path, e);
-                                    break;
-                                }
-                            };
+                            let batch =
+                                match fs.search_file(&file_path, &pattern, &fs_opts, &mut cursor) {
+                                    Ok(b) => b,
+                                    Err(e) => {
+                                        tracing::debug!(
+                                            "search_file failed {:?}: {}",
+                                            file_path,
+                                            e
+                                        );
+                                        break;
+                                    }
+                                };
                             if batch.is_empty() {
                                 continue;
                             }
