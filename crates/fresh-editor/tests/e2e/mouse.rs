@@ -2,7 +2,7 @@
 
 use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::fs;
 
 /// Test scrollbar rendering in a single split
@@ -1840,6 +1840,109 @@ fn test_double_click_requires_same_position() {
         !selected_text_same_pos.is_empty(),
         "Double-click at same position SHOULD select a word, but got empty selection"
     );
+}
+
+/// Test that after double-clicking a word, dragging extends selection by words (issue #1202).
+/// Example: double-click "quick" and drag right → "quick" → "quick brown" → "quick brown fox".
+#[test]
+fn test_double_click_drag_extends_selection_by_words() {
+    let mut harness = EditorTestHarness::new_no_wrap(80, 24).unwrap();
+    let content = "quick brown fox\n";
+    let _fixture = harness.load_buffer_from_text(content).unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
+
+    // "quick" at cols gutter_width..gutter_width+5, " brown" at +6..+12, " fox" at +13..+17
+    let quick_col = gutter_width + 3; // middle of "quick"
+    let brown_col = gutter_width + 9; // in "brown"
+    let fox_col = gutter_width + 14;  // in "fox"
+
+    // 1. First click
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: quick_col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: quick_col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+
+    // 2. Second click (double-click) – selects "quick" and enables word-drag mode
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: quick_col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let after_double = harness.get_selected_text();
+    assert_eq!(
+        after_double, "quick",
+        "After double-click, should have 'quick' selected, got '{}'",
+        after_double
+    );
+
+    // 3. Drag right to "brown" – selection should extend to "quick brown"
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: brown_col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let after_drag_brown = harness.get_selected_text();
+    assert!(
+        after_drag_brown.contains("quick") && after_drag_brown.contains("brown"),
+        "After drag to 'brown', selection should include both words, got '{}'",
+        after_drag_brown
+    );
+
+    // 4. Drag further right to "fox" – selection should extend to "quick brown fox"
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: fox_col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let after_drag_fox = harness.get_selected_text();
+    assert_eq!(
+        after_drag_fox.trim(),
+        "quick brown fox",
+        "After drag to 'fox', selection should be 'quick brown fox', got '{}'",
+        after_drag_fox
+    );
+
+    // 5. Release
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: fox_col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness.render().unwrap();
 }
 
 /// Test that with blinking_bar cursor style, the first character of a selection

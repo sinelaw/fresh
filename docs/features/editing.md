@@ -61,6 +61,7 @@ Edit multiple locations simultaneously:
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+W` | Select word under cursor |
+| Double-click + drag | Extend selection word-by-word (after double-clicking a word) |
 | `Ctrl+L` | Select current line |
 | `Ctrl+A` | Select all |
 | `Shift+Arrow` | Extend selection in direction |

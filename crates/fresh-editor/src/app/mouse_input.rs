@@ -214,6 +214,7 @@ impl Editor {
                 self.mouse_state.dragging_text_selection = false;
                 self.mouse_state.drag_selection_split = None;
                 self.mouse_state.drag_selection_anchor = None;
+                self.mouse_state.drag_selection_by_words = false;
                 // Clear popup scrollbar drag state
                 self.mouse_state.dragging_popup_scrollbar = None;
                 self.mouse_state.drag_start_popup_scroll = None;
@@ -1140,6 +1141,20 @@ impl Editor {
 
         // Now select the word under cursor
         self.handle_action(Action::SelectWord)?;
+
+        // Set up drag state so subsequent drag events extend selection word-by-word
+        if let Some(cursor) = self
+            .split_view_states
+            .get(&leaf_id)
+            .map(|vs| vs.cursors.primary())
+        {
+            // Use selection start as anchor (left edge); extends right add words, left shrinks
+            let sel_start = cursor.selection_start();
+            self.mouse_state.dragging_text_selection = true;
+            self.mouse_state.drag_selection_split = Some(split_id);
+            self.mouse_state.drag_selection_anchor = Some(sel_start);
+            self.mouse_state.drag_selection_by_words = true;
+        }
 
         Ok(())
     }
@@ -2093,6 +2108,7 @@ impl Editor {
     /// Handle text selection drag - extends selection from anchor to current position
     fn handle_text_selection_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         use crate::model::event::Event;
+        use crate::primitives::word_navigation::{find_word_end, find_word_start};
 
         let Some(split_id) = self.mouse_state.drag_selection_split else {
             return Ok(());
@@ -2164,6 +2180,17 @@ impl Editor {
                 return Ok(());
             };
 
+            // When drag started with double-click, snap to word boundaries
+            let new_position = if self.mouse_state.drag_selection_by_words {
+                if target_position >= anchor_position {
+                    find_word_end(&state.buffer, target_position)
+                } else {
+                    find_word_start(&state.buffer, target_position)
+                }
+            } else {
+                target_position
+            };
+
             let (primary_cursor_id, old_position, old_anchor, old_sticky_column) = self
                 .split_view_states
                 .get(&leaf_id)
@@ -2180,13 +2207,13 @@ impl Editor {
 
             let new_sticky_column = state
                 .buffer
-                .offset_to_position(target_position)
+                .offset_to_position(new_position)
                 .map(|pos| pos.column)
                 .unwrap_or(old_sticky_column);
             let event = Event::MoveCursor {
                 cursor_id: primary_cursor_id,
                 old_position,
-                new_position: target_position,
+                new_position,
                 old_anchor,
                 new_anchor: Some(anchor_position), // Keep anchor to maintain selection
                 old_sticky_column,

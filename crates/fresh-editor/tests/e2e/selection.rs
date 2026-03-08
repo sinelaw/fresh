@@ -48,8 +48,8 @@ fn test_selection_visual_rendering() {
     harness.assert_screen_contains("Hello World");
 
     // Check that the selected characters have the theme's selection background
-    // Gutter takes up 8 characters: " " (indicator) + "   1" (line num) + " │ " (separator)
-    // So "Hello" starts at column 8
+    // Gutter width scales with line count: 1 line → 1 digit → 5 chars total
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
     let buffer = harness.buffer();
     let theme = harness.editor().theme();
     let selection_bg = theme.selection_bg;
@@ -58,8 +58,8 @@ fn test_selection_visual_rendering() {
     let (content_first_row, _content_last_row) = harness.content_area_rows();
     let first_line_row = content_first_row as u16;
 
-    // Check first character 'H' at position (8, first_line_row) - should have selection background
-    let h_pos = buffer.index_of(8, first_line_row);
+    // Check first character 'H' at position (gutter_width, first_line_row) - should have selection background
+    let h_pos = buffer.index_of(gutter_width, first_line_row);
     let h_cell = &buffer.content[h_pos];
     assert_eq!(h_cell.symbol(), "H");
     assert_eq!(
@@ -67,8 +67,8 @@ fn test_selection_visual_rendering() {
         "Selected character 'H' should have selection background"
     );
 
-    // Check fourth character 'l' at position (11, first_line_row) - should have selection background
-    let l_pos = buffer.index_of(11, first_line_row);
+    // Check fourth character 'l' at position (gutter_width + 3, first_line_row) - should have selection background
+    let l_pos = buffer.index_of(gutter_width + 3, first_line_row);
     let l_cell = &buffer.content[l_pos];
     assert_eq!(l_cell.symbol(), "l");
     assert_eq!(
@@ -76,8 +76,8 @@ fn test_selection_visual_rendering() {
         "Selected character 'l' should have selection background"
     );
 
-    // Check fifth character 'o' at position (12, first_line_row) - byte position 4, IN selection
-    let o_pos = buffer.index_of(12, first_line_row);
+    // Check fifth character 'o' at position (gutter_width + 4, first_line_row) - byte position 4, IN selection
+    let o_pos = buffer.index_of(gutter_width + 4, first_line_row);
     let o_cell = &buffer.content[o_pos];
     assert_eq!(o_cell.symbol(), "o");
     // This 'o' is at byte position 4, which is in the selection range 0..5
@@ -87,8 +87,8 @@ fn test_selection_visual_rendering() {
         "Selected character 'o' (byte 4) should have selection background"
     );
 
-    // Check character ' ' (space) at position (13, first_line_row) - byte position 5, cursor position
-    let space_pos = buffer.index_of(13, first_line_row);
+    // Check character ' ' (space) at position (gutter_width + 5, first_line_row) - byte position 5, cursor position
+    let space_pos = buffer.index_of(gutter_width + 5, first_line_row);
     let space_cell = &buffer.content[space_pos];
     assert_eq!(space_cell.symbol(), " ");
     // This space is at byte position 5, which is the cursor position
