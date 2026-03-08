@@ -5041,6 +5041,7 @@ mod tests {
                 bindings,
                 read_only,
                 allow_text_input,
+                plugin_name,
             } => {
                 assert_eq!(name, "test-mode");
                 assert!(parent.is_none());
@@ -5049,6 +5050,7 @@ mod tests {
                 assert_eq!(bindings[1], ("b".to_string(), "action_b".to_string()));
                 assert!(!read_only);
                 assert!(!allow_text_input);
+                assert!(plugin_name.is_some());
             }
             _ => panic!("Expected DefineMode, got {:?}", cmd),
         }
