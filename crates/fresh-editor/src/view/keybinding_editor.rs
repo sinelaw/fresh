@@ -261,7 +261,7 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &mut KeybindingEditor, th
     // Column widths (adaptive): Key | Action Name | Description | Context | Source
     let key_col_width = (inner_width as f32 * 0.16).min(20.0) as u16;
     let action_name_col_width = (inner_width as f32 * 0.22).min(28.0) as u16;
-    let context_col_width = 14u16;
+    let context_col_width = (inner_width as f32 * 0.18).min(30.0).max(14.0) as u16;
     let source_col_width = 8u16;
     let fixed_cols =
         key_col_width + action_name_col_width + context_col_width + source_col_width + 5; // +5 for spacers

@@ -73,10 +73,9 @@ editor.setStatus("Unified keybinding test ready");
     harness.assert_screen_contains("Plugin");
 
     // Should show our plugin mode bindings with the mode context
-    // (the context column has a fixed width, so assert on a visible prefix)
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("mode:tst-unike"),
+        screen.contains("mode:tst-unikeys"),
         "Keybinding editor should show the mode context. Screen:\n{}",
         screen
     );
