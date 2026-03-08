@@ -4542,8 +4542,8 @@ pub(crate) enum SearchRegion {
 /// transfer) and loaded regions with in-memory regex.
 #[derive(Debug)]
 pub struct HybridSearchPlan {
-    pub file_path: PathBuf,
-    pub regions: Vec<SearchRegion>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) regions: Vec<SearchRegion>,
 }
 
 impl HybridSearchPlan {
