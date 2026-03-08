@@ -14,6 +14,85 @@ use fresh_core::api::{
 
 use super::Editor;
 
+/// Directory names to always skip during project file walking.
+const IGNORED_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".hg",
+    ".svn",
+    ".DS_Store",
+];
+
+/// Recursively walk `dir` via the `FileSystem` trait, collecting file paths.
+/// Skips hidden entries (dot-prefixed) and common non-source directories.
+fn walk_files_recursive(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    dir: &std::path::Path,
+    out: &mut Vec<std::path::PathBuf>,
+) {
+    let entries = match fs.read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries {
+        // Skip hidden files/dirs
+        if entry.name.starts_with('.') {
+            continue;
+        }
+        match entry.entry_type {
+            crate::model::filesystem::EntryType::File => {
+                out.push(entry.path);
+            }
+            crate::model::filesystem::EntryType::Directory => {
+                if !IGNORED_DIRS.contains(&entry.name.as_str()) {
+                    walk_files_recursive(fs, &entry.path, out);
+                }
+            }
+            _ => {} // skip symlinks etc. for now
+        }
+    }
+}
+
+/// Streaming variant: recursively walks and sends each file path via callback.
+/// Returns early if `cancel` is set or callback returns false (receiver dropped).
+fn walk_files_streaming(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    dir: &std::path::Path,
+    cancel: &std::sync::atomic::AtomicBool,
+    send: &mut dyn FnMut(std::path::PathBuf) -> bool,
+) {
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let entries = match fs.read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        if entry.name.starts_with('.') {
+            continue;
+        }
+        match entry.entry_type {
+            crate::model::filesystem::EntryType::File => {
+                if !send(entry.path) {
+                    return;
+                }
+            }
+            crate::model::filesystem::EntryType::Directory => {
+                if !IGNORED_DIRS.contains(&entry.name.as_str()) {
+                    walk_files_streaming(fs, &entry.path, cancel, send);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Editor {
     // ==================== Menu Helpers ====================
 
@@ -1688,28 +1767,10 @@ impl Editor {
             }
         }
 
-        // Collect all project files using the `ignore` crate's WalkBuilder
+        // Collect all project files via FileSystem trait (works for both local and remote)
         let cwd = self.working_dir.clone();
         let mut file_paths: Vec<std::path::PathBuf> = Vec::new();
-
-        for entry in ignore::WalkBuilder::new(&cwd)
-            .hidden(true)
-            .git_ignore(true)
-            .git_global(true)
-            .git_exclude(true)
-            .build()
-        {
-            match entry {
-                Ok(entry) => {
-                    if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                        file_paths.push(entry.into_path());
-                    }
-                }
-                Err(e) => {
-                    tracing::debug!("GrepProject: walk error: {}", e);
-                }
-            }
-        }
+        walk_files_recursive(&*self.filesystem, &cwd, &mut file_paths);
 
         // Search each file via TextBuffer::search_scan_all
         for file_path in &file_paths {
@@ -1861,6 +1922,7 @@ impl Editor {
         self.streaming_grep_cancellation = Some(cancel.clone());
 
         let filesystem = self.filesystem.clone();
+        let filesystem_walker = self.filesystem.clone();
         let cwd = self.working_dir.clone();
         let query_len = pattern.len();
 
@@ -1883,7 +1945,7 @@ impl Editor {
 
             let cancel_walker = cancel.clone();
 
-            // Walker task: uses `ignore` crate's WalkBuilder to respect .gitignore
+            // Walker task: recursively walks via FileSystem trait (works local and remote)
             tokio::task::spawn_blocking(move || {
                 tracing::info!(
                     "GrepStreaming walker: starting from {:?} search_id={}",
@@ -1892,30 +1954,11 @@ impl Editor {
                 );
                 let mut file_count = 0usize;
 
-                for entry in ignore::WalkBuilder::new(&cwd)
-                    .hidden(true)
-                    .git_ignore(true)
-                    .git_global(true)
-                    .git_exclude(true)
-                    .build()
-                {
-                    if cancel_walker.load(std::sync::atomic::Ordering::Relaxed) {
-                        break;
-                    }
-                    match entry {
-                        Ok(entry) => {
-                            if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                                file_count += 1;
-                                if path_tx.blocking_send(entry.into_path()).is_err() {
-                                    return; // receiver dropped
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::debug!("GrepProjectStreaming: walk error: {}", e);
-                        }
-                    }
-                }
+                walk_files_streaming(&*filesystem_walker, &cwd, &cancel_walker, &mut |path| {
+                    file_count += 1;
+                    path_tx.blocking_send(path).is_ok()
+                });
+
                 tracing::info!(
                     "GrepStreaming walker: done, sent {} files (search_id={})",
                     file_count,

@@ -3200,7 +3200,10 @@ impl JsEditorApi {
     /// Streaming project-wide grep search
     /// Returns a thenable with a searchId property. The progressCallback is called
     /// with batches of matches as they are found.
-    #[plugin_api(js_name = "grepProjectStreaming", ts_raw = "grepProjectStreaming(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean }, progressCallback?: (matches: GrepMatch[], done: boolean) => void): PromiseLike<GrepMatch[]> & { searchId: number }")]
+    #[plugin_api(
+        js_name = "grepProjectStreaming",
+        ts_raw = "grepProjectStreaming(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean }, progressCallback?: (matches: GrepMatch[], done: boolean) => void): PromiseLike<GrepMatch[]> & { searchId: number }"
+    )]
     #[qjs(rename = "_grepProjectStreamingStart")]
     pub fn grep_project_streaming_start(
         &self,
@@ -4433,11 +4436,7 @@ impl QuickJsBackend {
                 (action_name, None)
             };
 
-        let pair = self
-            .registered_actions
-            .borrow()
-            .get(lookup_name)
-            .cloned();
+        let pair = self.registered_actions.borrow().get(lookup_name).cloned();
         let (plugin_name, function_name) = match pair {
             Some(handler) => (handler.plugin_name, handler.handler_name),
             None => ("main".to_string(), lookup_name.to_string()),
