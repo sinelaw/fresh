@@ -328,14 +328,35 @@ pub struct FileSearchCursor {
     pub running_line: usize,
     /// Set to true when the entire file has been searched.
     pub done: bool,
+    /// Optional upper bound — stop searching at this byte offset instead
+    /// of EOF.  Used by hybrid search to restrict `search_file` to a
+    /// specific file range (e.g. an unloaded piece-tree region).
+    pub end_offset: Option<usize>,
 }
 
-impl FileSearchCursor {
-    pub fn new() -> Self {
+impl Default for FileSearchCursor {
+    fn default() -> Self {
         Self {
             offset: 0,
             running_line: 1,
             done: false,
+            end_offset: None,
+        }
+    }
+}
+
+impl FileSearchCursor {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a cursor bounded to a specific file range.
+    pub fn for_range(offset: usize, end_offset: usize, running_line: usize) -> Self {
+        Self {
+            offset,
+            running_line,
+            done: false,
+            end_offset: Some(end_offset),
         }
     }
 }
@@ -599,12 +620,7 @@ pub trait FileSystem: Send + Sync {
         pattern: &str,
         opts: &FileSearchOptions,
         cursor: &mut FileSearchCursor,
-    ) -> io::Result<Vec<SearchMatch>>
-    where
-        Self: Sized,
-    {
-        default_search_file(self, path, pattern, opts, cursor)
-    }
+    ) -> io::Result<Vec<SearchMatch>>;
 
     /// Write file using sudo (for root-owned files).
     ///
@@ -777,9 +793,10 @@ pub fn default_search_file(
     let overlap = pattern.len().max(256);
 
     let file_len = fs.metadata(path)?.size as usize;
+    let effective_end = cursor.end_offset.unwrap_or(file_len).min(file_len);
 
-    // Binary check on first call
-    if cursor.offset == 0 {
+    // Binary check on first call (only when starting from offset 0 with no range bound)
+    if cursor.offset == 0 && cursor.end_offset.is_none() {
         if file_len == 0 {
             cursor.done = true;
             return Ok(vec![]);
@@ -792,7 +809,7 @@ pub fn default_search_file(
         }
     }
 
-    if cursor.offset >= file_len {
+    if cursor.offset >= effective_end {
         cursor.done = true;
         return Ok(vec![]);
     }
@@ -801,7 +818,7 @@ pub fn default_search_file(
 
     // Read chunk with overlap from previous
     let read_start = cursor.offset.saturating_sub(overlap);
-    let read_end = (read_start + CHUNK_SIZE).min(file_len);
+    let read_end = (read_start + CHUNK_SIZE).min(effective_end);
     let chunk = fs.read_range(path, read_start as u64, read_end - read_start)?;
 
     let overlap_len = cursor.offset - read_start;
@@ -856,7 +873,7 @@ pub fn default_search_file(
     let new_data = &chunk[overlap_len..];
     cursor.running_line += new_data.iter().filter(|&&b| b == b'\n').count();
     cursor.offset = read_end;
-    if read_end >= file_len {
+    if read_end >= effective_end {
         cursor.done = true;
     }
 
@@ -1124,6 +1141,16 @@ impl FileSystem for StdFileSystem {
         }
 
         Ok(())
+    }
+
+    fn search_file(
+        &self,
+        path: &Path,
+        pattern: &str,
+        opts: &FileSearchOptions,
+        cursor: &mut FileSearchCursor,
+    ) -> io::Result<Vec<SearchMatch>> {
+        default_search_file(self, path, pattern, opts, cursor)
     }
 }
 
@@ -1722,5 +1749,41 @@ mod tests {
         assert_eq!(all_matches.len(), 1);
         assert_eq!(all_matches[0].line, total_lines); // last line
         assert_eq!(all_matches[0].context, "FINDME at the end");
+    }
+
+    #[test]
+    fn test_search_file_end_offset_bounds_search() {
+        let fs = StdFileSystem;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("bounded.txt");
+
+        // "AAA\nBBB\nCCC\nDDD\n" — each line is 4 bytes
+        fs.write_file(&path, b"AAA\nBBB\nCCC\nDDD\n").unwrap();
+
+        // Search only the first 8 bytes ("AAA\nBBB\n") — should find AAA and BBB
+        let opts = make_search_opts(true);
+        let mut cursor = FileSearchCursor::for_range(0, 8, 1);
+        let mut matches = Vec::new();
+        while !cursor.done {
+            matches.extend(fs.search_file(&path, "AAA", &opts, &mut cursor).unwrap());
+        }
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].context, "AAA");
+        assert_eq!(matches[0].line, 1);
+
+        // CCC is at byte 8, outside the first 8 bytes
+        let mut cursor = FileSearchCursor::for_range(0, 8, 1);
+        let ccc = fs.search_file(&path, "CCC", &opts, &mut cursor).unwrap();
+        assert!(ccc.is_empty(), "CCC should not be found in first 8 bytes");
+
+        // Search bytes 8..16 ("CCC\nDDD\n") — should find CCC
+        let mut cursor = FileSearchCursor::for_range(8, 16, 3);
+        let mut matches = Vec::new();
+        while !cursor.done {
+            matches.extend(fs.search_file(&path, "CCC", &opts, &mut cursor).unwrap());
+        }
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].context, "CCC");
+        assert_eq!(matches[0].line, 3);
     }
 }

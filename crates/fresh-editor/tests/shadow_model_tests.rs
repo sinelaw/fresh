@@ -193,6 +193,16 @@ impl FileSystem for ConfigurableFileSystem {
     fn remote_connection_info(&self) -> Option<&str> {
         self.inner.remote_connection_info()
     }
+
+    fn search_file(
+        &self,
+        path: &Path,
+        pattern: &str,
+        opts: &fresh::model::filesystem::FileSearchOptions,
+        cursor: &mut fresh::model::filesystem::FileSearchCursor,
+    ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
+        fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
+    }
 }
 
 // ============================================================================

@@ -1807,8 +1807,7 @@ impl Editor {
                 let mut cursor = crate::model::filesystem::FileSearchCursor::new();
                 let mut file_matches = Vec::new();
                 while !cursor.done && file_matches.len() < remaining {
-                    match crate::model::filesystem::default_search_file(
-                        &*self.filesystem,
+                    match self.filesystem.search_file(
                         file_path,
                         &pattern,
                         &fs_opts_file,
@@ -2069,8 +2068,7 @@ impl Editor {
                                 break;
                             }
 
-                            let batch = match crate::model::filesystem::default_search_file(
-                                &*fs,
+                            let batch = match fs.search_file(
                                 &file_path,
                                 &pattern,
                                 &fs_opts,

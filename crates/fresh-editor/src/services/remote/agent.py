@@ -379,11 +379,13 @@ def cmd_search_file(id, p):
     max_matches = p.get("max_matches", 100)
     offset = p.get("offset", 0)
     running_line = p.get("running_line", 1)
+    end_offset = p.get("end_offset")  # None = search to EOF
 
     file_size = os.path.getsize(path)
+    effective_end = min(end_offset, file_size) if end_offset is not None else file_size
 
-    # Binary detection: check first 8192 bytes for null byte
-    if offset == 0:
+    # Binary detection: check first 8192 bytes for null byte (only for full-file searches)
+    if offset == 0 and end_offset is None:
         with open(path, "rb") as f:
             header = f.read(8192)
             if b"\x00" in header:
@@ -408,7 +410,7 @@ def cmd_search_file(id, p):
     CHUNK_SIZE = 1048576  # 1MB
     overlap = max(len(pattern), 256)
     read_start = max(0, offset - overlap)
-    read_end = min(read_start + CHUNK_SIZE, file_size)
+    read_end = min(read_start + CHUNK_SIZE, effective_end)
 
     with open(path, "rb") as f:
         f.seek(read_start)
@@ -458,7 +460,7 @@ def cmd_search_file(id, p):
         "matches": matches,
         "next_offset": read_end,
         "running_line": new_running_line,
-        "done": read_end >= file_size,
+        "done": read_end >= effective_end,
     })
 
 

@@ -518,7 +518,7 @@ impl FileSystem for RemoteFileSystem {
         }
 
         let path_str = path.to_string_lossy();
-        let params = serde_json::json!({
+        let mut params = serde_json::json!({
             "path": path_str,
             "pattern": pattern,
             "fixed_string": opts.fixed_string,
@@ -528,6 +528,9 @@ impl FileSystem for RemoteFileSystem {
             "offset": cursor.offset,
             "running_line": cursor.running_line,
         });
+        if let Some(end) = cursor.end_offset {
+            params["end_offset"] = serde_json::json!(end);
+        }
 
         let result = self
             .channel

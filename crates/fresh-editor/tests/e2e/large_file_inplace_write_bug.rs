@@ -155,6 +155,16 @@ impl FileSystem for NotOwnerFileSystem {
     ) -> io::Result<()> {
         self.inner.sudo_write(path, data, mode, uid, gid)
     }
+
+    fn search_file(
+        &self,
+        path: &Path,
+        pattern: &str,
+        opts: &fresh::model::filesystem::FileSearchOptions,
+        cursor: &mut fresh::model::filesystem::FileSearchCursor,
+    ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
+        fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
+    }
 }
 
 /// Test that saving a large file with in-place write mode preserves all data.
@@ -489,6 +499,16 @@ impl FileSystem for CrashDuringStreamFileSystem {
         gid: u32,
     ) -> io::Result<()> {
         self.inner.sudo_write(path, data, mode, uid, gid)
+    }
+
+    fn search_file(
+        &self,
+        path: &Path,
+        pattern: &str,
+        opts: &fresh::model::filesystem::FileSearchOptions,
+        cursor: &mut fresh::model::filesystem::FileSearchCursor,
+    ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
+        fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
     }
 }
 
