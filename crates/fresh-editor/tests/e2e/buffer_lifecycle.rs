@@ -2,6 +2,7 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
 
 /// Test that saving an unnamed buffer triggers SaveAs prompt (fix for issue #154)
 #[test]
@@ -31,7 +32,9 @@ fn test_save_unnamed_buffer_shows_save_as_prompt() {
 /// Test that quitting with modified buffers shows confirmation and doesn't quit immediately
 #[test]
 fn test_quit_with_modified_buffers_shows_confirmation() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let mut config = Config::default();
+    config.editor.persist_unnamed_buffers = false;
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
 
     // Type some text to modify the buffer
     harness.type_text("Modified content").unwrap();
@@ -73,7 +76,9 @@ fn test_quit_without_modified_buffers() {
 /// Test that quitting with confirmation (discard) works
 #[test]
 fn test_quit_with_confirmation_discard() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let mut config = Config::default();
+    config.editor.persist_unnamed_buffers = false;
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
 
     // Modify buffer
     harness.type_text("Modified").unwrap();
@@ -101,7 +106,9 @@ fn test_quit_with_confirmation_discard() {
 /// Test that quitting with confirmation (cancel) cancels quit
 #[test]
 fn test_quit_with_confirmation_cancel() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let mut config = Config::default();
+    config.editor.persist_unnamed_buffers = false;
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
 
     // Modify buffer
     harness.type_text("Modified").unwrap();
