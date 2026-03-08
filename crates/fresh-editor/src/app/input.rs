@@ -161,26 +161,36 @@ impl Editor {
                 return self.handle_action(action);
             }
 
-            // Block unbound keys if the effective mode is read-only
+            // Handle unbound keys for modes that want to capture input.
+            //
+            // Buffer-local modes with allow_text_input (e.g. search-replace-list)
+            // capture character keys and block other unbound keys.
+            //
+            // Buffer-local modes WITHOUT allow_text_input (e.g. diff-view) let
+            // unbound keys fall through to normal keybinding handling so that
+            // Ctrl+C, arrows, etc. still work.
+            //
+            // Global editor modes (e.g. vi-normal) block all unbound keys when
+            // read-only.
             if let Some(ref mode_name) = effective_mode {
-                if self.mode_registry.is_read_only(mode_name) {
-                    // If the mode allows text input, dispatch character keys
-                    // as mode_text_input events instead of dropping them.
-                    if self.mode_registry.allows_text_input(mode_name) {
-                        if let KeyCode::Char(c) = code {
-                            // Reconstruct the actual character (apply shift)
-                            let ch = if modifiers.contains(KeyModifiers::SHIFT) {
-                                c.to_uppercase().next().unwrap_or(c)
-                            } else {
-                                c
-                            };
-                            // Only dispatch plain chars or shift+chars (not ctrl/alt combos)
-                            if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
-                                let action_name = format!("mode_text_input:{}", ch);
-                                return self.handle_action(Action::PluginAction(action_name));
-                            }
+                if self.mode_registry.allows_text_input(mode_name) {
+                    if let KeyCode::Char(c) = code {
+                        let ch = if modifiers.contains(KeyModifiers::SHIFT) {
+                            c.to_uppercase().next().unwrap_or(c)
+                        } else {
+                            c
+                        };
+                        if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+                            let action_name = format!("mode_text_input:{}", ch);
+                            return self.handle_action(Action::PluginAction(action_name));
                         }
                     }
+                    tracing::debug!("Blocking unbound key in text-input mode '{}'", mode_name);
+                    return Ok(());
+                }
+            }
+            if let Some(ref mode_name) = self.editor_mode {
+                if self.mode_registry.is_read_only(mode_name) {
                     tracing::debug!("Ignoring unbound key in read-only mode '{}'", mode_name);
                     return Ok(());
                 }

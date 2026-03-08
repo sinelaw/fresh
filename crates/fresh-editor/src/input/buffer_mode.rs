@@ -87,6 +87,7 @@ impl BufferMode {
         modifiers: KeyModifiers,
         command: impl Into<String>,
     ) -> Self {
+        let (code, modifiers) = ModeRegistry::normalize_key(code, modifiers);
         self.keybindings.insert((code, modifiers), command.into());
         self
     }
@@ -97,7 +98,11 @@ impl BufferMode {
         sequence: Vec<(KeyCode, KeyModifiers)>,
         command: impl Into<String>,
     ) -> Self {
-        self.chord_keybindings.insert(sequence, command.into());
+        let normalized: Vec<_> = sequence
+            .into_iter()
+            .map(|(code, mods)| ModeRegistry::normalize_key(code, mods))
+            .collect();
+        self.chord_keybindings.insert(normalized, command.into());
         self
     }
 
@@ -166,8 +171,9 @@ impl ModeRegistry {
     ///
     /// Normalization rules:
     /// - Uppercase char (with or without SHIFT) -> lowercase char with SHIFT
+    /// - Shifted punctuation (e.g. ':') -> base char with SHIFT (e.g. ';' + SHIFT)
     /// - Lowercase char with SHIFT -> keep as is (already normalized form)
-    fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
+    pub(crate) fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
         // BackTab already encodes Shift+Tab, so strip the redundant SHIFT modifier.
         // This ensures "BackTab" in a mode definition matches the terminal's
         // (BackTab, SHIFT) key event.
