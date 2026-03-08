@@ -903,6 +903,31 @@ impl Editor {
             }
         }
 
+        // Clean up orphaned buffers: the initial empty buffer created at startup
+        // may no longer be referenced by any split after workspace restore.
+        let referenced: HashSet<BufferId> = self
+            .split_view_states
+            .values()
+            .flat_map(|vs| vs.open_buffers.iter().copied())
+            .collect();
+        let orphans: Vec<BufferId> = self
+            .buffers
+            .keys()
+            .copied()
+            .filter(|id| {
+                !referenced.contains(id)
+                    && self.buffers.get(id).map_or(false, |s| {
+                        s.buffer.file_path().is_none() && !s.buffer.is_modified()
+                    })
+            })
+            .collect();
+        for id in orphans {
+            tracing::debug!("Removing orphaned empty unnamed buffer {:?}", id);
+            self.buffers.remove(&id);
+            self.event_logs.remove(&id);
+            self.buffer_metadata.remove(&id);
+        }
+
         tracing::debug!(
             "Workspace restore complete: {} splits, {} buffers",
             self.split_view_states.len(),
@@ -1255,6 +1280,10 @@ impl Editor {
         let mut active_buffer_id: Option<BufferId> = None;
 
         if !split_state.open_tabs.is_empty() {
+            // Clear pre-existing open_buffers (e.g. the initial empty buffer
+            // created at startup) so only the saved tabs appear.
+            view_state.open_buffers.clear();
+
             for tab in &split_state.open_tabs {
                 match tab {
                     SerializedTabRef::File(rel_path) => {
