@@ -845,6 +845,9 @@ pub struct Editor {
     /// ensuring consistent error handling (e.g., encoding confirmation prompts).
     pending_file_opens: Vec<PendingFileOpen>,
 
+    /// When true, apply hot exit recovery after the next batch of pending file opens
+    pending_hot_exit_recovery: bool,
+
     /// Tracks buffers opened with --wait: maps buffer_id → (wait_id, has_popup)
     wait_tracking: HashMap<BufferId, (u64, bool)>,
     /// Wait IDs that have completed (buffer closed or popup dismissed)
@@ -1519,6 +1522,7 @@ impl Editor {
             .unwrap_or_default(),
             color_capability,
             pending_file_opens: Vec::new(),
+            pending_hot_exit_recovery: false,
             wait_tracking: HashMap::new(),
             completed_waits: Vec::new(),
             stdin_streaming: None,

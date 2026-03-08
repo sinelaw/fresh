@@ -2403,6 +2403,13 @@ impl Editor {
     /// This is used for CLI file arguments to ensure they go through the same
     /// code path as interactive file opens, providing consistent error handling
     /// (e.g., encoding confirmation prompts are shown in the UI instead of crashing).
+    /// Schedule hot exit recovery to run after the next batch of pending file opens.
+    pub fn schedule_hot_exit_recovery(&mut self) {
+        if self.config.editor.hot_exit {
+            self.pending_hot_exit_recovery = true;
+        }
+    }
+
     pub fn queue_file_open(
         &mut self,
         path: PathBuf,
@@ -2483,6 +2490,20 @@ impl Editor {
                         );
                     }
                     processed_any = true;
+                }
+            }
+        }
+
+        // Apply hot exit recovery if flagged (one-shot after CLI files are opened)
+        if processed_any && self.pending_hot_exit_recovery {
+            self.pending_hot_exit_recovery = false;
+            match self.apply_hot_exit_recovery() {
+                Ok(count) if count > 0 => {
+                    tracing::info!("Hot exit: restored unsaved changes for {} buffer(s)", count);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!("Failed to apply hot exit recovery: {}", e);
                 }
             }
         }

@@ -763,6 +763,7 @@ fn handle_first_run_setup(
     // Queue CLI files to be opened after the TUI starts
     // This ensures they go through the same code path as interactive file opens,
     // with consistent error handling (e.g., encoding confirmation prompts in the UI)
+    let mut has_cli_files = false;
     for loc in file_locations {
         if loc.path.is_dir() {
             continue;
@@ -777,6 +778,12 @@ fn handle_first_run_setup(
             loc.message.clone(),
             None,
         );
+        has_cli_files = true;
+    }
+
+    // Schedule hot exit recovery for CLI-opened files (not covered by workspace restore)
+    if has_cli_files {
+        editor.schedule_hot_exit_recovery();
     }
 
     if show_file_explorer {

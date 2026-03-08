@@ -337,6 +337,88 @@ fn test_hot_exit_restores_unsaved_file_changes() {
     }
 }
 
+/// Test that hot exit restores unsaved changes when file is opened via CLI
+/// (i.e. without workspace restore - simulates `fresh file.txt` workflow)
+#[test]
+fn test_hot_exit_restores_without_workspace() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("hello.txt");
+    std::fs::write(&file1, "original content").unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // First session: open file, modify it, end recovery (simulating quit without workspace save)
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        harness.open_file(&file1).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("original content");
+
+        // Move to end and add text
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.type_text(" EDITED").unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("EDITED");
+
+        // Only end recovery session (no workspace save - simulates CLI file workflow)
+        harness.editor_mut().end_recovery_session().unwrap();
+    }
+
+    // Verify file on disk is unchanged
+    let on_disk = std::fs::read_to_string(&file1).unwrap();
+    assert_eq!(
+        on_disk, "original content",
+        "File on disk should be unchanged"
+    );
+
+    // Second session: open file directly (as CLI would), then apply hot exit recovery
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        // Open file directly (as CLI would, without workspace restore)
+        harness.open_file(&file1).unwrap();
+
+        // Apply hot exit recovery for open buffers
+        let recovered = harness
+            .editor_mut()
+            .apply_hot_exit_recovery()
+            .unwrap();
+        assert!(recovered > 0, "Should have recovered at least one buffer");
+
+        // The unsaved changes should be visible on screen
+        harness.render().unwrap();
+        harness.assert_screen_contains("EDITED");
+    }
+}
+
 /// Test that hot exit quit skips the prompt for modified file-backed buffers
 #[test]
 fn test_hot_exit_skips_quit_prompt() {

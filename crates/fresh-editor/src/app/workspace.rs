@@ -468,6 +468,102 @@ impl Editor {
         }
     }
 
+    /// Apply hot exit recovery to all currently open file-backed buffers.
+    ///
+    /// This restores unsaved changes from recovery files for buffers that were
+    /// opened via CLI (without workspace restore). Returns the number of buffers
+    /// recovered.
+    pub fn apply_hot_exit_recovery(&mut self) -> anyhow::Result<usize> {
+        if !self.config.editor.hot_exit {
+            return Ok(0);
+        }
+
+        let entries = self.recovery_service.list_recoverable()?;
+        if entries.is_empty() {
+            return Ok(0);
+        }
+
+        // Collect buffer IDs and their file paths
+        let buffer_files: Vec<_> = self
+            .buffers
+            .iter()
+            .filter_map(|(buffer_id, state)| {
+                let path = state.buffer.file_path()?.to_path_buf();
+                if path.as_os_str().is_empty() {
+                    return None; // Skip unnamed buffers
+                }
+                Some((*buffer_id, path))
+            })
+            .collect();
+
+        let mut recovered = 0;
+        for (buffer_id, file_path) in buffer_files {
+            let recovery_id = self.recovery_service.get_buffer_id(Some(&file_path));
+            let entry = entries.iter().find(|e| e.id == recovery_id);
+            if let Some(entry) = entry {
+                match self.recovery_service.load_recovery(entry) {
+                    Ok(crate::services::recovery::RecoveryResult::Recovered {
+                        content, ..
+                    }) => {
+                        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                            let current_len = state.buffer.total_bytes();
+                            let text = String::from_utf8_lossy(&content).into_owned();
+                            let current =
+                                state.buffer.get_text_range_mut(0, current_len).ok();
+                            let current_text = current
+                                .as_ref()
+                                .map(|b| String::from_utf8_lossy(b).into_owned());
+                            if current_text.as_deref() != Some(&text) {
+                                state.buffer.delete(0..current_len);
+                                state.buffer.insert(0, &text);
+                                state.buffer.set_modified(true);
+                                state.buffer.set_recovery_pending(false);
+                                recovered += 1;
+                                tracing::info!(
+                                    "Restored unsaved changes for {:?} from hot exit recovery",
+                                    file_path
+                                );
+                            }
+                        }
+                    }
+                    Ok(crate::services::recovery::RecoveryResult::RecoveredChunks {
+                        chunks, ..
+                    }) => {
+                        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                            for chunk in chunks.into_iter().rev() {
+                                let text =
+                                    String::from_utf8_lossy(&chunk.content).into_owned();
+                                if chunk.original_len > 0 {
+                                    state.buffer.delete(
+                                        chunk.offset..chunk.offset + chunk.original_len,
+                                    );
+                                }
+                                state.buffer.insert(chunk.offset, &text);
+                            }
+                            state.buffer.set_modified(true);
+                            state.buffer.set_recovery_pending(false);
+                            recovered += 1;
+                            tracing::info!(
+                                "Restored unsaved changes (chunked) for {:?} from hot exit recovery",
+                                file_path
+                            );
+                        }
+                    }
+                    Ok(_) => {} // OriginalFileModified, Corrupted - skip
+                    Err(e) => {
+                        tracing::debug!(
+                            "Failed to load hot exit recovery for {:?}: {}",
+                            file_path,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(recovered)
+    }
+
     /// Apply a loaded workspace to the editor
     pub fn apply_workspace(&mut self, workspace: &Workspace) -> Result<(), WorkspaceError> {
         tracing::debug!(
