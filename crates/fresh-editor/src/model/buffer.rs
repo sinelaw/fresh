@@ -4530,7 +4530,7 @@ impl<'a> Iterator for OverlappingChunks<'a> {
 /// A region in a hybrid search plan — either an unloaded file range or
 /// in-memory data from the piece tree.
 #[derive(Debug)]
-pub enum SearchRegion {
+pub(crate) enum SearchRegion {
     /// Contiguous range on the original file that hasn't been loaded.
     Unloaded {
         file_offset: usize,
@@ -7396,6 +7396,103 @@ mod tests {
             };
             let matches = buf.search_hybrid("aaa", &opts, regex, 3, 3).unwrap();
             assert!(matches.len() <= 3);
+        }
+    }
+
+    mod boundary_overlap {
+        use super::*;
+
+        fn make_regex(pattern: &str) -> regex::bytes::Regex {
+            regex::bytes::Regex::new(pattern).unwrap()
+        }
+
+        #[test]
+        fn empty_prev_tail_returns_nothing() {
+            let matches = search_boundary_overlap(
+                b"",
+                b"hello",
+                0,
+                1,
+                &make_regex("hello"),
+                100,
+            );
+            assert!(matches.is_empty());
+        }
+
+        #[test]
+        fn pure_tail_match_skipped() {
+            // "foo" is entirely in prev_tail — should NOT be returned
+            let matches = search_boundary_overlap(
+                b"foo bar",
+                b" baz",
+                0,
+                1,
+                &make_regex("foo"),
+                100,
+            );
+            assert!(matches.is_empty());
+        }
+
+        #[test]
+        fn cross_boundary_match_found() {
+            // "SPLIT" spans: prev_tail="...SPL", next_head="IT..."
+            let matches = search_boundary_overlap(
+                b"xxSPL",
+                b"ITyy",
+                0,
+                1,
+                &make_regex("SPLIT"),
+                100,
+            );
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].byte_offset, 2);
+            assert_eq!(matches[0].length, 5);
+        }
+
+        #[test]
+        fn pure_head_match_skipped() {
+            // "baz" is entirely in next_head — should NOT be returned
+            // (it starts at offset 4 which is >= overlap_len 3)
+            let matches = search_boundary_overlap(
+                b"foo",
+                b" baz",
+                0,
+                1,
+                &make_regex("baz"),
+                100,
+            );
+            assert!(matches.is_empty());
+        }
+
+        #[test]
+        fn line_number_tracking() {
+            // prev_tail has a newline; running_line=5 means "line 5 at
+            // the boundary".  The newline in the tail means SPLIT starts
+            // on line 5 (the boundary line).
+            let matches = search_boundary_overlap(
+                b"line1\nSPL",
+                b"IT end",
+                0,
+                5,
+                &make_regex("SPLIT"),
+                100,
+            );
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].line, 5);
+        }
+
+        #[test]
+        fn max_matches_respected() {
+            // Two cross-boundary matches but max is 1
+            let matches = search_boundary_overlap(
+                b"aXb",
+                b"Xc",
+                0,
+                1,
+                &make_regex("X"),
+                1,
+            );
+            assert!(matches.len() <= 1);
         }
     }
 }

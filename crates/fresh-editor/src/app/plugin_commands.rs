@@ -25,6 +25,21 @@ const IGNORED_DIRS: &[&str] = &[
     ".DS_Store",
 ];
 
+/// Build `FileSearchOptions` from the common grep parameters.
+fn make_search_opts(
+    fixed_string: bool,
+    case_sensitive: bool,
+    whole_words: bool,
+    max_matches: usize,
+) -> crate::model::filesystem::FileSearchOptions {
+    crate::model::filesystem::FileSearchOptions {
+        fixed_string,
+        case_sensitive,
+        whole_word: whole_words,
+        max_matches,
+    }
+}
+
 /// Recursively walk `dir` via the `FileSystem` trait, collecting file paths.
 /// Skips hidden entries (dot-prefixed) and common non-source directories.
 fn walk_files_recursive(
@@ -1731,12 +1746,7 @@ impl Editor {
         }
 
         // Build search options for FileSystem::search_file
-        let fs_opts = crate::model::filesystem::FileSearchOptions {
-            fixed_string,
-            case_sensitive,
-            whole_word: whole_words,
-            max_matches: max_results,
-        };
+        let fs_opts = make_search_opts(fixed_string, case_sensitive, whole_words, max_results);
 
         // Build regex for open buffer searches (piece tree path still needs it)
         let regex = match crate::model::filesystem::build_search_regex(&pattern, &fs_opts) {
@@ -1801,12 +1811,7 @@ impl Editor {
                 }
             } else {
                 // Not open — search via FileSystem trait
-                let fs_opts_file = crate::model::filesystem::FileSearchOptions {
-                    fixed_string,
-                    case_sensitive,
-                    whole_word: whole_words,
-                    max_matches: remaining,
-                };
+                let fs_opts_file = make_search_opts(fixed_string, case_sensitive, whole_words, remaining);
                 let mut cursor = crate::model::filesystem::FileSearchCursor::new();
                 let mut file_matches = Vec::new();
                 while !cursor.done && file_matches.len() < remaining {
@@ -1882,12 +1887,7 @@ impl Editor {
         }
 
         // Build search options and validate regex on main thread (catches errors early)
-        let fs_opts = crate::model::filesystem::FileSearchOptions {
-            fixed_string,
-            case_sensitive,
-            whole_word: whole_words,
-            max_matches: max_results,
-        };
+        let fs_opts = make_search_opts(fixed_string, case_sensitive, whole_words, max_results);
         // Build regex for dirty buffer snapshots (piece tree path still needs it)
         let regex = match crate::model::filesystem::build_search_regex(&pattern, &fs_opts) {
             Ok(re) => re,
