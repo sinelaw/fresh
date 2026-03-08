@@ -207,6 +207,46 @@ impl Editor {
         Ok(count)
     }
 
+    /// Save all modified file-backed buffers to disk (called on exit when auto_save is enabled).
+    /// Unlike `auto_save_persistent_buffers`, this skips the interval check and only saves
+    /// named file-backed buffers (not unnamed buffers).
+    pub fn save_all_on_exit(&mut self) -> anyhow::Result<usize> {
+        let mut to_save = Vec::new();
+        for (id, state) in &self.buffers {
+            if state.buffer.is_modified() {
+                if let Some(path) = state.buffer.file_path() {
+                    if !path.as_os_str().is_empty() {
+                        to_save.push((*id, path.to_path_buf()));
+                    }
+                }
+            }
+        }
+
+        let mut count = 0;
+        for (id, path) in to_save {
+            if let Some(state) = self.buffers.get_mut(&id) {
+                match state.buffer.save() {
+                    Ok(()) => {
+                        self.finalize_save_buffer(id, Some(path), true)?;
+                        count += 1;
+                    }
+                    Err(e) => {
+                        if e.downcast_ref::<SudoSaveRequired>().is_some() {
+                            tracing::debug!(
+                                "Auto-save on exit skipped for {} (sudo required)",
+                                path.display()
+                            );
+                        } else {
+                            tracing::warn!("Auto-save on exit failed for {}: {}", path.display(), e);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
     /// Revert the active buffer to the last saved version on disk
     /// Returns Ok(true) if reverted, Ok(false) if no file path, Err on failure
     pub fn revert_file(&mut self) -> anyhow::Result<bool> {

@@ -467,3 +467,90 @@ fn test_hot_exit_skips_quit_prompt() {
         "Editor should quit without prompt when hot_exit is enabled"
     );
 }
+
+/// Test that auto-save saves file-backed buffers to disk on exit
+#[test]
+fn test_auto_save_saves_on_exit() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("test.txt");
+    std::fs::write(&file1, "original").unwrap();
+
+    let mut config = Config::default();
+    config.editor.auto_save_enabled = true;
+
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_dir)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+
+    // Open and modify the file
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text(" MODIFIED").unwrap();
+    harness.render().unwrap();
+
+    // Verify file on disk is unchanged before exit
+    assert_eq!(std::fs::read_to_string(&file1).unwrap(), "original");
+
+    // save_all_on_exit should save to disk (simulates quit with auto_save)
+    let saved = harness.editor_mut().save_all_on_exit().unwrap();
+    assert_eq!(saved, 1, "Should have saved one buffer");
+
+    // File on disk should now have the modifications
+    assert_eq!(
+        std::fs::read_to_string(&file1).unwrap(),
+        "original MODIFIED"
+    );
+}
+
+/// Test that auto-save on exit skips the quit prompt
+#[test]
+fn test_auto_save_skips_quit_prompt() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("test.txt");
+    std::fs::write(&file1, "original").unwrap();
+
+    let mut config = Config::default();
+    config.editor.auto_save_enabled = true;
+    config.editor.hot_exit = false; // only auto-save, no hot exit
+
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_dir)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+
+    // Open and modify the file
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text(" MODIFIED").unwrap();
+    harness.render().unwrap();
+
+    // Quit — should not prompt because auto_save is enabled
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.should_quit(),
+        "Editor should quit without prompt when auto_save is enabled"
+    );
+}

@@ -3016,6 +3016,19 @@ where
         }
 
         if editor.should_quit() {
+            // Auto-save file-backed buffers to disk before exiting
+            if editor.config().editor.auto_save_enabled {
+                match editor.save_all_on_exit() {
+                    Ok(count) if count > 0 => {
+                        tracing::info!("Auto-saved {} buffer(s) on exit", count);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!("Failed to auto-save on exit: {}", e);
+                    }
+                }
+            }
+
             // End recovery session first (flushes dirty buffers + assigns recovery IDs),
             // then save workspace (captures those IDs for next session restore).
             if let Err(e) = editor.end_recovery_session() {

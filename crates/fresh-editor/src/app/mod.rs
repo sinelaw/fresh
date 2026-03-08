@@ -3305,10 +3305,13 @@ impl Editor {
     ///
     /// When `persist_unnamed_buffers` is enabled, unnamed buffers are excluded.
     /// When `hot_exit` is enabled, file-backed buffers are also excluded.
+    /// When `auto_save_enabled` is true, file-backed buffers are also excluded
+    /// (they will be saved to disk on exit).
     /// Both are automatically persisted via recovery files.
     fn count_modified_buffers_needing_prompt(&self) -> usize {
         let persist_unnamed = self.config.editor.persist_unnamed_buffers;
         let hot_exit = self.config.editor.hot_exit;
+        let auto_save = self.config.editor.auto_save_enabled;
 
         self.buffers
             .iter()
@@ -3322,8 +3325,8 @@ impl Editor {
                         if is_unnamed && persist_unnamed {
                             return false; // unnamed, will be auto-persisted
                         }
-                        if !is_unnamed && hot_exit {
-                            return false; // file-backed, will be hot-exited
+                        if !is_unnamed && (hot_exit || auto_save) {
+                            return false; // file-backed, will be hot-exited or auto-saved
                         }
                     }
                 }
