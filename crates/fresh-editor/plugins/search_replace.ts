@@ -178,7 +178,7 @@ const modeBindings: [string, string][] = [
   ["M-c", "search_replace_toggle_case"],
   ["M-r", "search_replace_toggle_regex"],
   ["M-w", "search_replace_toggle_whole_word"],
-  ["C-Return", "search_replace_replace_all"],
+  ["M-Return", "search_replace_replace_all"],
   ["S-Return", "search_replace_replace_scoped"],
   ["Escape", "search_replace_close"],
   ["Backspace", "search_replace_backspace"],
