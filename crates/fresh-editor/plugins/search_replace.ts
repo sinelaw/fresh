@@ -49,6 +49,7 @@ interface PanelState {
   viewportWidth: number;
   // State
   busy: boolean;
+  truncated: boolean;
   // Inline editing cursor position
   cursorPos: number;
   // Virtual scroll offset for matches tree
@@ -312,8 +313,9 @@ function buildPanelEntries(): TextPropertyEntry[] {
 
   const searchLabel = " " + editor.t("panel.search_label") + " ";
   const replSep = "  " + editor.t("panel.replace_label") + " ";
+  const truncatedSuffix = panel.truncated ? " " + editor.t("panel.limited") : "";
   const matchStats = totalMatches > 0
-    ? "  " + editor.t("panel.match_stats", { count: String(totalMatches), files: String(fileCount) })
+    ? "  " + editor.t("panel.match_stats", { count: String(totalMatches), files: String(fileCount) }) + truncatedSuffix
     : (searchPattern ? "  " + editor.t("panel.no_matches") : "");
 
   const line1Text = searchLabel + searchDisp + replSep + replDisp + matchStats;
@@ -345,8 +347,17 @@ function buildPanelEntries(): TextPropertyEntry[] {
   // Stats
   if (matchStats) {
     const msStart = rvEnd;
-    const msEnd = msStart + byteLen(matchStats);
-    line1Overlays.push({ start: msStart, end: msEnd, style: { fg: totalMatches > 0 ? C.statusOk : C.statusDim } });
+    if (panel.truncated && totalMatches > 0) {
+      // Color the count part normally, then the truncated suffix in warning color
+      const statsWithoutSuffix = "  " + editor.t("panel.match_stats", { count: String(totalMatches), files: String(fileCount) });
+      const countEnd = msStart + byteLen(statsWithoutSuffix);
+      line1Overlays.push({ start: msStart, end: countEnd, style: { fg: C.statusOk } });
+      const suffixEnd = countEnd + byteLen(truncatedSuffix);
+      line1Overlays.push({ start: countEnd, end: suffixEnd, style: { fg: [255, 180, 50] as RGB, bold: true } });
+    } else {
+      const msEnd = msStart + byteLen(matchStats);
+      line1Overlays.push({ start: msStart, end: msEnd, style: { fg: totalMatches > 0 ? C.statusOk : C.statusDim } });
+    }
   }
 
   entries.push({
@@ -399,7 +410,7 @@ function buildPanelEntries(): TextPropertyEntry[] {
   // ── Separator ──
   const sepChar = "─";
   const matchesLabel = totalMatches > 0
-    ? " " + editor.t("panel.matches_count", { count: String(totalMatches), files: String(fileCount) }) + " "
+    ? " " + editor.t("panel.matches_count", { count: String(totalMatches), files: String(fileCount) }) + (panel.truncated ? " " + editor.t("panel.limited") : "") + " "
     : " " + editor.t("panel.matches_title") + " ";
   const sepRemaining = W - charLen(matchesLabel);
   const sepLeft = Math.floor(sepRemaining / 2);
@@ -656,9 +667,13 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
     // Final state
     if (generation !== currentSearchGeneration || !panel) return allResults;
 
+    panel.truncated = !!(result && (result as any).truncated);
+
     if (!silent) {
       if (allResults.length === 0) {
         editor.setStatus(editor.t("status.no_matches", { pattern }));
+      } else if (panel.truncated) {
+        editor.setStatus(editor.t("status.found_matches", { count: String(allResults.length) }) + " " + editor.t("panel.limited"));
       } else {
         editor.setStatus(editor.t("status.found_matches", { count: String(allResults.length) }));
       }
@@ -722,6 +737,7 @@ async function openPanel(): Promise<void> {
     wholeWords: false,
     viewportWidth: DEFAULT_WIDTH,
     busy: false,
+    truncated: false,
     cursorPos: prefill.length,
     scrollOffset: 0,
   };
@@ -804,6 +820,7 @@ async function executeReplacements(results?: SearchResult[]): Promise<string> {
 async function rerunSearch(): Promise<void> {
   if (!panel || !panel.searchPattern) return;
   if (panel.busy) return; // guard against re-entrant search
+  panel.truncated = false;
   panel.busy = true;
   panel.matchIndex = 0;
   panel.scrollOffset = 0;

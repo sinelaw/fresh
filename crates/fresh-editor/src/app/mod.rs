@@ -4649,11 +4649,15 @@ impl Editor {
                             search_id: _,
                             callback_id,
                             total_matches,
+                            truncated,
                         } => {
                             self.streaming_grep_cancellation = None;
                             self.plugin_manager.resolve_callback(
                                 JsCallbackId::from(callback_id),
-                                format!(r#"{{"totalMatches":{}}}"#, total_matches),
+                                format!(
+                                    r#"{{"totalMatches":{},"truncated":{}}}"#,
+                                    total_matches, truncated
+                                ),
                             );
                         }
                     }

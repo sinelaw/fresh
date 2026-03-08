@@ -2130,9 +2130,11 @@ impl Editor {
             }
 
             let total = match_count.load(std::sync::atomic::Ordering::Relaxed);
+            let truncated = total >= max_results;
             tracing::info!(
-                "GrepStreaming coordinator: complete, total_matches={}",
-                total
+                "GrepStreaming coordinator: complete, total_matches={}, truncated={}",
+                total,
+                truncated
             );
             drop(
                 sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
@@ -2140,6 +2142,7 @@ impl Editor {
                         search_id,
                         callback_id: callback_id.as_u64(),
                         total_matches: total,
+                        truncated,
                     },
                 )),
             );

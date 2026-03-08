@@ -283,6 +283,8 @@ pub enum PluginAsyncMessage {
         callback_id: u64,
         /// Total number of matches found
         total_matches: usize,
+        /// Whether the search was stopped early due to reaching max_results
+        truncated: bool,
     },
 }
 
