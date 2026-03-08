@@ -5560,8 +5560,16 @@ impl Editor {
                 bindings,
                 read_only,
                 allow_text_input,
+                plugin_name,
             } => {
-                self.handle_define_mode(name, parent, bindings, read_only, allow_text_input);
+                self.handle_define_mode(
+                    name,
+                    parent,
+                    bindings,
+                    read_only,
+                    allow_text_input,
+                    plugin_name,
+                );
             }
 
             // ==================== File/Navigation Commands ====================

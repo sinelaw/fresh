@@ -1439,6 +1439,7 @@ impl Editor {
         bindings: Vec<(String, String)>,
         read_only: bool,
         allow_text_input: bool,
+        plugin_name: Option<String>,
     ) {
         use super::parse_key_string;
         use crate::input::buffer_mode::BufferMode;
@@ -1446,7 +1447,8 @@ impl Editor {
 
         let mut mode = BufferMode::new(name.clone())
             .with_read_only(read_only)
-            .with_allow_text_input(allow_text_input);
+            .with_allow_text_input(allow_text_input)
+            .with_plugin_name(plugin_name);
 
         if let Some(parent_name) = parent {
             mode = mode.with_parent(parent_name);

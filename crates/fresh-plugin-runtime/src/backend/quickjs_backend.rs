@@ -2388,6 +2388,7 @@ impl JsEditorApi {
                 bindings,
                 read_only: read_only.0.unwrap_or(false),
                 allow_text_input: allow_text,
+                plugin_name: Some(self.plugin_name.clone()),
             })
             .is_ok()
     }

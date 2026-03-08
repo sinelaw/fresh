@@ -1312,6 +1312,8 @@ pub enum PluginCommand {
         read_only: bool,
         /// When true, unbound character keys dispatch as `mode_text_input:<char>`.
         allow_text_input: bool,
+        /// Name of the plugin that defined this mode (for attribution)
+        plugin_name: Option<String>,
     },
 
     /// Switch the current split to display a buffer
@@ -2702,6 +2704,7 @@ impl PluginApi {
             bindings,
             read_only,
             allow_text_input,
+            plugin_name: None,
         })
     }
 

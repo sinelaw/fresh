@@ -116,6 +116,12 @@ impl BufferMode {
         self
     }
 
+    /// Set the plugin name for attribution
+    pub fn with_plugin_name(mut self, plugin_name: Option<String>) -> Self {
+        self.plugin_name = plugin_name;
+        self
+    }
+
     /// Set whether unbound character keys should be dispatched as text input events
     pub fn with_allow_text_input(mut self, allow: bool) -> Self {
         self.allow_text_input = allow;

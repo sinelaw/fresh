@@ -14,3 +14,4 @@ pub mod markdown_source;
 pub mod package_manager;
 pub mod plugin;
 pub mod theme_editor;
+pub mod unified_keybindings;
