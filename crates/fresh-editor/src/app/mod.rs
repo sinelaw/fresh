@@ -3268,8 +3268,9 @@ impl Editor {
 
     /// Request the editor to quit
     pub fn quit(&mut self) {
-        // Check for unsaved buffers
-        let modified_count = self.count_modified_buffers();
+        // Check for unsaved file-backed buffers (unnamed buffers are auto-persisted
+        // when persist_unnamed_buffers is enabled)
+        let modified_count = self.count_modified_buffers_needing_prompt();
         if modified_count > 0 {
             // Prompt user for confirmation with translated keys
             let discard_key = t!("prompt.key.discard").to_string();
@@ -3296,11 +3297,34 @@ impl Editor {
         }
     }
 
-    /// Count the number of modified buffers
-    fn count_modified_buffers(&self) -> usize {
+    /// Count modified buffers that would require a save prompt on quit.
+    ///
+    /// When `persist_unnamed_buffers` is enabled, unnamed buffers are excluded.
+    /// When `hot_exit` is enabled, file-backed buffers are also excluded.
+    /// Both are automatically persisted via recovery files.
+    fn count_modified_buffers_needing_prompt(&self) -> usize {
+        let persist_unnamed = self.config.editor.persist_unnamed_buffers;
+        let hot_exit = self.config.editor.hot_exit;
+
         self.buffers
-            .values()
-            .filter(|state| state.buffer.is_modified())
+            .iter()
+            .filter(|(buffer_id, state)| {
+                if !state.buffer.is_modified() {
+                    return false;
+                }
+                if let Some(meta) = self.buffer_metadata.get(buffer_id) {
+                    if let Some(path) = meta.file_path() {
+                        let is_unnamed = path.as_os_str().is_empty();
+                        if is_unnamed && persist_unnamed {
+                            return false; // unnamed, will be auto-persisted
+                        }
+                        if !is_unnamed && hot_exit {
+                            return false; // file-backed, will be hot-exited
+                        }
+                    }
+                }
+                true
+            })
             .count()
     }
 

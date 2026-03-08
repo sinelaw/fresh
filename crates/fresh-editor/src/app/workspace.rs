@@ -36,8 +36,8 @@ use crate::workspace::{
     FileExplorerState, PersistedFileWorkspace, SearchOptions, SerializedBookmark, SerializedCursor,
     SerializedFileState, SerializedFoldRange, SerializedScroll, SerializedSplitDirection,
     SerializedSplitNode, SerializedSplitViewState, SerializedTabRef, SerializedTerminalWorkspace,
-    SerializedViewMode, Workspace, WorkspaceConfigOverrides, WorkspaceError, WorkspaceHistories,
-    WORKSPACE_VERSION,
+    SerializedViewMode, UnnamedBufferRef, Workspace, WorkspaceConfigOverrides, WorkspaceError,
+    WorkspaceHistories, WORKSPACE_VERSION,
 };
 
 use super::types::Bookmark;
@@ -278,6 +278,40 @@ impl Editor {
             tracing::debug!("Captured {} external files", external_files.len());
         }
 
+        // Capture unnamed buffer references (for persist_unnamed_buffers)
+        let unnamed_buffers: Vec<UnnamedBufferRef> = if self.config.editor.persist_unnamed_buffers {
+            self.buffer_metadata
+                .iter()
+                .filter_map(|(buffer_id, meta)| {
+                    // Only file-backed buffers with empty path (unnamed)
+                    let path = meta.file_path()?;
+                    if !path.as_os_str().is_empty() {
+                        return None;
+                    }
+                    // Skip composite/hidden buffers
+                    if meta.hidden_from_tabs || meta.is_virtual() {
+                        return None;
+                    }
+                    // Skip if buffer has no content
+                    let state = self.buffers.get(buffer_id)?;
+                    if state.buffer.total_bytes() == 0 {
+                        return None;
+                    }
+                    // Get or generate recovery ID
+                    let recovery_id = meta.recovery_id.clone()?;
+                    Some(UnnamedBufferRef {
+                        recovery_id,
+                        display_name: meta.display_name.clone(),
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !unnamed_buffers.is_empty() {
+            tracing::debug!("Captured {} unnamed buffers", unnamed_buffers.len());
+        }
+
         Workspace {
             version: WORKSPACE_VERSION,
             working_dir: self.working_dir.clone(),
@@ -291,6 +325,7 @@ impl Editor {
             bookmarks,
             terminals,
             external_files,
+            unnamed_buffers,
             saved_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -571,6 +606,157 @@ impl Editor {
             }
         }
 
+        // 5b2. Apply hot exit recovery: restore unsaved changes to file-backed buffers
+        if self.config.editor.hot_exit {
+            let entries = self.recovery_service.list_recoverable().unwrap_or_default();
+            if !entries.is_empty() {
+                for (_, &buffer_id) in &path_to_buffer {
+                    let file_path = self
+                        .buffers
+                        .get(&buffer_id)
+                        .and_then(|s| s.buffer.file_path().map(|p| p.to_path_buf()));
+                    let file_path = match file_path {
+                        Some(p) => p,
+                        None => continue,
+                    };
+
+                    // Look for a recovery entry matching this file
+                    let recovery_id = self.recovery_service.get_buffer_id(Some(&file_path));
+                    let entry = entries.iter().find(|e| e.id == recovery_id);
+                    if let Some(entry) = entry {
+                        match self.recovery_service.load_recovery(entry) {
+                            Ok(crate::services::recovery::RecoveryResult::Recovered {
+                                content,
+                                ..
+                            }) => {
+                                // Small file: replace buffer content with full recovered version
+                                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                                    let current_len = state.buffer.total_bytes();
+                                    let text = String::from_utf8_lossy(&content).into_owned();
+                                    let current =
+                                        state.buffer.get_text_range_mut(0, current_len).ok();
+                                    let current_text = current
+                                        .as_ref()
+                                        .map(|b| String::from_utf8_lossy(b).into_owned());
+                                    if current_text.as_deref() != Some(&text) {
+                                        state.buffer.delete(0..current_len);
+                                        state.buffer.insert(0, &text);
+                                        state.buffer.set_modified(true);
+                                        state.buffer.set_recovery_pending(false);
+                                        tracing::info!(
+                                            "Restored unsaved changes for {:?} from hot exit recovery",
+                                            file_path
+                                        );
+                                    }
+                                }
+                            }
+                            Ok(crate::services::recovery::RecoveryResult::RecoveredChunks {
+                                chunks,
+                                ..
+                            }) => {
+                                // Large file: apply diff chunks on top of on-disk content
+                                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                                    for chunk in chunks.into_iter().rev() {
+                                        let text =
+                                            String::from_utf8_lossy(&chunk.content).into_owned();
+                                        if chunk.original_len > 0 {
+                                            state.buffer.delete(
+                                                chunk.offset..chunk.offset + chunk.original_len,
+                                            );
+                                        }
+                                        state.buffer.insert(chunk.offset, &text);
+                                    }
+                                    state.buffer.set_modified(true);
+                                    state.buffer.set_recovery_pending(false);
+                                    tracing::info!(
+                                        "Restored unsaved changes (chunked) for {:?} from hot exit recovery",
+                                        file_path
+                                    );
+                                }
+                            }
+                            Ok(_) => {} // OriginalFileModified, Corrupted - skip
+                            Err(e) => {
+                                tracing::debug!(
+                                    "Failed to load hot exit recovery for {:?}: {}",
+                                    file_path,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5c. Restore unnamed buffers from recovery files
+        let mut unnamed_buffer_map: HashMap<String, BufferId> = HashMap::new();
+        if self.config.editor.persist_unnamed_buffers && !workspace.unnamed_buffers.is_empty() {
+            tracing::debug!(
+                "Restoring {} unnamed buffers from recovery",
+                workspace.unnamed_buffers.len()
+            );
+            for unnamed_ref in &workspace.unnamed_buffers {
+                // Try to load content from recovery files
+                let entries = match self.recovery_service.list_recoverable() {
+                    Ok(e) => e,
+                    Err(e) => {
+                        tracing::warn!("Failed to list recovery entries: {}", e);
+                        continue;
+                    }
+                };
+
+                let entry = entries.iter().find(|e| e.id == unnamed_ref.recovery_id);
+                if let Some(entry) = entry {
+                    match self.recovery_service.load_recovery(entry) {
+                        Ok(crate::services::recovery::RecoveryResult::Recovered {
+                            content,
+                            ..
+                        }) => {
+                            let text = String::from_utf8_lossy(&content).into_owned();
+                            let buffer_id = self.new_buffer();
+                            let state = self.active_state_mut();
+                            state.buffer.insert(0, &text);
+                            // Mark as modified so it shows the dot indicator
+                            state.buffer.set_modified(true);
+                            state.buffer.set_recovery_pending(false);
+
+                            // Store recovery ID in metadata for future saves
+                            if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                                meta.recovery_id = Some(unnamed_ref.recovery_id.clone());
+                                meta.display_name = unnamed_ref.display_name.clone();
+                            }
+
+                            unnamed_buffer_map.insert(unnamed_ref.recovery_id.clone(), buffer_id);
+                            tracing::info!(
+                                "Restored unnamed buffer '{}' (recovery_id={})",
+                                unnamed_ref.display_name,
+                                unnamed_ref.recovery_id
+                            );
+                        }
+                        Ok(other) => {
+                            tracing::warn!(
+                                "Unexpected recovery result for unnamed buffer {}: {:?}",
+                                unnamed_ref.recovery_id,
+                                std::mem::discriminant(&other)
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to load recovery for unnamed buffer {}: {}",
+                                unnamed_ref.recovery_id,
+                                e
+                            );
+                        }
+                    }
+                } else {
+                    tracing::debug!(
+                        "Recovery file not found for unnamed buffer {}",
+                        unnamed_ref.recovery_id
+                    );
+                }
+            }
+        }
+
         // Restore terminals and build index -> buffer map
         let mut terminal_buffer_map: HashMap<usize, BufferId> = HashMap::new();
         if !workspace.terminals.is_empty() {
@@ -591,6 +777,7 @@ impl Editor {
             &workspace.split_layout,
             &path_to_buffer,
             &terminal_buffer_map,
+            &unnamed_buffer_map,
             &workspace.split_states,
             &mut split_id_map,
             true, // is_first_leaf - the first leaf reuses the existing split
@@ -788,6 +975,7 @@ impl Editor {
         node: &SerializedSplitNode,
         path_to_buffer: &HashMap<PathBuf, BufferId>,
         terminal_buffers: &HashMap<usize, BufferId>,
+        unnamed_buffers: &HashMap<String, BufferId>,
         split_states: &HashMap<usize, SerializedSplitViewState>,
         split_id_map: &mut HashMap<usize, SplitId>,
         is_first_leaf: bool,
@@ -797,11 +985,17 @@ impl Editor {
                 file_path,
                 split_id,
                 label,
+                unnamed_recovery_id,
             } => {
-                // Get the buffer for this file, or use the default buffer
+                // Get the buffer for this leaf: file path, unnamed recovery ID, or default
                 let buffer_id = file_path
                     .as_ref()
                     .and_then(|p| path_to_buffer.get(p).copied())
+                    .or_else(|| {
+                        unnamed_recovery_id
+                            .as_ref()
+                            .and_then(|id| unnamed_buffers.get(id).copied())
+                    })
                     .unwrap_or(self.active_buffer());
 
                 let current_leaf_id = if is_first_leaf {
@@ -829,6 +1023,7 @@ impl Editor {
                     split_states,
                     path_to_buffer,
                     terminal_buffers,
+                    unnamed_buffers,
                 );
             }
             SerializedSplitNode::Terminal {
@@ -865,6 +1060,7 @@ impl Editor {
                     split_states,
                     path_to_buffer,
                     terminal_buffers,
+                    unnamed_buffers,
                 );
             }
             SerializedSplitNode::Split {
@@ -879,15 +1075,20 @@ impl Editor {
                     first,
                     path_to_buffer,
                     terminal_buffers,
+                    unnamed_buffers,
                     split_states,
                     split_id_map,
                     is_first_leaf,
                 );
 
                 // Get the buffer for the second child's first leaf
-                let second_buffer_id =
-                    get_first_leaf_buffer(second, path_to_buffer, terminal_buffers)
-                        .unwrap_or(self.active_buffer());
+                let second_buffer_id = get_first_leaf_buffer(
+                    second,
+                    path_to_buffer,
+                    terminal_buffers,
+                    unnamed_buffers,
+                )
+                .unwrap_or(self.active_buffer());
 
                 // Convert direction
                 let split_direction = match direction {
@@ -923,6 +1124,7 @@ impl Editor {
                             second,
                             path_to_buffer,
                             terminal_buffers,
+                            unnamed_buffers,
                             split_states,
                             split_id_map,
                             false,
@@ -944,6 +1146,7 @@ impl Editor {
         split_states: &HashMap<usize, SerializedSplitViewState>,
         path_to_buffer: &HashMap<PathBuf, BufferId>,
         terminal_buffers: &HashMap<usize, BufferId>,
+        unnamed_buffers: &HashMap<String, BufferId>,
     ) {
         // Try to find the saved state for this split
         let Some(split_state) = split_states.get(&saved_split_id) else {
@@ -986,6 +1189,14 @@ impl Editor {
                                 .line_wrap_enabled = false;
                         }
                     }
+                    SerializedTabRef::Unnamed(recovery_id) => {
+                        if let Some(&buffer_id) = unnamed_buffers.get(recovery_id) {
+                            if !view_state.open_buffers.contains(&buffer_id) {
+                                view_state.open_buffers.push(buffer_id);
+                            }
+                            view_state.ensure_buffer_state(buffer_id);
+                        }
+                    }
                 }
             }
 
@@ -994,6 +1205,7 @@ impl Editor {
                     active_buffer_id = match tab {
                         SerializedTabRef::File(rel) => path_to_buffer.get(rel).copied(),
                         SerializedTabRef::Terminal(index) => terminal_buffers.get(index).copied(),
+                        SerializedTabRef::Unnamed(id) => unnamed_buffers.get(id).copied(),
                     };
                 }
             }
@@ -1015,9 +1227,18 @@ impl Editor {
 
         // Restore cursor, scroll, view_mode, and compose_width for ALL buffers in file_states
         for (rel_path, file_state) in &split_state.file_states {
-            let buffer_id = match path_to_buffer.get(rel_path).copied() {
-                Some(id) => id,
-                None => continue,
+            // Look up buffer by path, or by unnamed recovery ID
+            let rel_str = rel_path.to_string_lossy();
+            let buffer_id = if let Some(recovery_id) = rel_str.strip_prefix("__unnamed__") {
+                match unnamed_buffers.get(recovery_id).copied() {
+                    Some(id) => id,
+                    None => continue,
+                }
+            } else {
+                match path_to_buffer.get(rel_path).copied() {
+                    Some(id) => id,
+                    None => continue,
+                }
             };
             let max_pos = self
                 .buffers
@@ -1115,16 +1336,26 @@ fn get_first_leaf_buffer(
     node: &SerializedSplitNode,
     path_to_buffer: &HashMap<PathBuf, BufferId>,
     terminal_buffers: &HashMap<usize, BufferId>,
+    unnamed_buffers: &HashMap<String, BufferId>,
 ) -> Option<BufferId> {
     match node {
-        SerializedSplitNode::Leaf { file_path, .. } => file_path
+        SerializedSplitNode::Leaf {
+            file_path,
+            unnamed_recovery_id,
+            ..
+        } => file_path
             .as_ref()
-            .and_then(|p| path_to_buffer.get(p).copied()),
+            .and_then(|p| path_to_buffer.get(p).copied())
+            .or_else(|| {
+                unnamed_recovery_id
+                    .as_ref()
+                    .and_then(|id| unnamed_buffers.get(id).copied())
+            }),
         SerializedSplitNode::Terminal { terminal_index, .. } => {
             terminal_buffers.get(terminal_index).copied()
         }
         SerializedSplitNode::Split { first, .. } => {
-            get_first_leaf_buffer(first, path_to_buffer, terminal_buffers)
+            get_first_leaf_buffer(first, path_to_buffer, terminal_buffers, unnamed_buffers)
         }
     }
 }
@@ -1159,20 +1390,31 @@ fn serialize_split_node(
                 }
             }
 
-            let file_path = buffer_metadata
-                .get(buffer_id)
-                .and_then(|meta| meta.file_path())
-                .and_then(|abs_path| {
+            let meta = buffer_metadata.get(buffer_id);
+            let file_path = meta.and_then(|m| m.file_path()).and_then(|abs_path| {
+                if abs_path.as_os_str().is_empty() {
+                    None // unnamed buffer
+                } else {
                     abs_path
                         .strip_prefix(working_dir)
                         .ok()
                         .map(|p| p.to_path_buf())
-                });
+                }
+            });
+
+            // For unnamed buffers, emit their recovery ID so workspace restore
+            // can load content from recovery files
+            let unnamed_recovery_id = if file_path.is_none() {
+                meta.and_then(|m| m.recovery_id.clone())
+            } else {
+                None
+            };
 
             SerializedSplitNode::Leaf {
                 file_path,
                 split_id: raw_split_id.0,
                 label,
+                unnamed_recovery_id,
             }
         }
         SplitNode::Split {
@@ -1236,15 +1478,23 @@ fn serialize_split_view_state(
             }
         }
 
-        if let Some(rel_path) = buffer_metadata
-            .get(buffer_id)
-            .and_then(|meta| meta.file_path())
-            .and_then(|abs_path| abs_path.strip_prefix(working_dir).ok())
-        {
-            open_tabs.push(SerializedTabRef::File(rel_path.to_path_buf()));
-            open_files.push(rel_path.to_path_buf());
-            if Some(*buffer_id) == active_buffer {
-                active_tab_index = Some(tab_index);
+        if let Some(meta) = buffer_metadata.get(buffer_id) {
+            if let Some(abs_path) = meta.file_path() {
+                if abs_path.as_os_str().is_empty() {
+                    // Unnamed buffer - reference by recovery ID
+                    if let Some(ref recovery_id) = meta.recovery_id {
+                        open_tabs.push(SerializedTabRef::Unnamed(recovery_id.clone()));
+                        if Some(*buffer_id) == active_buffer {
+                            active_tab_index = Some(tab_index);
+                        }
+                    }
+                } else if let Ok(rel_path) = abs_path.strip_prefix(working_dir) {
+                    open_tabs.push(SerializedTabRef::File(rel_path.to_path_buf()));
+                    open_files.push(rel_path.to_path_buf());
+                    if Some(*buffer_id) == active_buffer {
+                        active_tab_index = Some(tab_index);
+                    }
+                }
             }
         }
     }
@@ -1263,61 +1513,76 @@ fn serialize_split_view_state(
     // Serialize file states for ALL buffers in keyed_states (not just the active one)
     let mut file_states = HashMap::new();
     for (buffer_id, buf_state) in &view_state.keyed_states {
-        if let Some(meta) = buffer_metadata.get(buffer_id) {
-            if let Some(abs_path) = meta.file_path() {
-                if let Ok(rel_path) = abs_path.strip_prefix(working_dir) {
-                    let primary_cursor = buf_state.cursors.primary();
-                    let folds = buffers
-                        .get(buffer_id)
-                        .map(|state| {
-                            buf_state
-                                .folds
-                                .collapsed_line_ranges(&state.buffer, &state.marker_list)
-                                .into_iter()
-                                .map(|range| SerializedFoldRange {
-                                    header_line: range.header_line,
-                                    end_line: range.end_line,
-                                    placeholder: range.placeholder,
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
+        let Some(meta) = buffer_metadata.get(buffer_id) else {
+            continue;
+        };
+        let Some(abs_path) = meta.file_path() else {
+            continue;
+        };
 
-                    file_states.insert(
-                        rel_path.to_path_buf(),
-                        SerializedFileState {
-                            cursor: SerializedCursor {
-                                position: primary_cursor.position,
-                                anchor: primary_cursor.anchor,
-                                sticky_column: primary_cursor.sticky_column,
-                            },
-                            additional_cursors: buf_state
-                                .cursors
-                                .iter()
-                                .skip(1) // Skip primary
-                                .map(|(_, cursor)| SerializedCursor {
-                                    position: cursor.position,
-                                    anchor: cursor.anchor,
-                                    sticky_column: cursor.sticky_column,
-                                })
-                                .collect(),
-                            scroll: SerializedScroll {
-                                top_byte: buf_state.viewport.top_byte,
-                                top_view_line_offset: buf_state.viewport.top_view_line_offset,
-                                left_column: buf_state.viewport.left_column,
-                            },
-                            view_mode: match buf_state.view_mode {
-                                ViewMode::Source => SerializedViewMode::Source,
-                                ViewMode::Compose => SerializedViewMode::Compose,
-                            },
-                            compose_width: buf_state.compose_width,
-                            plugin_state: buf_state.plugin_state.clone(),
-                            folds,
-                        },
-                    );
-                }
+        // Determine the key for this buffer's state
+        let state_key = if abs_path.as_os_str().is_empty() {
+            // Unnamed buffer - use recovery ID as key
+            if let Some(ref recovery_id) = meta.recovery_id {
+                PathBuf::from(format!("__unnamed__{}", recovery_id))
+            } else {
+                continue;
             }
-        }
+        } else if let Ok(rp) = abs_path.strip_prefix(working_dir) {
+            rp.to_path_buf()
+        } else {
+            continue;
+        };
+
+        let primary_cursor = buf_state.cursors.primary();
+        let folds = buffers
+            .get(buffer_id)
+            .map(|state| {
+                buf_state
+                    .folds
+                    .collapsed_line_ranges(&state.buffer, &state.marker_list)
+                    .into_iter()
+                    .map(|range| SerializedFoldRange {
+                        header_line: range.header_line,
+                        end_line: range.end_line,
+                        placeholder: range.placeholder,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        file_states.insert(
+            state_key,
+            SerializedFileState {
+                cursor: SerializedCursor {
+                    position: primary_cursor.position,
+                    anchor: primary_cursor.anchor,
+                    sticky_column: primary_cursor.sticky_column,
+                },
+                additional_cursors: buf_state
+                    .cursors
+                    .iter()
+                    .skip(1) // Skip primary
+                    .map(|(_, cursor)| SerializedCursor {
+                        position: cursor.position,
+                        anchor: cursor.anchor,
+                        sticky_column: cursor.sticky_column,
+                    })
+                    .collect(),
+                scroll: SerializedScroll {
+                    top_byte: buf_state.viewport.top_byte,
+                    top_view_line_offset: buf_state.viewport.top_view_line_offset,
+                    left_column: buf_state.viewport.left_column,
+                },
+                view_mode: match buf_state.view_mode {
+                    ViewMode::Source => SerializedViewMode::Source,
+                    ViewMode::Compose => SerializedViewMode::Compose,
+                },
+                compose_width: buf_state.compose_width,
+                plugin_state: buf_state.plugin_state.clone(),
+                folds,
+            },
+        );
     }
 
     // Active buffer's view_mode/compose_width for the split-level fields (backward compat)

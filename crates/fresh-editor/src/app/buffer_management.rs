@@ -1633,6 +1633,11 @@ impl Editor {
         // Save file state before closing (for per-file session persistence)
         self.save_file_state_on_close(id);
 
+        // Delete recovery data for explicitly closed buffers (including unnamed)
+        if let Err(e) = self.delete_buffer_recovery(id) {
+            tracing::debug!("Failed to delete buffer recovery on close: {}", e);
+        }
+
         // If closing a terminal buffer, clean up terminal-related data structures
         if let Some(terminal_id) = self.terminal_buffers.remove(&id) {
             // Close the terminal process

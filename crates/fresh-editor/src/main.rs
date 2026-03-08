@@ -3009,6 +3009,11 @@ where
         }
 
         if editor.should_quit() {
+            // End recovery session first (flushes dirty buffers + assigns recovery IDs),
+            // then save workspace (captures those IDs for next session restore).
+            if let Err(e) = editor.end_recovery_session() {
+                tracing::warn!("Failed to end recovery session: {}", e);
+            }
             if workspace_enabled {
                 if let Err(e) = editor.save_workspace() {
                     tracing::warn!("Failed to save workspace: {}", e);

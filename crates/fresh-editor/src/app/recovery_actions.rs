@@ -21,7 +21,62 @@ impl Editor {
 
     /// End the recovery session cleanly (call on normal shutdown)
     pub fn end_recovery_session(&mut self) -> AnyhowResult<()> {
-        Ok(self.recovery_service.end_session()?)
+        let persist_unnamed = self.config.editor.persist_unnamed_buffers;
+        let hot_exit = self.config.editor.hot_exit;
+
+        if persist_unnamed || hot_exit {
+            // Force all modified buffers to be re-saved by marking them pending,
+            // then reuse the existing periodic recovery save logic.
+            for (_, state) in self.buffers.iter_mut() {
+                if state.buffer.is_modified() {
+                    state.buffer.set_recovery_pending(true);
+                }
+            }
+            self.save_pending_recovery_buffers()?;
+
+            // Collect recovery IDs for buffers that should survive this session
+            let preserve_ids = self.recovery_ids_to_preserve();
+            Ok(self
+                .recovery_service
+                .end_session_preserving(&preserve_ids)?)
+        } else {
+            Ok(self.recovery_service.end_session()?)
+        }
+    }
+
+    /// Collect recovery IDs for all buffers that should be preserved across sessions.
+    fn recovery_ids_to_preserve(&self) -> Vec<String> {
+        let persist_unnamed = self.config.editor.persist_unnamed_buffers;
+        let hot_exit = self.config.editor.hot_exit;
+
+        self.buffer_metadata
+            .iter()
+            .filter_map(|(buffer_id, meta)| {
+                if meta.hidden_from_tabs || meta.is_virtual() {
+                    return None;
+                }
+                let state = self.buffers.get(buffer_id)?;
+                if !state.buffer.is_modified() {
+                    return None;
+                }
+                let path = meta.file_path()?;
+                let is_unnamed = path.as_os_str().is_empty();
+                if is_unnamed && !persist_unnamed {
+                    return None;
+                }
+                if !is_unnamed && !hot_exit {
+                    return None;
+                }
+                if is_unnamed && state.buffer.total_bytes() == 0 {
+                    return None;
+                }
+                // Use stored recovery_id, or compute from path for file-backed buffers
+                meta.recovery_id.clone().or_else(|| {
+                    let file_path = state.buffer.file_path().map(|p| p.to_path_buf());
+                    Some(self.recovery_service.get_buffer_id(file_path.as_deref()))
+                })
+            })
+            .collect()
     }
 
     /// Check if there are files to recover from a crash
@@ -146,20 +201,13 @@ impl Editor {
         Ok(self.recovery_service.discard_all_recovery()?)
     }
 
-    /// Perform auto-recovery-save for all modified buffers if needed
-    /// Returns the number of buffers saved, or an error
-    ///
-    /// This function is designed to be called frequently (every frame) and will:
-    /// - Return immediately if recovery is disabled
-    /// - Return immediately if no buffers are modified
-    /// - Only save buffers that are marked as needing recovery
+    /// Perform auto-recovery-save for all modified buffers if needed.
+    /// Called frequently (every frame); rate-limited by `auto_recovery_save_interval_secs`.
     pub fn auto_recovery_save_dirty_buffers(&mut self) -> AnyhowResult<usize> {
-        // Early exit if disabled
         if !self.recovery_service.is_enabled() {
             return Ok(0);
         }
 
-        // Check if enough time has passed since last auto-recovery-save
         let interval = std::time::Duration::from_secs(
             self.config.editor.auto_recovery_save_interval_secs as u64,
         );
@@ -167,17 +215,27 @@ impl Editor {
             return Ok(0);
         }
 
-        // Collect buffer IDs that need recovery first (immutable pass)
-        // Skip composite buffers and hidden buffers (they should not be saved for recovery)
+        let saved = self.save_pending_recovery_buffers()?;
+        self.last_auto_recovery_save = self.time_source.now();
+        Ok(saved)
+    }
+
+    /// Save all buffers marked `recovery_pending` to recovery storage.
+    /// Shared by the periodic auto-save and the exit flush.
+    fn save_pending_recovery_buffers(&mut self) -> AnyhowResult<usize> {
+        if !self.recovery_service.is_enabled() {
+            return Ok(0);
+        }
+
+        // Collect buffer IDs that need recovery (immutable pass).
+        // Skip composite/hidden buffers — they are not real user content.
         let buffers_needing_recovery: Vec<_> = self
             .buffers
             .iter()
             .filter_map(|(buffer_id, state)| {
-                // Skip composite buffers - they are virtual views, not real content
                 if state.is_composite_buffer {
                     return None;
                 }
-                // Skip hidden buffers - they are managed by other buffers (e.g., diff sources)
                 if let Some(meta) = self.buffer_metadata.get(buffer_id) {
                     if meta.hidden_from_tabs || meta.is_virtual() {
                         return None;
@@ -191,9 +249,7 @@ impl Editor {
             })
             .collect();
 
-        // Ensure unnamed buffers have stable recovery IDs (mutable pass)
-        // For file-backed buffers, recovery_id is computed from path hash (stable).
-        // For unnamed buffers, we generate once and store in metadata.
+        // Ensure unnamed buffers have stable recovery IDs (mutable pass).
         for buffer_id in &buffers_needing_recovery {
             let needs_id = self
                 .buffer_metadata
@@ -213,23 +269,18 @@ impl Editor {
             }
         }
 
-        // Now collect full buffer info with stable recovery IDs
+        // Collect full buffer info with stable recovery IDs.
         let buffer_info: Vec<_> = buffers_needing_recovery
             .into_iter()
             .filter_map(|buffer_id| {
                 let state = self.buffers.get(&buffer_id)?;
                 let meta = self.buffer_metadata.get(&buffer_id)?;
-
                 let path = state.buffer.file_path().map(|p| p.to_path_buf());
-
-                // Get recovery_id: use stored one for unnamed buffers, compute from path otherwise
                 let recovery_id = if let Some(ref stored_id) = meta.recovery_id {
                     stored_id.clone()
                 } else {
                     self.recovery_service.get_buffer_id(path.as_deref())
                 };
-
-                // Only save if enough time has passed since last recovery save
                 let recovery_pending = state.buffer.is_recovery_pending();
                 if self
                     .recovery_service
@@ -242,97 +293,12 @@ impl Editor {
             })
             .collect();
 
-        // Early exit if nothing to save
-        if buffer_info.is_empty() {
-            // Still update the timer to avoid checking buffers too frequently
-            self.last_auto_recovery_save = self.time_source.now();
-            return Ok(0);
-        }
-
         let mut saved_count = 0;
-
         for (buffer_id, recovery_id, path) in buffer_info {
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                let line_count = state.buffer.line_count();
-
-                // For large files, use chunked recovery to avoid reading entire file
-                if state.buffer.is_large_file() {
-                    let chunks = state.buffer.get_recovery_chunks();
-
-                    // If no modifications, skip saving (original file is recovery)
-                    if chunks.is_empty() {
-                        state.buffer.set_recovery_pending(false);
-                        continue;
-                    }
-
-                    // Convert to RecoveryChunk format
-                    let recovery_chunks: Vec<_> = chunks
-                        .into_iter()
-                        .map(|(offset, content)| {
-                            crate::services::recovery::types::RecoveryChunk::new(
-                                offset, 0, // For insertions, original_len is 0
-                                content,
-                            )
-                        })
-                        .collect();
-
-                    let original_size = state.buffer.original_file_size().unwrap_or(0);
-                    let final_size = state.buffer.total_bytes();
-
-                    tracing::debug!(
-                        "auto_recovery_save_dirty_buffers: large file recovery - original_size={}, final_size={}, path={:?}",
-                        original_size,
-                        final_size,
-                        path
-                    );
-
-                    self.recovery_service.save_buffer(
-                        &recovery_id,
-                        recovery_chunks,
-                        path.as_deref(),
-                        None,
-                        line_count,
-                        original_size,
-                        final_size,
-                    )?;
-
-                    tracing::debug!(
-                        "Saved chunked recovery for large file (original: {} bytes, final: {} bytes)",
-                        original_size,
-                        final_size
-                    );
-                } else {
-                    // For small files, save full content as a single chunk
-                    let total_bytes = state.buffer.total_bytes();
-                    let content = match state.buffer.get_text_range_mut(0, total_bytes) {
-                        Ok(bytes) => bytes,
-                        Err(e) => {
-                            tracing::warn!("Failed to get buffer content for recovery save: {}", e);
-                            continue;
-                        }
-                    };
-
-                    let chunks = vec![crate::services::recovery::types::RecoveryChunk::new(
-                        0, 0, content,
-                    )];
-                    self.recovery_service.save_buffer(
-                        &recovery_id,
-                        chunks,
-                        path.as_deref(),
-                        None,
-                        line_count,
-                        0,           // original_file_size = 0 for new/small files
-                        total_bytes, // final_size
-                    )?;
-                }
-
-                // Clear recovery_pending flag after successful save
-                state.buffer.set_recovery_pending(false);
+            if self.save_buffer_to_recovery(&buffer_id, &recovery_id, path.as_deref())? {
                 saved_count += 1;
             }
         }
-
-        self.last_auto_recovery_save = self.time_source.now();
         Ok(saved_count)
     }
 
@@ -370,5 +336,72 @@ impl Editor {
             state.buffer.set_recovery_pending(false);
         }
         Ok(())
+    }
+
+    /// Save a single buffer's content to recovery storage.
+    ///
+    /// For large files, saves only modified chunks (diffs against original).
+    /// For small files / unnamed buffers, saves full content.
+    /// Returns true if a save was performed, false if skipped.
+    fn save_buffer_to_recovery(
+        &mut self,
+        buffer_id: &BufferId,
+        recovery_id: &str,
+        path: Option<&std::path::Path>,
+    ) -> AnyhowResult<bool> {
+        let state = match self.buffers.get_mut(buffer_id) {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+        let line_count = state.buffer.line_count();
+
+        if state.buffer.is_large_file() {
+            let chunks = state.buffer.get_recovery_chunks();
+            if chunks.is_empty() {
+                state.buffer.set_recovery_pending(false);
+                return Ok(false);
+            }
+            let recovery_chunks: Vec<_> = chunks
+                .into_iter()
+                .map(|(offset, content)| {
+                    crate::services::recovery::types::RecoveryChunk::new(offset, 0, content)
+                })
+                .collect();
+            let original_size = state.buffer.original_file_size().unwrap_or(0);
+            let final_size = state.buffer.total_bytes();
+            self.recovery_service.save_buffer(
+                recovery_id,
+                recovery_chunks,
+                path,
+                None,
+                line_count,
+                original_size,
+                final_size,
+            )?;
+        } else {
+            let total_bytes = state.buffer.total_bytes();
+            let content = match state.buffer.get_text_range_mut(0, total_bytes) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    tracing::warn!("Failed to get buffer content for recovery save: {}", e);
+                    return Ok(false);
+                }
+            };
+            let chunks = vec![crate::services::recovery::types::RecoveryChunk::new(
+                0, 0, content,
+            )];
+            self.recovery_service.save_buffer(
+                recovery_id,
+                chunks,
+                path,
+                None,
+                line_count,
+                0,
+                total_bytes,
+            )?;
+        }
+
+        state.buffer.set_recovery_pending(false);
+        Ok(true)
     }
 }
