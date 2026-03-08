@@ -404,12 +404,8 @@ impl Editor {
                 }
             }
             PromptType::ConfirmQuitWithModified => {
-                let input_lower = input.trim().to_lowercase();
-                let discard_key = t!("prompt.key.discard").to_string().to_lowercase();
-                if input_lower == discard_key || input_lower == "discard" {
-                    self.should_quit = true;
-                } else {
-                    self.set_status_message(t!("buffer.close_cancelled").to_string());
+                if self.handle_confirm_quit_modified(&input) {
+                    return PromptResult::EarlyReturn;
                 }
             }
             PromptType::LspRename {
@@ -1091,6 +1087,45 @@ impl Editor {
                 self.set_status_message(t!("buffer.changes_discarded").to_string());
             }
         } else {
+            self.set_status_message(t!("buffer.close_cancelled").to_string());
+        }
+        false
+    }
+
+    /// Handle ConfirmQuitWithModified prompt. Returns true if early return is needed.
+    fn handle_confirm_quit_modified(&mut self, input: &str) -> bool {
+        let input_lower = input.trim().to_lowercase();
+        let save_key = t!("prompt.key.save").to_string().to_lowercase();
+        let discard_key = t!("prompt.key.discard").to_string().to_lowercase();
+        let quit_key = t!("prompt.key.quit").to_string().to_lowercase();
+
+        let first_char = input_lower.chars().next();
+        let save_first = save_key.chars().next();
+        let discard_first = discard_key.chars().next();
+        let quit_first = quit_key.chars().next();
+
+        if first_char == save_first {
+            // Save all modified file-backed buffers to disk, then quit
+            match self.save_all_on_exit() {
+                Ok(count) => {
+                    tracing::info!("Saved {} buffer(s) on exit", count);
+                    self.should_quit = true;
+                }
+                Err(e) => {
+                    self.set_status_message(
+                        t!("file.save_failed", error = e.to_string()).to_string(),
+                    );
+                    return true; // Early return, stay in editor
+                }
+            }
+        } else if first_char == discard_first {
+            // Discard changes and quit (no recovery)
+            self.should_quit = true;
+        } else if first_char == quit_first && self.config.editor.hot_exit {
+            // Quit without saving — changes will be preserved via hot exit recovery
+            self.should_quit = true;
+        } else {
+            // Cancel (default)
             self.set_status_message(t!("buffer.close_cancelled").to_string());
         }
         false

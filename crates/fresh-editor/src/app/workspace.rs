@@ -508,8 +508,7 @@ impl Editor {
                         if let Some(state) = self.buffers.get_mut(&buffer_id) {
                             let current_len = state.buffer.total_bytes();
                             let text = String::from_utf8_lossy(&content).into_owned();
-                            let current =
-                                state.buffer.get_text_range_mut(0, current_len).ok();
+                            let current = state.buffer.get_text_range_mut(0, current_len).ok();
                             let current_text = current
                                 .as_ref()
                                 .map(|b| String::from_utf8_lossy(b).into_owned());
@@ -527,16 +526,16 @@ impl Editor {
                         }
                     }
                     Ok(crate::services::recovery::RecoveryResult::RecoveredChunks {
-                        chunks, ..
+                        chunks,
+                        ..
                     }) => {
                         if let Some(state) = self.buffers.get_mut(&buffer_id) {
                             for chunk in chunks.into_iter().rev() {
-                                let text =
-                                    String::from_utf8_lossy(&chunk.content).into_owned();
+                                let text = String::from_utf8_lossy(&chunk.content).into_owned();
                                 if chunk.original_len > 0 {
-                                    state.buffer.delete(
-                                        chunk.offset..chunk.offset + chunk.original_len,
-                                    );
+                                    state
+                                        .buffer
+                                        .delete(chunk.offset..chunk.offset + chunk.original_len);
                                 }
                                 state.buffer.insert(chunk.offset, &text);
                             }

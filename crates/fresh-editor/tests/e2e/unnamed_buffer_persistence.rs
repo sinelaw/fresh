@@ -415,10 +415,7 @@ fn test_hot_exit_restores_without_workspace() {
 
         // Apply hot exit recovery — this is what schedule_hot_exit_recovery
         // triggers via process_pending_file_opens in the real app
-        let recovered = harness
-            .editor_mut()
-            .apply_hot_exit_recovery()
-            .unwrap();
+        let recovered = harness.editor_mut().apply_hot_exit_recovery().unwrap();
         assert!(recovered > 0, "Should have recovered at least one buffer");
 
         // Now the unsaved changes should be visible
@@ -427,9 +424,9 @@ fn test_hot_exit_restores_without_workspace() {
     }
 }
 
-/// Test that hot exit quit skips the prompt for modified file-backed buffers
+/// Test that hot exit quit shows prompt with "recoverable" option
 #[test]
-fn test_hot_exit_skips_quit_prompt() {
+fn test_hot_exit_quit_shows_recoverable_option() {
     let temp_dir = TempDir::new().unwrap();
     let project_dir = temp_dir.path().join("project");
     std::fs::create_dir(&project_dir).unwrap();
@@ -455,17 +452,88 @@ fn test_hot_exit_skips_quit_prompt() {
     harness.type_text("changes").unwrap();
     harness.render().unwrap();
 
-    // Send Ctrl+Q - should quit without prompt (hot exit backs up changes)
+    // Send Ctrl+Q — should show prompt with "recoverable" option
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
-    harness.assert_screen_not_contains("unsaved changes");
+    harness.assert_screen_contains("unsaved changes");
+    harness.assert_screen_contains("recoverable");
+    assert!(
+        !harness.should_quit(),
+        "Editor should prompt, not quit immediately"
+    );
+
+    // Press 'q' then Enter to quit without saving (recoverable)
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
     assert!(
         harness.should_quit(),
-        "Editor should quit without prompt when hot_exit is enabled"
+        "Editor should quit after choosing recoverable quit"
     );
+}
+
+/// Test that quit prompt save option saves and quits
+#[test]
+fn test_quit_save_and_quit() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("test.txt");
+    std::fs::write(&file1, "original").unwrap();
+
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    config.editor.persist_unnamed_buffers = false;
+
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_dir)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+
+    // Open and modify the file
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text(" SAVED").unwrap();
+    harness.render().unwrap();
+
+    // Quit with Ctrl+Q — should show prompt
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(!harness.should_quit());
+
+    // Press 's' then Enter to save and quit
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.should_quit(),
+        "Editor should quit after save-and-quit"
+    );
+
+    // File on disk should have the modifications
+    assert_eq!(std::fs::read_to_string(&file1).unwrap(), "original SAVED");
 }
 
 /// Test that auto-save saves file-backed buffers to disk on exit

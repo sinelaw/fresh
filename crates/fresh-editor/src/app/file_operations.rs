@@ -237,7 +237,11 @@ impl Editor {
                                 path.display()
                             );
                         } else {
-                            tracing::warn!("Auto-save on exit failed for {}: {}", path.display(), e);
+                            tracing::warn!(
+                                "Auto-save on exit failed for {}: {}",
+                                path.display(),
+                                e
+                            );
                         }
                     }
                 }

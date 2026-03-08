@@ -3276,24 +3276,52 @@ impl Editor {
         // when persist_unnamed_buffers is enabled)
         let modified_count = self.count_modified_buffers_needing_prompt();
         if modified_count > 0 {
-            // Prompt user for confirmation with translated keys
-            let discard_key = t!("prompt.key.discard").to_string();
+            let save_key = t!("prompt.key.save").to_string();
             let cancel_key = t!("prompt.key.cancel").to_string();
-            let msg = if modified_count == 1 {
-                t!(
-                    "prompt.quit_modified_one",
-                    discard_key = discard_key,
-                    cancel_key = cancel_key
-                )
-                .to_string()
+            let hot_exit = self.config.editor.hot_exit;
+
+            let msg = if hot_exit {
+                // With hot exit: offer save, quit-without-saving (recoverable), or cancel
+                let quit_key = t!("prompt.key.quit").to_string();
+                if modified_count == 1 {
+                    t!(
+                        "prompt.quit_modified_hot_one",
+                        save_key = save_key,
+                        quit_key = quit_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                } else {
+                    t!(
+                        "prompt.quit_modified_hot_many",
+                        count = modified_count,
+                        save_key = save_key,
+                        quit_key = quit_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                }
             } else {
-                t!(
-                    "prompt.quit_modified_many",
-                    count = modified_count,
-                    discard_key = discard_key,
-                    cancel_key = cancel_key
-                )
-                .to_string()
+                // Without hot exit: offer save, discard, or cancel
+                let discard_key = t!("prompt.key.discard").to_string();
+                if modified_count == 1 {
+                    t!(
+                        "prompt.quit_modified_one",
+                        save_key = save_key,
+                        discard_key = discard_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                } else {
+                    t!(
+                        "prompt.quit_modified_many",
+                        count = modified_count,
+                        save_key = save_key,
+                        discard_key = discard_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                }
             };
             self.start_prompt(msg, PromptType::ConfirmQuitWithModified);
         } else {
@@ -3303,14 +3331,14 @@ impl Editor {
 
     /// Count modified buffers that would require a save prompt on quit.
     ///
-    /// When `persist_unnamed_buffers` is enabled, unnamed buffers are excluded.
-    /// When `hot_exit` is enabled, file-backed buffers are also excluded.
-    /// When `auto_save_enabled` is true, file-backed buffers are also excluded
+    /// When `persist_unnamed_buffers` is enabled, unnamed buffers are excluded
+    /// (they are automatically recovered across sessions).
+    /// When `auto_save_enabled` is true, file-backed buffers are excluded
     /// (they will be saved to disk on exit).
-    /// Both are automatically persisted via recovery files.
+    /// File-backed buffers with `hot_exit` still prompt — the prompt
+    /// offers a "quit without saving (recoverable)" option.
     fn count_modified_buffers_needing_prompt(&self) -> usize {
         let persist_unnamed = self.config.editor.persist_unnamed_buffers;
-        let hot_exit = self.config.editor.hot_exit;
         let auto_save = self.config.editor.auto_save_enabled;
 
         self.buffers
@@ -3325,8 +3353,8 @@ impl Editor {
                         if is_unnamed && persist_unnamed {
                             return false; // unnamed, will be auto-persisted
                         }
-                        if !is_unnamed && (hot_exit || auto_save) {
-                            return false; // file-backed, will be hot-exited or auto-saved
+                        if !is_unnamed && auto_save {
+                            return false; // file-backed, will be auto-saved on exit
                         }
                     }
                 }
