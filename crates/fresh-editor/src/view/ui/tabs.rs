@@ -209,18 +209,14 @@ fn resolve_tab_names(
         *name_counts.entry(name.as_str()).or_insert(0) += 1;
     }
 
-    // Assign disambiguated names
+    // Assign disambiguated names — all duplicates get a number, including the first
     let mut result = HashMap::new();
     let mut name_indices: HashMap<String, usize> = HashMap::new();
     for (id, name) in &names {
         if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
             let idx = name_indices.entry(name.clone()).or_insert(0);
             *idx += 1;
-            if *idx == 1 {
-                result.insert(*id, name.clone());
-            } else {
-                result.insert(*id, format!("{} {}", name, idx));
-            }
+            result.insert(*id, format!("{} {}", name, idx));
         } else {
             result.insert(*id, name.clone());
         }
