@@ -8,10 +8,105 @@ use crate::view::overlay::{OverlayHandle, OverlayNamespace};
 use crate::view::split::SplitViewState;
 use anyhow::Result as AnyhowResult;
 use fresh_core::api::{
-    LayoutHints, MenuPosition, OverlayOptions, PluginResponse, ViewTransformPayload,
+    GrepMatch, JsCallbackId, LayoutHints, MenuPosition, OverlayOptions, PluginResponse,
+    ReplaceResult, ViewTransformPayload,
 };
 
 use super::Editor;
+
+/// Directory names to always skip during project file walking.
+const IGNORED_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".hg",
+    ".svn",
+    ".DS_Store",
+];
+
+/// Build `FileSearchOptions` from the common grep parameters.
+fn make_search_opts(
+    fixed_string: bool,
+    case_sensitive: bool,
+    whole_words: bool,
+    max_matches: usize,
+) -> crate::model::filesystem::FileSearchOptions {
+    crate::model::filesystem::FileSearchOptions {
+        fixed_string,
+        case_sensitive,
+        whole_word: whole_words,
+        max_matches,
+    }
+}
+
+/// Recursively walk `dir` via the `FileSystem` trait, collecting file paths.
+/// Skips hidden entries (dot-prefixed) and common non-source directories.
+fn walk_files_recursive(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    dir: &std::path::Path,
+    out: &mut Vec<std::path::PathBuf>,
+) {
+    let entries = match fs.read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries {
+        // Skip hidden files/dirs
+        if entry.name.starts_with('.') {
+            continue;
+        }
+        match entry.entry_type {
+            crate::model::filesystem::EntryType::File => {
+                out.push(entry.path);
+            }
+            crate::model::filesystem::EntryType::Directory => {
+                if !IGNORED_DIRS.contains(&entry.name.as_str()) {
+                    walk_files_recursive(fs, &entry.path, out);
+                }
+            }
+            _ => {} // skip symlinks etc. for now
+        }
+    }
+}
+
+/// Streaming variant: recursively walks and sends each file path via callback.
+/// Returns early if `cancel` is set or callback returns false (receiver dropped).
+fn walk_files_streaming(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    dir: &std::path::Path,
+    cancel: &std::sync::atomic::AtomicBool,
+    send: &mut dyn FnMut(std::path::PathBuf) -> bool,
+) {
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let entries = match fs.read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        if entry.name.starts_with('.') {
+            continue;
+        }
+        match entry.entry_type {
+            crate::model::filesystem::EntryType::File => {
+                if !send(entry.path) {
+                    return;
+                }
+            }
+            crate::model::filesystem::EntryType::Directory => {
+                if !IGNORED_DIRS.contains(&entry.name.as_str()) {
+                    walk_files_streaming(fs, &entry.path, cancel, send);
+                }
+            }
+            _ => {}
+        }
+    }
+}
 
 impl Editor {
     // ==================== Menu Helpers ====================
@@ -1343,11 +1438,14 @@ impl Editor {
         parent: Option<String>,
         bindings: Vec<(String, String)>,
         read_only: bool,
+        allow_text_input: bool,
     ) {
         use super::parse_key_string;
         use crate::input::buffer_mode::BufferMode;
 
-        let mut mode = BufferMode::new(name.clone()).with_read_only(read_only);
+        let mut mode = BufferMode::new(name.clone())
+            .with_read_only(read_only)
+            .with_allow_text_input(allow_text_input);
 
         if let Some(parent_name) = parent {
             mode = mode.with_parent(parent_name);
@@ -1626,5 +1724,512 @@ impl Editor {
                 })
                 .ok();
         }
+    }
+
+    // ==================== Project Grep ====================
+
+    /// Handle GrepProject command: walk files, search buffers/disk, collect matches
+    pub(super) fn handle_grep_project(
+        &mut self,
+        pattern: String,
+        fixed_string: bool,
+        case_sensitive: bool,
+        max_results: usize,
+        whole_words: bool,
+        callback_id: JsCallbackId,
+    ) {
+        if pattern.is_empty() {
+            let json = serde_json::to_string(&Vec::<GrepMatch>::new())
+                .unwrap_or_else(|_| "[]".to_string());
+            self.plugin_manager.resolve_callback(callback_id, json);
+            return;
+        }
+
+        // Build search options for FileSystem::search_file
+        let fs_opts = make_search_opts(fixed_string, case_sensitive, whole_words, max_results);
+
+        // Build regex for open buffer searches (piece tree path still needs it)
+        let regex = match crate::model::filesystem::build_search_regex(&pattern, &fs_opts) {
+            Ok(re) => re,
+            Err(e) => {
+                self.plugin_manager
+                    .reject_callback(callback_id, format!("Invalid regex: {}", e));
+                return;
+            }
+        };
+
+        let query_len = pattern.len();
+        let mut results: Vec<GrepMatch> = Vec::new();
+
+        // Build a map of open buffer paths -> BufferId
+        let mut open_buffer_paths: std::collections::HashMap<std::path::PathBuf, BufferId> =
+            std::collections::HashMap::new();
+        for (bid, state) in &self.buffers {
+            if let Some(path) = state.buffer.file_path() {
+                open_buffer_paths.insert(path.to_path_buf(), *bid);
+            }
+        }
+
+        // Collect all project files via FileSystem trait (works for both local and remote)
+        let cwd = self.working_dir.clone();
+        let mut file_paths: Vec<std::path::PathBuf> = Vec::new();
+        walk_files_recursive(&*self.filesystem, &cwd, &mut file_paths);
+
+        // Search each file: open buffers via piece tree, others via fs.search_file
+        for file_path in &file_paths {
+            if results.len() >= max_results {
+                break;
+            }
+            let remaining = max_results - results.len();
+
+            if let Some(&bid) = open_buffer_paths.get(file_path) {
+                // Search the open buffer — hybrid search uses fs.search_file
+                // for unloaded regions (avoids transferring large files)
+                if let Some(state) = self.buffers.get_mut(&bid) {
+                    let matches = match state.buffer.search_hybrid(
+                        &pattern,
+                        &fs_opts,
+                        regex.clone(),
+                        remaining,
+                        query_len,
+                    ) {
+                        Ok(m) => m,
+                        Err(_) => continue,
+                    };
+                    let file_str = file_path.to_string_lossy().to_string();
+                    for m in &matches {
+                        results.push(GrepMatch {
+                            file: file_str.clone(),
+                            buffer_id: bid.0,
+                            byte_offset: m.byte_offset,
+                            length: m.length,
+                            line: m.line,
+                            column: m.column,
+                            context: m.context.clone(),
+                        });
+                    }
+                }
+            } else {
+                // Not open — search via FileSystem trait
+                let fs_opts_file =
+                    make_search_opts(fixed_string, case_sensitive, whole_words, remaining);
+                let mut cursor = crate::model::filesystem::FileSearchCursor::new();
+                let mut file_matches = Vec::new();
+                while !cursor.done && file_matches.len() < remaining {
+                    match self.filesystem.search_file(
+                        file_path,
+                        &pattern,
+                        &fs_opts_file,
+                        &mut cursor,
+                    ) {
+                        Ok(batch) => file_matches.extend(batch),
+                        Err(_) => break,
+                    }
+                }
+                if file_matches.is_empty() {
+                    continue;
+                }
+                let file_str = file_path.to_string_lossy().to_string();
+                for m in file_matches {
+                    results.push(GrepMatch {
+                        file: file_str.clone(),
+                        buffer_id: 0,
+                        byte_offset: m.byte_offset,
+                        length: m.length,
+                        line: m.line,
+                        column: m.column,
+                        context: m.context,
+                    });
+                }
+            }
+        }
+
+        let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
+        self.plugin_manager.resolve_callback(callback_id, json);
+    }
+
+    // ==================== Streaming Grep ====================
+
+    /// Handle GrepProjectStreaming: parallel, non-blocking search with incremental results.
+    ///
+    /// - Snapshots dirty buffers on the main thread (piece tree isn't Send)
+    /// - Spawns a tokio task that walks the directory tree and fans out file searches
+    /// - Each file's matches are sent back immediately via AsyncBridge
+    /// - Supports cancellation via AtomicBool when a new search starts
+    pub(super) fn handle_grep_project_streaming(
+        &mut self,
+        pattern: String,
+        fixed_string: bool,
+        case_sensitive: bool,
+        max_results: usize,
+        whole_words: bool,
+        search_id: u64,
+        callback_id: JsCallbackId,
+    ) {
+        // Cancel any previous streaming search
+        if let Some(prev_cancel) = self.streaming_grep_cancellation.take() {
+            prev_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        tracing::info!(
+            "handle_grep_project_streaming: pattern={:?} search_id={} has_runtime={}",
+            pattern,
+            search_id,
+            self.tokio_runtime.is_some()
+        );
+
+        // Handle empty pattern
+        if pattern.is_empty() {
+            self.plugin_manager.resolve_callback(
+                callback_id,
+                format!(r#"{{"searchId":{},"totalMatches":0}}"#, search_id),
+            );
+            return;
+        }
+
+        // Build search options and validate regex on main thread (catches errors early)
+        let fs_opts = make_search_opts(fixed_string, case_sensitive, whole_words, max_results);
+        // Build regex for dirty buffer snapshots (piece tree path still needs it)
+        let regex = match crate::model::filesystem::build_search_regex(&pattern, &fs_opts) {
+            Ok(re) => re,
+            Err(e) => {
+                self.plugin_manager
+                    .reject_callback(callback_id, format!("Invalid regex: {}", e));
+                return;
+            }
+        };
+
+        // Extract hybrid search plans for dirty buffers on the main thread.
+        // This only copies the small loaded/edited regions — unloaded regions
+        // are represented as file range coordinates, avoiding full-file transfer.
+        let mut dirty_plans: std::collections::HashMap<
+            std::path::PathBuf,
+            (BufferId, crate::model::buffer::HybridSearchPlan),
+        > = std::collections::HashMap::new();
+        for (bid, state) in &mut self.buffers {
+            if let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) {
+                if state.buffer.is_modified() {
+                    if let Some(plan) = state.buffer.search_hybrid_plan() {
+                        dirty_plans.insert(path, (*bid, plan));
+                    }
+                }
+            }
+        }
+
+        // Set up cancellation
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.streaming_grep_cancellation = Some(cancel.clone());
+
+        let filesystem = self.filesystem.clone();
+        let filesystem_walker = self.filesystem.clone();
+        let cwd = self.working_dir.clone();
+        let query_len = pattern.len();
+
+        let Some(bridge) = &self.async_bridge else {
+            self.plugin_manager
+                .reject_callback(callback_id, "No async bridge available".to_string());
+            return;
+        };
+        let sender = bridge.sender();
+
+        let Some(runtime) = &self.tokio_runtime else {
+            self.plugin_manager
+                .reject_callback(callback_id, "No tokio runtime available".to_string());
+            return;
+        };
+
+        runtime.spawn(async move {
+            // Channel from walker to searchers
+            let (path_tx, mut path_rx) = tokio::sync::mpsc::channel::<std::path::PathBuf>(256);
+
+            let cancel_walker = cancel.clone();
+
+            // Walker task: recursively walks via FileSystem trait (works local and remote)
+            tokio::task::spawn_blocking(move || {
+                tracing::info!(
+                    "GrepStreaming walker: starting from {:?} search_id={}",
+                    cwd,
+                    search_id
+                );
+                let mut file_count = 0usize;
+
+                walk_files_streaming(&*filesystem_walker, &cwd, &cancel_walker, &mut |path| {
+                    file_count += 1;
+                    path_tx.blocking_send(path).is_ok()
+                });
+
+                tracing::info!(
+                    "GrepStreaming walker: done, sent {} files (search_id={})",
+                    file_count,
+                    search_id
+                );
+                // path_tx dropped here, signalling completion to consumers
+            });
+
+            // Searcher coordinator: reads from channel, spawns parallel searchers
+            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+            let match_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+            // Collect join handles so we can wait for all searchers to finish
+            let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+            while let Some(file_path) = path_rx.recv().await {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                if match_count.load(std::sync::atomic::Ordering::Relaxed) >= max_results {
+                    break;
+                }
+
+                let permit = match semaphore.clone().acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+
+                let fs = filesystem.clone();
+                let sender = sender.clone();
+                let cancel = cancel.clone();
+                let match_count = match_count.clone();
+                let regex = regex.clone();
+                let pattern = pattern.clone();
+                let fs_opts = fs_opts.clone();
+                let dirty_plan = dirty_plans.remove(&file_path);
+
+                let handle = tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
+
+                    let current_count = match_count.load(std::sync::atomic::Ordering::Relaxed);
+                    if current_count >= max_results {
+                        return;
+                    }
+                    let remaining = max_results - current_count;
+
+                    if let Some((bid, plan)) = dirty_plan {
+                        // Dirty buffer — execute hybrid search plan (searches
+                        // unloaded regions via fs.search_file, loaded in memory)
+                        let matches = match plan
+                            .execute(&*fs, &pattern, &fs_opts, &regex, remaining, query_len)
+                        {
+                            Ok(m) => m,
+                            Err(e) => {
+                                tracing::debug!(
+                                    "GrepProjectStreaming: hybrid search failed {:?}: {}",
+                                    file_path,
+                                    e
+                                );
+                                return;
+                            }
+                        };
+
+                        if !matches.is_empty() {
+                            let file_str = file_path.to_string_lossy().to_string();
+                            let file_matches: Vec<GrepMatch> = matches
+                                .iter()
+                                .map(|m| GrepMatch {
+                                    file: file_str.clone(),
+                                    buffer_id: bid.0,
+                                    byte_offset: m.byte_offset,
+                                    length: m.length,
+                                    line: m.line,
+                                    column: m.column,
+                                    context: m.context.clone(),
+                                })
+                                .collect();
+                            match_count.fetch_add(
+                                file_matches.len(),
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            let json = serde_json::to_string(&file_matches)
+                                .unwrap_or_else(|_| "[]".to_string());
+                            drop(
+                                sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                                    fresh_core::api::PluginAsyncMessage::GrepStreamingProgress {
+                                        search_id,
+                                        matches_json: json,
+                                    },
+                                )),
+                            );
+                        }
+                    } else {
+                        // Search via FileSystem trait
+                        let fs_opts = crate::model::filesystem::FileSearchOptions {
+                            fixed_string,
+                            case_sensitive,
+                            whole_word: whole_words,
+                            max_matches: remaining,
+                        };
+                        let mut cursor = crate::model::filesystem::FileSearchCursor::new();
+                        while !cursor.done {
+                            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                                break;
+                            }
+                            let current = match_count.load(std::sync::atomic::Ordering::Relaxed);
+                            if current >= max_results {
+                                break;
+                            }
+
+                            let batch =
+                                match fs.search_file(&file_path, &pattern, &fs_opts, &mut cursor) {
+                                    Ok(b) => b,
+                                    Err(e) => {
+                                        tracing::debug!(
+                                            "search_file failed {:?}: {}",
+                                            file_path,
+                                            e
+                                        );
+                                        break;
+                                    }
+                                };
+                            if batch.is_empty() {
+                                continue;
+                            }
+
+                            match_count
+                                .fetch_add(batch.len(), std::sync::atomic::Ordering::Relaxed);
+                            let file_str = file_path.to_string_lossy().to_string();
+                            let file_matches: Vec<GrepMatch> = batch
+                                .into_iter()
+                                .map(|m| GrepMatch {
+                                    file: file_str.clone(),
+                                    buffer_id: 0,
+                                    byte_offset: m.byte_offset,
+                                    length: m.length,
+                                    line: m.line,
+                                    column: m.column,
+                                    context: m.context,
+                                })
+                                .collect();
+                            let json = serde_json::to_string(&file_matches)
+                                .unwrap_or_else(|_| "[]".to_string());
+                            drop(
+                                sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                                    fresh_core::api::PluginAsyncMessage::GrepStreamingProgress {
+                                        search_id,
+                                        matches_json: json,
+                                    },
+                                )),
+                            );
+                        }
+                    }
+                });
+
+                handles.push(handle);
+            }
+
+            // Wait for all searchers to complete
+            tracing::info!(
+                "GrepStreaming coordinator: waiting for {} searchers",
+                handles.len()
+            );
+            for handle in handles {
+                drop(handle.await);
+            }
+
+            let total = match_count.load(std::sync::atomic::Ordering::Relaxed);
+            let truncated = total >= max_results;
+            tracing::info!(
+                "GrepStreaming coordinator: complete, total_matches={}, truncated={}",
+                total,
+                truncated
+            );
+            drop(
+                sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                    fresh_core::api::PluginAsyncMessage::GrepStreamingComplete {
+                        search_id,
+                        callback_id: callback_id.as_u64(),
+                        total_matches: total,
+                        truncated,
+                    },
+                )),
+            );
+        });
+    }
+
+    // ==================== Replace In Buffer ====================
+
+    /// Handle ReplaceInBuffer: open file if needed, apply edits, save
+    pub(super) fn handle_replace_in_buffer(
+        &mut self,
+        file_path: std::path::PathBuf,
+        matches: Vec<(usize, usize)>,
+        replacement: String,
+        callback_id: JsCallbackId,
+    ) {
+        if matches.is_empty() {
+            let result = ReplaceResult {
+                replacements: 0,
+                buffer_id: 0,
+            };
+            let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
+            self.plugin_manager.resolve_callback(callback_id, json);
+            return;
+        }
+
+        // Find or open the buffer for this file
+        let buffer_id = if let Some((&bid, _)) = self
+            .buffers
+            .iter()
+            .find(|(_, state)| state.buffer.file_path() == Some(&file_path))
+        {
+            bid
+        } else {
+            // Open the file — creates a buffer via FileSystem trait
+            match self.open_file_no_focus(&file_path) {
+                Ok(bid) => {
+                    // Mark as hidden from tabs so it doesn't clutter the UI
+                    if let Some(meta) = self.buffer_metadata.get_mut(&bid) {
+                        meta.hidden_from_tabs = true;
+                    }
+                    bid
+                }
+                Err(e) => {
+                    self.plugin_manager.reject_callback(
+                        callback_id,
+                        format!("Failed to open file {:?}: {}", file_path, e),
+                    );
+                    return;
+                }
+            }
+        };
+
+        // Sort matches by byte offset descending — editing from end backwards
+        // prevents earlier edits from shifting later offsets
+        let mut sorted_matches = matches;
+        sorted_matches.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // Build bulk edits: (start, del_len, replacement)
+        let edits: Vec<(usize, usize, &str)> = sorted_matches
+            .iter()
+            .map(|&(offset, len)| (offset, len, replacement.as_str()))
+            .collect();
+
+        let replacements = edits.len();
+
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            // Apply all edits as a single bulk operation (single undo action)
+            state.buffer.apply_bulk_edits(&edits);
+
+            // Save the buffer via the FileSystem trait
+            if let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) {
+                if let Err(e) = state.buffer.save_to_file(&path) {
+                    self.plugin_manager.reject_callback(
+                        callback_id,
+                        format!("Failed to save file {:?}: {}", path, e),
+                    );
+                    return;
+                }
+            }
+        }
+
+        let result = ReplaceResult {
+            replacements,
+            buffer_id: buffer_id.0,
+        };
+        let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager.resolve_callback(callback_id, json);
     }
 }

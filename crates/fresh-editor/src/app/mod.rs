@@ -293,6 +293,9 @@ pub struct Editor {
     /// When true, `flush_pending_grammars()` defers work until the build completes.
     grammar_build_in_progress: bool,
 
+    /// Cancellation flag for the current streaming grep search.
+    streaming_grep_cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+
     /// Plugin callback IDs waiting for the grammar build to complete.
     /// Multiple reloadGrammars() calls may accumulate here; all are resolved
     /// when the background build finishes.
@@ -845,6 +848,9 @@ pub struct Editor {
     /// ensuring consistent error handling (e.g., encoding confirmation prompts).
     pending_file_opens: Vec<PendingFileOpen>,
 
+    /// When true, apply hot exit recovery after the next batch of pending file opens
+    pending_hot_exit_recovery: bool,
+
     /// Tracks buffers opened with --wait: maps buffer_id → (wait_id, has_popup)
     wait_tracking: HashMap<BufferId, (u64, bool)>,
     /// Wait IDs that have completed (buffer closed or popup dismissed)
@@ -890,29 +896,14 @@ pub struct PendingFileOpen {
 #[allow(dead_code)] // Fields are used across module files via self.search_scan_state
 struct SearchScanState {
     buffer_id: BufferId,
-    /// Snapshot of the (pre-split) leaves.
+    /// Snapshot of the (pre-split) leaves (needed for refresh_saved_root).
     leaves: Vec<crate::model::piece_tree::LeafData>,
-    /// One work item per leaf.
-    chunks: Vec<crate::model::buffer::LineScanChunk>,
-    next_chunk: usize,
-    /// Running document byte offset for the next chunk (avoids O(N²) recomputation).
-    next_doc_offset: usize,
-    total_bytes: usize,
-    scanned_bytes: usize,
-    /// Compiled regex for searching.
-    regex: regex::Regex,
+    /// The chunked search state (lives on TextBuffer, driven from here).
+    scan: crate::model::buffer::ChunkedSearchState,
     /// The original query string.
     query: String,
-    /// Accumulated match results: (byte_offset, match_len).
-    match_ranges: Vec<(usize, usize)>,
-    /// Tail bytes from the previous chunk for cross-boundary matching.
-    overlap_tail: Vec<u8>,
-    /// Byte offset of the overlap_tail's first byte in the document.
-    overlap_doc_offset: usize,
     /// Search range restriction (from selection search).
     search_range: Option<std::ops::Range<usize>>,
-    /// Whether the match count was capped.
-    capped: bool,
     /// Search settings captured at scan start.
     case_sensitive: bool,
     whole_word: bool,
@@ -1328,6 +1319,7 @@ impl Editor {
             pending_grammars: Vec::new(),
             grammar_reload_pending: false,
             grammar_build_in_progress: false,
+            streaming_grep_cancellation: None,
             pending_grammar_callbacks: Vec::new(),
             theme,
             theme_registry,
@@ -1519,6 +1511,7 @@ impl Editor {
             .unwrap_or_default(),
             color_capability,
             pending_file_opens: Vec::new(),
+            pending_hot_exit_recovery: false,
             wait_tracking: HashMap::new(),
             completed_waits: Vec::new(),
             stdin_streaming: None,
@@ -1709,18 +1702,33 @@ impl Editor {
         }
     }
 
-    /// Resolve a keybinding for the current mode
+    /// Get the effective mode for the active buffer.
     ///
-    /// First checks the global editor mode (for vi mode and other modal editing).
-    /// If no global mode is set or no binding is found, falls back to the
-    /// active buffer's mode (for virtual buffers with custom modes).
-    /// Returns the command name if found.
+    /// Buffer-local mode (virtual buffers) takes precedence over the global
+    /// editor mode, so that e.g. a search-replace panel isn't hijacked by
+    /// a markdown-source or vi-mode global mode.
+    pub fn effective_mode(&self) -> Option<&str> {
+        self.active_buffer_mode().or(self.editor_mode.as_deref())
+    }
+
+    /// Resolve a keybinding for the current mode.
+    ///
+    /// Checks buffer-local mode first (for virtual buffers), then falls back
+    /// to the global editor mode. Returns the command name if found.
     pub fn resolve_mode_keybinding(
         &self,
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Option<String> {
-        // First check global editor mode (e.g., "vi-normal", "vi-operator-pending")
+        if let Some(mode_name) = self.active_buffer_mode() {
+            if let Some(binding) = self
+                .mode_registry
+                .resolve_keybinding(mode_name, code, modifiers)
+            {
+                return Some(binding);
+            }
+        }
+
         if let Some(ref global_mode) = self.editor_mode {
             if let Some(binding) =
                 self.mode_registry
@@ -1730,10 +1738,7 @@ impl Editor {
             }
         }
 
-        // Fall back to buffer-local mode (for virtual buffers)
-        let mode_name = self.active_buffer_mode()?;
-        self.mode_registry
-            .resolve_keybinding(mode_name, code, modifiers)
+        None
     }
 
     /// Check if LSP has any active progress tasks (e.g., indexing)
@@ -3268,27 +3273,56 @@ impl Editor {
 
     /// Request the editor to quit
     pub fn quit(&mut self) {
-        // Check for unsaved buffers
-        let modified_count = self.count_modified_buffers();
+        // Check for unsaved file-backed buffers (unnamed buffers are auto-persisted
+        // when persist_unnamed_buffers is enabled)
+        let modified_count = self.count_modified_buffers_needing_prompt();
         if modified_count > 0 {
-            // Prompt user for confirmation with translated keys
-            let discard_key = t!("prompt.key.discard").to_string();
+            let save_key = t!("prompt.key.save").to_string();
             let cancel_key = t!("prompt.key.cancel").to_string();
-            let msg = if modified_count == 1 {
-                t!(
-                    "prompt.quit_modified_one",
-                    discard_key = discard_key,
-                    cancel_key = cancel_key
-                )
-                .to_string()
+            let hot_exit = self.config.editor.hot_exit;
+
+            let msg = if hot_exit {
+                // With hot exit: offer save, quit-without-saving (recoverable), or cancel
+                let quit_key = t!("prompt.key.quit").to_string();
+                if modified_count == 1 {
+                    t!(
+                        "prompt.quit_modified_hot_one",
+                        save_key = save_key,
+                        quit_key = quit_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                } else {
+                    t!(
+                        "prompt.quit_modified_hot_many",
+                        count = modified_count,
+                        save_key = save_key,
+                        quit_key = quit_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                }
             } else {
-                t!(
-                    "prompt.quit_modified_many",
-                    count = modified_count,
-                    discard_key = discard_key,
-                    cancel_key = cancel_key
-                )
-                .to_string()
+                // Without hot exit: offer save, discard, or cancel
+                let discard_key = t!("prompt.key.discard").to_string();
+                if modified_count == 1 {
+                    t!(
+                        "prompt.quit_modified_one",
+                        save_key = save_key,
+                        discard_key = discard_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                } else {
+                    t!(
+                        "prompt.quit_modified_many",
+                        count = modified_count,
+                        save_key = save_key,
+                        discard_key = discard_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                }
             };
             self.start_prompt(msg, PromptType::ConfirmQuitWithModified);
         } else {
@@ -3296,11 +3330,37 @@ impl Editor {
         }
     }
 
-    /// Count the number of modified buffers
-    fn count_modified_buffers(&self) -> usize {
+    /// Count modified buffers that would require a save prompt on quit.
+    ///
+    /// When `persist_unnamed_buffers` is enabled, unnamed buffers are excluded
+    /// (they are automatically recovered across sessions).
+    /// When `auto_save_enabled` is true, file-backed buffers are excluded
+    /// (they will be saved to disk on exit).
+    /// File-backed buffers with `hot_exit` still prompt — the prompt
+    /// offers a "quit without saving (recoverable)" option.
+    fn count_modified_buffers_needing_prompt(&self) -> usize {
+        let persist_unnamed = self.config.editor.persist_unnamed_buffers;
+        let auto_save = self.config.editor.auto_save_enabled;
+
         self.buffers
-            .values()
-            .filter(|state| state.buffer.is_modified())
+            .iter()
+            .filter(|(buffer_id, state)| {
+                if !state.buffer.is_modified() {
+                    return false;
+                }
+                if let Some(meta) = self.buffer_metadata.get(buffer_id) {
+                    if let Some(path) = meta.file_path() {
+                        let is_unnamed = path.as_os_str().is_empty();
+                        if is_unnamed && persist_unnamed {
+                            return false; // unnamed, will be auto-persisted
+                        }
+                        if !is_unnamed && auto_save {
+                            return false; // file-backed, will be auto-saved on exit
+                        }
+                    }
+                }
+                true
+            })
             .count()
     }
 
@@ -4570,6 +4630,36 @@ impl Editor {
                         PluginAsyncMessage::PluginResponse(response) => {
                             self.handle_plugin_response(response);
                         }
+                        PluginAsyncMessage::GrepStreamingProgress {
+                            search_id,
+                            matches_json,
+                        } => {
+                            tracing::info!(
+                                "GrepStreamingProgress: search_id={} json_len={}",
+                                search_id,
+                                matches_json.len()
+                            );
+                            self.plugin_manager.call_streaming_callback(
+                                JsCallbackId::from(search_id),
+                                matches_json,
+                                false,
+                            );
+                        }
+                        PluginAsyncMessage::GrepStreamingComplete {
+                            search_id: _,
+                            callback_id,
+                            total_matches,
+                            truncated,
+                        } => {
+                            self.streaming_grep_cancellation = None;
+                            self.plugin_manager.resolve_callback(
+                                JsCallbackId::from(callback_id),
+                                format!(
+                                    r#"{{"totalMatches":{},"truncated":{}}}"#,
+                                    total_matches, truncated
+                                ),
+                            );
+                        }
                     }
                 }
                 AsyncMessage::LspProgress {
@@ -5469,8 +5559,9 @@ impl Editor {
                 parent,
                 bindings,
                 read_only,
+                allow_text_input,
             } => {
-                self.handle_define_mode(name, parent, bindings, read_only);
+                self.handle_define_mode(name, parent, bindings, read_only, allow_text_input);
             }
 
             // ==================== File/Navigation Commands ====================
@@ -6552,6 +6643,53 @@ impl Editor {
                     self.terminal_manager.close(terminal_id);
                     tracing::info!("Plugin closed terminal {:?} (no buffer found)", terminal_id);
                 }
+            }
+
+            PluginCommand::GrepProject {
+                pattern,
+                fixed_string,
+                case_sensitive,
+                max_results,
+                whole_words,
+                callback_id,
+            } => {
+                self.handle_grep_project(
+                    pattern,
+                    fixed_string,
+                    case_sensitive,
+                    max_results,
+                    whole_words,
+                    callback_id,
+                );
+            }
+
+            PluginCommand::GrepProjectStreaming {
+                pattern,
+                fixed_string,
+                case_sensitive,
+                max_results,
+                whole_words,
+                search_id,
+                callback_id,
+            } => {
+                self.handle_grep_project_streaming(
+                    pattern,
+                    fixed_string,
+                    case_sensitive,
+                    max_results,
+                    whole_words,
+                    search_id,
+                    callback_id,
+                );
+            }
+
+            PluginCommand::ReplaceInBuffer {
+                file_path,
+                matches,
+                replacement,
+                callback_id,
+            } => {
+                self.handle_replace_in_buffer(file_path, matches, replacement, callback_id);
             }
         }
         Ok(())
@@ -7998,7 +8136,7 @@ mod tests {
         // Manually create a search scan state that is already capped but not
         // at the last chunk (simulating early cap at ~15%).
         let buffer_id = editor.active_buffer();
-        let regex = regex::Regex::new("test").unwrap();
+        let regex = regex::bytes::Regex::new("test").unwrap();
         let fake_chunks = vec![
             crate::model::buffer::LineScanChunk {
                 leaf_index: 0,
@@ -8015,18 +8153,38 @@ mod tests {
         editor.search_scan_state = Some(SearchScanState {
             buffer_id,
             leaves: Vec::new(),
-            chunks: fake_chunks,
-            next_chunk: 1, // Only processed 1 of 2 chunks
-            next_doc_offset: 100,
-            total_bytes: 200,
-            scanned_bytes: 100,
-            regex,
+            scan: crate::model::buffer::ChunkedSearchState {
+                chunks: fake_chunks,
+                next_chunk: 1, // Only processed 1 of 2 chunks
+                next_doc_offset: 100,
+                total_bytes: 200,
+                scanned_bytes: 100,
+                regex,
+                matches: vec![
+                    crate::model::buffer::SearchMatch {
+                        byte_offset: 10,
+                        length: 4,
+                        line: 1,
+                        column: 11,
+                        context: String::new(),
+                    },
+                    crate::model::buffer::SearchMatch {
+                        byte_offset: 50,
+                        length: 4,
+                        line: 1,
+                        column: 51,
+                        context: String::new(),
+                    },
+                ],
+                overlap_tail: Vec::new(),
+                overlap_doc_offset: 0,
+                max_matches: 10_000,
+                capped: true, // Capped early — this is the key condition
+                query_len: 4,
+                running_line: 1,
+            },
             query: "test".to_string(),
-            match_ranges: vec![(10, 4), (50, 4)],
-            overlap_tail: Vec::new(),
-            overlap_doc_offset: 0,
             search_range: None,
-            capped: true, // Capped early — this is the key condition
             case_sensitive: false,
             whole_word: false,
             use_regex: false,

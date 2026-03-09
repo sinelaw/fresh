@@ -183,20 +183,46 @@ impl RecoveryService {
     }
 
     /// End the session cleanly (call on normal editor shutdown)
-    pub fn end_session(&mut self) -> io::Result<()> {
+    ///
+    /// When `preserve_ids` is provided, recovery files matching those IDs
+    /// are kept (used to persist unnamed buffer contents across sessions).
+    pub fn end_session_preserving(&mut self, preserve_ids: &[String]) -> io::Result<()> {
         if !self.config.enabled || !self.session_started {
             return Ok(());
         }
 
-        // Clean up all recovery files (user chose to close normally)
-        let cleaned = self.storage.cleanup_all()?;
-        tracing::info!("Cleaned up {} recovery files", cleaned);
+        if preserve_ids.is_empty() {
+            // No IDs to preserve - clean up everything (original behavior)
+            let cleaned = self.storage.cleanup_all()?;
+            tracing::info!("Cleaned up {} recovery files", cleaned);
+        } else {
+            // Selectively clean up, preserving unnamed buffer recovery files
+            let entries = self.storage.list_entries()?;
+            let mut cleaned = 0;
+            for entry in entries {
+                if !preserve_ids.contains(&entry.id) {
+                    if self.storage.delete_recovery(&entry.id).is_ok() {
+                        cleaned += 1;
+                    }
+                }
+            }
+            tracing::info!(
+                "Cleaned up {} recovery files, preserved {} unnamed buffer(s)",
+                cleaned,
+                preserve_ids.len()
+            );
+        }
 
         // Remove session lock
         self.storage.remove_session_lock()?;
         self.session_started = false;
         tracing::info!("Recovery session ended");
         Ok(())
+    }
+
+    /// End the session cleanly (call on normal editor shutdown)
+    pub fn end_session(&mut self) -> io::Result<()> {
+        self.end_session_preserving(&[])
     }
 
     /// Update session heartbeat (call periodically)

@@ -83,6 +83,7 @@ pub mod save_as_language_detection;
 pub mod scroll_clearing;
 pub mod scrolling;
 pub mod search;
+pub mod search_replace;
 pub mod select_to_paragraph;
 pub mod selection;
 pub mod settings;
@@ -120,6 +121,7 @@ pub mod undo_bulk_edit_after_save;
 pub mod undo_redo;
 pub mod unicode_cursor;
 pub mod unicode_prompt_bugs;
+pub mod unnamed_buffer_persistence;
 pub mod update_notification;
 pub mod vertical_rulers;
 #[cfg(feature = "plugins")]

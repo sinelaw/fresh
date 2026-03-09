@@ -1,7 +1,9 @@
 /// Text buffer that uses PieceTree with integrated line tracking
 /// Architecture where the tree is the single source of truth for text and line information
 use crate::model::encoding;
-use crate::model::filesystem::{FileMetadata, FileSystem, WriteOp};
+use crate::model::filesystem::{
+    FileMetadata, FileSearchCursor, FileSearchOptions, FileSystem, WriteOp,
+};
 use crate::model::piece_tree::{
     BufferData, BufferLocation, Cursor, PieceInfo, PieceRangeIter, PieceTree, PieceView, Position,
     StringBuffer, TreeStats,
@@ -87,6 +89,71 @@ pub struct LineScanChunk {
     pub byte_len: usize,
     /// True if the leaf already had a known line_feed_cnt (no I/O needed).
     pub already_known: bool,
+}
+
+// Re-export SearchMatch from filesystem — same type is used by both
+// FileSystem::search_file (project grep on disk) and the piece-tree
+// search below (in-editor Ctrl+F and dirty buffers).
+pub use crate::model::filesystem::SearchMatch;
+
+/// Mutable state for an incremental chunked search over a TextBuffer's
+/// piece tree.  This is the in-editor search path — it reads chunks via
+/// `get_text_range_mut` which loads lazily from disk and works with the
+/// piece tree's edit history.
+///
+/// For searching files on disk (project-wide grep), see
+/// `FileSystem::search_file` which uses `read_range` and doesn't need
+/// a TextBuffer at all.
+///
+/// Created by `TextBuffer::search_scan_init`, advanced by
+/// `TextBuffer::search_scan_next_chunk`.  The same struct is used by
+/// both the Editor's incremental (non-blocking) search and the project-
+/// wide search running inside `spawn_blocking`.
+#[derive(Debug)]
+pub struct ChunkedSearchState {
+    /// One work item per piece-tree leaf (after `prepare_line_scan` splits).
+    pub chunks: Vec<LineScanChunk>,
+    /// Index of the next chunk to process.
+    pub next_chunk: usize,
+    /// Running document byte offset for the next chunk.
+    pub next_doc_offset: usize,
+    /// Total bytes in the buffer.
+    pub total_bytes: usize,
+    /// Bytes scanned so far (for progress reporting).
+    pub scanned_bytes: usize,
+    /// Compiled regex for searching.
+    pub regex: regex::bytes::Regex,
+    /// Accumulated match results with line/column/context.
+    pub matches: Vec<SearchMatch>,
+    /// Tail bytes from the previous chunk for cross-boundary matching.
+    pub overlap_tail: Vec<u8>,
+    /// Byte offset of the overlap_tail's first byte in the document.
+    pub overlap_doc_offset: usize,
+    /// Maximum number of matches before capping.
+    pub max_matches: usize,
+    /// Whether the match count was capped.
+    pub capped: bool,
+    /// Length of the original query string (for overlap sizing).
+    pub query_len: usize,
+    /// 1-based line number at the start of the next non-overlap data.
+    /// Advanced incrementally as chunks are processed.
+    pub(crate) running_line: usize,
+}
+
+impl ChunkedSearchState {
+    /// Returns true if the scan is complete (all chunks processed or capped).
+    pub fn is_done(&self) -> bool {
+        self.next_chunk >= self.chunks.len() || self.capped
+    }
+
+    /// Progress as a percentage (0–100).
+    pub fn progress_percent(&self) -> usize {
+        if self.total_bytes > 0 {
+            (self.scanned_bytes * 100) / self.total_bytes
+        } else {
+            100
+        }
+    }
 }
 
 // Large file support configuration
@@ -2654,6 +2721,283 @@ impl TextBuffer {
         (chunks, total_bytes)
     }
 
+    /// Initialize a chunked search scan over this buffer's piece tree.
+    ///
+    /// Used for in-editor Ctrl+F (incremental, yields to the event loop
+    /// between chunks) and for searching dirty buffers during project grep.
+    /// For searching files on disk, use `FileSystem::search_file` instead.
+    pub fn search_scan_init(
+        &mut self,
+        regex: regex::bytes::Regex,
+        max_matches: usize,
+        query_len: usize,
+    ) -> ChunkedSearchState {
+        let (chunks, total_bytes) = self.prepare_line_scan();
+        ChunkedSearchState {
+            chunks,
+            next_chunk: 0,
+            next_doc_offset: 0,
+            total_bytes,
+            scanned_bytes: 0,
+            regex,
+            matches: Vec::new(),
+            overlap_tail: Vec::new(),
+            overlap_doc_offset: 0,
+            max_matches,
+            capped: false,
+            query_len,
+            running_line: 1,
+        }
+    }
+
+    /// Process one chunk of a chunked search scan.
+    ///
+    /// Loads the next chunk via `get_text_range_mut`, prepends overlap from
+    /// the previous chunk, runs the regex, and appends matches to `state`
+    /// with line/column/context computed on the fly from the loaded bytes.
+    ///
+    /// Line numbers are tracked incrementally via `running_line` — each
+    /// chunk counts newlines in its non-overlap portion to advance the
+    /// counter for the next chunk, and matches use an incremental cursor
+    /// so total line-counting work is O(chunk_size), not O(chunk × matches).
+    ///
+    /// Returns `Ok(true)` if there are more chunks to process, `Ok(false)`
+    /// when the scan is complete.
+    ///
+    /// TODO: For concurrent/parallel search (searching multiple files at once),
+    /// chunks would need to return chunk-relative line numbers and have them
+    /// fixed up with each file's starting line offset after all chunks complete.
+    pub fn search_scan_next_chunk(
+        &mut self,
+        state: &mut ChunkedSearchState,
+    ) -> std::io::Result<bool> {
+        if state.is_done() {
+            return Ok(false);
+        }
+
+        let chunk_info = state.chunks[state.next_chunk].clone();
+        let doc_offset = state.next_doc_offset;
+
+        state.next_chunk += 1;
+        state.scanned_bytes += chunk_info.byte_len;
+        state.next_doc_offset += chunk_info.byte_len;
+
+        // Load the chunk bytes
+        let chunk_bytes = self
+            .get_text_range_mut(doc_offset, chunk_info.byte_len)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        // Build search buffer: overlap tail + new chunk
+        let overlap_len = state.overlap_tail.len();
+        let mut search_buf = Vec::with_capacity(overlap_len + chunk_bytes.len());
+        search_buf.extend_from_slice(&state.overlap_tail);
+        search_buf.extend_from_slice(&chunk_bytes);
+
+        let buf_doc_offset = if overlap_len > 0 {
+            state.overlap_doc_offset
+        } else {
+            doc_offset
+        };
+
+        // Line number at buf_doc_offset: running_line tracks the line at
+        // doc_offset (start of new chunk data). Count newlines in the overlap
+        // prefix to get the line at the start of the full search_buf.
+        let newlines_in_overlap = search_buf[..overlap_len]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count();
+        let mut line_at = state.running_line - newlines_in_overlap;
+        let mut counted_to = 0usize;
+
+        // Run regex on the combined buffer
+        for m in state.regex.find_iter(&search_buf) {
+            // Skip matches entirely within the overlap (already found)
+            if overlap_len > 0 && m.end() <= overlap_len {
+                continue;
+            }
+
+            if state.matches.len() >= state.max_matches {
+                state.capped = true;
+                break;
+            }
+
+            // Advance line counter incrementally to this match
+            line_at += search_buf[counted_to..m.start()]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count();
+            counted_to = m.start();
+
+            // Find line boundaries in search_buf for context
+            let line_start = search_buf[..m.start()]
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            let line_end = search_buf[m.start()..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|p| m.start() + p)
+                .unwrap_or(search_buf.len());
+
+            let match_doc_offset = buf_doc_offset + m.start();
+            let match_len = m.end() - m.start();
+            let column = m.start() - line_start + 1;
+            let context = String::from_utf8_lossy(&search_buf[line_start..line_end]).into_owned();
+
+            state.matches.push(SearchMatch {
+                byte_offset: match_doc_offset,
+                length: match_len,
+                line: line_at,
+                column,
+                context,
+            });
+        }
+
+        // Advance running_line by newlines in the new (non-overlap) chunk data
+        let newlines_in_chunk = chunk_bytes.iter().filter(|&&b| b == b'\n').count();
+        state.running_line += newlines_in_chunk;
+
+        // Save overlap tail for next chunk
+        let max_overlap = state.query_len.max(256).min(chunk_bytes.len());
+        let tail_start = chunk_bytes.len().saturating_sub(max_overlap);
+        state.overlap_tail = chunk_bytes[tail_start..].to_vec();
+        state.overlap_doc_offset = doc_offset + tail_start;
+
+        Ok(!state.is_done())
+    }
+
+    /// Run a complete chunked search over the piece tree (all chunks).
+    ///
+    /// Synchronous variant — used for dirty buffer snapshots in project
+    /// grep and in tests.  For on-disk files, use `FileSystem::search_file`.
+    pub fn search_scan_all(
+        &mut self,
+        regex: regex::bytes::Regex,
+        max_matches: usize,
+        query_len: usize,
+    ) -> std::io::Result<ChunkedSearchState> {
+        let mut state = self.search_scan_init(regex, max_matches, query_len);
+        while self.search_scan_next_chunk(&mut state)? {}
+        Ok(state)
+    }
+
+    /// Build a hybrid search plan from the piece tree.
+    ///
+    /// Extracts regions (unloaded file ranges + loaded in-memory data) that
+    /// can be searched independently.  The plan is `Send` so it can be
+    /// executed on a background thread via `HybridSearchPlan::execute`.
+    ///
+    /// Returns `None` if the buffer has no file path (caller should fall
+    /// back to `search_scan_all`).
+    pub fn search_hybrid_plan(&mut self) -> Option<HybridSearchPlan> {
+        let file_path = self.file_path.clone()?;
+
+        self.piece_tree.split_leaves_to_chunk_size(LOAD_CHUNK_SIZE);
+        let leaves = self.piece_tree.get_leaves();
+
+        let mut regions: Vec<SearchRegion> = Vec::new();
+        let mut doc_offset = 0usize;
+
+        for leaf in &leaves {
+            let buf = self.buffers.get(leaf.location.buffer_id());
+            let is_unloaded_stored = matches!(
+                (&leaf.location, buf),
+                (
+                    BufferLocation::Stored(_),
+                    Some(StringBuffer {
+                        data: BufferData::Unloaded { .. },
+                        ..
+                    }),
+                )
+            );
+
+            if is_unloaded_stored {
+                let file_offset = match buf.unwrap().data {
+                    BufferData::Unloaded {
+                        file_offset: fo, ..
+                    } => fo + leaf.offset,
+                    _ => unreachable!(),
+                };
+
+                // Merge with previous unloaded region if contiguous
+                if let Some(SearchRegion::Unloaded {
+                    file_offset: prev_fo,
+                    bytes: prev_bytes,
+                    ..
+                }) = regions.last_mut()
+                {
+                    if *prev_fo + *prev_bytes == file_offset {
+                        *prev_bytes += leaf.bytes;
+                        doc_offset += leaf.bytes;
+                        continue;
+                    }
+                }
+                regions.push(SearchRegion::Unloaded {
+                    file_offset,
+                    bytes: leaf.bytes,
+                    doc_offset,
+                });
+            } else {
+                let data = match buf.and_then(|b| b.get_data()) {
+                    Some(full) => {
+                        let end = (leaf.offset + leaf.bytes).min(full.len());
+                        full[leaf.offset..end].to_vec()
+                    }
+                    None => match self.get_text_range_mut(doc_offset, leaf.bytes) {
+                        Ok(d) => d,
+                        Err(_) => {
+                            doc_offset += leaf.bytes;
+                            continue;
+                        }
+                    },
+                };
+
+                // Merge with previous loaded region
+                if let Some(SearchRegion::Loaded {
+                    data: prev_data, ..
+                }) = regions.last_mut()
+                {
+                    prev_data.extend_from_slice(&data);
+                    doc_offset += leaf.bytes;
+                    continue;
+                }
+                regions.push(SearchRegion::Loaded { data, doc_offset });
+            }
+
+            doc_offset += leaf.bytes;
+        }
+
+        Some(HybridSearchPlan { file_path, regions })
+    }
+
+    /// Hybrid search: uses `fs.search_file` for unloaded piece-tree regions
+    /// (searches where the data lives, no network transfer) and in-memory regex
+    /// for loaded/edited regions.  Handles overlap at region boundaries.
+    ///
+    /// For a huge remote file with a small local edit, this avoids transferring
+    /// the entire file — only match metadata crosses the network.
+    ///
+    /// Falls back to `search_scan_all` when the buffer has no file path or is
+    /// fully loaded.
+    pub fn search_hybrid(
+        &mut self,
+        pattern: &str,
+        opts: &FileSearchOptions,
+        regex: Regex,
+        max_matches: usize,
+        query_len: usize,
+    ) -> io::Result<Vec<SearchMatch>> {
+        let plan = match self.search_hybrid_plan() {
+            Some(p) => p,
+            None => {
+                let state = self.search_scan_all(regex, max_matches, query_len)?;
+                return Ok(state.matches);
+            }
+        };
+        plan.execute(&*self.fs, pattern, opts, &regex, max_matches, query_len)
+    }
+
     /// Count `\n` bytes in a single leaf.
     ///
     /// Uses `count_line_feeds_in_range` for unloaded buffers, which remote
@@ -4173,6 +4517,266 @@ impl<'a> Iterator for OverlappingChunks<'a> {
             valid_start,
         })
     }
+}
+
+/// A region in a hybrid search plan — either an unloaded file range or
+/// in-memory data from the piece tree.
+#[derive(Debug)]
+pub(crate) enum SearchRegion {
+    /// Contiguous range on the original file that hasn't been loaded.
+    Unloaded {
+        file_offset: usize,
+        bytes: usize,
+        doc_offset: usize,
+    },
+    /// In-memory data (loaded original content or user edits).
+    Loaded { data: Vec<u8>, doc_offset: usize },
+}
+
+/// A plan for hybrid search — extracted from a `TextBuffer`'s piece tree
+/// on the main thread, executable on any thread.
+///
+/// For a large remote file with a small edit, the plan captures the few
+/// loaded regions (small) and unloaded file ranges (coordinates only).
+/// `execute()` then searches unloaded regions via `fs.search_file` (no data
+/// transfer) and loaded regions with in-memory regex.
+#[derive(Debug)]
+pub struct HybridSearchPlan {
+    pub file_path: PathBuf,
+    pub regions: Vec<SearchRegion>,
+}
+
+impl HybridSearchPlan {
+    /// Execute the search plan.  Can run on any thread — only needs a
+    /// `FileSystem` reference for unloaded region searches.
+    pub fn execute(
+        &self,
+        fs: &dyn FileSystem,
+        pattern: &str,
+        opts: &FileSearchOptions,
+        regex: &Regex,
+        max_matches: usize,
+        query_len: usize,
+    ) -> io::Result<Vec<SearchMatch>> {
+        if self.regions.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Fast path: single unloaded region → search whole file
+        if self.regions.len() == 1 {
+            if let SearchRegion::Unloaded { .. } = &self.regions[0] {
+                let mut cursor = FileSearchCursor::new();
+                let mut all_matches = Vec::new();
+                while !cursor.done && all_matches.len() < max_matches {
+                    let batch = fs.search_file(&self.file_path, pattern, opts, &mut cursor)?;
+                    all_matches.extend(batch);
+                }
+                all_matches.truncate(max_matches);
+                return Ok(all_matches);
+            }
+        }
+
+        let overlap_size = query_len.max(256);
+        let mut all_matches: Vec<SearchMatch> = Vec::new();
+        let mut running_line: usize = 1;
+        let mut prev_tail: Vec<u8> = Vec::new();
+
+        for region in &self.regions {
+            if all_matches.len() >= max_matches {
+                break;
+            }
+            let remaining = max_matches - all_matches.len();
+
+            match region {
+                SearchRegion::Unloaded {
+                    file_offset,
+                    bytes,
+                    doc_offset: region_doc_offset,
+                } => {
+                    // Boundary overlap: prev_tail + start of unloaded region
+                    if !prev_tail.is_empty() {
+                        let overlap_read = (*bytes).min(overlap_size);
+                        if let Ok(head) =
+                            fs.read_range(&self.file_path, *file_offset as u64, overlap_read)
+                        {
+                            let boundary = search_boundary_overlap(
+                                &prev_tail,
+                                &head,
+                                *region_doc_offset - prev_tail.len(),
+                                running_line,
+                                regex,
+                                remaining,
+                            );
+                            all_matches.extend(boundary);
+                        }
+                    }
+
+                    // Search unloaded range via fs.search_file
+                    let mut opts_bounded = opts.clone();
+                    opts_bounded.max_matches = remaining.saturating_sub(all_matches.len());
+                    let mut cursor = FileSearchCursor::for_range(
+                        *file_offset,
+                        *file_offset + *bytes,
+                        running_line,
+                    );
+                    while !cursor.done && all_matches.len() < max_matches {
+                        let mut batch =
+                            fs.search_file(&self.file_path, pattern, &opts_bounded, &mut cursor)?;
+                        // Remap byte_offset from file-relative to doc-relative
+                        for m in &mut batch {
+                            m.byte_offset = *region_doc_offset + (m.byte_offset - *file_offset);
+                        }
+                        all_matches.extend(batch);
+                    }
+                    running_line = cursor.running_line;
+
+                    // Save tail for next boundary
+                    if *bytes >= overlap_size {
+                        let tail_off = *file_offset + *bytes - overlap_size;
+                        prev_tail = fs
+                            .read_range(&self.file_path, tail_off as u64, overlap_size)
+                            .unwrap_or_default();
+                    } else {
+                        prev_tail = fs
+                            .read_range(&self.file_path, *file_offset as u64, *bytes)
+                            .unwrap_or_default();
+                    }
+                }
+                SearchRegion::Loaded {
+                    data,
+                    doc_offset: region_doc_offset,
+                } => {
+                    // Build search buffer: overlap tail + loaded data
+                    let mut search_buf = Vec::with_capacity(prev_tail.len() + data.len());
+                    search_buf.extend_from_slice(&prev_tail);
+                    search_buf.extend_from_slice(data);
+
+                    let overlap_len = prev_tail.len();
+                    let buf_doc_offset = if overlap_len > 0 {
+                        *region_doc_offset - overlap_len
+                    } else {
+                        *region_doc_offset
+                    };
+
+                    let newlines_in_overlap = search_buf[..overlap_len]
+                        .iter()
+                        .filter(|&&b| b == b'\n')
+                        .count();
+                    let mut line_at = running_line.saturating_sub(newlines_in_overlap);
+                    let mut counted_to = 0usize;
+
+                    for m in regex.find_iter(&search_buf) {
+                        if overlap_len > 0 && m.end() <= overlap_len {
+                            continue;
+                        }
+                        if all_matches.len() >= max_matches {
+                            break;
+                        }
+
+                        line_at += search_buf[counted_to..m.start()]
+                            .iter()
+                            .filter(|&&b| b == b'\n')
+                            .count();
+                        counted_to = m.start();
+
+                        let line_start = search_buf[..m.start()]
+                            .iter()
+                            .rposition(|&b| b == b'\n')
+                            .map(|p| p + 1)
+                            .unwrap_or(0);
+                        let line_end = search_buf[m.start()..]
+                            .iter()
+                            .position(|&b| b == b'\n')
+                            .map(|p| m.start() + p)
+                            .unwrap_or(search_buf.len());
+
+                        let match_doc_offset = buf_doc_offset + m.start();
+                        let column = m.start() - line_start + 1;
+                        let context =
+                            String::from_utf8_lossy(&search_buf[line_start..line_end]).into_owned();
+
+                        all_matches.push(SearchMatch {
+                            byte_offset: match_doc_offset,
+                            length: m.end() - m.start(),
+                            line: line_at,
+                            column,
+                            context,
+                        });
+                    }
+
+                    running_line += data.iter().filter(|&&b| b == b'\n').count();
+
+                    let tail_start = data.len().saturating_sub(overlap_size);
+                    prev_tail = data[tail_start..].to_vec();
+                }
+            }
+        }
+
+        all_matches.truncate(max_matches);
+        Ok(all_matches)
+    }
+}
+
+/// Search the overlap zone between two regions for matches that span the
+/// boundary.  `prev_tail` is the tail of the previous region, `next_head`
+/// is the head of the next region.  `doc_offset` is the document byte
+/// offset of `prev_tail[0]`.  Only matches that cross the boundary (start
+/// in tail, end in head) are returned — pure-tail matches were already found.
+fn search_boundary_overlap(
+    prev_tail: &[u8],
+    next_head: &[u8],
+    doc_offset: usize,
+    running_line: usize,
+    regex: &Regex,
+    max_matches: usize,
+) -> Vec<SearchMatch> {
+    let mut buf = Vec::with_capacity(prev_tail.len() + next_head.len());
+    buf.extend_from_slice(prev_tail);
+    buf.extend_from_slice(next_head);
+
+    let overlap_len = prev_tail.len();
+    let newlines_before = prev_tail.iter().filter(|&&b| b == b'\n').count();
+    let mut line_at = running_line.saturating_sub(newlines_before);
+    let mut counted_to = 0usize;
+    let mut matches = Vec::new();
+
+    for m in regex.find_iter(&buf) {
+        // Only keep matches that cross the boundary
+        if m.start() < overlap_len && m.end() > overlap_len {
+            if matches.len() >= max_matches {
+                break;
+            }
+
+            line_at += buf[counted_to..m.start()]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count();
+            counted_to = m.start();
+
+            let line_start = buf[..m.start()]
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            let line_end = buf[m.start()..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|p| m.start() + p)
+                .unwrap_or(buf.len());
+
+            let column = m.start() - line_start + 1;
+            let context = String::from_utf8_lossy(&buf[line_start..line_end]).into_owned();
+
+            matches.push(SearchMatch {
+                byte_offset: doc_offset + m.start(),
+                length: m.end() - m.start(),
+                line: line_at,
+                column,
+                context,
+            });
+        }
+    }
+    matches
 }
 
 #[cfg(test)]
@@ -6224,6 +6828,21 @@ mod tests {
                 ) -> std::io::Result<()> {
                     self.inner.sudo_write(path, data, mode, uid, gid)
                 }
+                fn search_file(
+                    &self,
+                    path: &Path,
+                    pattern: &str,
+                    opts: &crate::model::filesystem::FileSearchOptions,
+                    cursor: &mut crate::model::filesystem::FileSearchCursor,
+                ) -> std::io::Result<Vec<SearchMatch>> {
+                    crate::model::filesystem::default_search_file(
+                        &self.inner,
+                        path,
+                        pattern,
+                        opts,
+                        cursor,
+                    )
+                }
             }
 
             // Create a 3MB file with newlines (3 chunks at LOAD_CHUNK_SIZE=1MB).
@@ -6364,6 +6983,457 @@ mod tests {
                 diff.nodes_visited,
                 total_leaves,
             );
+        }
+    }
+
+    mod chunked_search {
+        use super::*;
+
+        fn make_buffer(content: &[u8]) -> TextBuffer {
+            TextBuffer::from_bytes(content.to_vec(), test_fs())
+        }
+
+        fn make_regex(pattern: &str) -> regex::bytes::Regex {
+            regex::bytes::Regex::new(pattern).unwrap()
+        }
+
+        #[test]
+        fn single_chunk_line_col_context() {
+            let mut buf = make_buffer(b"hello world\nfoo bar\nbaz quux\n");
+            let state = buf.search_scan_all(make_regex("bar"), 100, 3).unwrap();
+            assert_eq!(state.matches.len(), 1);
+            let m = &state.matches[0];
+            assert_eq!(m.line, 2);
+            assert_eq!(m.column, 5); // "foo bar" → 'b' at column 5
+            assert_eq!(m.context, "foo bar");
+            assert_eq!(m.byte_offset, 16); // "hello world\nfoo " = 16 bytes
+            assert_eq!(m.length, 3);
+        }
+
+        #[test]
+        fn multiple_matches_correct_lines() {
+            let mut buf = make_buffer(b"aaa\nbbb\nccc\naaa\n");
+            let state = buf.search_scan_all(make_regex("aaa"), 100, 3).unwrap();
+            assert_eq!(state.matches.len(), 2);
+            assert_eq!(state.matches[0].line, 1);
+            assert_eq!(state.matches[0].context, "aaa");
+            assert_eq!(state.matches[1].line, 4);
+            assert_eq!(state.matches[1].context, "aaa");
+        }
+
+        #[test]
+        fn match_on_last_line_no_trailing_newline() {
+            let mut buf = make_buffer(b"line1\nline2\ntarget");
+            let state = buf.search_scan_all(make_regex("target"), 100, 6).unwrap();
+            assert_eq!(state.matches.len(), 1);
+            let m = &state.matches[0];
+            assert_eq!(m.line, 3);
+            assert_eq!(m.column, 1);
+            assert_eq!(m.context, "target");
+        }
+
+        #[test]
+        fn match_at_first_byte() {
+            let mut buf = make_buffer(b"target\nother\n");
+            let state = buf.search_scan_all(make_regex("target"), 100, 6).unwrap();
+            assert_eq!(state.matches.len(), 1);
+            let m = &state.matches[0];
+            assert_eq!(m.line, 1);
+            assert_eq!(m.column, 1);
+            assert_eq!(m.byte_offset, 0);
+        }
+
+        #[test]
+        fn max_matches_caps() {
+            let mut buf = make_buffer(b"a\na\na\na\na\n");
+            let state = buf.search_scan_all(make_regex("a"), 3, 1).unwrap();
+            assert_eq!(state.matches.len(), 3);
+            assert!(state.capped);
+        }
+
+        #[test]
+        fn case_insensitive_regex() {
+            let mut buf = make_buffer(b"Hello\nhello\nHELLO\n");
+            let state = buf
+                .search_scan_all(make_regex("(?i)hello"), 100, 5)
+                .unwrap();
+            assert_eq!(state.matches.len(), 3);
+            assert_eq!(state.matches[0].line, 1);
+            assert_eq!(state.matches[1].line, 2);
+            assert_eq!(state.matches[2].line, 3);
+        }
+
+        #[test]
+        fn whole_word_boundary() {
+            let mut buf = make_buffer(b"foobar\nfoo bar\nfoo\n");
+            let state = buf.search_scan_all(make_regex(r"\bfoo\b"), 100, 3).unwrap();
+            assert_eq!(state.matches.len(), 2);
+            assert_eq!(state.matches[0].line, 2);
+            assert_eq!(state.matches[0].column, 1);
+            assert_eq!(state.matches[1].line, 3);
+        }
+
+        /// Force multi-chunk processing by creating a large file buffer
+        /// with small piece-tree leaves, then verify line numbers are
+        /// correct across chunk boundaries.
+        #[test]
+        fn multi_chunk_line_numbers_correct() {
+            // Build content: 100 lines of "line_NNN\n"
+            let mut content = Vec::new();
+            for i in 1..=100 {
+                content.extend_from_slice(format!("line_{:03}\n", i).as_bytes());
+            }
+
+            // Load as a "large file" with tiny threshold to force multiple
+            // piece-tree leaves (chunks).
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            let path = temp_dir.path().join("test.txt");
+            std::fs::write(&path, &content).unwrap();
+            let mut buffer = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
+
+            let state = buffer
+                .search_scan_all(make_regex("line_050"), 100, 8)
+                .unwrap();
+            assert_eq!(state.matches.len(), 1);
+            let m = &state.matches[0];
+            assert_eq!(m.line, 50);
+            assert_eq!(m.column, 1);
+            assert_eq!(m.context, "line_050");
+        }
+
+        /// Verify that matches near chunk boundaries don't produce
+        /// duplicate results (overlap deduplication).
+        #[test]
+        fn multi_chunk_no_duplicate_matches() {
+            let mut content = Vec::new();
+            for i in 1..=100 {
+                content.extend_from_slice(format!("word_{:03}\n", i).as_bytes());
+            }
+
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            let path = temp_dir.path().join("test.txt");
+            std::fs::write(&path, &content).unwrap();
+            let mut buffer = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
+
+            // Search for a pattern that appears exactly once per line
+            let state = buffer.search_scan_all(make_regex("word_"), 200, 5).unwrap();
+            assert_eq!(
+                state.matches.len(),
+                100,
+                "Should find exactly 100 matches (one per line), no duplicates"
+            );
+
+            // Verify line numbers are sequential 1..=100
+            for (i, m) in state.matches.iter().enumerate() {
+                assert_eq!(
+                    m.line,
+                    i + 1,
+                    "Match {} should be on line {}, got {}",
+                    i,
+                    i + 1,
+                    m.line
+                );
+            }
+        }
+
+        /// The reviewer's counter-example: verify line counting when
+        /// overlap contains part of a line that continues into the
+        /// next chunk.
+        #[test]
+        fn overlap_mid_line_line_numbers() {
+            // Create content where a line spans a chunk boundary.
+            // Use a large-file load with tiny threshold to force chunking.
+            let mut content = Vec::new();
+            content.extend_from_slice(b"short\n");
+            // A long line that will span chunk boundaries
+            content.extend_from_slice(b"AAAA_");
+            for _ in 0..50 {
+                content.extend_from_slice(b"BBBBBBBBBB"); // 500 bytes of B
+            }
+            content.extend_from_slice(b"_TARGET_HERE\n");
+            content.extend_from_slice(b"after\n");
+
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            let path = temp_dir.path().join("test.txt");
+            std::fs::write(&path, &content).unwrap();
+            let mut buffer = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
+
+            let state = buffer
+                .search_scan_all(make_regex("TARGET_HERE"), 100, 11)
+                .unwrap();
+            assert_eq!(state.matches.len(), 1);
+            let m = &state.matches[0];
+            assert_eq!(m.line, 2, "TARGET_HERE is on line 2 (the long line)");
+            assert_eq!(m.length, 11);
+
+            // Also check "after" is on line 3
+            let state2 = buffer.search_scan_all(make_regex("after"), 100, 5).unwrap();
+            assert_eq!(state2.matches.len(), 1);
+            assert_eq!(state2.matches[0].line, 3);
+        }
+
+        /// Verify correct results when a match spans the overlap/chunk
+        /// boundary (starts in overlap tail, ends in new chunk).
+        #[test]
+        fn match_spanning_chunk_boundary() {
+            // Create content where "SPLIT" can appear at the boundary
+            let mut content = Vec::new();
+            content.extend_from_slice(b"line1\n");
+            // Pad to push "SPLIT" near a chunk boundary
+            for _ in 0..60 {
+                content.extend_from_slice(b"XXXXXXXXXX"); // 600 bytes
+            }
+            content.extend_from_slice(b"SPLIT\n");
+            content.extend_from_slice(b"end\n");
+
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            let path = temp_dir.path().join("test.txt");
+            std::fs::write(&path, &content).unwrap();
+            let mut buffer = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
+
+            let state = buffer.search_scan_all(make_regex("SPLIT"), 100, 5).unwrap();
+            assert_eq!(state.matches.len(), 1, "SPLIT should be found exactly once");
+            assert_eq!(state.matches[0].line, 2); // Still on line 2 (the long X line)
+        }
+
+        #[test]
+        fn empty_buffer_no_matches() {
+            let mut buf = make_buffer(b"");
+            let state = buf.search_scan_all(make_regex("anything"), 100, 8).unwrap();
+            assert!(state.matches.is_empty());
+            assert!(!state.capped);
+        }
+
+        #[test]
+        fn single_line_no_newline() {
+            let mut buf = make_buffer(b"hello world");
+            let state = buf.search_scan_all(make_regex("world"), 100, 5).unwrap();
+            assert_eq!(state.matches.len(), 1);
+            let m = &state.matches[0];
+            assert_eq!(m.line, 1);
+            assert_eq!(m.column, 7);
+            assert_eq!(m.context, "hello world");
+        }
+
+        /// Verify that multiple matches on the same line get the same
+        /// line number and correct columns.
+        #[test]
+        fn multiple_matches_same_line() {
+            let mut buf = make_buffer(b"aa bb aa cc aa\nother\n");
+            let state = buf.search_scan_all(make_regex("aa"), 100, 2).unwrap();
+            assert_eq!(state.matches.len(), 3);
+            for m in &state.matches {
+                assert_eq!(m.line, 1);
+                assert_eq!(m.context, "aa bb aa cc aa");
+            }
+            assert_eq!(state.matches[0].column, 1);
+            assert_eq!(state.matches[1].column, 7);
+            assert_eq!(state.matches[2].column, 13);
+        }
+    }
+
+    mod hybrid_search {
+        use super::*;
+
+        fn make_regex(pattern: &str) -> regex::bytes::Regex {
+            regex::bytes::Regex::new(pattern).unwrap()
+        }
+
+        fn make_opts() -> crate::model::filesystem::FileSearchOptions {
+            crate::model::filesystem::FileSearchOptions {
+                fixed_string: false,
+                case_sensitive: true,
+                whole_word: false,
+                max_matches: 100,
+            }
+        }
+
+        /// Hybrid search on a fully-loaded small buffer should produce
+        /// the same results as search_scan_all.
+        #[test]
+        fn hybrid_matches_scan_all_for_loaded_buffer() {
+            let content = b"foo bar baz\nfoo again\nlast line\n";
+            let mut buf = TextBuffer::from_bytes(content.to_vec(), test_fs());
+            let regex = make_regex("foo");
+            let opts = make_opts();
+
+            let hybrid = buf
+                .search_hybrid("foo", &opts, regex.clone(), 100, 3)
+                .unwrap();
+            let scan = buf.search_scan_all(regex, 100, 3).unwrap();
+
+            assert_eq!(hybrid.len(), scan.matches.len());
+            for (h, s) in hybrid.iter().zip(scan.matches.iter()) {
+                assert_eq!(h.byte_offset, s.byte_offset);
+                assert_eq!(h.line, s.line);
+                assert_eq!(h.column, s.column);
+                assert_eq!(h.length, s.length);
+                assert_eq!(h.context, s.context);
+            }
+        }
+
+        /// Hybrid search on a file-backed buffer (large file with unloaded
+        /// regions) should find matches using fs.search_file.
+        #[test]
+        fn hybrid_finds_matches_in_unloaded_regions() {
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            let path = temp_dir.path().join("big.txt");
+
+            // Create a file with known content
+            let mut content = Vec::new();
+            for i in 0..100 {
+                content.extend_from_slice(format!("line {:03}\n", i).as_bytes());
+            }
+            std::fs::write(&path, &content).unwrap();
+
+            // Load as a large file (unloaded mode)
+            let mut buf = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
+
+            // Verify some leaves are unloaded
+            let leaves = buf.piece_tree.get_leaves();
+            let has_unloaded = leaves.iter().any(|l| {
+                matches!(l.location, BufferLocation::Stored(_))
+                    && buf
+                        .buffers
+                        .get(l.location.buffer_id())
+                        .map(|b| !b.is_loaded())
+                        .unwrap_or(false)
+            });
+
+            let regex = make_regex("line 050");
+            let opts = make_opts();
+            let matches = buf.search_hybrid("line 050", &opts, regex, 100, 8).unwrap();
+
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].line, 51); // 1-based
+            assert!(matches[0].context.contains("line 050"));
+            // If the buffer had unloaded regions, hybrid search used fs.search_file
+            if has_unloaded {
+                // Just verify it worked — the match was found without loading everything
+            }
+        }
+
+        /// Hybrid search on a dirty buffer should find matches in both
+        /// edited (loaded) and unedited (unloaded) regions.
+        #[test]
+        fn hybrid_dirty_buffer_finds_all_matches() {
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            let path = temp_dir.path().join("dirty.txt");
+
+            let mut content = Vec::new();
+            for i in 0..50 {
+                content.extend_from_slice(format!("target {:02}\n", i).as_bytes());
+            }
+            std::fs::write(&path, &content).unwrap();
+
+            let mut buf = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
+
+            // Make a small edit near the beginning — insert "target XX" at position 0
+            buf.insert(0, "target XX\n");
+
+            let regex = make_regex("target");
+            let opts = make_opts();
+            let matches = buf.search_hybrid("target", &opts, regex, 200, 6).unwrap();
+
+            // Should find the inserted "target XX" plus all 50 original "target NN"
+            assert_eq!(matches.len(), 51);
+            // First match should be the inserted one
+            assert!(matches[0].context.contains("target XX"));
+        }
+
+        /// Boundary match: pattern spans loaded→unloaded boundary.
+        #[test]
+        fn hybrid_boundary_match() {
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            let path = temp_dir.path().join("boundary.txt");
+
+            // File content: "AAAAABBBBB" (no newlines)
+            let content = b"AAAAABBBBB";
+            std::fs::write(&path, content).unwrap();
+
+            let mut buf = TextBuffer::from_bytes(content.to_vec(), test_fs());
+            buf.rename_file_path(path);
+
+            let regex = make_regex("AAAAABBBBB");
+            let opts = make_opts();
+            let matches = buf
+                .search_hybrid("AAAAABBBBB", &opts, regex, 100, 10)
+                .unwrap();
+
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].byte_offset, 0);
+        }
+
+        /// Max matches limit is respected.
+        #[test]
+        fn hybrid_max_matches_respected() {
+            let content = b"aaa\naaa\naaa\naaa\naaa\n";
+            let mut buf = TextBuffer::from_bytes(content.to_vec(), test_fs());
+            let regex = make_regex("aaa");
+            let opts = crate::model::filesystem::FileSearchOptions {
+                max_matches: 3,
+                ..make_opts()
+            };
+            let matches = buf.search_hybrid("aaa", &opts, regex, 3, 3).unwrap();
+            assert!(matches.len() <= 3);
+        }
+    }
+
+    mod boundary_overlap {
+        use super::*;
+
+        fn make_regex(pattern: &str) -> regex::bytes::Regex {
+            regex::bytes::Regex::new(pattern).unwrap()
+        }
+
+        #[test]
+        fn empty_prev_tail_returns_nothing() {
+            let matches = search_boundary_overlap(b"", b"hello", 0, 1, &make_regex("hello"), 100);
+            assert!(matches.is_empty());
+        }
+
+        #[test]
+        fn pure_tail_match_skipped() {
+            // "foo" is entirely in prev_tail — should NOT be returned
+            let matches =
+                search_boundary_overlap(b"foo bar", b" baz", 0, 1, &make_regex("foo"), 100);
+            assert!(matches.is_empty());
+        }
+
+        #[test]
+        fn cross_boundary_match_found() {
+            // "SPLIT" spans: prev_tail="...SPL", next_head="IT..."
+            let matches =
+                search_boundary_overlap(b"xxSPL", b"ITyy", 0, 1, &make_regex("SPLIT"), 100);
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].byte_offset, 2);
+            assert_eq!(matches[0].length, 5);
+        }
+
+        #[test]
+        fn pure_head_match_skipped() {
+            // "baz" is entirely in next_head — should NOT be returned
+            // (it starts at offset 4 which is >= overlap_len 3)
+            let matches = search_boundary_overlap(b"foo", b" baz", 0, 1, &make_regex("baz"), 100);
+            assert!(matches.is_empty());
+        }
+
+        #[test]
+        fn line_number_tracking() {
+            // prev_tail has a newline; running_line=5 means "line 5 at
+            // the boundary".  The newline in the tail means SPLIT starts
+            // on line 5 (the boundary line).
+            let matches =
+                search_boundary_overlap(b"line1\nSPL", b"IT end", 0, 5, &make_regex("SPLIT"), 100);
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].line, 5);
+        }
+
+        #[test]
+        fn max_matches_respected() {
+            // Two cross-boundary matches but max is 1
+            let matches = search_boundary_overlap(b"aXb", b"Xc", 0, 1, &make_regex("X"), 1);
+            assert!(matches.len() <= 1);
         }
     }
 }

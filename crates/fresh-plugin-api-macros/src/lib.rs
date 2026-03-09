@@ -145,6 +145,9 @@ struct ApiMethod {
     return_type: String,
     /// Documentation from doc comments
     doc: String,
+    /// Raw TypeScript signature override (from `ts_raw = "..."`)
+    /// When set, replaces the entire auto-generated signature line.
+    ts_raw: Option<String>,
 }
 
 /// Parsed parameter information
@@ -558,12 +561,16 @@ fn parse_method(method: &ImplItemFn) -> Option<ApiMethod> {
         }
     };
 
+    // Check for raw TS signature override
+    let ts_raw = get_plugin_api_value(&method.attrs, "ts_raw");
+
     Some(ApiMethod {
         js_name,
         kind,
         params,
         return_type,
         doc,
+        ts_raw,
     })
 }
 
@@ -584,20 +591,25 @@ fn generate_ts_method(method: &ApiMethod) -> String {
         lines.push("   */".to_string());
     }
 
-    // Method signature
-    let params: String = method
-        .params
-        .iter()
-        .map(ParamInfo::to_typescript)
-        .collect::<Vec<_>>()
-        .join(", ");
+    // Use raw TS override if provided, otherwise auto-generate
+    if let Some(raw) = &method.ts_raw {
+        lines.push(format!("  {};", raw));
+    } else {
+        // Method signature
+        let params: String = method
+            .params
+            .iter()
+            .map(ParamInfo::to_typescript)
+            .collect::<Vec<_>>()
+            .join(", ");
 
-    let return_type = method.kind.wrap_return_type(&method.return_type);
+        let return_type = method.kind.wrap_return_type(&method.return_type);
 
-    lines.push(format!(
-        "  {}({}): {};",
-        method.js_name, params, return_type
-    ));
+        lines.push(format!(
+            "  {}({}): {};",
+            method.js_name, params, return_type
+        ));
+    }
 
     lines.join("\n")
 }
@@ -913,6 +925,7 @@ pub fn plugin_api_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `async_thenable` - Method returns `ProcessHandle<T>` (cancellable)
 /// - `ts_type = "..."` - Custom TypeScript type for a parameter
 /// - `ts_return = "..."` - Custom TypeScript return type
+/// - `ts_raw = "..."` - Raw TypeScript signature (replaces auto-generated signature)
 ///
 /// # Examples
 ///
@@ -1068,6 +1081,7 @@ mod tests {
                 params: vec![],
                 return_type: "SpawnResult".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
             ApiMethod {
                 js_name: "listBuffers".to_string(),
@@ -1075,6 +1089,7 @@ mod tests {
                 params: vec![],
                 return_type: "BufferInfo[]".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
         ];
 
@@ -1091,6 +1106,7 @@ mod tests {
             params: vec![],
             return_type: "number".to_string(),
             doc: "Get the active buffer ID".to_string(),
+            ts_raw: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1111,6 +1127,7 @@ mod tests {
             }],
             return_type: "void".to_string(),
             doc: "".to_string(),
+            ts_raw: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1138,6 +1155,7 @@ mod tests {
             ],
             return_type: "SpawnResult".to_string(),
             doc: "Spawn a process".to_string(),
+            ts_raw: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1263,6 +1281,7 @@ mod tests {
             ],
             return_type: "boolean".to_string(),
             doc: "Update alignment hunks".to_string(),
+            ts_raw: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1279,6 +1298,7 @@ mod tests {
             params: vec![],
             return_type: "CursorInfo | null".to_string(),
             doc: "Get primary cursor".to_string(),
+            ts_raw: None,
         };
         let ts = generate_ts_method(&method);
         assert!(ts.contains("getPrimaryCursor(): CursorInfo | null;"));
@@ -1289,6 +1309,7 @@ mod tests {
             params: vec![],
             return_type: "CursorInfo[]".to_string(),
             doc: "Get all cursors".to_string(),
+            ts_raw: None,
         };
         let ts = generate_ts_method(&method);
         assert!(ts.contains("getAllCursors(): CursorInfo[];"));
@@ -1299,6 +1320,7 @@ mod tests {
             params: vec![],
             return_type: "number[]".to_string(),
             doc: "Get all cursor positions".to_string(),
+            ts_raw: None,
         };
         let ts = generate_ts_method(&method);
         assert!(ts.contains("getAllCursorPositions(): number[];"));
@@ -1317,6 +1339,7 @@ mod tests {
             }],
             return_type: "TerminalResult".to_string(),
             doc: "Create a terminal".to_string(),
+            ts_raw: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1339,6 +1362,7 @@ mod tests {
                 }],
                 return_type: "boolean".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
             ApiMethod {
                 js_name: "setSuggestions".to_string(),
@@ -1351,6 +1375,7 @@ mod tests {
                 }],
                 return_type: "boolean".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
             ApiMethod {
                 js_name: "getPrimaryCursor".to_string(),
@@ -1358,6 +1383,7 @@ mod tests {
                 params: vec![],
                 return_type: "CursorInfo | null".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
             ApiMethod {
                 js_name: "createTerminal".to_string(),
@@ -1370,6 +1396,7 @@ mod tests {
                 }],
                 return_type: "TerminalResult".to_string(),
                 doc: "".to_string(),
+                ts_raw: None,
             },
         ];
 

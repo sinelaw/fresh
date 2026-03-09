@@ -72,6 +72,8 @@
         "double_click_time_ms": 500,
         "auto_save_enabled": false,
         "auto_save_interval_secs": 30,
+        "persist_unnamed_buffers": true,
+        "hot_exit": true,
         "recovery_enabled": true,
         "auto_recovery_save_interval_secs": 2,
         "auto_revert_poll_interval_ms": 2000,
@@ -487,6 +489,18 @@
           "format": "uint32",
           "minimum": 0,
           "default": 30,
+          "x-section": "Recovery"
+        },
+        "persist_unnamed_buffers": {
+          "description": "Whether to persist unnamed (scratch) buffers across editor sessions.\nWhen enabled, unnamed buffer contents are saved on exit and restored\non next startup, matching Sublime Text / Notepad++ behavior.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Recovery"
+        },
+        "hot_exit": {
+          "description": "Whether to preserve unsaved changes in file-backed buffers across\neditor sessions (VS Code \"hot exit\" behavior).\nWhen enabled, modified file-backed buffers are backed up on clean exit\nand their unsaved changes are restored on next startup.\nDefault: true",
+          "type": "boolean",
+          "default": true,
           "x-section": "Recovery"
         },
         "recovery_enabled": {

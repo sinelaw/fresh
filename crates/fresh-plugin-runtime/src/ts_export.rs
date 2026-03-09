@@ -19,11 +19,11 @@ use fresh_core::api::{
     BufferSavedDiff, CompositeHunk, CompositeLayoutConfig, CompositePaneStyle,
     CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
-    CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, JsDiagnostic,
+    CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrepMatch, JsDiagnostic,
     JsPosition, JsRange, JsTextPropertyEntry, LanguagePackConfig, LayoutHints, LspServerPackConfig,
-    OverlayColorSpec, OverlayOptions, ProcessLimitsPackConfig, SpawnResult, TerminalResult,
-    TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind,
-    ViewportInfo, VirtualBufferResult,
+    OverlayColorSpec, OverlayOptions, ProcessLimitsPackConfig, ReplaceResult, SpawnResult,
+    TerminalResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
+    ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
@@ -49,6 +49,10 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // Process types
         "SpawnResult" => Some(SpawnResult::decl(&cfg)),
         "BackgroundProcessResult" => Some(BackgroundProcessResult::decl(&cfg)),
+
+        // Grep/Replace types
+        "GrepMatch" => Some(GrepMatch::decl(&cfg)),
+        "ReplaceResult" => Some(ReplaceResult::decl(&cfg)),
 
         // Terminal types
         "TerminalResult" => Some(TerminalResult::decl(&cfg)),

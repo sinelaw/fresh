@@ -850,6 +850,23 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Recovery"))]
     pub auto_save_interval_secs: u32,
 
+    /// Whether to persist unnamed (scratch) buffers across editor sessions.
+    /// When enabled, unnamed buffer contents are saved on exit and restored
+    /// on next startup, matching Sublime Text / Notepad++ behavior.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Recovery"))]
+    pub persist_unnamed_buffers: bool,
+
+    /// Whether to preserve unsaved changes in file-backed buffers across
+    /// editor sessions (VS Code "hot exit" behavior).
+    /// When enabled, modified file-backed buffers are backed up on clean exit
+    /// and their unsaved changes are restored on next startup.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Recovery"))]
+    pub hot_exit: bool,
+
     // ===== Recovery =====
     /// Whether to enable file recovery (Emacs-style auto-save)
     /// When enabled, buffers are periodically saved to recovery files
@@ -1072,6 +1089,8 @@ impl Default for EditorConfig {
             diagnostics_inline_text: false,
             auto_save_enabled: false,
             auto_save_interval_secs: default_auto_save_interval(),
+            persist_unnamed_buffers: true,
+            hot_exit: true,
             recovery_enabled: true,
             auto_recovery_save_interval_secs: default_auto_recovery_save_interval(),
             highlight_context_bytes: default_highlight_context_bytes(),

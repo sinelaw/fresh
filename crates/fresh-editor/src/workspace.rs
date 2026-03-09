@@ -83,8 +83,21 @@ pub struct Workspace {
     #[serde(default)]
     pub external_files: Vec<PathBuf>,
 
+    /// Unnamed buffers that should be restored from recovery files
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unnamed_buffers: Vec<UnnamedBufferRef>,
+
     /// Timestamp when workspace was saved (Unix epoch seconds)
     pub saved_at: u64,
+}
+
+/// Reference to a persisted unnamed buffer (content stored in recovery files)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnnamedBufferRef {
+    /// Stable recovery ID used to locate the recovery file
+    pub recovery_id: String,
+    /// Display name shown in tabs (e.g., "Untitled-1")
+    pub display_name: String,
 }
 
 /// Serializable split layout (mirrors SplitNode but with file paths instead of buffer IDs)
@@ -97,6 +110,9 @@ pub enum SerializedSplitNode {
         /// Optional label set by plugins (e.g., "claude-sidebar")
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
+        /// Recovery ID for unnamed buffers (when file_path is None)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unnamed_recovery_id: Option<String>,
     },
     Terminal {
         terminal_index: usize,
@@ -318,11 +334,13 @@ pub struct SerializedBookmark {
     pub position: usize,
 }
 
-/// Reference to an open tab (file path or terminal index)
+/// Reference to an open tab (file path, terminal index, or unnamed buffer)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SerializedTabRef {
     File(PathBuf),
     Terminal(usize),
+    /// An unnamed buffer identified by its recovery ID
+    Unnamed(String),
 }
 
 /// Persisted metadata for a terminal workspace
@@ -752,6 +770,7 @@ impl Workspace {
                 file_path: None,
                 split_id: 0,
                 label: None,
+                unnamed_recovery_id: None,
             },
             active_split_id: 0,
             split_states: HashMap::new(),
@@ -762,6 +781,7 @@ impl Workspace {
             bookmarks: HashMap::new(),
             terminals: Vec::new(),
             external_files: Vec::new(),
+            unnamed_buffers: Vec::new(),
             saved_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -871,11 +891,13 @@ mod tests {
                 file_path: Some(PathBuf::from("src/main.rs")),
                 split_id: 1,
                 label: None,
+                unnamed_recovery_id: None,
             }),
             second: Box::new(SerializedSplitNode::Leaf {
                 file_path: Some(PathBuf::from("src/lib.rs")),
                 split_id: 2,
                 label: None,
+                unnamed_recovery_id: None,
             }),
             ratio: 0.5,
             split_id: 0,
@@ -993,11 +1015,13 @@ mod tests {
                 file_path: Some(PathBuf::from("README.md")),
                 split_id: 1,
                 label: None,
+                unnamed_recovery_id: None,
             }),
             second: Box::new(SerializedSplitNode::Leaf {
                 file_path: Some(PathBuf::from("Cargo.toml")),
                 split_id: 2,
                 label: None,
+                unnamed_recovery_id: None,
             }),
             ratio: 0.6,
             split_id: 0,

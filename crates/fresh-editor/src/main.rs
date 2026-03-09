@@ -763,6 +763,7 @@ fn handle_first_run_setup(
     // Queue CLI files to be opened after the TUI starts
     // This ensures they go through the same code path as interactive file opens,
     // with consistent error handling (e.g., encoding confirmation prompts in the UI)
+    let mut has_cli_files = false;
     for loc in file_locations {
         if loc.path.is_dir() {
             continue;
@@ -777,6 +778,12 @@ fn handle_first_run_setup(
             loc.message.clone(),
             None,
         );
+        has_cli_files = true;
+    }
+
+    // Schedule hot exit recovery for CLI-opened files (not covered by workspace restore)
+    if has_cli_files {
+        editor.schedule_hot_exit_recovery();
     }
 
     if show_file_explorer {
@@ -3009,6 +3016,24 @@ where
         }
 
         if editor.should_quit() {
+            // Auto-save file-backed buffers to disk before exiting
+            if editor.config().editor.auto_save_enabled {
+                match editor.save_all_on_exit() {
+                    Ok(count) if count > 0 => {
+                        tracing::info!("Auto-saved {} buffer(s) on exit", count);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!("Failed to auto-save on exit: {}", e);
+                    }
+                }
+            }
+
+            // End recovery session first (flushes dirty buffers + assigns recovery IDs),
+            // then save workspace (captures those IDs for next session restore).
+            if let Err(e) = editor.end_recovery_session() {
+                tracing::warn!("Failed to end recovery session: {}", e);
+            }
             if workspace_enabled {
                 if let Err(e) = editor.save_workspace() {
                     tracing::warn!("Failed to save workspace: {}", e);

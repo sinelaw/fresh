@@ -185,6 +185,11 @@ impl GuiApplication for EditorApp {
     }
 
     fn on_close(&mut self) {
+        // End recovery session first (flushes dirty buffers + assigns recovery IDs),
+        // then save workspace (captures those IDs for next session restore).
+        if let Err(e) = self.editor.end_recovery_session() {
+            tracing::warn!("Failed to end recovery session: {}", e);
+        }
         if self.workspace_enabled {
             if let Err(e) = self.editor.save_workspace() {
                 tracing::warn!("Failed to save workspace: {}", e);
