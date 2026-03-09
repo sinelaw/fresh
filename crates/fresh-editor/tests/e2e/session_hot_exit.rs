@@ -52,9 +52,7 @@ fn test_session_hot_exit_preserves_unsaved_changes() {
         harness.assert_screen_contains("original content");
 
         // Modify the file
-        harness
-            .send_key(KeyCode::End, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
         harness.type_text(" EDITED").unwrap();
         harness.render().unwrap();
         harness.assert_screen_contains("EDITED");

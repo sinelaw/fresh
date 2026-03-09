@@ -1,4 +1,4 @@
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config_io::DirectoryContext;
@@ -1878,8 +1878,12 @@ fn test_builtin_theme_requires_save_as() {
 
     copy_plugin(&plugins_dir, "theme_editor");
 
-    let themes_dir = project_root.join("themes");
-    fs::create_dir(&themes_dir).unwrap();
+    // Create a DirectoryContext so we know where config_dir/themes is
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Write the test theme into the config themes dir (where ThemeLoader looks)
+    let themes_dir = dir_context.themes_dir();
+    fs::create_dir_all(&themes_dir).unwrap();
     let test_theme = r#"{
         "name": "builtin-test",
         "editor": {"bg": [30, 30, 30], "fg": [200, 200, 200]},
@@ -1890,11 +1894,14 @@ fn test_builtin_theme_requires_save_as() {
     }"#;
     fs::write(themes_dir.join("builtin-test.json"), test_theme).unwrap();
 
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
+    let mut harness = EditorTestHarness::create(
         120,
         40,
-        Default::default(),
-        project_root.clone(),
+        HarnessOptions::new()
+            .with_config(Default::default())
+            .with_working_dir(project_root.clone())
+            .without_empty_plugins_dir()
+            .with_shared_dir_context(dir_context),
     )
     .unwrap();
 
