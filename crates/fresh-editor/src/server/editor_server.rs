@@ -373,6 +373,34 @@ impl EditorServer {
             std::thread::sleep(Duration::from_millis(5));
         }
 
+        // Perform the same shutdown sequence as the normal (non-session) exit path
+        // in run_event_loop_common: auto-save, end recovery session, save workspace.
+        if let Some(ref mut editor) = self.editor {
+            // Auto-save file-backed buffers to disk before exiting
+            if editor.config().editor.auto_save_enabled {
+                match editor.save_all_on_exit() {
+                    Ok(count) if count > 0 => {
+                        tracing::info!("Auto-saved {} buffer(s) on exit", count);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!("Failed to auto-save on exit: {}", e);
+                    }
+                }
+            }
+
+            // End recovery session first (flushes dirty buffers + assigns recovery IDs),
+            // then save workspace (captures those IDs for next session restore).
+            if let Err(e) = editor.end_recovery_session() {
+                tracing::warn!("Failed to end recovery session: {}", e);
+            }
+            if let Err(e) = editor.save_workspace() {
+                tracing::warn!("Failed to save workspace: {}", e);
+            } else {
+                tracing::debug!("Workspace saved successfully");
+            }
+        }
+
         // Clean shutdown
         self.disconnect_all_clients("Server shutting down")?;
 
