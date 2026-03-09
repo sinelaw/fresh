@@ -917,6 +917,13 @@ impl KeybindingEditor {
         let key_display = format_keybinding(&key_code, &modifiers);
         let action_display = KeybindingResolver::format_action_from_str(&dialog.action_text);
 
+        // When editing an existing binding, preserve its plugin_name so it stays
+        // in the same section. New bindings go to Builtin (plugin_name: None).
+        let preserved_plugin_name = dialog
+            .editing_index
+            .and_then(|idx| self.bindings.get(idx))
+            .and_then(|b| b.plugin_name.clone());
+
         let resolved = ResolvedBinding {
             key_display,
             action: dialog.action_text,
@@ -926,7 +933,7 @@ impl KeybindingEditor {
             key_code,
             modifiers,
             is_chord: false,
-            plugin_name: None,
+            plugin_name: preserved_plugin_name,
         };
 
         if let Some(edit_idx) = dialog.editing_index {
