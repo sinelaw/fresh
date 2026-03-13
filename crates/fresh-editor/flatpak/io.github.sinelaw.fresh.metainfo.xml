@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<component type="console-application">
+<component type="desktop-application">
   <id>io.github.sinelaw.fresh</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>GPL-2.0</project_license>
+  <project_license>GPL-2.0-only</project_license>
   <name>Fresh</name>
   <summary>A lightweight, fast terminal-based text editor with LSP support</summary>
   <description>
@@ -28,13 +28,13 @@
   <developer id="io.github.sinelaw">
     <name>Noam Lewis</name>
   </developer>
+  <launchable type="desktop-id">io.github.sinelaw.fresh.desktop</launchable>
   <provides>
     <binary>fresh</binary>
   </provides>
   <categories>
-    <category>Development</category>
-    <category>TextEditor</category>
     <category>Utility</category>
+    <category>TextEditor</category>
   </categories>
   <keywords>
     <keyword>editor</keyword>
@@ -45,8 +45,15 @@
     <keyword>programming</keyword>
   </keywords>
   <content_rating type="oars-1.1" />
+  <screenshots>
+    <screenshot type="default">
+      <image>https://github.com/sinelaw/fresh/raw/master/crates/fresh-editor/flatpak/io.github.sinelaw.fresh.svg</image>
+      <caption>Fresh editor</caption>
+    </screenshot>
+  </screenshots>
   <releases>
-    <release version="0.1.44" date="2024-12-16">
+    <release version="0.2.14" date="2025-03-13">
+      <url type="details">https://github.com/sinelaw/fresh/releases</url>
       <description>
         <p>Latest release with bug fixes and improvements.</p>
       </description>
