@@ -16,7 +16,6 @@ impl Editor {
         self.keybinding_editor = Some(KeybindingEditor::new(
             &self.config,
             &self.keybindings,
-            &self.mode_registry,
             config_path,
         ));
     }

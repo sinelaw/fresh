@@ -98,7 +98,6 @@ const colors = {
 
 editor.defineMode(
   "git-blame",
-  "normal", // inherit from normal mode for cursor movement
   [
     ["b", "git_blame_go_back"],
     ["q", "git_blame_close"],

@@ -4,6 +4,28 @@ use rust_i18n::t;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Normalize a key for consistent lookup in keybinding resolution.
+///
+/// Terminals vary in how they report certain keys:
+/// - BackTab already encodes Shift+Tab, but some terminals also set SHIFT —
+///   strip the redundant SHIFT so bindings defined as "BackTab" match.
+/// - Uppercase letters may arrive as `Char('P')` + SHIFT — normalize to
+///   `Char('p')` + SHIFT to match how `parse_key_string("P")` stores them.
+fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
+    if code == KeyCode::BackTab {
+        return (code, modifiers.difference(KeyModifiers::SHIFT));
+    }
+    if let KeyCode::Char(c) = code {
+        if c.is_ascii_uppercase() {
+            return (
+                KeyCode::Char(c.to_ascii_lowercase()),
+                modifiers | KeyModifiers::SHIFT,
+            );
+        }
+    }
+    (code, modifiers)
+}
+
 /// Global flag to force Linux-style keybinding display (Alt/Shift instead of ⌥/⇧)
 /// This is primarily used in tests to ensure consistent output across platforms.
 static FORCE_LINUX_KEYBINDINGS: AtomicBool = AtomicBool::new(false);
@@ -649,7 +671,7 @@ macro_rules! define_action_str_mapping {
         $args_name:ident;
         simple { $($s_name:literal => $s_variant:ident),* $(,)? }
         with_char { $($c_name:literal => $c_variant:ident),* $(,)? }
-        custom { $($x_name:literal => $x_body:expr),* $(,)? }
+        custom { $($x_name:literal => $x_variant:ident : $x_body:expr),* $(,)? }
     ) => {
         /// Parse action from string (used when loading from config)
         pub fn from_str(s: &str, $args_name: &HashMap<String, serde_json::Value>) -> Option<Self> {
@@ -659,6 +681,17 @@ macro_rules! define_action_str_mapping {
                 $($x_name => $x_body,)*
                 _ => return None,
             })
+        }
+
+        /// Convert an action back to its string name (inverse of from_str).
+        /// Returns the canonical action name string.
+        pub fn to_action_str(&self) -> String {
+            match self {
+                $(Self::$s_variant => $s_name.to_string(),)*
+                $(Self::$c_variant(_) => $c_name.to_string(),)*
+                $(Self::$x_variant(_) => $x_name.to_string(),)*
+                Self::PluginAction(name) => name.clone(),
+            }
         }
 
         /// All valid action name strings, sorted alphabetically.
@@ -774,6 +807,8 @@ impl Action {
             "revert" => Revert,
             "toggle_auto_revert" => ToggleAutoRevert,
             "format_buffer" => FormatBuffer,
+            "trim_trailing_whitespace" => TrimTrailingWhitespace,
+            "ensure_final_newline" => EnsureFinalNewline,
             "goto_line" => GotoLine,
             "scan_line_index" => ScanLineIndex,
             "goto_matching_bracket" => GoToMatchingBracket,
@@ -822,6 +857,10 @@ impl Action {
 
             "next_buffer" => NextBuffer,
             "prev_buffer" => PrevBuffer,
+            "switch_to_previous_tab" => SwitchToPreviousTab,
+            "switch_to_tab_by_name" => SwitchToTabByName,
+            "scroll_tabs_left" => ScrollTabsLeft,
+            "scroll_tabs_right" => ScrollTabsRight,
 
             "navigate_back" => NavigateBack,
             "navigate_forward" => NavigateForward,
@@ -876,6 +915,7 @@ impl Action {
             "toggle_file_explorer" => ToggleFileExplorer,
             "toggle_menu_bar" => ToggleMenuBar,
             "toggle_tab_bar" => ToggleTabBar,
+            "toggle_status_bar" => ToggleStatusBar,
             "toggle_vertical_scrollbar" => ToggleVerticalScrollbar,
             "toggle_horizontal_scrollbar" => ToggleHorizontalScrollbar,
             "focus_file_explorer" => FocusFileExplorer,
@@ -919,16 +959,20 @@ impl Action {
             "inspect_theme_at_cursor" => InspectThemeAtCursor,
             "select_theme" => SelectTheme,
             "select_keybinding_map" => SelectKeybindingMap,
+            "select_cursor_style" => SelectCursorStyle,
             "select_locale" => SelectLocale,
 
             "set_tab_size" => SetTabSize,
             "set_line_ending" => SetLineEnding,
             "set_encoding" => SetEncoding,
             "reload_with_encoding" => ReloadWithEncoding,
+            "set_language" => SetLanguage,
             "toggle_indentation_style" => ToggleIndentationStyle,
             "toggle_tab_indicators" => ToggleTabIndicators,
             "toggle_whitespace_indicators" => ToggleWhitespaceIndicators,
             "reset_buffer_settings" => ResetBufferSettings,
+            "add_ruler" => AddRuler,
+            "remove_ruler" => RemoveRuler,
 
             "dump_config" => DumpConfig,
 
@@ -991,18 +1035,22 @@ impl Action {
             "show_macro" => ShowMacro,
         }
         custom {
-            "copy_with_theme" => {
+            "copy_with_theme" => CopyWithTheme : {
                 // Empty theme = open theme picker prompt
                 let theme = args.get("theme").and_then(|v| v.as_str()).unwrap_or("");
                 Self::CopyWithTheme(theme.to_string())
             },
-            "menu_open" => {
+            "menu_open" => MenuOpen : {
                 let name = args.get("name")?.as_str()?;
                 Self::MenuOpen(name.to_string())
             },
-            "switch_keybinding_map" => {
+            "switch_keybinding_map" => SwitchKeybindingMap : {
                 let map_name = args.get("map")?.as_str()?;
                 Self::SwitchKeybindingMap(map_name.to_string())
+            },
+            "prompt_confirm_with_text" => PromptConfirmWithText : {
+                let text = args.get("text")?.as_str()?;
+                Self::PromptConfirmWithText(text.to_string())
             },
         }
     }
@@ -1133,6 +1181,9 @@ pub struct KeybindingResolver {
 
     /// Default chord bindings for each context
     default_chord_bindings: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
+
+    /// Plugin default chord bindings (for mode chord bindings from defineMode)
+    plugin_chord_defaults: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
 }
 
 impl KeybindingResolver {
@@ -1144,6 +1195,7 @@ impl KeybindingResolver {
             plugin_defaults: HashMap::new(),
             chord_bindings: HashMap::new(),
             default_chord_bindings: HashMap::new(),
+            plugin_chord_defaults: HashMap::new(),
         };
 
         // Load bindings from the active keymap (with inheritance resolution) into default_bindings
@@ -1306,10 +1358,24 @@ impl KeybindingResolver {
             .insert((key_code, modifiers), action);
     }
 
-    /// Clear all plugin default bindings for a specific mode
+    /// Load a plugin default chord binding (for mode chord bindings from defineMode)
+    pub fn load_plugin_chord_default(
+        &mut self,
+        context: KeyContext,
+        sequence: Vec<(KeyCode, KeyModifiers)>,
+        action: Action,
+    ) {
+        self.plugin_chord_defaults
+            .entry(context)
+            .or_default()
+            .insert(sequence, action);
+    }
+
+    /// Clear all plugin default bindings (single-key and chord) for a specific mode
     pub fn clear_plugin_defaults_for_mode(&mut self, mode_name: &str) {
         let context = KeyContext::Mode(mode_name.to_string());
         self.plugin_defaults.remove(&context);
+        self.plugin_chord_defaults.remove(&context);
     }
 
     /// Get all plugin default bindings (for keybinding editor display)
@@ -1387,9 +1453,13 @@ impl KeybindingResolver {
         event: &KeyEvent,
         context: KeyContext,
     ) -> ChordResolution {
-        // Build the full sequence: existing chord state + new key
-        let mut full_sequence = chord_state.to_vec();
-        full_sequence.push((event.code, event.modifiers));
+        // Build the full sequence: existing chord state + new key, all normalized
+        let mut full_sequence: Vec<(KeyCode, KeyModifiers)> = chord_state
+            .iter()
+            .map(|(c, m)| normalize_key(*c, *m))
+            .collect();
+        let (norm_code, norm_mods) = normalize_key(event.code, event.modifiers);
+        full_sequence.push((norm_code, norm_mods));
 
         tracing::trace!(
             "KeybindingResolver.resolve_chord: sequence={:?}, context={:?}",
@@ -1407,6 +1477,11 @@ impl KeybindingResolver {
             ),
             (&self.chord_bindings, &context, "custom context"),
             (&self.default_chord_bindings, &context, "default context"),
+            (
+                &self.plugin_chord_defaults,
+                &context,
+                "plugin default context",
+            ),
         ];
 
         let mut has_partial_match = false;
@@ -1442,6 +1517,10 @@ impl KeybindingResolver {
 
     /// Resolve a key event to an action in the given context
     pub fn resolve(&self, event: &KeyEvent, context: KeyContext) -> Action {
+        // Normalize key for lookups (e.g., BackTab+SHIFT → BackTab, Char('T')+SHIFT → Char('t')+SHIFT)
+        // but keep original event for the InsertChar fallback at the end.
+        let (norm_code, norm_mods) = normalize_key(event.code, event.modifiers);
+        let norm = &(norm_code, norm_mods);
         tracing::trace!(
             "KeybindingResolver.resolve: code={:?}, modifiers={:?}, context={:?}",
             event.code,
@@ -1451,14 +1530,14 @@ impl KeybindingResolver {
 
         // Check Global bindings first (highest priority - work in all contexts)
         if let Some(global_bindings) = self.bindings.get(&KeyContext::Global) {
-            if let Some(action) = global_bindings.get(&(event.code, event.modifiers)) {
+            if let Some(action) = global_bindings.get(norm) {
                 tracing::trace!("  -> Found in custom global bindings: {:?}", action);
                 return action.clone();
             }
         }
 
         if let Some(global_bindings) = self.default_bindings.get(&KeyContext::Global) {
-            if let Some(action) = global_bindings.get(&(event.code, event.modifiers)) {
+            if let Some(action) = global_bindings.get(norm) {
                 tracing::trace!("  -> Found in default global bindings: {:?}", action);
                 return action.clone();
             }
@@ -1466,7 +1545,7 @@ impl KeybindingResolver {
 
         // Try context-specific custom bindings
         if let Some(context_bindings) = self.bindings.get(&context) {
-            if let Some(action) = context_bindings.get(&(event.code, event.modifiers)) {
+            if let Some(action) = context_bindings.get(norm) {
                 tracing::trace!(
                     "  -> Found in custom {} bindings: {:?}",
                     context.to_when_clause(),
@@ -1478,7 +1557,7 @@ impl KeybindingResolver {
 
         // Try context-specific default bindings
         if let Some(context_bindings) = self.default_bindings.get(&context) {
-            if let Some(action) = context_bindings.get(&(event.code, event.modifiers)) {
+            if let Some(action) = context_bindings.get(norm) {
                 tracing::trace!(
                     "  -> Found in default {} bindings: {:?}",
                     context.to_when_clause(),
@@ -1490,7 +1569,7 @@ impl KeybindingResolver {
 
         // Try plugin default bindings (mode bindings from defineMode)
         if let Some(plugin_bindings) = self.plugin_defaults.get(&context) {
-            if let Some(action) = plugin_bindings.get(&(event.code, event.modifiers)) {
+            if let Some(action) = plugin_bindings.get(norm) {
                 tracing::trace!(
                     "  -> Found in plugin default {} bindings: {:?}",
                     context.to_when_clause(),
@@ -1504,7 +1583,7 @@ impl KeybindingResolver {
         // This prevents keys from leaking through to the editor when in special contexts
         if context != KeyContext::Normal {
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
-                if let Some(action) = normal_bindings.get(&(event.code, event.modifiers)) {
+                if let Some(action) = normal_bindings.get(norm) {
                     if Self::is_application_wide_action(action) {
                         tracing::trace!(
                             "  -> Found application-wide action in custom normal bindings: {:?}",
@@ -1516,7 +1595,7 @@ impl KeybindingResolver {
             }
 
             if let Some(normal_bindings) = self.default_bindings.get(&KeyContext::Normal) {
-                if let Some(action) = normal_bindings.get(&(event.code, event.modifiers)) {
+                if let Some(action) = normal_bindings.get(norm) {
                     if Self::is_application_wide_action(action) {
                         tracing::trace!(
                             "  -> Found application-wide action in default normal bindings: {:?}",
@@ -1545,16 +1624,17 @@ impl KeybindingResolver {
     /// a specific binding without being overridden by Global bindings.
     /// Returns None if no binding found in the specified context.
     pub fn resolve_in_context_only(&self, event: &KeyEvent, context: KeyContext) -> Option<Action> {
+        let norm = normalize_key(event.code, event.modifiers);
         // Try custom bindings for this context
         if let Some(context_bindings) = self.bindings.get(&context) {
-            if let Some(action) = context_bindings.get(&(event.code, event.modifiers)) {
+            if let Some(action) = context_bindings.get(&norm) {
                 return Some(action.clone());
             }
         }
 
         // Try default bindings for this context
         if let Some(context_bindings) = self.default_bindings.get(&context) {
-            if let Some(action) = context_bindings.get(&(event.code, event.modifiers)) {
+            if let Some(action) = context_bindings.get(&norm) {
                 return Some(action.clone());
             }
         }
@@ -1566,6 +1646,7 @@ impl KeybindingResolver {
     /// Only returns actions that are classified as UI actions (is_terminal_ui_action).
     /// Returns Action::None if the key doesn't map to a UI action.
     pub fn resolve_terminal_ui_action(&self, event: &KeyEvent) -> Action {
+        let norm = normalize_key(event.code, event.modifiers);
         tracing::trace!(
             "KeybindingResolver.resolve_terminal_ui_action: code={:?}, modifiers={:?}",
             event.code,
@@ -1575,7 +1656,7 @@ impl KeybindingResolver {
         // Check Terminal context bindings first (highest priority for terminal mode)
         for bindings in [&self.bindings, &self.default_bindings] {
             if let Some(terminal_bindings) = bindings.get(&KeyContext::Terminal) {
-                if let Some(action) = terminal_bindings.get(&(event.code, event.modifiers)) {
+                if let Some(action) = terminal_bindings.get(&norm) {
                     if Self::is_terminal_ui_action(action) {
                         tracing::trace!("  -> Found UI action in terminal bindings: {:?}", action);
                         return action.clone();
@@ -1587,7 +1668,7 @@ impl KeybindingResolver {
         // Check Global bindings (work in all contexts)
         for bindings in [&self.bindings, &self.default_bindings] {
             if let Some(global_bindings) = bindings.get(&KeyContext::Global) {
-                if let Some(action) = global_bindings.get(&(event.code, event.modifiers)) {
+                if let Some(action) = global_bindings.get(&norm) {
                     if Self::is_terminal_ui_action(action) {
                         tracing::trace!("  -> Found UI action in global bindings: {:?}", action);
                         return action.clone();
@@ -1599,7 +1680,7 @@ impl KeybindingResolver {
         // Check Normal context bindings (for actions like next_split that are in Normal context)
         for bindings in [&self.bindings, &self.default_bindings] {
             if let Some(normal_bindings) = bindings.get(&KeyContext::Normal) {
-                if let Some(action) = normal_bindings.get(&(event.code, event.modifiers)) {
+                if let Some(action) = normal_bindings.get(&norm) {
                     if Self::is_terminal_ui_action(action) {
                         tracing::trace!("  -> Found UI action in normal bindings: {:?}", action);
                         return action.clone();

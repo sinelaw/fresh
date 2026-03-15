@@ -123,52 +123,37 @@ impl Editor {
             let effective_mode = self.effective_mode().map(|s| s.to_owned());
 
             if let Some(ref mode_name) = effective_mode {
-                // Try to resolve as a chord (multi-key sequence like "gg")
-                if let Some(action_name) = self.mode_registry.resolve_chord_keybinding(
-                    mode_name,
-                    &self.chord_state,
-                    code,
-                    modifiers,
-                ) {
-                    tracing::debug!("Mode chord resolved to action: {}", action_name);
-                    self.chord_state.clear();
-                    let action = Action::from_str(&action_name, &std::collections::HashMap::new())
-                        .unwrap_or(Action::PluginAction(action_name));
-                    return self.handle_action(action);
-                }
-
-                // Check if this could be the start of a chord sequence
-                if self
-                    .mode_registry
-                    .is_chord_prefix(mode_name, &self.chord_state, code, modifiers)
-                {
-                    tracing::debug!("Potential chord prefix in mode '{}'", mode_name);
-                    self.chord_state.push((code, modifiers));
-                    return Ok(());
-                }
-
-                // Not a chord - clear any pending chord state
-                if !self.chord_state.is_empty() {
-                    tracing::debug!("Chord sequence abandoned in mode, clearing state");
-                    self.chord_state.clear();
-                }
-            }
-
-            // Check for user overrides of mode bindings via the main keybinding system
-            if let Some(ref mode_name) = effective_mode {
                 let mode_ctx = crate::input::keybindings::KeyContext::Mode(mode_name.to_string());
                 let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+
+                // Mode chord resolution (via KeybindingResolver)
+                let chord_result =
+                    self.keybindings
+                        .resolve_chord(&self.chord_state, &key_event, mode_ctx.clone());
+                match chord_result {
+                    crate::input::keybindings::ChordResolution::Complete(action) => {
+                        tracing::debug!("Mode chord resolved to action: {:?}", action);
+                        self.chord_state.clear();
+                        return self.handle_action(action);
+                    }
+                    crate::input::keybindings::ChordResolution::Partial => {
+                        tracing::debug!("Potential chord prefix in mode '{}'", mode_name);
+                        self.chord_state.push((code, modifiers));
+                        return Ok(());
+                    }
+                    crate::input::keybindings::ChordResolution::NoMatch => {
+                        if !self.chord_state.is_empty() {
+                            tracing::debug!("Chord sequence abandoned in mode, clearing state");
+                            self.chord_state.clear();
+                        }
+                    }
+                }
+
+                // Mode single-key resolution (custom > keymap > plugin defaults)
                 let resolved = self.keybindings.resolve(&key_event, mode_ctx);
                 if resolved != Action::None {
                     return self.handle_action(resolved);
                 }
-            }
-
-            // Check mode keybindings (buffer-local first, then global fallback)
-            if let Some(action_name) = self.resolve_mode_keybinding(code, modifiers) {
-                let action = Action::from_str(&action_name, &std::collections::HashMap::new())
-                    .unwrap_or_else(|| Action::PluginAction(action_name.clone()));
-                return self.handle_action(action);
             }
 
             // Handle unbound keys for modes that want to capture input.

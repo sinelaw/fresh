@@ -37,7 +37,7 @@ export interface DebouncedSearchOptions {
 // Editor interface (subset of what we need)
 interface EditorApi {
   readFile(path: string): Promise<string>;
-  defineMode(name: string, parent: string, bindings: [string, string][], readOnly: boolean): void;
+  defineMode(name: string, bindings: [string, string][], readOnly: boolean): void;
   createVirtualBufferInSplit(options: {
     name: string;
     mode: string;
@@ -131,7 +131,7 @@ export class SearchPreview {
 
       if (this.bufferId === null) {
         // Create preview mode if not exists
-        this.editor.defineMode(this.modeName, "special", [["q", "close_buffer"]], true);
+        this.editor.defineMode(this.modeName, [["q", "close_buffer"]], true);
 
         // Create preview in a split on the right
         const result = await this.editor.createVirtualBufferInSplit({

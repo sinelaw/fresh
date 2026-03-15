@@ -1592,7 +1592,7 @@ registerHandler("vi_cancel", vi_cancel);
 // ============================================================================
 
 // Define vi-normal mode
-editor.defineMode("vi-normal", null, [
+editor.defineMode("vi-normal", [
   // Count prefix (digits 1-9 start count, 0 is special)
   ["1", "vi_digit_1"],
   ["2", "vi_digit_2"],
@@ -1690,7 +1690,7 @@ editor.defineMode("vi-normal", null, [
 ], true); // read_only = true to prevent character insertion
 
 // Define vi-insert mode - only Escape is special, other keys insert text
-editor.defineMode("vi-insert", null, [
+editor.defineMode("vi-insert", [
   ["Escape", "vi_escape"],
   // Pass through to standard editor shortcuts
   ["C-p", "command_palette"],
@@ -1830,7 +1830,7 @@ async function vi_fc_space(): Promise<void> { return vi_find_char_handler(" "); 
 registerHandler("vi_fc_space", vi_fc_space);
 
 // Define vi-find-char mode with all the character bindings
-editor.defineMode("vi-find-char", null, [
+editor.defineMode("vi-find-char", [
   ["Escape", "vi_find_char_cancel"],
   // Letters
   ["a", "vi_fc_a"], ["b", "vi_fc_b"], ["c", "vi_fc_c"], ["d", "vi_fc_d"],
@@ -1856,7 +1856,7 @@ editor.defineMode("vi-find-char", null, [
 ], true);
 
 // Define vi-operator-pending mode
-editor.defineMode("vi-operator-pending", null, [
+editor.defineMode("vi-operator-pending", [
   // Count prefix in operator-pending mode (for d3w = delete 3 words)
   ["1", "vi_digit_1"],
   ["2", "vi_digit_2"],
@@ -1895,7 +1895,7 @@ editor.defineMode("vi-operator-pending", null, [
 ], true);
 
 // Define vi-text-object mode (waiting for object type: w, ", (, etc.)
-editor.defineMode("vi-text-object", null, [
+editor.defineMode("vi-text-object", [
   // Word objects
   ["w", "vi_to_word"],
   ["W", "vi_to_WORD"],
@@ -1922,7 +1922,7 @@ editor.defineMode("vi-text-object", null, [
 ], true);
 
 // Define vi-visual mode (character-wise)
-editor.defineMode("vi-visual", null, [
+editor.defineMode("vi-visual", [
   // Count prefix
   ["1", "vi_digit_1"],
   ["2", "vi_digit_2"],
@@ -1968,7 +1968,7 @@ editor.defineMode("vi-visual", null, [
 ], true);
 
 // Define vi-visual-line mode (line-wise)
-editor.defineMode("vi-visual-line", null, [
+editor.defineMode("vi-visual-line", [
   // Count prefix
   ["1", "vi_digit_1"],
   ["2", "vi_digit_2"],
@@ -2006,7 +2006,7 @@ editor.defineMode("vi-visual-line", null, [
 ], true);
 
 // Define vi-visual-block mode (column/block selection)
-editor.defineMode("vi-visual-block", null, [
+editor.defineMode("vi-visual-block", [
   // Count prefix
   ["1", "vi_digit_1"],
   ["2", "vi_digit_2"],

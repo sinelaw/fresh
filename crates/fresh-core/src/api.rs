@@ -1307,7 +1307,6 @@ pub enum PluginCommand {
     /// Define a buffer mode with keybindings
     DefineMode {
         name: String,
-        parent: Option<String>,
         bindings: Vec<(String, String)>, // (key_string, command_name)
         read_only: bool,
         /// When true, unbound character keys dispatch as `mode_text_input:<char>`.
@@ -2688,19 +2687,16 @@ impl PluginApi {
 
     /// Define a buffer mode with keybindings
     ///
-    /// Modes can inherit from parent modes (e.g., "diagnostics-list" inherits from "special").
     /// Bindings are specified as (key_string, command_name) pairs.
     pub fn define_mode(
         &self,
         name: String,
-        parent: Option<String>,
         bindings: Vec<(String, String)>,
         read_only: bool,
         allow_text_input: bool,
     ) -> Result<(), String> {
         self.send_command(PluginCommand::DefineMode {
             name,
-            parent,
             bindings,
             read_only,
             allow_text_input,

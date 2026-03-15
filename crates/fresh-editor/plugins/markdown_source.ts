@@ -311,7 +311,7 @@ registerHandler("md_src_shift_tab", md_src_shift_tab);
 
 // Define a non-read-only mode so unmapped keys insert normally.
 // Enter, Tab, and Shift+Tab are intercepted for smart list handling.
-editor.defineMode("markdown-source", null, [
+editor.defineMode("markdown-source", [
   ["Enter", "md_src_enter"],
   ["Tab", "md_src_tab"],
   ["BackTab", "md_src_shift_tab"],

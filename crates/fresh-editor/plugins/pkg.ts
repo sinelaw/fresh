@@ -1755,7 +1755,6 @@ const pkgTheme: Record<string, ThemeColor> = {
 // Define pkg-manager mode with arrow key navigation
 editor.defineMode(
   "pkg-manager",
-  "normal",
   [
     ["Up", "pkg_nav_up"],
     ["Down", "pkg_nav_down"],
@@ -1771,7 +1770,6 @@ editor.defineMode(
 // Define pkg-detail mode for package details view
 editor.defineMode(
   "pkg-detail",
-  "normal",
   [
     ["Up", "pkg_scroll_up"],
     ["Down", "pkg_scroll_down"],

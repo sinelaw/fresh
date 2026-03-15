@@ -187,7 +187,7 @@ const modeBindings: [string, string][] = [
   ["End", "search_replace_end"],
 ];
 
-editor.defineMode("search-replace-list", "normal", modeBindings, true, true);
+editor.defineMode("search-replace-list", modeBindings, true, true);
 
 // Single handler for all character input (any keyboard layout, including Unicode)
 function insertCharAtCursor(ch: string): void {

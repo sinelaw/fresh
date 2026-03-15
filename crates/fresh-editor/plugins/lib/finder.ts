@@ -923,8 +923,7 @@ export class Finder<T> {
         // Define preview mode
         this.editor.defineMode(
           this.previewModeName,
-          "special",
-          [["q", "close_buffer"]],
+          [["q", "close_buffer"], ["Escape", "close_buffer"]],
           true
         );
 
@@ -978,7 +977,6 @@ export class Finder<T> {
     // Define panel mode
     this.editor.defineMode(
       this.modeName,
-      "normal",
       [
         ["Return", `${this.handlerPrefix}_panel_select`],
         ["Escape", `${this.handlerPrefix}_panel_close`],

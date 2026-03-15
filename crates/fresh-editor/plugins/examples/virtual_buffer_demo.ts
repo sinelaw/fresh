@@ -11,7 +11,6 @@ editor.registerCommand(
 // Define a custom mode for the demo buffer
 editor.defineMode(
   "demo-list", // mode name
-  null,         // no parent mode
   [
     ["Return", "demo_goto_item"],
     ["n", "demo_next_item"],

@@ -1435,7 +1435,6 @@ impl Editor {
     pub(super) fn handle_define_mode(
         &mut self,
         name: String,
-        parent: Option<String>,
         bindings: Vec<(String, String)>,
         read_only: bool,
         allow_text_input: bool,
@@ -1445,14 +1444,10 @@ impl Editor {
         use crate::input::buffer_mode::BufferMode;
         use crate::input::keybindings::{Action, KeyContext};
 
-        let mut mode = BufferMode::new(name.clone())
+        let mode = BufferMode::new(name.clone())
             .with_read_only(read_only)
             .with_allow_text_input(allow_text_input)
             .with_plugin_name(plugin_name);
-
-        if let Some(parent_name) = parent {
-            mode = mode.with_parent(parent_name);
-        }
 
         // Clear any existing plugin defaults for this mode before re-registering
         self.keybindings.clear_plugin_defaults_for_mode(&name);
@@ -1461,17 +1456,14 @@ impl Editor {
 
         // Parse key bindings from strings
         // Key strings can be single keys ("g", "C-f") or chord sequences ("g g", "z z")
-        for (key_str, command) in bindings {
+        for (key_str, command) in &bindings {
             let parts: Vec<&str> = key_str.split_whitespace().collect();
 
             if parts.len() == 1 {
                 // Single key binding
-                if let Some((code, modifiers)) = parse_key_string(&key_str) {
-                    mode = mode.with_binding(code, modifiers, command.clone());
-
-                    // Dual-register into KeybindingResolver as plugin default
-                    let action = Action::from_str(&command, &std::collections::HashMap::new())
-                        .unwrap_or_else(|| Action::PluginAction(command));
+                if let Some((code, modifiers)) = parse_key_string(key_str) {
+                    let action = Action::from_str(command, &std::collections::HashMap::new())
+                        .unwrap_or_else(|| Action::PluginAction(command.clone()));
                     self.keybindings.load_plugin_default(
                         mode_context.clone(),
                         code,
@@ -1498,7 +1490,13 @@ impl Editor {
 
                 if !parse_failed && !sequence.is_empty() {
                     tracing::debug!("Adding chord binding: {:?} -> {}", sequence, command);
-                    mode = mode.with_chord_binding(sequence, command);
+                    let action = Action::from_str(command, &std::collections::HashMap::new())
+                        .unwrap_or_else(|| Action::PluginAction(command.clone()));
+                    self.keybindings.load_plugin_chord_default(
+                        mode_context.clone(),
+                        sequence,
+                        action,
+                    );
                 }
             }
         }
@@ -1508,19 +1506,27 @@ impl Editor {
         // Update keybinding labels in plugin state snapshot for getKeybindingLabel API
         #[cfg(feature = "plugins")]
         {
-            let all_bindings = self.mode_registry.get_all_keybindings(&name);
             if let Some(snapshot_handle) = self.plugin_manager.state_snapshot_handle() {
                 if let Ok(mut snapshot) = snapshot_handle.write() {
                     // Remove old labels for this mode
                     snapshot
                         .keybinding_labels
                         .retain(|k, _| !k.ends_with(&format!("\0{}", name)));
-                    // Add current labels
-                    for ((key_code, modifiers), command) in &all_bindings {
-                        let label =
-                            crate::input::keybindings::format_keybinding(key_code, modifiers);
-                        let key = format!("{}\0{}", command, name);
-                        snapshot.keybinding_labels.insert(key, label);
+                    // Add current labels from plugin defaults in KeybindingResolver
+                    if let Some(mode_bindings) =
+                        self.keybindings.get_plugin_defaults().get(&mode_context)
+                    {
+                        for ((key_code, modifiers), _action) in mode_bindings {
+                            let label =
+                                crate::input::keybindings::format_keybinding(key_code, modifiers);
+                            if let Some((_key_str, cmd)) = bindings
+                                .iter()
+                                .find(|(k, _)| parse_key_string(k) == Some((*key_code, *modifiers)))
+                            {
+                                let key = format!("{}\0{}", cmd, name);
+                                snapshot.keybinding_labels.insert(key, label);
+                            }
+                        }
                     }
                 }
             }

@@ -1195,7 +1195,7 @@ registerHandler("review_drill_down", review_drill_down);
 
 // Define the diff-view mode - inherits from "normal" for all standard navigation/selection/copy
 // Only adds diff-specific keybindings (close, hunk navigation)
-editor.defineMode("diff-view", "normal", [
+editor.defineMode("diff-view", [
     // Close the diff view
     ["q", "close"],
     // Hunk navigation (diff-specific)
@@ -1812,7 +1812,7 @@ registerHandler("on_buffer_closed", on_buffer_closed);
 
 editor.on("buffer_closed", "on_buffer_closed");
 
-editor.defineMode("review-mode", "normal", [
+editor.defineMode("review-mode", [
     // Staging actions
     ["s", "review_stage_hunk"], ["d", "review_discard_hunk"],
     // Navigation

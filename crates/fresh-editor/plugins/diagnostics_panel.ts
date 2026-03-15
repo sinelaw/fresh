@@ -247,10 +247,11 @@ editor.on("buffer_activated", "on_diagnostics_buffer_activated");
 // Mode Definition (for custom keybindings beyond Enter/Escape)
 editor.defineMode(
   "diagnostics-extra",
-  "diagnostics-results",
   [
     ["a", "diagnostics_toggle_all"],
     ["r", "diagnostics_refresh"],
+    ["Return", `_finder_diagnostics_panel_select`],
+    ["Escape", `_finder_diagnostics_panel_close`],
   ],
   true
 );

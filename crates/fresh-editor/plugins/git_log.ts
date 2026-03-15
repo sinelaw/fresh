@@ -132,7 +132,6 @@ const colors = {
 // Navigation uses normal cursor movement (arrows, j/k work naturally via parent mode)
 editor.defineMode(
   "git-log",
-  "normal", // inherit from normal mode for cursor movement
   [
     ["Return", "git_log_show_commit"],
     ["Tab", "git_log_show_commit"],
@@ -148,7 +147,6 @@ editor.defineMode(
 // Inherits from normal mode for natural cursor movement
 editor.defineMode(
   "git-commit-detail",
-  "normal", // inherit from normal mode for cursor movement
   [
     ["Return", "git_commit_detail_open_file"],
     ["q", "git_commit_detail_close"],
@@ -160,7 +158,6 @@ editor.defineMode(
 // Define git-file-view mode for viewing files at a specific commit
 editor.defineMode(
   "git-file-view",
-  "normal", // inherit from normal mode for cursor movement
   [
     ["q", "git_file_view_close"],
     ["Escape", "git_file_view_close"],

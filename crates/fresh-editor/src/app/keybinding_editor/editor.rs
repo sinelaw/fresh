@@ -3,8 +3,7 @@
 use super::helpers::{format_chord_keys, key_code_to_config_name, modifiers_to_config_names};
 use super::types::*;
 use crate::config::{Config, Keybinding};
-use crate::input::buffer_mode::ModeRegistry;
-use crate::input::keybindings::{format_keybinding, Action, KeybindingResolver};
+use crate::input::keybindings::{format_keybinding, Action, KeyContext, KeybindingResolver};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rust_i18n::t;
 use std::collections::{HashMap, HashSet};
@@ -83,24 +82,24 @@ pub struct KeybindingEditor {
 }
 
 impl KeybindingEditor {
-    /// Create a new keybinding editor from config, resolver, and mode registry
-    pub fn new(
-        config: &Config,
-        resolver: &KeybindingResolver,
-        mode_registry: &ModeRegistry,
-        config_file_path: String,
-    ) -> Self {
-        let bindings = Self::resolve_all_bindings(config, resolver, mode_registry);
+    /// Create a new keybinding editor from config and resolver
+    pub fn new(config: &Config, resolver: &KeybindingResolver, config_file_path: String) -> Self {
+        let bindings = Self::resolve_all_bindings(config, resolver);
         let filtered_indices: Vec<usize> = (0..bindings.len()).collect();
 
-        // Collect available action names (include plugin action names from modes)
+        // Collect available action names (include plugin action names from plugin defaults)
         let mut available_actions = Self::collect_action_names();
-        for mode_name in mode_registry.list_modes() {
-            let mode_bindings = mode_registry.get_all_keybindings(&mode_name);
-            for command in mode_bindings.values() {
-                if !available_actions.contains(command) {
-                    available_actions.push(command.clone());
+        for mode_bindings in resolver.get_plugin_defaults().values() {
+            for action in mode_bindings.values() {
+                let action_name = format!("{:?}", action);
+                let action_str = match action {
+                    Action::PluginAction(name) => name.clone(),
+                    other => format!("{:?}", other),
+                };
+                if !available_actions.contains(&action_str) {
+                    available_actions.push(action_str);
                 }
+                let _ = action_name;
             }
         }
         available_actions.sort();
@@ -110,11 +109,17 @@ impl KeybindingEditor {
         let mut keymap_names: Vec<String> = config.keybinding_maps.keys().cloned().collect();
         keymap_names.sort();
 
-        // Collect mode context names for filter cycling
-        let mut mode_contexts: Vec<String> = mode_registry
-            .list_modes()
-            .into_iter()
-            .map(|m| format!("mode:{}", m))
+        // Collect mode context names from plugin defaults
+        let mut mode_contexts: Vec<String> = resolver
+            .get_plugin_defaults()
+            .keys()
+            .filter_map(|ctx| {
+                if let KeyContext::Mode(name) = ctx {
+                    Some(format!("mode:{}", name))
+                } else {
+                    None
+                }
+            })
             .collect();
         mode_contexts.sort();
 
@@ -165,7 +170,6 @@ impl KeybindingEditor {
     fn resolve_all_bindings(
         config: &Config,
         resolver: &KeybindingResolver,
-        mode_registry: &ModeRegistry,
     ) -> Vec<ResolvedBinding> {
         let mut bindings = Vec::new();
         let mut seen: HashMap<(String, String), usize> = HashMap::new(); // (key_display, context) -> index
@@ -196,35 +200,35 @@ impl KeybindingEditor {
             }
         }
 
-        // Load plugin mode bindings from ModeRegistry
-        for mode_name in mode_registry.list_modes() {
-            let context_str = format!("mode:{}", mode_name);
-            let section = mode_registry
-                .get(&mode_name)
-                .and_then(|m| m.plugin_name.clone())
-                .unwrap_or_else(|| mode_name.clone());
-            let mode_bindings = mode_registry.get_all_keybindings(&mode_name);
-            for ((key_code, modifiers), command) in &mode_bindings {
-                let key_display = format_keybinding(key_code, modifiers);
-                let seen_key = (key_display.clone(), context_str.clone());
-                // Skip if already overridden by a user custom binding
-                if seen.contains_key(&seen_key) {
-                    continue;
+        // Load plugin mode bindings from KeybindingResolver plugin_defaults
+        for (context, context_bindings) in resolver.get_plugin_defaults() {
+            if let KeyContext::Mode(mode_name) = context {
+                let context_str = format!("mode:{}", mode_name);
+                // Use mode_name as section name (plugin_name is set later via metadata)
+                let section = mode_name.clone();
+                for ((key_code, modifiers), action) in context_bindings {
+                    let key_display = format_keybinding(key_code, modifiers);
+                    let seen_key = (key_display.clone(), context_str.clone());
+                    // Skip if already overridden by a user custom binding
+                    if seen.contains_key(&seen_key) {
+                        continue;
+                    }
+                    let command = action.to_action_str();
+                    let action_display = KeybindingResolver::format_action_from_str(&command);
+                    let idx = bindings.len();
+                    seen.insert(seen_key, idx);
+                    bindings.push(ResolvedBinding {
+                        key_display,
+                        action: command,
+                        action_display,
+                        context: context_str.clone(),
+                        source: BindingSource::Plugin,
+                        key_code: *key_code,
+                        modifiers: *modifiers,
+                        is_chord: false,
+                        plugin_name: Some(section.clone()),
+                    });
                 }
-                let action_display = KeybindingResolver::format_action_from_str(command);
-                let idx = bindings.len();
-                seen.insert(seen_key, idx);
-                bindings.push(ResolvedBinding {
-                    key_display,
-                    action: command.clone(),
-                    action_display,
-                    context: context_str.clone(),
-                    source: BindingSource::Plugin,
-                    key_code: *key_code,
-                    modifiers: *modifiers,
-                    is_chord: false,
-                    plugin_name: Some(section.clone()),
-                });
             }
         }
 

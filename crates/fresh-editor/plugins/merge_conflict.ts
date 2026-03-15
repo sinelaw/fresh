@@ -138,7 +138,6 @@ const colors = {
 // Uses ] and [ for conflict navigation to avoid overriding j/k
 editor.defineMode(
   "merge-conflict",
-  "normal", // inherit from normal mode for cursor movement
   [
     // Conflict navigation (use ] and [ to avoid overriding j/k cursor movement)
     ["]", "merge_next_conflict"],
@@ -165,7 +164,6 @@ editor.defineMode(
 // Define merge-result mode for the editable RESULT panel
 editor.defineMode(
   "merge-result",
-  "normal", // inherit from normal mode for editing
   [
     // Navigation - use C-j/C-k to avoid conflicting with C-p (command palette)
     ["C-j", "merge_next_conflict"],

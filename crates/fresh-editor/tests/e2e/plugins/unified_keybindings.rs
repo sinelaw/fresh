@@ -25,7 +25,7 @@ fn test_plugin_mode_bindings_in_keybinding_editor() {
     let test_plugin = r###"
 const editor = getEditor();
 
-editor.defineMode("tst-unikeys", null, [
+editor.defineMode("tst-unikeys", [
     ["Enter", "test_confirm_action"],
     ["d", "test_delete_action"],
     ["q", "test_quit_action"],
@@ -105,7 +105,7 @@ fn test_expand_plugin_section_edit_and_save() {
     let test_plugin = r###"
 const editor = getEditor();
 
-editor.defineMode("tst-sections", null, [
+editor.defineMode("tst-sections", [
     ["Enter", "sect_confirm"],
     ["d", "sect_delete"],
     ["q", "sect_quit"],

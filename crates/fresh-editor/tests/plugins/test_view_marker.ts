@@ -18,7 +18,6 @@ const TEST_NAMESPACE = "test-view-marker";
 // Define a simple mode for testing
 editor.defineMode(
   "test-view-marker",
-  "normal",  // parent mode
   [
     ["q", "test_view_marker_close"],
   ],

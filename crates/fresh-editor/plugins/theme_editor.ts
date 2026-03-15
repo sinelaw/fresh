@@ -476,7 +476,6 @@ const SHORTCUTS = {
 
 editor.defineMode(
   "theme-editor",
-  "normal",
   [
     // Navigation
     ["Return", "theme_editor_enter"],

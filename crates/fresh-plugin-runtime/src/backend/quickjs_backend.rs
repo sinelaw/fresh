@@ -2336,7 +2336,6 @@ impl JsEditorApi {
     pub fn define_mode(
         &self,
         name: String,
-        parent: Option<String>,
         bindings_arr: Vec<Vec<String>>,
         read_only: rquickjs::function::Opt<bool>,
         allow_text_input: rquickjs::function::Opt<bool>,
@@ -2384,7 +2383,6 @@ impl JsEditorApi {
         self.command_sender
             .send(PluginCommand::DefineMode {
                 name,
-                parent,
                 bindings,
                 read_only: read_only.0.unwrap_or(false),
                 allow_text_input: allow_text,
@@ -5024,7 +5022,7 @@ mod tests {
             .execute_js(
                 r#"
             const editor = getEditor();
-            editor.defineMode("test-mode", null, [
+            editor.defineMode("test-mode", [
                 ["a", "action_a"],
                 ["b", "action_b"]
             ]);
@@ -5037,14 +5035,12 @@ mod tests {
         match cmd {
             PluginCommand::DefineMode {
                 name,
-                parent,
                 bindings,
                 read_only,
                 allow_text_input,
                 plugin_name,
             } => {
                 assert_eq!(name, "test-mode");
-                assert!(parent.is_none());
                 assert_eq!(bindings.len(), 2);
                 assert_eq!(bindings[0], ("a".to_string(), "action_a".to_string()));
                 assert_eq!(bindings[1], ("b".to_string(), "action_b".to_string()));

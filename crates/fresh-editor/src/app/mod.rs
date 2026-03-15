@@ -1711,36 +1711,6 @@ impl Editor {
         self.active_buffer_mode().or(self.editor_mode.as_deref())
     }
 
-    /// Resolve a keybinding for the current mode.
-    ///
-    /// Checks buffer-local mode first (for virtual buffers), then falls back
-    /// to the global editor mode. Returns the command name if found.
-    pub fn resolve_mode_keybinding(
-        &self,
-        code: KeyCode,
-        modifiers: KeyModifiers,
-    ) -> Option<String> {
-        if let Some(mode_name) = self.active_buffer_mode() {
-            if let Some(binding) = self
-                .mode_registry
-                .resolve_keybinding(mode_name, code, modifiers)
-            {
-                return Some(binding);
-            }
-        }
-
-        if let Some(ref global_mode) = self.editor_mode {
-            if let Some(binding) =
-                self.mode_registry
-                    .resolve_keybinding(global_mode, code, modifiers)
-            {
-                return Some(binding);
-            }
-        }
-
-        None
-    }
-
     /// Check if LSP has any active progress tasks (e.g., indexing)
     pub fn has_active_lsp_progress(&self) -> bool {
         !self.lsp_progress.is_empty()
@@ -5556,20 +5526,12 @@ impl Editor {
             }
             PluginCommand::DefineMode {
                 name,
-                parent,
                 bindings,
                 read_only,
                 allow_text_input,
                 plugin_name,
             } => {
-                self.handle_define_mode(
-                    name,
-                    parent,
-                    bindings,
-                    read_only,
-                    allow_text_input,
-                    plugin_name,
-                );
+                self.handle_define_mode(name, bindings, read_only, allow_text_input, plugin_name);
             }
 
             // ==================== File/Navigation Commands ====================
