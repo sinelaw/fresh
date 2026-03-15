@@ -471,6 +471,8 @@ struct LeftMarginContext<'a> {
     fold_indicators: &'a BTreeMap<usize, FoldIndicator>,
     /// Line-start byte of the cursor line (for relative line numbers and cursor highlight)
     cursor_line_start_byte: usize,
+    /// 0-indexed line number of the cursor line (for relative line number calculation)
+    cursor_line_number: usize,
     /// Whether to show relative line numbers
     relative_line_numbers: bool,
     /// Whether to show line numbers in the gutter
@@ -586,7 +588,7 @@ fn render_left_margin(
             ctx.gutter_num + 1
         } else {
             // Show relative distance for other lines
-            ctx.gutter_num.abs_diff(ctx.cursor_line_start_byte)
+            ctx.gutter_num.abs_diff(ctx.cursor_line_number)
         };
         let rendered_text = format!(
             "{:>width$}",
@@ -4482,6 +4484,7 @@ impl SplitRenderer {
                     line_indicators,
                     fold_indicators: &decorations.fold_indicators,
                     cursor_line_start_byte,
+                    cursor_line_number: state.primary_cursor_line_number.value(),
                     relative_line_numbers,
                     show_line_numbers,
                     byte_offset_mode,

@@ -374,7 +374,17 @@ impl EditorState {
         deleted_text: &str,
     ) {
         let len = range.len();
-        let newlines_deleted = deleted_text.matches('\n').count();
+
+        // Count newlines deleted BEFORE the primary cursor's original position.
+        // For backspace: cursor was at range.end, so all deleted newlines are before it.
+        // For forward delete: cursor was at range.start, so no deleted newlines are before it.
+        let primary_newlines_removed = if cursor_id == cursors.primary_id() {
+            let cursor_pos = cursors.get(cursor_id).map_or(range.start, |c| c.position);
+            let bytes_before_cursor = cursor_pos.saturating_sub(range.start).min(len);
+            deleted_text[..bytes_before_cursor].matches('\n').count()
+        } else {
+            0
+        };
 
         // CRITICAL: Adjust markers BEFORE modifying buffer
         self.marker_list.adjust_for_delete(range.start, len);
@@ -399,16 +409,16 @@ impl EditorState {
         }
 
         // Update primary cursor line number if this was the primary cursor
-        if cursor_id == cursors.primary_id() {
+        if cursor_id == cursors.primary_id() && primary_newlines_removed > 0 {
             self.primary_cursor_line_number = match self.primary_cursor_line_number {
                 LineNumber::Absolute(line) => {
-                    LineNumber::Absolute(line.saturating_sub(newlines_deleted))
+                    LineNumber::Absolute(line.saturating_sub(primary_newlines_removed))
                 }
                 LineNumber::Relative {
                     line,
                     from_cached_line,
                 } => LineNumber::Relative {
-                    line: line.saturating_sub(newlines_deleted),
+                    line: line.saturating_sub(primary_newlines_removed),
                     from_cached_line,
                 },
             };
