@@ -5,9 +5,48 @@
  *
  * This is a simple example plugin that demonstrates:
  * - Querying editor state (buffer info, cursor position)
+ * - Obtaining selected text and replacing selection (primary cursor, buffer text)
  * - Sending commands (status messages, text insertion)
  * - Using async/await for plugin actions
  */
+// Global action: Replace selection with quoted selection
+async function quote_selection() : void {
+  const bufferId = editor.getActiveBufferId();
+  const cursorInfo = editor.getPrimaryCursor();
+  if (! cursorInfo.selection) {
+      editor.setStatus(`Nothing is highlighted!`);
+  }
+  const startSelection = cursorInfo.selection.start;
+  const endSelection = cursorInfo.selection.end;
+  const bufText = await 
+      editor.getBufferText(bufferId, startSelection, endSelection);
+
+  const success1 = editor.insertText(bufferId, startSelection, "'");
+  if (!success1) {
+    editor.setStatus("Failed to insert start quote");
+    return;
+  }
+
+  const success2 = editor.insertText(bufferId, endSelection+1, "'");
+  if (!success2) {
+    editor.setStatus("Failed to insert end quote");
+    return
+  }
+  const statusMessage = `Quoted: ${bufText}`;
+  editor.setStatus(statusMessage)
+}
+registerHandler("quote_selection", quote_selection);
+ 
+// Global action: Display primary cursor information
+function show_cursor_info() : void {
+  const cursorInfo = editor.getPrimaryCursor();
+  
+  const status = `Cursor at ${cursorInfo.position} Selection start-${cursorInfo.selection.start}, end-${cursorInfo.selection.end}`;
+
+  editor.setStatus(status);
+  editor.debug(`Cursor info: ${status}`);
+}
+registerHandler("show_cursor_info", show_cursor_info);
 
 // Global action: Display buffer information
 function show_buffer_info() : void {
@@ -87,6 +126,18 @@ async function async_demo() : Promise<void> {
 registerHandler("async_demo", async_demo);
 
 // Register commands so they appear in the command palette (Ctrl+P)
+editor.registerCommand(
+  "Hello: Quote Selection",
+  "Quote Selection",
+  "quote_selection"
+);
+
+editor.registerCommand(
+  "Hello: Show Cursor Info",
+  "Display primary cursor information",
+  "show_cursor_info"
+);
+
 editor.registerCommand(
   "Hello: Show Buffer Info",
   "Display active buffer information",
