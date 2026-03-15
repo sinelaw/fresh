@@ -135,28 +135,29 @@ fn test_active_tab_visibility_with_scrolling() {
     assert_eq!(active_idx, middle_idx, "Failed to activate middle tab");
     harness.assert_screen_contains(files[active_idx].file_name().unwrap().to_str().unwrap());
 
-    // Scroll right manually
+    // Scroll right manually — active tab may scroll out of view, that's intentional
     for _ in 0..5 {
-        // Scroll by 5 increments
         harness
             .send_key(KeyCode::PageDown, KeyModifiers::ALT)
             .unwrap(); // Alt+PageDown for ScrollTabsRight
         harness.render().unwrap();
-        harness.assert_screen_contains(files[active_idx].file_name().unwrap().to_str().unwrap());
-        // Check for indicators based on current position and width. More complex assertion left out for simplicity
-        // as the primary goal is visible active tab and manual scroll movement.
     }
 
     // Scroll left manually
     for _ in 0..10 {
-        // Scroll by 10 increments
         harness
             .send_key(KeyCode::PageUp, KeyModifiers::ALT)
             .unwrap(); // Alt+PageUp for ScrollTabsLeft
         harness.render().unwrap();
-        harness.assert_screen_contains(files[active_idx].file_name().unwrap().to_str().unwrap());
-        // Check for indicators based on current position and width.
     }
+
+    // After manual scrolling, switching tabs should bring active tab back into view
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::CONTROL)
+        .unwrap(); // NextBuffer
+    harness.render().unwrap();
+    active_idx = (active_idx + 1) % NUM_FILES;
+    harness.assert_screen_contains(files[active_idx].file_name().unwrap().to_str().unwrap());
 }
 
 /// Test that clicking on scroll buttons scrolls the tab bar

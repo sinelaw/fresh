@@ -138,22 +138,50 @@ pub fn scroll_to_show_tab(
     let preferred_position = max_width / 4;
     let target_offset = tab_start.saturating_sub(preferred_position);
 
-    // Clamp to valid range (0 to max_offset)
-    let max_offset = total_width.saturating_sub(max_width);
+    // Ensure the active tab is fully visible, accounting for scroll indicators.
+    // When offset > 0, a "<" indicator uses 1 column on the left.
+    // When content extends past the right edge, a ">" uses 1 column on the right.
+    // The visible content window is [offset .. offset+available) where
+    // available = max_width - indicator_columns.
+    //
+    // max_offset must also account for the left indicator: when scrolled to the
+    // end, the "<" takes 1 column, so we can see only max_width-1 content chars.
+    let max_offset_with_indicator = total_width.saturating_sub(max_width.saturating_sub(1));
+    let max_offset_no_indicator = total_width.saturating_sub(max_width);
+    let max_offset = if total_width > max_width {
+        max_offset_with_indicator
+    } else {
+        0
+    };
     let mut result = target_offset.min(max_offset);
 
-    // But ensure the tab is fully visible - if clamping pushed the tab off screen,
-    // adjust to show at least the tab
-    if tab_end > result + max_width {
-        // Tab is past right edge, scroll right to show it
-        result = tab_end.saturating_sub(max_width);
+    // Use worst-case (both indicators) for the right-edge check to avoid
+    // circular dependency between offset and indicator presence.
+    let available_worst = max_width.saturating_sub(2);
+
+    if tab_end > result + available_worst {
+        // Tab extends past the visible window — scroll right so tab_end
+        // aligns with the right edge of the visible content area.
+        result = tab_end.saturating_sub(available_worst);
     }
+    if tab_start < result {
+        // Tab starts before the visible window, scroll left to reveal it.
+        // If this brings us to 0, no left indicator needed.
+        result = tab_start;
+    }
+    // Final clamp — use the no-indicator max if result is 0, otherwise the
+    // indicator-aware max.
+    let effective_max = if result > 0 {
+        max_offset
+    } else {
+        max_offset_no_indicator
+    };
+    result = result.min(effective_max);
 
     tracing::debug!(
         "scroll_to_show_tab: idx={}, tab={}..{}, target={}, result={}, total={}, max_width={}, max_offset={}",
         active_idx, tab_start, tab_end, target_offset, result, total_width, max_width, max_offset
     );
-
     result
 }
 
@@ -497,7 +525,6 @@ impl TabsRenderer {
             "render_for_split: tab_scroll_offset={}, max_offset={}, offset={}, total={}, max_width={}",
             tab_scroll_offset, max_offset, offset, total_width, max_width
         );
-
         // Indicators reserve space based on scroll position
         let show_left = offset > 0;
         let show_right = total_width.saturating_sub(offset) > max_width;
@@ -721,6 +748,93 @@ mod tests {
         let offset = scroll_to_show_tab(&widths, 2, 0, 15);
         // Tab 2 starts at 20, ends at 30; need to scroll to show it
         assert!(offset > 0);
+    }
+
+    /// Helper: given a scroll offset, compute the visible content range
+    /// accounting for scroll indicators (1 char each).
+    fn visible_range(offset: usize, total_width: usize, max_width: usize) -> (usize, usize) {
+        let show_left = offset > 0;
+        let show_right = total_width.saturating_sub(offset) > max_width;
+        let available = max_width
+            .saturating_sub(if show_left { 1 } else { 0 })
+            .saturating_sub(if show_right { 1 } else { 0 });
+        (offset, offset + available)
+    }
+
+    /// Property: scroll_to_show_tab must produce an offset where the active tab
+    /// is fully contained within the visible content range (after accounting for
+    /// scroll indicator columns).
+    #[test]
+    fn scroll_to_show_tab_active_always_visible() {
+        // Simulate the e2e scenario: 15 tabs with long names in a 40-char-wide bar.
+        // tab_widths includes separators: [tab0, 1, tab1, 1, tab2, ...]
+        // Active index for tab N is N*2 (matching ensure_active_tab_visible logic).
+        let tab_content_width = 33; // " long_file_name_number_XX.txt × "
+        let num_tabs = 15;
+        let max_width = 40;
+
+        let mut tab_widths = Vec::new();
+        for i in 0..num_tabs {
+            if i > 0 {
+                tab_widths.push(1); // separator
+            }
+            tab_widths.push(tab_content_width);
+        }
+        let total_width: usize = tab_widths.iter().sum();
+
+        for tab_idx in 0..num_tabs {
+            let active_width_idx = if tab_idx == 0 { 0 } else { tab_idx * 2 };
+            let tab_start: usize = tab_widths[..active_width_idx].iter().sum();
+            let tab_end = tab_start + tab_widths[active_width_idx];
+
+            let offset = scroll_to_show_tab(&tab_widths, active_width_idx, 0, max_width);
+            let (vis_start, vis_end) = visible_range(offset, total_width, max_width);
+
+            assert!(
+                tab_start >= vis_start && tab_end <= vis_end,
+                "Tab {} (width_idx={}, {}..{}) not fully visible in range {}..{} (offset={})",
+                tab_idx,
+                active_width_idx,
+                tab_start,
+                tab_end,
+                vis_start,
+                vis_end,
+                offset
+            );
+        }
+    }
+
+    /// Property: same as above but with varying tab widths and screen sizes
+    #[test]
+    fn scroll_to_show_tab_property_varied_sizes() {
+        let test_cases: Vec<(Vec<usize>, usize)> = vec![
+            (vec![10, 15, 20, 10, 25], 30),
+            (vec![5; 20], 20),
+            (vec![40], 40),       // single tab exactly fills
+            (vec![50], 40),       // single tab wider than screen
+            (vec![3, 3, 3], 100), // all fit easily
+        ];
+
+        for (tab_widths, max_width) in test_cases {
+            let total_width: usize = tab_widths.iter().sum();
+            for active_idx in 0..tab_widths.len() {
+                let tab_start: usize = tab_widths[..active_idx].iter().sum();
+                let tab_end = tab_start + tab_widths[active_idx];
+                let tab_w = tab_widths[active_idx];
+
+                let offset = scroll_to_show_tab(&tab_widths, active_idx, 0, max_width);
+                let (vis_start, vis_end) = visible_range(offset, total_width, max_width);
+
+                // Only check if the tab can physically fit in the viewport
+                if tab_w <= max_width.saturating_sub(2) || (active_idx == 0 && tab_w <= max_width) {
+                    assert!(
+                        tab_start >= vis_start && tab_end <= vis_end,
+                        "Tab {} ({}..{}, w={}) not visible in {}..{} (offset={}, max_width={}, widths={:?})",
+                        active_idx, tab_start, tab_end, tab_w, vis_start, vis_end, offset, max_width, tab_widths
+                    );
+                }
+            }
+        }
     }
 
     #[test]

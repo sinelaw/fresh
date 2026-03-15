@@ -83,8 +83,13 @@ pub struct KeybindingEditor {
 
 impl KeybindingEditor {
     /// Create a new keybinding editor from config and resolver
-    pub fn new(config: &Config, resolver: &KeybindingResolver, config_file_path: String) -> Self {
-        let bindings = Self::resolve_all_bindings(config, resolver);
+    pub fn new(
+        config: &Config,
+        resolver: &KeybindingResolver,
+        mode_registry: &crate::input::buffer_mode::ModeRegistry,
+        config_file_path: String,
+    ) -> Self {
+        let bindings = Self::resolve_all_bindings(config, resolver, mode_registry);
         let filtered_indices: Vec<usize> = (0..bindings.len()).collect();
 
         // Collect available action names (include plugin action names from plugin defaults)
@@ -170,6 +175,7 @@ impl KeybindingEditor {
     fn resolve_all_bindings(
         config: &Config,
         resolver: &KeybindingResolver,
+        mode_registry: &crate::input::buffer_mode::ModeRegistry,
     ) -> Vec<ResolvedBinding> {
         let mut bindings = Vec::new();
         let mut seen: HashMap<(String, String), usize> = HashMap::new(); // (key_display, context) -> index
@@ -204,8 +210,11 @@ impl KeybindingEditor {
         for (context, context_bindings) in resolver.get_plugin_defaults() {
             if let KeyContext::Mode(mode_name) = context {
                 let context_str = format!("mode:{}", mode_name);
-                // Use mode_name as section name (plugin_name is set later via metadata)
-                let section = mode_name.clone();
+                // Use plugin_name from mode registry for section grouping
+                let section = mode_registry
+                    .get(mode_name)
+                    .and_then(|m| m.plugin_name.clone())
+                    .unwrap_or_else(|| mode_name.clone());
                 for ((key_code, modifiers), action) in context_bindings {
                     let key_display = format_keybinding(key_code, modifiers);
                     let seen_key = (key_display.clone(), context_str.clone());
