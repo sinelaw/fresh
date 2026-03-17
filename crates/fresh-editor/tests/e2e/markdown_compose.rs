@@ -3976,10 +3976,7 @@ fn test_toggle_compose_all_affects_all_buffers() {
 
     // Active buffer (two.md) should be back in source mode (line numbers)
     let screen = harness.screen_to_string();
-    let content_lines: Vec<&str> = screen
-        .lines()
-        .filter(|l| l.contains("File Two"))
-        .collect();
+    let content_lines: Vec<&str> = screen.lines().filter(|l| l.contains("File Two")).collect();
     assert!(
         content_lines.iter().any(|l| l.contains("│")),
         "two.md should be back in source mode with line numbers after toggle all OFF: {}",
@@ -3994,10 +3991,7 @@ fn test_toggle_compose_all_affects_all_buffers() {
         .unwrap();
 
     let screen = harness.screen_to_string();
-    let content_lines: Vec<&str> = screen
-        .lines()
-        .filter(|l| l.contains("File One"))
-        .collect();
+    let content_lines: Vec<&str> = screen.lines().filter(|l| l.contains("File One")).collect();
     assert!(
         content_lines.iter().any(|l| l.contains("│")),
         "one.md should also be back in source mode after toggle all OFF: {}",

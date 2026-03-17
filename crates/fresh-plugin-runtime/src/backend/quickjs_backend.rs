@@ -7210,4 +7210,215 @@ mod tests {
                 assert!(error.contains("nonexistent-plugin"));
             });
     }
+
+    #[test]
+    fn test_api_set_global_state() {
+        let (mut backend, rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            editor.setGlobalState("myKey", { enabled: true, count: 42 });
+        "#,
+                "test_plugin.js",
+            )
+            .unwrap();
+
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PluginCommand::SetGlobalState {
+                plugin_name,
+                key,
+                value,
+            } => {
+                assert_eq!(plugin_name, "test_plugin");
+                assert_eq!(key, "myKey");
+                let v = value.unwrap();
+                assert_eq!(v["enabled"], serde_json::json!(true));
+                assert_eq!(v["count"], serde_json::json!(42));
+            }
+            _ => panic!("Expected SetGlobalState command, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_api_set_global_state_delete() {
+        let (mut backend, rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            editor.setGlobalState("myKey", null);
+        "#,
+                "test_plugin.js",
+            )
+            .unwrap();
+
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PluginCommand::SetGlobalState {
+                plugin_name,
+                key,
+                value,
+            } => {
+                assert_eq!(plugin_name, "test_plugin");
+                assert_eq!(key, "myKey");
+                assert!(value.is_none(), "null should delete the key");
+            }
+            _ => panic!("Expected SetGlobalState command, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_api_get_global_state_roundtrip() {
+        let (mut backend, _rx) = create_test_backend();
+
+        // Set a value, then immediately read it back (write-through)
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            editor.setGlobalState("flag", true);
+            globalThis._result = editor.getGlobalState("flag");
+        "#,
+                "test_plugin.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test_plugin")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let result: bool = global.get("_result").unwrap();
+                assert!(
+                    result,
+                    "getGlobalState should return the value set by setGlobalState"
+                );
+            });
+    }
+
+    #[test]
+    fn test_api_get_global_state_missing_key() {
+        let (mut backend, _rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis._result = editor.getGlobalState("nonexistent");
+            globalThis._isUndefined = (editor.getGlobalState("nonexistent") === undefined);
+        "#,
+                "test_plugin.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test_plugin")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let is_undefined: bool = global.get("_isUndefined").unwrap();
+                assert!(
+                    is_undefined,
+                    "getGlobalState for missing key should return undefined"
+                );
+            });
+    }
+
+    #[test]
+    fn test_api_global_state_isolation_between_plugins() {
+        // Two plugins using the same key name should not see each other's state
+        let (tx, _rx) = mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let services = Arc::new(TestServiceBridge::new());
+
+        // Plugin A sets "flag" = true
+        let mut backend_a =
+            QuickJsBackend::with_state(state_snapshot.clone(), tx.clone(), services.clone())
+                .unwrap();
+        backend_a
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            editor.setGlobalState("flag", "from_plugin_a");
+        "#,
+                "plugin_a.js",
+            )
+            .unwrap();
+
+        // Plugin B sets "flag" = "from_plugin_b"
+        let mut backend_b =
+            QuickJsBackend::with_state(state_snapshot.clone(), tx.clone(), services.clone())
+                .unwrap();
+        backend_b
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            editor.setGlobalState("flag", "from_plugin_b");
+        "#,
+                "plugin_b.js",
+            )
+            .unwrap();
+
+        // Plugin A should still see its own value
+        backend_a
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis._aValue = editor.getGlobalState("flag");
+        "#,
+                "plugin_a.js",
+            )
+            .unwrap();
+
+        backend_a
+            .plugin_contexts
+            .borrow()
+            .get("plugin_a")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let a_value: String = global.get("_aValue").unwrap();
+                assert_eq!(
+                    a_value, "from_plugin_a",
+                    "Plugin A should see its own value, not plugin B's"
+                );
+            });
+
+        // Plugin B should see its own value
+        backend_b
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis._bValue = editor.getGlobalState("flag");
+        "#,
+                "plugin_b.js",
+            )
+            .unwrap();
+
+        backend_b
+            .plugin_contexts
+            .borrow()
+            .get("plugin_b")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let b_value: String = global.get("_bValue").unwrap();
+                assert_eq!(
+                    b_value, "from_plugin_b",
+                    "Plugin B should see its own value, not plugin A's"
+                );
+            });
+    }
 }
