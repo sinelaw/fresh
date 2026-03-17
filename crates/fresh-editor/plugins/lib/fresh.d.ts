@@ -1279,7 +1279,7 @@ interface EditorAPI {
 	/**
 	* Define a buffer mode (takes bindings as array of [key, command] pairs)
 	*/
-	defineMode(name: string, parent: string | null, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean): boolean;
+	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean): boolean;
 	/**
 	* Set the global editor mode
 	*/
