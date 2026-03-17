@@ -784,6 +784,15 @@ pub struct EditorStateSnapshot {
     #[serde(skip)]
     #[ts(skip)]
     pub keybinding_labels: HashMap<String, String>,
+
+    /// Plugin-managed global state, isolated per plugin.
+    /// Outer key is plugin name, inner key is the state key set by the plugin.
+    /// TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
+    /// Currently we isolate by plugin name, but we may want a more robust approach
+    /// (e.g. preventing plugins from reading each other's state, or providing
+    /// explicit cross-plugin state sharing APIs).
+    #[ts(type = "any")]
+    pub plugin_global_states: HashMap<String, HashMap<String, serde_json::Value>>,
 }
 
 impl EditorStateSnapshot {
@@ -809,6 +818,7 @@ impl EditorStateSnapshot {
             plugin_view_states: HashMap::new(),
             plugin_view_states_split: 0,
             keybinding_labels: HashMap::new(),
+            plugin_global_states: HashMap::new(),
         }
     }
 }
@@ -970,6 +980,16 @@ pub enum PluginCommand {
     /// Stored in BufferViewState.plugin_state and persisted across sessions.
     SetViewState {
         buffer_id: BufferId,
+        key: String,
+        #[ts(type = "any")]
+        value: Option<serde_json::Value>,
+    },
+
+    /// Set plugin-managed global state (not tied to any buffer or split).
+    /// Isolated per plugin by plugin_name.
+    /// TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
+    SetGlobalState {
+        plugin_name: String,
         key: String,
         #[ts(type = "any")]
         value: Option<serde_json::Value>,

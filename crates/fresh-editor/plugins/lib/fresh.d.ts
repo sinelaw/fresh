@@ -1361,6 +1361,18 @@ interface EditorAPI {
 	*/
 	getViewState(bufferId: number, key: string): unknown;
 	/**
+	* Set plugin-managed global state (not tied to any buffer or split).
+	* State is automatically isolated per plugin.
+	* TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
+	*/
+	setGlobalState(key: string, value: unknown): boolean;
+	/**
+	* Get plugin-managed global state (reads from snapshot).
+	* State is automatically isolated per plugin.
+	* TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
+	*/
+	getGlobalState(key: string): unknown;
+	/**
 	* Create a scroll sync group for anchor-based synchronized scrolling
 	*/
 	createScrollSyncGroup(groupId: number, leftSplit: number, rightSplit: number): boolean;

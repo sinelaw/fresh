@@ -860,6 +860,8 @@ mod tests {
             "setViewMode",
             "setViewState",
             "getViewState",
+            "setGlobalState",
+            "getGlobalState",
             "setLineWrap",
             "createScrollSyncGroup",
             "setScrollSyncAnchors",

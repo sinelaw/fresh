@@ -2692,6 +2692,71 @@ impl JsEditorApi {
         Ok(Value::new_undefined(ctx.clone()))
     }
 
+    // === Plugin Global State ===
+
+    /// Set plugin-managed global state (write-through to snapshot + command for persistence).
+    /// State is automatically isolated per plugin using the plugin's name.
+    /// TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
+    pub fn set_global_state<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        key: String,
+        value: Value<'js>,
+    ) -> bool {
+        // Convert JS value to serde_json::Value
+        let json_value = if value.is_undefined() || value.is_null() {
+            None
+        } else {
+            Some(js_to_json(&ctx, value))
+        };
+
+        // Write-through: update the snapshot immediately so getGlobalState sees it
+        if let Ok(mut snapshot) = self.state_snapshot.write() {
+            if let Some(ref json_val) = json_value {
+                snapshot
+                    .plugin_global_states
+                    .entry(self.plugin_name.clone())
+                    .or_default()
+                    .insert(key.clone(), json_val.clone());
+            } else {
+                // null/undefined = delete the key
+                if let Some(map) = snapshot.plugin_global_states.get_mut(&self.plugin_name) {
+                    map.remove(&key);
+                    if map.is_empty() {
+                        snapshot.plugin_global_states.remove(&self.plugin_name);
+                    }
+                }
+            }
+        }
+
+        // Send command to persist in Editor.plugin_global_state
+        self.command_sender
+            .send(PluginCommand::SetGlobalState {
+                plugin_name: self.plugin_name.clone(),
+                key,
+                value: json_value,
+            })
+            .is_ok()
+    }
+
+    /// Get plugin-managed global state (reads from snapshot).
+    /// State is automatically isolated per plugin using the plugin's name.
+    /// TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
+    pub fn get_global_state<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        key: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        if let Ok(snapshot) = self.state_snapshot.read() {
+            if let Some(map) = snapshot.plugin_global_states.get(&self.plugin_name) {
+                if let Some(json_val) = map.get(&key) {
+                    return json_to_js_value(&ctx, json_val);
+                }
+            }
+        }
+        Ok(Value::new_undefined(ctx.clone()))
+    }
+
     // === Scroll Sync ===
 
     /// Create a scroll sync group for anchor-based synchronized scrolling

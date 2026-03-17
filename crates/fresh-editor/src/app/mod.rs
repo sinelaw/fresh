@@ -757,6 +757,10 @@ pub struct Editor {
     /// Plugin-defined contexts like "config-editor" that control command availability
     active_custom_contexts: HashSet<String>,
 
+    /// Plugin-managed global state, isolated per plugin name.
+    /// Outer key is plugin name, inner key is the state key set by the plugin.
+    plugin_global_state: HashMap<String, HashMap<String, serde_json::Value>>,
+
     /// Global editor mode for modal editing (e.g., "vi-normal", "vi-insert")
     /// When set, this mode's keybindings take precedence over normal key handling
     editor_mode: Option<String>,
@@ -1486,6 +1490,7 @@ impl Editor {
             last_auto_recovery_save: time_source.now(),
             last_persistent_auto_save: time_source.now(),
             active_custom_contexts: HashSet::new(),
+            plugin_global_state: HashMap::new(),
             editor_mode: None,
             warning_log: None,
             status_log_path: None,
@@ -5113,6 +5118,18 @@ impl Editor {
             // Update editor mode (for vi mode and other modal editing)
             snapshot.editor_mode = self.editor_mode.clone();
 
+            // Update plugin global states from Rust-side store.
+            // Merge using or_insert to preserve JS-side write-through entries.
+            for (plugin_name, state_map) in &self.plugin_global_state {
+                let entry = snapshot
+                    .plugin_global_states
+                    .entry(plugin_name.clone())
+                    .or_default();
+                for (key, value) in state_map {
+                    entry.entry(key.clone()).or_insert_with(|| value.clone());
+                }
+            }
+
             // Update plugin view states from active split's BufferViewState.plugin_state.
             // If the active split changed, fully repopulate. Otherwise, merge using
             // or_insert to preserve JS-side write-through entries that haven't
@@ -5411,6 +5428,13 @@ impl Editor {
                 value,
             } => {
                 self.handle_set_view_state(buffer_id, key, value);
+            }
+            PluginCommand::SetGlobalState {
+                plugin_name,
+                key,
+                value,
+            } => {
+                self.handle_set_global_state(plugin_name, key, value);
             }
             PluginCommand::RefreshLines { buffer_id } => {
                 self.handle_refresh_lines(buffer_id);

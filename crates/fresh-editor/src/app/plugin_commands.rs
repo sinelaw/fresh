@@ -1098,6 +1098,31 @@ impl Editor {
         }
     }
 
+    /// Handle SetGlobalState command — persist plugin-level global state
+    pub(super) fn handle_set_global_state(
+        &mut self,
+        plugin_name: String,
+        key: String,
+        value: Option<serde_json::Value>,
+    ) {
+        match value {
+            Some(v) => {
+                self.plugin_global_state
+                    .entry(plugin_name)
+                    .or_default()
+                    .insert(key, v);
+            }
+            None => {
+                if let Some(map) = self.plugin_global_state.get_mut(&plugin_name) {
+                    map.remove(&key);
+                    if map.is_empty() {
+                        self.plugin_global_state.remove(&plugin_name);
+                    }
+                }
+            }
+        }
+    }
+
     /// Handle SetLineNumbers command
     ///
     /// Sets line number visibility on the active split's per-buffer view state,
