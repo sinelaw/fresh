@@ -485,6 +485,8 @@ editor.defineMode(
     ["S-Tab", "theme_editor_focus_shift_tab"],
     ["Up", "theme_editor_nav_up"],
     ["Down", "theme_editor_nav_down"],
+    ["PageUp", "theme_editor_page_up"],
+    ["PageDown", "theme_editor_page_down"],
     ["Left", "theme_editor_nav_left"],
     ["Right", "theme_editor_nav_right"],
     ["Escape", "theme_editor_escape"],
@@ -2115,6 +2117,34 @@ function theme_editor_nav_up() : void {
   }
 }
 registerHandler("theme_editor_nav_up", theme_editor_nav_up);
+
+/**
+ * Page Down - jump a page of items in the tree
+ */
+function theme_editor_page_down() : void {
+  if (state.bufferId === null) return;
+
+  if (state.focusPanel === "tree") {
+    const pageSize = Math.max(1, Math.max(8, state.viewportHeight - 2) - 1);
+    state.selectedIndex = Math.min(state.visibleFields.length - 1, state.selectedIndex + pageSize);
+    updateDisplay();
+  }
+}
+registerHandler("theme_editor_page_down", theme_editor_page_down);
+
+/**
+ * Page Up - jump a page of items in the tree
+ */
+function theme_editor_page_up() : void {
+  if (state.bufferId === null) return;
+
+  if (state.focusPanel === "tree") {
+    const pageSize = Math.max(1, Math.max(8, state.viewportHeight - 2) - 1);
+    state.selectedIndex = Math.max(0, state.selectedIndex - pageSize);
+    updateDisplay();
+  }
+}
+registerHandler("theme_editor_page_up", theme_editor_page_up);
 
 /**
  * Navigate left/right - for picker grid navigation

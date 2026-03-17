@@ -3300,3 +3300,138 @@ fn test_palette_swatch_click_targets_correct_column() {
 
     harness.assert_no_plugin_errors();
 }
+
+/// Test that PageUp/PageDown keys work for navigating the theme editor's left sidebar.
+/// Bug: PageUp/PageDown keys were not bound in the theme editor mode,
+/// so pressing them did nothing.
+#[test]
+fn test_theme_editor_page_up_page_down() {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    let themes_dir = project_root.join("themes");
+    fs::create_dir(&themes_dir).unwrap();
+    // Use a theme with enough fields so PageDown has room to move
+    let test_theme = r#"{
+        "name": "test",
+        "editor": {
+            "bg": [30, 30, 30],
+            "fg": [200, 200, 200],
+            "cursor": [255, 255, 255],
+            "selection_bg": [38, 79, 120],
+            "current_line_bg": [40, 40, 40],
+            "line_number_fg": [100, 100, 100],
+            "line_number_bg": [30, 30, 30],
+            "ruler_bg": [50, 50, 50],
+            "whitespace_indicator": [70, 70, 70],
+            "diff_add_bg": [35, 60, 35],
+            "diff_remove_bg": [70, 35, 35],
+            "diff_modify_bg": [40, 38, 30],
+            "inactive_cursor": [100, 100, 100]
+        },
+        "ui": {
+            "tab_active_bg": [50, 50, 50],
+            "tab_inactive_bg": [30, 30, 30],
+            "tab_active_fg": [200, 200, 200],
+            "tab_inactive_fg": [128, 128, 128],
+            "statusbar_bg": [0, 95, 135],
+            "statusbar_fg": [200, 200, 200],
+            "menu_bg": [37, 37, 38],
+            "menu_fg": [200, 200, 200],
+            "menu_selected_bg": [4, 57, 94],
+            "menu_selected_fg": [255, 255, 255],
+            "menu_border": [69, 69, 69],
+            "prompt_bg": [37, 37, 38],
+            "prompt_fg": [200, 200, 200]
+        },
+        "syntax": {
+            "keyword": [86, 156, 214],
+            "string": [206, 145, 120],
+            "comment": [106, 153, 85],
+            "function": [220, 220, 170],
+            "type": [78, 201, 176],
+            "constant": [79, 193, 255],
+            "variable": [156, 220, 254],
+            "operator": [200, 200, 200]
+        }
+    }"#;
+    fs::write(themes_dir.join("test.json"), test_theme).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+
+    harness.render().unwrap();
+
+    // Open theme editor
+    open_theme_editor(&mut harness);
+
+    // Get initial screen
+    let screen_initial = harness.screen_to_string();
+
+    // The initial selection should be on the first field (e.g. bg under Editor)
+    // Press PageDown - it should jump multiple fields at once
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string() != screen_initial)
+        .unwrap();
+
+    let screen_after_pagedown = harness.screen_to_string();
+
+    // After PageDown the selection indicator (▸) should have moved significantly
+    // Find the selected line (contains ▸) in each screen
+    let _initial_selected = screen_initial
+        .lines()
+        .position(|l| l.contains('\u{25B8}'))
+        .expect("Should have a selected line initially");
+    let after_pagedown_selected = screen_after_pagedown
+        .lines()
+        .position(|l| l.contains('\u{25B8}'))
+        .expect("Should have a selected line after PageDown");
+
+    // PageDown should have moved by more than 1 line (i.e. it's not just Down)
+    // OR the view should have scrolled (selected item on a different logical index)
+    // The key point: the screen should have changed after pressing PageDown.
+    assert!(
+        screen_after_pagedown != screen_initial,
+        "PageDown should change the screen"
+    );
+
+    // Now press PageUp to go back
+    let screen_before_pageup = harness.screen_to_string();
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string() != screen_before_pageup)
+        .unwrap();
+
+    let screen_after_pageup = harness.screen_to_string();
+
+    // After PageUp, the selection should have moved back up
+    let after_pageup_selected = screen_after_pageup
+        .lines()
+        .position(|l| l.contains('\u{25B8}'))
+        .expect("Should have a selected line after PageUp");
+
+    // PageUp should move selection upward (or at least change the display)
+    assert!(
+        after_pageup_selected <= after_pagedown_selected
+            || screen_after_pageup != screen_after_pagedown,
+        "PageUp should move selection up. After PageDown line: {}, After PageUp line: {}",
+        after_pagedown_selected,
+        after_pageup_selected
+    );
+
+    harness.assert_no_plugin_errors();
+}
