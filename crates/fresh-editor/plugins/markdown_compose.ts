@@ -24,8 +24,13 @@ const config: MarkdownConfig = {
 
 // When true, compose/preview mode is automatically enabled for all open and
 // newly opened markdown buffers.  Toggled by the "Toggle Compose/Preview
-// (All Files)" command.
-let globalComposeEnabled = false;
+// (All Files)" command.  Persisted across sessions via global plugin state.
+function getGlobalComposeEnabled(): boolean {
+  return (editor.getGlobalState("globalComposeEnabled") as boolean) ?? false;
+}
+function setGlobalComposeEnabled(value: boolean): void {
+  editor.setGlobalState("globalComposeEnabled", value);
+}
 
 // Table column widths stored per-buffer-per-split via setViewState/getViewState.
 // Persisted across sessions and independent per split.
@@ -452,20 +457,21 @@ registerHandler("markdownToggleCompose", markdownToggleCompose);
 
 // Toggle compose/preview mode for ALL open (and future) markdown buffers.
 function markdownToggleComposeAll(): void {
-  globalComposeEnabled = !globalComposeEnabled;
+  const newValue = !getGlobalComposeEnabled();
+  setGlobalComposeEnabled(newValue);
 
   const buffers = editor.listBuffers();
   for (const buf of buffers) {
     if (!isMarkdownFile(buf.path)) continue;
 
-    if (globalComposeEnabled) {
+    if (newValue) {
       enableMarkdownCompose(buf.id);
     } else {
       disableMarkdownCompose(buf.id);
     }
   }
 
-  if (globalComposeEnabled) {
+  if (newValue) {
     editor.setStatus(editor.t("status.compose_all_on"));
   } else {
     editor.setStatus(editor.t("status.compose_all_off"));
@@ -1539,7 +1545,7 @@ function onMarkdownBufferActivated(data: { buffer_id: number }) : void {
       config.composeWidth = info.compose_width;
     }
     enableMarkdownCompose(bufferId);
-  } else if (globalComposeEnabled) {
+  } else if (getGlobalComposeEnabled()) {
     // Global compose/preview mode is active — auto-enable for newly opened
     // markdown buffers that aren't already in compose mode.
     enableMarkdownCompose(bufferId);
