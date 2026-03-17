@@ -8,6 +8,7 @@ pub mod block_selection;
 pub mod blog_showcases;
 pub mod buffer_lifecycle;
 pub mod buffer_settings_commands;
+pub mod capslock_shortcuts;
 pub mod case_conversion;
 pub mod command_palette;
 pub mod crash_repro;

@@ -9,18 +9,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Terminals vary in how they report certain keys:
 /// - BackTab already encodes Shift+Tab, but some terminals also set SHIFT —
 ///   strip the redundant SHIFT so bindings defined as "BackTab" match.
-/// - Uppercase letters may arrive as `Char('P')` + SHIFT — normalize to
-///   `Char('p')` + SHIFT to match how `parse_key_string("P")` stores them.
+/// - Uppercase letters may arrive as `Char('P')` + SHIFT (real Shift press)
+///   or `Char('A')` without SHIFT (CapsLock on, kitty keyboard protocol).
+///   In both cases, lowercase the character and preserve the existing
+///   modifiers. This ensures CapsLock+Ctrl+A matches the `Ctrl+A` binding,
+///   while Shift+P still matches the `Shift+P` binding.
 fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
     if code == KeyCode::BackTab {
         return (code, modifiers.difference(KeyModifiers::SHIFT));
     }
     if let KeyCode::Char(c) = code {
         if c.is_ascii_uppercase() {
-            return (
-                KeyCode::Char(c.to_ascii_lowercase()),
-                modifiers | KeyModifiers::SHIFT,
-            );
+            return (KeyCode::Char(c.to_ascii_lowercase()), modifiers);
         }
     }
     (code, modifiers)
