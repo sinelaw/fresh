@@ -22,6 +22,11 @@ const config: MarkdownConfig = {
   hideLineNumbers: true,
 };
 
+// When true, compose/preview mode is automatically enabled for all open and
+// newly opened markdown buffers.  Toggled by the "Toggle Compose/Preview
+// (All Files)" command.
+let globalComposeEnabled = false;
+
 // Table column widths stored per-buffer-per-split via setViewState/getViewState.
 // Persisted across sessions and independent per split.
 interface TableWidthInfo {
@@ -444,6 +449,29 @@ function markdownToggleCompose() : void {
   }
 }
 registerHandler("markdownToggleCompose", markdownToggleCompose);
+
+// Toggle compose/preview mode for ALL open (and future) markdown buffers.
+function markdownToggleComposeAll(): void {
+  globalComposeEnabled = !globalComposeEnabled;
+
+  const buffers = editor.listBuffers();
+  for (const buf of buffers) {
+    if (!isMarkdownFile(buf.path)) continue;
+
+    if (globalComposeEnabled) {
+      enableMarkdownCompose(buf.id);
+    } else {
+      disableMarkdownCompose(buf.id);
+    }
+  }
+
+  if (globalComposeEnabled) {
+    editor.setStatus(editor.t("status.compose_all_on"));
+  } else {
+    editor.setStatus(editor.t("status.compose_all_off"));
+  }
+}
+registerHandler("markdownToggleComposeAll", markdownToggleComposeAll);
 
 /**
  * Extract text content from incoming tokens
@@ -1511,6 +1539,10 @@ function onMarkdownBufferActivated(data: { buffer_id: number }) : void {
       config.composeWidth = info.compose_width;
     }
     enableMarkdownCompose(bufferId);
+  } else if (globalComposeEnabled) {
+    // Global compose/preview mode is active — auto-enable for newly opened
+    // markdown buffers that aren't already in compose mode.
+    enableMarkdownCompose(bufferId);
   }
 }
 registerHandler("onMarkdownBufferActivated", onMarkdownBufferActivated);
@@ -1584,6 +1616,13 @@ editor.registerCommand(
 );
 
 editor.registerCommand(
+  "%cmd.toggle_compose_all",
+  "%cmd.toggle_compose_all_desc",
+  "markdownToggleComposeAll",
+  null
+);
+
+editor.registerCommand(
   "%cmd.set_compose_width",
   "%cmd.set_compose_width_desc",
   "markdownSetComposeWidth",
@@ -1591,4 +1630,4 @@ editor.registerCommand(
 );
 
 // Initialization
-editor.debug("Markdown Compose plugin loaded - use 'Markdown: Toggle Compose' command");
+editor.debug("Markdown Compose plugin loaded - use 'Markdown: Toggle Compose/Preview' command");

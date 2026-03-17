@@ -244,7 +244,7 @@
   "action.toggle_auto_revert": "Toggle auto-revert mode",
   "action.toggle_comment": "Toggle comment",
   "action.toggle_fold": "Toggle fold",
-  "action.toggle_compose_mode": "Toggle compose mode",
+  "action.toggle_compose_mode": "Toggle compose/preview mode",
   "action.toggle_debug_highlights": "Toggle debug highlight mode (show byte ranges)",
   "action.toggle_file_explorer": "Toggle file explorer",
   "action.toggle_indentation_style": "Toggle indentation style (spaces/tabs)",
