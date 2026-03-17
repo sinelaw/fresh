@@ -326,6 +326,7 @@ impl Editor {
             terminals,
             external_files,
             unnamed_buffers,
+            plugin_global_state: self.plugin_global_state.clone(),
             saved_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -593,7 +594,16 @@ impl Editor {
             self.menu_bar_visible = !menu_bar_hidden;
         }
 
-        // 2. Restore search options
+        // 2. Restore plugin global state
+        if !workspace.plugin_global_state.is_empty() {
+            tracing::debug!(
+                "Restoring plugin global state for {} plugins",
+                workspace.plugin_global_state.len()
+            );
+            self.plugin_global_state = workspace.plugin_global_state.clone();
+        }
+
+        // 3. Restore search options
         self.search_case_sensitive = workspace.search_options.case_sensitive;
         self.search_whole_word = workspace.search_options.whole_word;
         self.search_use_regex = workspace.search_options.use_regex;

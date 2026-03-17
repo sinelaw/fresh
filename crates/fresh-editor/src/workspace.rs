@@ -87,6 +87,12 @@ pub struct Workspace {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unnamed_buffers: Vec<UnnamedBufferRef>,
 
+    /// Plugin-managed global state, isolated per plugin name.
+    /// Persisted across sessions so plugins can store non-buffer-specific state.
+    /// TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub plugin_global_state: HashMap<String, HashMap<String, serde_json::Value>>,
+
     /// Timestamp when workspace was saved (Unix epoch seconds)
     pub saved_at: u64,
 }
@@ -782,6 +788,7 @@ impl Workspace {
             terminals: Vec::new(),
             external_files: Vec::new(),
             unnamed_buffers: Vec::new(),
+            plugin_global_state: HashMap::new(),
             saved_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
