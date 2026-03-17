@@ -1361,14 +1361,14 @@ interface EditorAPI {
 	*/
 	getViewState(bufferId: number, key: string): unknown;
 	/**
-	* Set plugin-managed global state (not tied to any buffer or split).
-	* State is automatically isolated per plugin.
+	* Set plugin-managed global state (write-through to snapshot + command for persistence).
+	* State is automatically isolated per plugin using the plugin's name.
 	* TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
 	*/
 	setGlobalState(key: string, value: unknown): boolean;
 	/**
 	* Get plugin-managed global state (reads from snapshot).
-	* State is automatically isolated per plugin.
+	* State is automatically isolated per plugin using the plugin's name.
 	* TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
 	*/
 	getGlobalState(key: string): unknown;
