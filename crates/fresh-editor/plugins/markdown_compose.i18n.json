@@ -1,9 +1,9 @@
 {
   "en": {
     "cmd.toggle_compose": "Markdown: Toggle Compose/Preview",
-    "cmd.toggle_compose_desc": "Toggle compose/preview mode for current buffer (soft wrapping, centered margins)",
+    "cmd.toggle_compose_desc": "Toggle markdown compose/preview mode for current buffer (soft wrapping, centered margins)",
     "cmd.toggle_compose_all": "Markdown: Toggle Compose/Preview (All Files)",
-    "cmd.toggle_compose_all_desc": "Toggle compose/preview mode for all open and future markdown files",
+    "cmd.toggle_compose_all_desc": "Toggle markdown compose/preview mode for all open and future markdown files",
     "cmd.set_compose_width": "Markdown: Set Compose Width",
     "cmd.set_compose_width_desc": "Set the width for compose mode wrapping and margins",
     "status.plugin_ready": "Markdown plugin ready",
