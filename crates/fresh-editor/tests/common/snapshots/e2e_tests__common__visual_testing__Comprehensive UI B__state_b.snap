@@ -26,10 +26,10 @@ expression: "&screen_text"
     4 │     let y = x * 2;                                                                                              
     5 │     println!("Result: {}", y);                                                                                  
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│  Plugin Demo: Open Help                        Open the editor help page (uses built-in action)               welcome│
-│  Show Signature Help                           Show function parameter hints                                  builtin│
-│  Shell Command (Replace)         Alt+Shift+|   Run shell command on buffer/selection, replace con...          builtin│
-│  Search and Replace in Project                 Search and replace text across all git-tracked files    search_replace│
+│  Plugin Demo: Open Help                             Open the editor help page (uses built-in action)          welcome│
+│  Show Signature Help                                Show function parameter hints                             builtin│
+│  Shell Command (Replace)              Alt+Shift+|   Run shell command on buffer/selection, replac...          builtin│
+│  Search and Replace in Project                      Search and replace text across all git-tracke...   search_replace│
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   file  |  >command  |  :line  |  #buffer                                                                               
 >help
