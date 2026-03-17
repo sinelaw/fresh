@@ -105,14 +105,16 @@ impl SuggestionsRenderer {
             + source_column_width;
 
         // Give name column a reasonable portion of remaining space
-        // Minimum 30, but can expand if there's room and no keybinding/source
+        // Scale with terminal width so wide screens aren't wasted on descriptions
         let base_name_width = 30;
         let name_column_width = if !has_keybinding && !has_source {
             // For file finders etc., use up to 60% of available width for name
             let max_name_width = (available_width * 60 / 100).max(base_name_width);
             max_name_width.min(available_width.saturating_sub(reserved_for_other_columns))
         } else {
-            base_name_width
+            // Use ~30% of available width for the name, minimum 30
+            let dynamic_width = available_width * 30 / 100;
+            dynamic_width.max(base_name_width)
         };
 
         for (idx, suggestion) in visible_suggestions.iter().enumerate() {
