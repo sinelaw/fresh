@@ -214,7 +214,7 @@ impl Encoding {
 /// the encoding, ignoring the binary flag. Use `detect_encoding_or_binary`
 /// when you need to know if the content should be treated as binary.
 pub fn detect_encoding(bytes: &[u8]) -> Encoding {
-    detect_encoding_or_binary(bytes).0
+    detect_encoding_or_binary(bytes, false).0
 }
 
 /// Detect the text encoding and whether content is binary.
@@ -222,6 +222,11 @@ pub fn detect_encoding(bytes: &[u8]) -> Encoding {
 /// Returns (Encoding, is_binary) where:
 /// - Encoding is the detected encoding (or default if binary)
 /// - is_binary is true if the content should be treated as raw binary
+///
+/// When `truncated` is true, an incomplete multi-byte UTF-8 sequence at the
+/// end of the sample is tolerated (up to 3 bytes) since it likely results from
+/// the caller truncating a larger stream. When false, such trailing bytes cause
+/// the sample to be rejected as UTF-8.
 ///
 /// # Detection Strategy
 ///
@@ -231,7 +236,7 @@ pub fn detect_encoding(bytes: &[u8]) -> Encoding {
 /// 4. Check for binary control characters (null bytes, etc.) - if found, it's binary
 /// 5. Use chardetng for statistical detection of legacy encodings
 /// 6. If encoding detection is uncertain, default to Windows-1252
-pub fn detect_encoding_or_binary(bytes: &[u8]) -> (Encoding, bool) {
+pub fn detect_encoding_or_binary(bytes: &[u8], truncated: bool) -> (Encoding, bool) {
     // Only check the first 8KB for encoding detection
     let check_len = bytes.len().min(8 * 1024);
     let sample = &bytes[..check_len];
@@ -267,10 +272,14 @@ pub fn detect_encoding_or_binary(bytes: &[u8]) -> (Encoding, bool) {
         }
     };
 
-    // If most of the sample is valid UTF-8 (at least 99% or all but the last few bytes),
-    // treat it as UTF-8. The incomplete sequence at end is just due to sample truncation.
-    if utf8_valid_len > 0 && (utf8_valid_len == sample.len() || utf8_valid_len >= sample.len() - 3)
-    {
+    // If the sample is valid UTF-8, treat it as UTF-8.
+    // When the caller indicates the sample was truncated from a larger stream,
+    // tolerate up to 3 trailing bytes of an incomplete multi-byte sequence (a
+    // truncation artifact). Without truncation, require exact validity — a
+    // trailing 0xE9 in a short file is a Latin-1 'é', not a truncated codepoint.
+    let is_valid_utf8 = utf8_valid_len == sample.len()
+        || (truncated && utf8_valid_len > 0 && utf8_valid_len >= sample.len() - 3);
+    if is_valid_utf8 {
         let valid_sample = &sample[..utf8_valid_len];
         // Check if it's pure ASCII (subset of UTF-8)
         // Also check for binary indicators in valid ASCII/UTF-8
@@ -675,7 +684,7 @@ mod tests {
     #[test]
     fn test_detect_binary() {
         let binary_data = [0x00, 0x01, 0x02, 0x03];
-        let (_, is_binary) = detect_encoding_or_binary(&binary_data);
+        let (_, is_binary) = detect_encoding_or_binary(&binary_data, false);
         assert!(is_binary);
     }
 
@@ -927,11 +936,18 @@ mod tests {
             0xE5, // Start of another character, incomplete
         ];
 
-        // This should still be detected as UTF-8, not Windows-1250
+        // With truncated=true, this should be detected as UTF-8
         assert_eq!(
-            detect_encoding(&utf8_chinese_truncated),
+            detect_encoding_or_binary(&utf8_chinese_truncated, true).0,
             Encoding::Utf8,
             "Truncated UTF-8 Chinese text should be detected as UTF-8"
+        );
+
+        // Without truncated flag, the incomplete trailing byte is treated as non-UTF-8
+        assert_ne!(
+            detect_encoding_or_binary(&utf8_chinese_truncated, false).0,
+            Encoding::Utf8,
+            "Non-truncated short sample with trailing 0xE5 should not be detected as UTF-8"
         );
 
         // Test with 2 bytes of incomplete sequence
@@ -941,7 +957,7 @@ mod tests {
             0xE5, 0xA4, // Incomplete 3-byte sequence (missing last byte)
         ];
         assert_eq!(
-            detect_encoding(&utf8_chinese_truncated_2),
+            detect_encoding_or_binary(&utf8_chinese_truncated_2, true).0,
             Encoding::Utf8,
             "Truncated UTF-8 with 2-byte incomplete sequence should be detected as UTF-8"
         );
@@ -996,14 +1012,14 @@ mod tests {
         // Each Chinese character is 3 bytes in UTF-8
         for truncate_offset in 1..=3 {
             let truncated_len = buffer.len() - truncate_offset;
-            let truncated = &buffer[..truncated_len];
+            let truncated_buf = &buffer[..truncated_len];
 
             // The truncated buffer should fail strict UTF-8 validation
             // (unless we happen to cut at a character boundary)
-            let is_strict_valid = std::str::from_utf8(truncated).is_ok();
+            let is_strict_valid = std::str::from_utf8(truncated_buf).is_ok();
 
-            // But our encoding detection should still detect it as UTF-8
-            let detected = detect_encoding(truncated);
+            // With truncated=true, our detection should still detect it as UTF-8
+            let detected = detect_encoding_or_binary(truncated_buf, true).0;
             assert_eq!(
                 detected,
                 Encoding::Utf8,

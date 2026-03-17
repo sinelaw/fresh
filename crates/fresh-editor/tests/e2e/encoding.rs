@@ -2228,3 +2228,24 @@ fn test_reload_with_encoding_menu_item() {
     // Verify the menu item is present
     harness.assert_screen_contains("Reload with Encoding...");
 }
+
+/// Regression: "Hello   é" in Latin-1 was misdetected as UTF-8 because the
+/// trailing 0xE9 byte was treated as a truncated multi-byte sequence.
+/// See proptest seed cc 4ada1874c158006a95ed15263e1dcc5aff614bd1938e47260bb970b166bcf1c4
+#[test]
+fn test_latin1_trailing_accent_not_misdetected_as_utf8() {
+    let temp_dir = TempDir::new().unwrap();
+    let text = "Hello   é";
+    let file_path = create_encoded_file(&temp_dir, "latin1.txt", TestEncoding::Latin1, text);
+
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let buffer_content = harness.get_buffer_content().unwrap();
+    assert!(
+        buffer_content.contains('é'),
+        "Latin-1 'é' should be preserved in buffer. Buffer: {:?}",
+        buffer_content
+    );
+}

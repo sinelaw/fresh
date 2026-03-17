@@ -682,7 +682,7 @@ impl TextBuffer {
         let contents = fs.read_file(path)?;
 
         // Use unified encoding/binary detection
-        let (encoding, is_binary) = Self::detect_encoding_or_binary(&contents);
+        let (encoding, is_binary) = Self::detect_encoding_or_binary(&contents, false);
 
         // For binary files, skip encoding conversion to preserve raw bytes
         let mut buffer = if is_binary {
@@ -728,7 +728,8 @@ impl TextBuffer {
         // Read a sample to detect encoding
         let sample_size = file_size.min(8 * 1024);
         let sample = fs.read_range(path, 0, sample_size)?;
-        let (encoding, is_binary) = Self::detect_encoding_or_binary(&sample);
+        let (encoding, is_binary) =
+            Self::detect_encoding_or_binary(&sample, file_size as usize > sample_size);
 
         // Binary files don't need confirmation (loaded as-is)
         if is_binary {
@@ -788,7 +789,8 @@ impl TextBuffer {
         let sample = fs.read_range(path, 0, sample_size)?;
 
         // Use unified encoding/binary detection
-        let (encoding, is_binary) = Self::detect_encoding_or_binary(&sample);
+        let (encoding, is_binary) =
+            Self::detect_encoding_or_binary(&sample, file_size as usize > sample_size);
 
         // Binary files skip encoding conversion to preserve raw bytes
         if is_binary {
@@ -3410,8 +3412,8 @@ impl TextBuffer {
     /// - is_binary is true if the content should be treated as raw binary
     ///
     /// Delegates to the encoding module for detection logic.
-    pub fn detect_encoding_or_binary(bytes: &[u8]) -> (Encoding, bool) {
-        encoding::detect_encoding_or_binary(bytes)
+    pub fn detect_encoding_or_binary(bytes: &[u8], truncated: bool) -> (Encoding, bool) {
+        encoding::detect_encoding_or_binary(bytes, truncated)
     }
 
     /// Detect encoding and convert bytes to UTF-8
@@ -7788,7 +7790,7 @@ mod property_tests {
 
     /// Helper to check if bytes are detected as binary
     fn is_detected_as_binary(bytes: &[u8]) -> bool {
-        TextBuffer::detect_encoding_or_binary(bytes).1
+        TextBuffer::detect_encoding_or_binary(bytes, false).1
     }
 
     #[test]
