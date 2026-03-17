@@ -3839,3 +3839,168 @@ fn test_compose_mode_width_survives_session_restore() {
         );
     }
 }
+
+/// Test that "Toggle Compose/Preview (All Files)" enables and disables
+/// compose mode for ALL open markdown buffers, not just the active one.
+///
+/// This is a regression test for a bug where setViewMode/setLineNumbers
+/// only operated on the active buffer via Deref, causing non-active
+/// buffers to remain in compose mode when toggling OFF.
+#[test]
+fn test_toggle_compose_all_affects_all_buffers() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    init_tracing_from_env();
+
+    // Set up project with the markdown_compose plugin
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    // Create two markdown files
+    let md_one = project_root.join("one.md");
+    std::fs::write(&md_one, "# File One\n\nContent one.\n").unwrap();
+    let md_two = project_root.join("two.md");
+    std::fs::write(&md_two, "# File Two\n\nContent two.\n").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 30, Default::default(), project_root)
+            .unwrap();
+
+    // Open both files (two.md will be active)
+    harness.open_file(&md_one).unwrap();
+    harness.open_file(&md_two).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("File Two");
+
+    // Both should start in source mode (line numbers visible)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("│"),
+        "Source mode should show line number separator: {}",
+        screen
+    );
+
+    // Toggle compose all ON via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose/Preview (All").unwrap();
+    harness
+        .wait_for_screen_contains("Toggle Compose/Preview (All")
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for compose mode to activate
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("Compose (All Files): ON")
+        })
+        .unwrap();
+
+    // Active buffer (two.md) should be in compose mode (no line numbers)
+    let screen = harness.screen_to_string();
+    // In compose mode, the line number column with │ separator is hidden
+    let content_lines: Vec<&str> = screen
+        .lines()
+        .filter(|l| l.contains("File Two") || l.contains("Content two"))
+        .collect();
+    for line in &content_lines {
+        assert!(
+            !line.contains("│"),
+            "Compose mode should hide line numbers, but got: {}",
+            line
+        );
+    }
+
+    // Switch to one.md and verify it's also in compose mode
+    harness.open_file(&md_one).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("File One"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let content_lines: Vec<&str> = screen
+        .lines()
+        .filter(|l| l.contains("File One") || l.contains("Content one"))
+        .collect();
+    for line in &content_lines {
+        assert!(
+            !line.contains("│"),
+            "one.md should also be in compose mode after toggle all ON, but got: {}",
+            line
+        );
+    }
+
+    // Switch back to two.md before toggling off
+    harness.open_file(&md_two).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("File Two"))
+        .unwrap();
+
+    // Toggle compose all OFF
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose/Preview (All").unwrap();
+    harness
+        .wait_for_screen_contains("Toggle Compose/Preview (All")
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for source mode to restore
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("Compose (All Files): OFF")
+        })
+        .unwrap();
+
+    // Active buffer (two.md) should be back in source mode (line numbers)
+    let screen = harness.screen_to_string();
+    let content_lines: Vec<&str> = screen
+        .lines()
+        .filter(|l| l.contains("File Two"))
+        .collect();
+    assert!(
+        content_lines.iter().any(|l| l.contains("│")),
+        "two.md should be back in source mode with line numbers after toggle all OFF: {}",
+        screen
+    );
+
+    // Switch to one.md and verify it's also back in source mode
+    harness.open_file(&md_one).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("File One"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let content_lines: Vec<&str> = screen
+        .lines()
+        .filter(|l| l.contains("File One"))
+        .collect();
+    assert!(
+        content_lines.iter().any(|l| l.contains("│")),
+        "one.md should also be back in source mode after toggle all OFF: {}",
+        screen
+    );
+}

@@ -1064,16 +1064,23 @@ impl Editor {
     }
 
     /// Handle SetViewMode command
-    pub(super) fn handle_set_view_mode(&mut self, _buffer_id: BufferId, mode: &str) {
+    pub(super) fn handle_set_view_mode(&mut self, buffer_id: BufferId, mode: &str) {
         use crate::state::ViewMode;
         let view_mode = match mode {
             "compose" => ViewMode::Compose,
             _ => ViewMode::Source,
         };
-        // Set on the active split's per-buffer view state (source of truth)
+        // Set on the specified buffer's per-split view state.
+        // Use buffer_id to target the correct buffer (not just the active one)
+        // so that "toggle compose all" can affect non-active buffers.
         let active_split = self.split_manager.active_split();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            view_state.view_mode = view_mode;
+            if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
+                buf_state.view_mode = view_mode;
+            } else {
+                // Buffer not yet in this split — fall back to setting on active
+                view_state.view_mode = view_mode;
+            }
         }
     }
 
@@ -1125,13 +1132,18 @@ impl Editor {
 
     /// Handle SetLineNumbers command
     ///
-    /// Sets line number visibility on the active split's per-buffer view state,
+    /// Sets line number visibility on the specified buffer's per-split view state,
     /// so that different splits showing the same buffer can have independent
     /// line number settings (e.g., source mode shows line numbers, compose hides them).
-    pub(super) fn handle_set_line_numbers(&mut self, _buffer_id: BufferId, enabled: bool) {
+    pub(super) fn handle_set_line_numbers(&mut self, buffer_id: BufferId, enabled: bool) {
         let active_split = self.split_manager.active_split();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            view_state.show_line_numbers = enabled;
+            if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
+                buf_state.show_line_numbers = enabled;
+            } else {
+                // Buffer not yet in this split — fall back to setting on active
+                view_state.show_line_numbers = enabled;
+            }
         }
     }
 
