@@ -1,0 +1,10 @@
+--- a/hello.txt
++++ b/hello.txt
+@@ -1,5 +1,6 @@
+ Hello, World!
+-This is the old line.
++This is the new line.
++This is an added line.
+ Some unchanged context.
+ More context here.
+-Removed line.

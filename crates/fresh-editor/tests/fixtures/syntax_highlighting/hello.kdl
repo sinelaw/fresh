@@ -1,0 +1,20 @@
+// KDL syntax highlighting test
+package {
+    name "hello-world"
+    version "1.0.0"
+    description "A KDL test file"
+}
+
+dependencies {
+    serde "1.0" optional=true
+    tokio "1.0" features=("full" "macros")
+}
+
+server {
+    host "localhost"
+    port 8080
+    tls enabled=true {
+        cert "/path/to/cert.pem"
+        key "/path/to/key.pem"
+    }
+}

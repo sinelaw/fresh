@@ -1,0 +1,21 @@
+# Justfile syntax highlighting test
+default_target := "build"
+
+build:
+    cargo build --release
+
+test: build
+    cargo test
+
+clean:
+    rm -rf target/
+
+run *args:
+    cargo run -- {{args}}
+
+docker-build version="latest":
+    docker build -t myapp:{{version}} .
+
+deploy env="staging":
+    echo "Deploying to {{env}}"
+    kubectl apply -f k8s/{{env}}/

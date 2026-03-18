@@ -1,0 +1,22 @@
+# Bazel BUILD syntax highlighting test
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+
+rust_library(
+    name = "hello_lib",
+    srcs = ["src/lib.rs"],
+    deps = [
+        "//third_party:serde",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+rust_binary(
+    name = "hello",
+    srcs = ["src/main.rs"],
+    deps = [":hello_lib"],
+)
+
+filegroup(
+    name = "configs",
+    srcs = glob(["config/**/*.toml"]),
+)

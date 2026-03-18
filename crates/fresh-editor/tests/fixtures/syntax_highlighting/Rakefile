@@ -1,0 +1,19 @@
+# Rakefile syntax highlighting test
+require "bundler/gem_tasks"
+require "rspec/core/rake_task"
+
+RSpec::Core::RakeTask.new(:spec)
+
+task default: :spec
+
+desc "Run all tests"
+task :test do
+  sh "bundle exec rspec"
+end
+
+namespace :db do
+  desc "Create database"
+  task :create do
+    puts "Creating database..."
+  end
+end

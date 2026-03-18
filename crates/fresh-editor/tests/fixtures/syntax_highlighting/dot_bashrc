@@ -1,0 +1,13 @@
+#!/bin/bash
+# .bashrc syntax highlighting test
+export PATH="$HOME/.local/bin:$PATH"
+export EDITOR="fresh"
+
+alias ll='ls -la'
+alias gs='git status'
+
+if [ -f ~/.bash_aliases ]; then
+    . ~/.bash_aliases
+fi
+
+PS1='\u@\h:\w\$ '

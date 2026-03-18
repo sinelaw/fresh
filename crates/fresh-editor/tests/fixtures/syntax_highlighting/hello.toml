@@ -1,0 +1,15 @@
+# TOML syntax highlighting test
+[package]
+name = "hello-world"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = "1.0"
+
+[server]
+host = "localhost"
+port = 8080
+enabled = true
+max_retries = 3

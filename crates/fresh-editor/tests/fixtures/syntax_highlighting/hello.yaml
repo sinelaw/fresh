@@ -1,0 +1,18 @@
+# YAML syntax highlighting test
+name: hello-world
+version: "1.0.0"
+
+server:
+  host: localhost
+  port: 8080
+  enabled: true
+
+database:
+  url: "postgresql://localhost:5432/mydb"
+  pool_size: 10
+
+items:
+  - name: first
+    value: 42
+  - name: second
+    value: 100

@@ -1,0 +1,21 @@
+# Git config syntax highlighting test
+[user]
+    name = Test User
+    email = test@example.com
+
+[core]
+    editor = fresh
+    autocrlf = input
+    whitespace = trailing-space,space-before-tab
+
+[alias]
+    co = checkout
+    br = branch
+    st = status
+    lg = log --oneline --graph --all
+
+[pull]
+    rebase = true
+
+[merge]
+    conflictstyle = diff3

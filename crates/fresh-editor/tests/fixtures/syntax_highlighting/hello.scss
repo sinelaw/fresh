@@ -1,0 +1,27 @@
+// SCSS syntax highlighting test
+$primary-color: #3498db;
+$font-size: 16px;
+$spacing: 10px;
+
+@mixin flex-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: $spacing;
+
+  .header {
+    @include flex-center;
+    background-color: $primary-color;
+    color: white;
+    font-size: $font-size * 1.5;
+  }
+
+  &:hover {
+    opacity: 0.8;
+  }
+}

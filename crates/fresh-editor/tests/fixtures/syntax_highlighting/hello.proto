@@ -1,0 +1,26 @@
+// Protobuf syntax highlighting test
+syntax = "proto3";
+
+package hello;
+
+option go_package = "github.com/example/hello";
+
+message Greeting {
+  string name = 1;
+  int32 count = 2;
+  bool enabled = 3;
+  repeated string items = 4;
+
+  enum Status {
+    UNKNOWN = 0;
+    ACTIVE = 1;
+    INACTIVE = 2;
+  }
+
+  Status status = 5;
+}
+
+service GreetingService {
+  rpc SayHello (Greeting) returns (Greeting);
+  rpc ListGreetings (Greeting) returns (stream Greeting);
+}

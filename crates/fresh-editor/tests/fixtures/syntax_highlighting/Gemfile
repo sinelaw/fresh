@@ -1,0 +1,17 @@
+# Gemfile syntax highlighting test
+source "https://rubygems.org"
+
+ruby "3.2.0"
+
+gem "rails", "~> 7.0"
+gem "puma", ">= 5.0"
+gem "pg", "~> 1.1"
+
+group :development, :test do
+  gem "debug", platforms: %i[mri windows]
+  gem "rspec-rails"
+end
+
+group :development do
+  gem "web-console"
+end

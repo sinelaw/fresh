@@ -1,0 +1,10 @@
+#!/bin/sh
+# .profile syntax highlighting test
+export PATH="$HOME/bin:$PATH"
+export LANG="en_US.UTF-8"
+
+if [ -n "$BASH_VERSION" ]; then
+    if [ -f "$HOME/.bashrc" ]; then
+        . "$HOME/.bashrc"
+    fi
+fi

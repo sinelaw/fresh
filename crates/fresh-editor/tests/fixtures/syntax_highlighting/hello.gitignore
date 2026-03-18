@@ -1,0 +1,23 @@
+# Gitignore syntax highlighting test
+*.o
+*.so
+*.dylib
+
+# Build directories
+/target/
+/build/
+/dist/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Dependencies
+node_modules/
+__pycache__/

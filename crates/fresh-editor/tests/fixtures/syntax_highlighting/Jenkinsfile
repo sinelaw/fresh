@@ -1,0 +1,37 @@
+// Groovy/Jenkinsfile syntax highlighting test
+pipeline {
+    agent any
+
+    environment {
+        VERSION = '1.0.0'
+        DEPLOY_ENV = 'staging'
+    }
+
+    stages {
+        stage('Build') {
+            steps {
+                sh 'make build'
+                echo "Building version ${VERSION}"
+            }
+        }
+        stage('Test') {
+            steps {
+                sh 'make test'
+            }
+        }
+        stage('Deploy') {
+            when {
+                branch 'main'
+            }
+            steps {
+                sh "deploy.sh ${DEPLOY_ENV}"
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}

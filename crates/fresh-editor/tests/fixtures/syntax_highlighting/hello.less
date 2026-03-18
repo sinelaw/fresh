@@ -1,0 +1,18 @@
+// LESS syntax highlighting test
+@primary-color: #3498db;
+@font-size: 16px;
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+
+  .header {
+    background-color: @primary-color;
+    color: white;
+    font-size: @font-size * 1.5;
+  }
+
+  &:hover {
+    opacity: 0.8;
+  }
+}

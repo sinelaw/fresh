@@ -1,0 +1,29 @@
+---
+// Astro syntax highlighting test
+interface Props {
+  title: string;
+  count?: number;
+}
+
+const { title, count = 0 } = Astro.props;
+const items = ["one", "two", "three"];
+---
+
+<html lang="en">
+  <head>
+    <title>{title}</title>
+  </head>
+  <body>
+    <h1>Hello, {title}!</h1>
+    <p>Count: {count}</p>
+    <ul>
+      {items.map((item) => (
+        <li>{item}</li>
+      ))}
+    </ul>
+  </body>
+</html>
+
+<style>
+  h1 { color: purple; }
+</style>

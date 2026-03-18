@@ -1,0 +1,23 @@
+# Earthfile syntax highlighting test
+VERSION 0.7
+
+FROM ubuntu:22.04
+WORKDIR /app
+
+deps:
+    RUN apt-get update && apt-get install -y build-essential
+    COPY go.mod go.sum .
+    RUN go mod download
+
+build:
+    FROM +deps
+    COPY . .
+    RUN go build -o hello ./cmd/hello
+    SAVE ARTIFACT hello /hello
+
+docker:
+    FROM ubuntu:22.04
+    COPY +build/hello /usr/local/bin/
+    EXPOSE 8080
+    ENTRYPOINT ["hello"]
+    SAVE IMAGE myapp:latest

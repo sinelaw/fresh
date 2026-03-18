@@ -219,12 +219,154 @@ editors to handle. It compares against Fresh's current support levels.
 
 ---
 
+## Validated Syntax Highlighting Results (tmux capture-pane -e)
+
+Tested by opening each file in Fresh via tmux, capturing the terminal output with
+ANSI escape codes (`tmux capture-pane -e -p`), and checking for syntax-colored tokens
+(colors beyond default text white/gray).
+
+### WORKING - Full syntax highlighting (55 files)
+
+| File | Detected Syntax | Engine | Colors |
+|------|----------------|--------|--------|
+| hello.rs | Rust | tree-sitter | 4 (keywords, strings, functions, types) |
+| hello.py | Python | tree-sitter | 5 |
+| hello.js | JavaScript | tree-sitter | 4 |
+| hello.ts | typescript | tree-sitter | 6 |
+| hello.tsx | typescript | tree-sitter | 6 |
+| hello.jsx | JavaScript | syntect | 6 |
+| hello.mjs | JavaScript | syntect | 6 |
+| hello.go | Go | syntect | 5 |
+| hello.c | C | syntect | 5 |
+| hello.h | C | syntect | 6 |
+| hello.cpp | C++ | syntect | 5 |
+| hello.cc | C++ | syntect | 6 |
+| hello.hpp | C++ | syntect | 6 |
+| hello.cs | C# | syntect | 4 |
+| hello.java | Java | syntect | 4 |
+| hello.php | PHP | syntect | 5 |
+| hello.rb | Ruby | syntect | 4 |
+| hello.lua | Lua | syntect | 5 |
+| hello.sh | Bourne Again Shell | syntect | 4 |
+| hello.bash | Bourne Again Shell | syntect | 4 |
+| hello.zsh | Bourne Again Shell | syntect | 3 |
+| dot_bashrc | Bourne Again Shell | syntect | 4 |
+| dot_profile | Bourne Again Shell | syntect | 4 |
+| hello.json | JSON | tree-sitter | 3 |
+| hello.html | HTML | syntect | 3 |
+| hello.css | CSS | syntect | 3 |
+| hello.py | Python | syntect | 5 |
+| hello.pyi | Python | syntect | 5 |
+| hello.toml | TOML | syntect (embedded) | 4 |
+| hello.zig | Zig | syntect (embedded) | 6 |
+| hello.odin | Odin | syntect (embedded) | 6 |
+| hello.typ | Typst | syntect (embedded) | 5 |
+| hello.gitconfig | Git Config | syntect (embedded) | 3 |
+| hello.yaml | YAML | syntect | 3 |
+| docker-compose.yml | YAML | syntect | 3 |
+| hello.xml | XML | syntect | 4 |
+| hello.md | Markdown | syntect | 5 |
+| hello.sql | SQL | syntect | 6 |
+| hello.tex | LaTeX | syntect | 5 |
+| hello.r | R | syntect | 5 |
+| hello.scala | Scala | syntect | 4 |
+| hello.hs | Haskell | syntect | 6 |
+| hello.clj | Clojure | syntect | 6 |
+| hello.erl | Erlang | syntect | 6 |
+| hello.ml | OCaml | syntect | 6 |
+| hello.pl | Perl | syntect | 6 |
+| hello.lisp | Lisp | syntect | 6 |
+| hello.d | D | syntect | 6 |
+| hello.bat | Batch File | syntect | 4 |
+| Makefile | Makefile | syntect | 5 |
+| GNUmakefile | Makefile | syntect | 5 |
+| hello.mk | Makefile | syntect | 5 |
+| Gemfile | Ruby | syntect | 4 |
+| Rakefile | Ruby | syntect | 6 |
+| Vagrantfile | Ruby | syntect | 6 |
+
+### PARTIAL - Detected but minimal/no highlighting colors (4 files)
+
+| File | Detected Syntax | Issue |
+|------|----------------|-------|
+| hello.gitignore | Gitignore | Only 2 highlight colors (comment green + path gray) |
+| hello.diff | Diff | Syntax detected but 0 highlight colors (scope-to-category mapping gap) |
+| hello.mts | typescript | Tree-sitter detected but no highlighting rendered |
+| hello.vue | text | Only tag bracket color (220/gold) |
+
+### NOT WORKING - No syntax highlighting (35 files)
+
+| File | Detected As | Reason | Fix Needed |
+|------|------------|--------|------------|
+| Dockerfile | dockerfile | Tree-sitter detects language but no TextMate grammar | Add Dockerfile.sublime-syntax |
+| Dockerfile.dev | text | Not detected at all (variant filename) | Add filename pattern |
+| Containerfile | dockerfile | Same as Dockerfile | Add Dockerfile.sublime-syntax |
+| CMakeLists.txt | Plain Text | No CMake grammar in syntect defaults | Add CMake.sublime-syntax |
+| hello.kt | text | No Kotlin grammar in syntect | Add Kotlin.sublime-syntax |
+| hello.swift | text | No Swift grammar in syntect | Add Swift.sublime-syntax |
+| hello.dart | text | No Dart grammar in syntect | Add Dart.sublime-syntax |
+| hello.ex | text | No Elixir grammar in syntect | Add Elixir.sublime-syntax |
+| hello.fs | text | No F# grammar in syntect | Add FSharp.sublime-syntax |
+| hello.nix | text | No Nix grammar in syntect | Add Nix.sublime-syntax |
+| hello.ps1 | text | No PowerShell grammar in syntect | Add PowerShell.sublime-syntax |
+| hello.scss | text | No SCSS grammar in syntect | Add SCSS.sublime-syntax |
+| hello.less | text | No LESS grammar in syntect | Add LESS.sublime-syntax |
+| hello.ini | text | No INI grammar in syntect | Add INI.sublime-syntax |
+| hello.cjs | text | .cjs not mapped to JavaScript | Add extension mapping |
+| hello.jl | text | No Julia grammar in syntect | Add Julia.sublime-syntax |
+| hello.nim | text | No Nim grammar in syntect | Add Nim.sublime-syntax |
+| hello.gleam | text | No Gleam grammar in syntect | Add Gleam.sublime-syntax |
+| hello.v | text | No V grammar in syntect | Add V.sublime-syntax |
+| hello.sol | text | No Solidity grammar in syntect | Add Solidity.sublime-syntax |
+| hello.kdl | text | No KDL grammar in syntect | Add KDL.sublime-syntax |
+| hello.nu | text | No Nushell grammar in syntect | Add Nushell.sublime-syntax |
+| hello.tf | text | No Terraform/HCL grammar | Add HCL.sublime-syntax |
+| hello.proto | text | No Protobuf grammar in syntect | Add Protobuf.sublime-syntax |
+| hello.graphql | text | No GraphQL grammar in syntect | Add GraphQL.sublime-syntax |
+| hello.astro | text | No Astro grammar in syntect | Add Astro.sublime-syntax |
+| hello.svelte | text | No Svelte grammar (partial tag color) | Add Svelte.sublime-syntax |
+| hello.env | text | No dotenv grammar | Add env.sublime-syntax |
+| hello.editorconfig | text | No editorconfig grammar | Map to INI grammar |
+| BUILD.bazel | text | No Starlark grammar | Add Starlark.sublime-syntax |
+| Jenkinsfile | text | Not mapped to Groovy | Add filename mapping |
+| Tiltfile | text | No Starlark grammar | Add Starlark.sublime-syntax |
+| Earthfile | text | No Earthfile grammar | Add Earthfile.sublime-syntax |
+| justfile | text | No Justfile grammar | Add Justfile.sublime-syntax |
+| go.mod | text | No go.mod grammar | Add go.mod.sublime-syntax |
+
+### Bugs Found
+
+1. **hello.diff**: Diff grammar IS in syntect and IS detected, but produces zero highlight
+   colors. The scope-to-category mapping in `textmate_engine.rs` doesn't handle Diff scopes
+   (`markup.inserted`, `markup.deleted`, `meta.diff.header`, `punctuation.definition.from-file`).
+
+2. **hello.mts**: Tree-sitter detects TypeScript but produces no colors. The `.mts` extension
+   may not be triggering the highlight engine properly despite status bar showing "typescript".
+
+3. **Dockerfile / Containerfile**: Tree-sitter detects the language (status bar shows
+   "dockerfile") but there's no TextMate grammar and tree-sitter fallback isn't producing colors.
+
+4. **Jenkinsfile**: Syntect has Groovy grammar (with `.groovy`, `.gvy`, `.gradle` extensions)
+   but `Jenkinsfile` isn't mapped to it.
+
+5. **hello.cjs**: JavaScript grammar exists but `.cjs` extension isn't in its extension list
+   (`["js", "htc"]`). Same issue for `.mjs` detection (though it works - may go through
+   tree-sitter JS).
+
+---
+
 ## Current Support Summary
 
-- **Syntect defaults (~100+):** Primary highlighting engine. Broad coverage via built-in TextMate grammars (the full Sublime Text default grammar set)
-- **Embedded grammars (9):** Custom .sublime-syntax files bundled with Fresh for specialized/improved highlighting: TOML, Odin, Zig, Typst, Git Rebase, Git Commit, Gitignore, Git Config, Git Attributes
-- **Tree-sitter (18):** Used for auto-indentation, bracket matching, and semantic features (NOT primary highlighting): Rust, Python, JavaScript, TypeScript, HTML, CSS, C, C++, Go, JSON, Java, C#, PHP, Ruby, Bash, Lua, Pascal, Odin
-- **LSP configs (23):** Bash, C, C++, C#, CSS, Go, HTML, Java, JavaScript, JSON, LaTeX, Lua, Markdown, PHP, Python, Ruby, Rust, Templ, TOML, TypeScript, Typst, YAML, Zig
+- **Syntect defaults (57 syntaxes):** Primary highlighting engine. The actual built-in set is
+  MUCH smaller than previously claimed (~57 syntaxes, NOT 100+). Notable absences: Kotlin,
+  Swift, Dart, Elixir, Nix, PowerShell, SCSS, LESS, CMake, Dockerfile, F#, Julia, Nim, INI.
+- **Embedded grammars (9):** TOML, Odin, Zig, Typst, Git Rebase, Git Commit, Gitignore,
+  Git Config, Git Attributes
+- **Tree-sitter (18):** Rust, Python, JavaScript, TypeScript, HTML, CSS, C, C++, Go, JSON,
+  Java, C#, PHP, Ruby, Bash, Lua, Pascal, Odin. Used for auto-indent/brackets, and as
+  highlighting fallback (works for TS/TSX, but NOT for Dockerfile).
+- **LSP configs (23):** Bash, C, C++, C#, CSS, Go, HTML, Java, JavaScript, JSON, LaTeX, Lua,
+  Markdown, PHP, Python, Ruby, Rust, Templ, TOML, TypeScript, Typst, YAML, Zig
 
 ### What "adding a language" means in practice
 
@@ -233,8 +375,12 @@ editors to handle. It compares against Fresh's current support levels.
 | **Syntax highlighting** for a language not in syntect defaults | Add a `.sublime-syntax` file to `crates/fresh-editor/src/grammars/` | Medium |
 | **LSP support** for a language already highlighted | Add server config to `config.example.json` | Low |
 | **Better indentation/brackets** for an existing language | Add tree-sitter parser + indent queries | High |
-| **Highlighting already works** (via syntect defaults) | Nothing needed for highlighting; just add LSP config | Low |
+| **Extension mapping** for an existing grammar | Add to `file_extensions` list or `filename_scopes` | Low |
 
-Most languages in the tables above that show "Syntect" already have working syntax
-highlighting. The main gap is **LSP configurations** (for autocomplete, diagnostics,
-go-to-definition) and **TextMate grammars for niche languages** not in syntect's defaults.
+### Priority fixes (bugs in existing support)
+
+1. Fix Diff scope-to-category mapping (markup.inserted/deleted not handled)
+2. Fix .mts tree-sitter highlighting (detected but not rendered)
+3. Add Dockerfile TextMate grammar (tree-sitter detects but can't highlight)
+4. Map Jenkinsfile -> Groovy grammar
+5. Map .cjs -> JavaScript grammar
