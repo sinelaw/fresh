@@ -37,10 +37,22 @@ impl DetectedLanguage {
     /// 2. Glob pattern match in user config
     /// 3. Extension match in user config
     /// 4. Built-in detection (tree-sitter `Language::from_path` + syntect)
+    /// 5. Fallback config (if set and no other match found)
     pub fn from_path(
         path: &Path,
         registry: &GrammarRegistry,
         languages: &HashMap<String, LanguageConfig>,
+    ) -> Self {
+        Self::from_path_with_fallback(path, registry, languages, None)
+    }
+
+    /// Like `from_path`, but also accepts an optional fallback language config
+    /// that is applied when no language is detected (#1219).
+    pub fn from_path_with_fallback(
+        path: &Path,
+        registry: &GrammarRegistry,
+        languages: &HashMap<String, LanguageConfig>,
+        fallback: Option<&LanguageConfig>,
     ) -> Self {
         let highlighter = HighlightEngine::for_file_with_languages(path, registry, languages);
         let ts_language = Language::from_path(path);
@@ -59,6 +71,30 @@ impl DetectedLanguage {
             .find_syntax_for_file_with_languages(path, languages)
             .map(|s| s.name.clone())
             .unwrap_or_else(|| name.clone());
+
+        // If no language was detected and a fallback config is set with a grammar,
+        // try to use the fallback grammar for highlighting (#1219)
+        if name == "text" && matches!(highlighter, HighlightEngine::None) {
+            if let Some(fb) = fallback {
+                if !fb.grammar.is_empty() {
+                    let fb_highlighter =
+                        HighlightEngine::for_syntax_name(&fb.grammar, registry, ts_language);
+                    if !matches!(fb_highlighter, HighlightEngine::None) {
+                        let fb_display = registry
+                            .find_syntax_by_name(&fb.grammar)
+                            .map(|s| s.name.clone())
+                            .unwrap_or_else(|| fb.grammar.clone());
+                        return Self {
+                            name,
+                            display_name: fb_display,
+                            highlighter: fb_highlighter,
+                            ts_language,
+                        };
+                    }
+                }
+            }
+        }
+
         Self {
             name,
             display_name,

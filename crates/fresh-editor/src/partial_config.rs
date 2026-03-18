@@ -87,6 +87,7 @@ pub struct PartialConfig {
     pub keybinding_maps: Option<HashMap<String, KeymapConfig>>,
     pub active_keybinding_map: Option<KeybindingMapName>,
     pub languages: Option<HashMap<String, PartialLanguageConfig>>,
+    pub fallback: Option<LanguageConfig>,
     pub lsp: Option<HashMap<String, LspServerConfig>>,
     pub warnings: Option<PartialWarningsConfig>,
     pub plugins: Option<HashMap<String, PartialPluginConfig>>,
@@ -115,6 +116,7 @@ impl Merge for PartialConfig {
         // HashMaps: merge entries, higher precedence wins on key collision
         merge_hashmap(&mut self.keybinding_maps, &other.keybinding_maps);
         merge_hashmap_recursive(&mut self.languages, &other.languages);
+        self.fallback.merge_from(&other.fallback);
         merge_hashmap_recursive(&mut self.lsp, &other.lsp);
         merge_hashmap_recursive(&mut self.plugins, &other.plugins);
 
@@ -889,6 +891,7 @@ impl From<&crate::config::Config> for PartialConfig {
                     .map(|(k, v)| (k.clone(), PartialLanguageConfig::from(v)))
                     .collect(),
             ),
+            fallback: cfg.fallback.clone(),
             lsp: Some(cfg.lsp.clone()),
             warnings: Some(PartialWarningsConfig::from(&cfg.warnings)),
             // Only include plugins that differ from defaults
@@ -1015,6 +1018,7 @@ impl PartialConfig {
                 .active_keybinding_map
                 .unwrap_or_else(|| defaults.active_keybinding_map.clone()),
             languages,
+            fallback: self.fallback.or_else(|| defaults.fallback.clone()),
             lsp,
             warnings: self
                 .warnings

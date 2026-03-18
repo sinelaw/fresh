@@ -417,6 +417,13 @@ pub struct Config {
     #[serde(default)]
     pub languages: HashMap<String, LanguageConfig>,
 
+    /// Fallback configuration for files whose type cannot be detected.
+    /// Applied when no extension, filename, glob, or built-in detection matches.
+    /// Useful for setting a default grammar (e.g., "bash") and comment_prefix
+    /// for unrecognized .conf, .rc, .rules, etc. files.
+    #[serde(default)]
+    pub fallback: Option<LanguageConfig>,
+
     /// LSP server configurations by language
     #[serde(default)]
     pub lsp: HashMap<String, LspServerConfig>,
@@ -1515,54 +1522,63 @@ impl BufferConfig {
             textmate_grammar: None,
         };
 
-        // Apply language-specific overrides if available
-        if let Some(lang_id) = language_id {
-            if let Some(lang_config) = global_config.languages.get(lang_id) {
-                // Tab size: use language setting if specified, else global
-                if let Some(ts) = lang_config.tab_size {
-                    config.tab_size = ts;
+        // Apply language-specific overrides if available.
+        // If no language config matches and the language is "text" (undetected),
+        // try the fallback config (#1219).
+        let lang_config_ref = language_id
+            .and_then(|id| global_config.languages.get(id))
+            .or_else(|| {
+                // Apply fallback only when language is unknown ("text" or None)
+                match language_id {
+                    None | Some("text") => global_config.fallback.as_ref(),
+                    _ => None,
                 }
-
-                // Use tabs: language override
-                config.use_tabs = lang_config.use_tabs;
-
-                // Auto indent: language override
-                config.auto_indent = lang_config.auto_indent;
-
-                // Auto close: language override (only if globally enabled)
-                if config.auto_close {
-                    if let Some(lang_auto_close) = lang_config.auto_close {
-                        config.auto_close = lang_auto_close;
-                    }
-                }
-
-                // Auto surround: language override (only if globally enabled)
-                if config.auto_surround {
-                    if let Some(lang_auto_surround) = lang_config.auto_surround {
-                        config.auto_surround = lang_auto_surround;
-                    }
-                }
-
-                // Whitespace tabs: language override can disable tab indicators
-                whitespace =
-                    whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
-                config.whitespace = whitespace;
-
-                // Formatter: from language config
-                config.formatter = lang_config.formatter.clone();
-
-                // Format on save: from language config
-                config.format_on_save = lang_config.format_on_save;
-
-                // On save actions: from language config
-                config.on_save = lang_config.on_save.clone();
-
-                // Highlighter preference: from language config
-                config.highlighter = lang_config.highlighter;
-
-                // TextMate grammar path: from language config
-                config.textmate_grammar = lang_config.textmate_grammar.clone();
+            });
+        if let Some(lang_config) = lang_config_ref {
+            // Tab size: use language setting if specified, else global
+            if let Some(ts) = lang_config.tab_size {
+                config.tab_size = ts;
             }
+
+            // Use tabs: language override
+            config.use_tabs = lang_config.use_tabs;
+
+            // Auto indent: language override
+            config.auto_indent = lang_config.auto_indent;
+
+            // Auto close: language override (only if globally enabled)
+            if config.auto_close {
+                if let Some(lang_auto_close) = lang_config.auto_close {
+                    config.auto_close = lang_auto_close;
+                }
+            }
+
+            // Auto surround: language override (only if globally enabled)
+            if config.auto_surround {
+                if let Some(lang_auto_surround) = lang_config.auto_surround {
+                    config.auto_surround = lang_auto_surround;
+                }
+            }
+
+            // Whitespace tabs: language override can disable tab indicators
+            whitespace =
+                whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
+            config.whitespace = whitespace;
+
+            // Formatter: from language config
+            config.formatter = lang_config.formatter.clone();
+
+            // Format on save: from language config
+            config.format_on_save = lang_config.format_on_save;
+
+            // On save actions: from language config
+            config.on_save = lang_config.on_save.clone();
+
+            // Highlighter preference: from language config
+            config.highlighter = lang_config.highlighter;
+
+            // TextMate grammar path: from language config
+            config.textmate_grammar = lang_config.textmate_grammar.clone();
         }
 
         config
@@ -1707,6 +1723,7 @@ impl Default for Config {
             keybinding_maps: HashMap::new(), // User-defined maps go here
             active_keybinding_map: default_keybinding_map_name(),
             languages: Self::default_languages(),
+            fallback: None,
             lsp: Self::default_lsp_config(),
             warnings: WarningsConfig::default(),
             plugins: HashMap::new(), // Populated when scanning for plugins
