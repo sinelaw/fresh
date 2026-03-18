@@ -57,7 +57,7 @@ fn check_highlighting(filename: &str) -> (bool, usize) {
                 if let Some(fg) = style.fg {
                     // Exclude default text, line numbers, empty line tilde, and black
                     match fg {
-                        Color::Indexed(15) => {} // default white text
+                        Color::Indexed(15) => {}  // default white text
                         Color::Indexed(244) => {} // line numbers
                         Color::Indexed(237) => {} // tilde empty lines
                         Color::Indexed(0) => {}   // black
@@ -84,11 +84,7 @@ macro_rules! test_highlighting_works {
         #[test]
         fn $test_name() {
             let (has_hl, color_count) = check_highlighting($filename);
-            assert!(
-                has_hl,
-                "{}: expected highlighter to be active",
-                $filename
-            );
+            assert!(has_hl, "{}: expected highlighter to be active", $filename);
             assert!(
                 color_count >= $min_colors,
                 "{}: expected at least {} highlight colors, got {}",
