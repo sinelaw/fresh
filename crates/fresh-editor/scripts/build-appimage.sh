@@ -129,10 +129,21 @@ EOF
 # Also place in standard location
 cp "$APPDIR/fresh.desktop" "$APPDIR/usr/share/applications/"
 
-# Copy icon
+# Copy icon (SVG + hicolor PNGs)
 ICON_SRC="$REPO_ROOT/flatpak/${APP_ID}.svg"
 cp "$ICON_SRC" "$APPDIR/fresh.svg"
 cp "$ICON_SRC" "$APPDIR/usr/share/icons/hicolor/scalable/apps/fresh.svg"
+
+# Install hicolor PNG icons for desktop environments that prefer raster icons
+ICONS_ROOT="$(cd "$REPO_ROOT/../.." && pwd)/docs/icons/linux/hicolor"
+if [ -d "$ICONS_ROOT" ]; then
+    for size_dir in "$ICONS_ROOT"/*/apps; do
+        size=$(basename "$(dirname "$size_dir")")
+        mkdir -p "$APPDIR/usr/share/icons/hicolor/${size}/apps"
+        cp "$size_dir/fresh.png" "$APPDIR/usr/share/icons/hicolor/${size}/apps/fresh.png"
+    done
+    echo "Installed hicolor PNG icons"
+fi
 
 # Copy and update AppStream metadata (filename must match the app ID)
 METAINFO="$APPDIR/usr/share/metainfo/${APP_ID}.metainfo.xml"

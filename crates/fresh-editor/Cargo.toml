@@ -237,6 +237,8 @@ assets = [
     ["../../docs/icons/linux/hicolor/128x128/apps/fresh.png", "usr/share/icons/hicolor/128x128/apps/", "644"],
     ["../../docs/icons/linux/hicolor/256x256/apps/fresh.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
     ["../../docs/icons/linux/hicolor/512x512/apps/fresh.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
+    # Freedesktop desktop entry
+    ["resources/fresh.desktop", "usr/share/applications/", "644"],
 ]
 # Maintainer scripts to create/remove symlink at /usr/bin/fresh
 maintainer-scripts = "debian/"
@@ -269,6 +271,8 @@ assets = [
     { source = "../../docs/icons/linux/hicolor/128x128/apps/fresh.png", dest = "/usr/share/icons/hicolor/128x128/apps/fresh.png", mode = "644" },
     { source = "../../docs/icons/linux/hicolor/256x256/apps/fresh.png", dest = "/usr/share/icons/hicolor/256x256/apps/fresh.png", mode = "644" },
     { source = "../../docs/icons/linux/hicolor/512x512/apps/fresh.png", dest = "/usr/share/icons/hicolor/512x512/apps/fresh.png", mode = "644" },
+    # Freedesktop desktop entry
+    { source = "resources/fresh.desktop", dest = "/usr/share/applications/fresh.desktop", mode = "644" },
 ]
 # posttrans runs after ALL transaction operations complete - needed because older versions
 # (<=0.1.56) had a preuninstall script that removes /usr/bin/fresh, which deletes our wrapper

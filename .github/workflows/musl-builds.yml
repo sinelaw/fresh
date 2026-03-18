@@ -68,6 +68,8 @@ jobs:
           cp README.md LICENSE "${ARCHIVE_NAME}/" 2>/dev/null || true
           cp -r crates/fresh-editor/plugins "${ARCHIVE_NAME}/" 2>/dev/null || true
           cp -r crates/fresh-editor/themes "${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp -r docs/icons/linux/hicolor "${ARCHIVE_NAME}/icons" 2>/dev/null || true
+          cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop" 2>/dev/null || true
 
           tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
           sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"

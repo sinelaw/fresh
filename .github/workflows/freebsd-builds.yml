@@ -49,6 +49,8 @@ jobs:
             cp README.md LICENSE CHANGELOG.md "${ARCHIVE_NAME}/" || true
             cp -r crates/fresh-editor/plugins "${ARCHIVE_NAME}/" || true
             cp -r crates/fresh-editor/themes "${ARCHIVE_NAME}/" || true
+            cp -r docs/icons/linux/hicolor "${ARCHIVE_NAME}/icons" || true
+            cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop" || true
 
             # 5. Create Archive
             tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"

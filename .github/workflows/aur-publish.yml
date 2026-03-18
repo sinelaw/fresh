@@ -45,57 +45,15 @@ jobs:
           echo "Computed SHA256 (x86_64): $SHA256_X86_64"
           echo "Computed SHA256 (aarch64): $SHA256_AARCH64"
 
-      - name: Clone AUR repo and update PKGBUILD
+      - name: Generate PKGBUILD from template
         run: |
-          git clone https://aur.archlinux.org/fresh-editor-bin.git aur-repo
-          cd aur-repo
-          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
-
-          # Update arch array to support both x86_64 and aarch64
-          sed -i "s/^arch=.*/arch=('x86_64' 'aarch64')/" PKGBUILD
-
-          # Remove old source and sha256sums arrays (including architecture-specific ones)
-          # and any continuation lines, then add new architecture-specific arrays
-          awk -v ver="${VERSION}" \
-              -v sha_x86_64="${{ steps.checksum.outputs.sha256_x86_64 }}" \
-              -v sha_aarch64="${{ steps.checksum.outputs.sha256_aarch64 }}" '
-            # Skip old source arrays (single or multi-line)
-            /^source=\(/ || /^source_x86_64=\(/ || /^source_aarch64=\(/ {
-              if (/\)$/) next  # Single line, skip it
-              in_source=1; next
-            }
-            in_source && /\)[[:space:]]*$/ { in_source=0; next }
-            in_source { next }
-
-            # Skip old sha256sums arrays (single or multi-line)
-            /^sha256sums=\(/ || /^sha256sums_x86_64=\(/ || /^sha256sums_aarch64=\(/ {
-              if (/\)$/) next  # Single line, skip it
-              in_sha=1; next
-            }
-            in_sha && /\)[[:space:]]*$/ { in_sha=0; next }
-            in_sha { next }
-
-            # Print the arch line, then add source and checksum arrays right after
-            /^arch=/ {
-              print
-              print ""
-              print "source_x86_64=(\"fresh-editor-" ver "-x86_64.tar.xz::https://github.com/sinelaw/fresh/releases/download/v" ver "/fresh-editor-x86_64-unknown-linux-gnu.tar.xz\""
-              print "             \"https://raw.githubusercontent.com/sinelaw/fresh/master/LICENSE\")"
-              print "source_aarch64=(\"fresh-editor-" ver "-aarch64.tar.xz::https://github.com/sinelaw/fresh/releases/download/v" ver "/fresh-editor-aarch64-unknown-linux-gnu.tar.xz\""
-              print "               \"https://raw.githubusercontent.com/sinelaw/fresh/master/LICENSE\")"
-              print ""
-              print "sha256sums_x86_64=(\"" sha_x86_64 "\""
-              print "                  \"SKIP\")"
-              print "sha256sums_aarch64=(\"" sha_aarch64 "\""
-              print "                   \"SKIP\")"
-              next
-            }
-
-            { print }
-          ' PKGBUILD > PKGBUILD.tmp && mv PKGBUILD.tmp PKGBUILD
-          echo "Updated PKGBUILD:"
-          cat PKGBUILD
+          mkdir -p aur-repo
+          cp crates/fresh-editor/packaging/aur/fresh-editor-bin/PKGBUILD.template aur-repo/PKGBUILD
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" aur-repo/PKGBUILD
+          sed -i "s/SHA256_X86_64_PLACEHOLDER/${{ steps.checksum.outputs.sha256_x86_64 }}/g" aur-repo/PKGBUILD
+          sed -i "s/SHA256_AARCH64_PLACEHOLDER/${{ steps.checksum.outputs.sha256_aarch64 }}/g" aur-repo/PKGBUILD
+          echo "Generated PKGBUILD:"
+          cat aur-repo/PKGBUILD
 
       - name: Publish AUR package (fresh-editor-bin)
         uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
@@ -118,36 +76,19 @@ jobs:
       - name: Download stable source tarball from release
         id: checksum
         run: |
-          # Download the stable source tarball from the GitHub release (not the auto-generated archive)
           curl -sL "https://github.com/sinelaw/fresh/releases/download/v${VERSION}/fresh-editor-${VERSION}-source.tar.gz" -o source.tar.gz
           SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
           echo "Computed SHA256: $SHA256"
 
-      - name: Clone AUR repo and update PKGBUILD
+      - name: Generate PKGBUILD from template
         run: |
-          git clone https://aur.archlinux.org/fresh-editor.git aur-repo
-          cd aur-repo
-          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
-          # Update arch array to support both x86_64 and aarch64 (source builds work on both)
-          sed -i "s/^arch=.*/arch=('x86_64' 'aarch64')/" PKGBUILD
-          # Update source URL to use stable release asset
-          sed -i 's|^source=.*|source=("fresh-editor-${pkgver}-source.tar.gz::https://github.com/sinelaw/fresh/releases/download/v${pkgver}/fresh-editor-${pkgver}-source.tar.gz")|' PKGBUILD
-          # Update sha256sums using awk for reliable replacement
-          awk -v sha="${{ steps.checksum.outputs.sha256 }}" '
-            /^sha256sums=\(.*\)$/ { print "sha256sums=(\"" sha "\")"; next }
-            /^sha256sums=\(/ { in_sha=1; print "sha256sums=(\"" sha "\")"; next }
-            in_sha && /\)[[:space:]]*$/ { in_sha=0; next }
-            in_sha { next }
-            { print }
-          ' PKGBUILD > PKGBUILD.tmp && mv PKGBUILD.tmp PKGBUILD
-          # Update paths for workspace restructuring (plugins/keymaps/themes moved to crates/fresh-editor/)
-          sed -i 's|cp -r plugins |cp -r crates/fresh-editor/plugins |g' PKGBUILD
-          sed -i 's|cp -r keymaps |cp -r crates/fresh-editor/keymaps |g' PKGBUILD
-          sed -i 's|cp -r themes |cp -r crates/fresh-editor/themes |g' PKGBUILD
-          echo "Updated PKGBUILD:"
-          cat PKGBUILD
+          mkdir -p aur-repo
+          cp crates/fresh-editor/packaging/aur/fresh-editor/PKGBUILD.template aur-repo/PKGBUILD
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" aur-repo/PKGBUILD
+          sed -i "s/SHA256_PLACEHOLDER/${{ steps.checksum.outputs.sha256 }}/g" aur-repo/PKGBUILD
+          echo "Generated PKGBUILD:"
+          cat aur-repo/PKGBUILD
 
       - name: Publish AUR package (fresh-editor)
         uses: KSXGitHub/github-actions-deploy-aur@v4.1.1

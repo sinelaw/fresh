@@ -24,6 +24,8 @@ modules:
       - install -Dm0644 flatpak/io.github.sinelaw.fresh.desktop ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
       - install -Dm0644 flatpak/io.github.sinelaw.fresh.metainfo.xml ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.metainfo.xml
       - install -Dm0644 flatpak/io.github.sinelaw.fresh.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
+      # Install hicolor PNG icons for desktop environments that prefer raster icons
+      - for size in 16x16 22x22 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do install -Dm0644 ../../docs/icons/linux/hicolor/${size}/apps/fresh.png ${FLATPAK_DEST}/share/icons/hicolor/${size}/apps/${FLATPAK_ID}.png; done
       # Install plugins
       - mkdir -p ${FLATPAK_DEST}/share/fresh-editor/plugins/lib
       - mkdir -p ${FLATPAK_DEST}/share/fresh-editor/plugins/examples

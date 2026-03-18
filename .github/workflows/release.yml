@@ -154,6 +154,12 @@ jobs:
           cp -r crates/fresh-editor/plugins "${ARCHIVE_NAME}/"
           cp -r crates/fresh-editor/themes "${ARCHIVE_NAME}/"
 
+          # Include icons and desktop file for Linux targets
+          if [[ "${{ matrix.target }}" == *-linux-* ]]; then
+            cp -r docs/icons/linux/hicolor "${ARCHIVE_NAME}/icons"
+            cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop"
+          fi
+
           if [ "${{ matrix.archive_ext }}" = "tar.xz" ]; then
             tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
             sha256sum "${ARCHIVE_NAME}.tar.xz" > "${ARCHIVE_NAME}.tar.xz.sha256"
