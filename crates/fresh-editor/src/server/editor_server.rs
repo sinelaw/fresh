@@ -178,6 +178,16 @@ impl EditorServer {
         self.listener.paths()
     }
 
+    /// Access the editor instance (available after initialize_editor).
+    pub fn editor(&self) -> Option<&Editor> {
+        self.editor.as_ref()
+    }
+
+    /// Mutable access to the editor instance (available after initialize_editor).
+    pub fn editor_mut(&mut self) -> Option<&mut Editor> {
+        self.editor.as_mut()
+    }
+
     /// Run the editor server main loop
     pub fn run(&mut self) -> io::Result<()> {
         tracing::info!("Editor server starting for {:?}", self.config.working_dir);
@@ -408,7 +418,12 @@ impl EditorServer {
     }
 
     /// Initialize the editor with the current terminal size
-    fn initialize_editor(&mut self) -> io::Result<()> {
+    /// Initialize the editor with the current terminal size.
+    ///
+    /// Performs the full startup sequence: create editor, set session name,
+    /// restore workspace, recover buffers from hot exit, start recovery session.
+    /// Called on first client connection.
+    pub fn initialize_editor(&mut self) -> io::Result<()> {
         let backend = CaptureBackend::new(self.term_size.cols, self.term_size.rows);
         let terminal = Terminal::new(backend)
             .map_err(|e| io::Error::other(format!("Failed to create terminal: {}", e)))?;
@@ -442,6 +457,41 @@ impl EditorServer {
                 .unwrap_or_else(|| "session".to_string())
         });
         editor.set_session_name(Some(session_display_name));
+
+        // Restore workspace and recovery data (mirrors the standalone startup
+        // path in handle_first_run_setup in main.rs).
+        match editor.try_restore_workspace() {
+            Ok(true) => {
+                tracing::info!("Session workspace restored successfully");
+            }
+            Ok(false) => {
+                tracing::debug!("No previous session workspace found");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to restore session workspace: {}", e);
+            }
+        }
+
+        // Recover buffers from hot exit recovery files
+        if editor.has_recovery_files().unwrap_or(false) {
+            tracing::info!("Recovery files found for session, recovering...");
+            match editor.recover_all_buffers() {
+                Ok(count) if count > 0 => {
+                    tracing::info!("Recovered {} buffer(s) for session", count);
+                }
+                Ok(_) => {
+                    tracing::info!("No buffers to recover for session");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to recover session buffers: {}", e);
+                }
+            }
+        }
+
+        // Start the recovery session (periodic saves of dirty buffers)
+        if let Err(e) = editor.start_recovery_session() {
+            tracing::warn!("Failed to start recovery session: {}", e);
+        }
 
         self.terminal = Some(terminal);
         self.editor = Some(editor);

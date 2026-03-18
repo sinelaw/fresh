@@ -823,6 +823,37 @@ fn handle_first_run_setup(
 /// prefix properly using std::path APIs.
 ///
 /// If the full path exists as a file, it's used as-is (handles files with colons in name).
+/// Build FileRequest structs from CLI file arguments, resolving paths relative to `working_dir`.
+/// Directories are silently skipped.
+fn build_file_requests(
+    files: &[String],
+    working_dir: &std::path::Path,
+) -> Vec<fresh::server::protocol::FileRequest> {
+    use fresh::server::protocol::FileRequest;
+    let mut requests = Vec::new();
+    for f in files {
+        let loc = parse_file_location(f);
+        let abs_path = if loc.path.is_relative() {
+            working_dir.join(&loc.path)
+        } else {
+            loc.path.clone()
+        };
+        let canonical_path = abs_path.canonicalize().unwrap_or(abs_path);
+        if canonical_path.is_dir() {
+            continue;
+        }
+        requests.push(FileRequest {
+            path: canonical_path.to_string_lossy().to_string(),
+            line: loc.line,
+            column: loc.column,
+            end_line: loc.end_line,
+            end_column: loc.end_column,
+            message: loc.message,
+        });
+    }
+    requests
+}
+
 fn parse_file_location(input: &str) -> FileLocation {
     use std::path::{Component, Path};
 
@@ -2261,7 +2292,7 @@ fn run_open_files_command(
 ) -> AnyhowResult<()> {
     use fresh::server::daemon::is_process_running;
     use fresh::server::protocol::{
-        ClientControl, ClientHello, FileRequest, ServerControl, TermSize, PROTOCOL_VERSION,
+        ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
     };
     use fresh::server::spawn_server_detached;
 
@@ -2271,43 +2302,10 @@ fn run_open_files_command(
     }
 
     let working_dir = std::env::current_dir()?;
+    let file_requests = build_file_requests(files, &working_dir);
 
-    // Build file requests BEFORE starting server, filtering out directories
-    let mut file_requests: Vec<FileRequest> = Vec::new();
-    let mut skipped_dirs = 0;
-
-    for f in files {
-        let loc = parse_file_location(f);
-        // Resolve relative paths to absolute paths based on client's working directory
-        let abs_path = if loc.path.is_relative() {
-            working_dir.join(&loc.path)
-        } else {
-            loc.path.clone()
-        };
-        // Canonicalize to resolve symlinks and normalize
-        let canonical_path = abs_path.canonicalize().unwrap_or(abs_path);
-
-        if canonical_path.is_dir() {
-            skipped_dirs += 1;
-            eprintln!("Skipping directory: {}", canonical_path.display());
-            continue;
-        }
-
-        file_requests.push(FileRequest {
-            path: canonical_path.to_string_lossy().to_string(),
-            line: loc.line,
-            column: loc.column,
-            end_line: loc.end_line,
-            end_column: loc.end_column,
-            message: loc.message,
-        });
-    }
-
-    // Check if we have any files to open BEFORE starting the server
     if file_requests.is_empty() {
-        if skipped_dirs > 0 {
-            eprintln!("No files to open (only directories were specified).");
-        }
+        eprintln!("No files to open (only directories were specified).");
         return Ok(());
     }
 
@@ -2388,7 +2386,7 @@ fn run_open_files_command(
         // and attach as a normal interactive client so the user can see the
         // editor. --wait is ignored in this path; the user quits normally.
         drop(conn);
-        return run_attach(session_name);
+        return run_attach(session_name, &[]);
     } else if wait {
         // Existing session — block until the server sends WaitComplete
         loop {
@@ -2414,10 +2412,10 @@ fn run_open_files_command(
 
 /// Attach to an existing session, starting a server if needed
 fn run_attach_command(args: &Args) -> AnyhowResult<()> {
-    run_attach(args.session_name.as_deref())
+    run_attach(args.session_name.as_deref(), &args.files)
 }
 
-fn run_attach(session_name: Option<&str>) -> AnyhowResult<()> {
+fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
         ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
@@ -2534,6 +2532,18 @@ fn run_attach(session_name: Option<&str>) -> AnyhowResult<()> {
         }
         _ => {
             return Err(anyhow::anyhow!("Unexpected server response"));
+        }
+    }
+
+    // Send file open requests if any files were specified on the command line
+    if !files.is_empty() {
+        let file_requests = build_file_requests(files, &working_dir);
+        if !file_requests.is_empty() {
+            let msg = serde_json::to_string(&ClientControl::OpenFiles {
+                files: file_requests,
+                wait: false,
+            })?;
+            conn.write_control(&msg)?;
         }
     }
 
