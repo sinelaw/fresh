@@ -579,13 +579,13 @@ fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
 
     // Get the current stdin handle (which is a pipe)
     let stdin_handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
-    if stdin_handle == INVALID_HANDLE_VALUE || stdin_handle.is_null() {
+    if stdin_handle == INVALID_HANDLE_VALUE || stdin_handle == 0 as HANDLE {
         anyhow::bail!("Failed to get stdin handle");
     }
 
     // Duplicate the handle so we can read from it in a background thread
     // while we replace stdin with CONIN$ for keyboard input
-    let mut duplicated_handle: HANDLE = std::ptr::null_mut();
+    let mut duplicated_handle: HANDLE = 0 as HANDLE;
     let current_process = unsafe { GetCurrentProcess() };
     let success = unsafe {
         DuplicateHandle(
@@ -2904,7 +2904,26 @@ fn run_event_loop(
     use fresh::client::win_vt_input::{self, VtInputEvent};
     use fresh::server::input_parser::InputParser;
 
-    let old_console_mode = win_vt_input::enable_vt_input()?;
+    // Try to enable VT input mode for bracketed paste support.
+    // If it fails (e.g., legacy Windows), fall back to crossterm.
+    let vt_mode = win_vt_input::enable_vt_input();
+    if let Err(ref e) = vt_mode {
+        tracing::warn!("VT input not available ({}), using crossterm fallback", e);
+        return run_event_loop_common(
+            editor,
+            terminal,
+            workspace_enabled,
+            key_translator,
+            |timeout| {
+                if event_poll(timeout)? {
+                    Ok(Some(event_read()?))
+                } else {
+                    Ok(None)
+                }
+            },
+        );
+    }
+    let old_console_mode = vt_mode.unwrap();
 
     let mut input_parser = InputParser::new();
     let mut event_buffer: std::collections::VecDeque<CrosstermEvent> =

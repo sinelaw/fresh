@@ -11,7 +11,7 @@
 use std::io;
 use std::time::Duration;
 
-use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
+use windows_sys::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
 use windows_sys::Win32::System::Console::{
     GetConsoleMode, GetStdHandle, ReadConsoleInputW, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_INPUT,
     ENABLE_WINDOW_INPUT, FOCUS_EVENT, INPUT_RECORD, KEY_EVENT, MOUSE_EVENT, STD_INPUT_HANDLE,
@@ -29,7 +29,7 @@ use windows_sys::Win32::System::Threading::WaitForSingleObject;
 pub fn enable_vt_input() -> io::Result<u32> {
     unsafe {
         let handle = GetStdHandle(STD_INPUT_HANDLE);
-        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        if handle == 0 || handle == -1_isize as HANDLE {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "Failed to get stdin handle",
