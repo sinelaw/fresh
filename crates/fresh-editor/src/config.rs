@@ -1561,8 +1561,7 @@ impl BufferConfig {
             }
 
             // Whitespace tabs: language override can disable tab indicators
-            whitespace =
-                whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
+            whitespace = whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
             config.whitespace = whitespace;
 
             // Formatter: from language config

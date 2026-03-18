@@ -225,12 +225,13 @@ impl Editor {
                 self.config.editor.large_file_threshold_bytes as usize,
                 Arc::clone(&self.filesystem),
             )?;
-            let detected = crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
-                &display_path,
-                &self.grammar_registry,
-                &self.config.languages,
-                self.config.fallback.as_ref(),
-            );
+            let detected =
+                crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
+                    &display_path,
+                    &self.grammar_registry,
+                    &self.config.languages,
+                    self.config.fallback.as_ref(),
+                );
             EditorState::from_buffer_with_language(buffer, detected)
         } else {
             // File doesn't exist - create empty buffer with the file path set
@@ -412,12 +413,13 @@ impl Editor {
             self.config.editor.large_file_threshold_bytes as usize,
             Arc::clone(&self.local_filesystem),
         )?;
-        let detected = crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
-            &display_path,
-            &self.grammar_registry,
-            &self.config.languages,
-            self.config.fallback.as_ref(),
-        );
+        let detected =
+            crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
+                &display_path,
+                &self.grammar_registry,
+                &self.config.languages,
+                self.config.fallback.as_ref(),
+            );
         let state = EditorState::from_buffer_with_language(buffer, detected);
 
         self.buffers.insert(buffer_id, state);
@@ -509,12 +511,13 @@ impl Editor {
         )?;
         // Create editor state with the buffer
         // Use display_path for language detection (glob patterns match user-visible paths)
-        let detected = crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
-            &display_path,
-            &self.grammar_registry,
-            &self.config.languages,
-            self.config.fallback.as_ref(),
-        );
+        let detected =
+            crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
+                &display_path,
+                &self.grammar_registry,
+                &self.config.languages,
+                self.config.fallback.as_ref(),
+            );
 
         let mut state = EditorState::from_buffer_with_language(buffer, detected);
 
@@ -646,12 +649,13 @@ impl Editor {
         )?;
         // Create editor state with the buffer
         // Use display_path for language detection (glob patterns match user-visible paths)
-        let detected = crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
-            &display_path,
-            &self.grammar_registry,
-            &self.config.languages,
-            self.config.fallback.as_ref(),
-        );
+        let detected =
+            crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
+                &display_path,
+                &self.grammar_registry,
+                &self.config.languages,
+                self.config.fallback.as_ref(),
+            );
 
         let mut state = EditorState::from_buffer_with_language(buffer, detected);
 
