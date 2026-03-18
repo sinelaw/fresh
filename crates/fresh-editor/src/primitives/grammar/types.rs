@@ -100,6 +100,8 @@ pub const VUE_GRAMMAR: &str = include_str!("../../grammars/vue.sublime-syntax");
 pub const SVELTE_GRAMMAR: &str = include_str!("../../grammars/svelte.sublime-syntax");
 /// Embedded Astro grammar
 pub const ASTRO_GRAMMAR: &str = include_str!("../../grammars/astro.sublime-syntax");
+/// Embedded Hyprlang grammar (Hyprland config)
+pub const HYPRLANG_GRAMMAR: &str = include_str!("../../grammars/hyprlang.sublime-syntax");
 
 /// Registry of all available TextMate grammars.
 ///
@@ -289,6 +291,12 @@ impl GrammarRegistry {
         let earthfile_scope = "source.earthfile".to_string();
         map.insert("Earthfile".to_string(), earthfile_scope);
 
+        // Hyprlang (Hyprland config files)
+        let hyprlang_scope = "source.hyprlang".to_string();
+        map.insert("hyprland.conf".to_string(), hyprlang_scope.clone());
+        map.insert("hyprpaper.conf".to_string(), hyprlang_scope.clone());
+        map.insert("hyprlock.conf".to_string(), hyprlang_scope);
+
         // go.mod / go.sum
         let gomod_scope = "source.gomod".to_string();
         map.insert("go.mod".to_string(), gomod_scope.clone());
@@ -430,6 +438,7 @@ impl GrammarRegistry {
             (VUE_GRAMMAR, "Vue"),
             (SVELTE_GRAMMAR, "Svelte"),
             (ASTRO_GRAMMAR, "Astro"),
+            (HYPRLANG_GRAMMAR, "Hyprlang"),
         ];
 
         for (grammar_str, name) in additional_grammars {

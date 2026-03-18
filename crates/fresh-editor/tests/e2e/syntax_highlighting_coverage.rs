@@ -247,6 +247,8 @@ test_highlighting_works!(test_highlight_vue, "hello.vue", 2);
 test_highlighting_works!(test_highlight_svelte, "hello.svelte", 2);
 test_highlighting_works!(test_highlight_astro, "hello.astro", 2);
 
+test_highlighting_works!(test_highlight_hyprlang, "hyprland.conf", 2);
+
 // --- Extension mappings (fixed) ---
 test_highlighting_works!(test_highlight_cjs, "hello.cjs", 2);
 test_highlighting_works!(test_highlight_mts, "hello.mts", 2);

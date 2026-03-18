@@ -1,0 +1,93 @@
+%YAML 1.2
+---
+name: Hyprlang
+file_extensions: [hl]
+scope: source.hyprlang
+contexts:
+  main:
+    - include: directives
+    - include: comments
+    - include: variables_def
+    - include: sections
+    - include: key_value
+
+  directives:
+    # hyprlang if / noerror / source directives
+    - match: '(#)\s*(hyprlang)\s+(if|noerror|source)\b'
+      captures:
+        1: punctuation.definition.directive.hyprlang
+        2: keyword.control.directive.hyprlang
+        3: keyword.control.directive.hyprlang
+      push:
+        - match: '$'
+          pop: true
+        - include: value_patterns
+
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.hyprlang
+
+  variables_def:
+    - match: '(\$)([\w]+)\s*(=)'
+      captures:
+        1: punctuation.definition.variable.hyprlang
+        2: variable.other.definition.hyprlang
+        3: keyword.operator.assignment.hyprlang
+      push:
+        - include: value_patterns
+        - match: '$'
+          pop: true
+
+  sections:
+    - match: '^\s*([\w][\w:]*)\s*(\{)\s*$'
+      captures:
+        1: entity.name.section.hyprlang
+        2: punctuation.section.block.begin.hyprlang
+      push:
+        - include: directives
+        - include: comments
+        - include: variables_def
+        - include: sections
+        - include: key_value
+        - match: '^\s*(\})'
+          captures:
+            1: punctuation.section.block.end.hyprlang
+          pop: true
+
+  key_value:
+    # keyword = value (with : for inline categories, e.g. input:touchpad:natural_scroll)
+    - match: '^\s*([\w][\w:\.\-]*)\s*(=)\s*'
+      captures:
+        1: variable.other.key.hyprlang
+        2: keyword.operator.assignment.hyprlang
+      push:
+        - include: value_patterns
+        - match: '$'
+          pop: true
+    # bare keywords (e.g. exec-once, bind, monitor)
+    - match: '^\s*([\w][\w\-]*)\b'
+      scope: keyword.other.hyprlang
+
+  value_patterns:
+    - include: comments
+    - match: '\b(true|false|yes|no|on|off)\b'
+      scope: constant.language.hyprlang
+    - match: '\b0[xX][0-9a-fA-F]+\b'
+      scope: constant.numeric.hex.hyprlang
+    - match: '\b\d+(\.\d+)?\b'
+      scope: constant.numeric.hyprlang
+    - match: 'rgba?\([^)]+\)'
+      scope: constant.other.color.hyprlang
+    - match: '\{\{'
+      push:
+        - meta_scope: meta.arithmetic.hyprlang
+        - match: '\}\}'
+          pop: true
+        - match: '[+\-*/]'
+          scope: keyword.operator.arithmetic.hyprlang
+        - match: '\$[\w]+'
+          scope: variable.other.hyprlang
+        - match: '\b\d+(\.\d+)?\b'
+          scope: constant.numeric.hyprlang
+    - match: '\$[\w]+'
+      scope: variable.other.hyprlang
