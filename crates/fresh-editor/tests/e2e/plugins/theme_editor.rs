@@ -1977,17 +1977,14 @@ fn test_builtin_theme_requires_save_as() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.process_async_and_render().unwrap();
 
-    // Should show Save As prompt or message about requiring Save As
-    let screen = harness.screen_to_string();
-    let requires_save_as = screen.contains("Save theme as") || screen.contains("save as");
-
-    assert!(
-        requires_save_as,
-        "Builtin theme should require Save As. Screen:\n{}",
-        screen
-    );
+    // Wait for Save As prompt to appear (async plugin handler)
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Save theme as") || screen.contains("save as")
+        })
+        .unwrap();
 }
 
 /// Test that color swatches are displayed next to color values
