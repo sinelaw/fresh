@@ -173,7 +173,7 @@ use crate::services::plugins::PluginManager;
 use crate::services::recovery::{RecoveryConfig, RecoveryService};
 use crate::services::time_source::{RealTimeSource, SharedTimeSource};
 use crate::state::EditorState;
-use crate::types::LspServerConfig;
+use crate::types::{LspServerConfig, ProcessLimits};
 use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::{Prompt, PromptType};
 use crate::view::scroll_sync::ScrollSyncManager;
@@ -1139,6 +1139,24 @@ impl Editor {
         // Configure LSP servers from config
         for (language, lsp_config) in &config.lsp {
             lsp.set_language_config(language.clone(), lsp_config.clone());
+        }
+
+        // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
+        // workspace root, override JS/TS LSP to use `deno lsp` (#1191)
+        if working_dir.join("deno.json").exists() || working_dir.join("deno.jsonc").exists() {
+            tracing::info!("Detected Deno project (deno.json found), using deno lsp for JS/TS");
+            let deno_config = LspServerConfig {
+                command: "deno".to_string(),
+                args: vec!["lsp".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: Some(serde_json::json!({"enable": true})),
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            };
+            lsp.set_language_config("javascript".to_string(), deno_config.clone());
+            lsp.set_language_config("typescript".to_string(), deno_config);
         }
 
         // Initialize split manager with the initial buffer
