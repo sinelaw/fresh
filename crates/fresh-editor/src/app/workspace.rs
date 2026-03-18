@@ -1407,6 +1407,17 @@ impl Editor {
                 }
             }
 
+            // If all saved tabs referenced deleted/missing files, open_buffers
+            // is now empty. Re-add the buffer that the split manager assigned to
+            // this split so the orphan cleanup won't remove a buffer the split
+            // manager still points to (#1278).
+            if view_state.open_buffers.is_empty() {
+                if let Some(buf) = self.split_manager.buffer_for_split(current_split_id) {
+                    view_state.open_buffers.push(buf);
+                    view_state.ensure_buffer_state(buf);
+                }
+            }
+
             if let Some(active_idx) = split_state.active_tab_index {
                 if let Some(tab) = split_state.open_tabs.get(active_idx) {
                     active_buffer_id = match tab {

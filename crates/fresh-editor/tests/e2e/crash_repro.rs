@@ -659,6 +659,19 @@ fn test_issue_1278_crash_workspace_deleted_file() {
             .expect("startup should not panic when workspace references deleted files");
 
         harness.assert_buffer_content("new content");
+
+        // The new file should be the only tab — no phantom empty tab left over
+        // from the failed workspace restore.
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains("epilogue.xhtml"),
+            "Tab bar should show the opened file"
+        );
+        assert!(
+            !screen.contains("[No Name]"),
+            "There should be no phantom unnamed buffer tab after workspace \
+             restore with deleted files"
+        );
     }
 }
 
