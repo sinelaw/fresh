@@ -99,7 +99,8 @@ impl GrammarRegistry {
     /// 3. User-installed grammars from ~/.config/fresh/grammars/
     /// 4. Language pack grammars from ~/.config/fresh/languages/packages/
     pub fn load(loader: &dyn GrammarLoader) -> Self {
-        let mut user_extensions = HashMap::new();
+        // Start with built-in extra extension mappings, user grammars override these
+        let mut user_extensions = Self::build_extra_extensions();
 
         // Start with syntect defaults, convert to builder to add more
         let defaults = SyntaxSet::load_defaults_newlines();

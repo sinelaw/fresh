@@ -235,7 +235,7 @@ test_no_highlighting_yet!(test_nohl_containerfile, "Containerfile");
 test_no_highlighting_yet!(test_nohl_terraform, "hello.tf");
 test_no_highlighting_yet!(test_nohl_protobuf, "hello.proto");
 test_no_highlighting_yet!(test_nohl_graphql, "hello.graphql");
-test_no_highlighting_yet!(test_nohl_jenkinsfile, "Jenkinsfile");
+// Jenkinsfile moved to test_highlighting_works above
 test_no_highlighting_yet!(test_nohl_earthfile, "Earthfile");
 test_no_highlighting_yet!(test_nohl_tiltfile, "Tiltfile");
 test_no_highlighting_yet!(test_nohl_justfile, "justfile");
@@ -253,6 +253,7 @@ test_no_highlighting_yet!(test_nohl_vue, "hello.vue");
 test_no_highlighting_yet!(test_nohl_svelte, "hello.svelte");
 test_no_highlighting_yet!(test_nohl_astro, "hello.astro");
 
-// --- Extension mapping gaps ---
-test_no_highlighting_yet!(test_nohl_cjs, "hello.cjs");
-test_no_highlighting_yet!(test_nohl_mts, "hello.mts");
+// --- Extension mappings (fixed) ---
+test_highlighting_works!(test_highlight_cjs, "hello.cjs", 2);
+test_highlighting_works!(test_highlight_mts, "hello.mts", 2);
+test_highlighting_works!(test_highlight_jenkinsfile, "Jenkinsfile", 2);

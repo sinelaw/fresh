@@ -169,8 +169,8 @@ impl Language {
         match path.extension()?.to_str()? {
             "rs" => Some(Language::Rust),
             "py" => Some(Language::Python),
-            "js" | "jsx" => Some(Language::JavaScript),
-            "ts" | "tsx" => Some(Language::TypeScript),
+            "js" | "jsx" | "mjs" | "cjs" => Some(Language::JavaScript),
+            "ts" | "tsx" | "mts" | "cts" => Some(Language::TypeScript),
             "html" => Some(Language::HTML),
             "css" => Some(Language::CSS),
             "c" | "h" => Some(Language::C),

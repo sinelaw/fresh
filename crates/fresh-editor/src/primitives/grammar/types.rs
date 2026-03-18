@@ -112,6 +112,25 @@ impl GrammarRegistry {
         })
     }
 
+    /// Build extra extension -> scope mappings for extensions not covered by syntect defaults.
+    ///
+    /// These map common file extensions to existing syntect grammar scopes,
+    /// filling gaps where syntect's built-in extension lists are incomplete.
+    pub fn build_extra_extensions() -> HashMap<String, String> {
+        let mut map = HashMap::new();
+
+        // JavaScript variants not in syntect defaults (["js", "htc"])
+        let js_scope = "source.js".to_string();
+        map.insert("cjs".to_string(), js_scope.clone());
+        map.insert("mjs".to_string(), js_scope);
+
+        // TypeScript - not in syntect defaults at all, but tree-sitter handles it.
+        // These ensure syntect lookup doesn't interfere.
+        // (TypeScript highlighting goes through tree-sitter fallback.)
+
+        map
+    }
+
     /// Build the default filename -> scope mappings for dotfiles and special files.
     pub fn build_filename_scopes() -> HashMap<String, String> {
         let mut map = HashMap::new();
@@ -158,6 +177,15 @@ impl GrammarRegistry {
         // Git attributes files
         let gitattributes_scope = "source.gitattributes".to_string();
         map.insert(".gitattributes".to_string(), gitattributes_scope);
+
+        // Jenkinsfile -> Groovy
+        let groovy_scope = "source.groovy".to_string();
+        map.insert("Jenkinsfile".to_string(), groovy_scope);
+
+        // Vagrantfile -> Ruby (syntect already handles this, but be explicit)
+        // Brewfile -> Ruby
+        let ruby_scope = "source.ruby".to_string();
+        map.insert("Brewfile".to_string(), ruby_scope);
 
         map
     }
@@ -698,8 +726,9 @@ impl Default for GrammarRegistry {
         Self::add_embedded_grammars(&mut builder);
         let syntax_set = builder.build();
         let filename_scopes = Self::build_filename_scopes();
+        let extra_extensions = Self::build_extra_extensions();
 
-        Self::new(syntax_set, HashMap::new(), filename_scopes)
+        Self::new(syntax_set, extra_extensions, filename_scopes)
     }
 }
 
