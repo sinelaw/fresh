@@ -23,8 +23,6 @@ use crate::server::protocol::{
 mod relay_unix;
 #[cfg(windows)]
 mod relay_windows;
-#[cfg(windows)]
-pub(crate) mod win_vt_input;
 
 /// Client configuration
 pub struct ClientConfig {
