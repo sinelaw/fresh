@@ -550,7 +550,7 @@ mod tests {
         for line in &lines {
             let ops = state.parse_line(line, &ss).unwrap();
             for (_offset, op) in &ops {
-                let _ = scopes.apply(op);
+                scopes.apply(op).unwrap();
                 let scope_str = scopes
                     .as_slice()
                     .iter()
