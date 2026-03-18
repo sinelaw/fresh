@@ -2,10 +2,13 @@
 //!
 //! Issue #562: Delete folder crash - scroll_offset out of bounds
 //! Issue #564: Replace all operation hangs/crashes
+//! Issue #1278: Crash opening file when workspace references deleted files
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
 use std::fs;
+use tempfile::TempDir;
 
 /// Test issue #562: Crash when scroll_offset becomes larger than display_nodes.len()
 ///
@@ -594,6 +597,69 @@ fn test_saved_at_index_out_of_bounds_after_undo_and_edit() {
 
     // If we get here without panicking, the bug is fixed
     harness.render().unwrap();
+}
+
+/// Test issue #1278: Crash when opening a file in a directory whose workspace
+/// references files that have been deleted.
+///
+/// Repro steps:
+/// 1. Open a file with `fresh somefile.txt` in a directory, quit (saves workspace)
+/// 2. Delete `somefile.txt`
+/// 3. Run `fresh other.txt` in the same directory → panics at
+///    buffer_management.rs:195 with `unwrap()` on `None`
+///
+/// Root cause: `apply_workspace()` clears `open_buffers` in
+/// `restore_split_view_state()` but adds nothing back (the referenced file is
+/// gone). The orphan cleanup then removes the initial empty buffer from
+/// `self.buffers`. Later, `process_pending_file_opens()` calls `open_file()`
+/// which does `self.buffers.get(&self.active_buffer()).unwrap()` — but the
+/// active buffer was already removed.
+#[test]
+fn test_issue_1278_crash_workspace_deleted_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    fs::create_dir(&project_dir).unwrap();
+
+    let original_file = project_dir.join("somefile.txt");
+    let new_file = project_dir.join("epilogue.xhtml");
+    fs::write(&original_file, "original content").unwrap();
+    fs::write(&new_file, "new content").unwrap();
+
+    // Session 1: open somefile.txt and save workspace
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.open_file(&original_file).unwrap();
+        harness.assert_buffer_content("original content");
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Delete the file the workspace references
+    fs::remove_file(&original_file).unwrap();
+
+    // Session 2: open a different file via startup() (mirrors production path).
+    // Before the fix this panics at buffer_management.rs:195.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness
+            .startup(true, &[new_file.clone()])
+            .expect("startup should not panic when workspace references deleted files");
+
+        harness.assert_buffer_content("new content");
+    }
 }
 
 /// Test issue #580: Global editor.tab_size = 0 should not cause panic
