@@ -1,0 +1,78 @@
+%YAML 1.2
+---
+# LESS syntax highlighting for Fresh editor
+name: LESS
+file_extensions:
+  - less
+scope: source.less
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: variables
+    - include: at_rules
+    - include: selectors
+    - include: properties
+    - include: numbers
+
+  comments:
+    - match: '//'
+      scope: punctuation.definition.comment.less
+      push:
+        - meta_scope: comment.line.double-slash.less
+        - match: '$'
+          pop: true
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.less
+      push:
+        - meta_scope: comment.block.less
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.less
+          pop: true
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.less
+      push:
+        - meta_scope: string.quoted.double.less
+        - match: '\\.'
+          scope: constant.character.escape.less
+        - match: '"'
+          scope: punctuation.definition.string.end.less
+          pop: true
+    - match: "'"
+      scope: punctuation.definition.string.begin.less
+      push:
+        - meta_scope: string.quoted.single.less
+        - match: "'"
+          scope: punctuation.definition.string.end.less
+          pop: true
+
+  variables:
+    - match: '@[a-zA-Z_][\w-]*'
+      scope: variable.other.less
+
+  at_rules:
+    - match: '@(import|media|supports|keyframes|font-face|charset|namespace)\b'
+      scope: keyword.control.at-rule.less
+
+  selectors:
+    - match: '\.[a-zA-Z_][\w-]*'
+      scope: entity.other.attribute-name.class.less
+    - match: '#[a-zA-Z_][\w-]*'
+      scope: entity.other.attribute-name.id.less
+    - match: '&'
+      scope: keyword.operator.parent-selector.less
+    - match: ':+([\w-]+)'
+      scope: entity.other.pseudo-class.less
+
+  properties:
+    - match: '\b(color|background|background-color|border|margin|padding|font|font-size|font-weight|font-family|display|position|width|height|max-width|max-height|min-width|min-height|top|right|bottom|left|overflow|opacity|z-index|flex|align-items|justify-content|text-align|text-decoration|line-height|content|transition|transform|animation|box-shadow|border-radius)\b'
+      scope: support.type.property-name.less
+
+  numbers:
+    - match: '#[0-9a-fA-F]{3,8}\b'
+      scope: constant.other.color.less
+    - match: '\b\d+(\.\d+)?(px|em|rem|%|vh|vw|pt|cm|mm|in|s|ms|deg|rad|fr)?\b'
+      scope: constant.numeric.less

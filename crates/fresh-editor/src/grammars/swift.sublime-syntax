@@ -1,0 +1,96 @@
+%YAML 1.2
+---
+# Swift syntax highlighting for Fresh editor
+name: Swift
+file_extensions:
+  - swift
+scope: source.swift
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: types
+    - include: functions
+    - include: numbers
+    - include: attributes
+
+  comments:
+    - match: '//'
+      scope: punctuation.definition.comment.swift
+      push:
+        - meta_scope: comment.line.double-slash.swift
+        - match: '$'
+          pop: true
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.swift
+      push:
+        - meta_scope: comment.block.swift
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.swift
+          pop: true
+
+  strings:
+    - match: '"""'
+      scope: punctuation.definition.string.begin.swift
+      push:
+        - meta_scope: string.quoted.triple.swift
+        - match: '\\.'
+          scope: constant.character.escape.swift
+        - match: '\\\([^)]+\)'
+          scope: variable.interpolation.swift
+        - match: '"""'
+          scope: punctuation.definition.string.end.swift
+          pop: true
+    - match: '"'
+      scope: punctuation.definition.string.begin.swift
+      push:
+        - meta_scope: string.quoted.double.swift
+        - match: '\\.'
+          scope: constant.character.escape.swift
+        - match: '\\\([^)]+\)'
+          scope: variable.interpolation.swift
+        - match: '"'
+          scope: punctuation.definition.string.end.swift
+          pop: true
+
+  keywords:
+    - match: '\b(import|typealias)\b'
+      scope: keyword.other.swift
+    - match: '\b(if|else|guard|switch|case|default|for|in|while|repeat|do|break|continue|fallthrough|return|throw|defer|where)\b'
+      scope: keyword.control.swift
+    - match: '\b(func|var|let|class|struct|enum|protocol|extension|init|deinit|subscript|operator|precedencegroup|associatedtype|static|override|mutating|nonmutating|convenience|required|open|public|internal|fileprivate|private|final|lazy|weak|unowned|dynamic|optional|indirect|async|await|throws|rethrows|try|catch|actor|nonisolated|isolated|consuming|borrowing|some|any|macro)\b'
+      scope: keyword.declaration.swift
+    - match: '\b(is|as)\b'
+      scope: keyword.operator.swift
+    - match: '\b(true|false|nil|self|Self|super)\b'
+      scope: constant.language.swift
+
+  types:
+    - match: '\b(Int|Int8|Int16|Int32|Int64|UInt|UInt8|UInt16|UInt32|UInt64|Float|Double|Bool|String|Character|Void|Never|Any|AnyObject|Optional|Array|Dictionary|Set|Result|Error|Codable|Hashable|Equatable|Comparable|Identifiable|Sendable)\b'
+      scope: storage.type.swift
+    - match: '\b[A-Z]\w*\b'
+      scope: entity.name.type.swift
+
+  functions:
+    - match: '\b(func)\s+(\w+)'
+      captures:
+        1: keyword.declaration.swift
+        2: entity.name.function.swift
+    - match: '\b(print|debugPrint|dump|fatalError|precondition|preconditionFailure|assert|assertionFailure|zip|map|flatMap|compactMap|filter|reduce|sorted|min|max|contains|forEach|enumerated)\b'
+      scope: support.function.swift
+
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+\b'
+      scope: constant.numeric.hex.swift
+    - match: '\b0[oO][0-7_]+\b'
+      scope: constant.numeric.octal.swift
+    - match: '\b0[bB][01_]+\b'
+      scope: constant.numeric.binary.swift
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?(e[+-]?\d+)?\b'
+      scope: constant.numeric.swift
+
+  attributes:
+    - match: '@\w+'
+      scope: variable.annotation.swift

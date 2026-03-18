@@ -1,0 +1,106 @@
+%YAML 1.2
+---
+# Kotlin syntax highlighting for Fresh editor
+name: Kotlin
+file_extensions:
+  - kt
+  - kts
+scope: source.kotlin
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: types
+    - include: functions
+    - include: numbers
+    - include: annotations
+
+  comments:
+    - match: '//'
+      scope: punctuation.definition.comment.kotlin
+      push:
+        - meta_scope: comment.line.double-slash.kotlin
+        - match: '$'
+          pop: true
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.kotlin
+      push:
+        - meta_scope: comment.block.kotlin
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.kotlin
+          pop: true
+
+  strings:
+    - match: '"""'
+      scope: punctuation.definition.string.begin.kotlin
+      push:
+        - meta_scope: string.quoted.triple.kotlin
+        - match: '\$\{[^}]+\}'
+          scope: variable.interpolation.kotlin
+        - match: '\$\w+'
+          scope: variable.interpolation.kotlin
+        - match: '"""'
+          scope: punctuation.definition.string.end.kotlin
+          pop: true
+    - match: '"'
+      scope: punctuation.definition.string.begin.kotlin
+      push:
+        - meta_scope: string.quoted.double.kotlin
+        - match: '\\.'
+          scope: constant.character.escape.kotlin
+        - match: '\$\{[^}]+\}'
+          scope: variable.interpolation.kotlin
+        - match: '\$\w+'
+          scope: variable.interpolation.kotlin
+        - match: '"'
+          scope: punctuation.definition.string.end.kotlin
+          pop: true
+    - match: "'"
+      scope: punctuation.definition.string.begin.kotlin
+      push:
+        - meta_scope: string.quoted.single.kotlin
+        - match: '\\.'
+          scope: constant.character.escape.kotlin
+        - match: "'"
+          scope: punctuation.definition.string.end.kotlin
+          pop: true
+
+  keywords:
+    - match: '\b(package|import)\b'
+      scope: keyword.other.kotlin
+    - match: '\b(if|else|when|for|while|do|try|catch|finally|throw|return|break|continue)\b'
+      scope: keyword.control.kotlin
+    - match: '\b(fun|val|var|class|interface|object|enum|sealed|data|inner|companion|abstract|open|override|private|protected|public|internal|inline|crossinline|noinline|reified|suspend|tailrec|operator|infix|external|annotation|const|lateinit|by|lazy|get|set|field|delegate|init|constructor|typealias|where)\b'
+      scope: keyword.declaration.kotlin
+    - match: '\b(is|as|in|!in|!is)\b'
+      scope: keyword.operator.kotlin
+    - match: '\b(true|false|null|this|super|it)\b'
+      scope: constant.language.kotlin
+
+  types:
+    - match: '\b(Int|Long|Short|Byte|Float|Double|Char|Boolean|String|Unit|Nothing|Any|Array|List|Map|Set|MutableList|MutableMap|MutableSet|Pair|Triple|Sequence)\b'
+      scope: storage.type.kotlin
+    - match: '\b[A-Z]\w*\b'
+      scope: entity.name.type.kotlin
+
+  functions:
+    - match: '\b(fun)\s+(\w+)'
+      captures:
+        1: keyword.declaration.kotlin
+        2: entity.name.function.kotlin
+    - match: '\b(println|print|listOf|mapOf|setOf|arrayOf|mutableListOf|mutableMapOf|mutableSetOf|require|check|assert|TODO|error|run|with|let|also|apply|takeIf|takeUnless|repeat|lazy|sequence|buildList|buildMap|buildSet)\b'
+      scope: support.function.kotlin
+
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+[Ll]?\b'
+      scope: constant.numeric.hex.kotlin
+    - match: '\b0[bB][01_]+[Ll]?\b'
+      scope: constant.numeric.binary.kotlin
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?(e[+-]?\d+)?[fFdDlL]?\b'
+      scope: constant.numeric.kotlin
+
+  annotations:
+    - match: '@\w+'
+      scope: variable.annotation.kotlin

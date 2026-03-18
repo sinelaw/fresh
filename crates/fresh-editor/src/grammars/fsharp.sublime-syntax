@@ -1,0 +1,52 @@
+%YAML 1.2
+---
+name: FSharp
+file_extensions: [fs, fsi, fsx]
+scope: source.fsharp
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '\(\*'
+      push: [{meta_scope: comment.block.fsharp}, {match: '\*\)', pop: true}]
+    - match: '//'
+      push: [{meta_scope: comment.line.double-slash.fsharp}, {match: '$', pop: true}]
+  strings:
+    - match: '"""'
+      push: [{meta_scope: string.quoted.triple.fsharp}, {match: '"""', pop: true}]
+    - match: '@"'
+      push: [{meta_scope: string.quoted.verbatim.fsharp}, {match: '"(?!")', pop: true}]
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.fsharp
+        - match: '\\.'
+          scope: constant.character.escape.fsharp
+        - match: '"'
+          pop: true
+  keywords:
+    - match: '\b(let|let!|use|use!|do|do!|return|return!|yield|yield!|rec|and|mutable|inline|private|public|internal|static|override|abstract|default|member|val|new|as|base)\b'
+      scope: keyword.declaration.fsharp
+    - match: '\b(if|then|else|elif|match|with|when|for|in|to|downto|while|try|finally|raise|failwith|fun|function|begin|end|open|module|namespace|type|of|inherit|interface|class|struct|exception|delegate|event)\b'
+      scope: keyword.control.fsharp
+    - match: '\b(true|false|null|unit)\b'
+      scope: constant.language.fsharp
+    - match: '\b(not|or|and)\b'
+      scope: keyword.operator.fsharp
+    - match: '\|>'
+      scope: keyword.operator.pipe.fsharp
+    - match: '\b(int|float|string|bool|char|byte|decimal|double|int16|int32|int64|uint16|uint32|uint64|nativeint|unativeint|single|unit|obj|exn|array|list|seq|option|voption|result|Map|Set|Async|Task)\b'
+      scope: storage.type.fsharp
+    - match: '\b[A-Z]\w*\b'
+      scope: entity.name.type.fsharp
+    - match: '\[\<\w+\>\]'
+      scope: variable.annotation.fsharp
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+[uUlLnsy]?\b'
+      scope: constant.numeric.hex.fsharp
+    - match: '\b0[bB][01_]+[uUlLnsy]?\b'
+      scope: constant.numeric.binary.fsharp
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?(e[+-]?\d+)?[fFmMuUlLnsy]?\b'
+      scope: constant.numeric.fsharp

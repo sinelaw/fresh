@@ -1,0 +1,59 @@
+%YAML 1.2
+---
+name: Nim
+file_extensions: [nim, nims, nimble]
+scope: source.nim
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+    - include: pragmas
+  comments:
+    - match: '#\['
+      push: [{meta_scope: comment.block.nim}, {match: '\]#', pop: true}]
+    - match: '##.*$'
+      scope: comment.line.documentation.nim
+    - match: '#.*$'
+      scope: comment.line.number-sign.nim
+  strings:
+    - match: '"""'
+      push: [{meta_scope: string.quoted.triple.nim}, {match: '"""', pop: true}]
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.nim
+        - match: '\\.'
+          scope: constant.character.escape.nim
+        - match: '"'
+          pop: true
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.nim
+        - match: '\\.'
+          scope: constant.character.escape.nim
+        - match: "'"
+          pop: true
+  keywords:
+    - match: '\b(proc|func|method|converter|macro|template|iterator|type|object|enum|concept|tuple|ref|ptr|var|let|const|import|include|from|export|except|discard|return|yield|block|defer|asm|bind|mixin|static|using)\b'
+      scope: keyword.declaration.nim
+    - match: '\b(if|elif|else|when|case|of|for|in|while|break|continue|try|except|finally|raise|do|end)\b'
+      scope: keyword.control.nim
+    - match: '\b(true|false|nil)\b'
+      scope: constant.language.nim
+    - match: '\b(and|or|not|xor|shl|shr|div|mod|in|notin|is|isnot|of|as|addr|cast)\b'
+      scope: keyword.operator.nim
+    - match: '\b(int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float|float32|float64|bool|char|string|cstring|pointer|range|array|seq|set|openArray|varargs|Natural|Positive|BiggestInt|BiggestFloat|Ordinal|SomeInteger|SomeFloat|SomeNumber|void|auto|typedesc)\b'
+      scope: storage.type.nim
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+\b'
+      scope: constant.numeric.hex.nim
+    - match: '\b0[oO][0-7_]+\b'
+      scope: constant.numeric.octal.nim
+    - match: '\b0[bB][01_]+\b'
+      scope: constant.numeric.binary.nim
+    - match: "\b\\d[\\d_]*(\\.[\\d_]*)?(e[+-]?\\d+)?('?[iIuUfFdD](8|16|32|64))?\\b"
+      scope: constant.numeric.nim
+  pragmas:
+    - match: '\{\.[\w, ]+\.\}'
+      scope: variable.annotation.nim

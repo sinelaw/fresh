@@ -1,0 +1,95 @@
+%YAML 1.2
+---
+# PowerShell syntax highlighting for Fresh editor
+name: PowerShell
+file_extensions:
+  - ps1
+  - psm1
+  - psd1
+scope: source.powershell
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: variables
+    - include: keywords
+    - include: commands
+    - include: operators
+    - include: numbers
+
+  comments:
+    - match: '<#'
+      scope: punctuation.definition.comment.begin.powershell
+      push:
+        - meta_scope: comment.block.powershell
+        - match: '#>'
+          scope: punctuation.definition.comment.end.powershell
+          pop: true
+    - match: '#.*$'
+      scope: comment.line.number-sign.powershell
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.powershell
+      push:
+        - meta_scope: string.quoted.double.powershell
+        - match: '`.'
+          scope: constant.character.escape.powershell
+        - match: '\$\([^)]+\)'
+          scope: variable.other.subexpression.powershell
+        - match: '\$[\w:]+'
+          scope: variable.other.powershell
+        - match: '"'
+          scope: punctuation.definition.string.end.powershell
+          pop: true
+    - match: "'"
+      scope: punctuation.definition.string.begin.powershell
+      push:
+        - meta_scope: string.quoted.single.powershell
+        - match: "''"
+          scope: constant.character.escape.powershell
+        - match: "'"
+          scope: punctuation.definition.string.end.powershell
+          pop: true
+    - match: '@"'
+      scope: punctuation.definition.string.begin.powershell
+      push:
+        - meta_scope: string.quoted.double.heredoc.powershell
+        - match: '^"@'
+          scope: punctuation.definition.string.end.powershell
+          pop: true
+
+  variables:
+    - match: '\$\{[^}]+\}'
+      scope: variable.other.powershell
+    - match: '\$(\w+:)?\w+'
+      scope: variable.other.powershell
+    - match: '@\w+'
+      scope: variable.other.powershell
+
+  keywords:
+    - match: '(?i)\b(if|else|elseif|switch|while|for|foreach|do|until|break|continue|return|exit|throw|try|catch|finally|trap|begin|process|end|class|enum|using|param)\b'
+      scope: keyword.control.powershell
+    - match: '(?i)\b(function|filter|workflow|configuration)\b'
+      scope: keyword.declaration.powershell
+    - match: '(?i)\b(\[string\]|\[int\]|\[int32\]|\[int64\]|\[bool\]|\[boolean\]|\[double\]|\[float\]|\[decimal\]|\[array\]|\[hashtable\]|\[psobject\]|\[pscustomobject\]|\[void\]|\[object\])\b'
+      scope: storage.type.powershell
+    - match: '(?i)\b(\$true|\$false|\$null)\b'
+      scope: constant.language.powershell
+
+  commands:
+    - match: '(?i)\b(Get|Set|New|Remove|Add|Clear|Write|Read|Out|Import|Export|ConvertTo|ConvertFrom|Invoke|Start|Stop|Enable|Disable|Test|Update|Select|Where|Sort|Group|Measure|Compare|ForEach|Format|Join|Split|Copy|Move|Rename)-([\w]+)\b'
+      scope: support.function.powershell
+
+  operators:
+    - match: '(?i)\b(-eq|-ne|-lt|-gt|-le|-ge|-like|-notlike|-match|-notmatch|-contains|-notcontains|-in|-notin|-replace|-split|-join|-and|-or|-not|-band|-bor|-bnot|-bxor|-is|-isnot|-as)\b'
+      scope: keyword.operator.powershell
+    - match: '[|>]'
+      scope: keyword.operator.pipe.powershell
+
+  numbers:
+    - match: '\b0x[0-9a-fA-F]+\b'
+      scope: constant.numeric.hex.powershell
+    - match: '\b\d+(\.\d+)?\b'
+      scope: constant.numeric.powershell

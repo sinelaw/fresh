@@ -1,0 +1,82 @@
+%YAML 1.2
+---
+# SCSS syntax highlighting for Fresh editor
+name: SCSS
+file_extensions:
+  - scss
+scope: source.scss
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: variables
+    - include: at_rules
+    - include: selectors
+    - include: properties
+    - include: numbers
+
+  comments:
+    - match: '//'
+      scope: punctuation.definition.comment.scss
+      push:
+        - meta_scope: comment.line.double-slash.scss
+        - match: '$'
+          pop: true
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.scss
+      push:
+        - meta_scope: comment.block.scss
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.scss
+          pop: true
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.scss
+      push:
+        - meta_scope: string.quoted.double.scss
+        - match: '\\.'
+          scope: constant.character.escape.scss
+        - match: '#\{[^}]+\}'
+          scope: variable.interpolation.scss
+        - match: '"'
+          scope: punctuation.definition.string.end.scss
+          pop: true
+    - match: "'"
+      scope: punctuation.definition.string.begin.scss
+      push:
+        - meta_scope: string.quoted.single.scss
+        - match: "'"
+          scope: punctuation.definition.string.end.scss
+          pop: true
+
+  variables:
+    - match: '\$[a-zA-Z_][\w-]*'
+      scope: variable.other.scss
+
+  at_rules:
+    - match: '@(mixin|include|extend|import|use|forward|function|return|if|else|for|each|while|at-root|debug|warn|error)\b'
+      scope: keyword.control.at-rule.scss
+    - match: '@(media|supports|keyframes|font-face|page|charset|namespace)\b'
+      scope: keyword.control.at-rule.scss
+
+  selectors:
+    - match: '\.[a-zA-Z_][\w-]*'
+      scope: entity.other.attribute-name.class.scss
+    - match: '#[a-zA-Z_][\w-]*'
+      scope: entity.other.attribute-name.id.scss
+    - match: '&'
+      scope: keyword.operator.parent-selector.scss
+    - match: ':+([\w-]+)'
+      scope: entity.other.pseudo-class.scss
+
+  properties:
+    - match: '\b(color|background|background-color|border|margin|padding|font|font-size|font-weight|font-family|display|position|width|height|max-width|max-height|min-width|min-height|top|right|bottom|left|overflow|opacity|z-index|flex|align-items|justify-content|text-align|text-decoration|line-height|content|transition|transform|animation|box-shadow|border-radius)\b'
+      scope: support.type.property-name.scss
+
+  numbers:
+    - match: '#[0-9a-fA-F]{3,8}\b'
+      scope: constant.other.color.scss
+    - match: '\b\d+(\.\d+)?(px|em|rem|%|vh|vw|pt|cm|mm|in|s|ms|deg|rad|fr)?\b'
+      scope: constant.numeric.scss

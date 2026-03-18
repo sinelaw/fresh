@@ -1,0 +1,67 @@
+%YAML 1.2
+---
+name: Elixir
+file_extensions: [ex, exs]
+scope: source.elixir
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: atoms
+    - include: numbers
+    - include: module_names
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.elixir
+  strings:
+    - match: '"""'
+      push: [{meta_scope: string.quoted.triple.elixir}, {match: '"""', pop: true}]
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.elixir
+        - match: '\\.'
+          scope: constant.character.escape.elixir
+        - match: '#\{[^}]+\}'
+          scope: variable.interpolation.elixir
+        - match: '"'
+          pop: true
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.elixir
+        - match: '\\.'
+          scope: constant.character.escape.elixir
+        - match: "'"
+          pop: true
+    - match: '~[rRsSwWcC][\[({/<|"'']'
+      scope: string.other.sigil.elixir
+  keywords:
+    - match: '\b(def|defp|defmacro|defmacrop|defmodule|defprotocol|defimpl|defstruct|defdelegate|defguard|defguardp|defexception|defoverridable)\b'
+      scope: keyword.declaration.elixir
+    - match: '\b(do|end|fn|case|cond|if|else|unless|when|with|for|in|raise|rescue|try|catch|after|receive|send|exit|throw|import|require|use|alias|quote|unquote|super)\b'
+      scope: keyword.control.elixir
+    - match: '\b(true|false|nil)\b'
+      scope: constant.language.elixir
+    - match: '\b(and|or|not|in|when)\b'
+      scope: keyword.operator.elixir
+    - match: '\|>'
+      scope: keyword.operator.pipe.elixir
+  atoms:
+    - match: ':\w+'
+      scope: constant.other.symbol.elixir
+    - match: '\b\w+:'
+      scope: constant.other.keyword.elixir
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+\b'
+      scope: constant.numeric.hex.elixir
+    - match: '\b0[bB][01_]+\b'
+      scope: constant.numeric.binary.elixir
+    - match: '\b0[oO][0-7_]+\b'
+      scope: constant.numeric.octal.elixir
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?(e[+-]?\d+)?\b'
+      scope: constant.numeric.elixir
+  module_names:
+    - match: '\b[A-Z]\w*\b'
+      scope: entity.name.type.elixir
+    - match: '@\w+'
+      scope: variable.other.attribute.elixir

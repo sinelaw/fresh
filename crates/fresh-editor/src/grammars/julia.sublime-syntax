@@ -1,0 +1,59 @@
+%YAML 1.2
+---
+name: Julia
+file_extensions: [jl]
+scope: source.julia
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '#='
+      push: [{meta_scope: comment.block.julia}, {match: '=#', pop: true}]
+    - match: '#.*$'
+      scope: comment.line.number-sign.julia
+  strings:
+    - match: '"""'
+      push: [{meta_scope: string.quoted.triple.julia}, {match: '"""', pop: true}]
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.julia
+        - match: '\\.'
+          scope: constant.character.escape.julia
+        - match: '\$\([^)]+\)'
+          scope: variable.interpolation.julia
+        - match: '\$\w+'
+          scope: variable.interpolation.julia
+        - match: '"'
+          pop: true
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.julia
+        - match: '\\.'
+          scope: constant.character.escape.julia
+        - match: "'"
+          pop: true
+    - match: '`[^`]*`'
+      scope: string.other.command.julia
+  keywords:
+    - match: '\b(function|macro|end|begin|let|do|for|in|while|if|elseif|else|try|catch|finally|return|break|continue|quote|module|baremodule|using|import|export|struct|mutable|abstract|primitive|type|where|const|local|global|outer)\b'
+      scope: keyword.control.julia
+    - match: '\b(true|false|nothing|missing|Inf|NaN|undef|pi)\b'
+      scope: constant.language.julia
+    - match: '\b(Int|Int8|Int16|Int32|Int64|Int128|UInt|UInt8|UInt16|UInt32|UInt64|UInt128|Float16|Float32|Float64|Bool|Char|String|Symbol|Any|Union|Nothing|Missing|Type|Function|Tuple|NamedTuple|Array|Vector|Matrix|Dict|Set|Pair|Ref|IO|IOStream|Number|Real|Integer|Signed|Unsigned|AbstractFloat|AbstractString|AbstractArray|AbstractDict|AbstractSet|AbstractVector|AbstractMatrix)\b'
+      scope: storage.type.julia
+    - match: '::\w+'
+      scope: entity.name.type.julia
+    - match: '\b[A-Z]\w*\b'
+      scope: entity.name.type.julia
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+\b'
+      scope: constant.numeric.hex.julia
+    - match: '\b0[bB][01_]+\b'
+      scope: constant.numeric.binary.julia
+    - match: '\b0[oO][0-7_]+\b'
+      scope: constant.numeric.octal.julia
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?(e[+-]?\d+)?(im)?\b'
+      scope: constant.numeric.julia

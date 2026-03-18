@@ -1,0 +1,44 @@
+%YAML 1.2
+---
+name: GraphQL
+file_extensions: [graphql, gql]
+scope: source.graphql
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.graphql
+  strings:
+    - match: '"""'
+      push: [{meta_scope: string.quoted.triple.graphql}, {match: '"""', pop: true}]
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.graphql
+        - match: '\\.'
+          scope: constant.character.escape.graphql
+        - match: '"'
+          pop: true
+  keywords:
+    - match: '\b(type|input|interface|union|enum|scalar|schema|directive|extend|fragment|on|implements)\b'
+      scope: keyword.declaration.graphql
+    - match: '\b(query|mutation|subscription)\b'
+      scope: keyword.control.graphql
+    - match: '\b(true|false|null)\b'
+      scope: constant.language.graphql
+    - match: '\b(Int|Float|String|Boolean|ID)\b'
+      scope: storage.type.graphql
+    - match: '\b[A-Z]\w*\b'
+      scope: entity.name.type.graphql
+    - match: '@\w+'
+      scope: variable.annotation.graphql
+    - match: '\$\w+'
+      scope: variable.other.graphql
+    - match: '!'
+      scope: keyword.operator.graphql
+  numbers:
+    - match: '\b\d+(\.\d+)?(e[+-]?\d+)?\b'
+      scope: constant.numeric.graphql

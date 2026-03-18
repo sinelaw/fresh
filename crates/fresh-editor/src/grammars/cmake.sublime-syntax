@@ -1,0 +1,62 @@
+%YAML 1.2
+---
+# CMake syntax highlighting for Fresh editor
+name: CMake
+file_extensions:
+  - cmake
+first_line_match: '(?i)^\s*cmake_minimum_required\s*\('
+scope: source.cmake
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: commands
+    - include: variables
+    - include: numbers
+
+  comments:
+    - match: '#\[\['
+      scope: punctuation.definition.comment.begin.cmake
+      push:
+        - meta_scope: comment.block.cmake
+        - match: '\]\]'
+          scope: punctuation.definition.comment.end.cmake
+          pop: true
+    - match: '#.*$'
+      scope: comment.line.number-sign.cmake
+
+  commands:
+    - match: '(?i)\b(if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|return|break|continue)\b'
+      scope: keyword.control.cmake
+    - match: '(?i)\b(cmake_minimum_required|project|add_executable|add_library|add_subdirectory|target_link_libraries|target_include_directories|target_compile_definitions|target_compile_options|find_package|include|enable_testing|add_test|install|configure_file|file|execute_process|add_custom_command|add_custom_target|add_dependencies|set_target_properties|get_target_property|set_property|get_property)\b'
+      scope: entity.name.function.cmake
+    - match: '(?i)\b(set|unset|option|message|string|list|math|get_filename_component|mark_as_advanced|include_directories|link_directories|link_libraries)\b'
+      scope: support.function.cmake
+    - match: '(?i)\b(PUBLIC|PRIVATE|INTERFACE|REQUIRED|COMPONENTS|CONFIG|MODULE|IMPORTED|GLOBAL|ALIAS|OBJECT|STATIC|SHARED|DESTINATION|TARGETS|FILES|DIRECTORY|PATTERN)\b'
+      scope: constant.language.cmake
+
+  variables:
+    - match: '\$\{([^}]+)\}'
+      scope: variable.other.cmake
+    - match: '\$ENV\{([^}]+)\}'
+      scope: variable.other.env.cmake
+    - match: '(?i)\b(CMAKE_[A-Z_]+|PROJECT_[A-Z_]+)\b'
+      scope: variable.language.cmake
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.cmake
+      push:
+        - meta_scope: string.quoted.double.cmake
+        - match: '\\.'
+          scope: constant.character.escape.cmake
+        - match: '\$\{[^}]+\}'
+          scope: variable.other.cmake
+        - match: '"'
+          scope: punctuation.definition.string.end.cmake
+          pop: true
+
+  numbers:
+    - match: '\b\d+(\.\d+)?\b'
+      scope: constant.numeric.cmake

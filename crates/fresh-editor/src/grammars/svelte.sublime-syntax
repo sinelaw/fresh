@@ -1,0 +1,112 @@
+%YAML 1.2
+---
+name: Svelte
+file_extensions: [svelte]
+scope: text.html.svelte
+contexts:
+  main:
+    - include: comments
+    - include: script_tag
+    - include: style_tag
+    - include: svelte_logic
+    - include: html_tags
+  comments:
+    - match: '<!--'
+      push: [{meta_scope: comment.block.html.svelte}, {match: '-->', pop: true}]
+  script_tag:
+    - match: '(<)(script)\b([^>]*)(>)'
+      captures:
+        1: punctuation.definition.tag.begin.svelte
+        2: entity.name.tag.svelte
+        3: entity.other.attribute-name.svelte
+        4: punctuation.definition.tag.end.svelte
+      push:
+        - include: js_content
+        - match: '(</)(script)(>)'
+          captures:
+            1: punctuation.definition.tag.begin.svelte
+            2: entity.name.tag.svelte
+            3: punctuation.definition.tag.end.svelte
+          pop: true
+  style_tag:
+    - match: '(<)(style)\b([^>]*)(>)'
+      captures:
+        1: punctuation.definition.tag.begin.svelte
+        2: entity.name.tag.svelte
+        3: entity.other.attribute-name.svelte
+        4: punctuation.definition.tag.end.svelte
+      push:
+        - include: css_content
+        - match: '(</)(style)(>)'
+          captures:
+            1: punctuation.definition.tag.begin.svelte
+            2: entity.name.tag.svelte
+            3: punctuation.definition.tag.end.svelte
+          pop: true
+  svelte_logic:
+    - match: '\{#(if|each|await|key)\b'
+      scope: keyword.control.svelte
+    - match: '\{:(else|then|catch)\b'
+      scope: keyword.control.svelte
+    - match: '\{/(if|each|await|key)\}'
+      scope: keyword.control.svelte
+    - match: '\{@(html|debug|const)\b'
+      scope: keyword.control.svelte
+    - match: '\{[^}]+\}'
+      scope: variable.interpolation.svelte
+  html_tags:
+    - match: '(</)(\w[\w-]*)(>)'
+      captures:
+        1: punctuation.definition.tag.begin.svelte
+        2: entity.name.tag.svelte
+        3: punctuation.definition.tag.end.svelte
+    - match: '(<)(\w[\w-]*)'
+      captures:
+        1: punctuation.definition.tag.begin.svelte
+        2: entity.name.tag.svelte
+      push:
+        - match: '/?>$'
+          scope: punctuation.definition.tag.end.svelte
+          pop: true
+        - match: '>'
+          scope: punctuation.definition.tag.end.svelte
+          pop: true
+        - match: 'on:\w+'
+          scope: entity.other.attribute-name.svelte
+        - match: 'bind:\w+'
+          scope: entity.other.attribute-name.svelte
+        - match: '\w[\w-]*'
+          scope: entity.other.attribute-name.svelte
+        - match: '"[^"]*"'
+          scope: string.quoted.double.svelte
+        - match: "'[^']*'"
+          scope: string.quoted.single.svelte
+  js_content:
+    - match: '//.*$'
+      scope: comment.line.double-slash.svelte
+    - match: "'[^']*'"
+      scope: string.quoted.single.svelte
+    - match: '"[^"]*"'
+      scope: string.quoted.double.svelte
+    - match: '`'
+      push:
+        - meta_scope: string.quoted.template.svelte
+        - match: '\$\{[^}]+\}'
+          scope: variable.interpolation.svelte
+        - match: '`'
+          pop: true
+    - match: '\b(import|export|from|default|const|let|var|function|class|return|if|else|for|while|switch|case|break|continue|try|catch|throw|new|async|await|of|in|as)\b'
+      scope: keyword.control.svelte
+    - match: '\$:'
+      scope: keyword.control.reactive.svelte
+    - match: '\b(true|false|null|undefined)\b'
+      scope: constant.language.svelte
+    - match: '\b\d+(\.\d+)?\b'
+      scope: constant.numeric.svelte
+  css_content:
+    - match: '\.[a-zA-Z_][\w-]*'
+      scope: entity.other.attribute-name.class.svelte
+    - match: '#[0-9a-fA-F]{3,8}\b'
+      scope: constant.other.color.svelte
+    - match: '\b\d+(\.\d+)?(px|em|rem|%|vh|vw)?\b'
+      scope: constant.numeric.svelte

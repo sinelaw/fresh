@@ -1,0 +1,81 @@
+%YAML 1.2
+---
+name: Astro
+file_extensions: [astro]
+scope: text.html.astro
+contexts:
+  main:
+    - include: frontmatter
+    - include: comments
+    - include: html_tags
+    - include: expressions
+  frontmatter:
+    - match: '^---$'
+      scope: punctuation.definition.frontmatter.astro
+      push:
+        - meta_scope: source.ts.embedded.astro
+        - match: '^---$'
+          scope: punctuation.definition.frontmatter.astro
+          pop: true
+        - include: js_content
+  comments:
+    - match: '<!--'
+      push: [{meta_scope: comment.block.html.astro}, {match: '-->', pop: true}]
+  html_tags:
+    - match: '(<)(style)\b([^>]*)(>)'
+      captures:
+        1: punctuation.definition.tag.begin.astro
+        2: entity.name.tag.astro
+        3: entity.other.attribute-name.astro
+        4: punctuation.definition.tag.end.astro
+      push:
+        - match: '\.[a-zA-Z_][\w-]*'
+          scope: entity.other.attribute-name.class.astro
+        - match: '#[0-9a-fA-F]{3,8}\b'
+          scope: constant.other.color.astro
+        - match: '\b\d+(\.\d+)?(px|em|rem|%|vh|vw)?\b'
+          scope: constant.numeric.astro
+        - match: '(</)(style)(>)'
+          captures:
+            1: punctuation.definition.tag.begin.astro
+            2: entity.name.tag.astro
+            3: punctuation.definition.tag.end.astro
+          pop: true
+    - match: '(</)(\w[\w\-:\.]*)(>)'
+      captures:
+        1: punctuation.definition.tag.begin.astro
+        2: entity.name.tag.astro
+        3: punctuation.definition.tag.end.astro
+    - match: '(<)(\w[\w\-:\.]*)'
+      captures:
+        1: punctuation.definition.tag.begin.astro
+        2: entity.name.tag.astro
+      push:
+        - match: '/?>$'
+          scope: punctuation.definition.tag.end.astro
+          pop: true
+        - match: '>'
+          scope: punctuation.definition.tag.end.astro
+          pop: true
+        - match: '\w[\w-]*'
+          scope: entity.other.attribute-name.astro
+        - match: '"[^"]*"'
+          scope: string.quoted.double.astro
+        - match: "'[^']*'"
+          scope: string.quoted.single.astro
+  expressions:
+    - match: '\{[^}]+\}'
+      scope: variable.interpolation.astro
+  js_content:
+    - match: '//.*$'
+      scope: comment.line.double-slash.astro
+    - match: "'[^']*'"
+      scope: string.quoted.single.astro
+    - match: '"[^"]*"'
+      scope: string.quoted.double.astro
+    - match: '\b(import|export|from|const|let|var|function|interface|type|return|if|else|for|while|async|await|of|in|as|default)\b'
+      scope: keyword.control.astro
+    - match: '\b(true|false|null|undefined)\b'
+      scope: constant.language.astro
+    - match: '\b\d+(\.\d+)?\b'
+      scope: constant.numeric.astro

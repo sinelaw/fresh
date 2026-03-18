@@ -1,0 +1,30 @@
+%YAML 1.2
+---
+name: Go Module
+file_extensions: [mod, sum]
+scope: source.gomod
+contexts:
+  main:
+    - include: comments
+    - include: keywords
+    - include: strings
+    - include: versions
+  comments:
+    - match: '//.*$'
+      scope: comment.line.double-slash.gomod
+  keywords:
+    - match: '^\s*(module|go|require|replace|exclude|retract|toolchain|tool)\b'
+      scope: keyword.declaration.gomod
+    - match: '\b(indirect)\b'
+      scope: keyword.other.gomod
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.gomod
+        - match: '"'
+          pop: true
+  versions:
+    - match: '\bv\d+\.\d+\.\d+[\w\-\.]*\b'
+      scope: constant.numeric.version.gomod
+    - match: '\b\d+\.\d+(\.\d+)?\b'
+      scope: constant.numeric.gomod

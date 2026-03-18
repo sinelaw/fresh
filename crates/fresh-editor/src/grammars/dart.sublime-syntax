@@ -1,0 +1,71 @@
+%YAML 1.2
+---
+name: Dart
+file_extensions: [dart]
+scope: source.dart
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+    - include: annotations
+  comments:
+    - match: '///'
+      push: [{meta_scope: comment.line.documentation.dart}, {match: '$', pop: true}]
+    - match: '//'
+      push: [{meta_scope: comment.line.double-slash.dart}, {match: '$', pop: true}]
+    - match: '/\*'
+      push: [{meta_scope: comment.block.dart}, {match: '\*/', pop: true}]
+  strings:
+    - match: "'''"
+      push: [{meta_scope: string.quoted.triple.single.dart}, {match: "'''", pop: true}]
+    - match: '"""'
+      push: [{meta_scope: string.quoted.triple.double.dart}, {match: '"""', pop: true}]
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.dart
+        - match: '\\.'
+          scope: constant.character.escape.dart
+        - match: '\$\{[^}]+\}'
+          scope: variable.interpolation.dart
+        - match: '\$\w+'
+          scope: variable.interpolation.dart
+        - match: "'"
+          pop: true
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.dart
+        - match: '\\.'
+          scope: constant.character.escape.dart
+        - match: '\$\{[^}]+\}'
+          scope: variable.interpolation.dart
+        - match: '\$\w+'
+          scope: variable.interpolation.dart
+        - match: '"'
+          pop: true
+  keywords:
+    - match: '\b(import|export|library|part|show|hide|as|deferred)\b'
+      scope: keyword.other.dart
+    - match: '\b(if|else|for|in|while|do|switch|case|default|break|continue|return|throw|try|catch|finally|rethrow|assert|yield)\b'
+      scope: keyword.control.dart
+    - match: '\b(var|final|const|late|required|class|abstract|sealed|base|interface|mixin|extends|implements|with|enum|typedef|extension|static|external|factory|operator|get|set|covariant|async|await|sync|on|when)\b'
+      scope: keyword.declaration.dart
+    - match: '\b(void|dynamic|Function|Future|Stream|Iterable|Iterator|List|Map|Set|int|double|num|String|bool|Object|Null|Never|Type|Symbol|Record|BigInt)\b'
+      scope: storage.type.dart
+    - match: '\b(true|false|null|this|super)\b'
+      scope: constant.language.dart
+    - match: '\b(is|is!|as)\b'
+      scope: keyword.operator.dart
+    - match: '\b(new)\b'
+      scope: keyword.operator.dart
+    - match: '\b[A-Z]\w*\b'
+      scope: entity.name.type.dart
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F]+\b'
+      scope: constant.numeric.hex.dart
+    - match: '\b\d+(\.\d+)?(e[+-]?\d+)?\b'
+      scope: constant.numeric.dart
+  annotations:
+    - match: '@\w+'
+      scope: variable.annotation.dart

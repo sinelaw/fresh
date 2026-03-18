@@ -1,0 +1,62 @@
+%YAML 1.2
+---
+name: Nushell
+file_extensions: [nu]
+scope: source.nushell
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+    - include: variables
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.nushell
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.nushell
+        - match: '\\.'
+          scope: constant.character.escape.nushell
+        - match: '\([^)]+\)'
+          scope: variable.interpolation.nushell
+        - match: '"'
+          pop: true
+    - match: "'"
+      push: [{meta_scope: string.quoted.single.nushell}, {match: "'", pop: true}]
+    - match: '`'
+      push: [{meta_scope: string.quoted.backtick.nushell}, {match: '`', pop: true}]
+  keywords:
+    - match: '\b(def|def-env|export|extern|alias|module|use|overlay|register)\b'
+      scope: keyword.declaration.nushell
+    - match: '\b(if|else|match|for|in|while|loop|break|continue|return|try|catch|error|let|let-env|mut|const|where|do)\b'
+      scope: keyword.control.nushell
+    - match: '\b(true|false|null|nothing)\b'
+      scope: constant.language.nushell
+    - match: '\b(not|and|or|in|not-in|starts-with|ends-with|mod|bit-and|bit-or|bit-xor|bit-shl|bit-shr)\b'
+      scope: keyword.operator.nushell
+    - match: '\|'
+      scope: keyword.operator.pipe.nushell
+    - match: '\b(int|float|string|bool|duration|date|filesize|range|record|table|list|binary|closure|block|any|nothing|cell-path|glob|signature)\b'
+      scope: storage.type.nushell
+    - match: '\b(print|echo|describe|debug|input|cd|ls|rm|cp|mv|mkdir|open|save|touch|watch|glob|each|par-each|reduce|filter|find|where|sort-by|reverse|uniq|flatten|first|last|skip|take|length|range|wrap|get|select|reject|rename|insert|update|upsert|merge|append|prepend|collect|str|path|into|from|to|http|math|random|hash|encode|decode|detect|split|parse|format|date|seq|char|ansi|term)\b'
+      scope: support.function.nushell
+  variables:
+    - match: '\$[\w\-]+'
+      scope: variable.other.nushell
+    - match: '\$env\.\w+'
+      scope: variable.language.nushell
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+\b'
+      scope: constant.numeric.hex.nushell
+    - match: '\b0[bB][01_]+\b'
+      scope: constant.numeric.binary.nushell
+    - match: '\b0[oO][0-7_]+\b'
+      scope: constant.numeric.octal.nushell
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?(e[+-]?\d+)?\b'
+      scope: constant.numeric.nushell
+    - match: '\b\d+(ns|us|ms|sec|min|hr|day|wk)\b'
+      scope: constant.numeric.duration.nushell
+    - match: '\b\d+(b|kb|mb|gb|tb|pb|eb|kib|mib|gib|tib|pib|eib)\b'
+      scope: constant.numeric.filesize.nushell

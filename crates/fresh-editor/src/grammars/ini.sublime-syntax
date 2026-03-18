@@ -1,0 +1,58 @@
+%YAML 1.2
+---
+# INI/conf file syntax highlighting for Fresh editor
+# Also handles .cfg, .env, .editorconfig, .properties-like files
+name: INI
+file_extensions:
+  - ini
+  - cfg
+  - conf
+  - env
+  - editorconfig
+  - properties
+  - desktop
+  - service
+  - socket
+  - timer
+scope: source.ini
+
+contexts:
+  main:
+    - include: comments
+    - include: sections
+    - include: key_value
+
+  comments:
+    - match: '[#;].*$'
+      scope: comment.line.ini
+
+  sections:
+    - match: '^\s*(\[)([^\]]+)(\])'
+      captures:
+        1: punctuation.definition.section.begin.ini
+        2: entity.name.section.ini
+        3: punctuation.definition.section.end.ini
+
+  key_value:
+    - match: '^\s*([a-zA-Z0-9_\-\.]+)\s*([:=])\s*'
+      captures:
+        1: variable.other.key.ini
+        2: keyword.operator.assignment.ini
+      push:
+        - include: values
+        - match: '$'
+          pop: true
+
+  values:
+    - match: '"[^"]*"'
+      scope: string.quoted.double.ini
+    - match: "'[^']*'"
+      scope: string.quoted.single.ini
+    - match: '\b(true|false|yes|no|on|off)\b'
+      scope: constant.language.ini
+    - match: '\b\d+(\.\d+)?\b'
+      scope: constant.numeric.ini
+    - match: '\$\{[^}]+\}'
+      scope: variable.other.ini
+    - match: '\$\w+'
+      scope: variable.other.ini

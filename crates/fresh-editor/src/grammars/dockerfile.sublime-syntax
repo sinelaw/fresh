@@ -1,0 +1,65 @@
+%YAML 1.2
+---
+# Dockerfile syntax highlighting for Fresh editor
+name: Dockerfile
+file_extensions:
+  - dockerfile
+first_line_match: '^(?i:FROM)\s'
+scope: source.dockerfile
+
+contexts:
+  main:
+    - include: comments
+    - include: instructions
+    - include: strings
+
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.dockerfile
+
+  instructions:
+    - match: '(?i)^\s*(FROM)\b'
+      captures:
+        1: keyword.control.dockerfile
+    - match: '(?i)^\s*(RUN|CMD|ENTRYPOINT|SHELL)\b'
+      captures:
+        1: keyword.control.dockerfile
+    - match: '(?i)^\s*(COPY|ADD)\b'
+      captures:
+        1: keyword.control.dockerfile
+    - match: '(?i)^\s*(ENV|ARG|LABEL)\b'
+      captures:
+        1: keyword.control.dockerfile
+    - match: '(?i)^\s*(EXPOSE|VOLUME|WORKDIR|USER|STOPSIGNAL|HEALTHCHECK|ONBUILD|MAINTAINER)\b'
+      captures:
+        1: keyword.control.dockerfile
+    - match: '(?i)\bAS\b'
+      scope: keyword.operator.dockerfile
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.dockerfile
+      push:
+        - meta_scope: string.quoted.double.dockerfile
+        - match: '\\.'
+          scope: constant.character.escape.dockerfile
+        - match: '\$\{[^}]+\}'
+          scope: variable.other.dockerfile
+        - match: '\$\w+'
+          scope: variable.other.dockerfile
+        - match: '"'
+          scope: punctuation.definition.string.end.dockerfile
+          pop: true
+    - match: "'"
+      scope: punctuation.definition.string.begin.dockerfile
+      push:
+        - meta_scope: string.quoted.single.dockerfile
+        - match: "'"
+          scope: punctuation.definition.string.end.dockerfile
+          pop: true
+    - match: '\$\{[^}]+\}'
+      scope: variable.other.dockerfile
+    - match: '\$\w+'
+      scope: variable.other.dockerfile
+    - match: '\b\d+\b'
+      scope: constant.numeric.dockerfile

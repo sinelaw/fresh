@@ -1,0 +1,57 @@
+%YAML 1.2
+---
+name: V
+file_extensions: [v, vv]
+scope: source.vlang
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '//'
+      push: [{meta_scope: comment.line.double-slash.vlang}, {match: '$', pop: true}]
+    - match: '/\*'
+      push: [{meta_scope: comment.block.vlang}, {match: '\*/', pop: true}]
+  strings:
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.vlang
+        - match: '\\.'
+          scope: constant.character.escape.vlang
+        - match: '\$\{[^}]+\}'
+          scope: variable.interpolation.vlang
+        - match: '\$\w+'
+          scope: variable.interpolation.vlang
+        - match: "'"
+          pop: true
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.vlang
+        - match: '\\.'
+          scope: constant.character.escape.vlang
+        - match: '"'
+          pop: true
+    - match: '`.'
+      scope: string.quoted.rune.vlang
+  keywords:
+    - match: '\b(fn|struct|enum|union|interface|type|module|import|pub|mut|shared|static|volatile|const|__global|embed)\b'
+      scope: keyword.declaration.vlang
+    - match: '\b(if|else|for|in|match|or|select|lock|rlock|defer|go|spawn|return|break|continue|assert|as|is|none|unsafe|asm|sql)\b'
+      scope: keyword.control.vlang
+    - match: '\b(true|false|none)\b'
+      scope: constant.language.vlang
+    - match: '\b(bool|string|rune|i8|i16|int|i64|i128|byte|u8|u16|u32|u64|u128|f32|f64|voidptr|byteptr|charptr|isize|usize)\b'
+      scope: storage.type.vlang
+    - match: '\b(println|print|eprintln|eprint|panic|exit)\b'
+      scope: support.function.vlang
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+\b'
+      scope: constant.numeric.hex.vlang
+    - match: '\b0[bB][01_]+\b'
+      scope: constant.numeric.binary.vlang
+    - match: '\b0[oO][0-7_]+\b'
+      scope: constant.numeric.octal.vlang
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?(e[+-]?\d+)?\b'
+      scope: constant.numeric.vlang

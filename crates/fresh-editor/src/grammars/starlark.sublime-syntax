@@ -1,0 +1,49 @@
+%YAML 1.2
+---
+name: Starlark
+file_extensions: [bzl, star]
+scope: source.starlark
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.starlark
+  strings:
+    - match: '"""'
+      push: [{meta_scope: string.quoted.triple.double.starlark}, {match: '"""', pop: true}]
+    - match: "'''"
+      push: [{meta_scope: string.quoted.triple.single.starlark}, {match: "'''", pop: true}]
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.starlark
+        - match: '\\.'
+          scope: constant.character.escape.starlark
+        - match: '"'
+          pop: true
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.starlark
+        - match: '\\.'
+          scope: constant.character.escape.starlark
+        - match: "'"
+          pop: true
+  keywords:
+    - match: '\b(def|return|if|elif|else|for|in|not|and|or|break|continue|pass|lambda|load)\b'
+      scope: keyword.control.starlark
+    - match: '\b(True|False|None)\b'
+      scope: constant.language.starlark
+    - match: '\b(struct|provider|rule|repository_rule|module_extension|tag_class|aspect)\b'
+      scope: keyword.declaration.starlark
+    - match: '\b(load|select|glob|package|exports_files|licenses|visibility|filegroup)\b'
+      scope: support.function.starlark
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F]+\b'
+      scope: constant.numeric.hex.starlark
+    - match: '\b0[oO][0-7]+\b'
+      scope: constant.numeric.octal.starlark
+    - match: '\b\d+\b'
+      scope: constant.numeric.starlark

@@ -1,0 +1,44 @@
+%YAML 1.2
+---
+name: Gleam
+file_extensions: [gleam]
+scope: source.gleam
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '//.*$'
+      scope: comment.line.double-slash.gleam
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.gleam
+        - match: '\\.'
+          scope: constant.character.escape.gleam
+        - match: '"'
+          pop: true
+  keywords:
+    - match: '\b(pub|fn|let|assert|case|if|else|use|type|opaque|const|import|as|external|todo|panic)\b'
+      scope: keyword.control.gleam
+    - match: '\b(True|False|Nil|Ok|Error)\b'
+      scope: constant.language.gleam
+    - match: '\b(Int|Float|String|Bool|Nil|List|Result|Option|BitString|UtfCodepoint|StringBuilder)\b'
+      scope: storage.type.gleam
+    - match: '\|>'
+      scope: keyword.operator.pipe.gleam
+    - match: '<-|->|\.\.|\.\.'
+      scope: keyword.operator.gleam
+    - match: '\b[A-Z]\w*\b'
+      scope: entity.name.type.gleam
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+\b'
+      scope: constant.numeric.hex.gleam
+    - match: '\b0[bB][01_]+\b'
+      scope: constant.numeric.binary.gleam
+    - match: '\b0[oO][0-7_]+\b'
+      scope: constant.numeric.octal.gleam
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?\b'
+      scope: constant.numeric.gleam

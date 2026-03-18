@@ -1,0 +1,55 @@
+%YAML 1.2
+---
+name: Justfile
+file_extensions: [justfile]
+scope: source.justfile
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: settings
+    - include: recipes
+    - include: variables
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.justfile
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.justfile
+        - match: '\\.'
+          scope: constant.character.escape.justfile
+        - match: '"'
+          pop: true
+    - match: "'"
+      push: [{meta_scope: string.quoted.single.justfile}, {match: "'", pop: true}]
+    - match: '`'
+      push: [{meta_scope: string.other.command.justfile}, {match: '`', pop: true}]
+  settings:
+    - match: '^\s*(set)\s+(\w+)'
+      captures:
+        1: keyword.control.justfile
+        2: variable.other.setting.justfile
+    - match: '^\s*(alias)\s+(\w+)\s*(:=)'
+      captures:
+        1: keyword.control.justfile
+        2: entity.name.function.justfile
+        3: keyword.operator.justfile
+    - match: '^\s*(export)\b'
+      scope: keyword.control.justfile
+    - match: '^\s*(import|mod)\b'
+      scope: keyword.control.justfile
+  recipes:
+    - match: '^\s*(@)?(\w[\w-]*)\s*([^:=].*)?:'
+      captures:
+        1: keyword.operator.justfile
+        2: entity.name.function.justfile
+    - match: '\{\{[^}]+\}\}'
+      scope: variable.interpolation.justfile
+  variables:
+    - match: '^\s*(\w+)\s*(:=)'
+      captures:
+        1: variable.other.justfile
+        2: keyword.operator.justfile
+    - match: '\b(if|else|true|false|arch|os|os_family|env_var|env_var_or_default|invocation_directory|justfile|justfile_directory|just_executable)\b'
+      scope: support.function.justfile

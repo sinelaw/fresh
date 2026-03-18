@@ -209,48 +209,47 @@ macro_rules! test_no_highlighting_yet {
     };
 }
 
-// --- Languages not in syntect defaults (no grammar) ---
-test_no_highlighting_yet!(test_nohl_kotlin, "hello.kt");
-test_no_highlighting_yet!(test_nohl_swift, "hello.swift");
-test_no_highlighting_yet!(test_nohl_dart, "hello.dart");
-test_no_highlighting_yet!(test_nohl_elixir, "hello.ex");
-test_no_highlighting_yet!(test_nohl_fsharp, "hello.fs");
-test_no_highlighting_yet!(test_nohl_nix, "hello.nix");
-test_no_highlighting_yet!(test_nohl_powershell, "hello.ps1");
-test_no_highlighting_yet!(test_nohl_scss, "hello.scss");
-test_no_highlighting_yet!(test_nohl_less, "hello.less");
-test_no_highlighting_yet!(test_nohl_ini, "hello.ini");
-test_no_highlighting_yet!(test_nohl_julia, "hello.jl");
-test_no_highlighting_yet!(test_nohl_nim, "hello.nim");
-test_no_highlighting_yet!(test_nohl_gleam, "hello.gleam");
-test_no_highlighting_yet!(test_nohl_v, "hello.v");
-test_no_highlighting_yet!(test_nohl_solidity, "hello.sol");
-test_no_highlighting_yet!(test_nohl_cmake, "CMakeLists.txt");
+// --- New embedded grammars (added for languages not in syntect defaults) ---
+test_highlighting_works!(test_highlight_kotlin, "hello.kt", 2);
+test_highlighting_works!(test_highlight_swift, "hello.swift", 2);
+test_highlighting_works!(test_highlight_dart, "hello.dart", 2);
+test_highlighting_works!(test_highlight_elixir, "hello.ex", 2);
+test_highlighting_works!(test_highlight_fsharp, "hello.fs", 2);
+test_highlighting_works!(test_highlight_nix, "hello.nix", 2);
+test_highlighting_works!(test_highlight_powershell, "hello.ps1", 2);
+test_highlighting_works!(test_highlight_scss, "hello.scss", 2);
+test_highlighting_works!(test_highlight_less, "hello.less", 2);
+test_highlighting_works!(test_highlight_ini, "hello.ini", 2);
+test_highlighting_works!(test_highlight_julia, "hello.jl", 2);
+test_highlighting_works!(test_highlight_nim, "hello.nim", 2);
+test_highlighting_works!(test_highlight_gleam, "hello.gleam", 2);
+test_highlighting_works!(test_highlight_v, "hello.v", 2);
+test_highlighting_works!(test_highlight_solidity, "hello.sol", 2);
+test_highlighting_works!(test_highlight_cmake, "CMakeLists.txt", 2);
 
 // --- DevOps/Infrastructure files ---
-test_no_highlighting_yet!(test_nohl_dockerfile, "Dockerfile");
-test_no_highlighting_yet!(test_nohl_dockerfile_dev, "Dockerfile.dev");
-test_no_highlighting_yet!(test_nohl_containerfile, "Containerfile");
-test_no_highlighting_yet!(test_nohl_terraform, "hello.tf");
-test_no_highlighting_yet!(test_nohl_protobuf, "hello.proto");
-test_no_highlighting_yet!(test_nohl_graphql, "hello.graphql");
-// Jenkinsfile moved to test_highlighting_works above
-test_no_highlighting_yet!(test_nohl_earthfile, "Earthfile");
-test_no_highlighting_yet!(test_nohl_tiltfile, "Tiltfile");
-test_no_highlighting_yet!(test_nohl_justfile, "justfile");
-test_no_highlighting_yet!(test_nohl_bazel, "BUILD.bazel");
-test_no_highlighting_yet!(test_nohl_gomod, "go.mod");
-test_no_highlighting_yet!(test_nohl_dotenv, "hello.env");
-test_no_highlighting_yet!(test_nohl_editorconfig, "hello.editorconfig");
+test_highlighting_works!(test_highlight_dockerfile, "Dockerfile", 2);
+test_highlighting_works!(test_highlight_dockerfile_dev, "Dockerfile.dev", 2);
+test_highlighting_works!(test_highlight_containerfile, "Containerfile", 2);
+test_highlighting_works!(test_highlight_terraform, "hello.tf", 2);
+test_highlighting_works!(test_highlight_protobuf, "hello.proto", 2);
+test_highlighting_works!(test_highlight_graphql, "hello.graphql", 2);
+test_highlighting_works!(test_highlight_earthfile, "Earthfile", 2);
+test_highlighting_works!(test_highlight_tiltfile, "Tiltfile", 2);
+test_highlighting_works!(test_highlight_justfile, "justfile", 2);
+test_highlighting_works!(test_highlight_bazel, "BUILD.bazel", 2);
+test_highlighting_works!(test_highlight_gomod, "go.mod", 2);
+test_highlighting_works!(test_highlight_dotenv, "hello.env", 2);
+test_highlighting_works!(test_highlight_editorconfig, "hello.editorconfig", 2);
 
 // --- Requested languages (from GitHub issues) ---
-test_no_highlighting_yet!(test_nohl_kdl, "hello.kdl");
-test_no_highlighting_yet!(test_nohl_nushell, "hello.nu");
+test_highlighting_works!(test_highlight_kdl, "hello.kdl", 2);
+test_highlighting_works!(test_highlight_nushell, "hello.nu", 2);
 
 // --- Web framework languages ---
-test_no_highlighting_yet!(test_nohl_vue, "hello.vue");
-test_no_highlighting_yet!(test_nohl_svelte, "hello.svelte");
-test_no_highlighting_yet!(test_nohl_astro, "hello.astro");
+test_highlighting_works!(test_highlight_vue, "hello.vue", 2);
+test_highlighting_works!(test_highlight_svelte, "hello.svelte", 2);
+test_highlighting_works!(test_highlight_astro, "hello.astro", 2);
 
 // --- Extension mappings (fixed) ---
 test_highlighting_works!(test_highlight_cjs, "hello.cjs", 2);

@@ -1,0 +1,55 @@
+%YAML 1.2
+---
+name: Nix
+file_extensions: [nix]
+scope: source.nix
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+    - include: paths
+  comments:
+    - match: '/\*'
+      push: [{meta_scope: comment.block.nix}, {match: '\*/', pop: true}]
+    - match: '#.*$'
+      scope: comment.line.number-sign.nix
+  strings:
+    - match: "''"
+      push:
+        - meta_scope: string.quoted.indented.nix
+        - match: '\$\{[^}]+\}'
+          scope: variable.interpolation.nix
+        - match: "'[^']"
+          scope: constant.character.escape.nix
+        - match: "''"
+          pop: true
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.nix
+        - match: '\\.'
+          scope: constant.character.escape.nix
+        - match: '\$\{[^}]+\}'
+          scope: variable.interpolation.nix
+        - match: '"'
+          pop: true
+  keywords:
+    - match: '\b(if|then|else|let|in|with|rec|inherit|assert|or)\b'
+      scope: keyword.control.nix
+    - match: '\b(import|builtins|fetchurl|fetchTarball|fetchGit|derivation)\b'
+      scope: support.function.nix
+    - match: '\b(true|false|null)\b'
+      scope: constant.language.nix
+    - match: '\.\.\.'
+      scope: keyword.operator.nix
+    - match: '//|&&|\|\||->|!|\?'
+      scope: keyword.operator.nix
+  numbers:
+    - match: '\b\d+\b'
+      scope: constant.numeric.nix
+  paths:
+    - match: '<[\w/\-\.]+>'
+      scope: string.other.path.nix
+    - match: '(?<=\s)[\.~/][\w/\-\.]+'
+      scope: string.other.path.nix

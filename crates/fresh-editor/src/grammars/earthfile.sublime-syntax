@@ -1,0 +1,43 @@
+%YAML 1.2
+---
+name: Earthfile
+file_extensions: [earth]
+scope: source.earthfile
+contexts:
+  main:
+    - include: comments
+    - include: instructions
+    - include: strings
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.earthfile
+  instructions:
+    - match: '(?i)^\s*(VERSION|FROM|IMPORT|ARG|LET|SET|RUN|COPY|SAVE|GIT|IF|ELSE|END|FOR|DO|COMMAND|FUNCTION|BUILD|WORKDIR|ENV|EXPOSE|VOLUME|ENTRYPOINT|CMD|LABEL|USER|HEALTHCHECK|SHELL|ADD|WITH|DOCKER|TRY|FINALLY|CACHE|HOST|LOCALLY|WAIT|PROJECT|PIPELINE|TRIGGER)\b'
+      scope: keyword.control.earthfile
+    - match: '^\s*(\w[\w\-]*):'
+      captures:
+        1: entity.name.function.earthfile
+    - match: '\bAS\b'
+      scope: keyword.operator.earthfile
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.earthfile
+        - match: '\\.'
+          scope: constant.character.escape.earthfile
+        - match: '\$\{[^}]+\}'
+          scope: variable.other.earthfile
+        - match: '\$\w+'
+          scope: variable.other.earthfile
+        - match: '"'
+          pop: true
+    - match: "'"
+      push: [{meta_scope: string.quoted.single.earthfile}, {match: "'", pop: true}]
+    - match: '\$\{[^}]+\}'
+      scope: variable.other.earthfile
+    - match: '\$\w+'
+      scope: variable.other.earthfile
+    - match: '\b\d+\b'
+      scope: constant.numeric.earthfile
+    - match: '\+[\w\-/]+'
+      scope: entity.name.tag.earthfile

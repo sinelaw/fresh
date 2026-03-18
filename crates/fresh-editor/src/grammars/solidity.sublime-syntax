@@ -1,0 +1,51 @@
+%YAML 1.2
+---
+name: Solidity
+file_extensions: [sol]
+scope: source.solidity
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '//'
+      push: [{meta_scope: comment.line.double-slash.solidity}, {match: '$', pop: true}]
+    - match: '/\*'
+      push: [{meta_scope: comment.block.solidity}, {match: '\*/', pop: true}]
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.solidity
+        - match: '\\.'
+          scope: constant.character.escape.solidity
+        - match: '"'
+          pop: true
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.solidity
+        - match: '\\.'
+          scope: constant.character.escape.solidity
+        - match: "'"
+          pop: true
+  keywords:
+    - match: '\b(pragma|import|contract|library|interface|abstract|is|using|for)\b'
+      scope: keyword.declaration.solidity
+    - match: '\b(function|constructor|modifier|event|error|struct|enum|mapping|returns|return|if|else|for|while|do|break|continue|throw|emit|revert|try|catch|assembly|delete|new|unchecked)\b'
+      scope: keyword.control.solidity
+    - match: '\b(public|private|internal|external|pure|view|payable|nonpayable|virtual|override|constant|immutable|indexed|anonymous|memory|storage|calldata)\b'
+      scope: storage.modifier.solidity
+    - match: '\b(address|bool|string|bytes\d*|int\d*|uint\d*|fixed\d*x\d*|ufixed\d*x\d*)\b'
+      scope: storage.type.solidity
+    - match: '\b(true|false|wei|gwei|ether|seconds|minutes|hours|days|weeks)\b'
+      scope: constant.language.solidity
+    - match: '\b(msg|block|tx|abi|type|this|super)\b'
+      scope: variable.language.solidity
+    - match: '\b(require|assert|revert|keccak256|sha256|ripemd160|ecrecover|addmod|mulmod|selfdestruct|suicide|gasleft|blockhash)\b'
+      scope: support.function.solidity
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+\b'
+      scope: constant.numeric.hex.solidity
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?(e[+-]?\d+)?\b'
+      scope: constant.numeric.solidity

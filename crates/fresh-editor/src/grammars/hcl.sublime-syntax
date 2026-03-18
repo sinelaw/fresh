@@ -1,0 +1,57 @@
+%YAML 1.2
+---
+name: HCL
+file_extensions: [tf, tfvars, hcl]
+scope: source.hcl
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: blocks
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '/\*'
+      push: [{meta_scope: comment.block.hcl}, {match: '\*/', pop: true}]
+    - match: '#.*$'
+      scope: comment.line.number-sign.hcl
+    - match: '//.*$'
+      scope: comment.line.double-slash.hcl
+  strings:
+    - match: '<<-?(\w+)'
+      push:
+        - meta_scope: string.heredoc.hcl
+        - match: '^\s*\1$'
+          pop: true
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.hcl
+        - match: '\\.'
+          scope: constant.character.escape.hcl
+        - match: '\$\{[^}]+\}'
+          scope: variable.interpolation.hcl
+        - match: '%\{[^}]+\}'
+          scope: variable.interpolation.hcl
+        - match: '"'
+          pop: true
+  blocks:
+    - match: '\b(resource|data|variable|output|locals|module|provider|terraform|backend|required_providers|required_version|moved|import|check)\b'
+      scope: keyword.declaration.hcl
+    - match: '\b(for_each|count|depends_on|lifecycle|provisioner|connection|dynamic|content)\b'
+      scope: keyword.other.hcl
+  keywords:
+    - match: '\b(for|in|if|else|endfor|endif)\b'
+      scope: keyword.control.hcl
+    - match: '\b(true|false|null)\b'
+      scope: constant.language.hcl
+    - match: '\b(string|number|bool|list|map|set|object|tuple|any)\b'
+      scope: storage.type.hcl
+    - match: '\b(var|local|each|self|path|module|data|count|terraform)\b\.'
+      scope: variable.language.hcl
+    - match: '\b(length|lookup|merge|concat|join|split|replace|lower|upper|title|trimspace|format|formatlist|tostring|tonumber|tobool|tolist|tomap|toset|try|can|coalesce|file|templatefile|jsonencode|jsondecode|yamlencode|yamldecode|base64encode|base64decode|cidrsubnet|element|flatten|keys|values|zipmap|range|slice|sort|distinct|compact|chunklist|setproduct|setunion|setintersection|setsubtract|contains|index|one|sum|min|max|abs|ceil|floor|log|pow|signum|parseint|regex|regexall|uuid|timestamp|timeadd|formatdate)\b'
+      scope: support.function.hcl
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F]+\b'
+      scope: constant.numeric.hex.hcl
+    - match: '\b\d+(\.\d+)?(e[+-]?\d+)?\b'
+      scope: constant.numeric.hcl

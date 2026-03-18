@@ -1,0 +1,44 @@
+%YAML 1.2
+---
+name: Protocol Buffers
+file_extensions: [proto]
+scope: source.proto
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '//'
+      push: [{meta_scope: comment.line.double-slash.proto}, {match: '$', pop: true}]
+    - match: '/\*'
+      push: [{meta_scope: comment.block.proto}, {match: '\*/', pop: true}]
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.proto
+        - match: '\\.'
+          scope: constant.character.escape.proto
+        - match: '"'
+          pop: true
+    - match: "'"
+      push: [{meta_scope: string.quoted.single.proto}, {match: "'", pop: true}]
+  keywords:
+    - match: '\b(syntax|package|import|public|weak|option)\b'
+      scope: keyword.other.proto
+    - match: '\b(message|enum|service|rpc|returns|extend|oneof|map|reserved|extensions|to|max)\b'
+      scope: keyword.declaration.proto
+    - match: '\b(optional|required|repeated|stream)\b'
+      scope: storage.modifier.proto
+    - match: '\b(double|float|int32|int64|uint32|uint64|sint32|sint64|fixed32|fixed64|sfixed32|sfixed64|bool|string|bytes)\b'
+      scope: storage.type.proto
+    - match: '\b(true|false)\b'
+      scope: constant.language.proto
+    - match: '\b[A-Z]\w*\b'
+      scope: entity.name.type.proto
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F]+\b'
+      scope: constant.numeric.hex.proto
+    - match: '\b\d+(\.\d+)?(e[+-]?\d+)?\b'
+      scope: constant.numeric.proto
