@@ -179,10 +179,9 @@ macro_rules! test_syntax_detected {
     };
 }
 
-// These files have syntax detected but may not produce highlight colors
-// due to scope mapping gaps or tree-sitter fallback issues.
+// These files have syntax detected with partial highlighting
 test_syntax_detected!(test_detect_gitignore, "hello.gitignore");
-test_syntax_detected!(test_detect_diff, "hello.diff");
+test_highlighting_works!(test_highlight_diff, "hello.diff", 2);
 
 // ============================================================
 // Tests for files that currently have NO highlighting

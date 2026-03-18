@@ -338,6 +338,26 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
     if scope_lower.starts_with("markup.list") {
         return Some(HighlightCategory::Operator);
     }
+    // Diff markup: inserted/deleted lines
+    if scope_lower.starts_with("markup.inserted") {
+        return Some(HighlightCategory::String); // green
+    }
+    if scope_lower.starts_with("markup.deleted") {
+        return Some(HighlightCategory::Keyword); // red/magenta
+    }
+    // Diff metadata (range info like @@ -1,5 +1,6 @@)
+    if scope_lower.starts_with("meta.diff.range")
+        || scope_lower.starts_with("meta.diff.header")
+        || scope_lower.starts_with("meta.diff.index")
+    {
+        return Some(HighlightCategory::Function); // cyan/yellow
+    }
+    // Diff from-file/to-file headers (--- a/file, +++ b/file)
+    if scope_lower.starts_with("punctuation.definition.from-file")
+        || scope_lower.starts_with("punctuation.definition.to-file")
+    {
+        return Some(HighlightCategory::Type); // type color
+    }
 
     // Keywords (but not keyword.operator)
     if scope_lower.starts_with("keyword") && !scope_lower.starts_with("keyword.operator") {
@@ -471,6 +491,91 @@ mod tests {
         assert_eq!(
             scope_to_category("punctuation.definition.string.end"),
             Some(HighlightCategory::String)
+        );
+    }
+
+    #[test]
+    fn test_diff_scopes_produce_categories() {
+        // Diff-specific scopes should map to categories
+        assert_eq!(
+            scope_to_category("markup.inserted"),
+            Some(HighlightCategory::String)
+        );
+        assert_eq!(
+            scope_to_category("markup.inserted.diff"),
+            Some(HighlightCategory::String)
+        );
+        assert_eq!(
+            scope_to_category("markup.deleted"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(
+            scope_to_category("markup.deleted.diff"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(
+            scope_to_category("meta.diff.range"),
+            Some(HighlightCategory::Function)
+        );
+        assert_eq!(
+            scope_to_category("meta.diff.header"),
+            Some(HighlightCategory::Function)
+        );
+    }
+
+    #[test]
+    fn test_diff_parsing_produces_scopes() {
+        use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
+
+        let ss = SyntaxSet::load_defaults_newlines();
+        let syntax = ss
+            .find_syntax_by_extension("diff")
+            .expect("Diff syntax should exist");
+        let mut state = ParseState::new(syntax);
+
+        let lines = [
+            "--- a/file.txt\n",
+            "+++ b/file.txt\n",
+            "@@ -1,3 +1,4 @@\n",
+            " unchanged\n",
+            "-removed line\n",
+            "+added line\n",
+        ];
+
+        let mut found_inserted = false;
+        let mut found_deleted = false;
+        let mut found_range = false;
+        let mut scopes = ScopeStack::new();
+
+        for line in &lines {
+            let ops = state.parse_line(line, &ss).unwrap();
+            for (_offset, op) in &ops {
+                let _ = scopes.apply(op);
+                let scope_str = scopes
+                    .as_slice()
+                    .iter()
+                    .map(|s| s.build_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if scope_str.contains("markup.inserted") {
+                    found_inserted = true;
+                }
+                if scope_str.contains("markup.deleted") {
+                    found_deleted = true;
+                }
+                if scope_str.contains("meta.diff") {
+                    found_range = true;
+                }
+            }
+        }
+
+        eprintln!(
+            "found_inserted={}, found_deleted={}, found_range={}",
+            found_inserted, found_deleted, found_range
+        );
+        assert!(
+            found_inserted || found_deleted || found_range,
+            "Diff grammar should produce markup.inserted, markup.deleted, or meta.diff scopes"
         );
     }
 }
