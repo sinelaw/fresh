@@ -109,22 +109,10 @@ else
     echo "Warning: No themes directory found at $BINARY_DIR/themes"
 fi
 
-# Create desktop file
-cat > "$APPDIR/fresh.desktop" << EOF
-[Desktop Entry]
-Name=Fresh
-GenericName=Text Editor
-Comment=A lightweight, fast terminal-based text editor with LSP support
-Exec=fresh %F
-Icon=fresh
-Terminal=true
-Type=Application
-Categories=Development;TextEditor;Utility;
-Keywords=editor;terminal;text;code;programming;lsp;
-MimeType=text/plain;text/x-csrc;text/x-chdr;text/x-c++src;text/x-c++hdr;text/x-java;text/x-python;text/x-script.python;application/x-python;text/x-rust;text/x-go;text/javascript;application/javascript;text/x-typescript;application/json;text/html;text/css;text/x-shellscript;text/x-lua;text/x-ruby;text/x-php;text/x-csharp;text/markdown;
-StartupNotify=false
-X-AppImage-Version=${VERSION}
-EOF
+# Copy desktop file from source and add AppImage version
+DESKTOP_SRC="$(cd "$REPO_ROOT/../.." && pwd)/crates/fresh-editor/resources/fresh.desktop"
+cp "$DESKTOP_SRC" "$APPDIR/fresh.desktop"
+echo "X-AppImage-Version=${VERSION}" >> "$APPDIR/fresh.desktop"
 
 # Also place in standard location
 cp "$APPDIR/fresh.desktop" "$APPDIR/usr/share/applications/"

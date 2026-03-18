@@ -221,6 +221,15 @@ jobs:
       version: ${{ needs.plan.outputs.version }}
     secrets: inherit
 
+  # Build GUI variants (native window)
+  build-gui:
+    needs: [plan]
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    uses: ./.github/workflows/gui-builds.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+    secrets: inherit
+
   # Build AppImage
   build-appimage:
     needs: [plan, build]
@@ -359,7 +368,7 @@ jobs:
   # Only runs if ALL needed jobs succeed - uses !cancelled() to run after all jobs complete,
   # then !failure() ensures none failed
   release:
-    needs: [plan, build, build-freebsd, build-musl, build-linux-packages, build-flatpak, build-appimage, build-npm-package, build-homebrew-formula, test-nix-build]
+    needs: [plan, build, build-freebsd, build-musl, build-linux-packages, build-flatpak, build-appimage, build-gui, build-npm-package, build-homebrew-formula, test-nix-build]
     if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     env:
@@ -443,6 +452,10 @@ jobs:
             artifacts/*.flatpak.sha256 \
             artifacts/*.AppImage \
             artifacts/*.AppImage.sha256 \
+            artifacts/*.pkg \
+            artifacts/*.pkg.sha256 \
+            artifacts/fresh-gui-*.exe \
+            artifacts/fresh-gui-*.exe.sha256 \
             artifacts/fresh.rb \
             2>/dev/null || true
 

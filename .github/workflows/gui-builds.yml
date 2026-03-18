@@ -1,0 +1,222 @@
+# GUI builds - native windowed Fresh
+# Called from the release workflow after the plan job
+
+name: GUI Builds
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to build'
+        required: true
+        type: string
+
+jobs:
+  build-gui:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-15
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM)
+        if: matrix.cross && matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build GUI binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ] && [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          fi
+          if [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
+            export RUSTFLAGS="-C target-feature=+crt-static"
+          fi
+          cargo build --release --features gui --target ${{ matrix.target }}
+
+      # ── Windows: single exe ──────────────────────────────────────────
+      - name: Package GUI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $src = "target/${{ matrix.target }}/release/fresh.exe"
+          $dst = "fresh-gui-${{ matrix.target }}.exe"
+          Copy-Item $src $dst
+          $hash = (Get-FileHash $dst -Algorithm SHA256).Hash.ToLower()
+          "$hash  $dst" | Out-File -Encoding ASCII "$dst.sha256"
+
+      # ── macOS: .app bundle → .pkg installer ──────────────────────────
+      - name: Package GUI (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # Update Info.plist version
+          sed -i '' "s|<string>0.2.5</string>|<string>${VERSION}</string>|g" \
+            crates/fresh-gui/resources/macos/Info.plist
+
+          # Create .app bundle
+          cd crates/fresh-gui/resources/macos
+          ./create-app-bundle.sh "../../../../target/${{ matrix.target }}/release/fresh"
+          cd ../../../..
+
+          # Ad-hoc sign the bundle (required for Apple Silicon)
+          codesign --force --deep --sign - \
+            crates/fresh-gui/resources/macos/Fresh.app
+
+          # Build .pkg installer (proper packaging principles)
+          # Stage the .app in a payload directory
+          mkdir -p pkg-root/Applications
+          mv crates/fresh-gui/resources/macos/Fresh.app pkg-root/Applications/
+
+          ARCH="${{ matrix.target }}"
+          ARCH="${ARCH%%-*}"  # x86_64 or aarch64
+          PKG_NAME="fresh-editor-gui-${ARCH}-${VERSION}.pkg"
+
+          pkgbuild \
+            --root pkg-root \
+            --identifier dev.getfresh.Fresh \
+            --version "${VERSION}" \
+            --install-location / \
+            "${PKG_NAME}"
+
+          shasum -a 256 "${PKG_NAME}" > "${PKG_NAME}.sha256"
+
+      # ── Linux: AppImage (self-contained, includes icons + desktop) ───
+      - name: Package GUI (Linux)
+        if: contains(matrix.target, 'linux')
+        run: |
+          BINARY="target/${{ matrix.target }}/release/fresh"
+
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            sudo apt-get update
+            sudo apt-get install -y binutils-aarch64-linux-gnu
+            aarch64-linux-gnu-strip --strip-all "$BINARY"
+          else
+            strip --strip-all "$BINARY"
+          fi
+
+          ARCH="${{ matrix.target }}"
+          ARCH="${ARCH%%-*}"  # x86_64 or aarch64
+
+          # Build the AppImage using the existing script infrastructure
+          sudo apt-get update
+          sudo apt-get install -y file libfuse2
+
+          # Create AppDir manually for GUI variant
+          APPDIR="$(mktemp -d)/Fresh-GUI.AppDir"
+          mkdir -p "$APPDIR/usr/bin"
+          mkdir -p "$APPDIR/usr/share/icons/hicolor/scalable/apps"
+          mkdir -p "$APPDIR/usr/share/applications"
+          mkdir -p "$APPDIR/usr/share/metainfo"
+
+          # Copy binary
+          cp "$BINARY" "$APPDIR/usr/bin/fresh"
+
+          # Desktop file that launches with --gui
+          cp crates/fresh-editor/resources/fresh-gui.desktop "$APPDIR/fresh-gui.desktop"
+          echo "X-AppImage-Version=${VERSION}" >> "$APPDIR/fresh-gui.desktop"
+
+          cp "$APPDIR/fresh-gui.desktop" "$APPDIR/usr/share/applications/"
+
+          # Copy icons
+          APP_ID="io.github.sinelaw.fresh"
+          SVG_ICON="crates/fresh-editor/flatpak/${APP_ID}.svg"
+          cp "$SVG_ICON" "$APPDIR/fresh.svg"
+          cp "$SVG_ICON" "$APPDIR/usr/share/icons/hicolor/scalable/apps/fresh.svg"
+
+          for size_dir in docs/icons/linux/hicolor/*/apps; do
+              size=$(basename "$(dirname "$size_dir")")
+              mkdir -p "$APPDIR/usr/share/icons/hicolor/${size}/apps"
+              cp "$size_dir/fresh.png" "$APPDIR/usr/share/icons/hicolor/${size}/apps/fresh.png"
+          done
+
+          # Copy metainfo
+          cp "crates/fresh-editor/flatpak/${APP_ID}.metainfo.xml" \
+            "$APPDIR/usr/share/metainfo/${APP_ID}.metainfo.xml"
+          sed -i "s/<release version=\"[^\"]*\"/<release version=\"${VERSION}\"/" \
+            "$APPDIR/usr/share/metainfo/${APP_ID}.metainfo.xml"
+          sed -i "s/date=\"[^\"]*\"/date=\"$(date +%Y-%m-%d)\"/" \
+            "$APPDIR/usr/share/metainfo/${APP_ID}.metainfo.xml"
+
+          # AppRun
+          cat > "$APPDIR/AppRun" << 'AEOF'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          exec "${HERE}/usr/bin/fresh" --gui "$@"
+          AEOF
+          chmod +x "$APPDIR/AppRun"
+
+          # Download and run appimagetool
+          APPIMAGETOOL="$(mktemp -d)/appimagetool"
+          wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
+            -O "$APPIMAGETOOL"
+          chmod +x "$APPIMAGETOOL"
+
+          OUTPUT="fresh-editor-gui-${VERSION}-${ARCH}.AppImage"
+          export ARCH
+
+          if [ "$ARCH" = "aarch64" ]; then
+            wget -q "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-aarch64" \
+              -O "$(dirname "$APPIMAGETOOL")/runtime-aarch64"
+            "$APPIMAGETOOL" --runtime-file "$(dirname "$APPIMAGETOOL")/runtime-aarch64" "$APPDIR" "$OUTPUT"
+          else
+            "$APPIMAGETOOL" "$APPDIR" "$OUTPUT"
+          fi
+
+          chmod +x "$OUTPUT"
+          sha256sum "$OUTPUT" > "${OUTPUT}.sha256"
+
+      # ── Upload artifacts ─────────────────────────────────────────────
+      - name: Upload GUI artifacts (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifacts-gui-${{ matrix.target }}
+          path: |
+            fresh-gui-*.exe
+            fresh-gui-*.exe.sha256
+
+      - name: Upload GUI artifacts (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifacts-gui-${{ matrix.target }}
+          path: |
+            fresh-editor-gui-*.pkg
+            fresh-editor-gui-*.pkg.sha256
+
+      - name: Upload GUI artifacts (Linux)
+        if: contains(matrix.target, 'linux')
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifacts-gui-${{ matrix.target }}
+          path: |
+            fresh-editor-gui-*.AppImage
+            fresh-editor-gui-*.AppImage.sha256
