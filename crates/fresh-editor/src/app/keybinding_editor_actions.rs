@@ -13,10 +13,12 @@ impl Editor {
     /// Open the keybinding editor modal
     pub fn open_keybinding_editor(&mut self) {
         let config_path = self.dir_context.config_path().display().to_string();
+        let cmd_registry = self.command_registry.read().unwrap();
         self.keybinding_editor = Some(KeybindingEditor::new(
             &self.config,
             &self.keybindings,
             &self.mode_registry,
+            &cmd_registry,
             config_path,
         ));
     }

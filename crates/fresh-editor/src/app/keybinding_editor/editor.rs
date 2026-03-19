@@ -3,6 +3,7 @@
 use super::helpers::{format_chord_keys, key_code_to_config_name, modifiers_to_config_names};
 use super::types::*;
 use crate::config::{Config, Keybinding};
+use crate::input::command_registry::CommandRegistry;
 use crate::input::keybindings::{format_keybinding, Action, KeyContext, KeybindingResolver};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rust_i18n::t;
@@ -87,9 +88,11 @@ impl KeybindingEditor {
         config: &Config,
         resolver: &KeybindingResolver,
         mode_registry: &crate::input::buffer_mode::ModeRegistry,
+        command_registry: &CommandRegistry,
         config_file_path: String,
     ) -> Self {
-        let bindings = Self::resolve_all_bindings(config, resolver, mode_registry);
+        let bindings =
+            Self::resolve_all_bindings(config, resolver, mode_registry, command_registry);
         let filtered_indices: Vec<usize> = (0..bindings.len()).collect();
 
         // Collect available action names (include plugin action names from plugin defaults)
@@ -105,6 +108,14 @@ impl KeybindingEditor {
                     available_actions.push(action_str);
                 }
                 let _ = action_name;
+            }
+        }
+        // Include action names from plugin-registered commands
+        for cmd in command_registry.get_all() {
+            if let Action::PluginAction(ref name) = cmd.action {
+                if !available_actions.contains(name) {
+                    available_actions.push(name.clone());
+                }
             }
         }
         available_actions.sort();
@@ -176,6 +187,7 @@ impl KeybindingEditor {
         config: &Config,
         resolver: &KeybindingResolver,
         mode_registry: &crate::input::buffer_mode::ModeRegistry,
+        command_registry: &CommandRegistry,
     ) -> Vec<ResolvedBinding> {
         let mut bindings = Vec::new();
         let mut seen: HashMap<(String, String), usize> = HashMap::new(); // (key_display, context) -> index
@@ -258,6 +270,31 @@ impl KeybindingEditor {
                     is_chord: false,
                     plugin_name: None,
                 });
+            }
+        }
+
+        // Add unbound entries for plugin-registered command actions
+        for cmd in command_registry.get_all() {
+            if let Action::PluginAction(ref action_name) = cmd.action {
+                if !bound_actions.contains(action_name) {
+                    let plugin_name = match &cmd.source {
+                        crate::input::commands::CommandSource::Plugin(name) => {
+                            Some(name.clone())
+                        }
+                        _ => None,
+                    };
+                    bindings.push(ResolvedBinding {
+                        key_display: String::new(),
+                        action: action_name.clone(),
+                        action_display: cmd.get_localized_name(),
+                        context: String::new(),
+                        source: BindingSource::Unbound,
+                        key_code: KeyCode::Null,
+                        modifiers: KeyModifiers::NONE,
+                        is_chord: false,
+                        plugin_name,
+                    });
+                }
             }
         }
 
