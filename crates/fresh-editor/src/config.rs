@@ -3245,6 +3245,682 @@ impl Config {
             },
         );
 
+        // --- Languages added for LSP support ---
+        // These entries ensure detect_language() maps file extensions to language
+        // names that match the LSP config keys in default_lsp_config().
+
+        languages.insert(
+            "kotlin".to_string(),
+            LanguageConfig {
+                extensions: vec!["kt".to_string(), "kts".to_string()],
+                filenames: vec![],
+                grammar: "Kotlin".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "swift".to_string(),
+            LanguageConfig {
+                extensions: vec!["swift".to_string()],
+                filenames: vec![],
+                grammar: "Swift".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "scala".to_string(),
+            LanguageConfig {
+                extensions: vec!["scala".to_string(), "sc".to_string()],
+                filenames: vec![],
+                grammar: "Scala".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "dart".to_string(),
+            LanguageConfig {
+                extensions: vec!["dart".to_string()],
+                filenames: vec![],
+                grammar: "Dart".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "elixir".to_string(),
+            LanguageConfig {
+                extensions: vec!["ex".to_string(), "exs".to_string()],
+                filenames: vec![],
+                grammar: "Elixir".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "erlang".to_string(),
+            LanguageConfig {
+                extensions: vec!["erl".to_string(), "hrl".to_string()],
+                filenames: vec![],
+                grammar: "Erlang".to_string(),
+                comment_prefix: Some("%".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "haskell".to_string(),
+            LanguageConfig {
+                extensions: vec!["hs".to_string(), "lhs".to_string()],
+                filenames: vec![],
+                grammar: "Haskell".to_string(),
+                comment_prefix: Some("--".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "ocaml".to_string(),
+            LanguageConfig {
+                extensions: vec!["ml".to_string(), "mli".to_string()],
+                filenames: vec![],
+                grammar: "OCaml".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "clojure".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "clj".to_string(),
+                    "cljs".to_string(),
+                    "cljc".to_string(),
+                    "edn".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "Clojure".to_string(),
+                comment_prefix: Some(";".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "r".to_string(),
+            LanguageConfig {
+                extensions: vec!["r".to_string(), "R".to_string(), "rmd".to_string()],
+                filenames: vec![],
+                grammar: "R".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "julia".to_string(),
+            LanguageConfig {
+                extensions: vec!["jl".to_string()],
+                filenames: vec![],
+                grammar: "Julia".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "perl".to_string(),
+            LanguageConfig {
+                extensions: vec!["pl".to_string(), "pm".to_string(), "t".to_string()],
+                filenames: vec![],
+                grammar: "Perl".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "nim".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "nim".to_string(),
+                    "nims".to_string(),
+                    "nimble".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "Nim".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "gleam".to_string(),
+            LanguageConfig {
+                extensions: vec!["gleam".to_string()],
+                filenames: vec![],
+                grammar: "Gleam".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "fsharp".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "fs".to_string(),
+                    "fsi".to_string(),
+                    "fsx".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "FSharp".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "nix".to_string(),
+            LanguageConfig {
+                extensions: vec!["nix".to_string()],
+                filenames: vec![],
+                grammar: "Nix".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "nushell".to_string(),
+            LanguageConfig {
+                extensions: vec!["nu".to_string()],
+                filenames: vec![],
+                grammar: "Nushell".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "solidity".to_string(),
+            LanguageConfig {
+                extensions: vec!["sol".to_string()],
+                filenames: vec![],
+                grammar: "Solidity".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "ruby".to_string(),
+            LanguageConfig {
+                extensions: vec!["rb".to_string(), "rake".to_string(), "gemspec".to_string()],
+                filenames: vec![
+                    "Gemfile".to_string(),
+                    "Rakefile".to_string(),
+                    "Guardfile".to_string(),
+                ],
+                grammar: "Ruby".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "php".to_string(),
+            LanguageConfig {
+                extensions: vec!["php".to_string(), "phtml".to_string()],
+                filenames: vec![],
+                grammar: "PHP".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "lua".to_string(),
+            LanguageConfig {
+                extensions: vec!["lua".to_string()],
+                filenames: vec![],
+                grammar: "Lua".to_string(),
+                comment_prefix: Some("--".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "html".to_string(),
+            LanguageConfig {
+                extensions: vec!["html".to_string(), "htm".to_string()],
+                filenames: vec![],
+                grammar: "HTML".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "css".to_string(),
+            LanguageConfig {
+                extensions: vec!["css".to_string()],
+                filenames: vec![],
+                grammar: "CSS".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "sql".to_string(),
+            LanguageConfig {
+                extensions: vec!["sql".to_string()],
+                filenames: vec![],
+                grammar: "SQL".to_string(),
+                comment_prefix: Some("--".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "graphql".to_string(),
+            LanguageConfig {
+                extensions: vec!["graphql".to_string(), "gql".to_string()],
+                filenames: vec![],
+                grammar: "GraphQL".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "protobuf".to_string(),
+            LanguageConfig {
+                extensions: vec!["proto".to_string()],
+                filenames: vec![],
+                grammar: "Protocol Buffers".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "cmake".to_string(),
+            LanguageConfig {
+                extensions: vec!["cmake".to_string()],
+                filenames: vec!["CMakeLists.txt".to_string()],
+                grammar: "CMake".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "terraform".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "tf".to_string(),
+                    "tfvars".to_string(),
+                    "hcl".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "HCL".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "vue".to_string(),
+            LanguageConfig {
+                extensions: vec!["vue".to_string()],
+                filenames: vec![],
+                grammar: "Vue".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "svelte".to_string(),
+            LanguageConfig {
+                extensions: vec!["svelte".to_string()],
+                filenames: vec![],
+                grammar: "Svelte".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "astro".to_string(),
+            LanguageConfig {
+                extensions: vec!["astro".to_string()],
+                filenames: vec![],
+                grammar: "Astro".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
         languages
     }
 
@@ -4492,5 +5168,29 @@ mod tests {
         );
         let buffer_config = BufferConfig::resolve(&config, Some("rust"));
         assert!(buffer_config.use_tabs);
+    }
+
+    /// Verify that every LSP config key has a matching entry in default_languages().
+    /// Without this, detect_language() won't map file extensions to the language name,
+    /// causing "No LSP server configured for this file type" even though the LSP config
+    /// exists. The only exception is "tailwindcss" which attaches to CSS/HTML/JS files
+    /// rather than having its own file type.
+    #[test]
+    #[cfg(feature = "runtime")]
+    fn test_lsp_languages_have_language_config() {
+        let config = Config::default();
+        let exceptions = ["tailwindcss"];
+        for lsp_key in config.lsp.keys() {
+            if exceptions.contains(&lsp_key.as_str()) {
+                continue;
+            }
+            assert!(
+                config.languages.contains_key(lsp_key),
+                "LSP config key '{}' has no matching entry in default_languages(). \
+                 Add a LanguageConfig with the correct file extensions so detect_language() \
+                 can map files to this language.",
+                lsp_key
+            );
+        }
     }
 }
