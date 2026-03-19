@@ -730,6 +730,29 @@ impl Editor {
             .is_some_and(|layout| layout.contains(col, row))
     }
 
+    /// Find the split whose content or scrollbar area contains (col, row).
+    /// Returns the split id and its buffer id, or None if not over any split.
+    pub(super) fn split_at_position(&self, col: u16, row: u16) -> Option<(LeafId, BufferId)> {
+        for &(split_id, buffer_id, content_rect, scrollbar_rect, _, _) in
+            &self.cached_layout.split_areas
+        {
+            let in_content = col >= content_rect.x
+                && col < content_rect.x + content_rect.width
+                && row >= content_rect.y
+                && row < content_rect.y + content_rect.height;
+            let in_scrollbar = scrollbar_rect.width > 0
+                && scrollbar_rect.height > 0
+                && col >= scrollbar_rect.x
+                && col < scrollbar_rect.x + scrollbar_rect.width
+                && row >= scrollbar_rect.y
+                && row < scrollbar_rect.y + scrollbar_rect.height;
+            if in_content || in_scrollbar {
+                return Some((split_id, buffer_id));
+            }
+        }
+        None
+    }
+
     /// Compute what hover target is at the given position
     fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
         // Check tab context menu first (it's rendered on top)

@@ -1437,10 +1437,11 @@ impl Editor {
             }
         }
 
-        // Otherwise, scroll the editor in the active split
-        // Use SplitViewState's viewport (View events go to SplitViewState, not EditorState)
-        let active_split = self.split_manager.active_split();
-        let buffer_id = self.active_buffer();
+        // Scroll the split under the mouse pointer (not necessarily the focused split).
+        // Fall back to the active split if the pointer isn't over any split area.
+        let (target_split, buffer_id) = self
+            .split_at_position(col, row)
+            .unwrap_or_else(|| (self.split_manager.active_split(), self.active_buffer()));
 
         // Check if this is a composite buffer - if so, use composite scroll
         if self.is_composite_buffer(buffer_id) {
@@ -1451,7 +1452,7 @@ impl Editor {
                 .unwrap_or(0);
             if let Some(view_state) = self
                 .composite_view_states
-                .get_mut(&(active_split, buffer_id))
+                .get_mut(&(target_split, buffer_id))
             {
                 view_state.scroll(delta as isize, max_row);
                 tracing::trace!(
@@ -1466,13 +1467,13 @@ impl Editor {
         // Get view_transform tokens from SplitViewState (if any)
         let view_transform_tokens = self
             .split_view_states
-            .get(&active_split)
+            .get(&target_split)
             .and_then(|vs| vs.view_transform.as_ref())
             .map(|vt| vt.tokens.clone());
 
         // Get mutable references to both buffer state and view state
         let state = self.buffers.get_mut(&buffer_id);
-        let view_state = self.split_view_states.get_mut(&active_split);
+        let view_state = self.split_view_states.get_mut(&target_split);
 
         if let (Some(state), Some(view_state)) = (state, view_state) {
             let buffer = &mut state.buffer;
@@ -1536,13 +1537,16 @@ impl Editor {
     /// Handle horizontal scroll (Shift+ScrollWheel or native ScrollLeft/ScrollRight)
     pub(super) fn handle_horizontal_scroll(
         &mut self,
-        _col: u16,
-        _row: u16,
+        col: u16,
+        row: u16,
         delta: i32,
     ) -> AnyhowResult<()> {
-        let active_split = self.split_manager.active_split();
+        let target_split = self
+            .split_at_position(col, row)
+            .map(|(id, _)| id)
+            .unwrap_or_else(|| self.split_manager.active_split());
 
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+        if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
             // Don't scroll horizontally when line wrap is enabled
             if view_state.viewport.line_wrap_enabled {
                 return Ok(());

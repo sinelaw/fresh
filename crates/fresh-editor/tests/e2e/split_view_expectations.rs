@@ -46,6 +46,19 @@ fn prev_split(harness: &mut EditorTestHarness) {
     harness.render().unwrap();
 }
 
+/// Helper: Navigate to next split via command palette
+fn next_split(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("next split").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
 /// Helper: Close the active split via command palette
 fn close_split(harness: &mut EditorTestHarness) {
     harness
@@ -820,4 +833,59 @@ fn test_cursor_movement_after_split_switch() {
 
     // Verify screen position changed
     assert_ne!(screen_x1, screen_x2, "Screen cursor X should have moved");
+}
+
+/// Test that mouse scroll wheel scrolls the viewport under the pointer, not the focused one
+#[test]
+fn test_scroll_wheel_targets_viewport_under_pointer() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Create long content so both splits can scroll
+    let long_text = (1..=100)
+        .map(|i| format!("Line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _fixture = harness.load_buffer_from_text(&long_text).unwrap();
+
+    // Scroll to top
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Create horizontal split - focus moves to the new (bottom) split
+    split_horizontal(&mut harness);
+
+    // Scroll to top in second (bottom) split too
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Navigate back to first (top) split so it's the focused one
+    prev_split(&mut harness);
+
+    // Confirm first split is focused and at top
+    let top_byte_first_split = harness.top_byte();
+
+    // Now scroll down with mouse wheel over the BOTTOM split (row 30 is in bottom half).
+    // The focused split is the TOP one, so if the bug exists, the top split scrolls instead.
+    for _ in 0..5 {
+        harness.mouse_scroll_down(60, 30).unwrap();
+    }
+
+    // Check that the focused (top) split did NOT scroll
+    let top_byte_first_after = harness.top_byte();
+    assert_eq!(
+        top_byte_first_after, top_byte_first_split,
+        "Focused (top) split should NOT have scrolled when mouse was over bottom split"
+    );
+
+    // Switch to the bottom split and check it DID scroll
+    next_split(&mut harness);
+    let top_byte_second_after = harness.top_byte();
+    assert_ne!(
+        top_byte_second_after, top_byte_first_split,
+        "Bottom split (under mouse pointer) should have scrolled"
+    );
 }
