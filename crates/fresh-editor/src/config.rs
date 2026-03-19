@@ -3684,6 +3684,68 @@ impl Config {
             },
         );
 
+        // --- Web framework LSP servers ---
+
+        // vue-language-server (installed via npm install -g @vue/language-server)
+        lsp.insert(
+            "vue".to_string(),
+            LspServerConfig {
+                command: "vue-language-server".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // svelte-language-server (installed via npm install -g svelte-language-server)
+        lsp.insert(
+            "svelte".to_string(),
+            LspServerConfig {
+                command: "svelteserver".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // astro-ls - Astro Language Server (installed via npm install -g @astrojs/language-server)
+        lsp.insert(
+            "astro".to_string(),
+            LspServerConfig {
+                command: "astro-ls".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // tailwindcss-language-server (installed via npm install -g @tailwindcss/language-server)
+        lsp.insert(
+            "tailwindcss".to_string(),
+            LspServerConfig {
+                command: "tailwindcss-language-server".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
         // --- Programming language LSP servers ---
 
         // nil - Nix Language Server (https://github.com/oxalica/nil)
