@@ -723,6 +723,8 @@ impl Editor {
                 if abs_path.exists() {
                     match self.open_file_internal(abs_path) {
                         Ok(buffer_id) => {
+                            // Add to path_to_buffer so open_tabs with absolute paths resolve
+                            path_to_buffer.insert(abs_path.clone(), buffer_id);
                             tracing::debug!(
                                 "Restored external file {:?} as buffer {:?}",
                                 abs_path,
@@ -1712,6 +1714,12 @@ fn serialize_split_view_state(
                     if Some(*buffer_id) == active_buffer {
                         active_tab_index = Some(tab_index);
                     }
+                } else {
+                    // External file (outside working_dir) - store absolute path
+                    open_tabs.push(SerializedTabRef::File(abs_path.to_path_buf()));
+                    if Some(*buffer_id) == active_buffer {
+                        active_tab_index = Some(tab_index);
+                    }
                 }
             }
         }
@@ -1749,7 +1757,8 @@ fn serialize_split_view_state(
         } else if let Ok(rp) = abs_path.strip_prefix(working_dir) {
             rp.to_path_buf()
         } else {
-            continue;
+            // External file - use absolute path as key
+            abs_path.to_path_buf()
         };
 
         let primary_cursor = buf_state.cursors.primary();
