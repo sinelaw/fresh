@@ -108,6 +108,23 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, RwLock};
 
+/// Recursively copy a directory and all its contents.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 /// Convert a QuickJS Value to serde_json::Value
 fn js_to_json(ctx: &rquickjs::Ctx<'_>, val: Value<'_>) -> serde_json::Value {
     use rquickjs::Type;
@@ -1415,6 +1432,94 @@ impl JsEditorApi {
 
         rquickjs_serde::to_value(ctx, &entries)
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    /// Create a directory (and all parent directories) recursively.
+    /// Returns true if the directory was created or already exists.
+    pub fn create_dir(&self, path: String) -> bool {
+        let p = Path::new(&path);
+        if p.is_dir() {
+            return true;
+        }
+        std::fs::create_dir_all(p).is_ok()
+    }
+
+    /// Remove a file or directory tree. For safety, the path must be under
+    /// the OS temp directory or the Fresh config directory. Returns true on success.
+    pub fn remove_path(&self, path: String) -> bool {
+        let target = match Path::new(&path).canonicalize() {
+            Ok(p) => p,
+            Err(_) => return false, // path doesn't exist or can't be resolved
+        };
+
+        let temp_dir = std::env::temp_dir();
+        let config_dir = self.services.config_dir();
+
+        // Verify the path is under an allowed root (temp or config dir)
+        let allowed = target.starts_with(&temp_dir) || target.starts_with(&config_dir);
+        if !allowed {
+            tracing::warn!(
+                "removePath refused: {:?} is not under temp dir ({:?}) or config dir ({:?})",
+                target, temp_dir, config_dir
+            );
+            return false;
+        }
+
+        // Don't allow removing the root directories themselves
+        if target == temp_dir || target == config_dir {
+            tracing::warn!("removePath refused: cannot remove root directory {:?}", target);
+            return false;
+        }
+
+        if target.is_dir() {
+            std::fs::remove_dir_all(&target).is_ok()
+        } else {
+            std::fs::remove_file(&target).is_ok()
+        }
+    }
+
+    /// Rename/move a file or directory. Returns true on success.
+    /// Falls back to copy+delete for cross-filesystem moves.
+    pub fn rename_path(&self, from: String, to: String) -> bool {
+        // Try direct rename first (works for same-filesystem moves)
+        if std::fs::rename(&from, &to).is_ok() {
+            return true;
+        }
+        // Cross-filesystem fallback: copy then remove
+        let from_path = Path::new(&from);
+        if from_path.is_dir() {
+            if copy_dir_recursive(from_path, Path::new(&to)).is_ok() {
+                return std::fs::remove_dir_all(from_path).is_ok();
+            }
+        } else if std::fs::copy(&from, &to).is_ok() {
+            return std::fs::remove_file(&from).is_ok();
+        }
+        false
+    }
+
+    /// Copy a file or directory recursively to a new location.
+    /// Returns true on success.
+    pub fn copy_path(&self, from: String, to: String) -> bool {
+        let from_path = Path::new(&from);
+        let to_path = Path::new(&to);
+        if from_path.is_dir() {
+            copy_dir_recursive(from_path, to_path).is_ok()
+        } else {
+            // Ensure parent directory exists
+            if let Some(parent) = to_path.parent() {
+                if !parent.exists() {
+                    if std::fs::create_dir_all(parent).is_err() {
+                        return false;
+                    }
+                }
+            }
+            std::fs::copy(from_path, to_path).is_ok()
+        }
+    }
+
+    /// Get the OS temporary directory path.
+    pub fn get_temp_dir(&self) -> String {
+        std::env::temp_dir().to_string_lossy().to_string()
     }
 
     // === Config ===

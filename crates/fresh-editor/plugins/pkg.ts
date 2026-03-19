@@ -231,14 +231,10 @@ interface ParsedPackageUrl {
 // =============================================================================
 
 /**
- * Ensure a directory exists
+ * Ensure a directory exists (cross-platform)
  */
-async function ensureDir(path: string): Promise<boolean> {
-  if (editor.fileExists(path)) {
-    return true;
-  }
-  const result = await editor.spawnProcess("mkdir", ["-p", path]);
-  return result.exit_code === 0;
+function ensureDir(path: string): boolean {
+  return editor.createDir(path);
 }
 
 /**
@@ -395,7 +391,7 @@ async function writeJsonFile(path: string, data: unknown): Promise<boolean> {
 async function syncRegistry(): Promise<void> {
   editor.setStatus("Syncing package registry...");
 
-  await ensureDir(INDEX_DIR);
+  ensureDir(INDEX_DIR);
 
   const sources = getRegistrySources();
   let synced = 0;
@@ -493,7 +489,7 @@ function loadRegistry(type: "plugins" | "themes" | "languages"): RegistryData {
  * Cache registry data locally for offline/fast access
  */
 async function cacheRegistry(): Promise<void> {
-  await ensureDir(CACHE_DIR);
+  ensureDir(CACHE_DIR);
   const sources = getRegistrySources();
 
   for (const source of sources) {
@@ -823,7 +819,7 @@ async function installFromRepo(
   version?: string
 ): Promise<boolean> {
   // Clone to temp directory first to detect package type
-  const tempDir = `/tmp/fresh-pkg-clone-${hashString(repoUrl)}-${Date.now()}`;
+  const tempDir = editor.pathJoin(editor.getTempDir(), `fresh-pkg-clone-${hashString(repoUrl)}-${Date.now()}`);
 
   const cloneArgs = ["clone"];
   if (!version || version === "latest") {
@@ -857,7 +853,7 @@ async function installFromRepo(
     editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
     editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
     // Clean up
-    await editor.spawnProcess("rm", ["-rf", tempDir]);
+    editor.removePath(tempDir);
     return false;
   }
 
@@ -877,16 +873,15 @@ async function installFromRepo(
   // Check if already installed in correct location
   if (editor.fileExists(correctTargetDir)) {
     editor.setStatus(`Package '${packageName}' is already installed`);
-    await editor.spawnProcess("rm", ["-rf", tempDir]);
+    editor.removePath(tempDir);
     return false;
   }
 
   // Ensure correct directory exists and move from temp
-  await ensureDir(correctPackagesDir);
-  const moveResult = await editor.spawnProcess("mv", [tempDir, correctTargetDir]);
-  if (moveResult.exit_code !== 0) {
-    editor.setStatus(`Failed to install ${packageName}: ${moveResult.stderr}`);
-    await editor.spawnProcess("rm", ["-rf", tempDir]);
+  ensureDir(correctPackagesDir);
+  if (!editor.renamePath(tempDir, correctTargetDir)) {
+    editor.setStatus(`Failed to install ${packageName}: could not move package to target directory`);
+    editor.removePath(tempDir);
     return false;
   }
 
@@ -976,13 +971,12 @@ async function installFromLocalPath(
   }
 
   // Ensure correct directory exists
-  await ensureDir(correctPackagesDir);
+  ensureDir(correctPackagesDir);
 
   // Copy the directory to correct target
   editor.setStatus(`Copying from ${sourcePath}...`);
-  const copyResult = await editor.spawnProcess("cp", ["-r", sourcePath, correctTargetDir]);
-  if (copyResult.exit_code !== 0) {
-    editor.setStatus(`Failed to copy package: ${copyResult.stderr}`);
+  if (!editor.copyPath(sourcePath, correctTargetDir)) {
+    editor.setStatus(`Failed to copy package from ${sourcePath}`);
     return false;
   }
 
@@ -992,7 +986,7 @@ async function installFromLocalPath(
     editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
     editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
     // Clean up the invalid package
-    await editor.spawnProcess("rm", ["-rf", correctTargetDir]);
+    editor.removePath(correctTargetDir);
     return false;
   }
 
@@ -1037,7 +1031,7 @@ async function installFromMonorepo(
   packageName: string,
   version?: string
 ): Promise<boolean> {
-  const tempDir = `/tmp/fresh-pkg-${hashString(parsed.repoUrl)}-${Date.now()}`;
+  const tempDir = editor.pathJoin(editor.getTempDir(), `fresh-pkg-${hashString(parsed.repoUrl)}-${Date.now()}`);
 
   try {
     // Clone the full repo to temp
@@ -1068,7 +1062,7 @@ async function installFromMonorepo(
     const subpathDir = editor.pathJoin(tempDir, parsed.subpath!);
     if (!editor.fileExists(subpathDir)) {
       editor.setStatus(`Subpath '${parsed.subpath}' not found in repository`);
-      await editor.spawnProcess("rm", ["-rf", tempDir]);
+      editor.removePath(tempDir);
       return false;
     }
 
@@ -1077,7 +1071,7 @@ async function installFromMonorepo(
     if (!validation.valid) {
       editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
       editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
-      await editor.spawnProcess("rm", ["-rf", tempDir]);
+      editor.removePath(tempDir);
       return false;
     }
 
@@ -1097,19 +1091,18 @@ async function installFromMonorepo(
     // Check if already installed
     if (editor.fileExists(correctTargetDir)) {
       editor.setStatus(`Package '${packageName}' is already installed`);
-      await editor.spawnProcess("rm", ["-rf", tempDir]);
+      editor.removePath(tempDir);
       return false;
     }
 
     // Ensure correct directory exists
-    await ensureDir(correctPackagesDir);
+    ensureDir(correctPackagesDir);
 
     // Copy subdirectory to correct target
     editor.setStatus(`Installing ${packageName} from ${parsed.subpath}...`);
-    const copyResult = await editor.spawnProcess("cp", ["-r", subpathDir, correctTargetDir]);
-    if (copyResult.exit_code !== 0) {
-      editor.setStatus(`Failed to copy package: ${copyResult.stderr}`);
-      await editor.spawnProcess("rm", ["-rf", tempDir]);
+    if (!editor.copyPath(subpathDir, correctTargetDir)) {
+      editor.setStatus(`Failed to copy package from ${parsed.subpath}`);
+      editor.removePath(tempDir);
       return false;
     }
 
@@ -1143,7 +1136,7 @@ async function installFromMonorepo(
     return true;
   } finally {
     // Cleanup temp directory
-    await editor.spawnProcess("rm", ["-rf", tempDir]);
+    editor.removePath(tempDir);
   }
 }
 
@@ -1408,16 +1401,14 @@ async function reinstallPackage(pkg: InstalledPackage): Promise<boolean> {
   }
 
   // Remove old copy
-  const rmResult = await editor.spawnProcess("rm", ["-rf", pkg.path]);
-  if (rmResult.exit_code !== 0) {
-    editor.setStatus(`Failed to remove old copy: ${rmResult.stderr}`);
+  if (!editor.removePath(pkg.path)) {
+    editor.setStatus(`Failed to remove old copy of ${pkg.name}`);
     return false;
   }
 
   // Re-copy from source
-  const copyResult = await editor.spawnProcess("cp", ["-r", sourcePath, pkg.path]);
-  if (copyResult.exit_code !== 0) {
-    editor.setStatus(`Failed to copy from source: ${copyResult.stderr}`);
+  if (!editor.copyPath(sourcePath, pkg.path)) {
+    editor.setStatus(`Failed to copy from source: ${sourcePath}`);
     return false;
   }
 
@@ -1474,13 +1465,8 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
     }
   }
 
-  // Use trash if available, otherwise rm -rf
-  let result = await editor.spawnProcess("trash", [pkg.path]);
-  if (result.exit_code !== 0) {
-    result = await editor.spawnProcess("rm", ["-rf", pkg.path]);
-  }
-
-  if (result.exit_code === 0) {
+  // Remove package directory
+  if (editor.removePath(pkg.path)) {
     // Reload themes if we removed a theme so Select Theme list is updated
     if (pkg.type === "theme") {
       editor.reloadThemes();
@@ -1488,7 +1474,7 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
     editor.setStatus(`Removed ${pkg.name}`);
     return true;
   } else {
-    editor.setStatus(`Failed to remove ${pkg.name}: ${result.stderr}`);
+    editor.setStatus(`Failed to remove ${pkg.name}`);
     return false;
   }
 }
@@ -1608,7 +1594,7 @@ async function installFromLockfile(): Promise<void> {
       }
     } else {
       // Need to clone
-      await ensureDir(PACKAGES_DIR);
+      ensureDir(PACKAGES_DIR);
       const result = await gitCommand(["clone", `${entry.source}`, `${pluginPath}`]);
 
       if (result.exit_code === 0) {
