@@ -1444,8 +1444,9 @@ impl JsEditorApi {
         std::fs::create_dir_all(p).is_ok()
     }
 
-    /// Remove a file or directory tree. For safety, the path must be under
-    /// the OS temp directory or the Fresh config directory. Returns true on success.
+    /// Remove a file or directory by moving it to the OS trash/recycle bin.
+    /// For safety, the path must be under the OS temp directory or the Fresh
+    /// config directory. Returns true on success.
     pub fn remove_path(&self, path: String) -> bool {
         let target = match Path::new(&path).canonicalize() {
             Ok(p) => p,
@@ -1471,28 +1472,31 @@ impl JsEditorApi {
             return false;
         }
 
-        if target.is_dir() {
-            std::fs::remove_dir_all(&target).is_ok()
-        } else {
-            std::fs::remove_file(&target).is_ok()
+        match trash::delete(&target) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!("removePath trash failed for {:?}: {}", target, e);
+                false
+            }
         }
     }
 
     /// Rename/move a file or directory. Returns true on success.
-    /// Falls back to copy+delete for cross-filesystem moves.
+    /// Falls back to copy then trash for cross-filesystem moves.
     pub fn rename_path(&self, from: String, to: String) -> bool {
         // Try direct rename first (works for same-filesystem moves)
         if std::fs::rename(&from, &to).is_ok() {
             return true;
         }
-        // Cross-filesystem fallback: copy then remove
+        // Cross-filesystem fallback: copy then trash the original
         let from_path = Path::new(&from);
-        if from_path.is_dir() {
-            if copy_dir_recursive(from_path, Path::new(&to)).is_ok() {
-                return std::fs::remove_dir_all(from_path).is_ok();
-            }
-        } else if std::fs::copy(&from, &to).is_ok() {
-            return std::fs::remove_file(&from).is_ok();
+        let copied = if from_path.is_dir() {
+            copy_dir_recursive(from_path, Path::new(&to)).is_ok()
+        } else {
+            std::fs::copy(&from, &to).is_ok()
+        };
+        if copied {
+            return trash::delete(from_path).is_ok();
         }
         false
     }

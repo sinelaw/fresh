@@ -1031,19 +1031,19 @@ interface EditorAPI {
 	*/
 	readDir(path: string): DirEntry[];
 	/**
-	* Create a directory and all parent directories recursively.
+	* Create a directory (and all parent directories) recursively.
 	* Returns true if the directory was created or already exists.
 	*/
 	createDir(path: string): boolean;
 	/**
-	* Remove a file or directory tree. For safety, the path must be under
-	* the OS temp directory or the Fresh config directory.
-	* Returns true on success, false if the path is outside allowed directories.
+	* Remove a file or directory by moving it to the OS trash/recycle bin.
+	* For safety, the path must be under the OS temp directory or the Fresh
+	* config directory. Returns true on success.
 	*/
 	removePath(path: string): boolean;
 	/**
 	* Rename/move a file or directory. Returns true on success.
-	* Works across filesystem boundaries (falls back to copy+delete).
+	* Falls back to copy then trash for cross-filesystem moves.
 	*/
 	renamePath(from: string, to: string): boolean;
 	/**
