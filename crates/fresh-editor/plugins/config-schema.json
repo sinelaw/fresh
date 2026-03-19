@@ -50,6 +50,7 @@
         "whitespace_tabs_leading": true,
         "whitespace_tabs_inner": true,
         "whitespace_tabs_trailing": true,
+        "use_tabs": false,
         "tab_size": 4,
         "auto_indent": true,
         "auto_close": true,
@@ -357,6 +358,12 @@
           "type": "boolean",
           "default": true,
           "x-section": "Whitespace"
+        },
+        "use_tabs": {
+          "description": "Whether pressing Tab inserts a tab character instead of spaces.\nThis is the global default; individual languages can override it\nvia their own `use_tabs` setting.\nDefault: false (insert spaces)",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Editing"
         },
         "tab_size": {
           "description": "Number of spaces per tab character",
@@ -891,9 +898,12 @@
           "default": true
         },
         "use_tabs": {
-          "description": "Whether pressing Tab should insert a tab character instead of spaces.\nDefaults to false (insert spaces based on tab_size).\nSet to true for languages like Go and Makefile that require tabs.",
-          "type": "boolean",
-          "default": false
+          "description": "Whether pressing Tab should insert a tab character instead of spaces.\nIf not specified (`null`), falls back to the global `editor.use_tabs` setting.\nSet to true for languages like Go and Makefile that require tabs.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
         },
         "tab_size": {
           "description": "Tab size (number of spaces per tab) for this language.\nIf not specified, falls back to the global editor.tab_size setting.",

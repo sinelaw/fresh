@@ -2,6 +2,7 @@
   "theme": "high-contrast",
   "check_for_updates": true,
   "editor": {
+    "use_tabs": false,
     "tab_size": 4,
     "auto_indent": true,
     "line_numbers": true,

@@ -138,6 +138,7 @@ fn merge_partial<T: Merge + Clone>(target: &mut Option<T>, other: &Option<T>) {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct PartialEditorConfig {
+    pub use_tabs: Option<bool>,
     pub tab_size: Option<usize>,
     pub auto_indent: Option<bool>,
     pub auto_close: Option<bool>,
@@ -199,6 +200,7 @@ pub struct PartialEditorConfig {
 
 impl Merge for PartialEditorConfig {
     fn merge_from(&mut self, other: &Self) {
+        self.use_tabs.merge_from(&other.use_tabs);
         self.tab_size.merge_from(&other.tab_size);
         self.auto_indent.merge_from(&other.auto_indent);
         self.auto_close.merge_from(&other.auto_close);
@@ -485,6 +487,7 @@ impl Merge for LspServerConfig {
 impl From<&crate::config::EditorConfig> for PartialEditorConfig {
     fn from(cfg: &crate::config::EditorConfig) -> Self {
         Self {
+            use_tabs: Some(cfg.use_tabs),
             tab_size: Some(cfg.tab_size),
             auto_indent: Some(cfg.auto_indent),
             auto_close: Some(cfg.auto_close),
@@ -552,6 +555,7 @@ impl PartialEditorConfig {
     /// Resolve this partial config to a concrete EditorConfig using defaults.
     pub fn resolve(self, defaults: &crate::config::EditorConfig) -> crate::config::EditorConfig {
         crate::config::EditorConfig {
+            use_tabs: self.use_tabs.unwrap_or(defaults.use_tabs),
             tab_size: self.tab_size.unwrap_or(defaults.tab_size),
             auto_indent: self.auto_indent.unwrap_or(defaults.auto_indent),
             auto_close: self.auto_close.unwrap_or(defaults.auto_close),
@@ -831,7 +835,7 @@ impl From<&LanguageConfig> for PartialLanguageConfig {
             highlighter: Some(cfg.highlighter),
             textmate_grammar: cfg.textmate_grammar.clone(),
             show_whitespace_tabs: Some(cfg.show_whitespace_tabs),
-            use_tabs: Some(cfg.use_tabs),
+            use_tabs: cfg.use_tabs,
             tab_size: cfg.tab_size,
             formatter: cfg.formatter.clone(),
             format_on_save: Some(cfg.format_on_save),
@@ -861,7 +865,7 @@ impl PartialLanguageConfig {
             show_whitespace_tabs: self
                 .show_whitespace_tabs
                 .unwrap_or(defaults.show_whitespace_tabs),
-            use_tabs: self.use_tabs.unwrap_or(defaults.use_tabs),
+            use_tabs: self.use_tabs.or(defaults.use_tabs),
             tab_size: self.tab_size.or(defaults.tab_size),
             formatter: self.formatter.or_else(|| defaults.formatter.clone()),
             format_on_save: self.format_on_save.unwrap_or(defaults.format_on_save),
@@ -1047,7 +1051,7 @@ impl Default for LanguageConfig {
             highlighter: HighlighterPreference::default(),
             textmate_grammar: None,
             show_whitespace_tabs: true,
-            use_tabs: false,
+            use_tabs: None,
             tab_size: None,
             formatter: None,
             format_on_save: false,

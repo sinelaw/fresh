@@ -1650,7 +1650,7 @@ impl Editor {
         let lang_config = crate::config::LanguageConfig {
             comment_prefix: config.comment_prefix,
             auto_indent: config.auto_indent.unwrap_or(true),
-            use_tabs: config.use_tabs.unwrap_or(false),
+            use_tabs: config.use_tabs,
             tab_size: config.tab_size,
             show_whitespace_tabs: config.show_whitespace_tabs.unwrap_or(true),
             formatter: config.formatter.map(|f| crate::config::FormatterConfig {

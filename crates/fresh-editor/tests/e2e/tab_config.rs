@@ -317,7 +317,7 @@ fn test_use_tabs_custom_config_enables_tabs() {
     // Create config with use_tabs enabled for Rust
     let mut config = Config::default();
     if let Some(rust_config) = config.languages.get_mut("rust") {
-        rust_config.use_tabs = true;
+        rust_config.use_tabs = Some(true);
     }
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();

@@ -260,7 +260,8 @@ impl Editor {
         state.buffer_settings.auto_surround = self.config.editor.auto_surround;
         if let Some(lang_config) = self.config.languages.get(&state.language) {
             whitespace = whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
-            state.buffer_settings.use_tabs = lang_config.use_tabs;
+            state.buffer_settings.use_tabs =
+                lang_config.use_tabs.unwrap_or(self.config.editor.use_tabs);
             // Use language-specific tab_size if set, otherwise fall back to global
             state.buffer_settings.tab_size =
                 lang_config.tab_size.unwrap_or(self.config.editor.tab_size);
@@ -278,6 +279,7 @@ impl Editor {
             }
         } else {
             state.buffer_settings.tab_size = self.config.editor.tab_size;
+            state.buffer_settings.use_tabs = self.config.editor.use_tabs;
         }
         state.buffer_settings.whitespace = whitespace;
 

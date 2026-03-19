@@ -149,13 +149,13 @@ impl Editor {
                 }
                 (
                     lang_config.tab_size.unwrap_or(self.config.editor.tab_size),
-                    lang_config.use_tabs,
+                    lang_config.use_tabs.unwrap_or(self.config.editor.use_tabs),
                 )
             } else {
-                (self.config.editor.tab_size, false)
+                (self.config.editor.tab_size, self.config.editor.use_tabs)
             }
         } else {
-            (self.config.editor.tab_size, false)
+            (self.config.editor.tab_size, self.config.editor.use_tabs)
         };
 
         // Apply settings to buffer

@@ -527,7 +527,7 @@ mod tests {
                 highlighter: crate::config::HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,

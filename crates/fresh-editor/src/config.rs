@@ -697,6 +697,14 @@ pub struct EditorConfig {
     pub whitespace_tabs_trailing: bool,
 
     // ===== Editing =====
+    /// Whether pressing Tab inserts a tab character instead of spaces.
+    /// This is the global default; individual languages can override it
+    /// via their own `use_tabs` setting.
+    /// Default: false (insert spaces)
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub use_tabs: bool,
+
     /// Number of spaces per tab character
     #[serde(default = "default_tab_size")]
     #[schemars(extend("x-section" = "Editing"))]
@@ -1070,6 +1078,7 @@ fn default_file_tree_poll_interval() -> u64 {
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
+            use_tabs: false,
             tab_size: default_tab_size(),
             auto_indent: true,
             auto_close: true,
@@ -1427,10 +1436,10 @@ pub struct LanguageConfig {
     pub show_whitespace_tabs: bool,
 
     /// Whether pressing Tab should insert a tab character instead of spaces.
-    /// Defaults to false (insert spaces based on tab_size).
+    /// If not specified (`null`), falls back to the global `editor.use_tabs` setting.
     /// Set to true for languages like Go and Makefile that require tabs.
-    #[serde(default = "default_false")]
-    pub use_tabs: bool,
+    #[serde(default)]
+    pub use_tabs: Option<bool>,
 
     /// Tab size (number of spaces per tab) for this language.
     /// If not specified, falls back to the global editor.tab_size setting.
@@ -1510,7 +1519,7 @@ impl BufferConfig {
         let mut whitespace = WhitespaceVisibility::from_editor_config(editor);
         let mut config = BufferConfig {
             tab_size: editor.tab_size,
-            use_tabs: false, // Global default is spaces
+            use_tabs: editor.use_tabs,
             auto_indent: editor.auto_indent,
             auto_close: editor.auto_close,
             auto_surround: editor.auto_surround,
@@ -1540,8 +1549,10 @@ impl BufferConfig {
                 config.tab_size = ts;
             }
 
-            // Use tabs: language override
-            config.use_tabs = lang_config.use_tabs;
+            // Use tabs: language override (only if explicitly set)
+            if let Some(use_tabs) = lang_config.use_tabs {
+                config.use_tabs = use_tabs;
+            }
 
             // Auto indent: language override
             config.auto_indent = lang_config.auto_indent;
@@ -2607,7 +2618,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
                     command: "rustfmt".to_string(),
@@ -2633,7 +2644,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
                     command: "prettier".to_string(),
@@ -2659,7 +2670,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
                     command: "prettier".to_string(),
@@ -2685,7 +2696,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
                     command: "ruff".to_string(),
@@ -2715,7 +2726,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
                     command: "clang-format".to_string(),
@@ -2748,7 +2759,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
                     command: "clang-format".to_string(),
@@ -2774,7 +2785,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -2810,7 +2821,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -2835,8 +2846,8 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: true,    // Makefiles require tabs for recipes
-                tab_size: Some(8), // Makefiles traditionally use 8-space tabs
+                use_tabs: Some(true), // Makefiles require tabs for recipes
+                tab_size: Some(8),    // Makefiles traditionally use 8-space tabs
                 formatter: None,
                 format_on_save: false,
                 on_save: vec![],
@@ -2856,7 +2867,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -2877,7 +2888,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
                     command: "prettier".to_string(),
@@ -2903,7 +2914,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -2924,7 +2935,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
                     command: "prettier".to_string(),
@@ -2950,7 +2961,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -2972,8 +2983,8 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
-                use_tabs: true,    // Go convention is to use tabs
-                tab_size: Some(8), // Go convention is 8-space tab width
+                use_tabs: Some(true), // Go convention is to use tabs
+                tab_size: Some(8),    // Go convention is 8-space tab width
                 formatter: Some(FormatterConfig {
                     command: "gofmt".to_string(),
                     args: vec![],
@@ -2998,7 +3009,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
-                use_tabs: true,
+                use_tabs: Some(true),
                 tab_size: Some(8),
                 formatter: None,
                 format_on_save: false,
@@ -3019,7 +3030,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -3040,7 +3051,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -3068,7 +3079,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -3089,7 +3100,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -3111,7 +3122,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -3137,7 +3148,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -3163,7 +3174,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -3184,7 +3195,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -3205,7 +3216,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -3226,7 +3237,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: false,
+                use_tabs: None,
                 tab_size: None,
                 formatter: None,
                 format_on_save: false,
@@ -4390,7 +4401,7 @@ mod tests {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: false, // Go hides tab indicators
-                use_tabs: true,              // Go uses tabs
+                use_tabs: Some(true),        // Go uses tabs
                 tab_size: Some(8),           // Go uses 8-space tabs
                 formatter: Some(FormatterConfig {
                     command: "gofmt".to_string(),
@@ -4436,12 +4447,50 @@ mod tests {
         config_with_tabs.languages.insert(
             "makefile".to_string(),
             LanguageConfig {
-                use_tabs: true,
+                use_tabs: Some(true),
                 tab_size: Some(8),
                 ..Default::default()
             },
         );
         let tabs_config = BufferConfig::resolve(&config_with_tabs, Some("makefile"));
         assert_eq!(tabs_config.indent_string(), "\t");
+    }
+
+    #[test]
+    fn test_buffer_config_global_use_tabs_inherited() {
+        // When editor.use_tabs is true, buffers without a language-specific
+        // override should inherit the global setting.
+        let mut config = Config::default();
+        config.editor.use_tabs = true;
+
+        // Unknown language inherits global
+        let buffer_config = BufferConfig::resolve(&config, Some("unknown_lang"));
+        assert!(buffer_config.use_tabs);
+
+        // No language inherits global
+        let buffer_config = BufferConfig::resolve(&config, None);
+        assert!(buffer_config.use_tabs);
+
+        // Language with explicit use_tabs: Some(false) overrides global
+        config.languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                use_tabs: Some(false),
+                ..Default::default()
+            },
+        );
+        let buffer_config = BufferConfig::resolve(&config, Some("python"));
+        assert!(!buffer_config.use_tabs);
+
+        // Language with use_tabs: None inherits global true
+        config.languages.insert(
+            "rust".to_string(),
+            LanguageConfig {
+                use_tabs: None,
+                ..Default::default()
+            },
+        );
+        let buffer_config = BufferConfig::resolve(&config, Some("rust"));
+        assert!(buffer_config.use_tabs);
     }
 }
