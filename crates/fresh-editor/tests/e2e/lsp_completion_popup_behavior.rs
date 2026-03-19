@@ -4,7 +4,7 @@
 //! various key inputs: swallowing arrow keys, treating non-word characters as
 //! type-to-filter, consuming Ctrl+key combos, etc.
 //!
-//! See LSP_COMPLETION_ISSUES.md for the full list of issues.
+//! See docs/internal/LSP_COMPLETION_ISSUES.md for the full list of issues.
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};

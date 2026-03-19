@@ -2,14 +2,14 @@
 
 ## Test Environment
 - Terminal: tmux session
-- Test file: `test_usability.md`
-- Editor: `./target/release/fresh test_usability.md`
+- Test file: `docs/internal/test_usability.md`
+- Editor: `./target/release/fresh docs/internal/test_usability.md`
 
 ## Test Cases
 
 ### T1: Compose Mode Toggle
 **Steps:**
-1. Open test_usability.md
+1. Open docs/internal/test_usability.md
 2. Verify file opens in normal mode (raw markdown visible, line numbers shown)
 3. Open command palette (Ctrl+P or equivalent)
 4. Search for "Markdown: Toggle Compose"
