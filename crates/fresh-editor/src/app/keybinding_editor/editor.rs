@@ -278,9 +278,7 @@ impl KeybindingEditor {
             if let Action::PluginAction(ref action_name) = cmd.action {
                 if !bound_actions.contains(action_name) {
                     let plugin_name = match &cmd.source {
-                        crate::input::commands::CommandSource::Plugin(name) => {
-                            Some(name.clone())
-                        }
+                        crate::input::commands::CommandSource::Plugin(name) => Some(name.clone()),
                         _ => None,
                     };
                     bindings.push(ResolvedBinding {

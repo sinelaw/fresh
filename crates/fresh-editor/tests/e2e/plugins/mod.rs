@@ -2,6 +2,7 @@
 //! These tests are only compiled when the "plugins" feature is enabled.
 
 pub mod audit_mode;
+pub mod command_keybinding_editor;
 pub mod diagnostics_panel_jump;
 pub mod diff_cursor;
 pub mod find_file;
