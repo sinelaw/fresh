@@ -151,6 +151,18 @@
       },
       "default": {}
     },
+    "fallback": {
+      "description": "Fallback configuration for files whose type cannot be detected.\nApplied when no extension, filename, glob, or built-in detection matches.\nUseful for setting a default grammar (e.g., \"bash\") and comment_prefix\nfor unrecognized .conf, .rc, .rules, etc. files.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LanguageConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "lsp": {
       "description": "LSP server configurations by language",
       "type": "object",
