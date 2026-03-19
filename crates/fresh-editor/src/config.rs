@@ -3635,9 +3635,55 @@ impl Config {
                 language_id_overrides: Default::default(),
             },
         );
-    }
 
-    /// Validate the configuration
+        // dart - Dart Language Server (#1252)
+        // Included with the Dart SDK
+        lsp.insert(
+            "dart".to_string(),
+            LspServerConfig {
+                command: "dart".to_string(),
+                args: vec!["language-server".to_string(), "--protocol=lsp".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // nu - Nushell Language Server (#1031)
+        // Built into the Nushell binary
+        lsp.insert(
+            "nushell".to_string(),
+            LspServerConfig {
+                command: "nu".to_string(),
+                args: vec!["--lsp".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // solc - Solidity Language Server (#857)
+        // Install via npm install -g @nomicfoundation/solidity-language-server
+        lsp.insert(
+            "solidity".to_string(),
+            LspServerConfig {
+                command: "nomicfoundation-solidity-language-server".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+    }
     pub fn validate(&self) -> Result<(), ConfigError> {
         // Validate tab size
         if self.editor.tab_size == 0 {
