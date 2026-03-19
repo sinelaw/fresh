@@ -3683,6 +3683,254 @@ impl Config {
                 language_id_overrides: Default::default(),
             },
         );
+
+        // --- Programming language LSP servers ---
+
+        // nil - Nix Language Server (https://github.com/oxalica/nil)
+        // Install via nix profile install github:oxalica/nil
+        lsp.insert(
+            "nix".to_string(),
+            LspServerConfig {
+                command: "nil".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // kotlin-language-server (https://github.com/fwcd/kotlin-language-server)
+        // Install via package manager or build from source
+        lsp.insert(
+            "kotlin".to_string(),
+            LspServerConfig {
+                command: "kotlin-language-server".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // sourcekit-lsp - Swift Language Server (included with Swift toolchain)
+        lsp.insert(
+            "swift".to_string(),
+            LspServerConfig {
+                command: "sourcekit-lsp".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // metals - Scala Language Server (https://scalameta.org/metals/)
+        // Install via coursier: cs install metals
+        lsp.insert(
+            "scala".to_string(),
+            LspServerConfig {
+                command: "metals".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // elixir-ls - Elixir Language Server (https://github.com/elixir-lsp/elixir-ls)
+        // Install via mix: mix escript.install hex elixir_ls
+        lsp.insert(
+            "elixir".to_string(),
+            LspServerConfig {
+                command: "elixir-ls".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // erlang_ls - Erlang Language Server (https://github.com/erlang-ls/erlang_ls)
+        lsp.insert(
+            "erlang".to_string(),
+            LspServerConfig {
+                command: "erlang_ls".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // haskell-language-server (https://github.com/haskell/haskell-language-server)
+        // Install via ghcup: ghcup install hls
+        lsp.insert(
+            "haskell".to_string(),
+            LspServerConfig {
+                command: "haskell-language-server-wrapper".to_string(),
+                args: vec!["--lsp".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // ocamllsp - OCaml Language Server (https://github.com/ocaml/ocaml-lsp)
+        // Install via opam: opam install ocaml-lsp-server
+        lsp.insert(
+            "ocaml".to_string(),
+            LspServerConfig {
+                command: "ocamllsp".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // clojure-lsp (https://github.com/clojure-lsp/clojure-lsp)
+        // Install via package manager or download from releases
+        lsp.insert(
+            "clojure".to_string(),
+            LspServerConfig {
+                command: "clojure-lsp".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // r-languageserver (https://github.com/REditorSupport/languageserver)
+        // Install via R: install.packages("languageserver")
+        lsp.insert(
+            "r".to_string(),
+            LspServerConfig {
+                command: "R".to_string(),
+                args: vec![
+                    "--vanilla".to_string(),
+                    "-e".to_string(),
+                    "languageserver::run()".to_string(),
+                ],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // julia LanguageServer.jl (https://github.com/julia-vscode/LanguageServer.jl)
+        // Install via Julia: using Pkg; Pkg.add("LanguageServer")
+        lsp.insert(
+            "julia".to_string(),
+            LspServerConfig {
+                command: "julia".to_string(),
+                args: vec![
+                    "--startup-file=no".to_string(),
+                    "--history-file=no".to_string(),
+                    "-e".to_string(),
+                    "using LanguageServer; runserver()".to_string(),
+                ],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // PerlNavigator (https://github.com/bscan/PerlNavigator)
+        // Install via npm: npm install -g perlnavigator-server
+        lsp.insert(
+            "perl".to_string(),
+            LspServerConfig {
+                command: "perlnavigator".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // nimlangserver - Nim Language Server (https://github.com/nim-lang/langserver)
+        // Install via nimble: nimble install nimlangserver
+        lsp.insert(
+            "nim".to_string(),
+            LspServerConfig {
+                command: "nimlangserver".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // gleam lsp - Gleam Language Server (built into the gleam binary)
+        lsp.insert(
+            "gleam".to_string(),
+            LspServerConfig {
+                command: "gleam".to_string(),
+                args: vec!["lsp".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // fsharp - F# Language Server (https://github.com/fsharp/FsAutoComplete)
+        // Install via dotnet: dotnet tool install -g fsautocomplete
+        lsp.insert(
+            "fsharp".to_string(),
+            LspServerConfig {
+                command: "fsautocomplete".to_string(),
+                args: vec!["--adaptive-lsp-server-enabled".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
     }
     pub fn validate(&self) -> Result<(), ConfigError> {
         // Validate tab size
