@@ -3509,11 +3509,7 @@ impl Config {
         languages.insert(
             "nim".to_string(),
             LanguageConfig {
-                extensions: vec![
-                    "nim".to_string(),
-                    "nims".to_string(),
-                    "nimble".to_string(),
-                ],
+                extensions: vec!["nim".to_string(), "nims".to_string(), "nimble".to_string()],
                 filenames: vec![],
                 grammar: "Nim".to_string(),
                 comment_prefix: Some("#".to_string()),
@@ -3555,11 +3551,7 @@ impl Config {
         languages.insert(
             "fsharp".to_string(),
             LanguageConfig {
-                extensions: vec![
-                    "fs".to_string(),
-                    "fsi".to_string(),
-                    "fsx".to_string(),
-                ],
+                extensions: vec!["fs".to_string(), "fsi".to_string(), "fsx".to_string()],
                 filenames: vec![],
                 grammar: "FSharp".to_string(),
                 comment_prefix: Some("//".to_string()),
@@ -3836,11 +3828,7 @@ impl Config {
         languages.insert(
             "terraform".to_string(),
             LanguageConfig {
-                extensions: vec![
-                    "tf".to_string(),
-                    "tfvars".to_string(),
-                    "hcl".to_string(),
-                ],
+                extensions: vec!["tf".to_string(), "tfvars".to_string(), "hcl".to_string()],
                 filenames: vec![],
                 grammar: "HCL".to_string(),
                 comment_prefix: Some("#".to_string()),
@@ -3907,6 +3895,243 @@ impl Config {
                 filenames: vec![],
                 grammar: "Astro".to_string(),
                 comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        // --- Languages for embedded grammars (syntax highlighting only) ---
+
+        languages.insert(
+            "scss".to_string(),
+            LanguageConfig {
+                extensions: vec!["scss".to_string()],
+                filenames: vec![],
+                grammar: "SCSS".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "less".to_string(),
+            LanguageConfig {
+                extensions: vec!["less".to_string()],
+                filenames: vec![],
+                grammar: "LESS".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "powershell".to_string(),
+            LanguageConfig {
+                extensions: vec!["ps1".to_string(), "psm1".to_string(), "psd1".to_string()],
+                filenames: vec![],
+                grammar: "PowerShell".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "kdl".to_string(),
+            LanguageConfig {
+                extensions: vec!["kdl".to_string()],
+                filenames: vec![],
+                grammar: "KDL".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "starlark".to_string(),
+            LanguageConfig {
+                extensions: vec!["bzl".to_string(), "star".to_string()],
+                filenames: vec!["BUILD".to_string(), "WORKSPACE".to_string()],
+                grammar: "Starlark".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "justfile".to_string(),
+            LanguageConfig {
+                extensions: vec![],
+                filenames: vec![
+                    "justfile".to_string(),
+                    "Justfile".to_string(),
+                    ".justfile".to_string(),
+                ],
+                grammar: "Justfile".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: true,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "earthfile".to_string(),
+            LanguageConfig {
+                extensions: vec!["earth".to_string()],
+                filenames: vec!["Earthfile".to_string()],
+                grammar: "Earthfile".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "gomod".to_string(),
+            LanguageConfig {
+                extensions: vec![],
+                filenames: vec!["go.mod".to_string(), "go.sum".to_string()],
+                grammar: "Go Module".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: true,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "vlang".to_string(),
+            LanguageConfig {
+                extensions: vec!["v".to_string(), "vv".to_string()],
+                filenames: vec![],
+                grammar: "V".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "ini".to_string(),
+            LanguageConfig {
+                extensions: vec!["ini".to_string(), "cfg".to_string()],
+                filenames: vec![],
+                grammar: "INI".to_string(),
+                comment_prefix: Some(";".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "hyprlang".to_string(),
+            LanguageConfig {
+                extensions: vec!["hl".to_string()],
+                filenames: vec!["hyprland.conf".to_string()],
+                grammar: "Hyprlang".to_string(),
+                comment_prefix: Some("#".to_string()),
                 auto_indent: true,
                 auto_close: None,
                 auto_surround: None,

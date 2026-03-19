@@ -648,7 +648,18 @@ impl StatusBarRenderer {
         let encoding_width = str_width(&encoding_text);
 
         // Language indicator (clickable to change language)
-        let language_text = format!(" {} ", &state.display_name);
+        // Show a warning suffix when grammar detected a language but no language config
+        // entry exists (language is "text" while display_name is something else).
+        // This means LSP won't work because detect_language() can't map the file extension.
+        let language_text = if state.language == "text"
+            && state.display_name != "Text"
+            && state.display_name != "Plain Text"
+            && state.display_name != "text"
+        {
+            format!(" {} [syntax only] ", &state.display_name)
+        } else {
+            format!(" {} ", &state.display_name)
+        };
         let language_width = str_width(&language_text);
 
         // LSP indicator (right-aligned, with colored background if warning/error)
