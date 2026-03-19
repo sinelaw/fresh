@@ -1,5 +1,6 @@
 use crate::common::harness::EditorTestHarness;
 use fresh::config::Config;
+use std::io::Write;
 
 /// Test that wrapped continuation lines are indented to match the leading whitespace
 /// of the original line when wrap_indent is enabled.
@@ -96,6 +97,54 @@ fn test_hanging_wrap_indent_disabled() {
     assert!(
         second_leading < 4,
         "With wrap_indent disabled, continuation should not be indented. \
+         Got {} leading spaces.\nSecond: {:?}\nScreen:\n{}",
+        second_leading,
+        second_content,
+        screen
+    );
+}
+
+/// Test that wrapped continuation lines are indented when the original line uses tab indentation.
+/// This is the same as test_hanging_wrap_indent_basic but with tabs instead of spaces.
+#[test]
+fn test_hanging_wrap_indent_with_tabs() {
+    let mut harness = EditorTestHarness::with_temp_project(60, 24).unwrap();
+
+    // Create a temp file with a tab-indented long line
+    let dir = harness.project_dir().unwrap();
+    let file_path = dir.join("tab_indent_test.txt");
+    {
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        // One tab + long content that will wrap (tab expands to 4 cols in the editor)
+        writeln!(
+            f,
+            "\tThis is a long tab-indented line that will wrap around because it is too long to fit in a single visual line."
+        )
+        .unwrap();
+    }
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    let content_lines: Vec<&str> = screen.lines().filter(|l| l.contains('│')).collect();
+
+    assert!(
+        content_lines.len() >= 2,
+        "Should have at least 2 content lines (original + wrapped). Got: {}.\nScreen:\n{}",
+        content_lines.len(),
+        screen
+    );
+
+    // The continuation line should have hanging indent matching the tab's visual width (4 spaces)
+    let second_line = content_lines[1];
+    let bar_pos = second_line.find('│').unwrap();
+    let second_content = &second_line[bar_pos + '│'.len_utf8()..];
+    let second_leading = second_content.chars().take_while(|c| *c == ' ').count();
+
+    assert!(
+        second_leading >= 4,
+        "Tab-indented continuation line should be indented by at least 4 spaces (matching tab width). \
          Got {} leading spaces.\nSecond: {:?}\nScreen:\n{}",
         second_leading,
         second_content,

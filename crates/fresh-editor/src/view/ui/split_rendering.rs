@@ -3511,7 +3511,6 @@ impl SplitRenderer {
         gutter_width: usize,
         hanging_indent: bool,
     ) -> Vec<fresh_core::api::ViewTokenWire> {
-        use crate::primitives::display_width::str_width;
         use crate::primitives::visual_layout::visual_width;
         use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 
@@ -3583,23 +3582,28 @@ impl SplitRenderer {
                 ViewTokenWireKind::Text(text) => {
                     // Measure leading whitespace at the start of a logical line
                     if measuring_indent {
-                        let leading_ws: usize = text
-                            .chars()
-                            .take_while(|c| *c == ' ' || *c == '\t')
-                            .map(|c| {
-                                if c == '\t' {
-                                    crate::primitives::display_width::char_width(c)
-                                } else {
-                                    1
-                                }
-                            })
-                            .sum();
-                        if leading_ws == text.chars().count() {
+                        let mut ws_char_count = 0usize;
+                        let mut ws_visual_width = 0usize;
+                        for c in text.chars() {
+                            if c == ' ' {
+                                ws_visual_width += 1;
+                                ws_char_count += 1;
+                            } else if c == '\t' {
+                                // Expand tab to next 4-column tab stop, matching detect_indent()
+                                let tab_stop = 4;
+                                let col = line_indent + ws_visual_width;
+                                ws_visual_width += tab_stop - (col % tab_stop);
+                                ws_char_count += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        if ws_char_count == text.chars().count() {
                             // Entire token is whitespace — accumulate and continue measuring
-                            line_indent += str_width(text);
+                            line_indent += ws_visual_width;
                         } else {
                             // Token has non-whitespace: finalize indent measurement
-                            line_indent += leading_ws;
+                            line_indent += ws_visual_width;
                             measuring_indent = false;
                         }
                         // Clamp indent to ensure continuation lines have room for content
