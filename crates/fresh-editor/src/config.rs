@@ -3684,6 +3684,88 @@ impl Config {
             },
         );
 
+        // --- DevOps / infrastructure LSP servers ---
+
+        // terraform-ls - Terraform Language Server (https://github.com/hashicorp/terraform-ls)
+        // Install via package manager or download from releases
+        lsp.insert(
+            "terraform".to_string(),
+            LspServerConfig {
+                command: "terraform-ls".to_string(),
+                args: vec!["serve".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // cmake-language-server (https://github.com/regen100/cmake-language-server)
+        // Install via pip: pip install cmake-language-server
+        lsp.insert(
+            "cmake".to_string(),
+            LspServerConfig {
+                command: "cmake-language-server".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // buf - Protobuf Language Server (https://buf.build)
+        // Install via package manager or curl
+        lsp.insert(
+            "protobuf".to_string(),
+            LspServerConfig {
+                command: "buf".to_string(),
+                args: vec!["beta".to_string(), "lsp".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // graphql-lsp (https://github.com/graphql/graphiql/tree/main/packages/graphql-language-service-cli)
+        // Install via npm: npm install -g graphql-language-service-cli
+        lsp.insert(
+            "graphql".to_string(),
+            LspServerConfig {
+                command: "graphql-lsp".to_string(),
+                args: vec!["server".to_string(), "-m".to_string(), "stream".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
+        // sqls - SQL Language Server (https://github.com/sqls-server/sqls)
+        // Install via go: go install github.com/sqls-server/sqls@latest
+        lsp.insert(
+            "sql".to_string(),
+            LspServerConfig {
+                command: "sqls".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+            },
+        );
+
         // --- Web framework LSP servers ---
 
         // vue-language-server (installed via npm install -g @vue/language-server)
