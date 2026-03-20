@@ -41,9 +41,9 @@ fn test_settings_paste() {
         .unwrap();
     harness.render().unwrap();
 
-    // Verify Edit Value dialog (for existing entry - "bash" language)
+    // Verify Edit Value dialog shows first language alphabetically (astro)
     harness.assert_screen_contains("Key");
-    harness.assert_screen_contains("bash");
+    harness.assert_screen_contains("astro");
 
     // Navigate down to Comment Prefix field (Key is read-only for existing entries)
     loop {
@@ -56,17 +56,11 @@ fn test_settings_paste() {
     }
 
     // Enter to start editing the "Comment Prefix" field
+    // Note: astro has no comment_prefix set, so the field starts empty
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-
-    // Clear existing value "#"
-    for _ in 0..5 {
-        harness
-            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
-            .unwrap();
-    }
 
     // Paste "rust"
     harness
