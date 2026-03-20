@@ -1453,8 +1453,19 @@ impl JsEditorApi {
             Err(_) => return false, // path doesn't exist or can't be resolved
         };
 
-        let temp_dir = std::env::temp_dir();
-        let config_dir = self.services.config_dir();
+        // Canonicalize allowed roots too, so that path prefix comparisons are
+        // consistent.  On Windows, `Path::canonicalize` returns extended-length
+        // UNC paths (e.g. `\\?\C:\...`) while `std::env::temp_dir()` and the
+        // config dir may use regular paths.  Without canonicalizing the roots
+        // the `starts_with` check would always fail on Windows.
+        let temp_dir = std::env::temp_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::temp_dir());
+        let config_dir = self
+            .services
+            .config_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| self.services.config_dir());
 
         // Verify the path is under an allowed root (temp or config dir)
         let allowed = target.starts_with(&temp_dir) || target.starts_with(&config_dir);
