@@ -7,9 +7,9 @@ const editor = getEditor();
  * Server: elixir-ls (github.com/elixir-lsp/elixir-ls)
  * VS Code: "ElixirLS" extension
  * Neovim: nvim-lspconfig elixirls
- * Alternative: lexical (github.com/lexical-lsp/lexical) - newer, faster
- * Alternative: Next LS (github.com/elixir-tools/next-ls) - by elixir-tools
  * Requires: Elixir and Erlang/OTP installed
+ * Note: The Elixir ecosystem is consolidating around Expert
+ * (github.com/elixir-lang/expert) as the new official LSP server
  */
 
 interface LspServerErrorData {
@@ -70,7 +70,7 @@ function on_elixir_lsp_status_clicked(data: LspStatusClickedData): void {
   editor.showActionPopup({
     id: "elixir-lsp-help",
     title: "Elixir Language Server Not Found",
-    message: `"${elixirLspError.serverCommand}" provides completion, diagnostics, go-to-definition, and debugging for Elixir. Requires Elixir and Erlang/OTP.\n\nAlternatives: lexical (faster, newer) or Next LS (by elixir-tools).\nVS Code users: Install the "ElixirLS" extension.\nSee: https://github.com/elixir-lsp/elixir-ls`,
+    message: `"${elixirLspError.serverCommand}" provides completion, diagnostics, go-to-definition, Dialyzer integration, and debugging for Elixir. Requires Elixir and Erlang/OTP.\n\nNew: Expert (https://expert-lsp.org) is the upcoming official Elixir LSP, merging ElixirLS, Lexical, and Next LS.\nVS Code users: Install the "ElixirLS" extension.\nSee: https://github.com/elixir-lsp/elixir-ls`,
     actions: [
       { id: "copy_brew", label: `Copy: ${INSTALL_COMMANDS.brew}` },
       { id: "copy_nix", label: `Copy: ${INSTALL_COMMANDS.nix}` },
