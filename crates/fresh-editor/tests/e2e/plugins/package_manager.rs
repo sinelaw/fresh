@@ -1564,15 +1564,27 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
     )
     .unwrap();
 
-    // Verify the command is available initially via Quick Open
+    // Step 1: Open Quick Open
+    eprintln!("[TEST] Step 1: Opening Quick Open (Ctrl+P)");
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
+    eprintln!(
+        "[TEST] Step 1: Prompt opened. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Step 2: Type and verify command exists
+    eprintln!("[TEST] Step 2: Typing 'Uninstall Test'");
     harness.type_text("Uninstall Test").unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Uninstall Test: Hello"))
         .unwrap();
+    eprintln!(
+        "[TEST] Step 2: Command found. Screen:\n{}",
+        harness.screen_to_string()
+    );
 
     let screen = harness.screen_to_string();
     assert!(
@@ -1581,74 +1593,135 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
         screen
     );
 
-    // Close Quick Open
+    // Step 3: Close Quick Open
+    eprintln!("[TEST] Step 3: Closing Quick Open (Esc)");
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.wait_for_prompt_closed().unwrap();
+    eprintln!(
+        "[TEST] Step 3: Prompt closed. Screen:\n{}",
+        harness.screen_to_string()
+    );
 
-    // Open package manager and uninstall the plugin
+    // Step 4: Open Quick Open again for package manager
+    eprintln!("[TEST] Step 4: Opening Quick Open for package manager (Ctrl+P)");
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
+    eprintln!(
+        "[TEST] Step 4: Prompt opened. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Step 5: Type and select Package: Packages
+    eprintln!("[TEST] Step 5: Typing 'Package: Packages'");
     harness.type_text("Package: Packages").unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Package: Packages"))
         .unwrap();
+    eprintln!(
+        "[TEST] Step 5: Package command found. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    eprintln!("[TEST] Step 5b: Pressing Enter to open package manager");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for package manager UI to finish loading
+    // Step 6: Wait for package manager UI to finish loading
+    eprintln!("[TEST] Step 6: Waiting for package manager to load");
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
             screen.contains("*Packages*") && !screen.contains("Loading...")
         })
         .unwrap();
+    eprintln!(
+        "[TEST] Step 6: Package manager loaded. Screen:\n{}",
+        harness.screen_to_string()
+    );
 
     let screen_after_load = harness.screen_to_string();
     assert!(
         screen_after_load.contains("uninstall-test"),
-        "Plugin should be visible in package manager"
+        "Plugin should be visible in package manager. Screen: {}",
+        screen_after_load
     );
 
-    // Wait for the Uninstall button to appear in the detail pane
+    // Step 7: Wait for the Uninstall button to appear in the detail pane
+    eprintln!("[TEST] Step 7: Waiting for Uninstall button");
     harness
         .wait_until(|h| h.screen_to_string().contains("Uninstall"))
         .unwrap();
+    eprintln!(
+        "[TEST] Step 7: Uninstall button visible. Screen:\n{}",
+        harness.screen_to_string()
+    );
 
-    // Press Tab to move focus to the Uninstall button and activate it
+    // Step 8: Tab to Uninstall button and press Enter
+    eprintln!("[TEST] Step 8: Pressing Tab to focus Uninstall button");
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
+    eprintln!(
+        "[TEST] Step 8: After Tab. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    eprintln!("[TEST] Step 8b: Pressing Enter to uninstall");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
+    eprintln!(
+        "[TEST] Step 8b: After Enter. Screen:\n{}",
+        harness.screen_to_string()
+    );
 
-    // Wait for uninstall to complete — look for "Removed" status or plugin
-    // disappearing from the list
+    // Step 9: Wait for uninstall to complete
+    eprintln!("[TEST] Step 9: Waiting for uninstall to complete (Removed or plugin gone)");
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
             screen.contains("Removed") || !screen.contains("uninstall-test")
         })
         .unwrap();
+    eprintln!(
+        "[TEST] Step 9: Uninstall complete. Screen:\n{}",
+        harness.screen_to_string()
+    );
 
-    // Close package manager and wait for it to fully close
+    // Step 10: Close package manager
+    eprintln!("[TEST] Step 10: Closing package manager (Esc)");
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
         .wait_until(|h| !h.screen_to_string().contains("*Packages*"))
         .unwrap();
+    eprintln!(
+        "[TEST] Step 10: Package manager closed. Screen:\n{}",
+        harness.screen_to_string()
+    );
 
-    // Verify the command is no longer available
+    // Step 11: Verify command is gone
+    eprintln!("[TEST] Step 11: Opening Quick Open to verify command removal (Ctrl+P)");
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
+    eprintln!(
+        "[TEST] Step 11: Prompt opened. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    eprintln!("[TEST] Step 11b: Typing 'Uninstall Test'");
     harness.type_text("Uninstall Test").unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains(">Uninstall Test"))
         .unwrap();
+    eprintln!(
+        "[TEST] Step 11b: Search results shown. Screen:\n{}",
+        harness.screen_to_string()
+    );
 
     let screen = harness.screen_to_string();
     // The command should be gone - it should NOT appear as a suggestion
