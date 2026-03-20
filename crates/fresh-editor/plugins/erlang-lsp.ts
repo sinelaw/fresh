@@ -7,8 +7,10 @@ const editor = getEditor();
  * Server: erlang_ls (github.com/erlang-ls/erlang_ls)
  * VS Code: "Erlang LS" extension
  * Neovim: nvim-lspconfig erlangls
- * Requires: Erlang/OTP installed, rebar3 for building
- * Alternative: IntelliJ Erlang plugin
+ * Requires: Erlang/OTP 24+, rebar3
+ * Note: erlang_ls is archived; consider ELP (Erlang Language Platform)
+ * by WhatsApp as the recommended successor
+ * ELP: github.com/WhatsApp/erlang-language-platform
  */
 
 interface LspServerErrorData {
@@ -69,7 +71,7 @@ function on_erlang_lsp_status_clicked(data: LspStatusClickedData): void {
   editor.showActionPopup({
     id: "erlang-lsp-help",
     title: "Erlang Language Server Not Found",
-    message: `"${erlangLspError.serverCommand}" provides completion, diagnostics, navigation, and code actions for Erlang. Requires Erlang/OTP.\n\nConfigure via erlang_ls.config in your project root.\nVS Code users: Install the "Erlang LS" extension.\nSee: https://github.com/erlang-ls/erlang_ls`,
+    message: `"${erlangLspError.serverCommand}" provides completion, diagnostics, navigation, and code actions for Erlang. Requires Erlang/OTP 24+.\n\nNote: erlang_ls is archived. Consider ELP (Erlang Language Platform) by WhatsApp as the successor: https://github.com/WhatsApp/erlang-language-platform\nConfigure via erlang_ls.config in your project root.\nVS Code users: Install "Erlang LS" or "Erlang Language Platform" extension.\nSee: https://github.com/erlang-ls/erlang_ls`,
     actions: [
       { id: "copy_brew", label: `Copy: ${INSTALL_COMMANDS.brew}` },
       { id: "copy_nix", label: `Copy: ${INSTALL_COMMANDS.nix}` },
