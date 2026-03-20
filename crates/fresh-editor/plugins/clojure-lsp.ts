@@ -30,8 +30,8 @@ interface ActionPopupResultData {
 
 const INSTALL_COMMANDS = {
   brew: "brew install clojure-lsp/brew/clojure-lsp-native",
-  npm: "npm install -g clojure-lsp",
-  nix: "nix-env -iA nixpkgs.clojure-lsp",
+  nix: "nix-shell -p clojure-lsp",
+  script: "sudo bash < <(curl -s https://raw.githubusercontent.com/clojure-lsp/clojure-lsp/master/install)",
 };
 
 let clojureLspError: { serverCommand: string; message: string } | null = null;
@@ -72,8 +72,8 @@ function on_clojure_lsp_status_clicked(data: LspStatusClickedData): void {
     message: `"${clojureLspError.serverCommand}" provides completion, diagnostics, refactoring, and navigation for Clojure/ClojureScript.\n\nNo special project setup needed - it analyzes classpath automatically.\nVS Code users: Install "Calva" (bundles clojure-lsp and nREPL client).\nSee: https://clojure-lsp.io`,
     actions: [
       { id: "copy_brew", label: `Copy: ${INSTALL_COMMANDS.brew}` },
-      { id: "copy_npm", label: `Copy: ${INSTALL_COMMANDS.npm}` },
       { id: "copy_nix", label: `Copy: ${INSTALL_COMMANDS.nix}` },
+      { id: "copy_script", label: `Copy: install script (Linux/macOS)` },
       { id: "disable", label: "Disable Clojure LSP" },
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
@@ -95,14 +95,14 @@ function on_clojure_lsp_action_result(data: ActionPopupResultData): void {
       editor.setStatus("Copied: " + INSTALL_COMMANDS.brew);
       break;
 
-    case "copy_npm":
-      editor.setClipboard(INSTALL_COMMANDS.npm);
-      editor.setStatus("Copied: " + INSTALL_COMMANDS.npm);
-      break;
-
     case "copy_nix":
       editor.setClipboard(INSTALL_COMMANDS.nix);
       editor.setStatus("Copied: " + INSTALL_COMMANDS.nix);
+      break;
+
+    case "copy_script":
+      editor.setClipboard(INSTALL_COMMANDS.script);
+      editor.setStatus("Copied: " + INSTALL_COMMANDS.script);
       break;
 
     case "disable":
