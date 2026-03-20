@@ -1461,14 +1461,19 @@ impl JsEditorApi {
         if !allowed {
             tracing::warn!(
                 "removePath refused: {:?} is not under temp dir ({:?}) or config dir ({:?})",
-                target, temp_dir, config_dir
+                target,
+                temp_dir,
+                config_dir
             );
             return false;
         }
 
         // Don't allow removing the root directories themselves
         if target == temp_dir || target == config_dir {
-            tracing::warn!("removePath refused: cannot remove root directory {:?}", target);
+            tracing::warn!(
+                "removePath refused: cannot remove root directory {:?}",
+                target
+            );
             return false;
         }
 
