@@ -311,8 +311,22 @@ fn test_pkg_install_plugin_empty_registry() {
         r#"{"schema_version": 1, "updated": "2024-01-01", "packages": {}}"#,
     )
     .unwrap();
-    // Also create a .git directory to make it look like a valid git repo
-    fs::create_dir_all(fake_registry_dir.join(".git")).unwrap();
+    // Initialize a real git repo (no remote) so `git pull` exits immediately
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git init fake registry");
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git add in fake registry");
+    std::process::Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git commit in fake registry");
 
     // Change to repo directory
     let original_dir = repo.change_to_repo_dir();
@@ -562,7 +576,22 @@ fn test_pkg_manager_ui_split_view_and_tab_navigation() {
         }"#,
     )
     .unwrap();
-    fs::create_dir_all(fake_registry_dir.join(".git")).unwrap();
+    // Initialize a real git repo (no remote) so `git pull` exits immediately
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git init fake registry");
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git add in fake registry");
+    std::process::Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git commit in fake registry");
 
     // Change to repo directory
     let original_dir = repo.change_to_repo_dir();
@@ -767,7 +796,22 @@ globalThis.beta_cmd = function() { editor.setStatus("Beta plugin works!"); };
         r#"{"schema_version": 1, "updated": "2024-01-01", "packages": {}}"#,
     )
     .unwrap();
-    fs::create_dir_all(fake_registry_dir.join(".git")).unwrap();
+    // Initialize a real git repo (no remote) so `git pull` exits immediately
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git init fake registry");
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git add in fake registry");
+    std::process::Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git commit in fake registry");
 
     let original_dir = repo.change_to_repo_dir();
     let _guard = DirGuard::new(original_dir);
@@ -1102,7 +1146,22 @@ editor.debug("Bundle test plugin 2 loaded!");
         r#"{"schema_version": 1, "updated": "2024-01-01", "packages": {}}"#,
     )
     .unwrap();
-    fs::create_dir_all(fake_registry_dir.join(".git")).unwrap();
+    // Initialize a real git repo (no remote) so `git pull` exits immediately
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git init fake registry");
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git add in fake registry");
+    std::process::Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git commit in fake registry");
 
     // Create the bundles directory structure
     let bundles_packages_dir = dir_context.config_dir.join("bundles").join("packages");
@@ -1435,7 +1494,9 @@ fn test_uninstall_plugin_removes_commands() {
     let index_dir = packages_dir.join(".index");
     fs::create_dir_all(&index_dir).unwrap();
 
-    // Create a fake registry source directory (djb2 hash for default registry)
+    // Create a fake registry as a proper git repo so that syncRegistry's
+    // `git pull --ff-only` fails fast ("no remote") instead of hanging on
+    // a broken .git directory (which can timeout on macOS CI).
     let fake_registry_dir = index_dir.join("193934da");
     fs::create_dir_all(&fake_registry_dir).unwrap();
     fs::write(
@@ -1448,7 +1509,22 @@ fn test_uninstall_plugin_removes_commands() {
         r#"{"schema_version": 1, "updated": "2024-01-01", "packages": {}}"#,
     )
     .unwrap();
-    fs::create_dir_all(fake_registry_dir.join(".git")).unwrap();
+    // Initialize a real git repo (no remote) so `git pull` exits immediately
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git init fake registry");
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git add in fake registry");
+    std::process::Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&fake_registry_dir)
+        .output()
+        .expect("Failed to git commit in fake registry");
 
     // Create a test plugin that registers a command
     let test_plugin_dir = packages_dir.join("uninstall-test-plugin");
@@ -1492,6 +1568,7 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.type_text("Uninstall Test").unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Uninstall Test: Hello"))
@@ -1506,12 +1583,13 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
 
     // Close Quick Open
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    harness.wait_for_prompt_closed().unwrap();
 
     // Open package manager and uninstall the plugin
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.type_text("Package: Packages").unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Package: Packages"))
@@ -1556,14 +1634,17 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
         })
         .unwrap();
 
-    // Close package manager
+    // Close package manager and wait for it to fully close
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("*Packages*"))
+        .unwrap();
 
     // Verify the command is no longer available
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.type_text("Uninstall Test").unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains(">Uninstall Test"))
