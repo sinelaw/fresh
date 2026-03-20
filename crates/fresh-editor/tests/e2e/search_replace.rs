@@ -355,8 +355,12 @@ fn test_search_replace_executes_replacement() {
     open_search_replace_via_palette(&mut harness);
     enter_search_and_replace(&mut harness, "hello", "goodbye");
 
+    // Wait for search results to be populated (match stats appear in the panel)
     harness
-        .wait_until(|h| h.screen_to_string().contains("[v]"))
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
         .unwrap();
 
     // Press Alt+Enter to execute Replace All
@@ -423,8 +427,12 @@ fn test_search_replace_delete_pattern() {
         .unwrap();
     harness.render().unwrap();
 
+    // Wait for search results to be populated (match stats appear in the panel)
     harness
-        .wait_until(|h| h.screen_to_string().contains("[v]"))
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
         .unwrap();
 
     // Alt+Enter to execute Replace All
@@ -464,8 +472,12 @@ fn test_search_replace_multiple_matches_same_line() {
     open_search_replace_via_palette(&mut harness);
     enter_search_and_replace(&mut harness, "aa", "ZZ");
 
+    // Wait for search results to be populated (match stats appear in the panel)
     harness
-        .wait_until(|h| h.screen_to_string().contains("[v]"))
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
         .unwrap();
 
     // Alt+Enter to execute Replace All

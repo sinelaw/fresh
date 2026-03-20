@@ -1534,6 +1534,11 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
         "Plugin should be visible in package manager"
     );
 
+    // Wait for the Uninstall button to appear in the detail pane
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Uninstall"))
+        .unwrap();
+
     // Press Tab to move focus to the Uninstall button and activate it
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
@@ -1542,7 +1547,8 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
         .unwrap();
     harness.render().unwrap();
 
-    // Wait for uninstall to complete
+    // Wait for uninstall to complete — look for "Removed" status or plugin
+    // disappearing from the list
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
