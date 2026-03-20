@@ -138,8 +138,10 @@ while true; do
             break
             ;;
         *)
-            # Respond to any other request with null result
-            if [ -n "$msg_id" ]; then
+            # Only respond to requests (which have both a method and an id).
+            # Skip responses (no method) — these are replies to our
+            # workspace/diagnostic/refresh server→client requests.
+            if [ -n "$method" ] && [ -n "$msg_id" ]; then
                 send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
             fi
             ;;
@@ -485,7 +487,10 @@ while true; do
             break
             ;;
         *)
-            if [ -n "$msg_id" ]; then
+            # Only respond to requests (which have both a method and an id).
+            # Skip responses (no method) — these are replies to our
+            # workspace/diagnostic/refresh server→client requests.
+            if [ -n "$method" ] && [ -n "$msg_id" ]; then
                 send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
             fi
             ;;
@@ -839,7 +844,10 @@ while true; do
             break
             ;;
         *)
-            if [ -n "$msg_id" ]; then
+            # Only respond to requests (which have both a method and an id).
+            # Skip responses (no method) — these are replies to our
+            # server→client requests.
+            if [ -n "$method" ] && [ -n "$msg_id" ]; then
                 send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
             fi
             ;;

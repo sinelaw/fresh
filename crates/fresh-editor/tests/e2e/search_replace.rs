@@ -43,7 +43,7 @@ fn open_search_replace_via_palette(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
+    harness.wait_for_prompt().unwrap();
 
     harness.type_text("Search and Replace").unwrap();
 
@@ -180,15 +180,18 @@ fn test_search_replace_toggle_selection() {
     open_search_replace_via_palette(&mut harness);
     enter_search_and_replace(&mut harness, "apple", "pear");
 
-    // Wait for results panel with checkboxes
+    // Wait for results panel with checkboxes AND for focus to stabilize on
+    // the matches panel.  After rerunSearch() completes, a .then() callback
+    // sets focusPanel="matches" and re-renders.  wait_until_stable ensures
+    // that extra render cycle has settled before we send navigation keys.
     harness
-        .wait_until(|h| {
+        .wait_until_stable(|h| {
             let s = h.screen_to_string();
             s.contains("[v]") && s.contains("only.txt")
         })
         .unwrap();
 
-    // Focus starts on matches panel at index 0 (first file node).
+    // Focus is now on matches panel at index 0 (first file node).
     // Navigate down to the first match row (child of the file node).
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
