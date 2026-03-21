@@ -398,6 +398,53 @@ fn test_config_show_prompt_line_false() {
     );
 }
 
+/// Test that changing show_prompt_line via the Settings UI takes effect immediately
+#[test]
+fn test_settings_show_prompt_line_applies_immediately() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.render().unwrap();
+
+    // Prompt line should be visible initially
+    assert!(harness.editor().prompt_line_visible());
+
+    // Open settings
+    harness.open_settings().unwrap();
+
+    // Search for "show_prompt_line"
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("show_prompt").unwrap();
+    harness.render().unwrap();
+
+    // Jump to result and toggle it off
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Save with Ctrl+S
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Settings should be closed
+    assert!(
+        !harness.editor().is_settings_open(),
+        "Settings should be closed after Ctrl+S"
+    );
+
+    // Prompt line should now be hidden (applied immediately, not requiring restart)
+    assert!(
+        !harness.editor().prompt_line_visible(),
+        "Prompt line should be hidden after toggling show_prompt_line off via Settings UI"
+    );
+}
+
 /// Test that toggling prompt line via command palette hides and shows it
 #[test]
 fn test_toggle_prompt_line_via_command_palette() {
