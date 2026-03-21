@@ -37,6 +37,7 @@ impl OverlayFace {
     /// If the options contain theme key references, creates a ThemedStyle
     /// for runtime resolution. Otherwise creates a fully resolved Style.
     pub fn from_options(options: &fresh_core::api::OverlayOptions) -> Self {
+        use crate::view::theme::named_color_from_str;
         use ratatui::style::Modifier;
 
         let mut style = Style::default();
@@ -44,12 +45,20 @@ impl OverlayFace {
         if let Some(ref fg) = options.fg {
             if let Some((r, g, b)) = fg.as_rgb() {
                 style = style.fg(Color::Rgb(r, g, b));
+            } else if let Some(key) = fg.as_theme_key() {
+                if let Some(color) = named_color_from_str(key) {
+                    style = style.fg(color);
+                }
             }
         }
 
         if let Some(ref bg) = options.bg {
             if let Some((r, g, b)) = bg.as_rgb() {
                 style = style.bg(Color::Rgb(r, g, b));
+            } else if let Some(key) = bg.as_theme_key() {
+                if let Some(color) = named_color_from_str(key) {
+                    style = style.bg(color);
+                }
             }
         }
 
@@ -70,15 +79,19 @@ impl OverlayFace {
             style = style.add_modifier(modifiers);
         }
 
+        // Only treat as theme keys if they're NOT recognized named colors
+        // (named colors were already resolved to concrete Color values above)
         let fg_theme = options
             .fg
             .as_ref()
             .and_then(|c| c.as_theme_key())
+            .filter(|key| named_color_from_str(key).is_none())
             .map(String::from);
         let bg_theme = options
             .bg
             .as_ref()
             .and_then(|c| c.as_theme_key())
+            .filter(|key| named_color_from_str(key).is_none())
             .map(String::from);
 
         if fg_theme.is_some() || bg_theme.is_some() {

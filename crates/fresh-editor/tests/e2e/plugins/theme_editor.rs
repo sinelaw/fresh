@@ -3432,3 +3432,111 @@ fn test_theme_editor_page_up_page_down() {
 
     harness.assert_no_plugin_errors();
 }
+
+/// Test that named color swatches in the theme editor use the native ANSI
+/// color (e.g. Color::Yellow) rather than an RGB approximation.
+///
+/// BUG: When a theme field uses a named color like "Yellow", the swatch (██)
+/// in the theme editor was rendered as Color::Rgb(255, 255, 0) instead of
+/// Color::Yellow. This is wrong because the actual theme renders Color::Yellow
+/// as ANSI color 3 (via crossterm), which terminals display as a different
+/// shade than RGB(255, 255, 0). The swatch should use the native ANSI color
+/// so it matches what the user actually sees.
+#[test]
+fn test_named_color_swatch_uses_native_ansi_color() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    // Create a theme with a named color "Yellow" for tab_active_fg.
+    // The swatch should render as Color::Yellow (native ANSI),
+    // not Color::Rgb(255, 255, 0).
+    let themes_dir = project_root.join("themes");
+    fs::create_dir(&themes_dir).unwrap();
+    let test_theme = r#"{
+        "name": "dark",
+        "editor": {
+            "bg": [30, 30, 30],
+            "fg": [212, 212, 212]
+        },
+        "ui": {
+            "tab_active_fg": "Yellow",
+            "tab_active_bg": [0, 0, 200]
+        },
+        "search": {},
+        "diagnostic": {},
+        "syntax": {}
+    }"#;
+    fs::write(themes_dir.join("dark.json"), test_theme).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+    harness.render().unwrap();
+
+    // Open theme editor
+    open_theme_editor(&mut harness);
+
+    // Wait for the theme editor to fully display with ui section expanded
+    // and tab_active_fg visible
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Theme Editor") && screen.contains("tab_active_fg")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+
+    // Find the line that contains "tab_active_fg" (named color "Yellow")
+    let named_line_idx = lines
+        .iter()
+        .position(|l| l.contains("tab_active_fg"))
+        .expect("Should find tab_active_fg line in theme editor");
+
+    // Find the swatch (██) on that line
+    let swatch_color = find_swatch_color(&harness, named_line_idx as u16);
+
+    assert!(
+        swatch_color.is_some(),
+        "Named color 'Yellow' should have a visible swatch. Screen:\n{}",
+        screen
+    );
+
+    let color = swatch_color.unwrap();
+
+    // The swatch should use the native ANSI Color::Yellow, not an RGB approximation.
+    // Before the fix, this was Color::Rgb(255, 255, 0) which doesn't match
+    // what the terminal actually renders for Color::Yellow.
+    assert_eq!(
+        color,
+        Color::Yellow,
+        "Swatch for named 'Yellow' should be Color::Yellow (native ANSI), \
+         not an RGB approximation. Got: {:?}",
+        color
+    );
+}
+
+/// Find the fg color of the swatch (██) on a given screen row.
+/// Scans the left panel area (columns 0-37) for cells where fg == bg,
+/// which indicates a color swatch.
+fn find_swatch_color(harness: &EditorTestHarness, row: u16) -> Option<Color> {
+    for col in 0..38 {
+        if let Some(cell_text) = harness.get_cell(col, row) {
+            if cell_text == "█" {
+                if let Some(style) = harness.get_cell_style(col, row) {
+                    // Swatch cells have fg == bg (same color)
+                    if style.fg.is_some() && style.fg == style.bg {
+                        return style.fg;
+                    }
+                }
+            }
+        }
+    }
+    None
+}

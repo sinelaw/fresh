@@ -757,22 +757,31 @@ fn convert_event_face_to_overlay_face(event_face: &EventOverlayFace) -> OverlayF
             color: Color::Rgb(color.0, color.1, color.2),
         },
         EventOverlayFace::Style { options } => {
+            use crate::view::theme::named_color_from_str;
             use ratatui::style::Modifier;
 
-            // Build fallback style from RGB values
+            // Build fallback style from RGB values or named colors
             let mut style = Style::default();
 
-            // Extract foreground color (RGB fallback or default white)
+            // Extract foreground color (RGB, named color, or default white)
             if let Some(ref fg) = options.fg {
                 if let Some((r, g, b)) = fg.as_rgb() {
                     style = style.fg(Color::Rgb(r, g, b));
+                } else if let Some(key) = fg.as_theme_key() {
+                    if let Some(color) = named_color_from_str(key) {
+                        style = style.fg(color);
+                    }
                 }
             }
 
-            // Extract background color (RGB fallback)
+            // Extract background color (RGB, named color, or fallback)
             if let Some(ref bg) = options.bg {
                 if let Some((r, g, b)) = bg.as_rgb() {
                     style = style.bg(Color::Rgb(r, g, b));
+                } else if let Some(key) = bg.as_theme_key() {
+                    if let Some(color) = named_color_from_str(key) {
+                        style = style.bg(color);
+                    }
                 }
             }
 
@@ -794,16 +803,18 @@ fn convert_event_face_to_overlay_face(event_face: &EventOverlayFace) -> OverlayF
                 style = style.add_modifier(modifiers);
             }
 
-            // Extract theme keys
+            // Extract theme keys (exclude recognized named colors, already resolved above)
             let fg_theme = options
                 .fg
                 .as_ref()
                 .and_then(|c| c.as_theme_key())
+                .filter(|key| named_color_from_str(key).is_none())
                 .map(String::from);
             let bg_theme = options
                 .bg
                 .as_ref()
                 .and_then(|c| c.as_theme_key())
+                .filter(|key| named_color_from_str(key).is_none())
                 .map(String::from);
 
             // If theme keys are provided, use ThemedStyle for runtime resolution

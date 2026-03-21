@@ -132,6 +132,31 @@ impl From<ColorDef> for Color {
     }
 }
 
+/// Convert a named color string (e.g. "Yellow", "Red") to a ratatui Color.
+/// Returns None if the string is not a recognized named color.
+pub fn named_color_from_str(name: &str) -> Option<Color> {
+    match name {
+        "Black" => Some(Color::Black),
+        "Red" => Some(Color::Red),
+        "Green" => Some(Color::Green),
+        "Yellow" => Some(Color::Yellow),
+        "Blue" => Some(Color::Blue),
+        "Magenta" => Some(Color::Magenta),
+        "Cyan" => Some(Color::Cyan),
+        "Gray" => Some(Color::Gray),
+        "DarkGray" => Some(Color::DarkGray),
+        "LightRed" => Some(Color::LightRed),
+        "LightGreen" => Some(Color::LightGreen),
+        "LightYellow" => Some(Color::LightYellow),
+        "LightBlue" => Some(Color::LightBlue),
+        "LightMagenta" => Some(Color::LightMagenta),
+        "LightCyan" => Some(Color::LightCyan),
+        "White" => Some(Color::White),
+        "Default" | "Reset" => Some(Color::Reset),
+        _ => None,
+    }
+}
+
 impl From<Color> for ColorDef {
     fn from(color: Color) -> Self {
         match color {

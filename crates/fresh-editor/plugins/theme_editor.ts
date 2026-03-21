@@ -74,28 +74,28 @@ type PickerFocusTarget =
 // =============================================================================
 
 const NAMED_COLORS_PER_ROW = 6;
-const NAMED_COLOR_GRID: Array<Array<{ display: string; value: string; rgb: RGB | null }>> = [
+const NAMED_COLOR_GRID: Array<Array<{ display: string; value: string; rgb: OverlayColorSpec | null }>> = [
   [
-    { display: "Black", value: "Black", rgb: [0, 0, 0] },
-    { display: "Red", value: "Red", rgb: [255, 0, 0] },
-    { display: "Green", value: "Green", rgb: [0, 128, 0] },
-    { display: "Yellow", value: "Yellow", rgb: [255, 255, 0] },
-    { display: "Blue", value: "Blue", rgb: [0, 0, 255] },
-    { display: "Magenta", value: "Magenta", rgb: [255, 0, 255] },
+    { display: "Black", value: "Black", rgb: "Black" },
+    { display: "Red", value: "Red", rgb: "Red" },
+    { display: "Green", value: "Green", rgb: "Green" },
+    { display: "Yellow", value: "Yellow", rgb: "Yellow" },
+    { display: "Blue", value: "Blue", rgb: "Blue" },
+    { display: "Magenta", value: "Magenta", rgb: "Magenta" },
   ],
   [
-    { display: "Cyan", value: "Cyan", rgb: [0, 255, 255] },
-    { display: "Gray", value: "Gray", rgb: [128, 128, 128] },
-    { display: "DkGray", value: "DarkGray", rgb: [169, 169, 169] },
-    { display: "LtRed", value: "LightRed", rgb: [255, 128, 128] },
-    { display: "LtGreen", value: "LightGreen", rgb: [144, 238, 144] },
-    { display: "LtYellw", value: "LightYellow", rgb: [255, 255, 224] },
+    { display: "Cyan", value: "Cyan", rgb: "Cyan" },
+    { display: "Gray", value: "Gray", rgb: "Gray" },
+    { display: "DkGray", value: "DarkGray", rgb: "DarkGray" },
+    { display: "LtRed", value: "LightRed", rgb: "LightRed" },
+    { display: "LtGreen", value: "LightGreen", rgb: "LightGreen" },
+    { display: "LtYellw", value: "LightYellow", rgb: "LightYellow" },
   ],
   [
-    { display: "LtBlue", value: "LightBlue", rgb: [173, 216, 230] },
-    { display: "LtMag", value: "LightMagenta", rgb: [255, 128, 255] },
-    { display: "LtCyan", value: "LightCyan", rgb: [224, 255, 255] },
-    { display: "White", value: "White", rgb: [255, 255, 255] },
+    { display: "LtBlue", value: "LightBlue", rgb: "LightBlue" },
+    { display: "LtMag", value: "LightMagenta", rgb: "LightMagenta" },
+    { display: "LtCyan", value: "LightCyan", rgb: "LightCyan" },
+    { display: "White", value: "White", rgb: "White" },
     { display: "Default", value: "Default", rgb: null },
     { display: "Reset", value: "Reset", rgb: null },
   ],
@@ -556,6 +556,27 @@ function parseColorToRgb(value: ColorValue): RGB | null {
 }
 
 /**
+ * Convert a color value to an OverlayColorSpec for rendering.
+ * Named colors (e.g. "Yellow") are sent as strings so the editor renders them
+ * using native ANSI color codes, matching the actual theme rendering.
+ * RGB arrays are passed through directly.
+ */
+function colorValueToOverlaySpec(value: ColorValue): OverlayColorSpec | null {
+  if (Array.isArray(value) && value.length === 3) {
+    return value as RGB;
+  }
+  if (typeof value === "string") {
+    // For recognized named colors, send the name directly so the editor
+    // uses native ANSI rendering (matching actual theme output)
+    if (NAMED_COLORS[value] !== undefined) {
+      return value;
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
  * Convert RGB to hex string
  */
 function rgbToHex(r: number, g: number, b: number): string {
@@ -929,14 +950,22 @@ function styleForLeftEntry(item: TreeLine | undefined): { style?: Partial<Overla
     const paddedLen = getUtf8ByteLength(text.padEnd(LEFT_WIDTH));
     const colorValue = item.colorValue;
     const swatchIdx = colorValue !== undefined ? text.indexOf("██") : -1;
-    const rgb = colorValue !== undefined ? parseColorToRgb(colorValue) : null;
 
-    if (rgb && swatchIdx >= 0) {
+    // For the swatch, use the native color representation to ensure it matches
+    // how the theme actually renders: named colors (e.g. "Yellow") should use
+    // the terminal's native ANSI color, not an RGB approximation.
+    const swatchColor: OverlayColorSpec | null = colorValue !== undefined
+      ? (typeof colorValue === "string" && NAMED_COLORS[colorValue] !== undefined
+        ? colorValue as OverlayColorSpec  // Send named color string directly
+        : parseColorToRgb(colorValue))    // Send RGB for array values
+      : null;
+
+    if (swatchColor && swatchIdx >= 0) {
       const swatchStart = getUtf8ByteLength(text.substring(0, swatchIdx));
       const swatchEnd = swatchStart + getUtf8ByteLength("██");
       // Non-overlapping segments: fieldName | swatch | value
       inlines.push({ start: 0, end: swatchStart, style: { fg: colors.fieldName } });
-      inlines.push({ start: swatchStart, end: swatchEnd, style: { fg: rgb, bg: rgb } });
+      inlines.push({ start: swatchStart, end: swatchEnd, style: { fg: swatchColor, bg: swatchColor } });
       const valueStart = swatchEnd + getUtf8ByteLength(" ");
       if (valueStart < paddedLen) {
         inlines.push({ start: valueStart, end: paddedLen, style: { fg: colors.customValue } });
@@ -1015,10 +1044,10 @@ function styleForRightEntry(item: PickerLine | undefined): { style?: Partial<Ove
     // entry text = " " + item.text
     // item.text = " " + token texts concatenated
     const editorBg = getNestedValue(state.themeData, "editor.bg") as ColorValue;
-    const bgRgb = parseColorToRgb(editorBg);
+    const bgSpec = colorValueToOverlaySpec(editorBg);
     const entryText = " " + item.text;
     const entryLen = getUtf8ByteLength(entryText);
-    const baseStyle: Partial<OverlayOptions> | undefined = bgRgb ? { bg: bgRgb } : undefined;
+    const baseStyle: Partial<OverlayOptions> | undefined = bgSpec ? { bg: bgSpec } : undefined;
 
     // Skip the leading " " + " " (from entry " " prefix + item.text leading " ")
     let charPos = 2; // " " prefix + " " in item.text
@@ -1028,15 +1057,15 @@ function styleForRightEntry(item: PickerLine | undefined): { style?: Partial<Ove
       if (token.syntaxType) {
         const syntaxPath = `syntax.${token.syntaxType}`;
         const syntaxColor = getNestedValue(state.themeData, syntaxPath) as ColorValue;
-        const syntaxRgb = parseColorToRgb(syntaxColor);
-        if (syntaxRgb) {
-          inlines.push({ start: bytePos, end: bytePos + tokenLen, style: { fg: syntaxRgb } });
+        const fgSpec = colorValueToOverlaySpec(syntaxColor);
+        if (fgSpec) {
+          inlines.push({ start: bytePos, end: bytePos + tokenLen, style: { fg: fgSpec } });
         }
       } else {
         const fgColor = getNestedValue(state.themeData, "editor.fg") as ColorValue;
-        const fgRgb = parseColorToRgb(fgColor);
-        if (fgRgb) {
-          inlines.push({ start: bytePos, end: bytePos + tokenLen, style: { fg: fgRgb } });
+        const fgSpec = colorValueToOverlaySpec(fgColor);
+        if (fgSpec) {
+          inlines.push({ start: bytePos, end: bytePos + tokenLen, style: { fg: fgSpec } });
         }
       }
       bytePos += tokenLen;
