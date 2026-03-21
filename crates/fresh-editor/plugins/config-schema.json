@@ -38,6 +38,7 @@
         "show_menu_bar": true,
         "show_tab_bar": true,
         "show_status_bar": true,
+        "show_prompt_line": true,
         "show_vertical_scrollbar": true,
         "show_horizontal_scrollbar": false,
         "use_terminal_bg": false,
@@ -278,6 +279,12 @@
         },
         "show_status_bar": {
           "description": "Whether the status bar is visible by default.\nThe status bar shows file info, cursor position, and editor status at the bottom of the screen.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "show_prompt_line": {
+          "description": "Whether the prompt line is visible by default.\nThe prompt line is the bottom-most line used for command input, search, file open, etc.\nWhen hidden, the prompt line only appears when a prompt is active.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
           "type": "boolean",
           "default": true,
           "x-section": "Display"
