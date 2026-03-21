@@ -145,7 +145,14 @@ fn collect_line_starts(
     // Collect all line starts by iterating through lines using a single iterator
     // The iterator naturally handles the trailing empty line case without infinite loops
     while let Some((line_start, _)) = iter.next_line() {
+        // If the selection ends exactly at a line's start (and spans at least one line),
+        // that line has no selected content and should not be included (fixes #1304).
+        // When start_pos == end_pos (no selection / single point), we still include the
+        // line the cursor is on.
         if line_start > end_pos || line_start > buffer_len {
+            break;
+        }
+        if line_start == end_pos && line_start > start_pos {
             break;
         }
         line_starts.push(line_start);

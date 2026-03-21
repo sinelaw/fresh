@@ -1004,8 +1004,10 @@ fn test_shift_tab_dedent_does_not_dedent_line_at_selection_boundary() {
     let mut harness = harness_with_spaces();
     harness.open_file(&file_path).unwrap();
 
-    // Move to line 2
+    // Move to line 2, column 0 (Home twice: SmartHome first goes to first
+    // non-whitespace, second press goes to column 0)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Select down two lines (Shift+Down twice), ending at start of line 4
