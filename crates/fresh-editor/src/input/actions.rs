@@ -5621,13 +5621,18 @@ mod property_tests {
                 }
             }
             // Filter to those in range, considering that we start from the line containing start_pos
+            // A line start at exactly end_pos is excluded when end_pos > start_pos (the selection
+            // ends at a line boundary, so that line has no selected content)
             let first_line_start = expected_line_starts.iter()
                 .filter(|&&pos| pos <= start_pos)
                 .max()
                 .copied()
                 .unwrap_or(0);
             let expected_in_range: Vec<usize> = expected_line_starts.iter()
-                .filter(|&&pos| pos >= first_line_start && pos <= end_pos)
+                .filter(|&&pos| {
+                    pos >= first_line_start
+                        && (pos < end_pos || (pos == end_pos && pos == start_pos))
+                })
                 .copied()
                 .collect();
 
@@ -5686,16 +5691,15 @@ mod property_tests {
 
             let line_starts = collect_line_starts(&mut buffer, 0, buffer_len, 80);
 
-            // Expected: 1 (for position 0) + num_trailing_newlines (one for each \n creates a new line start)
-            // But we only count line starts that are <= end_pos
-            // If prefix is empty and we have N newlines, we should have positions: 0, 1, 2, ..., N
-            // But the last one at position N would be > buffer_len - 1 only if it's the synthetic empty line
-            let expected_count = if prefix.is_empty() {
-                // Just newlines: positions 0, 1, 2, ..., up to buffer_len
-                num_trailing_newlines.min(buffer_len) + 1
+            // Expected line starts: position 0, then one for each \n.
+            // The last \n creates a line start at buffer_len, but since start_pos=0 < end_pos=buffer_len,
+            // a line start at exactly end_pos is excluded (no selected content on that line).
+            // So the count is: 1 (pos 0) + num_trailing_newlines - 1 (last excluded) = num_trailing_newlines
+            // when num_trailing_newlines > 0. When num_trailing_newlines == 0, count is 1 (just pos 0).
+            let expected_count = if num_trailing_newlines > 0 {
+                num_trailing_newlines
             } else {
-                // prefix + newlines
-                1 + num_trailing_newlines
+                1
             };
 
             prop_assert_eq!(

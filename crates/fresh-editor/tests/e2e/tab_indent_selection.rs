@@ -42,9 +42,10 @@ fn test_tab_indents_selected_lines() {
     let content = harness.get_buffer_content().unwrap();
     println!("Buffer content after Tab indentation:\n{}", content);
 
-    // Expected: lines 2, 3, and 4 should have 4 spaces prefix
+    // Expected: lines 2 and 3 should have 4 spaces prefix
+    // Line 4 should NOT be indented because the selection ends at its start
     assert_eq!(
-        content, "line 1\n    line 2\n    line 3\n    line 4\n",
+        content, "line 1\n    line 2\n    line 3\nline 4\n",
         "Tab should indent selected lines with 4 spaces"
     );
 }
@@ -83,8 +84,9 @@ fn test_tab_indent_selection_with_tabs() {
     let content = harness.get_buffer_content().unwrap();
     println!("Buffer content after Tab with tabs:\n{}", content);
 
+    // Line 4 should NOT be indented because the selection ends at its start
     assert_eq!(
-        content, "line 1\n\tline 2\n\tline 3\n\tline 4\n",
+        content, "line 1\n\tline 2\n\tline 3\nline 4\n",
         "Tab should indent selected lines with tab character for Go files"
     );
 }
