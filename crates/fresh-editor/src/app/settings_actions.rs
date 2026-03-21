@@ -153,6 +153,7 @@ impl Editor {
         self.menu_bar_visible = self.config.editor.show_menu_bar;
         self.tab_bar_visible = self.config.editor.show_tab_bar;
         self.status_bar_visible = self.config.editor.show_status_bar;
+        self.prompt_line_visible = self.config.editor.show_prompt_line;
 
         // Propagate tab_size/use_tabs/auto_close/whitespace visibility to all open buffers
         // Each buffer resolves its settings from its language + the new global config
