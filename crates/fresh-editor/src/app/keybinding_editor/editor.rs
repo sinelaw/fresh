@@ -248,6 +248,7 @@ impl KeybindingEditor {
                         modifiers: *modifiers,
                         is_chord: false,
                         plugin_name: Some(section.clone()),
+                        original_config: None,
                     });
                 }
             }
@@ -269,6 +270,7 @@ impl KeybindingEditor {
                     modifiers: KeyModifiers::NONE,
                     is_chord: false,
                     plugin_name: None,
+                    original_config: None,
                 });
             }
         }
@@ -291,6 +293,7 @@ impl KeybindingEditor {
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
                         plugin_name,
+                        original_config: None,
                     });
                 }
             }
@@ -319,6 +322,11 @@ impl KeybindingEditor {
             // Chord binding
             let key_display = format_chord_keys(&kb.keys);
             let action_display = KeybindingResolver::format_action_from_str(&kb.action);
+            let original_config = if source == BindingSource::Custom {
+                Some(kb.clone())
+            } else {
+                None
+            };
             Some(ResolvedBinding {
                 key_display,
                 action: kb.action.clone(),
@@ -329,6 +337,7 @@ impl KeybindingEditor {
                 modifiers: KeyModifiers::NONE,
                 is_chord: true,
                 plugin_name: None,
+                original_config,
             })
         } else if !kb.key.is_empty() {
             // Single key binding
@@ -336,6 +345,11 @@ impl KeybindingEditor {
             let modifiers = KeybindingResolver::parse_modifiers_public(&kb.modifiers);
             let key_display = format_keybinding(&key_code, &modifiers);
             let action_display = KeybindingResolver::format_action_from_str(&kb.action);
+            let original_config = if source == BindingSource::Custom {
+                Some(kb.clone())
+            } else {
+                None
+            };
             Some(ResolvedBinding {
                 key_display,
                 action: kb.action.clone(),
@@ -346,6 +360,7 @@ impl KeybindingEditor {
                 modifiers,
                 is_chord: false,
                 plugin_name: None,
+                original_config,
             })
         } else {
             None
@@ -723,8 +738,14 @@ impl KeybindingEditor {
                 let binding = &self.bindings[idx];
                 let action_name = binding.action.clone();
 
-                // Build config-level Keybinding for matching during save
-                let config_kb = self.resolved_to_config_keybinding(binding);
+                // Use the original config-level Keybinding if available (for
+                // bindings loaded from config), otherwise reconstruct it.
+                // This avoids lossy round-trips through parse_key which
+                // lowercases key names (e.g. "N" → "n").
+                let config_kb = binding
+                    .original_config
+                    .clone()
+                    .unwrap_or_else(|| self.resolved_to_config_keybinding(binding));
 
                 // If this binding was added in the current session, just
                 // remove it from pending_adds. Otherwise track for removal
@@ -758,6 +779,7 @@ impl KeybindingEditor {
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
                         plugin_name: None,
+                        original_config: None,
                     });
                 }
 
@@ -803,6 +825,7 @@ impl KeybindingEditor {
                     modifiers: self.bindings[idx].modifiers,
                     is_chord: self.bindings[idx].is_chord,
                     plugin_name: self.bindings[idx].plugin_name.clone(),
+                    original_config: None,
                 };
                 self.has_changes = true;
 
@@ -820,6 +843,7 @@ impl KeybindingEditor {
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
                         plugin_name: None,
+                        original_config: None,
                     });
                 }
 
@@ -864,6 +888,7 @@ impl KeybindingEditor {
                     modifiers: self.bindings[idx].modifiers,
                     is_chord: self.bindings[idx].is_chord,
                     plugin_name: self.bindings[idx].plugin_name.clone(),
+                    original_config: None,
                 };
                 self.has_changes = true;
 
@@ -880,6 +905,7 @@ impl KeybindingEditor {
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
                         plugin_name: None,
+                        original_config: None,
                     });
                 }
 
@@ -982,6 +1008,7 @@ impl KeybindingEditor {
             modifiers,
             is_chord: false,
             plugin_name: preserved_plugin_name,
+            original_config: None,
         };
 
         if let Some(edit_idx) = dialog.editing_index {

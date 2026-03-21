@@ -19,7 +19,7 @@ pub fn format_chord_keys(keys: &[KeyPress]) -> String {
 /// Convert a KeyCode back to a config-friendly name
 pub fn key_code_to_config_name(key_code: KeyCode) -> String {
     match key_code {
-        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Char(c) => c.to_lowercase().to_string(),
         KeyCode::Enter => "Enter".to_string(),
         KeyCode::Tab => "Tab".to_string(),
         KeyCode::Backspace => "Backspace".to_string(),

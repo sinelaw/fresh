@@ -1,5 +1,6 @@
 //! Data types for the keybinding editor.
 
+use crate::config::Keybinding;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
@@ -50,6 +51,8 @@ pub struct ResolvedBinding {
     pub is_chord: bool,
     /// Plugin name this binding belongs to (None = builtin)
     pub plugin_name: Option<String>,
+    /// Original config-level Keybinding (preserved for Custom bindings loaded from config)
+    pub original_config: Option<Keybinding>,
 }
 
 /// Mode for the edit/add dialog

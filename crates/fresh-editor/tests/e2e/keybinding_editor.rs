@@ -1725,3 +1725,158 @@ fn test_keybinding_editor_captures_keys_over_terminal_mode() {
     // Keybinding editor should be closed now
     harness.assert_screen_not_contains("Keybinding Editor");
 }
+
+/// Regression test: deleting a custom keybinding that uses Shift+letter fails.
+/// The bug: when recording Shift+N, crossterm sends KeyCode::Char('N') (uppercase).
+/// key_code_to_config_name stores it as "N". After save+reload, parse_key lowercases
+/// it to KeyCode::Char('n'), so key_code_to_config_name returns "n". The deletion
+/// matching compares "N" (in config) vs "n" (from resolved round-trip) and fails.
+#[test]
+fn test_delete_shift_letter_binding_full_flow() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // === Phase 1: Add a custom binding Shift+N → search_next ===
+    open_keybinding_editor(&mut harness);
+
+    // Press 'a' to open Add dialog
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Add Keybinding");
+
+    // Record key: Shift+N (crossterm sends uppercase 'N' with SHIFT modifier)
+    harness
+        .send_key(KeyCode::Char('N'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Shift+N");
+
+    // Tab to Action field
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+
+    // Type "duplicate_line" and accept autocomplete
+    for ch in "duplicate_line".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Tab to context, then to Save button, press Enter to save the dialog
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("modified");
+
+    // Save and close keybinding editor with Ctrl+S
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("Keybinding Editor");
+
+    // === Phase 2: Reopen keybinding editor and delete the binding ===
+    open_keybinding_editor(&mut harness);
+
+    // Search for "duplicate_line"
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for ch in "duplicate_line".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify the custom binding appears
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Shift+N"),
+        "Before delete: table should show Shift+N.\nScreen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("custom"),
+        "Before delete: table should show 'custom' source.\nScreen:\n{}",
+        screen
+    );
+
+    // Navigate to the custom binding row
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let mut found_custom = false;
+    for _ in 0..10 {
+        let current_screen = harness.screen_to_string();
+        for line in current_screen.lines() {
+            if line.contains(">") && line.contains("custom") {
+                found_custom = true;
+                break;
+            }
+        }
+        if found_custom {
+            break;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+    assert!(found_custom, "Should find the custom binding row to delete");
+
+    // Delete the custom binding
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify deletion happened in the UI
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Shift+N"),
+        "After delete (before save): Shift+N should be gone from the table.\nScreen:\n{}",
+        screen
+    );
+
+    // Save and close
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("Keybinding Editor");
+
+    // === Phase 3: Reopen and verify the binding is truly gone (persisted) ===
+    open_keybinding_editor(&mut harness);
+
+    // Search for "duplicate_line"
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for ch in "duplicate_line".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Shift+N"),
+        "After save+reopen: Shift+N should NOT appear (deletion should persist).\nScreen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("custom"),
+        "After save+reopen: 'custom' source should NOT appear.\nScreen:\n{}",
+        screen
+    );
+}
