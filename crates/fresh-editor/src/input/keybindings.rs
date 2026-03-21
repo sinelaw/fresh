@@ -679,7 +679,9 @@ macro_rules! define_action_str_mapping {
                 $($s_name => Self::$s_variant,)*
                 $($c_name => return Self::with_char($args_name, Self::$c_variant),)*
                 $($x_name => $x_body,)*
-                _ => return None,
+                // Unrecognized action names are treated as plugin actions, allowing
+                // keybindings for plugin-registered commands to load from config.
+                _ => Self::PluginAction(s.to_string()),
             })
         }
 
@@ -2399,7 +2401,11 @@ mod tests {
         let args = HashMap::new();
         assert_eq!(Action::from_str("move_left", &args), Some(Action::MoveLeft));
         assert_eq!(Action::from_str("save", &args), Some(Action::Save));
-        assert_eq!(Action::from_str("unknown", &args), None);
+        // Unknown action names are treated as plugin actions
+        assert_eq!(
+            Action::from_str("unknown", &args),
+            Some(Action::PluginAction("unknown".to_string()))
+        );
 
         // Test new context-specific actions
         assert_eq!(
