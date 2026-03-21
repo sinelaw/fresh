@@ -945,3 +945,88 @@ fn test_smart_backspace_partial_indent() {
         "Smart backspace should remove partial indent (2 spaces)"
     );
 }
+
+// =============================================================================
+// Selection Boundary Tests (Issue #1304)
+// =============================================================================
+
+/// Test that Tab does not indent a line when the selection only touches its very start.
+/// When selecting from line 2 down to the beginning of line 4 (Shift+Down twice),
+/// only lines 2 and 3 should be indented, not line 4.
+/// See: https://github.com/sinelaw/fresh/issues/1304
+#[test]
+fn test_tab_indent_does_not_indent_line_at_selection_boundary() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "Line 1\nLine 2\nLine 3\nLine 4\nLine 5").unwrap();
+
+    let mut harness = harness_with_spaces();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to line 2
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    // Select down two lines (Shift+Down twice), ending at start of line 4
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Press Tab to indent
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    // Only lines 2 and 3 should be indented; lines 1, 4, and 5 should remain unchanged
+    assert_eq!(
+        content, "Line 1\n    Line 2\n    Line 3\nLine 4\nLine 5",
+        "Tab should not indent line 4 when selection ends at its start (issue #1304)"
+    );
+}
+
+/// Test that Shift+Tab does not dedent a line when the selection only touches its very start.
+/// Same boundary condition as the indent test above but for dedent.
+/// See: https://github.com/sinelaw/fresh/issues/1304
+#[test]
+fn test_shift_tab_dedent_does_not_dedent_line_at_selection_boundary() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(
+        &file_path,
+        "Line 1\n    Line 2\n    Line 3\n    Line 4\nLine 5",
+    )
+    .unwrap();
+
+    let mut harness = harness_with_spaces();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to line 2
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    // Select down two lines (Shift+Down twice), ending at start of line 4
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Press Shift+Tab to dedent
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    // Only lines 2 and 3 should be dedented; line 4 should keep its indentation
+    assert_eq!(
+        content, "Line 1\nLine 2\nLine 3\n    Line 4\nLine 5",
+        "Shift+Tab should not dedent line 4 when selection ends at its start (issue #1304)"
+    );
+}
