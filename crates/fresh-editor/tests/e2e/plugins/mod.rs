@@ -14,5 +14,6 @@ pub mod lsp_find_references;
 pub mod markdown_source;
 pub mod package_manager;
 pub mod plugin;
+pub mod plugin_keybinding_execution;
 pub mod theme_editor;
 pub mod unified_keybindings;
