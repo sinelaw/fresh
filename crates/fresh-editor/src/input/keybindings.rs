@@ -2615,6 +2615,33 @@ mod tests {
         assert!(!resolver.default_bindings[&KeyContext::Menu].is_empty());
     }
 
+    /// Validate that every action name in every built-in keymap resolves to a
+    /// known built-in action, not a `PluginAction`.  This catches typos like
+    /// `"prompt_delete_to_end"` (should be `"prompt_delete_to_line_end"`).
+    #[test]
+    fn test_all_builtin_keymaps_have_valid_action_names() {
+        let known_actions: std::collections::HashSet<String> =
+            Action::all_action_names().into_iter().collect();
+
+        let config = Config::default();
+
+        for map_name in crate::config::KeybindingMapName::BUILTIN_OPTIONS {
+            let bindings = config.resolve_keymap(map_name);
+            for binding in &bindings {
+                assert!(
+                    known_actions.contains(&binding.action),
+                    "Keymap '{}' contains unknown action '{}' (key: '{}', when: {:?}). \
+                     This will be treated as a plugin action at runtime. \
+                     Check for typos in the keymap JSON file.",
+                    map_name,
+                    binding.action,
+                    binding.key,
+                    binding.when,
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_resolve_determinism() {
         // Property: Resolving the same key in the same context should always return the same action
