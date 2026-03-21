@@ -570,7 +570,8 @@ impl EditorServer {
         conn.control.set_nonblocking(true)?;
 
         // Send terminal setup sequences
-        let setup = terminal_setup_sequences();
+        let mouse_hover_enabled = self.config.editor_config.editor.mouse_hover_enabled;
+        let setup = terminal_setup_sequences(mouse_hover_enabled);
         conn.write_data(&setup)?;
 
         // Send cursor style (from editor if running, otherwise from config)

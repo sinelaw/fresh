@@ -55,6 +55,7 @@ mod integration_tests {
             working_dir: temp_dir.clone(),
             session_name: Some(unique_session_name("lifecycle")),
             idle_timeout: Some(Duration::from_millis(100)),
+            mouse_hover_enabled: true,
         };
 
         let mut server = Server::new(config).unwrap();
@@ -83,6 +84,7 @@ mod integration_tests {
             working_dir: temp_dir.clone(),
             session_name: Some(session_name.clone()),
             idle_timeout: Some(Duration::from_secs(5)),
+            mouse_hover_enabled: true,
         };
 
         let mut server = Server::new(config).unwrap();
@@ -127,6 +129,7 @@ mod integration_tests {
             working_dir: temp_dir.clone(),
             session_name: Some(unique_session_name("version")),
             idle_timeout: Some(Duration::from_secs(5)),
+            mouse_hover_enabled: true,
         };
 
         let mut server = Server::new(config).unwrap();
@@ -169,6 +172,7 @@ mod integration_tests {
             working_dir: temp_dir.clone(),
             session_name: Some(unique_session_name("idle")),
             idle_timeout: Some(Duration::from_millis(50)), // Very short timeout
+            mouse_hover_enabled: true,
         };
 
         let mut server = Server::new(config).unwrap();
@@ -194,6 +198,7 @@ mod integration_tests {
             working_dir: temp_dir.clone(),
             session_name: Some(unique_session_name("ping")),
             idle_timeout: Some(Duration::from_secs(5)),
+            mouse_hover_enabled: true,
         };
 
         let mut server = Server::new(config).unwrap();
@@ -241,6 +246,7 @@ mod integration_tests {
             working_dir: temp_dir.clone(),
             session_name: Some(unique_session_name("quit")),
             idle_timeout: None, // No idle timeout
+            mouse_hover_enabled: true,
         };
 
         let mut server = Server::new(config).unwrap();
@@ -290,6 +296,7 @@ mod integration_tests {
             working_dir: temp_dir.clone(),
             session_name: Some(session_name.clone()),
             idle_timeout: Some(Duration::from_secs(5)),
+            mouse_hover_enabled: true,
         };
 
         // Use channel to get socket paths from server thread
@@ -527,6 +534,7 @@ mod integration_tests {
             working_dir: temp_dir.clone(),
             session_name: Some(session_name.clone()),
             idle_timeout: Some(Duration::from_secs(5)),
+            mouse_hover_enabled: true,
         };
 
         let paths_for_cleanup = socket_paths.clone();

@@ -66,6 +66,8 @@ impl Editor {
         let old_theme = self.config.theme.clone();
         let old_locale = self.config.locale.clone();
         let old_plugins = self.config.plugins.clone();
+        #[cfg(windows)]
+        let old_mouse_hover = self.config.editor.mouse_hover_enabled;
 
         // Get target layer, new config, and the actual changes made
         let (target_layer, new_config, pending_changes, pending_deletions) = {
@@ -153,6 +155,23 @@ impl Editor {
         self.menu_bar_visible = self.config.editor.show_menu_bar;
         self.tab_bar_visible = self.config.editor.show_tab_bar;
         self.status_bar_visible = self.config.editor.show_status_bar;
+
+        // On Windows, switch mouse tracking mode when mouse_hover_enabled changes.
+        // Mode 1003 (all motion) is used for hover; mode 1002 (cell motion) otherwise.
+        #[cfg(windows)]
+        if old_mouse_hover != self.config.editor.mouse_hover_enabled {
+            let mode = if self.config.editor.mouse_hover_enabled {
+                fresh_winterm::MouseMode::AllMotion
+            } else {
+                // Clear any pending hover state when disabling
+                self.mouse_state.lsp_hover_state = None;
+                self.mouse_state.lsp_hover_request_sent = false;
+                fresh_winterm::MouseMode::CellMotion
+            };
+            if let Err(e) = fresh_winterm::set_mouse_mode(mode) {
+                tracing::error!("Failed to switch mouse mode: {}", e);
+            }
+        }
 
         // Propagate tab_size/use_tabs/auto_close/whitespace visibility to all open buffers
         // Each buffer resolves its settings from its language + the new global config

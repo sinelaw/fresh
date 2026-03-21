@@ -2926,7 +2926,20 @@ fn run_event_loop(
     use fresh_winterm::{VtInputEvent, VtInputReader};
 
     let _old_console_mode = fresh_winterm::enable_vt_input()?;
-    fresh_winterm::enable_mouse_tracking()?;
+    // Use the configured mouse mode: when mouse_hover_enabled is true, use
+    // mode 1003 (all motion) for full hover support; otherwise use mode 1002
+    // (cell motion) which avoids the high event volume that can cause input
+    // corruption on Windows.
+    if editor.config.editor.mouse_hover_enabled {
+        fresh_winterm::enable_mouse_tracking()?; // 1003 + 1006 + 2004
+    } else {
+        // Enable cell-motion mouse (1002 + 1006) and bracketed paste (2004)
+        fresh_winterm::set_mouse_mode(fresh_winterm::MouseMode::CellMotion)?;
+        use std::io::Write;
+        let mut stdout = io::stdout();
+        stdout.write_all(b"\x1b[?2004h")?;
+        stdout.flush()?;
+    }
 
     // Spawn a dedicated reader thread to drain the console buffer as fast
     // as possible. This prevents the Windows console from dropping bytes

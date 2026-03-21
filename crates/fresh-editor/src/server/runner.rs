@@ -29,6 +29,8 @@ pub struct ServerConfig {
     pub session_name: Option<String>,
     /// Idle timeout before auto-shutdown (None = never)
     pub idle_timeout: Option<Duration>,
+    /// Whether mouse hover (and mode 1003 on Windows) is enabled
+    pub mouse_hover_enabled: bool,
 }
 
 /// Server state
@@ -221,7 +223,7 @@ impl Server {
         conn.control.set_nonblocking(true)?;
 
         // Send terminal setup sequences to initialize the client's terminal
-        let setup = terminal_setup_sequences();
+        let setup = terminal_setup_sequences(self.config.mouse_hover_enabled);
         conn.write_data(&setup)?;
 
         Ok(ConnectedClient {
@@ -452,6 +454,7 @@ mod tests {
             working_dir: PathBuf::from("/tmp/test"),
             session_name: None,
             idle_timeout: Some(Duration::from_secs(3600)),
+            mouse_hover_enabled: true,
         };
         assert_eq!(config.working_dir, PathBuf::from("/tmp/test"));
         assert_eq!(config.idle_timeout, Some(Duration::from_secs(3600)));

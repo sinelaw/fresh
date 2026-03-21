@@ -327,7 +327,12 @@ impl Backend for CaptureBackend {
 ///
 /// Uses shared constants from `terminal_modes::sequences` to stay in sync
 /// with the direct-mode terminal setup in `TerminalModes::enable()`.
-pub fn terminal_setup_sequences() -> Vec<u8> {
+///
+/// When `mouse_hover_enabled` is false on Windows, mode 1003 (all motion) is
+/// omitted and only mode 1002 (cell motion) is enabled, reducing event volume
+/// and avoiding input corruption. On non-Windows platforms the parameter is
+/// ignored and full mouse tracking is always enabled.
+pub fn terminal_setup_sequences(mouse_hover_enabled: bool) -> Vec<u8> {
     use crate::services::terminal_modes::sequences as seq;
 
     let mut buf = Vec::new();
@@ -337,7 +342,16 @@ pub fn terminal_setup_sequences() -> Vec<u8> {
     // Enable mouse tracking (SGR format)
     buf.extend_from_slice(seq::ENABLE_MOUSE_CLICK);
     buf.extend_from_slice(seq::ENABLE_MOUSE_DRAG);
-    buf.extend_from_slice(seq::ENABLE_MOUSE_MOTION);
+    // On Windows, only enable all-motion tracking (mode 1003) when hover is
+    // enabled. Mode 1003 generates extreme event volume that can cause input
+    // corruption on Windows. On other platforms, always enable it.
+    if cfg!(windows) {
+        if mouse_hover_enabled {
+            buf.extend_from_slice(seq::ENABLE_MOUSE_MOTION);
+        }
+    } else {
+        buf.extend_from_slice(seq::ENABLE_MOUSE_MOTION);
+    }
     buf.extend_from_slice(seq::ENABLE_SGR_MOUSE);
     // Enable focus events
     buf.extend_from_slice(seq::ENABLE_FOCUS_EVENTS);
@@ -464,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_setup_sequences_enable_features() {
-        let setup = terminal_setup_sequences();
+        let setup = terminal_setup_sequences(true);
         let setup_str = String::from_utf8_lossy(&setup);
 
         // Alternate screen

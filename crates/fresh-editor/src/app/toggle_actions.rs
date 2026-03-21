@@ -194,6 +194,9 @@ impl Editor {
     }
 
     /// Toggle mouse hover for LSP on/off
+    ///
+    /// On Windows, this also switches the mouse tracking mode: mode 1003
+    /// (all motion) when enabled, mode 1002 (cell motion) when disabled.
     pub fn toggle_mouse_hover(&mut self) {
         self.config.editor.mouse_hover_enabled = !self.config.editor.mouse_hover_enabled;
 
@@ -204,6 +207,19 @@ impl Editor {
             self.mouse_state.lsp_hover_state = None;
             self.mouse_state.lsp_hover_request_sent = false;
             self.set_status_message(t!("toggle.mouse_hover_disabled").to_string());
+        }
+
+        // On Windows, switch mouse tracking mode to match
+        #[cfg(windows)]
+        {
+            let mode = if self.config.editor.mouse_hover_enabled {
+                fresh_winterm::MouseMode::AllMotion
+            } else {
+                fresh_winterm::MouseMode::CellMotion
+            };
+            if let Err(e) = fresh_winterm::set_mouse_mode(mode) {
+                tracing::error!("Failed to switch mouse mode: {}", e);
+            }
         }
     }
 

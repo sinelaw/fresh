@@ -830,8 +830,14 @@ pub struct EditorConfig {
     // ===== Mouse =====
     /// Whether mouse hover triggers LSP hover requests.
     /// When enabled, hovering over code with the mouse will show documentation.
-    /// Default: true
-    #[serde(default = "default_true")]
+    /// On Windows, this also controls the mouse tracking mode: when disabled,
+    /// the editor uses xterm mode 1002 (cell motion — click, drag, release only);
+    /// when enabled, it uses mode 1003 (all motion — full mouse movement tracking).
+    /// Mode 1003 generates high event volume on Windows and may cause input
+    /// corruption on some systems. On macOS and Linux this setting only controls
+    /// LSP hover; the mouse tracking mode is always full motion.
+    /// Default: true (macOS/Linux), false (Windows)
+    #[serde(default = "default_mouse_hover_enabled")]
     #[schemars(extend("x-section" = "Mouse"))]
     pub mouse_hover_enabled: bool,
 
@@ -1059,6 +1065,10 @@ fn default_highlight_context_bytes() -> usize {
     10_000 // 10KB context for accurate syntax highlighting
 }
 
+fn default_mouse_hover_enabled() -> bool {
+    !cfg!(windows)
+}
+
 fn default_mouse_hover_delay() -> u64 {
     500 // 500ms delay before showing hover info
 }
@@ -1102,7 +1112,7 @@ impl Default for EditorConfig {
             recovery_enabled: true,
             auto_recovery_save_interval_secs: default_auto_recovery_save_interval(),
             highlight_context_bytes: default_highlight_context_bytes(),
-            mouse_hover_enabled: true,
+            mouse_hover_enabled: default_mouse_hover_enabled(),
             mouse_hover_delay_ms: default_mouse_hover_delay(),
             double_click_time_ms: default_double_click_time(),
             auto_revert_poll_interval_ms: default_auto_revert_poll_interval(),
