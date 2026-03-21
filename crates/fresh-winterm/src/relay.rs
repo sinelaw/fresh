@@ -55,7 +55,9 @@ pub fn relay_loop(conn: &mut impl RelayConnection) -> io::Result<RelayExitReason
     tracing::debug!("[windows_loop] Starting VT input relay loop");
 
     let old_console_mode = vt_input::enable_vt_input()?;
-    if let Err(e) = vt_input::enable_mouse_tracking() {
+    // Default to CellMotion (safe, low event volume). The server will send
+    // the correct mode via terminal_setup_sequences() shortly after connection.
+    if let Err(e) = vt_input::enable_mouse_tracking(vt_input::MouseMode::CellMotion) {
         tracing::warn!("Failed to enable mouse tracking: {}", e);
     }
     // Spawn dedicated reader thread (same as direct mode)

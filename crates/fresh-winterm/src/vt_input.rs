@@ -66,11 +66,17 @@ pub fn enable_vt_input() -> io::Result<u32> {
 
 /// Enable mouse tracking and bracketed paste via VT escape sequences.
 ///
-/// Enables mode 1003 (all-motion) + 1006 (SGR) + 2004 (bracketed paste).
-pub fn enable_mouse_tracking() -> io::Result<()> {
+/// When `mode` is `AllMotion`, enables mode 1003 (all-motion) + 1006 (SGR) +
+/// 2004 (bracketed paste). When `mode` is `CellMotion`, enables mode 1002
+/// (cell-motion) + 1006 (SGR) + 2004 (bracketed paste) — lower event volume,
+/// no hover/mousemove tracking.
+pub fn enable_mouse_tracking(mode: MouseMode) -> io::Result<()> {
     use std::io::Write;
     let mut stdout = io::stdout();
-    stdout.write_all(b"\x1b[?1003;1006h\x1b[?2004h")?;
+    match mode {
+        MouseMode::CellMotion => stdout.write_all(b"\x1b[?1002;1006h\x1b[?2004h")?,
+        MouseMode::AllMotion => stdout.write_all(b"\x1b[?1003;1006h\x1b[?2004h")?,
+    }
     stdout.flush()?;
     Ok(())
 }
