@@ -711,6 +711,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_prompt_line",
+        desc_key: "cmd.toggle_prompt_line_desc",
+        action: || Action::TogglePromptLine,
+        contexts: &[Normal, FileExplorer, Terminal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.toggle_vertical_scrollbar",
         desc_key: "cmd.toggle_vertical_scrollbar_desc",
         action: || Action::ToggleVerticalScrollbar,

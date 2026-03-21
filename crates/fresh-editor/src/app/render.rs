@@ -131,7 +131,11 @@ impl Editor {
                 },
             ), // Status bar (hidden when toggled off or with popups)
             Constraint::Length(if show_search_options { 1 } else { 0 }),   // Search options bar
-            Constraint::Length(1), // Prompt line (always reserved)
+            Constraint::Length(if self.prompt_line_visible || self.prompt.is_some() {
+                1
+            } else {
+                0
+            }), // Prompt line (auto-hidden when no prompt active)
         ];
 
         let main_chunks = Layout::default()
@@ -4342,7 +4346,7 @@ impl Editor {
             Constraint::Min(0),
             Constraint::Length(if self.status_bar_visible { 1 } else { 0 }), // status bar
             Constraint::Length(0), // search options (doesn't matter for layout)
-            Constraint::Length(1), // prompt line
+            Constraint::Length(if self.prompt_line_visible { 1 } else { 0 }), // prompt line
         ];
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)

@@ -524,6 +524,8 @@ pub enum Action {
     ToggleTabBar,
     // Status bar visibility
     ToggleStatusBar,
+    // Prompt line visibility
+    TogglePromptLine,
     // Scrollbar visibility
     ToggleVerticalScrollbar,
     ToggleHorizontalScrollbar,
@@ -916,6 +918,7 @@ impl Action {
             "toggle_menu_bar" => ToggleMenuBar,
             "toggle_tab_bar" => ToggleTabBar,
             "toggle_status_bar" => ToggleStatusBar,
+            "toggle_prompt_line" => TogglePromptLine,
             "toggle_vertical_scrollbar" => ToggleVerticalScrollbar,
             "toggle_horizontal_scrollbar" => ToggleHorizontalScrollbar,
             "focus_file_explorer" => FocusFileExplorer,
@@ -2085,6 +2088,7 @@ impl KeybindingResolver {
             Action::ToggleMenuBar => t!("action.toggle_menu_bar"),
             Action::ToggleTabBar => t!("action.toggle_tab_bar"),
             Action::ToggleStatusBar => t!("action.toggle_status_bar"),
+            Action::TogglePromptLine => t!("action.toggle_prompt_line"),
             Action::ToggleVerticalScrollbar => t!("action.toggle_vertical_scrollbar"),
             Action::ToggleHorizontalScrollbar => t!("action.toggle_horizontal_scrollbar"),
             Action::FocusFileExplorer => t!("action.focus_file_explorer"),

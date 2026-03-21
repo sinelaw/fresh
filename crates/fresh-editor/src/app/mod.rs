@@ -449,6 +449,9 @@ pub struct Editor {
     /// Whether status bar is visible
     status_bar_visible: bool,
 
+    /// Whether prompt line is visible (when no prompt is active)
+    prompt_line_visible: bool,
+
     /// Whether mouse capture is enabled
     mouse_enabled: bool,
 
@@ -1311,6 +1314,7 @@ impl Editor {
         let show_menu_bar = config.editor.show_menu_bar;
         let show_tab_bar = config.editor.show_tab_bar;
         let show_status_bar = config.editor.show_status_bar;
+        let show_prompt_line = config.editor.show_prompt_line;
 
         // Start periodic update checker if enabled (also sends daily telemetry)
         let update_checker = if check_for_updates {
@@ -1390,6 +1394,7 @@ impl Editor {
             menu_bar_auto_shown: false,
             tab_bar_visible: show_tab_bar,
             status_bar_visible: show_status_bar,
+            prompt_line_visible: show_prompt_line,
             mouse_enabled: true,
             same_buffer_scroll_sync: false,
             mouse_cursor_position: None,

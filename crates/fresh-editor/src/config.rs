@@ -607,6 +607,15 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_status_bar: bool,
 
+    /// Whether the prompt line is visible by default.
+    /// The prompt line is the bottom-most line used for command input, search, file open, etc.
+    /// When hidden, the prompt line only appears when a prompt is active.
+    /// Can be toggled at runtime via command palette or keybinding.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_prompt_line: bool,
+
     /// Whether the vertical scrollbar is visible in each split pane.
     /// Can be toggled at runtime via command palette or keybinding.
     /// Default: true
@@ -1125,6 +1134,7 @@ impl Default for EditorConfig {
             show_menu_bar: true,
             show_tab_bar: true,
             show_status_bar: true,
+            show_prompt_line: true,
             show_vertical_scrollbar: true,
             show_horizontal_scrollbar: false,
             use_terminal_bg: false,

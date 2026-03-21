@@ -105,6 +105,22 @@ impl Editor {
         self.status_bar_visible
     }
 
+    /// Toggle prompt line visibility
+    pub fn toggle_prompt_line(&mut self) {
+        self.prompt_line_visible = !self.prompt_line_visible;
+        let status = if self.prompt_line_visible {
+            t!("toggle.prompt_line_shown")
+        } else {
+            t!("toggle.prompt_line_hidden")
+        };
+        self.set_status_message(status.to_string());
+    }
+
+    /// Get prompt line visibility
+    pub fn prompt_line_visible(&self) -> bool {
+        self.prompt_line_visible
+    }
+
     /// Toggle vertical scrollbar visibility
     pub fn toggle_vertical_scrollbar(&mut self) {
         self.config.editor.show_vertical_scrollbar = !self.config.editor.show_vertical_scrollbar;
@@ -331,6 +347,7 @@ impl Editor {
         self.menu_bar_visible = self.config.editor.show_menu_bar;
         self.tab_bar_visible = self.config.editor.show_tab_bar;
         self.status_bar_visible = self.config.editor.show_status_bar;
+        self.prompt_line_visible = self.config.editor.show_prompt_line;
 
         // Update LSP configs
         if let Some(ref mut lsp) = self.lsp {
