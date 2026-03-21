@@ -877,14 +877,19 @@ function buildPickerLines(): PickerLine[] {
   lines.push({ text: `"${field.def.description}"`, type: "picker-desc" });
   lines.push({ text: "─".repeat(RIGHT_WIDTH - 2), type: "picker-separator" });
 
-  // Hex / RGB value
-  const colorStr = formatColorValue(field.value);
-  const rgb = parseColorToRgb(field.value);
-  let valueLine = `Hex: ${colorStr}`;
-  if (rgb) {
-    valueLine += `     RGB: ${rgb[0]}, ${rgb[1]}, ${rgb[2]}`;
+  // Color value display
+  const isNamed = typeof field.value === "string" && NAMED_COLORS[field.value] !== undefined;
+  if (isNamed) {
+    lines.push({ text: `Color: ${field.value} (terminal native)`, type: "picker-hex" });
+  } else {
+    const colorStr = formatColorValue(field.value);
+    const rgb = parseColorToRgb(field.value);
+    let valueLine = `Hex: ${colorStr}`;
+    if (rgb) {
+      valueLine += `     RGB: ${rgb[0]}, ${rgb[1]}, ${rgb[2]}`;
+    }
+    lines.push({ text: valueLine, type: "picker-hex" });
   }
-  lines.push({ text: valueLine, type: "picker-hex" });
 
   lines.push({ text: "", type: "picker-blank" });
 
@@ -1373,11 +1378,9 @@ function buildColorSuggestions(field: ThemeField): PromptSuggestion[] {
     suggestions.push({ text: name, description: editor.t("suggestion.terminal_native"), value: name });
   }
 
-  // Add named colors with hex format
+  // Add named colors (terminal native - no hex shown since actual color depends on terminal)
   for (const name of NAMED_COLOR_LIST) {
-    const rgb = NAMED_COLORS[name];
-    const hexValue = rgbToHex(rgb[0], rgb[1], rgb[2]);
-    suggestions.push({ text: name, description: hexValue, value: name });
+    suggestions.push({ text: name, description: editor.t("suggestion.terminal_native"), value: name });
   }
 
   return suggestions;
