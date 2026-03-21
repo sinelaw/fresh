@@ -2930,7 +2930,7 @@ fn run_event_loop(
     // mode 1003 (all motion) for full hover support; otherwise use mode 1002
     // (cell motion) which avoids the high event volume that can cause input
     // corruption on Windows.
-    let mouse_mode = if editor.config.editor.mouse_hover_enabled {
+    let mouse_mode = if editor.config().editor.mouse_hover_enabled {
         fresh_winterm::MouseMode::AllMotion
     } else {
         fresh_winterm::MouseMode::CellMotion
