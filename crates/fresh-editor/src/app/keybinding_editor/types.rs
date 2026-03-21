@@ -51,6 +51,10 @@ pub struct ResolvedBinding {
     pub is_chord: bool,
     /// Plugin name this binding belongs to (None = builtin)
     pub plugin_name: Option<String>,
+    /// Human-friendly command name from the CommandRegistry (e.g., "Titlecase").
+    /// Present for plugin commands so the keybinding editor can display and search
+    /// by the same name shown in the command palette.
+    pub command_name: Option<String>,
     /// Original config-level Keybinding (preserved for Custom bindings loaded from config)
     pub original_config: Option<Keybinding>,
 }

@@ -174,3 +174,49 @@ editor.setStatus("crd-plugin loaded");
         screen
     );
 }
+
+/// Test that a plugin-registered command can be found in the keybinding editor
+/// by searching for its display name (the name shown in the command palette),
+/// not just by its machine-readable action name.
+#[test]
+fn test_plugin_command_searchable_by_display_name() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+
+    let plugin_source = r#"
+const editor = getEditor();
+editor.registerCommand(
+    "Lunar Eclipse Transform",
+    "A command with a display name different from its action name",
+    "lunar_eclipse_xform",
+    null
+);
+editor.setStatus("let-plugin loaded");
+"#;
+
+    load_plugin_from_buffer(&mut harness, "let_plugin.ts", plugin_source);
+
+    // Open the keybinding editor
+    harness.editor_mut().open_keybinding_editor();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Keybinding Editor");
+
+    // Search by the display name (as the user would see it in the command palette)
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Lunar Eclipse").unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("lunar_eclipse_xform"),
+        "Searching by display name should find the plugin command and show its action name. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("Lunar Eclipse Transform"),
+        "The display name should appear in the description column. Screen:\n{}",
+        screen
+    );
+}

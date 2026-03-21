@@ -248,6 +248,7 @@ impl KeybindingEditor {
                         modifiers: *modifiers,
                         is_chord: false,
                         plugin_name: Some(section.clone()),
+                        command_name: None,
                         original_config: None,
                     });
                 }
@@ -270,6 +271,7 @@ impl KeybindingEditor {
                     modifiers: KeyModifiers::NONE,
                     is_chord: false,
                     plugin_name: None,
+                    command_name: None,
                     original_config: None,
                 });
             }
@@ -293,8 +295,36 @@ impl KeybindingEditor {
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
                         plugin_name,
+                        command_name: Some(cmd.get_localized_name()),
                         original_config: None,
                     });
+                }
+            }
+        }
+
+        // Populate command_name for bound plugin actions from the registry
+        {
+            let commands = command_registry.get_all();
+            let cmd_by_action: std::collections::HashMap<&str, &crate::input::commands::Command> =
+                commands
+                    .iter()
+                    .filter_map(|c| {
+                        if let Action::PluginAction(ref name) = c.action {
+                            Some((name.as_str(), c))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+            for binding in &mut bindings {
+                if binding.command_name.is_none() {
+                    if let Some(cmd) = cmd_by_action.get(binding.action.as_str()) {
+                        let name = cmd.get_localized_name();
+                        // Use the command name as the display description so it
+                        // matches what users see in the command palette.
+                        binding.action_display = name.clone();
+                        binding.command_name = Some(name);
+                    }
                 }
             }
         }
@@ -337,6 +367,7 @@ impl KeybindingEditor {
                 modifiers: KeyModifiers::NONE,
                 is_chord: true,
                 plugin_name: None,
+                command_name: None,
                 original_config,
             })
         } else if !kb.key.is_empty() {
@@ -360,6 +391,7 @@ impl KeybindingEditor {
                 modifiers,
                 is_chord: false,
                 plugin_name: None,
+                command_name: None,
                 original_config,
             })
         } else {
@@ -448,7 +480,11 @@ impl KeybindingEditor {
                             let matches = binding.action.to_lowercase().contains(&query)
                                 || binding.action_display.to_lowercase().contains(&query)
                                 || binding.key_display.to_lowercase().contains(&query)
-                                || binding.context.to_lowercase().contains(&query);
+                                || binding.context.to_lowercase().contains(&query)
+                                || binding
+                                    .command_name
+                                    .as_ref()
+                                    .is_some_and(|n| n.to_lowercase().contains(&query));
                             if !matches {
                                 continue;
                             }
@@ -779,6 +815,7 @@ impl KeybindingEditor {
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
                         plugin_name: None,
+                        command_name: None,
                         original_config: None,
                     });
                 }
@@ -825,6 +862,7 @@ impl KeybindingEditor {
                     modifiers: self.bindings[idx].modifiers,
                     is_chord: self.bindings[idx].is_chord,
                     plugin_name: self.bindings[idx].plugin_name.clone(),
+                    command_name: None,
                     original_config: None,
                 };
                 self.has_changes = true;
@@ -843,6 +881,7 @@ impl KeybindingEditor {
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
                         plugin_name: None,
+                        command_name: None,
                         original_config: None,
                     });
                 }
@@ -888,6 +927,7 @@ impl KeybindingEditor {
                     modifiers: self.bindings[idx].modifiers,
                     is_chord: self.bindings[idx].is_chord,
                     plugin_name: self.bindings[idx].plugin_name.clone(),
+                    command_name: None,
                     original_config: None,
                 };
                 self.has_changes = true;
@@ -905,6 +945,7 @@ impl KeybindingEditor {
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
                         plugin_name: None,
+                        command_name: None,
                         original_config: None,
                     });
                 }
@@ -1008,6 +1049,7 @@ impl KeybindingEditor {
             modifiers,
             is_chord: false,
             plugin_name: preserved_plugin_name,
+            command_name: None,
             original_config: None,
         };
 
