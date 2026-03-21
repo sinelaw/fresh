@@ -458,19 +458,13 @@ fn test_search_replace_delete_pattern() {
 fn test_search_replace_multiple_matches_same_line() {
     init_tracing_from_env();
 
-    // Install a SIGUSR1 handler that prints a backtrace for debugging hangs.
-    // In CI you can send `kill -USR1 <pid>` to get a snapshot of where the test is stuck.
-    #[cfg(unix)]
-    {
-        unsafe {
-            libc::signal(libc::SIGUSR1, _sigusr1_handler as libc::sighandler_t);
-        }
-    }
-
     let start = std::time::Instant::now();
     let elapsed = || format!("{:.1}s", start.elapsed().as_secs_f64());
 
-    eprintln!("[DEBUG {}] test_search_replace_multiple_matches_same_line: starting", elapsed());
+    eprintln!(
+        "[DEBUG {}] test_search_replace_multiple_matches_same_line: starting",
+        elapsed()
+    );
 
     let (_temp_dir, project_root) = setup_search_replace_project();
 
@@ -488,7 +482,11 @@ fn test_search_replace_multiple_matches_same_line() {
     harness.open_file(&start_file).unwrap();
     harness.render().unwrap();
     eprintln!("[DEBUG {}] file opened and initial render done", elapsed());
-    eprintln!("[DEBUG {}] screen after open:\n{}", elapsed(), harness.screen_to_string());
+    eprintln!(
+        "[DEBUG {}] screen after open:\n{}",
+        elapsed(),
+        harness.screen_to_string()
+    );
 
     // --- Open command palette ---
     eprintln!("[DEBUG {}] opening command palette (Ctrl+P)", elapsed());
@@ -499,7 +497,10 @@ fn test_search_replace_multiple_matches_same_line() {
     eprintln!("[DEBUG {}] command palette prompt is active", elapsed());
 
     harness.type_text("Search and Replace").unwrap();
-    eprintln!("[DEBUG {}] typed 'Search and Replace' into palette", elapsed());
+    eprintln!(
+        "[DEBUG {}] typed 'Search and Replace' into palette",
+        elapsed()
+    );
 
     harness
         .wait_until(|h| {
@@ -507,8 +508,15 @@ fn test_search_replace_multiple_matches_same_line() {
             s.contains("Search and Replace") || s.contains("Search & Replace")
         })
         .unwrap();
-    eprintln!("[DEBUG {}] palette shows Search and Replace option", elapsed());
-    eprintln!("[DEBUG {}] screen:\n{}", elapsed(), harness.screen_to_string());
+    eprintln!(
+        "[DEBUG {}] palette shows Search and Replace option",
+        elapsed()
+    );
+    eprintln!(
+        "[DEBUG {}] screen:\n{}",
+        elapsed(),
+        harness.screen_to_string()
+    );
 
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -544,7 +552,10 @@ fn test_search_replace_multiple_matches_same_line() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    eprintln!("[DEBUG {}] pressed Enter to move to replace field", elapsed());
+    eprintln!(
+        "[DEBUG {}] pressed Enter to move to replace field",
+        elapsed()
+    );
 
     harness.type_text("ZZ").unwrap();
     harness.render().unwrap();
@@ -554,11 +565,21 @@ fn test_search_replace_multiple_matches_same_line() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    eprintln!("[DEBUG {}] pressed Enter to confirm and run search", elapsed());
-    eprintln!("[DEBUG {}] screen after search submitted:\n{}", elapsed(), harness.screen_to_string());
+    eprintln!(
+        "[DEBUG {}] pressed Enter to confirm and run search",
+        elapsed()
+    );
+    eprintln!(
+        "[DEBUG {}] screen after search submitted:\n{}",
+        elapsed(),
+        harness.screen_to_string()
+    );
 
     // Wait for search results to be populated (match stats appear in the panel)
-    eprintln!("[DEBUG {}] waiting for search results (matches + [v])", elapsed());
+    eprintln!(
+        "[DEBUG {}] waiting for search results (matches + [v])",
+        elapsed()
+    );
     {
         let mut wait_iters = 0u64;
         harness
@@ -577,7 +598,11 @@ fn test_search_replace_multiple_matches_same_line() {
             .unwrap();
     }
     eprintln!("[DEBUG {}] search results populated", elapsed());
-    eprintln!("[DEBUG {}] screen:\n{}", elapsed(), harness.screen_to_string());
+    eprintln!(
+        "[DEBUG {}] screen:\n{}",
+        elapsed(),
+        harness.screen_to_string()
+    );
 
     // Alt+Enter to execute Replace All
     eprintln!("[DEBUG {}] pressing Alt+Enter to Replace All", elapsed());
@@ -616,15 +641,4 @@ fn test_search_replace_multiple_matches_same_line() {
         content
     );
     eprintln!("[DEBUG {}] test PASSED", elapsed());
-}
-
-/// SIGUSR1 handler — prints a message to stderr so CI logs show that the signal was received.
-/// This is intentionally minimal (async-signal-safe) — just writes a fixed string.
-#[cfg(unix)]
-extern "C" fn _sigusr1_handler(_sig: libc::c_int) {
-    // write(2, ...) is async-signal-safe
-    let msg = b"\n[SIGUSR1] Signal received - test is likely stuck in a wait_until loop. Check preceding DEBUG output for last step.\n";
-    unsafe {
-        libc::write(2, msg.as_ptr() as *const libc::c_void, msg.len());
-    }
 }
