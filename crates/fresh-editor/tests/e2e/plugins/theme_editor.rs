@@ -3481,23 +3481,76 @@ fn test_named_color_swatch_uses_native_ansi_color() {
     // Open theme editor
     open_theme_editor(&mut harness);
 
-    // Wait for the theme editor to fully display with ui section expanded
-    // and tab_active_fg visible
+    // Wait for the theme editor to fully display
     harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("Theme Editor") && screen.contains("tab_active_fg")
-        })
+        .wait_until(|h| h.screen_to_string().contains("Theme Editor"))
         .unwrap();
+
+    // The "ui" section is collapsed by default. Navigate down until the
+    // selection indicator (▸) is on the UI Elements section header.
+    let selection_indicator = '\u{25B8}'; // ▸
+    let mut found_ui_section = false;
+    for _ in 0..50 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        // Check if the selected line (containing ▸) is the collapsed UI section
+        if screen
+            .lines()
+            .any(|l| l.contains(selection_indicator) && (l.contains("> UI") || l.contains("> ui")))
+        {
+            found_ui_section = true;
+            break;
+        }
+    }
+
+    let screen_before_expand = harness.screen_to_string();
+    assert!(
+        found_ui_section,
+        "Should have found UI section header. Screen:\n{}",
+        screen_before_expand
+    );
+
+    // Expand the UI section
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Navigate down to tab_active_fg within the expanded UI section.
+    // The UI section has many fields from the schema, so we need enough presses.
+    for _ in 0..80 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        // Stop when the selected line contains tab_active_fg
+        if screen
+            .lines()
+            .any(|l| l.contains(selection_indicator) && l.contains("tab_active_fg"))
+        {
+            break;
+        }
+    }
+
+    // Move selection away so the tab_active_fg row renders without selection
+    // highlight (which changes bg color and breaks swatch detection where fg==bg).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
 
     let screen = harness.screen_to_string();
     let lines: Vec<&str> = screen.lines().collect();
 
-    // Find the line that contains "tab_active_fg" (named color "Yellow")
+    // Find the line that contains "tab_active_fg" AND the swatch "██" (the left-panel field row,
+    // not the right-panel header which also mentions the field name).
     let named_line_idx = lines
         .iter()
-        .position(|l| l.contains("tab_active_fg"))
-        .expect("Should find tab_active_fg line in theme editor");
+        .position(|l| l.contains("tab_active_fg") && l.contains("██"))
+        .unwrap_or_else(|| {
+            panic!(
+                "Should find tab_active_fg swatch line in theme editor. Screen:\n{}",
+                screen
+            )
+        });
 
     // Find the swatch (██) on that line
     let swatch_color = find_swatch_color(&harness, named_line_idx as u16);
