@@ -816,6 +816,31 @@ impl IndentCalculator {
             result
         };
 
+        // When the current line ends with `}`, the new line should maintain the same
+        // indent level as the closing brace line. The `}` has already been placed at
+        // the correct indent level (matching its opening construct), so the next line
+        // should continue at that same level (still inside the enclosing block).
+        //
+        // Example:
+        //   void foo() {
+        //       if (true) {
+        //           x = 1;
+        //       }          // indent = 4
+        //       |           // Enter here should also be 4 (still inside foo)
+        //
+        // Without this early return, the tree-sitter counting logic produces incorrect
+        // results because the reference line (the `}` line) sits at the boundary of
+        // @indent nodes, creating an asymmetry between reference and cursor counts.
+        if last_nonws_is_closing_brace {
+            let closing_brace_indent =
+                Self::get_current_line_indent(buffer, position, tab_size);
+            tracing::debug!(
+                "Line ends with '}}', maintaining indent level: {}",
+                closing_brace_indent
+            );
+            return Some(closing_brace_indent);
+        }
+
         // Calculate indent delta using hybrid heuristic:
         // Count @indent nodes at reference line and at cursor, then compute the difference
         let mut reference_indent_count: i32 = 0;
@@ -843,14 +868,8 @@ impl IndentCalculator {
                         let cursor_inside_node =
                             node_start < cursor_offset && cursor_offset <= node_end;
 
-                        if cursor_inside_node
-                            && node_on_previous_line
-                            && !last_nonws_is_closing_brace
-                        {
+                        if cursor_inside_node && node_on_previous_line {
                             cursor_indent_count += 1;
-                            found_any_captures = true;
-                        } else if last_nonws_is_closing_brace && cursor_inside_node {
-                            // Mark as found but don't count (closing delimiter line)
                             found_any_captures = true;
                         }
                     }
@@ -881,7 +900,7 @@ impl IndentCalculator {
         //   def foo():
         //       if True:   <-- cursor here, delta=0 but should indent
         // Detect this case and add +1 to the delta.
-        if indent_delta == 0 && !last_nonws_is_closing_brace {
+        if indent_delta == 0 {
             let mut check_pos = cursor_offset;
             while check_pos > line_start_offset {
                 check_pos -= 1;
