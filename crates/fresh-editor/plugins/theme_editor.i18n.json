@@ -296,7 +296,11 @@
     "field.popup_selection_fg": "vyskakovací okno výběr popředí",
     "field.popup_selection_fg_desc": "vyskakovací okno selected item text barva",
     "field.whitespace_indicator_fg": "Bílé znaky Indikátor popředí",
-    "field.whitespace_indicator_fg_desc": "Barva popředí indikátorů bílých znaků (šipky tabulátorů a tečky mezer)"
+    "field.whitespace_indicator_fg_desc": "Barva popředí indikátorů bílých znaků (šipky tabulátorů a tečky mezer)",
+    "field.punctuation_bracket": "závorka",
+    "field.punctuation_bracket_desc": "závorkas ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "oddělovač",
+    "field.punctuation_delimiter_desc": "oddělovačs (;, ,, .)"
   },
   "de": {
     "cmd.edit_theme": "Theme bearbeiten",
@@ -595,7 +599,11 @@
     "field.popup_selection_fg": "Popup Auswahl Vordergrund",
     "field.popup_selection_fg_desc": "Textfarbe des ausgewaehlten Popup-Elements",
     "field.whitespace_indicator_fg": "Leerzeichen-Indikator Vordergrund",
-    "field.whitespace_indicator_fg_desc": "Vordergrundfarbe für Leerzeichen-Indikatoren (Tab-Pfeile und Leerzeichen-Punkte)"
+    "field.whitespace_indicator_fg_desc": "Vordergrundfarbe für Leerzeichen-Indikatoren (Tab-Pfeile und Leerzeichen-Punkte)",
+    "field.punctuation_bracket": "Klammer",
+    "field.punctuation_bracket_desc": "Klammern ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "Trennzeichen",
+    "field.punctuation_delimiter_desc": "Trennzeichen (;, ,, .)"
   },
   "en": {
     "cmd.edit_theme": "Edit Theme",
@@ -894,7 +902,11 @@
     "field.popup_selection_fg": "Popup Selection Foreground",
     "field.popup_selection_fg_desc": "Popup selected item text color",
     "field.whitespace_indicator_fg": "Whitespace Indicator Foreground",
-    "field.whitespace_indicator_fg_desc": "Foreground color for whitespace indicators (tab arrows and space dots)"
+    "field.whitespace_indicator_fg_desc": "Foreground color for whitespace indicators (tab arrows and space dots)",
+    "field.punctuation_bracket": "Punctuation Bracket",
+    "field.punctuation_bracket_desc": "Brackets and parentheses ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "Punctuation Delimiter",
+    "field.punctuation_delimiter_desc": "Delimiters and separators (;, ,, .)"
   },
   "es": {
     "cmd.edit_theme": "Editar tema",
@@ -1193,7 +1205,11 @@
     "field.popup_selection_fg": "Fondo de seleccion de ventana emergente",
     "field.popup_selection_fg_desc": "Fondo de elemento seleccionado en ventana emergente",
     "field.whitespace_indicator_fg": "Indicador de espacios en blanco primer plano",
-    "field.whitespace_indicator_fg_desc": "Color de primer plano para indicadores de espacios en blanco (flechas de tabulación y puntos de espacio)"
+    "field.whitespace_indicator_fg_desc": "Color de primer plano para indicadores de espacios en blanco (flechas de tabulación y puntos de espacio)",
+    "field.punctuation_bracket": "Paréntesis",
+    "field.punctuation_bracket_desc": "Paréntesis y corchetes ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "Delimitador",
+    "field.punctuation_delimiter_desc": "Delimitadores y separadores (;, ,, .)"
   },
   "fr": {
     "cmd.edit_theme": "Modifier le theme",
@@ -1492,7 +1508,11 @@
     "field.popup_selection_fg": "Premier plan selection popup",
     "field.popup_selection_fg_desc": "Couleur du texte de l'element selectionne du popup",
     "field.whitespace_indicator_fg": "Indicateur d'espaces premier plan",
-    "field.whitespace_indicator_fg_desc": "Couleur de premier plan pour les indicateurs d'espaces (flèches de tabulation et points d'espace)"
+    "field.whitespace_indicator_fg_desc": "Couleur de premier plan pour les indicateurs d'espaces (flèches de tabulation et points d'espace)",
+    "field.punctuation_bracket": "Parenthese",
+    "field.punctuation_bracket_desc": "Parentheses et crochets ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "Delimiteur",
+    "field.punctuation_delimiter_desc": "Delimiteurs et separateurs (;, ,, .)"
   },
   "ja": {
     "cmd.edit_theme": "テーマを編集",
@@ -1791,7 +1811,11 @@
     "field.popup_selection_fg": "ポップアップ選択前景",
     "field.popup_selection_fg_desc": "ポップアップの選択項目の文字颜色",
     "field.whitespace_indicator_fg": "空白インジケーター前景",
-    "field.whitespace_indicator_fg_desc": "空白インジケーターの前景色（タブ矢印とスペースドット）"
+    "field.whitespace_indicator_fg_desc": "空白インジケーターの前景色（タブ矢印とスペースドット）",
+    "field.punctuation_bracket": "括弧",
+    "field.punctuation_bracket_desc": "括弧 ({、}、(、)、[、])",
+    "field.punctuation_delimiter": "区切り文字",
+    "field.punctuation_delimiter_desc": "区切り文字 (;、,、.)"
   },
   "ko": {
     "cmd.edit_theme": "편집 Theme",
@@ -2090,7 +2114,11 @@
     "field.popup_selection_fg": "팝업 선택 전경",
     "field.popup_selection_fg_desc": "팝업 selected item 텍스트 색상",
     "field.whitespace_indicator_fg": "공백 표시기 전경",
-    "field.whitespace_indicator_fg_desc": "공백 표시기의 전경색 (탭 화살표 및 공백 점)"
+    "field.whitespace_indicator_fg_desc": "공백 표시기의 전경색 (탭 화살표 및 공백 점)",
+    "field.punctuation_bracket": "괄호",
+    "field.punctuation_bracket_desc": "괄호s ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "구분자",
+    "field.punctuation_delimiter_desc": "구분자s (;, ,, .)"
   },
   "pt-BR": {
     "cmd.edit_theme": "editar Theme",
@@ -2389,7 +2417,11 @@
     "field.popup_selection_fg": "popup seleção primeiro plano",
     "field.popup_selection_fg_desc": "popup selected item texto cor",
     "field.whitespace_indicator_fg": "Indicador de espaço em branco primeiro plano",
-    "field.whitespace_indicator_fg_desc": "Cor de primeiro plano para indicadores de espaço em branco (setas de tabulação e pontos de espaço)"
+    "field.whitespace_indicator_fg_desc": "Cor de primeiro plano para indicadores de espaço em branco (setas de tabulação e pontos de espaço)",
+    "field.punctuation_bracket": "parêntese",
+    "field.punctuation_bracket_desc": "parênteses ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "delimitador",
+    "field.punctuation_delimiter_desc": "delimitadors (;, ,, .)"
   },
   "ru": {
     "cmd.edit_theme": "редактировать Theme",
@@ -2688,7 +2720,11 @@
     "field.popup_selection_fg": "всплывающее окно выделение передний план",
     "field.popup_selection_fg_desc": "всплывающее окно selected item текст цвет",
     "field.whitespace_indicator_fg": "Индикатор пробелов передний план",
-    "field.whitespace_indicator_fg_desc": "Цвет переднего плана для индикаторов пробелов (стрелки табуляции и точки пробелов)"
+    "field.whitespace_indicator_fg_desc": "Цвет переднего плана для индикаторов пробелов (стрелки табуляции и точки пробелов)",
+    "field.punctuation_bracket": "скобка",
+    "field.punctuation_bracket_desc": "скобкаs ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "разделитель",
+    "field.punctuation_delimiter_desc": "разделительs (;, ,, .)"
   },
   "th": {
     "cmd.edit_theme": "แก้ไข Theme",
@@ -2987,7 +3023,11 @@
     "field.popup_selection_fg": "ป๊อปอัป การเลือก พื้นหน้า",
     "field.popup_selection_fg_desc": "ป๊อปอัป selected item ข้อความ สี",
     "field.whitespace_indicator_fg": "ตัวบ่งชี้ช่องว่างพื้นหน้า",
-    "field.whitespace_indicator_fg_desc": "สีพื้นหน้าสำหรับตัวบ่งชี้ช่องว่าง (ลูกศรแท็บและจุดเว้นวรรค)"
+    "field.whitespace_indicator_fg_desc": "สีพื้นหน้าสำหรับตัวบ่งชี้ช่องว่าง (ลูกศรแท็บและจุดเว้นวรรค)",
+    "field.punctuation_bracket": "วงเล็บ",
+    "field.punctuation_bracket_desc": "วงเล็บs ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "ตัวคั่น",
+    "field.punctuation_delimiter_desc": "ตัวคั่นs (;, ,, .)"
   },
   "uk": {
     "cmd.edit_theme": "редагувати Theme",
@@ -3286,7 +3326,11 @@
     "field.popup_selection_fg": "спливаюче вікно виділення передний план",
     "field.popup_selection_fg_desc": "спливаюче вікно selected item текст цвет",
     "field.whitespace_indicator_fg": "Індикатор пробілів передній план",
-    "field.whitespace_indicator_fg_desc": "Колір переднього плану для індикаторів пробілів (стрілки табуляції та крапки пробілів)"
+    "field.whitespace_indicator_fg_desc": "Колір переднього плану для індикаторів пробілів (стрілки табуляції та крапки пробілів)",
+    "field.punctuation_bracket": "дужка",
+    "field.punctuation_bracket_desc": "дужкаs ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "роздільник",
+    "field.punctuation_delimiter_desc": "роздільникs (;, ,, .)"
   },
   "vi": {
     "cmd.edit_theme": "Chỉnh sửa giao diện",
@@ -3585,7 +3629,11 @@
     "field.popup_selection_fg": "Tiền cảnh lựa chọn cửa sổ bật lên",
     "field.popup_selection_fg_desc": "Màu văn bản mục đã chọn trong cửa sổ bật lên",
     "field.whitespace_indicator_fg": "Chỉ báo khoảng trắng tiền cảnh",
-    "field.whitespace_indicator_fg_desc": "Màu tiền cảnh cho chỉ báo khoảng trắng (mũi tên tab và dấu chấm khoảng trắng)"
+    "field.whitespace_indicator_fg_desc": "Màu tiền cảnh cho chỉ báo khoảng trắng (mũi tên tab và dấu chấm khoảng trắng)",
+    "field.punctuation_bracket": "Dấu ngoặc",
+    "field.punctuation_bracket_desc": "Dấu ngoặc ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "Dấu phân cách",
+    "field.punctuation_delimiter_desc": "Dấu phân cách (;, ,, .)"
   },
   "zh-CN": {
     "cmd.edit_theme": "编辑主题",
@@ -3884,7 +3932,11 @@
     "field.popup_selection_fg": "弹出窗口选择前景",
     "field.popup_selection_fg_desc": "弹出窗口选中项文字颜色",
     "field.whitespace_indicator_fg": "空白指示器前景",
-    "field.whitespace_indicator_fg_desc": "空白指示器的前景颜色（制表符箭头和空格点）"
+    "field.whitespace_indicator_fg_desc": "空白指示器的前景颜色（制表符箭头和空格点）",
+    "field.punctuation_bracket": "括号",
+    "field.punctuation_bracket_desc": "括号 ({、}、(、)、[、])",
+    "field.punctuation_delimiter": "分隔符",
+    "field.punctuation_delimiter_desc": "分隔符 (;、,、.)"
   },
   "it": {
     "cmd.edit_theme": "Modifica tema",
@@ -4183,6 +4235,10 @@
     "field.popup_selection_fg": "Primo piano selezione popup",
     "field.popup_selection_fg_desc": "Colore del testo dell elemento selezionato nel popup",
     "field.whitespace_indicator_fg": "Indicatore spazi bianchi primo piano",
-    "field.whitespace_indicator_fg_desc": "Colore primo piano per gli indicatori di spazi bianchi (frecce di tabulazione e punti di spazio)"
+    "field.whitespace_indicator_fg_desc": "Colore primo piano per gli indicatori di spazi bianchi (frecce di tabulazione e punti di spazio)",
+    "field.punctuation_bracket": "Parentesi",
+    "field.punctuation_bracket_desc": "Parentesi e parentesi quadre ({, }, (, ), [, ])",
+    "field.punctuation_delimiter": "Delimitatore",
+    "field.punctuation_delimiter_desc": "Delimitatori e separatori (;, ,, .)"
   }
 }
