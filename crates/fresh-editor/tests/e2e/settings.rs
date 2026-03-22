@@ -1784,7 +1784,9 @@ fn test_category_selection_indicator_visible() {
     // Category format: "> " + modified_indicator + icon + name
     let screen = harness.screen_to_string();
     assert!(
-        screen.lines().any(|l| l.contains(">") && l.contains("General") && l.find(">") < l.find("General")),
+        screen
+            .lines()
+            .any(|l| l.contains(">") && l.contains("General") && l.find(">") < l.find("General")),
         "Expected '>' indicator on General category when focused. Screen: {}",
         screen
     );
@@ -1796,7 +1798,9 @@ fn test_category_selection_indicator_visible() {
     // Now Clipboard should have the ">" indicator
     let screen = harness.screen_to_string();
     assert!(
-        screen.lines().any(|l| l.contains(">") && l.contains("Clipboard") && l.find(">") < l.find("Clipboard")),
+        screen.lines().any(|l| l.contains(">")
+            && l.contains("Clipboard")
+            && l.find(">") < l.find("Clipboard")),
         "Expected '>' indicator on Clipboard category when focused. Screen: {}",
         screen
     );
@@ -1816,7 +1820,11 @@ fn test_category_selection_indicator_visible() {
             false
         }
     });
-    assert!(!has_focused_clipboard, "Clipboard should not have '>' indicator when categories panel is unfocused. Screen: {}", screen);
+    assert!(
+        !has_focused_clipboard,
+        "Clipboard should not have '>' indicator when categories panel is unfocused. Screen: {}",
+        screen
+    );
 
     // But Clipboard should still be visible (just highlighted differently)
     harness.assert_screen_contains("Clipboard");

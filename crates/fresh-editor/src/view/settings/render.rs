@@ -417,17 +417,17 @@ fn render_categories_horizontal(
 /// Get an icon for a settings category name (Nerd Font icons)
 fn category_icon(name: &str) -> &'static str {
     match name.to_lowercase().as_str() {
-        "general" => "\u{f013} ",  //
-        "editor" => "\u{f044} ",   //
-        "clipboard" => "\u{f328} ", //
-        "file browser" => "\u{f07b} ", //
+        "general" => "\u{f013} ",       //
+        "editor" => "\u{f044} ",        //
+        "clipboard" => "\u{f328} ",     //
+        "file browser" => "\u{f07b} ",  //
         "file explorer" => "\u{f07c} ", //
-        "packages" => "\u{f487} ", //
-        "plugins" => "\u{f1e6} ",  //
-        "terminal" => "\u{f120} ", //
-        "warnings" => "\u{f071} ", //
-        "keybindings" => "\u{f11c} ", //
-        _ => "\u{f111} ",         //  (dot circle as fallback)
+        "packages" => "\u{f487} ",      //
+        "plugins" => "\u{f1e6} ",       //
+        "terminal" => "\u{f120} ",      //
+        "warnings" => "\u{f071} ",      //
+        "keybindings" => "\u{f11c} ",   //
+        _ => "\u{f111} ",               //  (dot circle as fallback)
     }
 }
 
@@ -483,21 +483,31 @@ fn render_categories(
 
         let icon = category_icon(&page.name);
 
-        let mut spans = vec![
-            Span::styled(selection_indicator, style),
-        ];
+        let mut spans = vec![Span::styled(selection_indicator, style)];
         if has_changes {
-            spans.push(Span::styled(modified_indicator, Style::default().fg(theme.menu_highlight_fg)));
+            spans.push(Span::styled(
+                modified_indicator,
+                Style::default().fg(theme.menu_highlight_fg),
+            ));
         } else {
             spans.push(Span::styled(modified_indicator, style));
         }
-        spans.push(Span::styled(icon, Style::default().fg(theme.popup_border_fg).bg(if is_selected {
-            if state.focus_panel() == FocusPanel::Categories { theme.menu_highlight_bg } else { theme.selection_bg }
-        } else if is_hovered {
-            theme.menu_hover_bg
-        } else {
-            theme.popup_bg
-        })));
+        spans.push(Span::styled(
+            icon,
+            Style::default()
+                .fg(theme.popup_border_fg)
+                .bg(if is_selected {
+                    if state.focus_panel() == FocusPanel::Categories {
+                        theme.menu_highlight_bg
+                    } else {
+                        theme.selection_bg
+                    }
+                } else if is_hovered {
+                    theme.menu_hover_bg
+                } else {
+                    theme.popup_bg
+                }),
+        ));
         spans.push(Span::styled(&page.name, style));
 
         let line = Line::from(spans);
@@ -2115,14 +2125,14 @@ fn build_keyhint_line<'a>(text: &str, theme: &Theme) -> Line<'a> {
             continue;
         }
         if i > 0 {
-            spans.push(Span::styled("  ", sep_style));
+            spans.push(Span::styled(" ", sep_style));
         }
         // Split by first ":" to separate key from description
         if let Some(colon_pos) = segment.find(':') {
             let key = &segment[..colon_pos];
             let action = &segment[colon_pos + 1..];
             spans.push(Span::styled(format!(" {} ", key), key_style));
-            spans.push(Span::styled(format!(" {}", action), desc_style));
+            spans.push(Span::styled(action.to_string(), desc_style));
         } else {
             // No colon - just render as text
             spans.push(Span::styled(segment.to_string(), desc_style));
