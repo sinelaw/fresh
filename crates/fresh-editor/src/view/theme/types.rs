@@ -793,6 +793,12 @@ pub struct SyntaxColors {
     /// Operators (+, -, =, etc.)
     #[serde(default = "default_syntax_operator")]
     pub operator: ColorDef,
+    /// Punctuation brackets ({, }, (, ), [, ])
+    #[serde(default = "default_syntax_punctuation_bracket")]
+    pub punctuation_bracket: ColorDef,
+    /// Punctuation delimiters (;, ,, .)
+    #[serde(default = "default_syntax_punctuation_delimiter")]
+    pub punctuation_delimiter: ColorDef,
 }
 
 // Default syntax colors (VSCode Dark+ inspired)
@@ -819,6 +825,12 @@ fn default_syntax_constant() -> ColorDef {
 }
 fn default_syntax_operator() -> ColorDef {
     ColorDef::Rgb(212, 212, 212)
+}
+fn default_syntax_punctuation_bracket() -> ColorDef {
+    ColorDef::Rgb(212, 212, 212) // default foreground — brackets blend with text
+}
+fn default_syntax_punctuation_delimiter() -> ColorDef {
+    ColorDef::Rgb(212, 212, 212) // default foreground — delimiters blend with text
 }
 
 /// Comprehensive theme structure with all UI colors
@@ -964,6 +976,8 @@ pub struct Theme {
     pub syntax_variable: Color,
     pub syntax_constant: Color,
     pub syntax_operator: Color,
+    pub syntax_punctuation_bracket: Color,
+    pub syntax_punctuation_delimiter: Color,
 }
 
 impl From<ThemeFile> for Theme {
@@ -1067,6 +1081,8 @@ impl From<ThemeFile> for Theme {
             syntax_variable: file.syntax.variable.into(),
             syntax_constant: file.syntax.constant.into(),
             syntax_operator: file.syntax.operator.into(),
+            syntax_punctuation_bracket: file.syntax.punctuation_bracket.into(),
+            syntax_punctuation_delimiter: file.syntax.punctuation_delimiter.into(),
         }
     }
 }
@@ -1178,6 +1194,8 @@ impl From<Theme> for ThemeFile {
                 variable: theme.syntax_variable.into(),
                 constant: theme.syntax_constant.into(),
                 operator: theme.syntax_operator.into(),
+                punctuation_bracket: theme.syntax_punctuation_bracket.into(),
+                punctuation_delimiter: theme.syntax_punctuation_delimiter.into(),
             },
         }
     }
@@ -1273,6 +1291,8 @@ impl Theme {
                 "variable" => Some(self.syntax_variable),
                 "constant" => Some(self.syntax_constant),
                 "operator" => Some(self.syntax_operator),
+                "punctuation_bracket" => Some(self.syntax_punctuation_bracket),
+                "punctuation_delimiter" => Some(self.syntax_punctuation_delimiter),
                 _ => None,
             },
             "diagnostic" => match field {

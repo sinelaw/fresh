@@ -19,6 +19,8 @@ pub enum HighlightCategory {
     Keyword,
     Number,
     Operator,
+    PunctuationBracket,
+    PunctuationDelimiter,
     Property,
     String,
     Type,
@@ -48,6 +50,8 @@ impl HighlightCategory {
             Self::Variable | Self::Property => "syntax.variable",
             Self::Constant | Self::Number | Self::Attribute => "syntax.constant",
             Self::Operator => "syntax.operator",
+            Self::PunctuationBracket => "syntax.punctuation_bracket",
+            Self::PunctuationDelimiter => "syntax.punctuation_delimiter",
         }
     }
 
@@ -61,6 +65,8 @@ impl HighlightCategory {
             Self::Keyword => "Keyword",
             Self::Number => "Number",
             Self::Operator => "Operator",
+            Self::PunctuationBracket => "Punctuation Bracket",
+            Self::PunctuationDelimiter => "Punctuation Delimiter",
             Self::Property => "Property",
             Self::String => "String",
             Self::Type => "Type",
@@ -79,6 +85,8 @@ pub fn highlight_color(category: HighlightCategory, theme: &crate::view::theme::
         HighlightCategory::Keyword => theme.syntax_keyword,
         HighlightCategory::Number => theme.syntax_constant,
         HighlightCategory::Operator => theme.syntax_operator,
+        HighlightCategory::PunctuationBracket => theme.syntax_punctuation_bracket,
+        HighlightCategory::PunctuationDelimiter => theme.syntax_punctuation_delimiter,
         HighlightCategory::Property => theme.syntax_variable,
         HighlightCategory::String => theme.syntax_string,
         HighlightCategory::Type => theme.syntax_type,

@@ -53,6 +53,8 @@ pub enum HighlightCategory {
     Keyword,
     Number,
     Operator,
+    PunctuationBracket,
+    PunctuationDelimiter,
     Property,
     String,
     Type,
@@ -70,10 +72,12 @@ impl HighlightCategory {
             4 => Some(Self::Keyword),
             5 => Some(Self::Number),
             6 => Some(Self::Operator),
-            7 => Some(Self::Property),
-            8 => Some(Self::String),
-            9 => Some(Self::Type),
-            10 => Some(Self::Variable),
+            7 => Some(Self::PunctuationBracket),
+            8 => Some(Self::PunctuationDelimiter),
+            9 => Some(Self::Property),
+            10 => Some(Self::String),
+            11 => Some(Self::Type),
+            12 => Some(Self::Variable),
             _ => None,
         }
     }
@@ -81,29 +85,29 @@ impl HighlightCategory {
     /// Map a TypeScript highlight index to a category.
     pub fn from_typescript_index(index: usize) -> Option<Self> {
         match index {
-            0 => Some(Self::Attribute), // attribute
-            1 => Some(Self::Comment),   // comment
-            2 => Some(Self::Constant),  // constant
-            3 => Some(Self::Constant),  // constant.builtin
-            4 => Some(Self::Type),      // constructor
-            5 => Some(Self::String),    // embedded (template substitutions)
-            6 => Some(Self::Function),  // function
-            7 => Some(Self::Function),  // function.builtin
-            8 => Some(Self::Function),  // function.method
-            9 => Some(Self::Keyword),   // keyword
-            10 => Some(Self::Number),   // number
-            11 => Some(Self::Operator), // operator
-            12 => Some(Self::Property), // property
-            13 => Some(Self::Operator), // punctuation.bracket
-            14 => Some(Self::Operator), // punctuation.delimiter
-            15 => Some(Self::Constant), // punctuation.special (template ${})
-            16 => Some(Self::String),   // string
-            17 => Some(Self::String),   // string.special (regex)
-            18 => Some(Self::Type),     // type
-            19 => Some(Self::Type),     // type.builtin
-            20 => Some(Self::Variable), // variable
-            21 => Some(Self::Constant), // variable.builtin (this, super, arguments)
-            22 => Some(Self::Variable), // variable.parameter
+            0 => Some(Self::Attribute),             // attribute
+            1 => Some(Self::Comment),               // comment
+            2 => Some(Self::Constant),              // constant
+            3 => Some(Self::Constant),              // constant.builtin
+            4 => Some(Self::Type),                  // constructor
+            5 => Some(Self::String),                // embedded (template substitutions)
+            6 => Some(Self::Function),              // function
+            7 => Some(Self::Function),              // function.builtin
+            8 => Some(Self::Function),              // function.method
+            9 => Some(Self::Keyword),               // keyword
+            10 => Some(Self::Number),               // number
+            11 => Some(Self::Operator),             // operator
+            12 => Some(Self::Property),             // property
+            13 => Some(Self::PunctuationBracket),   // punctuation.bracket
+            14 => Some(Self::PunctuationDelimiter), // punctuation.delimiter
+            15 => Some(Self::Constant),             // punctuation.special (template ${})
+            16 => Some(Self::String),               // string
+            17 => Some(Self::String),               // string.special (regex)
+            18 => Some(Self::Type),                 // type
+            19 => Some(Self::Type),                 // type.builtin
+            20 => Some(Self::Variable),             // variable
+            21 => Some(Self::Constant),             // variable.builtin (this, super, arguments)
+            22 => Some(Self::Variable),             // variable.parameter
             _ => None,
         }
     }
@@ -119,6 +123,8 @@ impl HighlightCategory {
             Self::Variable | Self::Property => "syntax.variable",
             Self::Constant | Self::Number | Self::Attribute => "syntax.constant",
             Self::Operator => "syntax.operator",
+            Self::PunctuationBracket => "syntax.punctuation_bracket",
+            Self::PunctuationDelimiter => "syntax.punctuation_delimiter",
         }
     }
 
@@ -132,6 +138,8 @@ impl HighlightCategory {
             Self::Keyword => "Keyword",
             Self::Number => "Number",
             Self::Operator => "Operator",
+            Self::PunctuationBracket => "Punctuation Bracket",
+            Self::PunctuationDelimiter => "Punctuation Delimiter",
             Self::Property => "Property",
             Self::String => "String",
             Self::Type => "Type",
@@ -694,6 +702,8 @@ const DEFAULT_HIGHLIGHT_CAPTURES: &[&str] = &[
     "keyword",
     "number",
     "operator",
+    "punctuation.bracket",
+    "punctuation.delimiter",
     "property",
     "string",
     "type",

@@ -32,6 +32,8 @@ pub fn highlight_color(category: HighlightCategory, theme: &Theme) -> Color {
         HighlightCategory::Keyword => theme.syntax_keyword,
         HighlightCategory::Number => theme.syntax_constant,
         HighlightCategory::Operator => theme.syntax_operator,
+        HighlightCategory::PunctuationBracket => theme.syntax_punctuation_bracket,
+        HighlightCategory::PunctuationDelimiter => theme.syntax_punctuation_delimiter,
         HighlightCategory::Property => theme.syntax_variable, // Properties are like variables
         HighlightCategory::String => theme.syntax_string,
         HighlightCategory::Type => theme.syntax_type,

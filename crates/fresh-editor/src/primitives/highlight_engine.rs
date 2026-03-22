@@ -102,9 +102,34 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         return Some(HighlightCategory::String);
     }
 
-    // Operators (including keyword.operator)
-    if scope_lower.starts_with("keyword.operator") || scope_lower.starts_with("punctuation") {
+    // Operators (keyword.operator only)
+    if scope_lower.starts_with("keyword.operator") {
         return Some(HighlightCategory::Operator);
+    }
+
+    // Punctuation brackets ({, }, (, ), [, ], <, >)
+    // Covers punctuation.section.*, punctuation.bracket.*,
+    // and punctuation.definition.{array,block,brackets,group,inline-table,section,table,tag}
+    if scope_lower.starts_with("punctuation.section")
+        || scope_lower.starts_with("punctuation.bracket")
+        || scope_lower.starts_with("punctuation.definition.array")
+        || scope_lower.starts_with("punctuation.definition.block")
+        || scope_lower.starts_with("punctuation.definition.brackets")
+        || scope_lower.starts_with("punctuation.definition.group")
+        || scope_lower.starts_with("punctuation.definition.inline-table")
+        || scope_lower.starts_with("punctuation.definition.section")
+        || scope_lower.starts_with("punctuation.definition.table")
+        || scope_lower.starts_with("punctuation.definition.tag")
+    {
+        return Some(HighlightCategory::PunctuationBracket);
+    }
+
+    // Punctuation delimiters (;, ,, .)
+    if scope_lower.starts_with("punctuation.separator")
+        || scope_lower.starts_with("punctuation.terminator")
+        || scope_lower.starts_with("punctuation.accessor")
+    {
+        return Some(HighlightCategory::PunctuationDelimiter);
     }
 
     // Functions
@@ -1208,15 +1233,56 @@ mod tests {
     }
 
     #[test]
-    fn test_other_punctuation_still_operator() {
-        // Other punctuation (brackets, delimiters) should still be operator
-        assert_eq!(
-            scope_to_category("punctuation.separator"),
-            Some(HighlightCategory::Operator)
-        );
+    fn test_punctuation_bracket() {
+        // punctuation.section (TextMate standard for block delimiters)
         assert_eq!(
             scope_to_category("punctuation.section"),
-            Some(HighlightCategory::Operator)
+            Some(HighlightCategory::PunctuationBracket)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.section.block.begin.c"),
+            Some(HighlightCategory::PunctuationBracket)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.bracket"),
+            Some(HighlightCategory::PunctuationBracket)
+        );
+        // punctuation.definition.* bracket-like scopes from sublime-syntax grammars
+        assert_eq!(
+            scope_to_category("punctuation.definition.array.begin.toml"),
+            Some(HighlightCategory::PunctuationBracket)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.definition.block.code.typst"),
+            Some(HighlightCategory::PunctuationBracket)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.definition.group.typst"),
+            Some(HighlightCategory::PunctuationBracket)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.definition.inline-table.begin.toml"),
+            Some(HighlightCategory::PunctuationBracket)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.definition.tag.end.svelte"),
+            Some(HighlightCategory::PunctuationBracket)
+        );
+    }
+
+    #[test]
+    fn test_punctuation_delimiter() {
+        assert_eq!(
+            scope_to_category("punctuation.separator"),
+            Some(HighlightCategory::PunctuationDelimiter)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.terminator.statement.c"),
+            Some(HighlightCategory::PunctuationDelimiter)
+        );
+        assert_eq!(
+            scope_to_category("punctuation.accessor"),
+            Some(HighlightCategory::PunctuationDelimiter)
         );
     }
 }

@@ -374,9 +374,34 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         return Some(HighlightCategory::String);
     }
 
-    // Operators
-    if scope_lower.starts_with("keyword.operator") || scope_lower.starts_with("punctuation") {
+    // Operators (keyword.operator only)
+    if scope_lower.starts_with("keyword.operator") {
         return Some(HighlightCategory::Operator);
+    }
+
+    // Punctuation brackets ({, }, (, ), [, ], <, >)
+    // Covers punctuation.section.*, punctuation.bracket.*,
+    // and punctuation.definition.{array,block,brackets,group,inline-table,section,table,tag}
+    if scope_lower.starts_with("punctuation.section")
+        || scope_lower.starts_with("punctuation.bracket")
+        || scope_lower.starts_with("punctuation.definition.array")
+        || scope_lower.starts_with("punctuation.definition.block")
+        || scope_lower.starts_with("punctuation.definition.brackets")
+        || scope_lower.starts_with("punctuation.definition.group")
+        || scope_lower.starts_with("punctuation.definition.inline-table")
+        || scope_lower.starts_with("punctuation.definition.section")
+        || scope_lower.starts_with("punctuation.definition.table")
+        || scope_lower.starts_with("punctuation.definition.tag")
+    {
+        return Some(HighlightCategory::PunctuationBracket);
+    }
+
+    // Punctuation delimiters (;, ,, .)
+    if scope_lower.starts_with("punctuation.separator")
+        || scope_lower.starts_with("punctuation.terminator")
+        || scope_lower.starts_with("punctuation.accessor")
+    {
+        return Some(HighlightCategory::PunctuationDelimiter);
     }
 
     // Functions
