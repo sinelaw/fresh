@@ -14,3 +14,4 @@ Press `Ctrl+P` to open the command palette. Use prefix characters to switch mode
 - Press `Tab` to accept the top suggestion
 - Type `>` to access commands, or `#` followed by a buffer name to switch files
 - Space-separated terms match independently (e.g., "feat group" matches "features/groups/view.tsx")
+- In file finder mode, use `path:line[:col]` syntax to jump to a location after opening (e.g. `src/main.rs:42:10`)

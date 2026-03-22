@@ -125,9 +125,9 @@ Configure `trim_trailing_whitespace_on_save` and `ensure_final_newline_on_save` 
 | `Ctrl+R` | Replace in buffer |
 | `Ctrl+Alt+R` | Interactive replace (y/n/!/q for each match) |
 | `F3` | Find next match |
-| `Shift+F3` | Find previous match **TODO - use command palette**|
+| `Shift+F3` | Find previous match |
 | `Alt+N` / `Ctrl+F3` | Find next occurrence of selection |
-| `Alt+P` / `Ctrl+Shift+F3` | Find previous occurrence of selection **TODO - use command palette**|
+| `Alt+P` / `Ctrl+Shift+F3` | Find previous occurrence of selection |
 
 See [Search and Replace](./search-replace.md) for more details.
 

@@ -4,6 +4,14 @@
 
 Detach from Fresh and reattach later, similar to tmux. Your editor state persists even after closing the terminal.
 
+## Hot Exit
+
+All buffers — including unnamed scratch buffers — persist across sessions automatically. When you quit Fresh, unsaved changes are preserved and restored on next startup. Configurable via the `hot_exit` setting (default: on).
+
+## Workspace Storage
+
+Session state (open files, split layout, plugin state) is always restored on startup, even when opening specific files from the CLI. Plugin state also persists across sessions.
+
 ## Quick Start
 
 ```bash

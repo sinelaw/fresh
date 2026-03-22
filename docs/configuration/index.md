@@ -245,7 +245,6 @@ All settings can be changed via the Settings UI (command palette → "Open Setti
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Tab size | Spaces per indent level | 4 |
 | Auto-close | Auto-close brackets and quotes | on |
 | Auto-surround | Wrap selection when typing a delimiter | on |
 | Trim trailing whitespace on save | Remove trailing whitespace when saving | off |
@@ -258,6 +257,20 @@ All settings can be changed via the Settings UI (command palette → "Open Setti
 | Auto-save | Save modified buffers to disk automatically | off |
 | Auto-save interval | Seconds between auto-saves (when enabled) | 30 |
 | Recovery save interval | Seconds between crash-recovery saves | 2 |
+| Hot exit | Persist all buffers (including scratch) across sessions | on |
+
+### Indentation
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Tab size | Spaces per indent level | 4 |
+| Use tabs | Indent with tabs instead of spaces | off |
+
+### UI
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Show prompt line | Show the prompt line at the bottom | on |
 
 ### Clipboard
 
@@ -287,4 +300,4 @@ To prevent LSP servers from consuming too many resources, Fresh can limit their 
 }
 ```
 
-See `docs/PROCESS_LIMITS.md`.
+The `max_memory_mb` limit is enforced via platform-specific mechanisms. `max_cpu_percent` is relative to one core (e.g. 200 = two full cores).

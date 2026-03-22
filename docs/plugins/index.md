@@ -13,6 +13,14 @@ Bundled plugins:
 *   **Git Grep:** Interactively search through your Git repository.
 *   **Git Find File:** Quickly find and open files in your Git repository.
 
+## Load Plugin from Buffer
+
+Run and hot-reload plugins directly from an open `.ts` buffer using "Load Plugin from Buffer" from the command palette. The buffer gets LSP support for the Fresh plugin API, making this useful for rapid plugin development.
+
+## Plugin API: `registerHandler()`
+
+Plugins should use `registerHandler()` to register command handlers instead of the older `globalThis` pattern. This provides better type safety and is the recommended approach for all new plugins.
+
 > On macOS, plugins folder needs to live either in the same directory as the binary OR in the directory that fresh is run from. If installed via homebrew, the binary lives in ```/opt/homebrew/bin/fresh```. The simplest, cleanest way to to create a symbolic link in that folder pointing to your plugins. i.e. ``` ln -s /Users/username/freshplugins /opt/homebrew/bin/plugins```
 
 ## Package Manager

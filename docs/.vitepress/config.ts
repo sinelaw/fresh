@@ -116,9 +116,7 @@ export default defineConfig({
                 text: "Configuration",
                 collapsed: true,
                 items: [
-                  { text: "Config Design", link: "/internal/config-design" },
                   { text: "Config Editor Design", link: "/internal/config-editor-design" },
-                  { text: "Config Implementation", link: "/internal/config-implementation-plan" },
                   { text: "Settings Modified Indicator", link: "/internal/settings-modified-indicator-design" },
                 ],
               },
@@ -126,10 +124,8 @@ export default defineConfig({
                 text: "Plugins",
                 collapsed: true,
                 items: [
-                  { text: "Plugin Architecture", link: "/internal/plugin-architecture-plan" },
                   { text: "Plugin Marketplace", link: "/internal/plugin-marketplace-design" },
                   { text: "Plugin Usability", link: "/internal/plugin-usability-review" },
-                  { text: "i18n Design", link: "/internal/i18n-design" },
                 ],
               },
               {
@@ -138,7 +134,6 @@ export default defineConfig({
                 items: [
                   { text: "Theme Consolidation", link: "/internal/theme-consolidation-plan" },
                   { text: "Theme Usability", link: "/internal/theme-usability-improvements" },
-                  { text: "Theme User Flows", link: "/internal/theme-user-flows" },
                 ],
               },
               {
@@ -147,9 +142,6 @@ export default defineConfig({
                 items: [
                   { text: "Input Calibration", link: "/internal/input-calibration-wizard" },
                   { text: "Event Dispatch", link: "/internal/event-dispatch-architecture" },
-                  { text: "Paste Handling", link: "/internal/paste-handling" },
-                  { text: "Vi Mode Design", link: "/internal/vi-mode-design" },
-                  { text: "Warning UX", link: "/internal/warning-notification-ux" },
                 ],
               },
               {
@@ -189,10 +181,9 @@ export default defineConfig({
                 text: "Core/System",
                 collapsed: true,
                 items: [
+                  { text: "Design Decisions", link: "/internal/design-decisions" },
                   { text: "Testing Guide", link: "/internal/testing" },
-                  { text: "Bulk Edit Optimization", link: "/internal/bulk-edit-optimization" },
                   { text: "Code Review", link: "/internal/code-review" },
-                  { text: "TimeSource Design", link: "/internal/timesource-design" },
                   { text: "Unicode Width", link: "/internal/unicode-width" },
                   { text: "Readme", link: "/internal/README" },
                 ],

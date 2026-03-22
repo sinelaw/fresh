@@ -4,7 +4,7 @@ The Keybinding Editor provides a visual interface for browsing, searching, and c
 
 ## Overview
 
-The editor displays all active keybindings in a searchable, filterable table with five columns:
+The editor displays all active keybindings in a searchable, filterable table. Sections are collapsible, and plugin mode bindings are shown as first-class entries alongside built-in bindings. The table has five columns:
 
 | Column | Description |
 |--------|-------------|
@@ -28,7 +28,7 @@ Two search modes are available:
 
 ### Text Search
 
-Press `/` to start a text search. Type to filter bindings by action name, description, key display, or context. Press `Esc` to cancel.
+Press `/` to start a text search. Type to filter bindings by action name, description, key display, or context. Plugin-registered command names are included in search results. Press `Esc` to cancel.
 
 ### Key Recording Search
 
