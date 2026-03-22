@@ -358,9 +358,10 @@ fn test_search_replace_executes_replacement() {
     open_search_replace_via_palette(&mut harness);
     enter_search_and_replace(&mut harness, "hello", "goodbye");
 
-    // Wait for search results to be populated (match stats appear in the panel)
+    // Wait for search results to be populated AND for the panel focus to
+    // stabilize before sending Alt+Enter.
     harness
-        .wait_until(|h| {
+        .wait_until_stable(|h| {
             let s = h.screen_to_string();
             s.contains("matches") && s.contains("[v]")
         })
@@ -430,9 +431,10 @@ fn test_search_replace_delete_pattern() {
         .unwrap();
     harness.render().unwrap();
 
-    // Wait for search results to be populated (match stats appear in the panel)
+    // Wait for search results to be populated AND for the panel focus to
+    // stabilize before sending Alt+Enter.
     harness
-        .wait_until(|h| {
+        .wait_until_stable(|h| {
             let s = h.screen_to_string();
             s.contains("matches") && s.contains("[v]")
         })
@@ -575,29 +577,21 @@ fn test_search_replace_multiple_matches_same_line() {
         harness.screen_to_string()
     );
 
-    // Wait for search results to be populated (match stats appear in the panel)
+    // Wait for search results to be populated AND for the panel focus to
+    // stabilize.  After rerunSearch() completes, a .then() callback sets
+    // focusPanel="matches" and re-renders.  wait_until_stable ensures that
+    // extra render cycle has settled before we send Alt+Enter.
     eprintln!(
-        "[DEBUG {}] waiting for search results (matches + [v])",
+        "[DEBUG {}] waiting for search results (matches + [v]) and stability",
         elapsed()
     );
-    {
-        let mut wait_iters = 0u64;
-        harness
-            .wait_until(|h| {
-                wait_iters += 1;
-                if wait_iters % 20 == 0 {
-                    eprintln!(
-                        "[DEBUG wait_until matches] iteration {}, screen:\n{}",
-                        wait_iters,
-                        h.screen_to_string()
-                    );
-                }
-                let s = h.screen_to_string();
-                s.contains("matches") && s.contains("[v]")
-            })
-            .unwrap();
-    }
-    eprintln!("[DEBUG {}] search results populated", elapsed());
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
+        .unwrap();
+    eprintln!("[DEBUG {}] search results populated and stable", elapsed());
     eprintln!(
         "[DEBUG {}] screen:\n{}",
         elapsed(),
