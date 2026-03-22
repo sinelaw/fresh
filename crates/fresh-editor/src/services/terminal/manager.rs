@@ -195,11 +195,13 @@ impl TerminalManager {
                 cmd.cwd(dir);
             }
 
-            // On Windows, set environment variables that help with ConPTY
+            // Set TERM so programs like less know the terminal capabilities.
+            // The built-in emulator is alacritty-based so xterm-256color is appropriate.
+            cmd.env("TERM", "xterm-256color");
+
+            // On Windows, set additional environment variables that help with ConPTY
             #[cfg(windows)]
             {
-                // Set TERM to help shells understand they're in a terminal
-                cmd.env("TERM", "xterm-256color");
                 // Ensure PROMPT is set for cmd.exe
                 if shell.to_lowercase().contains("cmd") {
                     cmd.env("PROMPT", "$P$G");
