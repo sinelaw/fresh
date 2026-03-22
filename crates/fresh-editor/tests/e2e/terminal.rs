@@ -3009,3 +3009,85 @@ fn test_bracket_paste_in_terminal_mode() {
     // Clean up: send Ctrl+D to exit cat
     harness.editor_mut().send_terminal_input(b"\x04");
 }
+
+/// Test that arrow keys work in programs that enable application cursor keys (DECCKM).
+/// Programs like `less` and `git log` set DECCKM mode, which means arrow keys
+/// must be sent as SS3 sequences (\x1bOA) instead of CSI (\x1b[A).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_arrow_keys_in_less() {
+    let mut harness = harness_or_return!(80, 24);
+
+    harness.editor_mut().open_terminal();
+
+    // Create a numbered file with distinctive prefixed lines (more than terminal height)
+    harness.editor_mut().send_terminal_input(
+        b"for i in $(seq 1 100); do echo \"TLINE_$i\"; done > /tmp/fresh_test_less_arrows.txt\n",
+    );
+
+    // Wait for the file creation to complete
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo XDONE_MARKER_X\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("XDONE_MARKER_X"))
+        .unwrap();
+
+    // Open the file in less (this enters alternate screen and enables DECCKM)
+    harness
+        .editor_mut()
+        .send_terminal_input(b"less /tmp/fresh_test_less_arrows.txt\n");
+
+    // Wait for less to show the file content
+    harness
+        .wait_until(|h| h.screen_to_string().contains("TLINE_1"))
+        .unwrap();
+
+    // Verify we see the first few lines
+    harness.assert_screen_contains("TLINE_2");
+    harness.assert_screen_contains("TLINE_3");
+
+    // Verify we're NOT seeing lines near the end yet
+    harness.assert_screen_not_contains("TLINE_100");
+
+    // Press Down arrow multiple times to scroll down.
+    // In less with DECCKM, this requires SS3 sequences to work.
+    for _ in 0..40 {
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Down, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // After scrolling down 40 lines, line 41 should be visible
+    harness
+        .wait_until(|h| h.screen_to_string().contains("TLINE_41"))
+        .unwrap();
+
+    // The first line should no longer be visible
+    harness.assert_screen_not_contains("TLINE_1");
+
+    // Now press Up arrow to scroll back up
+    for _ in 0..10 {
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Up, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // After scrolling up 10 lines, line 31 should be visible
+    harness
+        .wait_until(|h| h.screen_to_string().contains("TLINE_31"))
+        .unwrap();
+
+    // Exit less with 'q'
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+
+    // Clean up
+    harness
+        .editor_mut()
+        .send_terminal_input(b"rm /tmp/fresh_test_less_arrows.txt\n");
+}

@@ -335,6 +335,13 @@ impl TerminalState {
         self.term.mode().contains(TermMode::ALTERNATE_SCROLL)
     }
 
+    /// Check if application cursor keys mode (DECCKM) is enabled.
+    /// Programs like less, git log set this mode so that arrow keys
+    /// send `\x1bOA` (SS3) instead of `\x1b[A` (CSI).
+    pub fn is_app_cursor(&self) -> bool {
+        self.term.mode().contains(TermMode::APP_CURSOR)
+    }
+
     // =========================================================================
     // Incremental scrollback streaming
     // =========================================================================

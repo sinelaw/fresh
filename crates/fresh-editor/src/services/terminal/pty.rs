@@ -8,7 +8,15 @@ use crossterm::event::{KeyCode, KeyModifiers};
 ///
 /// This handles special keys and modifier combinations that need
 /// to be sent as escape sequences or control characters.
-pub fn key_to_pty_bytes(code: KeyCode, modifiers: KeyModifiers) -> Option<Vec<u8>> {
+///
+/// When `app_cursor` is true (DECCKM mode), unmodified arrow keys use SS3
+/// sequences (`\x1bOA`) instead of CSI (`\x1b[A`). Programs like less and
+/// git log enable this mode.
+pub fn key_to_pty_bytes(
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    app_cursor: bool,
+) -> Option<Vec<u8>> {
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     let alt = modifiers.contains(KeyModifiers::ALT);
     let shift = modifiers.contains(KeyModifiers::SHIFT);
@@ -88,6 +96,8 @@ pub fn key_to_pty_bytes(code: KeyCode, modifiers: KeyModifiers) -> Option<Vec<u8
                 Some(vec![0x1b, b'[', b'1', b';', b'2', b'A'])
             } else if alt {
                 Some(vec![0x1b, b'[', b'1', b';', b'3', b'A'])
+            } else if app_cursor {
+                Some(vec![0x1b, b'O', b'A'])
             } else {
                 Some(vec![0x1b, b'[', b'A'])
             }
@@ -99,6 +109,8 @@ pub fn key_to_pty_bytes(code: KeyCode, modifiers: KeyModifiers) -> Option<Vec<u8
                 Some(vec![0x1b, b'[', b'1', b';', b'2', b'B'])
             } else if alt {
                 Some(vec![0x1b, b'[', b'1', b';', b'3', b'B'])
+            } else if app_cursor {
+                Some(vec![0x1b, b'O', b'B'])
             } else {
                 Some(vec![0x1b, b'[', b'B'])
             }
@@ -110,6 +122,8 @@ pub fn key_to_pty_bytes(code: KeyCode, modifiers: KeyModifiers) -> Option<Vec<u8
                 Some(vec![0x1b, b'[', b'1', b';', b'2', b'C'])
             } else if alt {
                 Some(vec![0x1b, b'[', b'1', b';', b'3', b'C'])
+            } else if app_cursor {
+                Some(vec![0x1b, b'O', b'C'])
             } else {
                 Some(vec![0x1b, b'[', b'C'])
             }
@@ -121,6 +135,8 @@ pub fn key_to_pty_bytes(code: KeyCode, modifiers: KeyModifiers) -> Option<Vec<u8
                 Some(vec![0x1b, b'[', b'1', b';', b'2', b'D'])
             } else if alt {
                 Some(vec![0x1b, b'[', b'1', b';', b'3', b'D'])
+            } else if app_cursor {
+                Some(vec![0x1b, b'O', b'D'])
             } else {
                 Some(vec![0x1b, b'[', b'D'])
             }
@@ -183,45 +199,71 @@ mod tests {
 
     #[test]
     fn test_regular_char() {
-        let bytes = key_to_pty_bytes(KeyCode::Char('a'), KeyModifiers::NONE);
+        let bytes = key_to_pty_bytes(KeyCode::Char('a'), KeyModifiers::NONE, false);
         assert_eq!(bytes, Some(vec![b'a']));
     }
 
     #[test]
     fn test_ctrl_c() {
-        let bytes = key_to_pty_bytes(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let bytes = key_to_pty_bytes(KeyCode::Char('c'), KeyModifiers::CONTROL, false);
         assert_eq!(bytes, Some(vec![0x03])); // ETX (Ctrl+C)
     }
 
     #[test]
     fn test_enter() {
-        let bytes = key_to_pty_bytes(KeyCode::Enter, KeyModifiers::NONE);
+        let bytes = key_to_pty_bytes(KeyCode::Enter, KeyModifiers::NONE, false);
         assert_eq!(bytes, Some(vec![b'\r']));
     }
 
     #[test]
     fn test_arrow_keys() {
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Up, KeyModifiers::NONE),
+            key_to_pty_bytes(KeyCode::Up, KeyModifiers::NONE, false),
             Some(vec![0x1b, b'[', b'A'])
         );
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Down, KeyModifiers::NONE),
+            key_to_pty_bytes(KeyCode::Down, KeyModifiers::NONE, false),
             Some(vec![0x1b, b'[', b'B'])
         );
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Right, KeyModifiers::NONE),
+            key_to_pty_bytes(KeyCode::Right, KeyModifiers::NONE, false),
             Some(vec![0x1b, b'[', b'C'])
         );
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Left, KeyModifiers::NONE),
+            key_to_pty_bytes(KeyCode::Left, KeyModifiers::NONE, false),
             Some(vec![0x1b, b'[', b'D'])
         );
     }
 
     #[test]
+    fn test_arrow_keys_app_cursor() {
+        // When DECCKM (application cursor keys) is active, unmodified arrows use SS3
+        assert_eq!(
+            key_to_pty_bytes(KeyCode::Up, KeyModifiers::NONE, true),
+            Some(vec![0x1b, b'O', b'A'])
+        );
+        assert_eq!(
+            key_to_pty_bytes(KeyCode::Down, KeyModifiers::NONE, true),
+            Some(vec![0x1b, b'O', b'B'])
+        );
+        assert_eq!(
+            key_to_pty_bytes(KeyCode::Right, KeyModifiers::NONE, true),
+            Some(vec![0x1b, b'O', b'C'])
+        );
+        assert_eq!(
+            key_to_pty_bytes(KeyCode::Left, KeyModifiers::NONE, true),
+            Some(vec![0x1b, b'O', b'D'])
+        );
+        // Modified arrows still use CSI even with app_cursor
+        assert_eq!(
+            key_to_pty_bytes(KeyCode::Up, KeyModifiers::CONTROL, true),
+            Some(vec![0x1b, b'[', b'1', b';', b'5', b'A'])
+        );
+    }
+
+    #[test]
     fn test_alt_key() {
-        let bytes = key_to_pty_bytes(KeyCode::Char('x'), KeyModifiers::ALT);
+        let bytes = key_to_pty_bytes(KeyCode::Char('x'), KeyModifiers::ALT, false);
         assert_eq!(bytes, Some(vec![0x1b, b'x']));
     }
 }
