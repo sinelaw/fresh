@@ -7,6 +7,7 @@ use crate::model::cursor::{Cursors, Position2D, SelectionMode};
 use crate::model::event::{CursorId, Event};
 use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
 use crate::primitives::highlighter::HighlightCategory;
+use crate::primitives::indent_pattern::PatternIndentCalculator;
 use crate::primitives::word_navigation::{
     find_word_end, find_word_end_right, find_word_start, find_word_start_left,
     find_word_start_right,
@@ -431,7 +432,15 @@ pub fn get_auto_close_char(ch: char, auto_close: bool, language: &str) -> Option
     }
 }
 
-/// Calculate the correct indent for a closing delimiter using tree-sitter.
+/// Calculate the correct indent for a closing delimiter.
+///
+/// Uses tree-sitter when available, otherwise falls back to pattern-based
+/// delimiter matching which works for any C-style language (braces, brackets, parens).
+///
+/// TODO: Consider adding Sublime Text-style regex indent rules (`increaseIndentPattern`/
+/// `decreaseIndentPattern` per language) as a middle tier between tree-sitter and pattern
+/// matching. This would handle language-specific constructs (e.g., Python's `:`, Ruby's
+/// `end`) without requiring a full tree-sitter grammar for each language.
 fn calculate_closing_delimiter_indent(
     state: &mut EditorState,
     insert_position: usize,
@@ -445,7 +454,16 @@ fn calculate_closing_delimiter_indent(
             .calculate_dedent_for_delimiter(&state.buffer, insert_position, ch, language, tab_size)
             .unwrap_or(0)
     } else {
-        0
+        // No tree-sitter language available — use pattern-based fallback.
+        // This handles all C-style languages (Dart, Kotlin, Swift, etc.) by
+        // scanning backwards for the matching unmatched opening delimiter.
+        PatternIndentCalculator::calculate_dedent_for_delimiter(
+            &state.buffer,
+            insert_position,
+            ch,
+            tab_size,
+        )
+        .unwrap_or(0)
     }
 }
 

@@ -2048,3 +2048,86 @@ fn test_go_nested_auto_indent_uses_only_tabs() {
         "Nested Go indent should be two tabs"
     );
 }
+
+/// Test that typing a closing brace in a Dart file (no tree-sitter, pattern-based only)
+/// correctly dedents to the matching opening brace's indent level.
+#[test]
+fn test_dart_auto_dedent_closing_brace() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.dart");
+    // Dart file with a for-loop body at 4-space indent, trailing spaces on last line
+    // simulating the cursor ready to type `}`
+    std::fs::write(
+        &file_path,
+        "void main() {\n  for (final item in items) {\n    print(item);\n    ",
+    )
+    .unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor to end of file (on the line with trailing spaces)
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type closing brace - should dedent to 2 spaces (matching `for` keyword indent)
+    harness.type_text("}").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert!(lines.len() >= 4, "Should have at least 4 lines");
+
+    let brace_line = lines[3];
+    let leading_spaces = brace_line.chars().take_while(|&c| c == ' ').count();
+    assert_eq!(
+        leading_spaces, 2,
+        "Dart closing brace should dedent to 2 spaces (for-loop level), got {}. Content:\n{}",
+        leading_spaces, content
+    );
+    assert!(
+        brace_line.trim() == "}",
+        "Line should contain only the closing brace, got: {:?}",
+        brace_line
+    );
+}
+
+/// Test that typing a closing brace in a Dart file at the top-level block
+/// correctly dedents to column 0.
+#[test]
+fn test_dart_auto_dedent_closing_brace_top_level() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.dart");
+    // Dart file with function body, for-loop closed, trailing spaces for main's `}`
+    std::fs::write(
+        &file_path,
+        "void main() {\n  for (final item in items) {\n    print(item);\n  }\n  ",
+    )
+    .unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type closing brace - should dedent to 0 (matching `void main()` indent)
+    harness.type_text("}").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert!(lines.len() >= 5, "Should have at least 5 lines");
+
+    let brace_line = lines[4];
+    let leading_spaces = brace_line.chars().take_while(|&c| c == ' ').count();
+    assert_eq!(
+        leading_spaces, 0,
+        "Dart top-level closing brace should dedent to column 0, got {}. Content:\n{}",
+        leading_spaces, content
+    );
+}

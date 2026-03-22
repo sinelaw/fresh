@@ -832,8 +832,7 @@ impl IndentCalculator {
         // results because the reference line (the `}` line) sits at the boundary of
         // @indent nodes, creating an asymmetry between reference and cursor counts.
         if last_nonws_is_closing_brace {
-            let closing_brace_indent =
-                Self::get_current_line_indent(buffer, position, tab_size);
+            let closing_brace_indent = Self::get_current_line_indent(buffer, position, tab_size);
             tracing::debug!(
                 "Line ends with '}}', maintaining indent level: {}",
                 closing_brace_indent
