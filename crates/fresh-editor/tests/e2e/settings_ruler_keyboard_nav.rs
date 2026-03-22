@@ -192,7 +192,7 @@ fn test_settings_rulers_up_down_trapped_in_editing_mode() {
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    let screen_after_ups = harness.screen_to_string();
+    let _screen_after_ups = harness.screen_to_string();
 
     // Down from add-new row should have no effect (trapped at bottom of list)
     // This demonstrates the focus trap: Down does nothing when at the end,

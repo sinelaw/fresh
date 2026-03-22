@@ -257,6 +257,9 @@ impl SettingsState {
                         dialog.stop_editing();
                     }
                     // If not valid, Tab is ignored (user must fix or press Esc)
+                } else {
+                    // Tab exits text editing mode for non-JSON controls (TextList, Text)
+                    dialog.stop_editing();
                 }
             }
             _ => {}
@@ -758,6 +761,12 @@ impl SettingsState {
             }
             KeyCode::Down => {
                 self.text_focus_next();
+                InputResult::Consumed
+            }
+            KeyCode::Tab => {
+                // Tab exits text editing mode and advances focus to the next panel
+                self.stop_editing();
+                self.toggle_focus();
                 InputResult::Consumed
             }
             _ => InputResult::Consumed, // Consume all during text edit
