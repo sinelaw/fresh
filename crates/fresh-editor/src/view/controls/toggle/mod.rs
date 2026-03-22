@@ -150,7 +150,7 @@ mod tests {
             let layout = render_toggle(frame, area, &state, &colors);
 
             assert_eq!(layout.checkbox_area.width, 3);
-            assert_eq!(layout.full_area.width, 11); // "Enable: [x]"
+            assert_eq!(layout.full_area.width, 11); // "Enable: [✓]"
         });
     }
 

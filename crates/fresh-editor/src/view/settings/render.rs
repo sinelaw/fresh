@@ -20,7 +20,7 @@ use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarSta
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 /// Build spans for a text line with selection highlighting
@@ -113,8 +113,8 @@ pub fn render_settings(
     state: &mut SettingsState,
     theme: &Theme,
 ) -> SettingsLayout {
-    // Calculate modal size (80% of screen width, 90% height to fill most of available space)
-    let modal_width = (area.width * 80 / 100).min(100);
+    // Calculate modal size (90% of screen width, 90% height to fill most of available space)
+    let modal_width = (area.width * 90 / 100).min(160);
     let modal_height = area.height * 90 / 100;
     let modal_x = (area.width.saturating_sub(modal_width)) / 2;
     let modal_y = (area.height.saturating_sub(modal_height)) / 2;
@@ -133,6 +133,7 @@ pub fn render_settings(
     let block = Block::default()
         .title(title.as_str())
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.popup_border_fg))
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, modal_area);
@@ -230,7 +231,7 @@ fn render_horizontal_layout(
 ) {
     // Layout: [left panel (categories)] | [right panel (settings)]
     let chunks =
-        Layout::horizontal([Constraint::Length(20), Constraint::Min(40)]).split(content_area);
+        Layout::horizontal([Constraint::Length(24), Constraint::Min(40)]).split(content_area);
 
     let categories_area = chunks[0];
     let settings_area = chunks[1];
@@ -413,6 +414,23 @@ fn render_categories_horizontal(
     }
 }
 
+/// Get an icon for a settings category name (Nerd Font icons)
+fn category_icon(name: &str) -> &'static str {
+    match name.to_lowercase().as_str() {
+        "general" => "\u{f013} ",  //
+        "editor" => "\u{f044} ",   //
+        "clipboard" => "\u{f328} ", //
+        "file browser" => "\u{f07b} ", //
+        "file explorer" => "\u{f07c} ", //
+        "packages" => "\u{f487} ", //
+        "plugins" => "\u{f1e6} ",  //
+        "terminal" => "\u{f120} ", //
+        "warnings" => "\u{f071} ", //
+        "keybindings" => "\u{f11c} ", //
+        _ => "\u{f111} ",         //  (dot circle as fallback)
+    }
+}
+
 /// Render the category list
 fn render_categories(
     frame: &mut Frame,
@@ -454,20 +472,35 @@ fn render_categories(
 
         // Indicator for categories with modified settings
         let has_changes = page.items.iter().any(|i| i.modified);
-        let modified_indicator = if has_changes { "●" } else { " " };
+        let modified_indicator = if has_changes { "● " } else { "  " };
 
         // Show ">" when selected and focused for clearer selection indicator
         let selection_indicator = if is_selected && state.focus_panel() == FocusPanel::Categories {
-            ">"
+            "> "
         } else {
-            " "
+            "  "
         };
 
-        let text = format!(
-            "{}{} {}",
-            selection_indicator, modified_indicator, page.name
-        );
-        let line = Line::from(Span::styled(text, style));
+        let icon = category_icon(&page.name);
+
+        let mut spans = vec![
+            Span::styled(selection_indicator, style),
+        ];
+        if has_changes {
+            spans.push(Span::styled(modified_indicator, Style::default().fg(theme.menu_highlight_fg)));
+        } else {
+            spans.push(Span::styled(modified_indicator, style));
+        }
+        spans.push(Span::styled(icon, Style::default().fg(theme.popup_border_fg).bg(if is_selected {
+            if state.focus_panel() == FocusPanel::Categories { theme.menu_highlight_bg } else { theme.selection_bg }
+        } else if is_hovered {
+            theme.menu_hover_bg
+        } else {
+            theme.popup_bg
+        })));
+        spans.push(Span::styled(&page.name, style));
+
+        let line = Line::from(spans);
         frame.render_widget(Paragraph::new(line), row_area);
     }
 }
@@ -2056,11 +2089,47 @@ fn render_footer(
     } else {
         t!("settings.help_default").to_string()
     };
-    let help_style = Style::default().fg(theme.line_number_fg);
+    // Render help text with reverse-video styling for key hints
+    // Parse "Key:Action  Key:Action" format
+    let help_line = build_keyhint_line(&help, theme);
     frame.render_widget(
-        Paragraph::new(help.as_str()).style(help_style),
+        Paragraph::new(help_line),
         Rect::new(help_start_x, footer_y, help_width, 1),
     );
+}
+
+/// Build a Line with reverse-video styled key hints from "Key:Action  Key:Action" format
+fn build_keyhint_line<'a>(text: &str, theme: &Theme) -> Line<'a> {
+    let key_style = Style::default()
+        .fg(theme.popup_text_fg)
+        .bg(theme.split_separator_fg);
+    let desc_style = Style::default().fg(theme.line_number_fg);
+    let sep_style = Style::default().fg(theme.line_number_fg);
+
+    let mut spans: Vec<Span<'a>> = Vec::new();
+
+    // Split by double-space to get individual key hints
+    for (i, segment) in text.split("  ").enumerate() {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        if i > 0 {
+            spans.push(Span::styled("  ", sep_style));
+        }
+        // Split by first ":" to separate key from description
+        if let Some(colon_pos) = segment.find(':') {
+            let key = &segment[..colon_pos];
+            let action = &segment[colon_pos + 1..];
+            spans.push(Span::styled(format!(" {} ", key), key_style));
+            spans.push(Span::styled(format!(" {}", action), desc_style));
+        } else {
+            // No colon - just render as text
+            spans.push(Span::styled(segment.to_string(), desc_style));
+        }
+    }
+
+    Line::from(spans)
 }
 
 /// Render footer with buttons stacked vertically (for narrow mode)
@@ -2284,12 +2353,12 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
 fn render_search_hint(frame: &mut Frame, area: Rect, theme: &Theme) {
     let hint_style = Style::default().fg(theme.line_number_fg);
     let key_style = Style::default()
-        .fg(theme.menu_active_fg)
-        .add_modifier(Modifier::BOLD);
+        .fg(theme.popup_text_fg)
+        .bg(theme.split_separator_fg);
 
     let spans = vec![
         Span::styled("Press ", hint_style),
-        Span::styled("/", key_style),
+        Span::styled(" / ", key_style),
         Span::styled(" to search settings...", hint_style),
     ];
     let line = Line::from(spans);
@@ -2536,6 +2605,7 @@ fn render_confirm_dialog(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.diagnostic_warning_fg))
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, dialog_area);
@@ -2657,6 +2727,7 @@ fn render_reset_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
     let block = Block::default()
         .title(" Reset All Changes ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.diagnostic_warning_fg))
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, dialog_area);
@@ -2782,6 +2853,7 @@ fn render_entry_dialog(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.popup_border_fg))
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, dialog_area);
@@ -3100,6 +3172,7 @@ fn render_help_overlay(frame: &mut Frame, parent_area: Rect, theme: &Theme) {
     let block = Block::default()
         .title(" Keyboard Shortcuts ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.menu_highlight_fg))
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, dialog_area);
@@ -3135,13 +3208,14 @@ fn render_help_overlay(frame: &mut Frame, parent_area: Rect, theme: &Theme) {
             }
 
             let key_style = Style::default()
-                .fg(theme.diagnostic_info_fg)
-                .add_modifier(Modifier::BOLD);
+                .fg(theme.popup_text_fg)
+                .bg(theme.split_separator_fg);
             let desc_style = Style::default().fg(theme.popup_text_fg);
 
             let line = Line::from(vec![
-                Span::styled(format!("  {:12}", key), key_style),
-                Span::styled(*description, desc_style),
+                Span::styled("  ", Style::default()),
+                Span::styled(format!(" {} ", key), key_style),
+                Span::styled(format!("  {}", description), desc_style),
             ]);
             frame.render_widget(Paragraph::new(line), Rect::new(inner.x, y, inner.width, 1));
             y += 1;

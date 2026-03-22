@@ -60,9 +60,7 @@ pub fn render_toggle_aligned(
         FocusState::Disabled => (colors.disabled, colors.disabled, colors.disabled),
     };
 
-    let checkbox = if state.checked { "[x]" } else { "[ ]" };
-
-    // Format: "Label: [x]" with optional padding
+    // Format: "Label: [✓]" with optional padding
     let actual_label_width = label_width.unwrap_or(state.label.len() as u16);
     let padded_label = format!(
         "{:width$}",
@@ -70,11 +68,21 @@ pub fn render_toggle_aligned(
         width = actual_label_width as usize
     );
 
-    let line = Line::from(vec![
-        Span::styled(padded_label, Style::default().fg(label_color)),
-        Span::styled(": ", Style::default().fg(label_color)),
-        Span::styled(checkbox, Style::default().fg(bracket_color)),
-    ]);
+    let line = if state.checked {
+        Line::from(vec![
+            Span::styled(padded_label, Style::default().fg(label_color)),
+            Span::styled(": ", Style::default().fg(label_color)),
+            Span::styled("[", Style::default().fg(bracket_color)),
+            Span::styled("✓", Style::default().fg(_check_color)),
+            Span::styled("]", Style::default().fg(bracket_color)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(padded_label, Style::default().fg(label_color)),
+            Span::styled(": ", Style::default().fg(label_color)),
+            Span::styled("[ ]", Style::default().fg(bracket_color)),
+        ])
+    };
 
     let paragraph = Paragraph::new(line);
     frame.render_widget(paragraph, area);

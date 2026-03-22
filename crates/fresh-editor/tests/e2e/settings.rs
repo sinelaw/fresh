@@ -1781,9 +1781,10 @@ fn test_category_selection_indicator_visible() {
 
     // Categories panel is focused by default, should show ">" before General
     // General may have "●" modified indicator due to test defaults
+    // Category format: "> " + modified_indicator + icon + name
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(">● General") || screen.contains(">  General"),
+        screen.lines().any(|l| l.contains(">") && l.contains("General") && l.find(">") < l.find("General")),
         "Expected '>' indicator on General category when focused. Screen: {}",
         screen
     );
@@ -1795,7 +1796,7 @@ fn test_category_selection_indicator_visible() {
     // Now Clipboard should have the ">" indicator
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(">● Clipboard") || screen.contains(">  Clipboard"),
+        screen.lines().any(|l| l.contains(">") && l.contains("Clipboard") && l.find(">") < l.find("Clipboard")),
         "Expected '>' indicator on Clipboard category when focused. Screen: {}",
         screen
     );
@@ -1804,9 +1805,18 @@ fn test_category_selection_indicator_visible() {
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Now Clipboard should not have the ">" indicator (panel not focused)
-    harness.assert_screen_not_contains(">● Clipboard");
-    harness.assert_screen_not_contains(">  Clipboard");
+    // Now the ">" indicator before Clipboard should be gone (categories panel not focused)
+    // The ">" may still appear as the item selection indicator in the settings panel,
+    // so check that no line has ">" before "Clipboard"
+    let screen = harness.screen_to_string();
+    let has_focused_clipboard = screen.lines().any(|l| {
+        if let (Some(gt_pos), Some(cb_pos)) = (l.find("> "), l.find("Clipboard")) {
+            gt_pos < cb_pos
+        } else {
+            false
+        }
+    });
+    assert!(!has_focused_clipboard, "Clipboard should not have '>' indicator when categories panel is unfocused. Screen: {}", screen);
 
     // But Clipboard should still be visible (just highlighted differently)
     harness.assert_screen_contains("Clipboard");
@@ -2150,11 +2160,11 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
         .unwrap();
     harness.render().unwrap();
 
-    // Verify it now shows as checked [x]
+    // Verify it now shows as checked [✓]
     // After toggling, the item is modified so it shows ">● " (3-char indicator area)
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(">● Check For Updates") && screen.contains(": [x]"),
+        screen.contains(">● Check For Updates") && screen.contains(": [✓]"),
         "Check For Updates should now be checked (with modified indicator). Screen:\n{}",
         screen
     );
@@ -2190,14 +2200,14 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // This is the key assertion: the toggle should show the SAVED value [x]
+    // This is the key assertion: the toggle should show the SAVED value [✓]
     // not the ORIGINAL value [ ]
-    // Note: The item shows the correct [x] value; the "●" indicator may or may not
+    // Note: The item shows the correct [✓] value; the "●" indicator may or may not
     // appear depending on layer detection
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Check For Updates") && screen.contains(": [x]"),
-        "BUG #474: After save and reopen, Check For Updates should still be checked [x], \
+        screen.contains("Check For Updates") && screen.contains(": [✓]"),
+        "BUG #474: After save and reopen, Check For Updates should still be checked [✓], \
          but it shows the original value [ ]. Screen:\n{}",
         screen
     );
