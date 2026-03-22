@@ -3018,25 +3018,22 @@ fn test_bracket_paste_in_terminal_mode() {
 fn test_arrow_keys_in_less() {
     let mut harness = harness_or_return!(80, 24);
 
+    // Create a numbered file in an isolated temp directory
+    let tmp = tempfile::TempDir::new().unwrap();
+    let test_file = tmp.path().join("less_arrows.txt");
+    let content: String = (1..=100)
+        .map(|i| format!("TLINE_{}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&test_file, &content).unwrap();
+
     harness.editor_mut().open_terminal();
 
-    // Create a numbered file with distinctive prefixed lines (more than terminal height)
-    harness.editor_mut().send_terminal_input(
-        b"for i in $(seq 1 100); do echo \"TLINE_$i\"; done > /tmp/fresh_test_less_arrows.txt\n",
-    );
-
-    // Wait for the file creation to complete
-    harness
-        .editor_mut()
-        .send_terminal_input(b"echo XDONE_MARKER_X\n");
-    harness
-        .wait_until(|h| h.screen_to_string().contains("XDONE_MARKER_X"))
-        .unwrap();
-
     // Open the file in less (this enters alternate screen and enables DECCKM)
+    let less_cmd = format!("less {}\n", test_file.display());
     harness
         .editor_mut()
-        .send_terminal_input(b"less /tmp/fresh_test_less_arrows.txt\n");
+        .send_terminal_input(less_cmd.as_bytes());
 
     // Wait for less to show the file content
     harness
@@ -3052,11 +3049,15 @@ fn test_arrow_keys_in_less() {
 
     // Press Down arrow multiple times to scroll down.
     // In less with DECCKM, this requires SS3 sequences to work.
-    for _ in 0..40 {
-        harness
-            .editor_mut()
-            .handle_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+    // Send in batches with async processing to let less keep up under load.
+    for _ in 0..4 {
+        for _ in 0..10 {
+            harness
+                .editor_mut()
+                .handle_key(KeyCode::Down, KeyModifiers::NONE)
+                .unwrap();
+        }
+        harness.process_async_and_render().unwrap();
     }
 
     // After scrolling down 40 lines, line 41 should be visible
@@ -3085,9 +3086,4 @@ fn test_arrow_keys_in_less() {
         .editor_mut()
         .handle_key(KeyCode::Char('q'), KeyModifiers::NONE)
         .unwrap();
-
-    // Clean up
-    harness
-        .editor_mut()
-        .send_terminal_input(b"rm /tmp/fresh_test_less_arrows.txt\n");
 }
