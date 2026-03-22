@@ -3535,7 +3535,7 @@ impl LspHandle {
         // Spawn a task to wait for the response and update the state
         let runtime = self.runtime.clone();
         runtime.spawn(async move {
-            match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+            match tokio::time::timeout(std::time::Duration::from_secs(60), rx).await {
                 Ok(Ok(Ok(_))) => {
                     // Successfully initialized
                     if let Ok(mut s) = state.lock() {
@@ -3556,7 +3556,7 @@ impl LspHandle {
                     }
                 }
                 Err(_) => {
-                    tracing::error!("LSP initialization timed out after 10 seconds");
+                    tracing::error!("LSP initialization timed out after 60 seconds");
                     if let Ok(mut s) = state.lock() {
                         let _ = s.transition_to(LspClientState::Error);
                     }
