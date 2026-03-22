@@ -216,9 +216,12 @@ impl SettingsLayout {
                         }
                     }
                     ControlLayoutInfo::TextList { rows } => {
-                        for (row_idx, row_area) in rows.iter().enumerate() {
-                            if point_in_rect(*row_area, x, y) {
-                                return Some(SettingsHit::ControlTextListRow(item.index, row_idx));
+                        for &(data_idx, row_area) in rows.iter() {
+                            if point_in_rect(row_area, x, y) {
+                                return Some(SettingsHit::ControlTextListRow(
+                                    item.index,
+                                    data_idx.unwrap_or(usize::MAX),
+                                ));
                             }
                         }
                     }
@@ -232,16 +235,16 @@ impl SettingsLayout {
                                 return Some(SettingsHit::ControlMapAddNew(item.index));
                             }
                         }
-                        for (row_idx, row_area) in entry_rows.iter().enumerate() {
-                            if point_in_rect(*row_area, x, y) {
-                                return Some(SettingsHit::ControlMapRow(item.index, row_idx));
+                        for &(data_idx, row_area) in entry_rows.iter() {
+                            if point_in_rect(row_area, x, y) {
+                                return Some(SettingsHit::ControlMapRow(item.index, data_idx));
                             }
                         }
                     }
                     ControlLayoutInfo::ObjectArray { entry_rows } => {
-                        for (row_idx, row_area) in entry_rows.iter().enumerate() {
-                            if point_in_rect(*row_area, x, y) {
-                                return Some(SettingsHit::ControlMapRow(item.index, row_idx));
+                        for &(data_idx, row_area) in entry_rows.iter() {
+                            if point_in_rect(row_area, x, y) {
+                                return Some(SettingsHit::ControlMapRow(item.index, data_idx));
                             }
                         }
                     }

@@ -103,7 +103,7 @@ mod tests {
 
     fn make_layout() -> KeybindingListLayout {
         KeybindingListLayout {
-            entry_rects: vec![Rect::new(2, 1, 40, 1), Rect::new(2, 2, 40, 1)],
+            entry_rects: vec![(0, Rect::new(2, 1, 40, 1)), (1, Rect::new(2, 2, 40, 1))],
             delete_rects: vec![Rect::new(38, 1, 3, 1), Rect::new(38, 2, 3, 1)],
             add_rect: Some(Rect::new(2, 3, 40, 1)),
         }

@@ -216,7 +216,8 @@ impl Default for KeybindingListColors {
 /// Layout information for hit testing
 #[derive(Debug, Clone, Default)]
 pub struct KeybindingListLayout {
-    pub entry_rects: Vec<Rect>,
+    /// (data_index, screen_area) for each visible entry
+    pub entry_rects: Vec<(usize, Rect)>,
     pub delete_rects: Vec<Rect>,
     pub add_rect: Option<Rect>,
 }
@@ -232,9 +233,9 @@ impl KeybindingListLayout {
         }
 
         // Check entry areas
-        for (idx, rect) in self.entry_rects.iter().enumerate() {
+        for &(data_idx, rect) in self.entry_rects.iter() {
             if y == rect.y && x >= rect.x && x < rect.x + rect.width {
-                return Some(KeybindingListHit::Entry(idx));
+                return Some(KeybindingListHit::Entry(data_idx));
             }
         }
 
@@ -319,7 +320,7 @@ mod tests {
     #[test]
     fn test_keybinding_list_hit_test() {
         let layout = KeybindingListLayout {
-            entry_rects: vec![Rect::new(2, 1, 40, 1), Rect::new(2, 2, 40, 1)],
+            entry_rects: vec![(0, Rect::new(2, 1, 40, 1)), (1, Rect::new(2, 2, 40, 1))],
             delete_rects: vec![Rect::new(38, 1, 3, 1), Rect::new(38, 2, 3, 1)],
             add_rect: Some(Rect::new(2, 3, 40, 1)),
         };

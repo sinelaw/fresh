@@ -1001,7 +1001,11 @@ fn render_control(
             let colors = TextListColors::from_theme(theme);
             let list_layout = render_text_list_partial(frame, area, state, &colors, 30, skip_rows);
             ControlLayoutInfo::TextList {
-                rows: list_layout.rows.iter().map(|r| r.text_area).collect(),
+                rows: list_layout
+                    .rows
+                    .iter()
+                    .map(|r| (r.index, r.text_area))
+                    .collect(),
             }
         }
 
@@ -1009,7 +1013,11 @@ fn render_control(
             let colors = MapColors::from_theme(theme);
             let map_layout = render_map_partial(frame, area, state, &colors, 20, skip_rows);
             ControlLayoutInfo::Map {
-                entry_rows: map_layout.entry_areas.iter().map(|e| e.row_area).collect(),
+                entry_rows: map_layout
+                    .entry_areas
+                    .iter()
+                    .map(|e| (e.index, e.row_area))
+                    .collect(),
                 add_row_area: map_layout.add_row_area,
             }
         }
@@ -1027,7 +1035,11 @@ fn render_control(
             };
             let kb_layout = render_keybinding_list_partial(frame, area, state, &colors, skip_rows);
             ControlLayoutInfo::ObjectArray {
-                entry_rows: kb_layout.entry_rects,
+                entry_rows: kb_layout
+                    .entry_rects
+                    .iter()
+                    .map(|&(idx, rect)| (idx, rect))
+                    .collect(),
             }
         }
 
@@ -1649,7 +1661,7 @@ fn render_keybinding_list_partial(
 
         if content_row >= skip_rows {
             let entry_area = Rect::new(area.x + indent, y, area.width.saturating_sub(indent), 1);
-            entry_rects.push(entry_area);
+            entry_rects.push((idx, entry_area));
 
             let is_entry_focused = is_focused && state.focused_index == Some(idx);
             let bg = if is_entry_focused {
@@ -1760,14 +1772,17 @@ pub enum ControlLayoutInfo {
     },
     Text(Rect),
     TextList {
-        rows: Vec<Rect>,
+        /// (data_index, screen_area) - None index means "add new" row
+        rows: Vec<(Option<usize>, Rect)>,
     },
     Map {
-        entry_rows: Vec<Rect>,
+        /// (data_index, screen_area)
+        entry_rows: Vec<(usize, Rect)>,
         add_row_area: Option<Rect>,
     },
     ObjectArray {
-        entry_rows: Vec<Rect>,
+        /// (data_index, screen_area)
+        entry_rows: Vec<(usize, Rect)>,
     },
     Json {
         edit_area: Rect,

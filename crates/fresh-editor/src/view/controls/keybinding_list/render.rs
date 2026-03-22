@@ -39,7 +39,7 @@ pub fn render_keybinding_list(
         }
 
         let entry_area = Rect::new(area.x + 2, y, area.width.saturating_sub(2), 1);
-        layout.entry_rects.push(entry_area);
+        layout.entry_rects.push((idx, entry_area));
 
         let is_entry_focused = is_focused && state.focused_index == Some(idx);
         let bg = if is_entry_focused {
