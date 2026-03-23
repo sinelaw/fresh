@@ -347,6 +347,10 @@ impl TextMateEngine {
                 && cache.range.end >= viewport_end
                 && self.last_buffer_len == buffer.len()
             {
+                tracing::trace!(
+                    "highlight_viewport: cache HIT, viewport={}..{}, cache={}..{}",
+                    viewport_start, viewport_end, cache.range.start, cache.range.end
+                );
                 return cache
                     .spans
                     .iter()
@@ -366,14 +370,15 @@ impl TextMateEngine {
         let desired_parse_start = viewport_start.saturating_sub(context_bytes);
         let parse_end = (viewport_end + context_bytes).min(buffer.len());
 
+        tracing::debug!(
+            "highlight_viewport: cache MISS, viewport={}..{}, desired_parse={}..{}, \
+             buf_len={}, last_buf_len={}, checkpoints={}, parsed_up_to={}",
+            viewport_start, viewport_end, desired_parse_start, parse_end,
+            buffer.len(), self.last_buffer_len, self.checkpoints.len(), self.parsed_up_to
+        );
+
         if parse_end <= desired_parse_start {
             return Vec::new();
-        }
-
-        // If buffer length changed out-of-band (e.g. file reload), reset checkpoints
-        if self.last_buffer_len != buffer.len() && self.last_buffer_len != 0 {
-            self.checkpoints.clear();
-            self.parsed_up_to = 0;
         }
 
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
@@ -566,13 +571,27 @@ impl TextMateEngine {
         if idx > 0 {
             // Resume from checkpoint
             let cp = &self.checkpoints[idx - 1];
+            tracing::debug!(
+                "find_parse_resume: using checkpoint at byte {}, desired_start={}, \
+                 checkpoints_available={}, distance={}",
+                cp.byte_offset, desired_start, self.checkpoints.len(),
+                desired_start.saturating_sub(cp.byte_offset)
+            );
             (cp.byte_offset, cp.parse_state.clone(), cp.scope_stack.clone(), true)
         } else if parse_end <= MAX_PARSE_BYTES {
             // No checkpoint, file is small enough — parse from byte 0
+            tracing::debug!(
+                "find_parse_resume: NO checkpoint, parsing from byte 0, \
+                 desired_start={}, parse_end={}, checkpoints_available={}",
+                desired_start, parse_end, self.checkpoints.len()
+            );
             (0, ParseState::new(syntax), ScopeStack::new(), true)
         } else {
             // No checkpoint and file is too large to parse from byte 0.
-            // Fall back to fresh ParseState from desired_start (no checkpoints built).
+            tracing::debug!(
+                "find_parse_resume: FALLBACK fresh ParseState at {}, file too large ({})",
+                desired_start, parse_end
+            );
             (desired_start, ParseState::new(syntax), ScopeStack::new(), false)
         }
     }
@@ -616,6 +635,7 @@ impl TextMateEngine {
     /// the edit is still valid parse state. The span cache is cleared if the edit
     /// overlaps it.
     pub fn invalidate_range(&mut self, edit_range: Range<usize>) {
+        let old_checkpoint_count = self.checkpoints.len();
         if let Some(cache) = &self.cache {
             if edit_range.start < cache.range.end && edit_range.end > cache.range.start {
                 self.cache = None;
@@ -627,6 +647,11 @@ impl TextMateEngine {
             .partition_point(|cp| cp.byte_offset < edit_range.start);
         self.checkpoints.truncate(keep);
         self.parsed_up_to = self.parsed_up_to.min(edit_range.start);
+        tracing::debug!(
+            "invalidate_range: edit={}..{}, checkpoints: {} -> {}, parsed_up_to={}",
+            edit_range.start, edit_range.end,
+            old_checkpoint_count, self.checkpoints.len(), self.parsed_up_to
+        );
     }
 
     /// Invalidate all cache and checkpoints

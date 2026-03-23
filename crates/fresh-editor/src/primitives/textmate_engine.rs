@@ -126,11 +126,6 @@ impl TextMateEngine {
             return Vec::new();
         }
 
-        if self.last_buffer_len != buffer.len() && self.last_buffer_len != 0 {
-            self.checkpoints.clear();
-            self.parsed_up_to = 0;
-        }
-
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
 
         let (actual_start, mut state, mut current_scopes, use_checkpoints) =
