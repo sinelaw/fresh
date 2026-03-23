@@ -208,6 +208,60 @@ fn test_embedded_css_highlighting_after_edit_before_style() {
     );
 }
 
+/// Delete a line of CSS content where checkpoints exist.
+/// This tests that marker deletion/collapse doesn't cause panics (orphan markers)
+/// when checkpoint markers exist in the deleted range.
+#[test]
+fn test_embedded_css_highlighting_after_delete() {
+    let path = fixture_path("embedded_css_long.html");
+    let mut harness = create_harness();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    // Jump to CSS area to build checkpoints
+    goto_line(&mut harness, 200);
+    let colors_before = collect_highlight_colors(&harness, 2, 20);
+    assert!(
+        colors_before >= 2,
+        "Pre-delete: expected CSS highlighting, got {} colors",
+        colors_before
+    );
+
+    // Select and delete multiple lines (Shift+Down then Backspace)
+    // This deletes content where checkpoint markers exist
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should not panic and highlighting should still work
+    let colors_after = collect_highlight_colors(&harness, 2, 20);
+    assert!(
+        colors_after >= 2,
+        "Post-delete: CSS highlighting should survive, got {} colors",
+        colors_after
+    );
+
+    // Type some text to trigger another convergence walk
+    harness.type_text("        .new-rule { color: red; }").unwrap();
+    harness.render().unwrap();
+
+    let colors_final = collect_highlight_colors(&harness, 2, 20);
+    assert!(
+        colors_final >= 2,
+        "Post-delete+insert: highlighting should work, got {} colors",
+        colors_final
+    );
+}
+
 /// Verify highlighting at the top of the file still works (regression guard).
 #[test]
 fn test_highlighting_near_top_still_works() {

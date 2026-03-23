@@ -10,9 +10,11 @@
 //! - No tree-sitter or native code dependencies
 
 use crate::model::buffer::Buffer;
+use crate::model::marker::{MarkerId, MarkerList};
 use crate::primitives::grammar::GrammarRegistry;
 use crate::primitives::highlight_types::{highlight_color, HighlightCategory, HighlightSpan};
 use crate::view::theme::Theme;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
@@ -22,27 +24,20 @@ use syntect::parsing::SyntaxSet;
 const MAX_PARSE_BYTES: usize = 1024 * 1024;
 
 /// Interval between parse state checkpoints (in bytes).
-const CHECKPOINT_INTERVAL: usize = 4096;
+const CHECKPOINT_INTERVAL: usize = 256;
 
 /// TextMate highlighting engine (WASM-compatible)
 ///
-/// Uses syntect for TextMate grammar-based syntax highlighting with parse state
-/// checkpointing for correct embedded language support. See the runtime
-/// `TextMateEngine` in `highlight_engine.rs` for detailed documentation.
+/// Marker-based checkpoint system identical to the runtime engine in
+/// `highlight_engine.rs`. See that file for detailed documentation.
 pub struct TextMateEngine {
     syntax_set: Arc<SyntaxSet>,
     syntax_index: usize,
+    checkpoint_markers: MarkerList,
+    checkpoint_states: HashMap<MarkerId, (syntect::parsing::ParseState, syntect::parsing::ScopeStack)>,
+    dirty_from: Option<usize>,
     cache: Option<TextMateCache>,
-    checkpoints: Vec<ParseCheckpoint>,
-    parsed_up_to: usize,
     last_buffer_len: usize,
-}
-
-/// A saved parse state at a known byte offset.
-struct ParseCheckpoint {
-    byte_offset: usize,
-    parse_state: syntect::parsing::ParseState,
-    scope_stack: syntect::parsing::ScopeStack,
 }
 
 #[derive(Debug, Clone)]
@@ -63,9 +58,10 @@ impl TextMateEngine {
         Self {
             syntax_set,
             syntax_index,
+            checkpoint_markers: MarkerList::new(),
+            checkpoint_states: HashMap::new(),
+            dirty_from: None,
             cache: None,
-            checkpoints: Vec::new(),
-            parsed_up_to: 0,
             last_buffer_len: 0,
         }
     }
@@ -86,8 +82,17 @@ impl TextMateEngine {
         Some(Self::new(syntax_set, index))
     }
 
-    /// Highlight the visible viewport range using parse state checkpoints.
-    /// See the runtime `TextMateEngine` in `highlight_engine.rs` for detailed docs.
+    pub fn notify_insert(&mut self, position: usize, length: usize) {
+        self.checkpoint_markers.adjust_for_insert(position, length);
+        self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
+    }
+
+    pub fn notify_delete(&mut self, position: usize, length: usize) {
+        self.checkpoint_markers.adjust_for_delete(position, length);
+        self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
+    }
+
+    /// Highlight the visible viewport range. See runtime engine for detailed docs.
     pub fn highlight_viewport(
         &mut self,
         buffer: &Buffer,
@@ -96,8 +101,6 @@ impl TextMateEngine {
         theme: &Theme,
         context_bytes: usize,
     ) -> Vec<HighlightSpan> {
-
-        // Check cache validity
         if let Some(cache) = &self.cache {
             if cache.range.start <= viewport_start
                 && cache.range.end >= viewport_end
@@ -118,17 +121,20 @@ impl TextMateEngine {
             }
         }
 
-        // Cache miss
         let desired_parse_start = viewport_start.saturating_sub(context_bytes);
         let parse_end = (viewport_end + context_bytes).min(buffer.len());
-
         if parse_end <= desired_parse_start {
             return Vec::new();
         }
 
-        let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
+        if let Some(dirty) = self.dirty_from {
+            if dirty < parse_end {
+                self.run_convergence_walk(buffer, parse_end);
+            }
+        }
 
-        let (actual_start, mut state, mut current_scopes, use_checkpoints) =
+        let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
+        let (actual_start, mut state, mut current_scopes, create_checkpoints) =
             self.find_parse_resume_point(desired_parse_start, parse_end, syntax);
 
         let content = buffer.slice_bytes(actual_start..parse_end);
@@ -144,21 +150,20 @@ impl TextMateEngine {
         let mut bytes_since_checkpoint: usize = 0;
 
         while pos < content_bytes.len() {
-            if use_checkpoints
-                && current_offset > self.parsed_up_to
-                && bytes_since_checkpoint >= CHECKPOINT_INTERVAL
-            {
-                self.checkpoints.push(ParseCheckpoint {
-                    byte_offset: current_offset,
-                    parse_state: state.clone(),
-                    scope_stack: current_scopes.clone(),
-                });
+            if create_checkpoints && bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
+                let nearby = self.checkpoint_markers.query_range(
+                    current_offset.saturating_sub(CHECKPOINT_INTERVAL / 2),
+                    current_offset + CHECKPOINT_INTERVAL / 2,
+                );
+                if nearby.is_empty() {
+                    let marker_id = self.checkpoint_markers.create(current_offset, true);
+                    self.checkpoint_states
+                        .insert(marker_id, (state.clone(), current_scopes.clone()));
+                }
                 bytes_since_checkpoint = 0;
             }
 
-            let line_start = pos;
             let mut line_end = pos;
-
             while line_end < content_bytes.len() {
                 if content_bytes[line_end] == b'\n' {
                     line_end += 1;
@@ -174,7 +179,7 @@ impl TextMateEngine {
                 line_end += 1;
             }
 
-            let line_bytes = &content_bytes[line_start..line_end];
+            let line_bytes = &content_bytes[pos..line_end];
             let actual_line_byte_len = line_bytes.len();
 
             let line_str = match std::str::from_utf8(line_bytes) {
@@ -247,10 +252,6 @@ impl TextMateEngine {
             bytes_since_checkpoint += actual_line_byte_len;
         }
 
-        if use_checkpoints {
-            self.parsed_up_to = self.parsed_up_to.max(parse_end);
-        }
-
         Self::merge_adjacent_spans(&mut spans);
 
         self.cache = Some(TextMateCache {
@@ -273,6 +274,132 @@ impl TextMateEngine {
             .collect()
     }
 
+    fn run_convergence_walk(&mut self, buffer: &Buffer, walk_end: usize) {
+        let dirty = match self.dirty_from.take() {
+            Some(d) => d,
+            None => return,
+        };
+
+        let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
+
+        let (resume_pos, mut state, mut current_scopes) = {
+            let before = self.find_nearest_checkpoint_before(dirty);
+            if let Some((id, cp_pos)) = before {
+                if let Some((s, sc)) = self.checkpoint_states.get(&id) {
+                    (cp_pos, s.clone(), sc.clone())
+                } else {
+                    self.checkpoint_markers.delete(id);
+                    (0, syntect::parsing::ParseState::new(syntax), syntect::parsing::ScopeStack::new())
+                }
+            } else if walk_end <= MAX_PARSE_BYTES {
+                (0, syntect::parsing::ParseState::new(syntax), syntect::parsing::ScopeStack::new())
+            } else {
+                self.dirty_from = Some(dirty);
+                return;
+            }
+        };
+
+        let mut markers_ahead: Vec<(MarkerId, usize)> = self
+            .checkpoint_markers
+            .query_range(dirty, walk_end)
+            .into_iter()
+            .map(|(id, start, _)| (id, start))
+            .collect();
+        markers_ahead.sort_by_key(|(_, pos)| *pos);
+
+        if markers_ahead.is_empty() {
+            return;
+        }
+
+        let content_end = walk_end.min(buffer.len());
+        if resume_pos >= content_end {
+            return;
+        }
+        let content = buffer.slice_bytes(resume_pos..content_end);
+        let content_str = match std::str::from_utf8(&content) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        let content_bytes = content_str.as_bytes();
+        let mut pos = 0;
+        let mut current_offset = resume_pos;
+        let mut marker_idx = 0;
+
+        while pos < content_bytes.len() && marker_idx < markers_ahead.len() {
+            let mut line_end = pos;
+            while line_end < content_bytes.len() {
+                if content_bytes[line_end] == b'\n' {
+                    line_end += 1;
+                    break;
+                } else if content_bytes[line_end] == b'\r' {
+                    if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
+                        line_end += 2;
+                    } else {
+                        line_end += 1;
+                    }
+                    break;
+                }
+                line_end += 1;
+            }
+
+            let line_bytes = &content_bytes[pos..line_end];
+            let actual_line_byte_len = line_bytes.len();
+
+            let line_str = match std::str::from_utf8(line_bytes) {
+                Ok(s) => s,
+                Err(_) => {
+                    pos = line_end;
+                    current_offset += actual_line_byte_len;
+                    continue;
+                }
+            };
+
+            let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
+            let line_for_syntect = if line_end < content_bytes.len() || line_str.ends_with('\n') {
+                format!("{}\n", line_content)
+            } else {
+                line_content.to_string()
+            };
+
+            if let Ok(ops) = state.parse_line(&line_for_syntect, &self.syntax_set) {
+                for (_op_offset, op) in ops {
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = current_scopes.apply(&op);
+                }
+            }
+
+            pos = line_end;
+            current_offset += actual_line_byte_len;
+
+            while marker_idx < markers_ahead.len() && markers_ahead[marker_idx].1 <= current_offset
+            {
+                let (marker_id, _) = markers_ahead[marker_idx];
+                marker_idx += 1;
+
+                if let Some(stored) = self.checkpoint_states.get(&marker_id) {
+                    if state == stored.0 && current_scopes == stored.1 {
+                        return;
+                    }
+                }
+                self.checkpoint_states
+                    .insert(marker_id, (state.clone(), current_scopes.clone()));
+            }
+        }
+
+        if marker_idx < markers_ahead.len() {
+            self.dirty_from = Some(markers_ahead[marker_idx].1);
+        }
+    }
+
+    fn find_nearest_checkpoint_before(&self, byte_offset: usize) -> Option<(MarkerId, usize)> {
+        let markers = self.checkpoint_markers.query_range(0, byte_offset);
+        markers
+            .into_iter()
+            .max_by_key(|(_, start, _)| *start)
+            .map(|(id, start, _)| (id, start))
+    }
+
     fn find_parse_resume_point(
         &self,
         desired_start: usize,
@@ -281,21 +408,18 @@ impl TextMateEngine {
     ) -> (usize, syntect::parsing::ParseState, syntect::parsing::ScopeStack, bool) {
         use syntect::parsing::{ParseState, ScopeStack};
 
-        let idx = self
-            .checkpoints
-            .partition_point(|cp| cp.byte_offset <= desired_start);
-
-        if idx > 0 {
-            let cp = &self.checkpoints[idx - 1];
-            (cp.byte_offset, cp.parse_state.clone(), cp.scope_stack.clone(), true)
-        } else if parse_end <= MAX_PARSE_BYTES {
+        if let Some((id, cp_pos)) = self.find_nearest_checkpoint_before(desired_start + 1) {
+            if let Some((s, sc)) = self.checkpoint_states.get(&id) {
+                return (cp_pos, s.clone(), sc.clone(), true);
+            }
+        }
+        if parse_end <= MAX_PARSE_BYTES {
             (0, ParseState::new(syntax), ScopeStack::new(), true)
         } else {
             (desired_start, ParseState::new(syntax), ScopeStack::new(), false)
         }
     }
 
-    /// Map scope stack to highlight category
     fn scope_stack_to_category(scopes: &syntect::parsing::ScopeStack) -> Option<HighlightCategory> {
         for scope in scopes.as_slice().iter().rev() {
             let scope_str = scope.build_string();
@@ -306,12 +430,10 @@ impl TextMateEngine {
         None
     }
 
-    /// Merge adjacent spans with same category
     fn merge_adjacent_spans(spans: &mut Vec<CachedSpan>) {
         if spans.len() < 2 {
             return;
         }
-
         let mut write_idx = 0;
         for read_idx in 1..spans.len() {
             if spans[write_idx].category == spans[read_idx].category
@@ -328,28 +450,24 @@ impl TextMateEngine {
         spans.truncate(write_idx + 1);
     }
 
-    /// Invalidate cache and checkpoints for an edited range.
     pub fn invalidate_range(&mut self, edit_range: Range<usize>) {
         if let Some(cache) = &self.cache {
             if edit_range.start < cache.range.end && edit_range.end > cache.range.start {
                 self.cache = None;
             }
         }
-        let keep = self
-            .checkpoints
-            .partition_point(|cp| cp.byte_offset < edit_range.start);
-        self.checkpoints.truncate(keep);
-        self.parsed_up_to = self.parsed_up_to.min(edit_range.start);
     }
 
-    /// Invalidate all cache and checkpoints
     pub fn invalidate_all(&mut self) {
         self.cache = None;
-        self.checkpoints.clear();
-        self.parsed_up_to = 0;
+        let ids: Vec<MarkerId> = self.checkpoint_states.keys().copied().collect();
+        for id in ids {
+            self.checkpoint_markers.delete(id);
+        }
+        self.checkpoint_states.clear();
+        self.dirty_from = None;
     }
 
-    /// Get syntax name
     pub fn syntax_name(&self) -> &str {
         &self.syntax_set.syntaxes()[self.syntax_index].name
     }

@@ -334,7 +334,9 @@ impl EditorState {
         // Insert text into buffer
         self.buffer.insert(position, text);
 
-        // Invalidate highlight cache for edited range
+        // Notify highlighter of the insert (adjusts checkpoint marker positions)
+        // and invalidate span cache for the edited range.
+        self.highlighter.notify_insert(position, text.len());
         self.highlighter
             .invalidate_range(position..position + text.len());
 
@@ -393,7 +395,9 @@ impl EditorState {
         // Delete from buffer
         self.buffer.delete(range.clone());
 
-        // Invalidate highlight cache for edited range
+        // Notify highlighter of the delete (adjusts checkpoint marker positions)
+        // and invalidate span cache for the edited range.
+        self.highlighter.notify_delete(range.start, len);
         self.highlighter.invalidate_range(range.clone());
 
         // Note: reference_highlight_overlay uses markers that auto-adjust,
