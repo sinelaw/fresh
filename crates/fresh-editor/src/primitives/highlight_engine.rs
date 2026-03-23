@@ -531,9 +531,12 @@ impl TextMateEngine {
     ) -> Option<Vec<HighlightSpan>> {
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
 
-        // Find checkpoint before the dirty point
+        // Find checkpoint before the dirty point (bounded search)
         let (actual_start, mut state, mut current_scopes) = {
-            if let Some((id, cp_pos)) = self.find_nearest_checkpoint_before(dirty_pos) {
+            let search_start = dirty_pos.saturating_sub(MAX_PARSE_BYTES);
+            let markers = self.checkpoint_markers.query_range(search_start, dirty_pos);
+            let nearest = markers.into_iter().max_by_key(|(_, start, _)| *start);
+            if let Some((id, cp_pos, _)) = nearest {
                 if let Some((s, sc)) = self.checkpoint_states.get(&id) {
                     (cp_pos, s.clone(), sc.clone())
                 } else {
@@ -542,7 +545,7 @@ impl TextMateEngine {
             } else if parse_end <= MAX_PARSE_BYTES {
                 (0, syntect::parsing::ParseState::new(syntax), syntect::parsing::ScopeStack::new())
             } else {
-                return None; // large file, no checkpoint, fall back
+                return None; // large file, no nearby checkpoint, fall back
             }
         };
 
@@ -907,16 +910,6 @@ impl TextMateEngine {
             .collect()
     }
 
-    /// Find the nearest checkpoint marker before `byte_offset`.
-    fn find_nearest_checkpoint_before(&self, byte_offset: usize) -> Option<(MarkerId, usize)> {
-        // query_range returns markers overlapping [0, byte_offset)
-        let markers = self.checkpoint_markers.query_range(0, byte_offset);
-        markers
-            .into_iter()
-            .max_by_key(|(_, start, _)| *start)
-            .map(|(id, start, _)| (id, start))
-    }
-
     /// Find the best point to resume parsing from for the viewport.
     fn find_parse_resume_point(
         &self,
@@ -926,16 +919,28 @@ impl TextMateEngine {
     ) -> (usize, syntect::parsing::ParseState, syntect::parsing::ScopeStack, bool) {
         use syntect::parsing::{ParseState, ScopeStack};
 
-        if let Some((id, cp_pos)) = self.find_nearest_checkpoint_before(desired_start + 1) {
+        // Look for a checkpoint near the desired start. For large files, only
+        // consider checkpoints that are within MAX_PARSE_BYTES of desired_start
+        // to avoid parsing hundreds of MB from a distant checkpoint.
+        let search_start = desired_start.saturating_sub(MAX_PARSE_BYTES);
+        let markers = self.checkpoint_markers.query_range(search_start, desired_start + 1);
+        let nearest = markers
+            .into_iter()
+            .max_by_key(|(_, start, _)| *start);
+
+        if let Some((id, cp_pos, _)) = nearest {
             if let Some((s, sc)) = self.checkpoint_states.get(&id) {
                 return (cp_pos, s.clone(), sc.clone(), true);
             }
-            // Marker exists but state is missing — skip and fall through.
         }
+
         if parse_end <= MAX_PARSE_BYTES {
+            // File is small enough to parse from byte 0
             (0, ParseState::new(syntax), ScopeStack::new(), true)
         } else {
-            (desired_start, ParseState::new(syntax), ScopeStack::new(), false)
+            // Large file, no nearby checkpoint — start fresh from desired_start.
+            // Still create checkpoints so future visits to this region can resume.
+            (desired_start, ParseState::new(syntax), ScopeStack::new(), true)
         }
     }
 

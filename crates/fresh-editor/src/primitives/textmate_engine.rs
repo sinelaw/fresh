@@ -283,8 +283,10 @@ impl TextMateEngine {
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
 
         let (resume_pos, mut state, mut current_scopes) = {
-            let before = self.find_nearest_checkpoint_before(dirty);
-            if let Some((id, cp_pos)) = before {
+            let search_start = dirty.saturating_sub(MAX_PARSE_BYTES);
+            let markers = self.checkpoint_markers.query_range(search_start, dirty);
+            let nearest = markers.into_iter().max_by_key(|(_, start, _)| *start);
+            if let Some((id, cp_pos, _)) = nearest {
                 if let Some((s, sc)) = self.checkpoint_states.get(&id) {
                     (cp_pos, s.clone(), sc.clone())
                 } else {
@@ -392,14 +394,6 @@ impl TextMateEngine {
         }
     }
 
-    fn find_nearest_checkpoint_before(&self, byte_offset: usize) -> Option<(MarkerId, usize)> {
-        let markers = self.checkpoint_markers.query_range(0, byte_offset);
-        markers
-            .into_iter()
-            .max_by_key(|(_, start, _)| *start)
-            .map(|(id, start, _)| (id, start))
-    }
-
     fn find_parse_resume_point(
         &self,
         desired_start: usize,
@@ -408,7 +402,11 @@ impl TextMateEngine {
     ) -> (usize, syntect::parsing::ParseState, syntect::parsing::ScopeStack, bool) {
         use syntect::parsing::{ParseState, ScopeStack};
 
-        if let Some((id, cp_pos)) = self.find_nearest_checkpoint_before(desired_start + 1) {
+        let search_start = desired_start.saturating_sub(MAX_PARSE_BYTES);
+        let markers = self.checkpoint_markers.query_range(search_start, desired_start + 1);
+        let nearest = markers.into_iter().max_by_key(|(_, start, _)| *start);
+
+        if let Some((id, cp_pos, _)) = nearest {
             if let Some((s, sc)) = self.checkpoint_states.get(&id) {
                 return (cp_pos, s.clone(), sc.clone(), true);
             }
@@ -416,7 +414,7 @@ impl TextMateEngine {
         if parse_end <= MAX_PARSE_BYTES {
             (0, ParseState::new(syntax), ScopeStack::new(), true)
         } else {
-            (desired_start, ParseState::new(syntax), ScopeStack::new(), false)
+            (desired_start, ParseState::new(syntax), ScopeStack::new(), true)
         }
     }
 
