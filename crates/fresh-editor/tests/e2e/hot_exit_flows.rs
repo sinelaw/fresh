@@ -987,3 +987,106 @@ fn test_hot_exit_disabled_no_recovery() {
         harness.assert_screen_not_contains("SHOULD_NOT_RECOVER");
     }
 }
+
+// =========================================================================
+// Undo after hot exit recovery should not clear modified flag
+// =========================================================================
+
+/// After hot exit recovery, the buffer's modified flag must remain set even
+/// after pressing undo. Previously, the event log's saved_at_index was left
+/// at 0 after recovery, causing undo to incorrectly clear the modified flag.
+#[test]
+fn test_undo_after_hot_exit_recovery_keeps_modified_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("test.txt");
+    std::fs::write(&file1, "original content").unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Session 1: open file, make an edit, then hot-exit
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        harness.editor_mut().set_session_mode(true);
+        harness.open_file(&file1).unwrap();
+        harness.render().unwrap();
+
+        // Type some text to create a modification
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.type_text(" EDITED").unwrap();
+        harness.render().unwrap();
+
+        // Tab bar should show modified indicator
+        let tab_bar = harness.screen_row_text(layout::TAB_BAR_ROW as u16);
+        assert!(
+            tab_bar.contains('*'),
+            "Tab should show modified indicator after editing.\nTab bar: {tab_bar}"
+        );
+
+        // Shutdown with hot exit (preserves unsaved changes)
+        harness.shutdown(true).unwrap();
+    }
+
+    // Session 2: restore workspace, then press undo
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        let restored = harness.startup(true, &[]).unwrap();
+        assert!(restored, "Workspace should be restored");
+        harness.render().unwrap();
+
+        // Tab bar should show modified indicator after recovery
+        let tab_bar = harness.screen_row_text(layout::TAB_BAR_ROW as u16);
+        assert!(
+            tab_bar.contains('*'),
+            "Tab should show modified indicator after hot exit recovery.\nTab bar: {tab_bar}"
+        );
+
+        // Verify recovered content is present
+        harness.assert_screen_contains("EDITED");
+
+        // Press undo — this should NOT clear the modified indicator,
+        // because the recovered content still differs from the on-disk file
+        harness
+            .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+
+        // The tab bar should STILL show the modified indicator
+        let tab_bar = harness.screen_row_text(layout::TAB_BAR_ROW as u16);
+        assert!(
+            tab_bar.contains('*'),
+            "Tab should still show modified indicator after undo following hot exit recovery.\nTab bar: {tab_bar}"
+        );
+
+        // The recovered content should still be visible (undo had nothing to undo)
+        harness.assert_screen_contains("EDITED");
+    }
+}
