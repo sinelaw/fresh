@@ -257,13 +257,30 @@ pub struct TextMateEngine {
     /// Parse state stored per checkpoint marker.
     checkpoint_states: HashMap<MarkerId, (syntect::parsing::ParseState, syntect::parsing::ScopeStack)>,
     /// Earliest byte offset where an edit may have invalidated parse state.
-    /// Set on edit, consumed by the convergence walk on next render.
+    /// Consumed during the next highlight_viewport call.
     dirty_from: Option<usize>,
     /// Cached highlight spans for the last rendered viewport.
     cache: Option<TextMateCache>,
     last_buffer_len: usize,
     /// Tree-sitter language for non-highlighting features (indentation, semantic highlighting)
     ts_language: Option<Language>,
+    /// Performance counters for testing and diagnostics.
+    stats: HighlightStats,
+}
+
+/// Counters for monitoring highlighting performance in tests.
+#[derive(Debug, Default, Clone)]
+pub struct HighlightStats {
+    /// Number of bytes parsed by syntect (total across all highlight_viewport calls).
+    pub bytes_parsed: usize,
+    /// Number of highlight_viewport calls that hit the span cache.
+    pub cache_hits: usize,
+    /// Number of highlight_viewport calls that missed the cache and re-parsed.
+    pub cache_misses: usize,
+    /// Number of checkpoint states updated during convergence.
+    pub checkpoints_updated: usize,
+    /// Number of times convergence was detected (state matched existing checkpoint).
+    pub convergences: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -299,6 +316,7 @@ impl TextMateEngine {
             cache: None,
             last_buffer_len: 0,
             ts_language: None,
+            stats: HighlightStats::default(),
         }
     }
 
@@ -317,7 +335,18 @@ impl TextMateEngine {
             cache: None,
             last_buffer_len: 0,
             ts_language,
+            stats: HighlightStats::default(),
         }
+    }
+
+    /// Get performance stats for testing and diagnostics.
+    pub fn stats(&self) -> &HighlightStats {
+        &self.stats
+    }
+
+    /// Reset performance counters.
+    pub fn reset_stats(&mut self) {
+        self.stats = HighlightStats::default();
     }
 
     /// Get the tree-sitter language (for indentation, semantic highlighting, etc.)
@@ -339,8 +368,11 @@ impl TextMateEngine {
 
     /// Highlight the visible viewport range.
     ///
-    /// On cache miss, runs a convergence walk if there are dirty edits, then
-    /// parses from the nearest checkpoint to fill the viewport.
+    /// On cache miss, parses from the earliest needed point (considering both the
+    /// viewport context window and any dirty edits) to parse_end in a single pass.
+    /// During parsing, existing checkpoint states are updated (convergence check)
+    /// and new checkpoints are created. Spans are collected only for the viewport
+    /// context region.
     pub fn highlight_viewport(
         &mut self,
         buffer: &Buffer,
@@ -355,6 +387,7 @@ impl TextMateEngine {
                 && cache.range.end >= viewport_end
                 && self.last_buffer_len == buffer.len()
             {
+                self.stats.cache_hits += 1;
                 return cache
                     .spans
                     .iter()
@@ -370,6 +403,8 @@ impl TextMateEngine {
             }
         }
 
+        self.stats.cache_misses += 1;
+
         // Cache miss
         let desired_parse_start = viewport_start.saturating_sub(context_bytes);
         let parse_end = (viewport_end + context_bytes).min(buffer.len());
@@ -378,17 +413,36 @@ impl TextMateEngine {
             return Vec::new();
         }
 
-        // Run convergence walk if there are dirty edits before our viewport
-        if let Some(dirty) = self.dirty_from {
-            if dirty < parse_end {
-                self.run_convergence_walk(buffer, parse_end);
-            }
-        }
-
-        // Find the best starting point
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
+
+        // If there are dirty edits before parse_end, we need to start parsing from
+        // before the dirty point to update checkpoint states. We combine this with
+        // span collection into a single pass — no separate convergence walk.
+        let effective_start = if let Some(dirty) = self.dirty_from.take() {
+            if dirty < parse_end {
+                dirty.min(desired_parse_start)
+            } else {
+                // Dirty region is beyond our parse range; keep it for later
+                self.dirty_from = Some(dirty);
+                desired_parse_start
+            }
+        } else {
+            desired_parse_start
+        };
+
         let (actual_start, mut state, mut current_scopes, create_checkpoints) =
-            self.find_parse_resume_point(desired_parse_start, parse_end, syntax);
+            self.find_parse_resume_point(effective_start, parse_end, syntax);
+
+        // Pre-fetch checkpoint markers in our parse range for convergence checking
+        // and updating. Sorted by position for sequential access.
+        let mut markers_in_range: Vec<(MarkerId, usize)> = self
+            .checkpoint_markers
+            .query_range(actual_start, parse_end)
+            .into_iter()
+            .map(|(id, start, _)| (id, start))
+            .collect();
+        markers_in_range.sort_by_key(|(_, pos)| *pos);
+        let mut marker_idx = 0;
 
         // Parse from actual_start to parse_end
         let content = buffer.slice_bytes(actual_start..parse_end);
@@ -404,9 +458,8 @@ impl TextMateEngine {
         let mut bytes_since_checkpoint: usize = 0;
 
         while pos < content_bytes.len() {
-            // Create checkpoints at line boundaries every CHECKPOINT_INTERVAL bytes
+            // Create or update checkpoints at line boundaries
             if create_checkpoints && bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
-                // Only create if no checkpoint already exists near this offset
                 let nearby = self.checkpoint_markers.query_range(
                     current_offset.saturating_sub(CHECKPOINT_INTERVAL / 2),
                     current_offset + CHECKPOINT_INTERVAL / 2,
@@ -422,7 +475,6 @@ impl TextMateEngine {
             let line_start = pos;
             let mut line_end = pos;
 
-            // Scan for line ending
             while line_end < content_bytes.len() {
                 if content_bytes[line_end] == b'\n' {
                     line_end += 1;
@@ -468,7 +520,7 @@ impl TextMateEngine {
                 }
             };
 
-            // Only collect spans for bytes at or after desired_parse_start
+            // Collect spans for bytes at or after desired_parse_start
             let collect_spans = current_offset + actual_line_byte_len > desired_parse_start;
             let mut syntect_offset = 0;
             let line_content_len = line_content.len();
@@ -510,7 +562,28 @@ impl TextMateEngine {
             pos = line_end;
             current_offset += actual_line_byte_len;
             bytes_since_checkpoint += actual_line_byte_len;
+
+            // Update existing checkpoint states as we pass them (convergence check).
+            // This replaces the separate convergence walk — single pass.
+            while marker_idx < markers_in_range.len()
+                && markers_in_range[marker_idx].1 <= current_offset
+            {
+                let (marker_id, _) = markers_in_range[marker_idx];
+                marker_idx += 1;
+                if let Some(stored) = self.checkpoint_states.get(&marker_id) {
+                    if *stored == (state.clone(), current_scopes.clone()) {
+                        self.stats.convergences += 1;
+                        // No update needed — state matches
+                        continue;
+                    }
+                }
+                self.stats.checkpoints_updated += 1;
+                self.checkpoint_states
+                    .insert(marker_id, (state.clone(), current_scopes.clone()));
+            }
         }
+
+        self.stats.bytes_parsed += parse_end.saturating_sub(actual_start);
 
         Self::merge_adjacent_spans(&mut spans);
 
@@ -532,143 +605,6 @@ impl TextMateEngine {
                 }
             })
             .collect()
-    }
-
-    /// Convergence walk: re-parse from the checkpoint before `dirty_from` forward,
-    /// updating checkpoint states until the new state matches an existing checkpoint
-    /// (convergence) or we reach `walk_end`.
-    fn run_convergence_walk(&mut self, buffer: &Buffer, walk_end: usize) {
-        let dirty = match self.dirty_from.take() {
-            Some(d) => d,
-            None => return,
-        };
-
-        let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
-
-        // Find checkpoint just before the dirty point
-        let (resume_pos, mut state, mut current_scopes) = {
-            let before = self.find_nearest_checkpoint_before(dirty);
-            if let Some((id, cp_pos)) = before {
-                if let Some((s, sc)) = self.checkpoint_states.get(&id) {
-                    (cp_pos, s.clone(), sc.clone())
-                } else {
-                    self.checkpoint_markers.delete(id);
-                    (0, syntect::parsing::ParseState::new(syntax), syntect::parsing::ScopeStack::new())
-                }
-            } else if walk_end <= MAX_PARSE_BYTES {
-                (0, syntect::parsing::ParseState::new(syntax), syntect::parsing::ScopeStack::new())
-            } else {
-                // Large file, no checkpoint — can't converge from byte 0.
-                // Leave dirty_from set so next render tries again if checkpoints appear.
-                self.dirty_from = Some(dirty);
-                return;
-            }
-        };
-
-        // Get markers from dirty to walk_end to check for convergence
-        let mut markers_ahead: Vec<(MarkerId, usize)> = self
-            .checkpoint_markers
-            .query_range(dirty, walk_end)
-            .into_iter()
-            .map(|(id, start, _)| (id, start))
-            .collect();
-        markers_ahead.sort_by_key(|(_, pos)| *pos);
-
-        if markers_ahead.is_empty() {
-            // No checkpoints to converge against — nothing to do
-            return;
-        }
-
-        // Parse from resume_pos toward walk_end
-        let content_end = walk_end.min(buffer.len());
-        if resume_pos >= content_end {
-            return;
-        }
-        let content = buffer.slice_bytes(resume_pos..content_end);
-        let content_str = match std::str::from_utf8(&content) {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-
-        let content_bytes = content_str.as_bytes();
-        let mut pos = 0;
-        let mut current_offset = resume_pos;
-        let mut marker_idx = 0;
-
-        while pos < content_bytes.len() && marker_idx < markers_ahead.len() {
-            // Find line end
-            let mut line_end = pos;
-            while line_end < content_bytes.len() {
-                if content_bytes[line_end] == b'\n' {
-                    line_end += 1;
-                    break;
-                } else if content_bytes[line_end] == b'\r' {
-                    if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
-                        line_end += 2;
-                    } else {
-                        line_end += 1;
-                    }
-                    break;
-                }
-                line_end += 1;
-            }
-
-            let line_bytes = &content_bytes[pos..line_end];
-            let actual_line_byte_len = line_bytes.len();
-
-            let line_str = match std::str::from_utf8(line_bytes) {
-                Ok(s) => s,
-                Err(_) => {
-                    pos = line_end;
-                    current_offset += actual_line_byte_len;
-                    continue;
-                }
-            };
-
-            let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
-            let line_for_syntect = if line_end < content_bytes.len() || line_str.ends_with('\n') {
-                format!("{}\n", line_content)
-            } else {
-                line_content.to_string()
-            };
-
-            if let Ok(ops) = state.parse_line(&line_for_syntect, &self.syntax_set) {
-                for (_op_offset, op) in ops {
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = current_scopes.apply(&op);
-                }
-            }
-
-            pos = line_end;
-            current_offset += actual_line_byte_len;
-
-            // Check convergence against any markers we've reached or passed
-            while marker_idx < markers_ahead.len() && markers_ahead[marker_idx].1 <= current_offset
-            {
-                let (marker_id, _marker_pos) = markers_ahead[marker_idx];
-                marker_idx += 1;
-
-                if let Some(stored) = self.checkpoint_states.get(&marker_id) {
-                    if state == stored.0 && current_scopes == stored.1 {
-                        // CONVERGED — everything downstream is still valid
-                        tracing::debug!(
-                            "convergence_walk: converged at byte {}, checked {} markers",
-                            current_offset, marker_idx
-                        );
-                        return;
-                    }
-                }
-                // State differs — update this checkpoint
-                self.checkpoint_states
-                    .insert(marker_id, (state.clone(), current_scopes.clone()));
-            }
-        }
-
-        // Didn't converge within walk_end
-        if marker_idx < markers_ahead.len() {
-            // Still dirty markers beyond what we walked
-            self.dirty_from = Some(markers_ahead[marker_idx].1);
-        }
     }
 
     /// Find the nearest checkpoint marker before `byte_offset`.
@@ -1042,6 +978,22 @@ impl HighlightEngine {
             Self::TreeSitter(_) => "tree-sitter",
             Self::TextMate(_) => "textmate",
             Self::None => "none",
+        }
+    }
+
+    /// Get performance stats (TextMate engine only).
+    pub fn highlight_stats(&self) -> Option<&HighlightStats> {
+        if let Self::TextMate(h) = self {
+            Some(h.stats())
+        } else {
+            None
+        }
+    }
+
+    /// Reset performance counters.
+    pub fn reset_highlight_stats(&mut self) {
+        if let Self::TextMate(h) = self {
+            h.reset_stats();
         }
     }
 

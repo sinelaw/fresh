@@ -329,3 +329,119 @@ fn test_highlighting_near_top_still_works() {
         colors
     );
 }
+
+// ============================================================
+// Performance counter tests
+// ============================================================
+
+/// After the initial parse, subsequent renders without edits should be cache hits
+/// (zero bytes re-parsed).
+#[test]
+fn test_perf_cache_hit_no_reparse() {
+    let path = fixture_path("embedded_css_long.html");
+    let mut harness = create_harness();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    // Initial render parses the viewport
+    goto_line(&mut harness, 200);
+
+    // Reset stats after initial parse
+    harness.reset_highlight_stats();
+
+    // Render again without any edits — should be a pure cache hit
+    harness.render().unwrap();
+
+    let stats = harness.highlight_stats().expect("should have TextMate stats");
+    assert!(
+        stats.cache_hits >= 1,
+        "Second render without edits should be a cache hit, got {} hits",
+        stats.cache_hits
+    );
+    assert_eq!(
+        stats.bytes_parsed, 0,
+        "No bytes should be re-parsed on cache hit, got {}",
+        stats.bytes_parsed
+    );
+}
+
+/// Typing a normal character should only re-parse the viewport region once
+/// (single pass, not double).
+#[test]
+fn test_perf_single_char_edit_single_parse() {
+    let path = fixture_path("embedded_css_long.html");
+    let mut harness = create_harness();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    goto_line(&mut harness, 200);
+    harness.reset_highlight_stats();
+
+    // Type one character
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::NONE)
+        .unwrap();
+
+    let stats = harness.highlight_stats().expect("should have TextMate stats");
+    assert_eq!(
+        stats.cache_misses, 1,
+        "Single char edit should cause exactly 1 cache miss, got {}",
+        stats.cache_misses
+    );
+    // bytes_parsed should be roughly the viewport + context, not double that
+    // Viewport is ~40 lines * ~55 bytes = ~2200 bytes, context = 10KB each side
+    // So total parse should be under ~25KB, definitely not over 50KB (which would
+    // indicate a double-parse bug).
+    assert!(
+        stats.bytes_parsed < 50_000,
+        "Single char edit should parse < 50KB (single pass), got {} bytes",
+        stats.bytes_parsed
+    );
+}
+
+/// After typing an opening quote (state-changing edit), subsequent keystrokes
+/// should still only parse the viewport region once per keystroke.
+#[test]
+fn test_perf_state_changing_edit_no_double_parse() {
+    let path = fixture_path("embedded_css_long.html");
+    let mut harness = create_harness();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    goto_line(&mut harness, 200);
+
+    // Type an opening quote — this changes parse state for everything after it
+    harness
+        .send_key(KeyCode::Char('"'), KeyModifiers::NONE)
+        .unwrap();
+
+    // Reset stats AFTER the quote so we measure subsequent keystrokes
+    harness.reset_highlight_stats();
+
+    // Type 5 more characters inside the "broken" string context
+    for ch in "hello".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    let stats = harness.highlight_stats().expect("should have TextMate stats");
+
+    // Each keystroke should cause 1 cache miss (5 total)
+    assert_eq!(
+        stats.cache_misses, 5,
+        "5 keystrokes should cause 5 cache misses, got {}",
+        stats.cache_misses
+    );
+
+    // Total bytes parsed across 5 keystrokes should be ~5x viewport size.
+    // If there were a double-parse bug, it would be ~10x.
+    // Viewport + context ≈ 22KB, so 5 keystrokes ≈ 110KB, definitely < 250KB.
+    assert!(
+        stats.bytes_parsed < 250_000,
+        "5 keystrokes after state-changing edit should parse < 250KB total \
+         (single pass each), got {} bytes (avg {} per keystroke)",
+        stats.bytes_parsed,
+        stats.bytes_parsed / 5
+    );
+}

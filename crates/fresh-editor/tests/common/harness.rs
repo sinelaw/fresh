@@ -63,7 +63,7 @@ pub mod layout {
 }
 use fresh::config_io::DirectoryContext;
 use fresh::model::filesystem::{FileSystem, StdFileSystem};
-use fresh::primitives::highlight_engine::HighlightEngine;
+use fresh::primitives::highlight_engine::{HighlightEngine, HighlightStats};
 use fresh::services::fs::{BackendMetrics, SlowFileSystem, SlowFsConfig};
 use fresh::services::time_source::{SharedTimeSource, TestTimeSource};
 use fresh::{app::Editor, config::Config};
@@ -1760,6 +1760,19 @@ impl EditorTestHarness {
             self.editor.active_state().highlighter,
             HighlightEngine::None
         )
+    }
+
+    /// Get highlight performance stats (TextMate engine only).
+    pub fn highlight_stats(&self) -> Option<&HighlightStats> {
+        self.editor.active_state().highlighter.highlight_stats()
+    }
+
+    /// Reset highlight performance counters.
+    pub fn reset_highlight_stats(&mut self) {
+        self.editor
+            .active_state_mut()
+            .highlighter
+            .reset_highlight_stats();
     }
 
     /// Get the shadow string (for property testing)
