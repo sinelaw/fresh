@@ -115,6 +115,7 @@ pub mod sudo_save_prompt;
 #[cfg(unix)]
 pub mod symlinks;
 pub mod syntax_highlighting_coverage;
+pub mod syntax_highlighting_embedded_offset;
 pub mod syntax_language_case;
 pub mod tab_config;
 pub mod tab_drag;
