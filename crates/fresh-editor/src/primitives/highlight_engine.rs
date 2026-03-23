@@ -368,11 +368,10 @@ impl TextMateEngine {
 
     /// Highlight the visible viewport range.
     ///
-    /// On cache miss, parses from the earliest needed point (considering both the
-    /// viewport context window and any dirty edits) to parse_end in a single pass.
-    /// During parsing, existing checkpoint states are updated (convergence check)
-    /// and new checkpoints are created. Spans are collected only for the viewport
-    /// context region.
+    /// If the span cache is valid and there are no dirty edits, returns cached spans.
+    /// If there are dirty edits, re-parses only from the dirty point until convergence
+    /// (parse state matches an existing checkpoint), then splices the new spans into
+    /// the cache. This means most single-character edits only re-parse ~256-512 bytes.
     pub fn highlight_viewport(
         &mut self,
         buffer: &Buffer,
@@ -381,70 +380,330 @@ impl TextMateEngine {
         theme: &Theme,
         context_bytes: usize,
     ) -> Vec<HighlightSpan> {
-        // Check cache validity
-        if let Some(cache) = &self.cache {
-            if cache.range.start <= viewport_start
-                && cache.range.end >= viewport_end
-                && self.last_buffer_len == buffer.len()
+        let desired_parse_start = viewport_start.saturating_sub(context_bytes);
+        let parse_end = (viewport_end + context_bytes).min(buffer.len());
+
+        // Check cache state. For a pure cache hit (no dirty edits), we also
+        // require buffer length to match. For partial updates (dirty_from set),
+        // we only need the cache to cover the viewport — the buffer length
+        // changed due to the edit, but we'll splice the dirty region.
+        let dirty = self.dirty_from.take();
+        let cache_covers_viewport = self.cache.as_ref().is_some_and(|c| {
+            c.range.start <= desired_parse_start && c.range.end >= desired_parse_start
+        });
+        let exact_cache_hit = cache_covers_viewport
+            && dirty.is_none()
+            && self.last_buffer_len == buffer.len()
+            && self
+                .cache
+                .as_ref()
+                .is_some_and(|c| c.range.end >= parse_end);
+
+        if exact_cache_hit {
+            // Pure cache hit — no dirty edits, cache covers viewport
+            self.stats.cache_hits += 1;
+            return self.filter_cached_spans(viewport_start, viewport_end, theme);
+        }
+
+        if cache_covers_viewport && dirty.is_some() {
+            if let Some(dirty_pos) = dirty {
+                if dirty_pos < parse_end {
+                    // Partial update: re-parse from dirty point until convergence,
+                    // splice new spans into existing cache
+                    if let Some(result) = self.try_partial_update(
+                        buffer,
+                        dirty_pos,
+                        desired_parse_start,
+                        parse_end,
+                        viewport_start,
+                        viewport_end,
+                        theme,
+                    ) {
+                        return result;
+                    }
+                    // Convergence failed within parse range — fall through to full re-parse
+                } else {
+                    // Dirty region beyond viewport — cache is still valid
+                    self.dirty_from = Some(dirty_pos);
+                    self.stats.cache_hits += 1;
+                    return self.filter_cached_spans(viewport_start, viewport_end, theme);
+                }
+            }
+        } else if let Some(d) = dirty {
+            // No usable cache and dirty — put dirty back, will do full parse
+            self.dirty_from = Some(d);
+        }
+
+        // Full re-parse (cold start or convergence failed)
+        self.full_parse(
+            buffer,
+            desired_parse_start,
+            parse_end,
+            viewport_start,
+            viewport_end,
+            theme,
+            context_bytes,
+        )
+    }
+
+    /// Filter cached spans for the viewport and resolve colors.
+    fn filter_cached_spans(
+        &self,
+        viewport_start: usize,
+        viewport_end: usize,
+        theme: &Theme,
+    ) -> Vec<HighlightSpan> {
+        let cache = self.cache.as_ref().unwrap();
+        cache
+            .spans
+            .iter()
+            .filter(|span| span.range.start < viewport_end && span.range.end > viewport_start)
+            .map(|span| HighlightSpan {
+                range: span.range.clone(),
+                color: highlight_color(span.category, theme),
+                category: Some(span.category),
+            })
+            .collect()
+    }
+
+    /// Try to do a partial update: re-parse from the dirty point until convergence,
+    /// then splice new spans into the cache. Returns None if convergence doesn't
+    /// happen within parse_end (caller should fall back to full re-parse).
+    fn try_partial_update(
+        &mut self,
+        buffer: &Buffer,
+        dirty_pos: usize,
+        desired_parse_start: usize,
+        parse_end: usize,
+        viewport_start: usize,
+        viewport_end: usize,
+        theme: &Theme,
+    ) -> Option<Vec<HighlightSpan>> {
+        let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
+
+        // Find checkpoint before the dirty point
+        let (actual_start, mut state, mut current_scopes) = {
+            if let Some((id, cp_pos)) = self.find_nearest_checkpoint_before(dirty_pos) {
+                if let Some((s, sc)) = self.checkpoint_states.get(&id) {
+                    (cp_pos, s.clone(), sc.clone())
+                } else {
+                    return None; // orphan, fall back
+                }
+            } else if parse_end <= MAX_PARSE_BYTES {
+                (0, syntect::parsing::ParseState::new(syntax), syntect::parsing::ScopeStack::new())
+            } else {
+                return None; // large file, no checkpoint, fall back
+            }
+        };
+
+        // Get markers from dirty point forward for convergence checking
+        let mut markers_ahead: Vec<(MarkerId, usize)> = self
+            .checkpoint_markers
+            .query_range(dirty_pos, parse_end)
+            .into_iter()
+            .map(|(id, start, _)| (id, start))
+            .collect();
+        markers_ahead.sort_by_key(|(_, pos)| *pos);
+        let mut marker_idx = 0;
+
+        // Parse from actual_start to parse_end, looking for convergence
+        let content_end = parse_end.min(buffer.len());
+        if actual_start >= content_end {
+            return None;
+        }
+        let content = buffer.slice_bytes(actual_start..content_end);
+        let content_str = match std::str::from_utf8(&content) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+
+        let mut new_spans = Vec::new();
+        let content_bytes = content_str.as_bytes();
+        let mut pos = 0;
+        let mut current_offset = actual_start;
+        let mut converged_at: Option<usize> = None;
+        let mut bytes_since_checkpoint: usize = 0;
+
+        while pos < content_bytes.len() {
+            // Create checkpoints in new territory
+            if bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
+                let nearby = self.checkpoint_markers.query_range(
+                    current_offset.saturating_sub(CHECKPOINT_INTERVAL / 2),
+                    current_offset + CHECKPOINT_INTERVAL / 2,
+                );
+                if nearby.is_empty() {
+                    let marker_id = self.checkpoint_markers.create(current_offset, true);
+                    self.checkpoint_states
+                        .insert(marker_id, (state.clone(), current_scopes.clone()));
+                }
+                bytes_since_checkpoint = 0;
+            }
+
+            let line_start = pos;
+            let mut line_end = pos;
+            while line_end < content_bytes.len() {
+                if content_bytes[line_end] == b'\n' {
+                    line_end += 1;
+                    break;
+                } else if content_bytes[line_end] == b'\r' {
+                    if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
+                        line_end += 2;
+                    } else {
+                        line_end += 1;
+                    }
+                    break;
+                }
+                line_end += 1;
+            }
+
+            let line_bytes = &content_bytes[line_start..line_end];
+            let actual_line_byte_len = line_bytes.len();
+
+            let line_str = match std::str::from_utf8(line_bytes) {
+                Ok(s) => s,
+                Err(_) => {
+                    pos = line_end;
+                    current_offset += actual_line_byte_len;
+                    bytes_since_checkpoint += actual_line_byte_len;
+                    continue;
+                }
+            };
+
+            let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
+            let line_for_syntect = if line_end < content_bytes.len() || line_str.ends_with('\n') {
+                format!("{}\n", line_content)
+            } else {
+                line_content.to_string()
+            };
+
+            let ops = match state.parse_line(&line_for_syntect, &self.syntax_set) {
+                Ok(ops) => ops,
+                Err(_) => {
+                    pos = line_end;
+                    current_offset += actual_line_byte_len;
+                    bytes_since_checkpoint += actual_line_byte_len;
+                    continue;
+                }
+            };
+
+            // Collect spans for the dirty region
+            let collect_spans =
+                current_offset + actual_line_byte_len > desired_parse_start.max(actual_start);
+            let mut syntect_offset = 0;
+            let line_content_len = line_content.len();
+
+            for (op_offset, op) in ops {
+                let clamped_op_offset = op_offset.min(line_content_len);
+                if collect_spans && clamped_op_offset > syntect_offset {
+                    if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
+                        let byte_start = current_offset + syntect_offset;
+                        let byte_end = current_offset + clamped_op_offset;
+                        let clamped_start = byte_start.max(actual_start);
+                        if clamped_start < byte_end {
+                            new_spans.push(CachedSpan {
+                                range: clamped_start..byte_end,
+                                category,
+                            });
+                        }
+                    }
+                }
+                syntect_offset = clamped_op_offset;
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = current_scopes.apply(&op);
+            }
+
+            if collect_spans && syntect_offset < line_content_len {
+                if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
+                    let byte_start = current_offset + syntect_offset;
+                    let byte_end = current_offset + line_content_len;
+                    let clamped_start = byte_start.max(actual_start);
+                    if clamped_start < byte_end {
+                        new_spans.push(CachedSpan {
+                            range: clamped_start..byte_end,
+                            category,
+                        });
+                    }
+                }
+            }
+
+            pos = line_end;
+            current_offset += actual_line_byte_len;
+            bytes_since_checkpoint += actual_line_byte_len;
+
+            // Check convergence at checkpoint markers
+            while marker_idx < markers_ahead.len()
+                && markers_ahead[marker_idx].1 <= current_offset
             {
-                self.stats.cache_hits += 1;
-                return cache
-                    .spans
-                    .iter()
-                    .filter(|span| {
-                        span.range.start < viewport_end && span.range.end > viewport_start
-                    })
-                    .map(|span| HighlightSpan {
-                        range: span.range.clone(),
-                        color: highlight_color(span.category, theme),
-                        category: Some(span.category),
-                    })
-                    .collect();
+                let (marker_id, _) = markers_ahead[marker_idx];
+                marker_idx += 1;
+                if let Some(stored) = self.checkpoint_states.get(&marker_id) {
+                    if *stored == (state.clone(), current_scopes.clone()) {
+                        self.stats.convergences += 1;
+                        converged_at = Some(current_offset);
+                        break;
+                    }
+                }
+                self.stats.checkpoints_updated += 1;
+                self.checkpoint_states
+                    .insert(marker_id, (state.clone(), current_scopes.clone()));
+            }
+
+            if converged_at.is_some() {
+                break;
             }
         }
 
-        self.stats.cache_misses += 1;
+        self.stats.bytes_parsed += current_offset.saturating_sub(actual_start);
 
-        // Cache miss
-        let desired_parse_start = viewport_start.saturating_sub(context_bytes);
-        let parse_end = (viewport_end + context_bytes).min(buffer.len());
+        let convergence_point = converged_at?; // None → fall back to full parse
+
+        self.stats.cache_misses += 1; // partial update counts as a miss
+
+        // Splice: replace spans in [actual_start..convergence_point] with new_spans,
+        // keep everything outside that range from the existing cache.
+        Self::merge_adjacent_spans(&mut new_spans);
+
+        if let Some(cache) = &mut self.cache {
+            // Remove old spans that overlap the re-parsed region
+            let splice_start = actual_start;
+            let splice_end = convergence_point;
+            cache.spans.retain(|span| {
+                span.range.end <= splice_start || span.range.start >= splice_end
+            });
+            // Insert new spans and re-sort by range start
+            cache.spans.extend(new_spans);
+            cache.spans.sort_by_key(|s| s.range.start);
+            Self::merge_adjacent_spans(&mut cache.spans);
+        }
+
+        self.last_buffer_len = buffer.len();
+
+        Some(self.filter_cached_spans(viewport_start, viewport_end, theme))
+    }
+
+    /// Full re-parse from desired_parse_start to parse_end. Used on cold start
+    /// or when partial update fails (no convergence).
+    fn full_parse(
+        &mut self,
+        buffer: &Buffer,
+        desired_parse_start: usize,
+        parse_end: usize,
+        viewport_start: usize,
+        viewport_end: usize,
+        theme: &Theme,
+        _context_bytes: usize,
+    ) -> Vec<HighlightSpan> {
+        self.stats.cache_misses += 1;
+        self.dirty_from = None; // consumed
 
         if parse_end <= desired_parse_start {
             return Vec::new();
         }
 
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
-
-        // If there are dirty edits before parse_end, we need to start parsing from
-        // before the dirty point to update checkpoint states. We combine this with
-        // span collection into a single pass — no separate convergence walk.
-        let effective_start = if let Some(dirty) = self.dirty_from.take() {
-            if dirty < parse_end {
-                dirty.min(desired_parse_start)
-            } else {
-                // Dirty region is beyond our parse range; keep it for later
-                self.dirty_from = Some(dirty);
-                desired_parse_start
-            }
-        } else {
-            desired_parse_start
-        };
-
         let (actual_start, mut state, mut current_scopes, create_checkpoints) =
-            self.find_parse_resume_point(effective_start, parse_end, syntax);
+            self.find_parse_resume_point(desired_parse_start, parse_end, syntax);
 
-        // Pre-fetch checkpoint markers in our parse range for convergence checking
-        // and updating. Sorted by position for sequential access.
-        let mut markers_in_range: Vec<(MarkerId, usize)> = self
-            .checkpoint_markers
-            .query_range(actual_start, parse_end)
-            .into_iter()
-            .map(|(id, start, _)| (id, start))
-            .collect();
-        markers_in_range.sort_by_key(|(_, pos)| *pos);
-        let mut marker_idx = 0;
-
-        // Parse from actual_start to parse_end
         let content = buffer.slice_bytes(actual_start..parse_end);
         let content_str = match std::str::from_utf8(&content) {
             Ok(s) => s,
@@ -458,7 +717,6 @@ impl TextMateEngine {
         let mut bytes_since_checkpoint: usize = 0;
 
         while pos < content_bytes.len() {
-            // Create or update checkpoints at line boundaries
             if create_checkpoints && bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
                 let nearby = self.checkpoint_markers.query_range(
                     current_offset.saturating_sub(CHECKPOINT_INTERVAL / 2),
@@ -520,7 +778,6 @@ impl TextMateEngine {
                 }
             };
 
-            // Collect spans for bytes at or after desired_parse_start
             let collect_spans = current_offset + actual_line_byte_len > desired_parse_start;
             let mut syntect_offset = 0;
             let line_content_len = line_content.len();
@@ -563,21 +820,14 @@ impl TextMateEngine {
             current_offset += actual_line_byte_len;
             bytes_since_checkpoint += actual_line_byte_len;
 
-            // Update existing checkpoint states as we pass them (convergence check).
-            // This replaces the separate convergence walk — single pass.
-            while marker_idx < markers_in_range.len()
-                && markers_in_range[marker_idx].1 <= current_offset
-            {
-                let (marker_id, _) = markers_in_range[marker_idx];
-                marker_idx += 1;
-                if let Some(stored) = self.checkpoint_states.get(&marker_id) {
-                    if *stored == (state.clone(), current_scopes.clone()) {
-                        self.stats.convergences += 1;
-                        // No update needed — state matches
-                        continue;
-                    }
-                }
-                self.stats.checkpoints_updated += 1;
+            // Update checkpoint states as we pass them
+            let markers_here: Vec<(MarkerId, usize)> = self
+                .checkpoint_markers
+                .query_range(current_offset.saturating_sub(actual_line_byte_len), current_offset)
+                .into_iter()
+                .map(|(id, start, _)| (id, start))
+                .collect();
+            for (marker_id, _) in markers_here {
                 self.checkpoint_states
                     .insert(marker_id, (state.clone(), current_scopes.clone()));
             }
@@ -674,12 +924,13 @@ impl TextMateEngine {
 
     /// Invalidate span cache for an edited range.
     /// Checkpoint positions are handled by notify_insert/notify_delete.
-    pub fn invalidate_range(&mut self, edit_range: Range<usize>) {
-        if let Some(cache) = &self.cache {
-            if edit_range.start < cache.range.end && edit_range.end > cache.range.start {
-                self.cache = None;
-            }
-        }
+    /// The span cache is NOT cleared here — it will be patched (partial update)
+    /// during the next highlight_viewport call using convergence. Only dirty_from
+    /// (set by notify_insert/notify_delete) controls re-parsing scope.
+    pub fn invalidate_range(&mut self, _edit_range: Range<usize>) {
+        // Intentionally does NOT clear self.cache.
+        // The cache will be partially updated in highlight_viewport when
+        // dirty_from is set. This avoids full re-parses for small edits.
     }
 
     /// Invalidate all cache and checkpoints (file reload, language change, etc.)

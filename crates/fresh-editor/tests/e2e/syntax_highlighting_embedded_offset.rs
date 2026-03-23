@@ -399,10 +399,12 @@ fn test_perf_single_char_edit_single_parse() {
     );
 }
 
-/// After typing an opening quote (state-changing edit), subsequent keystrokes
-/// should still only parse the viewport region once per keystroke.
+/// After typing an opening quote (state-changing edit), the first subsequent
+/// keystroke re-parses the viewport (state diverged). But the second keystroke
+/// and beyond should converge almost immediately — the "inside string" state
+/// matches the checkpoints updated by the first keystroke.
 #[test]
-fn test_perf_state_changing_edit_no_double_parse() {
+fn test_perf_convergence_after_state_change() {
     let path = fixture_path("embedded_css_long.html");
     let mut harness = create_harness();
     harness.open_file(&path).unwrap();
@@ -410,15 +412,20 @@ fn test_perf_state_changing_edit_no_double_parse() {
 
     goto_line(&mut harness, 200);
 
-    // Type an opening quote — this changes parse state for everything after it
+    // Type an opening quote — diverges state for everything after it.
+    // This keystroke + the first char after it will do a full viewport parse.
     harness
         .send_key(KeyCode::Char('"'), KeyModifiers::NONE)
         .unwrap();
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::NONE)
+        .unwrap();
 
-    // Reset stats AFTER the quote so we measure subsequent keystrokes
+    // Now reset stats. Subsequent keystrokes should converge quickly because
+    // the checkpoints already have the "inside string" state from the parse above.
     harness.reset_highlight_stats();
 
-    // Type 5 more characters inside the "broken" string context
+    // Type 5 more characters inside the string
     for ch in "hello".chars() {
         harness
             .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
@@ -427,21 +434,30 @@ fn test_perf_state_changing_edit_no_double_parse() {
 
     let stats = harness.highlight_stats().expect("should have TextMate stats");
 
-    // Each keystroke should cause 1 cache miss (5 total)
-    assert_eq!(
-        stats.cache_misses, 5,
-        "5 keystrokes should cause 5 cache misses, got {}",
-        stats.cache_misses
-    );
-
-    // Total bytes parsed across 5 keystrokes should be ~5x viewport size.
-    // If there were a double-parse bug, it would be ~10x.
-    // Viewport + context ≈ 22KB, so 5 keystrokes ≈ 110KB, definitely < 250KB.
+    // With convergence, each keystroke should parse only from the checkpoint
+    // before the edit to the first converging checkpoint (~256-512 bytes).
+    // 5 keystrokes * ~500 bytes = ~2500 bytes. Definitely under 10KB.
+    // Without convergence (the old bug), it would be ~5 * 22KB = ~110KB.
     assert!(
-        stats.bytes_parsed < 250_000,
-        "5 keystrokes after state-changing edit should parse < 250KB total \
-         (single pass each), got {} bytes (avg {} per keystroke)",
+        stats.bytes_parsed < 10_000,
+        "5 keystrokes after state stabilization should parse < 10KB total \
+         (convergence after ~256 bytes each), got {} bytes (avg {} per keystroke)",
         stats.bytes_parsed,
         stats.bytes_parsed / 5
+    );
+
+    // Each keystroke should trigger at least one convergence detection
+    assert!(
+        stats.convergences >= 5,
+        "5 keystrokes should each converge at least once, got {} convergences",
+        stats.convergences
+    );
+
+    // Checkpoints_updated should be low — mostly convergence, few updates
+    assert!(
+        stats.checkpoints_updated <= stats.convergences,
+        "Should update fewer checkpoints than convergences, got {} updates vs {} convergences",
+        stats.checkpoints_updated,
+        stats.convergences
     );
 }
