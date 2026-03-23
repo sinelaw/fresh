@@ -13,6 +13,8 @@ A roundup of everything that landed since the [0.2.9 release](../fresh-0.2.9/) �
 
 Search and replace across your entire project. Type a query, tab to the replacement field, and press **Alt+Enter** to replace all matches. Handles unsaved buffers, large files, and up to 10,000 results.
 
+This wasn't a trivial feature to build. The initial implementation shelled out to `git grep`, which was fast — but completely broken over SSH remotes since it bypassed our `FileSystem` trait. The rewrite routes all I/O through that trait so search works identically on local and remote filesystems. Large files added another layer: we can't pull a multi-GB file over the network just to search it. Instead, a `HybridSearchPlan` splits each file into loaded (dirty, in-memory) and unloaded regions — unloaded regions are searched on the remote side via chunked reads, and only the matches come back over the wire. Chunk boundaries are tricky: matches can span them, so we overlap adjacent chunks and deduplicate. Eight parallel searchers, bounded by a tokio semaphore, keep throughput high without overwhelming the remote. Every new keystroke cancels in-flight work via an atomic flag, so the UI stays responsive even mid-search.
+
 <div class="showcase-demo">
   <img src="./project-search-replace/showcase.gif" alt="Project-Wide Search & Replace demo" />
 </div>
