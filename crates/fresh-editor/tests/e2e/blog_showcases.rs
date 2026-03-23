@@ -12,7 +12,7 @@
 
 use crate::common::blog_showcase::BlogShowcase;
 use crate::common::fixtures::TestFixture;
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use lsp_types::FoldingRange;
 use std::fs;
@@ -1536,6 +1536,728 @@ fn blog_showcase_fresh_0_2_9_auto_save() {
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
     hold(&mut h, &mut s, 3, 100);
+
+    s.finalize().unwrap();
+}
+
+// =========================================================================
+// Blog Post 5: What's New in Fresh (0.2.11–0.2.18)
+// =========================================================================
+
+/// Project-Wide Search & Replace: search across files and replace with Alt+Enter
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_2_18_project_search_replace() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    fs::create_dir_all(project_root.join("src")).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "search_replace");
+
+    fs::write(
+        project_root.join("src/main.rs"),
+        r#"use std::collections::HashMap;
+
+fn main() {
+    let config = load_config("settings.json");
+    let items = vec!["alpha", "beta", "gamma"];
+
+    for item in &items {
+        process_item(item, &config);
+    }
+
+    println!("Done processing {} items", items.len());
+}
+
+fn load_config(path: &str) -> HashMap<String, String> {
+    println!("Loading config from {}", path);
+    HashMap::new()
+}
+
+fn process_item(item: &str, _config: &HashMap<String, String>) {
+    let value = item.to_uppercase();
+    println!("[{}] {}", item, value);
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project_root.join("src/utils.rs"),
+        r#"pub fn process_batch(items: &[&str]) -> Vec<String> {
+    items.iter().map(|item| process_item(item)).collect()
+}
+
+pub fn process_item(item: &str) -> String {
+    item.to_uppercase()
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project_root.join("src/tests.rs"),
+        r#"#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_process_item() {
+        let config = HashMap::new();
+        process_item("test", &config);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let mut h = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .with_working_dir(project_root)
+            .with_full_grammar_registry()
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    h.open_file(&temp_dir.path().join("project/src/main.rs"))
+        .unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.2.18/project-search-replace",
+        "Project-Wide Search & Replace",
+        "Search and replace across your entire project. Alt+Enter to replace all matches.",
+    );
+
+    hold(&mut h, &mut s, 4, 100);
+
+    // Open project search via command palette
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+P"), 150);
+
+    for ch in "Search and Replace".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+    }
+    snap(&mut h, &mut s, None, 100);
+    hold(&mut h, &mut s, 2, 100);
+
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 200);
+    hold(&mut h, &mut s, 3, 100);
+
+    // Type search term
+    for ch in "process_item".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some(&ch.to_string()), 50);
+    }
+
+    // Press Enter to confirm search and move to replace field
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 150);
+
+    // Type replacement
+    for ch in "handle_item".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some(&ch.to_string()), 50);
+    }
+    hold(&mut h, &mut s, 2, 100);
+
+    // Press Enter to confirm replacement and trigger the search
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 150);
+
+    // Wait for streaming search results to arrive
+    h.wait_until_stable(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("[v]") || screen.contains("matches")
+    })
+    .unwrap();
+    hold(&mut h, &mut s, 6, 100);
+
+    // Alt+Enter to replace all
+    h.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Alt+Enter"), 400);
+    hold_key(&mut h, &mut s, "Replace All", 5, 150);
+
+    s.finalize().unwrap();
+}
+
+/// Inline Diagnostics: diagnostic text displayed at end of lines
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_2_18_inline_diagnostics() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    fs::create_dir_all(project_root.join("src")).unwrap();
+
+    let rs_path = project_root.join("src/main.rs");
+    fs::write(
+        &rs_path,
+        r#"fn main() {
+    let x: i32 = "hello";
+    let y = unknown_function();
+    let z: bool = 42;
+    println!("{} {} {}", x, y, z);
+}
+"#,
+    )
+    .unwrap();
+
+    let mut config = fresh::config::Config::default();
+    config.editor.diagnostics_inline_text = true;
+
+    let mut h = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_root)
+            .with_full_grammar_registry()
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    h.open_file(&rs_path).unwrap();
+
+    // Inject fake diagnostics via the proper API
+    {
+        let diagnostics = vec![
+            lsp_types::Diagnostic {
+                range: lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: 1,
+                        character: 18,
+                    },
+                    end: lsp_types::Position {
+                        line: 1,
+                        character: 25,
+                    },
+                },
+                severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+                message: "mismatched types: expected `i32`, found `&str`".to_string(),
+                code: None,
+                code_description: None,
+                source: None,
+                related_information: None,
+                tags: None,
+                data: None,
+            },
+            lsp_types::Diagnostic {
+                range: lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: 2,
+                        character: 12,
+                    },
+                    end: lsp_types::Position {
+                        line: 2,
+                        character: 28,
+                    },
+                },
+                severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+                message: "cannot find function `unknown_function`".to_string(),
+                code: None,
+                code_description: None,
+                source: None,
+                related_information: None,
+                tags: None,
+                data: None,
+            },
+            lsp_types::Diagnostic {
+                range: lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: 3,
+                        character: 19,
+                    },
+                    end: lsp_types::Position {
+                        line: 3,
+                        character: 21,
+                    },
+                },
+                severity: Some(lsp_types::DiagnosticSeverity::WARNING),
+                message: "mismatched types: expected `bool`, found integer".to_string(),
+                code: None,
+                code_description: None,
+                source: None,
+                related_information: None,
+                tags: None,
+                data: None,
+            },
+        ];
+        let state = h.editor_mut().active_state_mut();
+        let theme = fresh::view::theme::Theme::load_builtin("dark").unwrap();
+        fresh::services::lsp::diagnostics::apply_diagnostics_to_state(state, &diagnostics, &theme);
+    }
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.2.18/inline-diagnostics",
+        "Inline Diagnostics",
+        "Diagnostic messages displayed right-aligned at the end of each line.",
+    );
+
+    // Show the file with inline diagnostics
+    hold(&mut h, &mut s, 8, 100);
+
+    // Navigate through diagnostic lines
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    snap(&mut h, &mut s, Some("↓"), 200);
+    hold(&mut h, &mut s, 3, 100);
+
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    snap(&mut h, &mut s, Some("↓"), 200);
+    hold(&mut h, &mut s, 3, 100);
+
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    snap(&mut h, &mut s, Some("↓"), 200);
+    hold(&mut h, &mut s, 5, 100);
+
+    s.finalize().unwrap();
+}
+
+/// Surround Selection: typing a delimiter wraps the selection
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_2_18_surround_selection() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    fs::create_dir(&project_root).unwrap();
+
+    let rs_path = project_root.join("main.rs");
+    fs::write(
+        &rs_path,
+        r#"fn render_page(title: &str, items: &[Item]) -> String {
+    let header = format!("Welcome to {}", title);
+    let count = items.len().to_string();
+    let body = items.iter()
+        .map(|item| item.name.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{}\n{} items: {}", header, count, body)
+}
+"#,
+    )
+    .unwrap();
+
+    let mut h = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(fresh::config::Config::default())
+            .with_working_dir(project_root)
+            .with_full_grammar_registry()
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    h.open_file(&rs_path).unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.2.18/surround-selection",
+        "Surround Selection",
+        "Select text and type a delimiter to wrap it.",
+    );
+
+    hold(&mut h, &mut s, 4, 100);
+
+    // Go to line 3: "let count = items.len().to_string();"
+    // We'll select "items.len()" and wrap it with parentheses — a common
+    // pattern when you want to add a method call on a sub-expression.
+    for _ in 0..2 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+
+    // Move to start of "items.len()" — SmartHome goes to first non-ws (col 4),
+    // then 12 right to reach col 16 where "items" starts
+    h.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..12 {
+        h.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+    snap(&mut h, &mut s, None, 150);
+
+    // Select "items.len()" with Shift+Right x11
+    for _ in 0..11 {
+        h.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+    }
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Select"), 200);
+    hold(&mut h, &mut s, 3, 100);
+
+    // Type ( to surround — result: (items.len())
+    h.send_key(KeyCode::Char('('), KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("("), 400);
+    hold_key(&mut h, &mut s, "(items.len())", 4, 150);
+
+    // Now demonstrate with braces: select "body" on the format! line and wrap with {
+    // Go to line 8: "    format!(..., header, count, body)"
+    for _ in 0..5 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+
+    // Move to start of "body" — last arg in format! macro
+    h.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    // back past ")" at EOL
+    for _ in 0..5 {
+        h.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+    snap(&mut h, &mut s, None, 150);
+
+    // Select "body" (4 chars)
+    for _ in 0..4 {
+        h.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+    }
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Select"), 200);
+    hold(&mut h, &mut s, 2, 100);
+
+    // Type { to surround with braces
+    h.send_key(KeyCode::Char('{'), KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("{"), 400);
+    hold_key(&mut h, &mut s, "{body}", 4, 150);
+
+    hold(&mut h, &mut s, 3, 100);
+
+    s.finalize().unwrap();
+}
+
+/// Whitespace Indicators: granular control over space and tab visibility
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_2_18_whitespace_indicators() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    fs::create_dir(&project_root).unwrap();
+
+    let py_path = project_root.join("example.py");
+    fs::write(
+        &py_path,
+        "def process(items):\n    for item in items:\n        if item.is_valid():  \n            result = item.transform()\n            yield result\n\ndef main():\n    data = [1, 2, 3]   \n    for r in process(data):\n        print(r)\n",
+    )
+    .unwrap();
+
+    let mut config = fresh::config::Config::default();
+    config.editor.whitespace_spaces_leading = true;
+    config.editor.whitespace_spaces_inner = true;
+    config.editor.whitespace_spaces_trailing = true;
+    config.editor.whitespace_tabs_leading = true;
+    config.editor.whitespace_tabs_inner = true;
+    config.editor.whitespace_tabs_trailing = true;
+
+    let mut h = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_root)
+            .with_full_grammar_registry()
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    h.open_file(&py_path).unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.2.18/whitespace-indicators",
+        "Whitespace Indicators",
+        "Granular control over space and tab visibility — leading, inner, trailing, or all.",
+    );
+
+    // Show the file with whitespace indicators visible
+    hold(&mut h, &mut s, 8, 100);
+
+    // Navigate through to show different whitespace patterns
+    for _ in 0..4 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        snap(&mut h, &mut s, Some("↓"), 150);
+    }
+    hold(&mut h, &mut s, 4, 100);
+
+    // Open settings to show configuration
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+P"), 120);
+
+    for ch in "settings".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+    }
+    snap(&mut h, &mut s, None, 80);
+
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 200);
+    hold(&mut h, &mut s, 2, 100);
+
+    // Filter for whitespace
+    h.send_key(KeyCode::Char('/'), KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    for ch in "whitespace".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+    }
+    snap(&mut h, &mut s, Some("whitespace"), 150);
+    hold(&mut h, &mut s, 5, 100);
+
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    hold(&mut h, &mut s, 3, 100);
+
+    s.finalize().unwrap();
+}
+
+/// Theme Editor Redesign: virtual scrolling, mouse support, inspect at cursor
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_2_18_theme_editor() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let pd = h.project_dir().unwrap();
+    create_demo_project(&pd);
+    h.open_file(&pd.join("src/main.rs")).unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.2.18/theme-editor",
+        "Theme Editor Redesign",
+        "Redesigned theme editor with virtual scrolling, mouse support, and Inspect Theme at Cursor.",
+    );
+
+    hold(&mut h, &mut s, 4, 100);
+
+    // Open theme editor via command palette
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+P"), 150);
+
+    for ch in "theme editor".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+    }
+    snap(&mut h, &mut s, None, 100);
+    hold(&mut h, &mut s, 2, 100);
+
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 200);
+    hold(&mut h, &mut s, 4, 100);
+
+    // Scroll down through theme entries
+    for _ in 0..6 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some("↓"), 80);
+    }
+    hold(&mut h, &mut s, 3, 100);
+
+    // Scroll more to show virtual scrolling
+    for _ in 0..8 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some("↓"), 60);
+    }
+    hold(&mut h, &mut s, 4, 100);
+
+    // Go back up
+    for _ in 0..5 {
+        h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some("↑"), 60);
+    }
+    hold(&mut h, &mut s, 4, 100);
+
+    // Close
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    hold(&mut h, &mut s, 3, 100);
+
+    s.finalize().unwrap();
+}
+
+/// Syntax Grammars: 30 new languages with highlighting
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_2_18_syntax_grammars() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    fs::create_dir_all(project_root.join("src")).unwrap();
+
+    // Create files in various languages to show off syntax highlighting
+    fs::write(
+        project_root.join("Dockerfile"),
+        r#"FROM rust:1.75 AS builder
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+RUN cargo build --release
+COPY src/ ./src/
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y libssl3
+COPY --from=builder /app/target/release/fresh /usr/local/bin/
+ENTRYPOINT ["fresh"]
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project_root.join("config.nix"),
+        r#"{ pkgs ? import <nixpkgs> {} }:
+
+pkgs.mkShell {
+  buildInputs = with pkgs; [
+    rustc
+    cargo
+    pkg-config
+    openssl
+  ];
+
+  shellHook = ''
+    echo "Fresh development environment"
+    export RUST_LOG=debug
+  '';
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project_root.join("app.svelte"),
+        r#"<script lang="ts">
+  import { onMount } from 'svelte';
+
+  let count = $state(0);
+  let doubled = $derived(count * 2);
+
+  function increment() {
+    count += 1;
+  }
+</script>
+
+<main>
+  <h1>Count: {count}</h1>
+  <p>Doubled: {doubled}</p>
+  <button onclick={increment}>+1</button>
+</main>
+
+<style>
+  main { padding: 2rem; }
+  button { font-size: 1.5rem; }
+</style>
+"#,
+    )
+    .unwrap();
+
+    let mut h = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .with_working_dir(project_root.clone())
+            .with_full_grammar_registry()
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.2.18/syntax-grammars",
+        "30 New Syntax Grammars",
+        "Dockerfile, Nix, Svelte, Vue, Kotlin, Swift, and 24 more languages with syntax highlighting.",
+    );
+
+    // Open Dockerfile
+    h.open_file(&project_root.join("Dockerfile")).unwrap();
+    hold(&mut h, &mut s, 6, 100);
+
+    // Show Nix file
+    h.open_file(&project_root.join("config.nix")).unwrap();
+    hold(&mut h, &mut s, 6, 100);
+
+    // Show Svelte file
+    h.open_file(&project_root.join("app.svelte")).unwrap();
+    hold(&mut h, &mut s, 6, 100);
+
+    // Scroll through Svelte to show mixed HTML/JS/CSS highlighting
+    for _ in 0..10 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some("↓"), 60);
+    }
+    hold(&mut h, &mut s, 5, 100);
+
+    s.finalize().unwrap();
+}
+
+/// Hot Exit: unnamed buffer content persists across editor restarts
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_2_18_hot_exit() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    fs::create_dir(&project_root).unwrap();
+
+    let dir_context = fresh::config_io::DirectoryContext::for_testing(temp_dir.path());
+
+    let mut h = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_shared_dir_context(dir_context.clone())
+            .with_working_dir(project_root.clone())
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.2.18/hot-exit",
+        "Hot Exit",
+        "Unnamed scratch buffers persist across editor restarts — never lose your quick notes.",
+    );
+
+    // Type some quick notes into the unnamed buffer
+    let notes = "TODO before release:\n- run full test suite\n- update changelog\n- tag v0.2.18\n- build release artifacts";
+    for ch in notes.chars() {
+        if ch == '\n' {
+            h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        } else {
+            h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        }
+    }
+    h.render().unwrap();
+    hold(&mut h, &mut s, 8, 100);
+
+    // Quit the editor (Ctrl+Q)
+    h.shutdown(true).unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+Q"), 400);
+    hold_key(&mut h, &mut s, "quit", 4, 150);
+
+    // ---- Restart the editor in a new harness ----
+    let mut h2 = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_shared_dir_context(dir_context)
+            .with_working_dir(project_root)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+
+    h2.startup(true, &[]).unwrap();
+    h2.render().unwrap();
+
+    // Show the restored buffer — notes are back!
+    hold(&mut h2, &mut s, 10, 100);
 
     s.finalize().unwrap();
 }
