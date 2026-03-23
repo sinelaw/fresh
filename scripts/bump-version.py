@@ -24,6 +24,7 @@ LOCAL_CRATES = [
     "fresh-languages",
     "fresh-plugin-runtime",
     "fresh-plugin-api-macros",
+    "fresh-winterm",
 ]
 
 def print_usage():
