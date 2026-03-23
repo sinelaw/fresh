@@ -21,15 +21,28 @@ use syntect::parsing::SyntaxSet;
 /// Maximum bytes to parse in a single operation
 const MAX_PARSE_BYTES: usize = 1024 * 1024;
 
-/// TextMate highlighting engine
+/// Interval between parse state checkpoints (in bytes).
+const CHECKPOINT_INTERVAL: usize = 4096;
+
+/// TextMate highlighting engine (WASM-compatible)
 ///
-/// Uses syntect for TextMate grammar-based syntax highlighting.
-/// This is WASM-compatible when syntect uses the `fancy-regex` feature.
+/// Uses syntect for TextMate grammar-based syntax highlighting with parse state
+/// checkpointing for correct embedded language support. See the runtime
+/// `TextMateEngine` in `highlight_engine.rs` for detailed documentation.
 pub struct TextMateEngine {
     syntax_set: Arc<SyntaxSet>,
     syntax_index: usize,
     cache: Option<TextMateCache>,
+    checkpoints: Vec<ParseCheckpoint>,
+    parsed_up_to: usize,
     last_buffer_len: usize,
+}
+
+/// A saved parse state at a known byte offset.
+struct ParseCheckpoint {
+    byte_offset: usize,
+    parse_state: syntect::parsing::ParseState,
+    scope_stack: syntect::parsing::ScopeStack,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +64,8 @@ impl TextMateEngine {
             syntax_set,
             syntax_index,
             cache: None,
+            checkpoints: Vec::new(),
+            parsed_up_to: 0,
             last_buffer_len: 0,
         }
     }
@@ -71,10 +86,8 @@ impl TextMateEngine {
         Some(Self::new(syntax_set, index))
     }
 
-    /// Highlight the visible viewport range
-    ///
-    /// `context_bytes` controls how far before/after the viewport to parse for accurate
-    /// highlighting of multi-line constructs (strings, comments, nested blocks).
+    /// Highlight the visible viewport range using parse state checkpoints.
+    /// See the runtime `TextMateEngine` in `highlight_engine.rs` for detailed docs.
     pub fn highlight_viewport(
         &mut self,
         buffer: &Buffer,
@@ -83,7 +96,6 @@ impl TextMateEngine {
         theme: &Theme,
         context_bytes: usize,
     ) -> Vec<HighlightSpan> {
-        use syntect::parsing::{ParseState, ScopeStack};
 
         // Check cache validity
         if let Some(cache) = &self.cache {
@@ -106,45 +118,61 @@ impl TextMateEngine {
             }
         }
 
-        // Cache miss - parse viewport region
-        let parse_start = viewport_start.saturating_sub(context_bytes);
+        // Cache miss
+        let desired_parse_start = viewport_start.saturating_sub(context_bytes);
         let parse_end = (viewport_end + context_bytes).min(buffer.len());
 
-        if parse_end <= parse_start || parse_end - parse_start > MAX_PARSE_BYTES {
+        if parse_end <= desired_parse_start {
             return Vec::new();
         }
 
-        let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
-        let mut state = ParseState::new(syntax);
-        let mut spans = Vec::new();
+        if self.last_buffer_len != buffer.len() && self.last_buffer_len != 0 {
+            self.checkpoints.clear();
+            self.parsed_up_to = 0;
+        }
 
-        // Get content
-        let content = buffer.slice_bytes(parse_start..parse_end);
+        let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
+
+        let (actual_start, mut state, mut current_scopes, use_checkpoints) =
+            self.find_parse_resume_point(desired_parse_start, parse_end, syntax);
+
+        let content = buffer.slice_bytes(actual_start..parse_end);
         let content_str = match std::str::from_utf8(&content) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
 
-        // Parse line by line
+        let mut spans = Vec::new();
         let content_bytes = content_str.as_bytes();
         let mut pos = 0;
-        let mut current_offset = parse_start;
-        let mut current_scopes = ScopeStack::new();
+        let mut current_offset = actual_start;
+        let mut bytes_since_checkpoint: usize = 0;
 
         while pos < content_bytes.len() {
+            if use_checkpoints
+                && current_offset > self.parsed_up_to
+                && bytes_since_checkpoint >= CHECKPOINT_INTERVAL
+            {
+                self.checkpoints.push(ParseCheckpoint {
+                    byte_offset: current_offset,
+                    parse_state: state.clone(),
+                    scope_stack: current_scopes.clone(),
+                });
+                bytes_since_checkpoint = 0;
+            }
+
             let line_start = pos;
             let mut line_end = pos;
 
-            // Scan for line ending
             while line_end < content_bytes.len() {
                 if content_bytes[line_end] == b'\n' {
                     line_end += 1;
                     break;
                 } else if content_bytes[line_end] == b'\r' {
                     if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
-                        line_end += 2; // CRLF
+                        line_end += 2;
                     } else {
-                        line_end += 1; // CR only
+                        line_end += 1;
                     }
                     break;
                 }
@@ -159,11 +187,11 @@ impl TextMateEngine {
                 Err(_) => {
                     pos = line_end;
                     current_offset += actual_line_byte_len;
+                    bytes_since_checkpoint += actual_line_byte_len;
                     continue;
                 }
             };
 
-            // Prepare line for syntect
             let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
             let line_for_syntect = if line_end < content_bytes.len() || line_str.ends_with('\n') {
                 format!("{}\n", line_content)
@@ -176,42 +204,43 @@ impl TextMateEngine {
                 Err(_) => {
                     pos = line_end;
                     current_offset += actual_line_byte_len;
+                    bytes_since_checkpoint += actual_line_byte_len;
                     continue;
                 }
             };
 
-            // Convert operations to spans
+            let collect_spans = current_offset + actual_line_byte_len > desired_parse_start;
             let mut syntect_offset = 0;
             let line_content_len = line_content.len();
 
             for (op_offset, op) in ops {
                 let clamped_op_offset = op_offset.min(line_content_len);
-                if clamped_op_offset > syntect_offset {
+                if collect_spans && clamped_op_offset > syntect_offset {
                     if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
                         let byte_start = current_offset + syntect_offset;
                         let byte_end = current_offset + clamped_op_offset;
-                        if byte_start < byte_end {
+                        let clamped_start = byte_start.max(desired_parse_start);
+                        if clamped_start < byte_end {
                             spans.push(CachedSpan {
-                                range: byte_start..byte_end,
+                                range: clamped_start..byte_end,
                                 category,
                             });
                         }
                     }
                 }
                 syntect_offset = clamped_op_offset;
-                // Scope stack errors are non-fatal for highlighting
                 #[allow(clippy::let_underscore_must_use)]
                 let _ = current_scopes.apply(&op);
             }
 
-            // Handle remaining text on line
-            if syntect_offset < line_content_len {
+            if collect_spans && syntect_offset < line_content_len {
                 if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
                     let byte_start = current_offset + syntect_offset;
                     let byte_end = current_offset + line_content_len;
-                    if byte_start < byte_end {
+                    let clamped_start = byte_start.max(desired_parse_start);
+                    if clamped_start < byte_end {
                         spans.push(CachedSpan {
-                            range: byte_start..byte_end,
+                            range: clamped_start..byte_end,
                             category,
                         });
                     }
@@ -220,19 +249,21 @@ impl TextMateEngine {
 
             pos = line_end;
             current_offset += actual_line_byte_len;
+            bytes_since_checkpoint += actual_line_byte_len;
         }
 
-        // Merge adjacent spans
+        if use_checkpoints {
+            self.parsed_up_to = self.parsed_up_to.max(parse_end);
+        }
+
         Self::merge_adjacent_spans(&mut spans);
 
-        // Update cache
         self.cache = Some(TextMateCache {
-            range: parse_start..parse_end,
+            range: desired_parse_start..parse_end,
             spans: spans.clone(),
         });
         self.last_buffer_len = buffer.len();
 
-        // Filter and resolve colors
         spans
             .into_iter()
             .filter(|span| span.range.start < viewport_end && span.range.end > viewport_start)
@@ -245,6 +276,28 @@ impl TextMateEngine {
                 }
             })
             .collect()
+    }
+
+    fn find_parse_resume_point(
+        &self,
+        desired_start: usize,
+        parse_end: usize,
+        syntax: &syntect::parsing::SyntaxReference,
+    ) -> (usize, syntect::parsing::ParseState, syntect::parsing::ScopeStack, bool) {
+        use syntect::parsing::{ParseState, ScopeStack};
+
+        let idx = self
+            .checkpoints
+            .partition_point(|cp| cp.byte_offset <= desired_start);
+
+        if idx > 0 {
+            let cp = &self.checkpoints[idx - 1];
+            (cp.byte_offset, cp.parse_state.clone(), cp.scope_stack.clone(), true)
+        } else if parse_end <= MAX_PARSE_BYTES {
+            (0, ParseState::new(syntax), ScopeStack::new(), true)
+        } else {
+            (desired_start, ParseState::new(syntax), ScopeStack::new(), false)
+        }
     }
 
     /// Map scope stack to highlight category
@@ -280,18 +333,25 @@ impl TextMateEngine {
         spans.truncate(write_idx + 1);
     }
 
-    /// Invalidate cache for edited range
+    /// Invalidate cache and checkpoints for an edited range.
     pub fn invalidate_range(&mut self, edit_range: Range<usize>) {
         if let Some(cache) = &self.cache {
             if edit_range.start < cache.range.end && edit_range.end > cache.range.start {
                 self.cache = None;
             }
         }
+        let keep = self
+            .checkpoints
+            .partition_point(|cp| cp.byte_offset < edit_range.start);
+        self.checkpoints.truncate(keep);
+        self.parsed_up_to = self.parsed_up_to.min(edit_range.start);
     }
 
-    /// Invalidate all cache
+    /// Invalidate all cache and checkpoints
     pub fn invalidate_all(&mut self) {
         self.cache = None;
+        self.checkpoints.clear();
+        self.parsed_up_to = 0;
     }
 
     /// Get syntax name

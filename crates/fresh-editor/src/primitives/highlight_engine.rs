@@ -231,16 +231,43 @@ pub enum HighlightEngine {
 
 /// TextMate highlighting engine wrapper
 ///
-/// This struct handles the lifetime complexities of syntect by storing
-/// the syntax set and using indices rather than references.
+/// Uses syntect for TextMate grammar-based syntax highlighting with parse state
+/// checkpointing for correct embedded language support.
+///
+/// Syntect's parser is a sequential state machine that must process text from the
+/// start of the file to correctly track embedded language transitions (e.g. CSS
+/// inside HTML `<style>` tags). To avoid re-parsing the entire file on every
+/// viewport change, we cache `ParseState` + `ScopeStack` checkpoints at regular
+/// byte intervals. On a cache miss we resume from the nearest checkpoint rather
+/// than byte 0. For large files where no checkpoint reaches the viewport, we fall
+/// back to a fresh `ParseState` from `context_bytes` before the viewport (correct
+/// for single-language files, which large files almost always are).
 pub struct TextMateEngine {
     syntax_set: Arc<SyntaxSet>,
     syntax_index: usize,
     cache: Option<TextMateCache>,
+    /// Parse state checkpoints at regular byte intervals, sorted by byte_offset.
+    /// Built incrementally as we parse; used to resume mid-file without losing
+    /// embedded language context.
+    checkpoints: Vec<ParseCheckpoint>,
+    /// Furthest byte offset with valid checkpoints. Everything before this has
+    /// been parsed and checkpointed.
+    parsed_up_to: usize,
     last_buffer_len: usize,
     /// Tree-sitter language for non-highlighting features (indentation, semantic highlighting)
     /// Even when using syntect for highlighting, we track the language for other features
     ts_language: Option<Language>,
+}
+
+/// A saved parse state at a known byte offset, allowing us to resume syntect
+/// parsing from this point without re-parsing from byte 0.
+struct ParseCheckpoint {
+    /// Byte offset in the buffer (always at a line boundary).
+    byte_offset: usize,
+    /// The syntect parse state at this offset.
+    parse_state: syntect::parsing::ParseState,
+    /// The scope stack at this offset.
+    scope_stack: syntect::parsing::ScopeStack,
 }
 
 #[derive(Debug, Clone)]
@@ -258,6 +285,10 @@ struct CachedSpan {
 /// Maximum bytes to parse in a single operation
 const MAX_PARSE_BYTES: usize = 1024 * 1024;
 
+/// Interval between parse state checkpoints (in bytes).
+/// 4KB: a 1MB file produces ~256 checkpoints at ~200 bytes each ≈ 50KB overhead.
+const CHECKPOINT_INTERVAL: usize = 4096;
+
 impl TextMateEngine {
     /// Create a new TextMate engine for the given syntax
     pub fn new(syntax_set: Arc<SyntaxSet>, syntax_index: usize) -> Self {
@@ -265,6 +296,8 @@ impl TextMateEngine {
             syntax_set,
             syntax_index,
             cache: None,
+            checkpoints: Vec::new(),
+            parsed_up_to: 0,
             last_buffer_len: 0,
             ts_language: None,
         }
@@ -280,6 +313,8 @@ impl TextMateEngine {
             syntax_set,
             syntax_index,
             cache: None,
+            checkpoints: Vec::new(),
+            parsed_up_to: 0,
             last_buffer_len: 0,
             ts_language,
         }
@@ -292,6 +327,10 @@ impl TextMateEngine {
 
     /// Highlight the visible viewport range
     ///
+    /// Uses parse state checkpoints to correctly handle embedded languages (CSS in
+    /// HTML, etc.) without re-parsing the entire file. Falls back to a fresh
+    /// `ParseState` for large files where checkpoints don't reach the viewport.
+    ///
     /// `context_bytes` controls how far before/after the viewport to parse for accurate
     /// highlighting of multi-line constructs (strings, comments, nested blocks).
     pub fn highlight_viewport(
@@ -302,8 +341,6 @@ impl TextMateEngine {
         theme: &Theme,
         context_bytes: usize,
     ) -> Vec<HighlightSpan> {
-        use syntect::parsing::{ParseState, ScopeStack};
-
         // Check cache validity
         if let Some(cache) = &self.cache {
             if cache.range.start <= viewport_start
@@ -325,33 +362,53 @@ impl TextMateEngine {
             }
         }
 
-        // Cache miss - parse viewport region
-        let parse_start = viewport_start.saturating_sub(context_bytes);
+        // Cache miss — determine the region we need spans for
+        let desired_parse_start = viewport_start.saturating_sub(context_bytes);
         let parse_end = (viewport_end + context_bytes).min(buffer.len());
 
-        if parse_end <= parse_start || parse_end - parse_start > MAX_PARSE_BYTES {
+        if parse_end <= desired_parse_start {
             return Vec::new();
         }
 
-        let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
-        let mut state = ParseState::new(syntax);
-        let mut spans = Vec::new();
+        // If buffer length changed out-of-band (e.g. file reload), reset checkpoints
+        if self.last_buffer_len != buffer.len() && self.last_buffer_len != 0 {
+            self.checkpoints.clear();
+            self.parsed_up_to = 0;
+        }
 
-        // Get content
-        let content = buffer.slice_bytes(parse_start..parse_end);
+        let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
+
+        // Find the best starting point: nearest checkpoint at or before desired_parse_start
+        let (actual_start, mut state, mut current_scopes, use_checkpoints) =
+            self.find_parse_resume_point(desired_parse_start, parse_end, syntax);
+
+        // Fetch content from actual_start to parse_end
+        let content = buffer.slice_bytes(actual_start..parse_end);
         let content_str = match std::str::from_utf8(&content) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
 
-        // Parse line by line - manually track line boundaries to handle CRLF correctly
-        // str::lines() strips both \n and \r\n, losing the distinction
+        let mut spans = Vec::new();
         let content_bytes = content_str.as_bytes();
         let mut pos = 0;
-        let mut current_offset = parse_start;
-        let mut current_scopes = ScopeStack::new();
+        let mut current_offset = actual_start;
+        let mut bytes_since_checkpoint: usize = 0;
 
         while pos < content_bytes.len() {
+            // Save checkpoint at line boundaries if we're in new territory
+            if use_checkpoints
+                && current_offset > self.parsed_up_to
+                && bytes_since_checkpoint >= CHECKPOINT_INTERVAL
+            {
+                self.checkpoints.push(ParseCheckpoint {
+                    byte_offset: current_offset,
+                    parse_state: state.clone(),
+                    scope_stack: current_scopes.clone(),
+                });
+                bytes_since_checkpoint = 0;
+            }
+
             let line_start = pos;
             let mut line_end = pos;
 
@@ -381,6 +438,7 @@ impl TextMateEngine {
                 Err(_) => {
                     pos = line_end;
                     current_offset += actual_line_byte_len;
+                    bytes_since_checkpoint += actual_line_byte_len;
                     continue;
                 }
             };
@@ -398,26 +456,29 @@ impl TextMateEngine {
                 Err(_) => {
                     pos = line_end;
                     current_offset += actual_line_byte_len;
+                    bytes_since_checkpoint += actual_line_byte_len;
                     continue;
                 }
             };
 
-            // Convert operations to spans
-            // Note: syntect offsets are relative to line_for_syntect, but we need
-            // to map them to the actual buffer positions
+            // Only collect spans for bytes at or after desired_parse_start.
+            // Lines before that are just advancing parser state for embedded language context.
+            let collect_spans = current_offset + actual_line_byte_len > desired_parse_start;
+
             let mut syntect_offset = 0;
             let line_content_len = line_content.len();
 
             for (op_offset, op) in ops {
-                // Handle any text before this operation (but only within content, not newline)
                 let clamped_op_offset = op_offset.min(line_content_len);
-                if clamped_op_offset > syntect_offset {
+                if collect_spans && clamped_op_offset > syntect_offset {
                     if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
                         let byte_start = current_offset + syntect_offset;
                         let byte_end = current_offset + clamped_op_offset;
-                        if byte_start < byte_end {
+                        // Clamp span start to desired_parse_start (partial first line)
+                        let clamped_start = byte_start.max(desired_parse_start);
+                        if clamped_start < byte_end {
                             spans.push(CachedSpan {
-                                range: byte_start..byte_end,
+                                range: clamped_start..byte_end,
                                 category,
                             });
                         }
@@ -431,13 +492,14 @@ impl TextMateEngine {
             }
 
             // Handle remaining text on line (content only, not line ending)
-            if syntect_offset < line_content_len {
+            if collect_spans && syntect_offset < line_content_len {
                 if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
                     let byte_start = current_offset + syntect_offset;
                     let byte_end = current_offset + line_content_len;
-                    if byte_start < byte_end {
+                    let clamped_start = byte_start.max(desired_parse_start);
+                    if clamped_start < byte_end {
                         spans.push(CachedSpan {
-                            range: byte_start..byte_end,
+                            range: clamped_start..byte_end,
                             category,
                         });
                     }
@@ -447,6 +509,12 @@ impl TextMateEngine {
             // Advance by actual byte length (including real line terminator)
             pos = line_end;
             current_offset += actual_line_byte_len;
+            bytes_since_checkpoint += actual_line_byte_len;
+        }
+
+        // Update checkpoint coverage high-water mark
+        if use_checkpoints {
+            self.parsed_up_to = self.parsed_up_to.max(parse_end);
         }
 
         // Merge adjacent spans
@@ -454,7 +522,7 @@ impl TextMateEngine {
 
         // Update cache
         self.cache = Some(TextMateCache {
-            range: parse_start..parse_end,
+            range: desired_parse_start..parse_end,
             spans: spans.clone(),
         });
         self.last_buffer_len = buffer.len();
@@ -472,6 +540,41 @@ impl TextMateEngine {
                 }
             })
             .collect()
+    }
+
+    /// Find the best point to resume parsing from.
+    ///
+    /// Returns `(byte_offset, ParseState, ScopeStack, use_checkpoints)`.
+    /// - If a checkpoint exists before `desired_start`, resume from it.
+    /// - If no checkpoint, start from byte 0.
+    /// - If starting from byte 0 would exceed MAX_PARSE_BYTES, fall back to a fresh
+    ///   ParseState from `desired_start` (correct for single-language files, best-effort
+    ///   for embedded languages in very large files).
+    fn find_parse_resume_point(
+        &self,
+        desired_start: usize,
+        parse_end: usize,
+        syntax: &syntect::parsing::SyntaxReference,
+    ) -> (usize, syntect::parsing::ParseState, syntect::parsing::ScopeStack, bool) {
+        use syntect::parsing::{ParseState, ScopeStack};
+
+        // Binary search for the latest checkpoint at or before desired_start
+        let idx = self
+            .checkpoints
+            .partition_point(|cp| cp.byte_offset <= desired_start);
+
+        if idx > 0 {
+            // Resume from checkpoint
+            let cp = &self.checkpoints[idx - 1];
+            (cp.byte_offset, cp.parse_state.clone(), cp.scope_stack.clone(), true)
+        } else if parse_end <= MAX_PARSE_BYTES {
+            // No checkpoint, file is small enough — parse from byte 0
+            (0, ParseState::new(syntax), ScopeStack::new(), true)
+        } else {
+            // No checkpoint and file is too large to parse from byte 0.
+            // Fall back to fresh ParseState from desired_start (no checkpoints built).
+            (desired_start, ParseState::new(syntax), ScopeStack::new(), false)
+        }
     }
 
     /// Map scope stack to highlight category
@@ -507,18 +610,30 @@ impl TextMateEngine {
         spans.truncate(write_idx + 1);
     }
 
-    /// Invalidate cache for edited range
+    /// Invalidate cache and checkpoints for an edited range.
+    ///
+    /// Discards all checkpoints at or after the edit start — everything before
+    /// the edit is still valid parse state. The span cache is cleared if the edit
+    /// overlaps it.
     pub fn invalidate_range(&mut self, edit_range: Range<usize>) {
         if let Some(cache) = &self.cache {
             if edit_range.start < cache.range.end && edit_range.end > cache.range.start {
                 self.cache = None;
             }
         }
+        // Discard checkpoints at or after the edit point
+        let keep = self
+            .checkpoints
+            .partition_point(|cp| cp.byte_offset < edit_range.start);
+        self.checkpoints.truncate(keep);
+        self.parsed_up_to = self.parsed_up_to.min(edit_range.start);
     }
 
-    /// Invalidate all cache
+    /// Invalidate all cache and checkpoints
     pub fn invalidate_all(&mut self) {
         self.cache = None;
+        self.checkpoints.clear();
+        self.parsed_up_to = 0;
     }
 
     /// Get the highlight category at a byte position from the cache.
