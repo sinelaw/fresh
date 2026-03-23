@@ -355,15 +355,65 @@ impl TextMateEngine {
     }
 
     /// Notify the checkpoint system of a buffer insert. Markers auto-adjust positions.
+    /// Also shifts cached span byte offsets after the insert point so the span cache
+    /// remains valid for the partial-update / convergence path.
     pub fn notify_insert(&mut self, position: usize, length: usize) {
         self.checkpoint_markers.adjust_for_insert(position, length);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
+        // Shift cached spans after the insert point
+        if let Some(cache) = &mut self.cache {
+            for span in &mut cache.spans {
+                if span.range.start >= position {
+                    span.range.start += length;
+                    span.range.end += length;
+                } else if span.range.end > position {
+                    // Span straddles the insert point — extend its end
+                    span.range.end += length;
+                }
+            }
+            if cache.range.end >= position {
+                cache.range.end += length;
+            }
+        }
     }
 
     /// Notify the checkpoint system of a buffer delete. Markers auto-adjust positions.
+    /// Also adjusts cached span byte offsets after the delete point.
     pub fn notify_delete(&mut self, position: usize, length: usize) {
         self.checkpoint_markers.adjust_for_delete(position, length);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
+        // Adjust cached spans after the delete point
+        if let Some(cache) = &mut self.cache {
+            let delete_end = position + length;
+            cache.spans.retain_mut(|span| {
+                if span.range.start >= delete_end {
+                    // Span is entirely after the delete — shift back
+                    span.range.start -= length;
+                    span.range.end -= length;
+                    true
+                } else if span.range.end <= position {
+                    // Span is entirely before the delete — unchanged
+                    true
+                } else if span.range.start >= position && span.range.end <= delete_end {
+                    // Span is entirely within the deleted region — remove it
+                    false
+                } else {
+                    // Span partially overlaps — clamp and adjust
+                    if span.range.start < position {
+                        span.range.end = position.min(span.range.end);
+                    } else {
+                        span.range.start = position;
+                        span.range.end = position + span.range.end.saturating_sub(delete_end);
+                    }
+                    span.range.start < span.range.end
+                }
+            });
+            if cache.range.end > delete_end {
+                cache.range.end -= length;
+            } else if cache.range.end > position {
+                cache.range.end = position;
+            }
+        }
     }
 
     /// Highlight the visible viewport range.

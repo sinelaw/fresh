@@ -461,3 +461,67 @@ fn test_perf_convergence_after_state_change() {
         stats.convergences
     );
 }
+
+/// After typing multiple characters, the highlighting on lines AFTER the edit
+/// must remain stable AND convergence must actually kick in (not fall back to
+/// full re-parse). Verifies that span cache offset adjustment works correctly.
+#[test]
+fn test_perf_no_highlight_drift_after_typing() {
+    let path = fixture_path("embedded_css_long.html");
+    let mut harness = create_harness();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    // Jump to a CSS rule and type initial chars to warm up checkpoints
+    goto_line(&mut harness, 200);
+    harness
+        .send_key(KeyCode::End, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::NONE)
+        .unwrap();
+
+    // Capture reference colors on a line below the edit
+    let colors_before: Vec<_> = (8..60)
+        .filter_map(|x| {
+            harness
+                .get_cell_style(x, 15)
+                .and_then(|s| s.fg)
+                .map(|fg| (x, format!("{:?}", fg)))
+        })
+        .collect();
+
+    // Reset stats, then type more characters
+    harness.reset_highlight_stats();
+    for ch in "0123456789".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Check that convergence actually happened (not just full re-parses)
+    let stats = harness.highlight_stats().expect("should have TextMate stats");
+    assert!(
+        stats.convergences >= 1,
+        "Expected convergence to kick in during typing, got {} convergences. \
+         Without convergence the span offset adjustment isn't exercised.",
+        stats.convergences
+    );
+
+    // Check colors didn't drift
+    let colors_after: Vec<_> = (8..60)
+        .filter_map(|x| {
+            harness
+                .get_cell_style(x, 15)
+                .and_then(|s| s.fg)
+                .map(|fg| (x, format!("{:?}", fg)))
+        })
+        .collect();
+
+    assert_eq!(
+        colors_before, colors_after,
+        "Highlight colors on lines after the edit should not drift after typing. \
+         This indicates cached span byte offsets are not being adjusted for inserts."
+    );
+}
