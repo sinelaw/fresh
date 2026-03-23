@@ -108,12 +108,17 @@ impl Editor {
                         match self.open_file(&path) {
                             Ok(_) => {
                                 // Replace buffer content with recovered content
-                                let state = self.active_state_mut();
-                                let total = state.buffer.total_bytes();
-                                state.buffer.delete(0..total);
-                                state.buffer.insert(0, &text);
-                                // Mark as modified since it differs from disk
-                                state.buffer.set_modified(true);
+                                {
+                                    let state = self.active_state_mut();
+                                    let total = state.buffer.total_bytes();
+                                    state.buffer.delete(0..total);
+                                    state.buffer.insert(0, &text);
+                                    // Mark as modified since it differs from disk
+                                    state.buffer.set_modified(true);
+                                }
+                                // Invalidate the event log's saved position so undo
+                                // can't incorrectly clear the modified flag
+                                self.active_event_log_mut().clear_saved_position();
                                 recovered_count += 1;
                                 tracing::info!("Recovered buffer: {}", path.display());
                             }
@@ -131,9 +136,14 @@ impl Editor {
                     } else {
                         // Unsaved buffer - create new buffer with recovered content
                         self.new_buffer();
-                        let state = self.active_state_mut();
-                        state.buffer.insert(0, &text);
-                        state.buffer.set_modified(true);
+                        {
+                            let state = self.active_state_mut();
+                            state.buffer.insert(0, &text);
+                            state.buffer.set_modified(true);
+                        }
+                        // Invalidate the event log's saved position so undo
+                        // can't incorrectly clear the modified flag
+                        self.active_event_log_mut().clear_saved_position();
                         recovered_count += 1;
                         tracing::info!("Recovered unsaved buffer");
                     }
@@ -144,22 +154,27 @@ impl Editor {
                 }) => {
                     // Chunked recovery for large files - apply chunks directly
                     if self.open_file(&original_path).is_ok() {
-                        let state = self.active_state_mut();
+                        {
+                            let state = self.active_state_mut();
 
-                        // Apply chunks in reverse order to preserve offsets
-                        // Each chunk: delete original_len bytes at offset, then insert content
-                        for chunk in chunks.into_iter().rev() {
-                            let text = String::from_utf8_lossy(&chunk.content).into_owned();
-                            if chunk.original_len > 0 {
-                                state
-                                    .buffer
-                                    .delete(chunk.offset..chunk.offset + chunk.original_len);
+                            // Apply chunks in reverse order to preserve offsets
+                            // Each chunk: delete original_len bytes at offset, then insert content
+                            for chunk in chunks.into_iter().rev() {
+                                let text = String::from_utf8_lossy(&chunk.content).into_owned();
+                                if chunk.original_len > 0 {
+                                    state
+                                        .buffer
+                                        .delete(chunk.offset..chunk.offset + chunk.original_len);
+                                }
+                                state.buffer.insert(chunk.offset, &text);
                             }
-                            state.buffer.insert(chunk.offset, &text);
-                        }
 
-                        // Mark as modified since it differs from disk
-                        state.buffer.set_modified(true);
+                            // Mark as modified since it differs from disk
+                            state.buffer.set_modified(true);
+                        }
+                        // Invalidate the event log's saved position so undo
+                        // can't incorrectly clear the modified flag
+                        self.active_event_log_mut().clear_saved_position();
                         recovered_count += 1;
                         tracing::info!("Recovered buffer with chunks: {}", original_path.display());
                     }

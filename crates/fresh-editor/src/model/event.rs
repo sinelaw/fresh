@@ -600,6 +600,13 @@ impl EventLog {
         self.saved_at_index = Some(self.current_index);
     }
 
+    /// Invalidate the saved position so the buffer is always considered modified.
+    /// Call this after hot exit recovery, where the buffer content differs from
+    /// disk but the event log has no record of the changes.
+    pub fn clear_saved_position(&mut self) {
+        self.saved_at_index = None;
+    }
+
     /// Check if the buffer is at the saved position (not modified)
     /// Returns true if we're at the saved position OR if all events between
     /// saved_at_index and current_index are readonly (don't modify buffer content)

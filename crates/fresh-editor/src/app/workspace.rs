@@ -532,6 +532,11 @@ impl Editor {
                                 state.buffer.insert(0, &text);
                                 state.buffer.set_modified(true);
                                 state.buffer.set_recovery_pending(false);
+                                // Invalidate saved position so undo can't
+                                // incorrectly clear the modified flag
+                                if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                                    log.clear_saved_position();
+                                }
                                 recovered += 1;
                                 tracing::info!(
                                     "Restored unsaved changes for {:?} from hot exit recovery",
@@ -556,6 +561,11 @@ impl Editor {
                             }
                             state.buffer.set_modified(true);
                             state.buffer.set_recovery_pending(false);
+                            // Invalidate saved position so undo can't
+                            // incorrectly clear the modified flag
+                            if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                                log.clear_saved_position();
+                            }
                             recovered += 1;
                             tracing::info!(
                                 "Restored unsaved changes (chunked) for {:?} from hot exit recovery",
@@ -784,6 +794,11 @@ impl Editor {
                                         );
                                     }
                                 }
+                                // Invalidate saved position so undo can't
+                                // incorrectly clear the modified flag
+                                if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                                    log.clear_saved_position();
+                                }
                             }
                             Ok(crate::services::recovery::RecoveryResult::RecoveredChunks {
                                 chunks,
@@ -807,6 +822,11 @@ impl Editor {
                                         "Restored unsaved changes (chunked) for {:?} from hot exit recovery",
                                         file_path
                                     );
+                                }
+                                // Invalidate saved position so undo can't
+                                // incorrectly clear the modified flag
+                                if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                                    log.clear_saved_position();
                                 }
                             }
                             Ok(
@@ -868,11 +888,16 @@ impl Editor {
                         }) => {
                             let text = String::from_utf8_lossy(&content).into_owned();
                             let buffer_id = self.new_buffer();
-                            let state = self.active_state_mut();
-                            state.buffer.insert(0, &text);
-                            // Mark as modified so it shows the dot indicator
-                            state.buffer.set_modified(true);
-                            state.buffer.set_recovery_pending(false);
+                            {
+                                let state = self.active_state_mut();
+                                state.buffer.insert(0, &text);
+                                // Mark as modified so it shows the dot indicator
+                                state.buffer.set_modified(true);
+                                state.buffer.set_recovery_pending(false);
+                            }
+                            // Invalidate saved position so undo can't
+                            // incorrectly clear the modified flag
+                            self.active_event_log_mut().clear_saved_position();
 
                             // Store recovery ID in metadata for future saves
                             if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
