@@ -262,6 +262,57 @@ fn test_embedded_css_highlighting_after_delete() {
     );
 }
 
+/// Rapid typing at a deep offset in a large Rust file — reproduces a panic
+/// where `checkpoint_states[&id]` failed because a marker existed in the
+/// MarkerList but had no corresponding state entry.
+#[test]
+fn test_no_panic_on_rapid_typing_in_large_rust_file() {
+    // Use the editor's own render.rs as a large Rust file (~210KB, ~4700 lines)
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let path = std::path::PathBuf::from(manifest_dir).join("src/app/render.rs");
+    if !path.exists() {
+        // Skip if file doesn't exist (e.g. in CI with different layout)
+        return;
+    }
+
+    let mut harness = create_harness();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    // Jump to line 4079 (deep into the file, ~171KB offset)
+    goto_line(&mut harness, 4079);
+
+    // Rapidly type characters — each triggers notify_insert + invalidate_range + render
+    for ch in "// test comment".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // Delete some characters
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // Type more
+    for ch in "edit".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // Should not panic
+    harness.render().unwrap();
+    let colors = collect_highlight_colors(&harness, 2, 20);
+    assert!(
+        colors >= 1,
+        "After rapid typing in large Rust file, should not panic, got {} colors",
+        colors
+    );
+}
+
 /// Verify highlighting at the top of the file still works (regression guard).
 #[test]
 fn test_highlighting_near_top_still_works() {

@@ -552,7 +552,6 @@ impl TextMateEngine {
                 if let Some((s, sc)) = self.checkpoint_states.get(&id) {
                     (cp_pos, s.clone(), sc.clone())
                 } else {
-                    // Orphan marker — clean up and start from byte 0
                     self.checkpoint_markers.delete(id);
                     (0, syntect::parsing::ParseState::new(syntax), syntect::parsing::ScopeStack::new())
                 }
