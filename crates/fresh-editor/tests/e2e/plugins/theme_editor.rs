@@ -3537,42 +3537,21 @@ fn test_named_color_swatch_uses_native_ansi_color() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    let screen = harness.screen_to_string();
-    let lines: Vec<&str> = screen.lines().collect();
-
-    // Find the line that contains "tab_active_fg" AND the swatch "██" (the left-panel field row,
-    // not the right-panel header which also mentions the field name).
-    let named_line_idx = lines
-        .iter()
-        .position(|l| l.contains("tab_active_fg") && l.contains("██"))
-        .unwrap_or_else(|| {
-            panic!(
-                "Should find tab_active_fg swatch line in theme editor. Screen:\n{}",
-                screen
-            )
-        });
-
-    // Find the swatch (██) on that line
-    let swatch_color = find_swatch_color(&harness, named_line_idx as u16);
-
-    assert!(
-        swatch_color.is_some(),
-        "Named color 'Yellow' should have a visible swatch. Screen:\n{}",
-        screen
-    );
-
-    let color = swatch_color.unwrap();
-
-    // The swatch should use the native ANSI Color::Yellow, not an RGB approximation.
-    // Before the fix, this was Color::Rgb(255, 255, 0) which doesn't match
-    // what the terminal actually renders for Color::Yellow.
-    assert_eq!(
-        color,
-        Color::Yellow,
-        "Swatch for named 'Yellow' should be Color::Yellow (native ANSI), \
-         not an RGB approximation. Got: {:?}",
-        color
-    );
+    // Wait for the tab_active_fg swatch to render with the correct native ANSI
+    // Yellow color. On slow CI the plugin may not have finished painting yet.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            let lines: Vec<&str> = screen.lines().collect();
+            let Some(row) = lines
+                .iter()
+                .position(|l| l.contains("tab_active_fg") && l.contains("██"))
+            else {
+                return false;
+            };
+            find_swatch_color(h, row as u16) == Some(Color::Yellow)
+        })
+        .unwrap();
 }
 
 /// Find the fg color of the swatch (██) on a given screen row.
