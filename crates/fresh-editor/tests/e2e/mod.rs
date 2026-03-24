@@ -53,6 +53,7 @@ pub mod lsp_completion_popup_behavior;
 pub mod lsp_config;
 pub mod lsp_diagnostic_flow;
 pub mod lsp_env;
+pub mod lsp_goto_definition_readonly;
 pub mod lsp_no_config;
 pub mod lsp_order;
 pub mod lsp_publish_diagnostics_capability;
