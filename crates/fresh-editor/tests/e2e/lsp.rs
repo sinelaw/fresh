@@ -8099,3 +8099,221 @@ log("STOPPED")
 
     Ok(())
 }
+
+/// Test that commenting a line does not displace inlay hints on subsequent lines.
+///
+/// Reproduces issue #1263: "Comments displace inlay hints"
+/// When commenting a line (Ctrl+/), inlay hints on subsequent lines should
+/// remain at their correct column positions. The bug causes them to be
+/// shifted right by the length of the comment prefix (e.g., 3 chars for "// ").
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_comment_does_not_displace_inlay_hints() -> anyhow::Result<()> {
+    use crate::common::harness::HarnessOptions;
+
+    let temp_dir = tempfile::tempdir()?;
+
+    // Create a fake LSP that returns inlay hints for function call arguments.
+    // It parses the buffer to find lines matching "= add(" and returns
+    // parameter hints (a: and b:) at the argument positions.
+    let script = r#"#!/bin/bash
+
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+
+BUFFER_FILE=$(mktemp)
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    case "$method" in
+        "initialize")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"textDocumentSync":1,"inlayHintProvider":true}}}'
+            ;;
+        "initialized")
+            ;;
+        "textDocument/didOpen")
+            text=$(echo "$msg" | sed 's/.*"text":"//;s/".*//' | sed 's/\\n/\n/g')
+            echo "$text" > "$BUFFER_FILE"
+            ;;
+        "textDocument/didChange")
+            text=$(echo "$msg" | grep -o '"text":"[^"]*"' | tail -1 | sed 's/"text":"//;s/"$//' | sed 's/\\n/\n/g')
+            if [ -n "$text" ]; then
+                echo "$text" > "$BUFFER_FILE"
+            fi
+            ;;
+        "textDocument/inlayHint")
+            # Return parameter hints only for call sites (lines with "= add(")
+            hints="["
+            first=true
+            line_num=0
+            while IFS= read -r line; do
+                # Only match call sites, not the function definition
+                case "$line" in
+                    *"= add("*)
+                        # Find column after "add("
+                        prefix="${line%%add(*}"
+                        col=$(( ${#prefix} + 4 ))
+                        # Find second arg position (after ", ")
+                        after_add="${line#*add(}"
+                        before_comma="${after_add%%,*}"
+                        col2=$(( col + ${#before_comma} + 2 ))
+
+                        if [ "$first" = true ]; then
+                            first=false
+                        else
+                            hints="$hints,"
+                        fi
+                        hints="$hints{\"position\":{\"line\":$line_num,\"character\":$col},\"label\":\"a:\",\"kind\":2}"
+                        hints="$hints,{\"position\":{\"line\":$line_num,\"character\":$col2},\"label\":\"b:\",\"kind\":2}"
+                        ;;
+                esac
+                line_num=$((line_num + 1))
+            done < "$BUFFER_FILE"
+            hints="$hints]"
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":'"$hints"'}'
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            rm -f "$BUFFER_FILE"
+            break
+            ;;
+    esac
+done
+"#;
+
+    let script_path = temp_dir.path().join("fake_lsp_inlay.sh");
+    std::fs::write(&script_path, script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms)?;
+    }
+
+    // Create a C source file: line 1 is the definition, lines 2-3 are call sites
+    let test_file = temp_dir.path().join("test.c");
+    std::fs::write(
+        &test_file,
+        "int add(int a, int b) { return a + b; }\nint x = add(1, 2);\nint y = add(3, 4);\n",
+    )?;
+
+    // Configure LSP with our fake server
+    let mut config = fresh::config::Config::default();
+    config.editor.enable_inlay_hints = true;
+    config.lsp.insert(
+        "c".to_string(),
+        fresh::services::lsp::LspServerConfig {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+        },
+    );
+
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(temp_dir.path().to_path_buf()),
+    )?;
+
+    // Open the test file and wait for inlay hints to appear
+    harness.open_file(&test_file)?;
+    harness.render()?;
+    harness.wait_for_screen_contains("a:")?;
+
+    let screen_before = harness.screen_to_string();
+    eprintln!("Before commenting:\n{}", screen_before);
+
+    // Use find_text_on_screen to locate the "a:" hint on the "int y" line.
+    // We'll look for "a: 3" which uniquely identifies the hint on line 3.
+    let hint_pos_before = harness
+        .find_text_on_screen("a: 3")
+        .expect("Should find 'a: 3' hint on screen before commenting");
+    eprintln!(
+        "Before commenting: 'a: 3' at col={}, row={}",
+        hint_pos_before.0, hint_pos_before.1
+    );
+
+    // Move cursor to line 1 (the function definition)
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    // Toggle comment on line 1 with Ctrl+/
+    harness.send_key(KeyCode::Char('/'), KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    // Verify line 1 is now commented
+    let content = harness.get_buffer_content().unwrap();
+    assert!(
+        content.starts_with("// "),
+        "Line 1 should be commented. Buffer: {:?}",
+        content
+    );
+
+    // The old inlay hints are still displayed via marker tracking
+    // (markers auto-adjust their byte positions when text is inserted).
+    // The bug is that hints on subsequent lines render at displaced columns.
+    let screen_after = harness.screen_to_string();
+    eprintln!("After commenting:\n{}", screen_after);
+
+    // The "int y" line (line 3) should still render the hints correctly:
+    //   "int y = add(a: 3, b: 4);"
+    // With the bug (issue #1263), the hints are displaced by 3 chars:
+    //   "int y = aa: dd(b: 3, 4);"  ← hints shifted left into wrong positions
+    //
+    // Check: the hint "a:" should still appear right after "add(" on the int y line,
+    // NOT embedded in the middle of "add".
+    // We verify by checking that "add(a:" is present (correct rendering).
+    let line3_correct = screen_after.contains("add(a: 3");
+    let line3_broken = screen_after.contains("aa: dd(");
+
+    assert!(
+        line3_correct && !line3_broken,
+        "Inlay hints on subsequent lines should NOT be displaced after commenting line 1.\n\
+         Expected 'add(a: 3' on screen (hints at correct column).\n\
+         Got broken rendering with 'aa: dd(' (hints displaced by 3 chars).\n\
+         This reproduces issue #1263: Comments displace inlay hints.\n\
+         Screen before:\n{}\nScreen after:\n{}",
+        screen_before,
+        screen_after
+    );
+
+    Ok(())
+}
