@@ -1,104 +1,27 @@
-# Bulk Edit Marker Displacement Bug
+# Bulk Edit Marker Displacement — Post-Fix Analysis
 
-## Objective
+## Status
 
-Fix virtual text (inlay hints, inline diagnostics, etc.) becoming visually displaced after any bulk edit operation — toggle comment, cut, paste, indent/dedent, multi-cursor edits.
+**The forward-path bug is FIXED** (commit `abd52d7`). BulkEdit operations now adjust markers
+and margins correctly. This document is updated to reflect the fix and analyze the **remaining
+undo/redo gaps**.
 
-## Problem
+## What Was Fixed
 
-### Symptom
+### Original Problem (Issue #1263)
 
-After toggling a line comment (inserting `// ` on line 1), inlay hints on subsequent lines render at incorrect column positions — shifted left by the number of inserted bytes. For example:
+`apply_events_as_bulk_edit` (`app/mod.rs`) modified the buffer via `apply_bulk_edits()` but
+never called `marker_list.adjust_for_insert/delete` or `margins.adjust_for_insert/delete`.
+This caused virtual text (inlay hints, ghost text, inline diagnostics), overlays (search
+highlights, diagnostic underlines), and margins (breakpoints) to render at stale byte positions
+after toggle-comment, cut, paste, indent/dedent, and multi-cursor edits.
 
-```
-Before:  int x = add(a: 1, b: 2);    ← hints "a:" and "b:" correctly placed
-After:   int x = aa: dd(b: 1, 2);    ← hints displaced 3 chars left into the text
-```
-
-The displacement equals the byte length of the inserted text (3 bytes for `// `).
-
-### Root Cause
-
-`apply_events_as_bulk_edit` (`app/mod.rs:2501-2741`) modifies the buffer but does **not** adjust the marker list or margins.
-
-The function:
-1. Converts events to edit tuples (line 2542-2554)
-2. Calls `state.buffer.apply_bulk_edits(&edit_refs)` — modifies only the piece tree (line 2566)
-3. Manually adjusts cursor positions (lines 2571-2696)
-4. Invalidates the highlighter (line 2703)
-5. **Never calls `marker_list.adjust_for_insert/delete`**
-6. **Never calls `margins.adjust_for_insert/delete`**
-
-Compare with the normal single-edit path in `state.rs:331-332`:
+### The Fix (`app/mod.rs:2568-2580`)
 
 ```rust
-self.marker_list.adjust_for_insert(position, text.len());
-self.margins.adjust_for_insert(position, text.len());
-```
-
-### Why Rendering Breaks
-
-The rendering pipeline builds two things from the same buffer state:
-
-1. **`char_source_bytes`** (in `ViewLine`) — absolute byte offsets read from the buffer after the edit. These are correct.
-2. **`virtual_text_lookup`** (HashMap keyed by byte position) — built by calling `marker_list.get_position()` for each virtual text marker. Since markers were never adjusted, these return **stale** byte positions.
-
-The rendering loop (`split_rendering.rs:4752`) matches `byte_pos` from (1) against keys from (2). With stale marker positions, the lookup hits at the wrong character, displacing the virtual text.
-
-### Affected Features
-
-All callers of `apply_events_as_bulk_edit`:
-
-| Feature | File | Line |
-|---------|------|------|
-| Toggle comment | `app/render.rs` | 3253, 3467 |
-| Cut | `app/clipboard.rs` | 424, 482 |
-| Paste | `app/clipboard.rs` | 605 |
-| Indent/Dedent | `app/render.rs` | 3985 |
-| Multi-cursor typing | `app/input.rs` | 1078 |
-| Auto-close pairs | `app/input.rs` | 3698, 3770 |
-
-### Affected Marker-Based Features
-
-Any feature storing positions via the marker system:
-
-- **Virtual text** (inlay hints, ghost text, inline diagnostics)
-- **Overlays** (semantic tokens, search highlights, diagnostic underlines) — each overlay has `start_marker` and `end_marker`
-- **Margins** (breakpoints, line annotations)
-
-Syntax highlights are NOT affected — they are recomputed fresh each frame from the buffer.
-
-## Discussion: How Other Features Compare
-
-### Diagnostic Highlights (Overlays)
-
-Diagnostic underlines and semantic tokens are stored as **Overlay** objects, each backed by two markers (start + end). They use `query_viewport()` which resolves marker positions at render time. Since bulk edits skip marker adjustment, overlays are equally affected — they just haven't been reported because:
-
-1. Diagnostics are re-fetched from the LSP shortly after the edit
-2. Semantic tokens also get refreshed
-3. The transient misalignment is brief and less visually obvious than inlay hint displacement
-
-### Syntax Highlights
-
-Not affected. `highlight_viewport()` re-scans the buffer text each frame. No markers involved.
-
-### Search Highlights
-
-Stored as overlays (markers). The code at `app/mod.rs:2717` explicitly notes: "Do NOT clear search overlays — markers track through edits for F3/Shift+F3." But since markers aren't adjusted for bulk edits, F3 after a bulk edit would jump to the wrong position.
-
-### Cursor Positions
-
-Manually adjusted with custom shift logic in `apply_events_as_bulk_edit` (lines 2571-2696). This is correct but redundant — cursors could use the marker system too.
-
-## Alternatives
-
-### Option A: Add marker/margin adjustments to `apply_events_as_bulk_edit`
-
-After `state.buffer.apply_bulk_edits()`, iterate through the sorted edit list and call `marker_list.adjust_for_insert/adjust_for_delete` for each edit.
-
-```rust
-// After line 2566: state.buffer.apply_bulk_edits(&edit_refs)
-// Edits are sorted descending by position — apply marker adjustments in same order
+// Adjust markers and margins for each edit (descending position order,
+// matching the order used by apply_bulk_edits — later positions first
+// so earlier edits don't shift positions of later ones)
 for (pos, del_len, text) in &edits {
     if *del_len > 0 {
         state.marker_list.adjust_for_delete(*pos, *del_len);
@@ -111,149 +34,195 @@ for (pos, del_len, text) in &edits {
 }
 ```
 
-| Pro | Con |
-|-----|-----|
-| Minimal change (~10 lines) | Must maintain correct edit ordering |
-| Fixes all callers at once | Sequential marker adjustments (O(k log n) for k edits) |
-| Consistent with single-edit path | Undo/redo uses buffer snapshots — need to verify marker consistency |
-| Easy to reason about correctness | |
+### Test Coverage
 
-### Option B: Batch marker adjustment via `marker_list.apply_bulk_edits()`
+E2E test `test_comment_does_not_displace_inlay_hints` (`crates/fresh-editor/tests/e2e/lsp.rs`)
+verifies that toggling a comment does not displace inlay hints on subsequent lines.
 
-Add a new method to `MarkerList` that accepts a list of edits and applies all adjustments in a single tree pass, mirroring `buffer.apply_bulk_edits()`.
+---
 
-| Pro | Con |
-|-----|-----|
-| Most efficient for large edit batches | Significant implementation complexity in IntervalTree |
-| Single atomic operation | Lazy propagation already makes sequential calls O(log n) each |
-| Clean API symmetry with buffer | Over-engineered for the current problem |
+## Remaining Gap: BulkEdit Undo/Redo Does Not Adjust Markers
 
-### Option C: Re-request virtual text from LSP after bulk edit
+### The Problem
 
-The LSP is already notified at line 2737. Just wait for the response to fix positions.
+BulkEdit undo uses **snapshot-based** restoration (`state.rs:688-711`):
 
-| Pro | Con |
-|-----|-----|
-| No marker code changes | Doesn't fix transient displacement (user sees flicker) |
-| | Doesn't fix non-LSP virtual text (plugins, etc.) |
-| | Doesn't fix overlay displacement (search, diagnostics) |
-| | Treats symptom, not cause |
+1. `buffer.restore_buffer_state(snapshot)` — replaces piece tree wholesale
+2. Cursor positions updated explicitly
+3. **No marker or margin adjustment**
 
-### Option D: Track pending edits and correct in `build_lookup`
-
-Maintain a per-frame "pending displacement" list; apply corrections when building the virtual text lookup.
-
-| Pro | Con |
-|-----|-----|
-| Targeted to virtual text only | Duplicates the marker system's purpose |
-| | Doesn't fix overlays, margins, search |
-| | Complex and error-prone |
-| | Violates the design of the marker system |
-
-## Undo/Redo Analysis
-
-### How BulkEdit undo works today
-
-BulkEdit uses **snapshot-based** undo, not event-replay:
-
-1. Before edit: `old_snapshot = buffer.snapshot_buffer_state()` — clones piece tree + string buffers
-2. After edit: `new_snapshot = buffer.snapshot_buffer_state()`
-3. Undo: `inverse()` swaps the two snapshots (`event.rs:452-454`), then `state.apply()` calls `buffer.restore_buffer_state(old_snapshot)` — wholesale replaces the piece tree (`buffer.rs:2076`)
-4. Redo: Same mechanism with the swapped event
-
-**Snapshots only cover the buffer (piece tree + string buffers). They do NOT snapshot or restore the marker list or margins.**
-
-### BulkEdit undo is already broken today
-
-Currently, since `apply_events_as_bulk_edit` never adjusts markers, the forward and reverse paths are symmetrically broken — markers never move, so undo "accidentally" leaves them at the right positions for the restored buffer. But this breaks as soon as the LSP refreshes markers in between:
+This means after a BulkEdit + LSP refresh + undo sequence, markers are displaced:
 
 ```
 1. Markers at [53, 68]
-2. BulkEdit inserts "// "  → buffer +3, markers stay at [53, 68]   ← wrong but "stable"
-3. LSP responds             → clears markers, creates new at [56, 71]  ← now correct
-4. Undo                     → buffer restored, markers still at [56, 71]  ← WRONG
+2. BulkEdit inserts "// "  → markers adjusted to [56, 71]     ✅ (fixed)
+3. LSP responds             → clears old markers, creates new at [56, 71]  ✅
+4. Undo                     → buffer reverts, markers stay at [56, 71]     ❌ WRONG
+5. LSP responds again       → markers corrected to [53, 68]               ✅ (eventual)
 ```
 
-After step 4, markers are displaced by +3 until the LSP responds again. **This is an existing bug.**
+Between steps 4 and 5, markers are displaced. The user sees a brief flash of misaligned
+hints/diagnostics until the LSP refreshes. This is the **same transient incorrectness** that
+existed before the fix — the fix didn't introduce it, but it didn't resolve it either.
 
-### Single-edit undo also has a pre-existing limitation
+### Single-Edit Undo Comparison
 
-For normal Insert/Delete events, undo works via event inversion — the inverse event goes through `apply_insert`/`apply_delete` which properly calls `marker_list.adjust_for_insert/delete`. This is correct for simple cases.
+Single-edit undo/redo works correctly because event inversion produces a Delete/Insert event
+that goes through `apply_delete`/`apply_insert` in `state.rs`, which calls the marker
+adjustment methods. The inverse edit naturally produces the correct marker shift.
 
-However, **delete operations destroy marker position information irreversibly:**
+The one exception: **delete operations destroy intra-range marker spread irreversibly.** If
+markers at [10, 12, 14] are inside a deleted range, they collapse to position 10. Undoing the
+delete (re-inserting text) shifts them all to one end, not back to [10, 12, 14]. This is a
+fundamental limitation shared by all editors.
 
+### Why BulkEdit Undo Can't Simply Replay Marker Adjustments
+
+The snapshot approach bypasses the edit-by-edit path entirely. `restore_buffer_state()` replaces
+the piece tree atomically — there are no individual inserts/deletes to trigger marker adjustment.
+
+To fix this properly, the BulkEdit undo path would need to either:
+
+1. **Store the edit list alongside the snapshot** and replay inverse marker adjustments on undo
+2. **Snapshot markers too** — but this has proven problematic (see Atom's failed `maintainHistory`)
+3. **Switch BulkEdit undo from snapshots to event replay** — more correct but harder to implement
+
+---
+
+## How Other Editors Handle This
+
+Cross-editor research reveals three industry patterns:
+
+### Pattern 1: "Decorations are ephemeral" (VSCode/Monaco, Helix, Kakoune)
+
+Accept that undo doesn't restore decorations. Source systems (LSP, plugins) re-push them.
+
+- **VSCode/Monaco**: Decorations live in an IntervalTree, adjusted by `acceptReplace` for all
+  edits including undo. But decorations deleted/modified between edits are not restored. No
+  built-in mechanism for decoration undo. [Monaco issue #4949](https://github.com/microsoft/monaco-editor/issues/4949)
+  documents this as a known limitation.
+- **Helix**: Undo preserves only text + selections. Marks, diagnostics, gutter indicators are
+  external to the revision tree.
+- **Kakoune**: `range-specs` break silently on undo — stale positions are simply wrong until
+  updated.
+
+**Fresh is currently in this camp.** The LSP refresh after undo resolves markers eventually.
+
+### Pattern 2: "Record adjustments in undo entries" (Emacs, Neovim)
+
+Store per-marker position data alongside undo entries.
+
+- **Emacs**: Text properties are fully undoable via `(nil PROPERTY VALUE BEG . END)` undo list
+  entries. Markers have `(marker . adjustment)` entries. But **overlays** (the main decoration
+  mechanism) are explicitly NOT part of undo. This clean split means most visual decorations
+  (flycheck, company, hl-line) get zero undo integration.
+- **Neovim**: Extmarks have an opt-in `undo_restore` flag. When true, mark positions are saved
+  to the undo header and restored. However: redo is still broken (issue #30331),
+  `invalidate+undo_restore` has bugs (#29509), and deleted extmarks are never restored.
+  Described by maintainers as a "typical Vim whack-a-mole game."
+
+**This is the most promising direction for Fresh** — store the BulkEdit's edit list in the
+event so the undo path can replay inverse marker adjustments.
+
+### Pattern 3: "Composable effect inversion" (CodeMirror 6)
+
+The most architecturally sophisticated approach. CM6's `invertedEffects` facet lets each
+decoration consumer define inverse effects registered alongside the history module:
+
+```typescript
+const invertHighlight = invertedEffects.of(tr => {
+  let found = []
+  for (let e of tr.effects) {
+    if (e.is(addHighlight)) found.push(removeHighlight.of(e.value))
+    if (e.is(removeHighlight)) found.push(addHighlight.of(e.value))
+  }
+  return found
+})
 ```
-1. Markers at [10, 12, 14] inside a range
-2. Delete [10, 15)  → all three markers collapse to position 10
-3. Undo (Insert)    → markers at 10 all shift to 15 (right affinity) or stay at 10 (left affinity)
-```
 
-After undo, markers are bunched at one end, not restored to [10, 12, 14]. The original spread within the deleted range is lost. This is a **fundamental limitation** of marker-based position tracking shared by all editors (VSCode, Neovim, etc.).
+On undo, both text inversion and effect inversions are applied. Effects carry position data
+mapped through document changes. This is opt-in, composable, and doesn't require snapshotting.
 
-### Why this doesn't block our fix
+**This is a longer-term aspiration for Fresh** — a plugin hook system where overlay consumers
+participate in undo — but it requires significant architectural work.
 
-The marker system was never designed to be undo-correct on its own. It relies on external providers (LSP) refreshing positions after every edit. This is true today for:
+### Pattern 4: "Snapshot markers at checkpoints" (Atom — failed)
 
-- Single-edit undo (delete collapses markers irreversibly)
-- BulkEdit undo (snapshot doesn't cover markers)
-- Any sequence where LSP refreshes markers between edits
+Atom's `MarkerLayer` had an experimental `maintainHistory` option that snapshotted marker
+positions at undo checkpoints. It had significant edge-case bugs: markers destroyed between
+checkpoints were not restorable by undo. The snippet system eventually moved to a "history
+provider" callback pattern instead.
 
-Our fix (Option A) doesn't change this contract. It makes the **forward path** correct — markers track through bulk edits just like they track through single edits. The undo path has the same transient-incorrectness window it always had, which the LSP resolves on its next response.
+**This approach should be avoided.** The edge cases around markers created/destroyed between
+checkpoints are what killed Atom's implementation.
 
-**Net effect:** Strictly better. The forward path (which users see more and which is currently visibly broken) becomes correct. The undo path remains as correct/incorrect as it already is.
+### Summary Table
 
-## Recommendation
+| Editor | Markers in undo? | Mechanism | Redo works? | Key limitation |
+|---|---|---|---|---|
+| **VSCode/Monaco** | No | N/A | N/A | No API to hook decoration undo |
+| **Neovim** | Opt-in | Undo header | No (#30331) | Redo broken; invalidate+undo_restore buggy |
+| **Emacs** | Text props yes, overlays no | Undo list entries | Yes (text props) | Overlays (most decorations) excluded |
+| **CodeMirror 6** | Opt-in | `invertedEffects` | Yes | Must manually define inverse effects |
+| **Helix** | No | N/A | N/A | No plugin hook for auxiliary state |
+| **Kakoune** | No | N/A | N/A | Range-specs break silently |
+| **Atom** | Opt-in (experimental) | Checkpoint snapshots | Partially | Failed; destroyed markers not restorable |
+| **ProseMirror** | Doc marks yes, decorations no | Steps with `invert()` | Yes (marks) | No decoration undo mechanism |
 
-**Option A: Add marker/margin adjustments to `apply_events_as_bulk_edit`.**
+---
 
-This is the right fix because:
+## Recommendations for BulkEdit Undo/Redo
 
-1. **It's the minimal change** (~10 lines) that fixes the root cause
-2. **It fixes all callers** — toggle comment, cut, paste, indent/dedent, multi-cursor
-3. **It fixes all marker-based features** — virtual text, overlays, search highlights, margins
-4. **It's consistent** with the single-edit path (`state.rs:331-332`)
-5. **Undo is not a concern** — the marker system already relies on LSP re-requests for undo correctness in both the single-edit and bulk-edit paths; this fix doesn't change that contract
-6. **Performance is fine** — lazy propagation in the IntervalTree makes each `adjust_for_edit` O(log n); for k sub-edits this is O(k log n), acceptable for typical bulk edits (< 50 sub-edits)
+### Short-term: Store edit list in BulkEdit event (Pattern 2)
 
-Option B (batch marker API) is a valid future optimization if profiling shows bulk edits with many sub-edits are slow, but it's unnecessary complexity for now.
-
-## Implementation Plan
-
-### Step 1: Add marker and margin adjustments
-
-In `app/mod.rs`, after the `state.buffer.apply_bulk_edits(&edit_refs)` call at line 2566, add marker and margin adjustments for each sub-edit. The edits are already sorted descending by position (line 2557), which is the correct order — later positions first avoids cascading shifts.
+Add the sorted edit list to the `BulkEdit` event variant so the undo path can replay inverse
+marker adjustments:
 
 ```rust
-// Adjust markers and margins for each edit (descending position order)
-for (pos, del_len, text) in &edits {
-    if *del_len > 0 {
-        state.marker_list.adjust_for_delete(*pos, *del_len);
-        state.margins.adjust_for_delete(*pos, *del_len);
-    }
+Event::BulkEdit {
+    old_snapshot, new_snapshot,
+    old_cursors, new_cursors,
+    edits: Vec<(usize, usize, String)>,  // NEW: the edit tuples
+}
+```
+
+In `state.rs` BulkEdit application, after `restore_buffer_state()`:
+
+```rust
+// Replay inverse marker adjustments (ascending order for undo = reverse of
+// the descending order used in the forward path)
+for (pos, del_len, text) in edits.iter().rev() {
+    // Undo: inverse of insert is delete, inverse of delete is insert
     if !text.is_empty() {
-        state.marker_list.adjust_for_insert(*pos, text.len());
-        state.margins.adjust_for_insert(*pos, text.len());
+        self.marker_list.adjust_for_delete(*pos, text.len());
+        self.margins.adjust_for_delete(*pos, text.len());
+    }
+    if *del_len > 0 {
+        self.marker_list.adjust_for_insert(*pos, *del_len);
+        self.margins.adjust_for_insert(*pos, *del_len);
     }
 }
 ```
 
-### Step 2: Add test coverage
+| Pro | Con |
+|-----|-----|
+| Eliminates transient displacement after undo | Edit list stored twice (once as snapshot diff, once as tuples) |
+| Consistent with single-edit undo behavior | Doesn't solve the "delete collapses markers" fundamental limitation |
+| Minimal architecture change | Need to handle redo direction too (forward edits, not inverse) |
 
-Add a test that:
-1. Sets up a buffer with virtual text markers at known positions
-2. Applies a bulk edit (e.g., insert `// ` at line start)
-3. Verifies marker positions are correctly adjusted
-4. Verifies `build_lookup` returns correct byte positions
-5. Optionally: verifies rendering output shows hints at correct columns
+### Long-term: Effect inversion hooks (Pattern 3)
 
-### Step 3: Verify search overlay correctness
+Design a system where overlay consumers (LSP diagnostics, search highlights, reference
+highlights) can register inverse effect handlers, similar to CM6's `invertedEffects`. This
+would let each subsystem participate in undo without the core needing to know about them.
 
-After the fix, verify that F3 (find next) works correctly after a bulk edit by checking that search overlay markers track correctly through toggle-comment and indent/dedent.
+This is significantly more architectural work and should only be pursued if the short-term
+fix proves insufficient.
 
-### Step 4: Edge cases to test
+### What NOT to do
 
-- **Multi-cursor edits**: Multiple inserts at different positions. Each sub-edit must adjust markers correctly without double-shifting.
-- **Mixed insert + delete**: Cut operations that delete ranges. Both `adjust_for_delete` and `adjust_for_insert` must be called in the right order.
-- **Undo after bulk edit**: Verify that undo + LSP refresh produces correct marker positions (same behavior as today's single-edit undo).
-- **Empty edits**: No-op sub-edits (0-length insert or delete) should be harmless.
-- **Edits at buffer boundaries**: Insert at position 0, delete at end of buffer.
+- **Don't snapshot the entire marker tree** — Atom tried this and failed. Markers created/destroyed
+  between checkpoints produce irrecoverable edge cases.
+- **Don't try to make undo "perfect"** — Even Neovim's opt-in system has redo bugs after years.
+  The LSP refresh provides an eventual-consistency safety net that makes transient marker
+  incorrectness tolerable.
