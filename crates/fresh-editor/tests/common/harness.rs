@@ -675,6 +675,13 @@ impl EditorTestHarness {
         self._temp_dir.take()
     }
 
+    /// Enable software-cursor-only mode (no hardware cursor).
+    /// Use this in tests that need REVERSED cell styling on cursor positions,
+    /// e.g. when verifying that cursor styling doesn't bleed through overlays.
+    pub fn set_software_cursor_only(&mut self, enabled: bool) {
+        self.editor.set_software_cursor_only(enabled);
+    }
+
     /// Enable shadow buffer validation
     /// Call this at the start of tests that focus on simple text editing operations
     /// where you want to validate that the piece tree matches simple string operations

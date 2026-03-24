@@ -19,6 +19,10 @@ use ratatui::style::Modifier;
 #[test]
 fn test_cursor_does_not_bleed_through_dropdown_menu() {
     let mut harness = EditorTestHarness::new(80, 30).unwrap();
+    // Use software-cursor-only mode so the cursor cell gets REVERSED styling.
+    // Without this, the hardware cursor path skips REVERSED and there is
+    // nothing to bleed through — making the test vacuous.
+    harness.set_software_cursor_only(true);
 
     // Type several lines of text so there's content under where the File menu will drop down.
     harness.type_text("Line one").unwrap();

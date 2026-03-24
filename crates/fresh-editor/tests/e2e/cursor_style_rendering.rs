@@ -83,25 +83,27 @@ fn test_steady_underline_no_reversed_on_primary_cursor() {
     );
 }
 
-/// Block cursors MUST still use REVERSED so the character under the cursor
-/// is readable (white text on white background would be invisible without it).
+/// Block cursors skip REVERSED on the primary cursor cell when a hardware
+/// cursor is available (the default). The terminal's own block cursor provides
+/// the visual indicator; adding REVERSED would cause double-inversion in
+/// multiplexers like zellij, making the cursor invisible.
 #[test]
-fn test_blinking_block_keeps_reversed_on_primary_cursor() {
+fn test_blinking_block_skips_reversed_with_hardware_cursor() {
     let (style, cx, cy) = cursor_cell_style(CursorStyle::BlinkingBlock);
     assert!(
-        style.add_modifier.contains(Modifier::REVERSED),
-        "BlinkingBlock: cell ({cx}, {cy}) MUST have REVERSED modifier, \
-         but style was {style:?}"
+        !style.add_modifier.contains(Modifier::REVERSED),
+        "BlinkingBlock: cell ({cx}, {cy}) must NOT have REVERSED modifier \
+         when hardware cursor is available, but style was {style:?}"
     );
 }
 
-/// Steady block cursor MUST still use REVERSED.
+/// Steady block cursor also skips REVERSED when hardware cursor is available.
 #[test]
-fn test_steady_block_keeps_reversed_on_primary_cursor() {
+fn test_steady_block_skips_reversed_with_hardware_cursor() {
     let (style, cx, cy) = cursor_cell_style(CursorStyle::SteadyBlock);
     assert!(
-        style.add_modifier.contains(Modifier::REVERSED),
-        "SteadyBlock: cell ({cx}, {cy}) MUST have REVERSED modifier, \
-         but style was {style:?}"
+        !style.add_modifier.contains(Modifier::REVERSED),
+        "SteadyBlock: cell ({cx}, {cy}) must NOT have REVERSED modifier \
+         when hardware cursor is available, but style was {style:?}"
     );
 }

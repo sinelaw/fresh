@@ -443,8 +443,10 @@ struct CharStyleContext<'a> {
     viewport_overlays: &'a [(crate::view::overlay::Overlay, Range<usize>)],
     primary_cursor_position: usize,
     is_active: bool,
-    /// Skip REVERSED style on the primary cursor cell (session mode or
-    /// non-block cursor styles like bar/underline).
+    /// Skip REVERSED style on the primary cursor cell.
+    /// True when a hardware cursor is available (not software_cursor_only),
+    /// or in session mode. Avoids double-inversion in terminal multiplexers
+    /// like zellij where the hardware block cursor inverts the cell too.
     skip_primary_cursor_reverse: bool,
 }
 
@@ -789,17 +791,18 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     if ctx.is_active {
         if ctx.is_cursor {
             if ctx.skip_primary_cursor_reverse {
-                // Hardware cursor provides the primary cursor visual (session mode
-                // or non-block cursor styles like bar/underline where REVERSED
-                // would create a block highlight that hides the thin cursor shape).
+                // Hardware cursor provides the primary cursor visual.
+                // Skip REVERSED on primary to avoid double-inversion in
+                // terminal multiplexers (e.g. zellij) where the hardware
+                // cursor also inverts the cell.
                 // Secondary cursors still need REVERSED as their only indicator.
                 if is_secondary_cursor {
                     style = style.add_modifier(Modifier::REVERSED);
                 }
             } else {
-                // Block cursor mode: apply REVERSED to all cursor positions
-                // (primary and secondary). The REVERSED block highlight is
-                // visually consistent with the block cursor shape.
+                // Software-cursor-only mode: apply REVERSED to all cursor
+                // positions (primary and secondary) since there is no
+                // hardware cursor to provide a visual indicator.
                 style = style.add_modifier(Modifier::REVERSED);
             }
         }
