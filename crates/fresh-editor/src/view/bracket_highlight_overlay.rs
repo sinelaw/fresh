@@ -29,7 +29,7 @@ const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<
 
 /// Maximum number of bytes to scan for bracket matching/nesting depth.
 /// Prevents O(n) scans on huge files from hanging the editor.
-const MAX_BRACKET_SEARCH_BYTES: usize = 1_000_000;
+pub(crate) const MAX_BRACKET_SEARCH_BYTES: usize = 1_000_000;
 
 /// Chunk size for bulk reads during bracket scanning.
 const BRACKET_SCAN_CHUNK: usize = 16 * 1024;
