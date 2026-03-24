@@ -73,7 +73,9 @@ fn test_lsp_hover_popup_text_selection_copy() -> anyhow::Result<()> {
     fn find_popup_content_position(screen: &str) -> Option<(u16, u16)> {
         for (row, line) in screen.lines().enumerate() {
             // Look for the popup content from fake LSP
-            if let Some(col) = line.find("Test hover content") {
+            if let Some(byte_offset) = line.find("Test hover content") {
+                // Use char count, not byte offset, since box-drawing chars are multi-byte
+                let col = line[..byte_offset].chars().count();
                 return Some((col as u16, row as u16));
             }
         }
@@ -344,30 +346,44 @@ fn test_markdown_popup_text_selection_copy() {
         "Markdown popup should be visible"
     );
 
+    // Find "Function" in the rendered screen to get its actual column position.
+    // Use character count (not byte offset) since the screen contains multi-byte
+    // Unicode characters like box-drawing │ that are 3 bytes but 1 column wide.
+    let (func_x, func_y) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(row, line)| {
+            line.find("Function").map(|byte_offset| {
+                let col = line[..byte_offset].chars().count();
+                (col as u16, row as u16)
+            })
+        })
+        .expect("Should find 'Function' in the rendered screen");
+    println!("Found 'Function' at ({}, {})", func_x, func_y);
+
     // Mouse drag to select "Function" from the popup content
-    // Popup at x=10, y=5 with borders means inner content at x=11, y=6
-    let inner_x = 11u16;
-    let inner_y = 6u16;
     harness
-        .mouse_drag(inner_x, inner_y, inner_x + 8, inner_y)
+        .mouse_drag(func_x, func_y, func_x + 8, func_y)
         .unwrap();
     harness.render().unwrap();
 
-    // Check popup state before Ctrl+C
+    // Verify selection was created before Ctrl+C
     {
         let editor = harness.editor_mut();
-        let popup_visible = editor.active_state().popups.is_visible();
-        println!("Popup visible before Ctrl+C: {}", popup_visible);
-        if let Some(popup) = editor.active_state().popups.top() {
-            println!(
-                "Popup has_selection before Ctrl+C: {}",
-                popup.has_selection()
-            );
-            println!("Selection: {:?}", popup.text_selection);
-            if let Some(text) = popup.get_selected_text() {
-                println!("get_selected_text returned: {:?}", text);
-            }
-        }
+        assert!(
+            editor.active_state().popups.is_visible(),
+            "Popup should still be visible after mouse drag"
+        );
+        let popup = editor.active_state().popups.top().unwrap();
+        println!(
+            "Popup has_selection before Ctrl+C: {}",
+            popup.has_selection()
+        );
+        println!("Selection: {:?}", popup.text_selection);
+        assert!(
+            popup.has_selection(),
+            "Mouse drag should have created a selection in the popup"
+        );
     }
 
     // Press Ctrl+C to copy
@@ -436,25 +452,30 @@ fn test_transient_popup_mouse_drag_and_copy() {
         "Transient popup should be visible"
     );
 
-    // Get popup inner area position
-    // Popup at x=10, y=5 with borders means inner content at x=11, y=6
-    let inner_x = 11u16;
-    let inner_y = 6u16;
-
-    // Mouse drag to select "Function" (first 8 characters of line 0)
-    let start_col = inner_x;
-    let start_row = inner_y;
-    let end_col = inner_x + 8;
-    let end_row = inner_y;
+    // Find "Function" in the rendered screen to get its actual column position.
+    // Use character count (not byte offset) since box-drawing chars are multi-byte.
+    let (func_x, func_y) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(row, line)| {
+            line.find("Function").map(|byte_offset| {
+                let col = line[..byte_offset].chars().count();
+                (col as u16, row as u16)
+            })
+        })
+        .expect("Should find 'Function' in the rendered screen");
 
     println!(
         "Mouse drag from ({}, {}) to ({}, {})",
-        start_col, start_row, end_col, end_row
+        func_x,
+        func_y,
+        func_x + 8,
+        func_y
     );
 
-    // Perform mouse drag
+    // Perform mouse drag to select "Function"
     harness
-        .mouse_drag(start_col, start_row, end_col, end_row)
+        .mouse_drag(func_x, func_y, func_x + 8, func_y)
         .unwrap();
     harness.render().unwrap();
 
