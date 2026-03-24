@@ -103,15 +103,22 @@ impl GrammarRegistry {
         let mut user_extensions = Self::build_extra_extensions();
 
         // Start with syntect defaults, convert to builder to add more
+        tracing::info!("[grammar-build] Loading syntect defaults...");
         let defaults = SyntaxSet::load_defaults_newlines();
+        tracing::info!("[grammar-build] Converting to builder...");
         let mut builder = defaults.into_builder();
 
         // Add embedded grammars (TOML, etc.)
+        tracing::info!("[grammar-build] Adding embedded grammars...");
         Self::add_embedded_grammars(&mut builder);
 
         // Add user grammars from ~/.config/fresh/grammars/
         if let Some(grammars_dir) = loader.grammars_dir() {
             if loader.exists(&grammars_dir) {
+                tracing::info!(
+                    "[grammar-build] Loading user grammars from {:?}...",
+                    grammars_dir
+                );
                 load_user_grammars(loader, &grammars_dir, &mut builder, &mut user_extensions);
             }
         }
@@ -119,6 +126,10 @@ impl GrammarRegistry {
         // Add language pack grammars from ~/.config/fresh/languages/packages/
         if let Some(packages_dir) = loader.languages_packages_dir() {
             if loader.exists(&packages_dir) {
+                tracing::info!(
+                    "[grammar-build] Loading language pack grammars from {:?}...",
+                    packages_dir
+                );
                 load_language_pack_grammars(
                     loader,
                     &packages_dir,
@@ -128,7 +139,12 @@ impl GrammarRegistry {
             }
         }
 
+        tracing::info!(
+            "[grammar-build] Building syntax set ({} syntaxes)...",
+            builder.syntaxes().len()
+        );
         let syntax_set = builder.build();
+        tracing::info!("[grammar-build] Syntax set built");
         let filename_scopes = Self::build_filename_scopes();
 
         tracing::info!(

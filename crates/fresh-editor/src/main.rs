@@ -1280,11 +1280,13 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     // Create filesystem early - needed for remote directory detection
     // For remote editing, this establishes the SSH connection
+    tracing::info!("Creating filesystem...");
     let FilesystemResult {
         filesystem,
         process_spawner,
         remote_session,
     } = create_filesystem(&remote_info)?;
+    tracing::info!("Filesystem created");
 
     let mut working_dir = None;
     let mut show_file_explorer = false;
@@ -1304,6 +1306,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     // Load config using the layered config system
     // For remote editing, use current local dir for config (remote doesn't have our config)
+    tracing::info!("Loading config...");
     let effective_working_dir = if remote_info.is_some() {
         std::env::current_dir().unwrap_or_default()
     } else {
@@ -1331,6 +1334,8 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     } else {
         config::Config::load_with_layers(&dir_context, &effective_working_dir)
     };
+
+    tracing::info!("Config loaded");
 
     // CLI flag overrides config
     if args.no_upgrade_check {
@@ -1381,10 +1386,13 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let size = terminal.size()?;
     tracing::info!("Terminal size: {}x{}", size.width, size.height);
 
+    tracing::info!("Loading directory context...");
     let dir_context = DirectoryContext::from_system()?;
+    tracing::info!("Directory context loaded");
     let current_working_dir = working_dir;
 
     // Load key translator for input calibration
+    tracing::info!("Loading key translator...");
     let key_translator = match KeyTranslator::load_from_config_dir(&dir_context.config_dir) {
         Ok(translator) => translator,
         Err(e) => {
@@ -1393,6 +1401,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         }
     };
 
+    tracing::info!("Key translator loaded, returning SetupState");
     Ok(SetupState {
         config,
         tracing_handles,
@@ -2771,6 +2780,7 @@ fn real_main() -> AnyhowResult<()> {
         // Use the filesystem created during initialization (supports both local and remote)
         let fs = filesystem.clone();
 
+        tracing::info!("Creating editor instance...");
         let mut editor = Editor::with_working_dir(
             config.clone(),
             terminal_width,
@@ -2782,6 +2792,7 @@ fn real_main() -> AnyhowResult<()> {
             fs,
         )
         .context("Failed to create editor instance")?;
+        tracing::info!("Editor instance created");
 
         // Set the process spawner (LocalProcessSpawner for local, RemoteProcessSpawner for remote)
         editor.set_process_spawner(process_spawner.clone());
@@ -2792,6 +2803,7 @@ fn real_main() -> AnyhowResult<()> {
         }
 
         if first_run {
+            tracing::info!("Running first-run setup...");
             handle_first_run_setup(
                 &mut editor,
                 &args,
@@ -2802,6 +2814,7 @@ fn real_main() -> AnyhowResult<()> {
                 workspace_enabled,
             )
             .context("Failed first run setup")?;
+            tracing::info!("First-run setup complete");
         } else {
             if restore_workspace_on_restart {
                 match editor.try_restore_workspace() {

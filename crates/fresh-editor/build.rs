@@ -37,6 +37,14 @@ fn main() {
         eprintln!("Warning: Failed to generate builtin themes: {}", e);
     }
 
+    // Pre-compile syntect defaults + embedded grammars into a binary packdump.
+    // At runtime this replaces the expensive into_builder() + build() cycle (~12s)
+    // with a simple deserialization (~300ms).
+    println!("cargo::rerun-if-changed=src/grammars");
+    if let Err(e) = generate_syntax_packdump() {
+        eprintln!("Warning: Failed to generate syntax packdump: {}", e);
+    }
+
     // Generate plugins content hash for cache invalidation
     #[cfg(feature = "embed-plugins")]
     {
@@ -237,6 +245,97 @@ pub const GENERATED_LOCALE_OPTIONS: &[Option<&str>] = &[
     println!(
         "cargo::warning=Generated locale options with {} locales",
         locales.len()
+    );
+
+    Ok(())
+}
+
+/// Pre-compile syntect defaults + all embedded grammars into a single binary packdump.
+///
+/// This moves the expensive `SyntaxSetBuilder::build()` + grammar parsing from
+/// runtime to build time, reducing startup from ~12s to ~300ms.
+fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
+    use syntect::dumps::dump_to_uncompressed_file;
+    use syntect::parsing::{SyntaxDefinition, SyntaxSet, SyntaxSetBuilder};
+
+    let out_dir = std::env::var("OUT_DIR")?;
+    let dest_path = Path::new(&out_dir).join("default_syntaxes.packdump");
+
+    // Start with syntect's built-in defaults
+    let defaults = SyntaxSet::load_defaults_newlines();
+    let mut builder = defaults.into_builder();
+
+    // Add all embedded grammars — must match the list in types.rs add_embedded_grammars()
+    let grammar_files: &[(&str, &str)] = &[
+        ("src/grammars/toml.sublime-syntax", "TOML"),
+        ("src/grammars/odin/Odin.sublime-syntax", "Odin"),
+        ("src/grammars/zig.sublime-syntax", "Zig"),
+        ("src/grammars/git-rebase.sublime-syntax", "Git Rebase Todo"),
+        (
+            "src/grammars/git-commit.sublime-syntax",
+            "Git Commit Message",
+        ),
+        ("src/grammars/gitignore.sublime-syntax", "Gitignore"),
+        ("src/grammars/gitconfig.sublime-syntax", "Git Config"),
+        (
+            "src/grammars/gitattributes.sublime-syntax",
+            "Git Attributes",
+        ),
+        ("src/grammars/typst.sublime-syntax", "Typst"),
+        ("src/grammars/dockerfile.sublime-syntax", "Dockerfile"),
+        ("src/grammars/ini.sublime-syntax", "INI"),
+        ("src/grammars/cmake.sublime-syntax", "CMake"),
+        ("src/grammars/scss.sublime-syntax", "SCSS"),
+        ("src/grammars/less.sublime-syntax", "LESS"),
+        ("src/grammars/powershell.sublime-syntax", "PowerShell"),
+        ("src/grammars/kotlin.sublime-syntax", "Kotlin"),
+        ("src/grammars/swift.sublime-syntax", "Swift"),
+        ("src/grammars/dart.sublime-syntax", "Dart"),
+        ("src/grammars/elixir.sublime-syntax", "Elixir"),
+        ("src/grammars/fsharp.sublime-syntax", "FSharp"),
+        ("src/grammars/nix.sublime-syntax", "Nix"),
+        ("src/grammars/hcl.sublime-syntax", "HCL"),
+        ("src/grammars/protobuf.sublime-syntax", "Protocol Buffers"),
+        ("src/grammars/graphql.sublime-syntax", "GraphQL"),
+        ("src/grammars/julia.sublime-syntax", "Julia"),
+        ("src/grammars/nim.sublime-syntax", "Nim"),
+        ("src/grammars/gleam.sublime-syntax", "Gleam"),
+        ("src/grammars/vlang.sublime-syntax", "V"),
+        ("src/grammars/solidity.sublime-syntax", "Solidity"),
+        ("src/grammars/kdl.sublime-syntax", "KDL"),
+        ("src/grammars/nushell.sublime-syntax", "Nushell"),
+        ("src/grammars/starlark.sublime-syntax", "Starlark"),
+        ("src/grammars/justfile.sublime-syntax", "Justfile"),
+        ("src/grammars/earthfile.sublime-syntax", "Earthfile"),
+        ("src/grammars/gomod.sublime-syntax", "Go Module"),
+        ("src/grammars/vue.sublime-syntax", "Vue"),
+        ("src/grammars/svelte.sublime-syntax", "Svelte"),
+        ("src/grammars/astro.sublime-syntax", "Astro"),
+        ("src/grammars/hyprlang.sublime-syntax", "Hyprlang"),
+    ];
+
+    let mut loaded = 0;
+    for (path, name) in grammar_files {
+        let content = fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("Failed to read grammar {}: {}", path, e));
+        match SyntaxDefinition::load_from_str(&content, true, Some(name)) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                loaded += 1;
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to parse grammar {}: {}", name, e);
+            }
+        }
+    }
+
+    let syntax_set = builder.build();
+    dump_to_uncompressed_file(&syntax_set, &dest_path)?;
+
+    println!(
+        "cargo::warning=Generated syntax packdump: {} syntaxes ({} embedded)",
+        syntax_set.syntaxes().len(),
+        loaded
     );
 
     Ok(())

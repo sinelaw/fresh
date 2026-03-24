@@ -163,14 +163,18 @@ impl GrammarRegistry {
     /// without any `SyntaxSetBuilder::build()` call. Use this at startup,
     /// then swap in a full registry built on a background thread.
     pub fn defaults_only() -> Arc<Self> {
-        // Start with syntect defaults and add embedded grammars immediately.
-        // This requires a build() call but ensures all built-in grammars are
-        // available from the first frame. The build is fast since there are
-        // no user grammars to load.
-        let defaults = SyntaxSet::load_defaults_newlines();
-        let mut builder = defaults.into_builder();
-        Self::add_embedded_grammars(&mut builder);
-        let syntax_set = builder.build();
+        // Load pre-compiled syntax set (defaults + embedded grammars) from
+        // build-time packdump. This avoids the expensive into_builder() + build()
+        // cycle at runtime (~12s → ~300ms).
+        tracing::info!("defaults_only: loading pre-compiled syntax packdump...");
+        let syntax_set: SyntaxSet = syntect::dumps::from_uncompressed_data(include_bytes!(
+            concat!(env!("OUT_DIR"), "/default_syntaxes.packdump")
+        ))
+        .expect("Failed to load pre-compiled syntax packdump");
+        tracing::info!(
+            "defaults_only: loaded ({} syntaxes)",
+            syntax_set.syntaxes().len()
+        );
         let filename_scopes = Self::build_filename_scopes();
         let extra_extensions = Self::build_extra_extensions();
         Arc::new(Self {

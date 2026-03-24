@@ -984,7 +984,10 @@ impl Editor {
         color_capability: crate::view::color_support::ColorCapability,
         filesystem: Arc<dyn FileSystem + Send + Sync>,
     ) -> AnyhowResult<Self> {
+        tracing::info!("Building default grammar registry...");
+        let start = std::time::Instant::now();
         let grammar_registry = crate::primitives::grammar::GrammarRegistry::defaults_only();
+        tracing::info!("Default grammar registry built in {:?}", start.elapsed());
         let mut editor = Self::with_options(
             config,
             width,
@@ -1062,8 +1065,10 @@ impl Editor {
         let working_dir = working_dir.canonicalize().unwrap_or(working_dir);
 
         // Load all themes into registry
+        tracing::info!("Loading themes...");
         let theme_loader = crate::view::theme::ThemeLoader::new(dir_context.themes_dir());
         let theme_registry = theme_loader.load_all();
+        tracing::info!("Themes loaded");
 
         // Get active theme from registry, falling back to default if not found
         let theme = theme_registry.get_cloned(&config.theme).unwrap_or_else(|| {
@@ -1585,10 +1590,14 @@ impl Editor {
         self.grammar_build_in_progress = true;
         let sender = bridge.sender();
         let config_dir = self.dir_context.config_dir.clone();
+        tracing::info!("Spawning background grammar build thread...");
         std::thread::Builder::new()
             .name("grammar-build".to_string())
             .spawn(move || {
+                tracing::info!("[grammar-build] Thread started");
+                let start = std::time::Instant::now();
                 let registry = crate::primitives::grammar::GrammarRegistry::for_editor(config_dir);
+                tracing::info!("[grammar-build] Complete in {:?}", start.elapsed());
                 drop(sender.send(
                     crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
                         registry,
