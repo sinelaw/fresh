@@ -1,0 +1,128 @@
+{
+  "en": {
+    "cmd.next_change": "Next Change",
+    "cmd.next_change_desc": "Jump to the next changed region",
+    "cmd.prev_change": "Previous Change",
+    "cmd.prev_change_desc": "Jump to the previous changed region",
+    "status.no_changes": "No changes",
+    "status.change": "Change %{n}/%{total}",
+    "status.change_wrapped": "Change %{n}/%{total} [wrapped]"
+  },
+  "cs": {
+    "cmd.next_change": "Další změna",
+    "cmd.next_change_desc": "Přejít na další změněnou oblast",
+    "cmd.prev_change": "Předchozí změna",
+    "cmd.prev_change_desc": "Přejít na předchozí změněnou oblast",
+    "status.no_changes": "Žádné změny",
+    "status.change": "Změna %{n}/%{total}",
+    "status.change_wrapped": "Změna %{n}/%{total} [zabaleno]"
+  },
+  "de": {
+    "cmd.next_change": "Nächste Änderung",
+    "cmd.next_change_desc": "Zur nächsten geänderten Region springen",
+    "cmd.prev_change": "Vorherige Änderung",
+    "cmd.prev_change_desc": "Zur vorherigen geänderten Region springen",
+    "status.no_changes": "Keine Änderungen",
+    "status.change": "Änderung %{n}/%{total}",
+    "status.change_wrapped": "Änderung %{n}/%{total} [umgebrochen]"
+  },
+  "es": {
+    "cmd.next_change": "Siguiente cambio",
+    "cmd.next_change_desc": "Saltar a la siguiente región modificada",
+    "cmd.prev_change": "Cambio anterior",
+    "cmd.prev_change_desc": "Saltar a la región modificada anterior",
+    "status.no_changes": "Sin cambios",
+    "status.change": "Cambio %{n}/%{total}",
+    "status.change_wrapped": "Cambio %{n}/%{total} [envuelto]"
+  },
+  "fr": {
+    "cmd.next_change": "Modification suivante",
+    "cmd.next_change_desc": "Aller à la prochaine région modifiée",
+    "cmd.prev_change": "Modification précédente",
+    "cmd.prev_change_desc": "Aller à la région modifiée précédente",
+    "status.no_changes": "Aucune modification",
+    "status.change": "Modification %{n}/%{total}",
+    "status.change_wrapped": "Modification %{n}/%{total} [bouclé]"
+  },
+  "it": {
+    "cmd.next_change": "Modifica successiva",
+    "cmd.next_change_desc": "Vai alla prossima regione modificata",
+    "cmd.prev_change": "Modifica precedente",
+    "cmd.prev_change_desc": "Vai alla regione modificata precedente",
+    "status.no_changes": "Nessuna modifica",
+    "status.change": "Modifica %{n}/%{total}",
+    "status.change_wrapped": "Modifica %{n}/%{total} [avvolto]"
+  },
+  "ja": {
+    "cmd.next_change": "次の変更",
+    "cmd.next_change_desc": "次の変更箇所にジャンプ",
+    "cmd.prev_change": "前の変更",
+    "cmd.prev_change_desc": "前の変更箇所にジャンプ",
+    "status.no_changes": "変更なし",
+    "status.change": "変更 %{n}/%{total}",
+    "status.change_wrapped": "変更 %{n}/%{total} [折り返し]"
+  },
+  "ko": {
+    "cmd.next_change": "다음 변경",
+    "cmd.next_change_desc": "다음 변경된 영역으로 이동",
+    "cmd.prev_change": "이전 변경",
+    "cmd.prev_change_desc": "이전 변경된 영역으로 이동",
+    "status.no_changes": "변경 없음",
+    "status.change": "변경 %{n}/%{total}",
+    "status.change_wrapped": "변경 %{n}/%{total} [순환]"
+  },
+  "pt-BR": {
+    "cmd.next_change": "Próxima alteração",
+    "cmd.next_change_desc": "Ir para a próxima região alterada",
+    "cmd.prev_change": "Alteração anterior",
+    "cmd.prev_change_desc": "Ir para a região alterada anterior",
+    "status.no_changes": "Sem alterações",
+    "status.change": "Alteração %{n}/%{total}",
+    "status.change_wrapped": "Alteração %{n}/%{total} [retornou]"
+  },
+  "ru": {
+    "cmd.next_change": "Следующее изменение",
+    "cmd.next_change_desc": "Перейти к следующей изменённой области",
+    "cmd.prev_change": "Предыдущее изменение",
+    "cmd.prev_change_desc": "Перейти к предыдущей изменённой области",
+    "status.no_changes": "Нет изменений",
+    "status.change": "Изменение %{n}/%{total}",
+    "status.change_wrapped": "Изменение %{n}/%{total} [цикл]"
+  },
+  "th": {
+    "cmd.next_change": "การเปลี่ยนแปลงถัดไป",
+    "cmd.next_change_desc": "ข้ามไปยังพื้นที่ที่เปลี่ยนแปลงถัดไป",
+    "cmd.prev_change": "การเปลี่ยนแปลงก่อนหน้า",
+    "cmd.prev_change_desc": "ข้ามไปยังพื้นที่ที่เปลี่ยนแปลงก่อนหน้า",
+    "status.no_changes": "ไม่มีการเปลี่ยนแปลง",
+    "status.change": "การเปลี่ยนแปลง %{n}/%{total}",
+    "status.change_wrapped": "การเปลี่ยนแปลง %{n}/%{total} [วนรอบ]"
+  },
+  "uk": {
+    "cmd.next_change": "Наступна зміна",
+    "cmd.next_change_desc": "Перейти до наступної зміненої області",
+    "cmd.prev_change": "Попередня зміна",
+    "cmd.prev_change_desc": "Перейти до попередньої зміненої області",
+    "status.no_changes": "Немає змін",
+    "status.change": "Зміна %{n}/%{total}",
+    "status.change_wrapped": "Зміна %{n}/%{total} [цикл]"
+  },
+  "vi": {
+    "cmd.next_change": "Thay đổi tiếp theo",
+    "cmd.next_change_desc": "Nhảy đến vùng thay đổi tiếp theo",
+    "cmd.prev_change": "Thay đổi trước đó",
+    "cmd.prev_change_desc": "Nhảy đến vùng thay đổi trước đó",
+    "status.no_changes": "Không có thay đổi",
+    "status.change": "Thay đổi %{n}/%{total}",
+    "status.change_wrapped": "Thay đổi %{n}/%{total} [quay vòng]"
+  },
+  "zh-CN": {
+    "cmd.next_change": "下一个更改",
+    "cmd.next_change_desc": "跳转到下一个已更改的区域",
+    "cmd.prev_change": "上一个更改",
+    "cmd.prev_change_desc": "跳转到上一个已更改的区域",
+    "status.no_changes": "没有更改",
+    "status.change": "更改 %{n}/%{total}",
+    "status.change_wrapped": "更改 %{n}/%{total} [已循环]"
+  }
+}

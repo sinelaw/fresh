@@ -248,6 +248,8 @@ async function updateGitGutter(bufferId: number): Promise<void> {
       editor.debug("Git Gutter: file not tracked by git");
       editor.clearLineIndicators(bufferId, NAMESPACE);
       state.hunks = [];
+      // Signal to other plugins that git is not available for this buffer
+      editor.setViewState(bufferId, "git_gutter_hunks", null);
       return;
     }
 
@@ -304,6 +306,9 @@ async function updateGitGutter(bufferId: number): Promise<void> {
     }
 
     state.hunks = hunks;
+
+    // Export hunks for other plugins (e.g. diff_nav) via shared view state
+    editor.setViewState(bufferId, "git_gutter_hunks", hunks);
   } finally {
     state.updating = false;
   }
