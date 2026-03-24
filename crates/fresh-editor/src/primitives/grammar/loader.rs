@@ -102,49 +102,68 @@ impl GrammarRegistry {
         // Start with built-in extra extension mappings, user grammars override these
         let mut user_extensions = Self::build_extra_extensions();
 
-        // Start with syntect defaults, convert to builder to add more
-        tracing::info!("[grammar-build] Loading syntect defaults...");
-        let defaults = SyntaxSet::load_defaults_newlines();
-        tracing::info!("[grammar-build] Converting to builder...");
-        let mut builder = defaults.into_builder();
+        // Check if there are any user grammars or language packs to add
+        let has_user_grammars = loader.grammars_dir().is_some_and(|dir| loader.exists(&dir));
+        let has_language_packs = loader
+            .languages_packages_dir()
+            .is_some_and(|dir| loader.exists(&dir));
 
-        // Add embedded grammars (TOML, etc.)
-        tracing::info!("[grammar-build] Adding embedded grammars...");
-        Self::add_embedded_grammars(&mut builder);
-
-        // Add user grammars from ~/.config/fresh/grammars/
-        if let Some(grammars_dir) = loader.grammars_dir() {
-            if loader.exists(&grammars_dir) {
+        let syntax_set =
+            if !has_user_grammars && !has_language_packs {
+                // Fast path: no user additions, use pre-compiled packdump directly
                 tracing::info!(
-                    "[grammar-build] Loading user grammars from {:?}...",
-                    grammars_dir
-                );
-                load_user_grammars(loader, &grammars_dir, &mut builder, &mut user_extensions);
-            }
-        }
-
-        // Add language pack grammars from ~/.config/fresh/languages/packages/
-        if let Some(packages_dir) = loader.languages_packages_dir() {
-            if loader.exists(&packages_dir) {
+                "[grammar-build] No user grammars or language packs, using pre-compiled packdump"
+            );
+                let ss: SyntaxSet = syntect::dumps::from_uncompressed_data(include_bytes!(
+                    concat!(env!("OUT_DIR"), "/default_syntaxes.packdump")
+                ))
+                .expect("Failed to load pre-compiled syntax packdump");
                 tracing::info!(
-                    "[grammar-build] Loading language pack grammars from {:?}...",
-                    packages_dir
+                    "[grammar-build] Loaded {} syntaxes from packdump",
+                    ss.syntaxes().len()
                 );
-                load_language_pack_grammars(
-                    loader,
-                    &packages_dir,
-                    &mut builder,
-                    &mut user_extensions,
-                );
-            }
-        }
+                ss
+            } else {
+                // Slow path: need to add user grammars, must go through builder
+                tracing::info!("[grammar-build] Loading pre-compiled packdump as builder base...");
+                let base: SyntaxSet = syntect::dumps::from_uncompressed_data(include_bytes!(
+                    concat!(env!("OUT_DIR"), "/default_syntaxes.packdump")
+                ))
+                .expect("Failed to load pre-compiled syntax packdump");
+                tracing::info!("[grammar-build] Converting to builder...");
+                let mut builder = base.into_builder();
 
-        tracing::info!(
-            "[grammar-build] Building syntax set ({} syntaxes)...",
-            builder.syntaxes().len()
-        );
-        let syntax_set = builder.build();
-        tracing::info!("[grammar-build] Syntax set built");
+                if has_user_grammars {
+                    let grammars_dir = loader.grammars_dir().unwrap();
+                    tracing::info!(
+                        "[grammar-build] Loading user grammars from {:?}...",
+                        grammars_dir
+                    );
+                    load_user_grammars(loader, &grammars_dir, &mut builder, &mut user_extensions);
+                }
+
+                if has_language_packs {
+                    let packages_dir = loader.languages_packages_dir().unwrap();
+                    tracing::info!(
+                        "[grammar-build] Loading language pack grammars from {:?}...",
+                        packages_dir
+                    );
+                    load_language_pack_grammars(
+                        loader,
+                        &packages_dir,
+                        &mut builder,
+                        &mut user_extensions,
+                    );
+                }
+
+                tracing::info!(
+                    "[grammar-build] Building syntax set ({} syntaxes)...",
+                    builder.syntaxes().len()
+                );
+                let ss = builder.build();
+                tracing::info!("[grammar-build] Syntax set built");
+                ss
+            };
         let filename_scopes = Self::build_filename_scopes();
 
         tracing::info!(
