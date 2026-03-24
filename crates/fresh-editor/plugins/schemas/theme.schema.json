@@ -826,6 +826,24 @@
             212,
             212
           ]
+        },
+        "punctuation_bracket": {
+          "description": "Punctuation brackets ({, }, (, ), [, ])",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            212,
+            212,
+            212
+          ]
+        },
+        "punctuation_delimiter": {
+          "description": "Punctuation delimiters (;, ,, .)",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            212,
+            212,
+            212
+          ]
         }
       }
     }
