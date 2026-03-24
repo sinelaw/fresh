@@ -292,11 +292,11 @@ fn test_diagnostics_panel_plugin_loads() {
     use crate::common::fake_lsp::FakeLspServer;
     init_tracing_from_env();
 
-    // Create a fake LSP server that sends diagnostics
-    let _fake_server = FakeLspServer::spawn_many_diagnostics(3).unwrap();
-
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new().unwrap();
+
+    // Create a fake LSP server that sends diagnostics
+    let _fake_server = FakeLspServer::spawn_many_diagnostics(temp_dir.path(), 3).unwrap();
     let project_root = temp_dir.path().to_path_buf();
 
     // Create plugins directory and copy the diagnostics panel plugin
@@ -315,7 +315,7 @@ fn test_diagnostics_panel_plugin_loads() {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::many_diagnostics_script_path()
+            command: FakeLspServer::many_diagnostics_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -722,9 +722,10 @@ editor.setStatus("Nonblocking test plugin loaded");
 #[ignore]
 fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
     init_tracing_from_env();
-    let _fake_server = FakeLspServer::spawn()?;
 
     let temp_dir = tempfile::TempDir::new().unwrap();
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
@@ -742,7 +743,9 @@ fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
     config.lsp.insert(
         "cpp".to_string(),
         LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,
@@ -791,9 +794,10 @@ fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
 #[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
 fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
     init_tracing_from_env();
-    let _fake_server = FakeLspServer::spawn()?;
 
     let temp_dir = tempfile::TempDir::new().unwrap();
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
@@ -813,7 +817,9 @@ fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
     config.lsp.insert(
         "cpp".to_string(),
         LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,
@@ -978,9 +984,10 @@ editor.setStatus("Test source plugin loaded!");
 #[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
 fn test_diagnostics_api_with_fake_lsp() -> anyhow::Result<()> {
     init_tracing_from_env();
-    let _fake_server = FakeLspServer::spawn()?;
 
     let temp_dir = tempfile::TempDir::new().unwrap();
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
@@ -1041,7 +1048,9 @@ editor.setStatus("Test diagnostics plugin loaded");
     config.lsp.insert(
         "rust".to_string(),
         LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,

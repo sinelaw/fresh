@@ -22,7 +22,7 @@ use crate::common::harness::EditorTestHarness;
 /// - Pull diagnostics (`textDocument/diagnostic`) return empty initially
 /// - After didChange: sends `workspace/diagnostic/refresh` then `publishDiagnostics`
 ///   with empty diagnostics (clearing the errors)
-fn create_ra_replay_server_script() -> std::path::PathBuf {
+fn create_ra_replay_server_script(dir: &std::path::Path) -> std::path::PathBuf {
     // The publishDiagnostics payload is taken verbatim from the recording,
     // with the URI made dynamic (replaced at runtime with the actual file URI).
     let script = r##"#!/bin/bash
@@ -151,7 +151,7 @@ done
 echo "SERVER: exiting" >> "$LOG_FILE"
 "##;
 
-    let script_path = std::env::temp_dir().join("fake_ra_replay_server.sh");
+    let script_path = dir.join("fake_ra_replay_server.sh");
     std::fs::write(&script_path, script).expect("Failed to write RA replay server script");
 
     #[cfg(unix)]
@@ -186,9 +186,8 @@ fn test_rust_analyzer_push_diagnostics_displayed() -> anyhow::Result<()> {
         .with_env_filter("fresh=debug")
         .try_init();
 
-    let script_path = create_ra_replay_server_script();
-
     let temp_dir = tempfile::tempdir()?;
+    let script_path = create_ra_replay_server_script(temp_dir.path());
     let log_file = temp_dir.path().join("ra_replay_log.txt");
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(
@@ -276,9 +275,8 @@ fn test_rust_analyzer_diagnostics_cleared_after_fix() -> anyhow::Result<()> {
         .with_env_filter("fresh=debug")
         .try_init();
 
-    let script_path = create_ra_replay_server_script();
-
     let temp_dir = tempfile::tempdir()?;
+    let script_path = create_ra_replay_server_script(temp_dir.path());
     let log_file = temp_dir.path().join("ra_clear_log.txt");
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(
@@ -377,7 +375,7 @@ fn test_rust_analyzer_diagnostics_cleared_after_fix() -> anyhow::Result<()> {
 ///
 /// The diagnostic content uses actual rust-analyzer E0308 formatting recorded
 /// from rust-analyzer v1.92.0.
-fn create_ra_edit_save_server_script() -> std::path::PathBuf {
+fn create_ra_edit_save_server_script(dir: &std::path::Path) -> std::path::PathBuf {
     let script = r##"#!/bin/bash
 
 # Fake LSP server for edit/save/edit/save flow testing
@@ -499,7 +497,7 @@ done
 echo "SERVER: exiting" >> "$LOG_FILE"
 "##;
 
-    let script_path = std::env::temp_dir().join("fake_ra_edit_save_server.sh");
+    let script_path = dir.join("fake_ra_edit_save_server.sh");
     std::fs::write(&script_path, script).expect("Failed to write RA edit/save server script");
 
     #[cfg(unix)]
@@ -533,9 +531,8 @@ fn test_edit_save_edit_save_diagnostic_flow() -> anyhow::Result<()> {
         .with_env_filter("fresh=debug")
         .try_init();
 
-    let script_path = create_ra_edit_save_server_script();
-
     let temp_dir = tempfile::tempdir()?;
+    let script_path = create_ra_edit_save_server_script(temp_dir.path());
     let log_file = temp_dir.path().join("ra_edit_save_log.txt");
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(
@@ -681,9 +678,8 @@ fn test_workspace_diagnostic_refresh_handled() -> anyhow::Result<()> {
         .with_env_filter("fresh=debug")
         .try_init();
 
-    let script_path = create_ra_replay_server_script();
-
     let temp_dir = tempfile::tempdir()?;
+    let script_path = create_ra_replay_server_script(temp_dir.path());
     let log_file = temp_dir.path().join("ra_refresh_log.txt");
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(
@@ -755,7 +751,7 @@ fn test_workspace_diagnostic_refresh_handled() -> anyhow::Result<()> {
 /// Meanwhile, the editor continues sending didChange with newer versions.
 /// The editor should drop these stale diagnostics because the version is older
 /// than the current document version.
-fn create_stale_diagnostics_server_script() -> std::path::PathBuf {
+fn create_stale_diagnostics_server_script(dir: &std::path::Path) -> std::path::PathBuf {
     let script = r##"#!/bin/bash
 
 # Fake LSP server that sends delayed, stale diagnostics
@@ -856,7 +852,7 @@ done
 echo "SERVER: exiting" >> "$LOG_FILE"
 "##;
 
-    let script_path = std::env::temp_dir().join("fake_stale_diag_server.sh");
+    let script_path = dir.join("fake_stale_diag_server.sh");
     std::fs::write(&script_path, script).expect("Failed to write stale diagnostics server script");
 
     #[cfg(unix)]
@@ -891,9 +887,8 @@ fn test_stale_diagnostics_dropped_during_rapid_typing() -> anyhow::Result<()> {
         .with_env_filter("fresh=debug")
         .try_init();
 
-    let script_path = create_stale_diagnostics_server_script();
-
     let temp_dir = tempfile::tempdir()?;
+    let script_path = create_stale_diagnostics_server_script(temp_dir.path());
     let log_file = temp_dir.path().join("stale_diag_log.txt");
     let test_file = temp_dir.path().join("test.py");
     std::fs::write(&test_file, "")?;

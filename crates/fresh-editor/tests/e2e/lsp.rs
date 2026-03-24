@@ -784,10 +784,10 @@ fn test_lsp_waiting_indicator() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server
-    let _fake_server = FakeLspServer::spawn()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    \n}\n")?;
 
@@ -797,7 +797,9 @@ fn test_lsp_waiting_indicator() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,
@@ -853,9 +855,9 @@ fn test_lsp_waiting_indicator() -> anyhow::Result<()> {
 fn test_semantic_tokens_version_gating() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
-    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_delay(150)?;
-
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_delay(temp_dir.path(), 150)?;
     let test_file = temp_dir.path().join("semantic.rs");
     std::fs::write(&test_file, "fn main() {}\n")?;
 
@@ -864,7 +866,7 @@ fn test_semantic_tokens_version_gating() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::semantic_tokens_delay_script_path()
+            command: FakeLspServer::semantic_tokens_delay_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -951,9 +953,9 @@ fn test_semantic_tokens_range_preserves_overlays_on_edit() -> anyhow::Result<()>
     use crate::common::fake_lsp::FakeLspServer;
     use std::collections::HashSet;
 
-    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_delay(200)?;
-
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_delay(temp_dir.path(), 200)?;
     let test_file = temp_dir.path().join("semantic_range.rs");
     std::fs::write(&test_file, "fn main() { let value = 1; }\n")?;
 
@@ -961,7 +963,7 @@ fn test_semantic_tokens_range_preserves_overlays_on_edit() -> anyhow::Result<()>
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::semantic_tokens_delay_script_path()
+            command: FakeLspServer::semantic_tokens_delay_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -1046,9 +1048,9 @@ fn test_semantic_tokens_persist_on_enter_key() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
     use std::collections::HashSet;
 
-    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_delay(200)?;
-
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_delay(temp_dir.path(), 200)?;
     let test_file = temp_dir.path().join("semantic_enter.rs");
     std::fs::write(&test_file, "fn main() { let value = 1; }\n")?;
 
@@ -1056,7 +1058,7 @@ fn test_semantic_tokens_persist_on_enter_key() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::semantic_tokens_delay_script_path()
+            command: FakeLspServer::semantic_tokens_delay_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -1141,9 +1143,9 @@ fn test_semantic_tokens_overlays_shift_on_edit() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
     use std::collections::HashMap;
 
-    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_delay(200)?;
-
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_delay(temp_dir.path(), 200)?;
     let test_file = temp_dir.path().join("semantic_shift.rs");
     std::fs::write(&test_file, "fn main() { let value = 1; }\n")?;
 
@@ -1152,7 +1154,7 @@ fn test_semantic_tokens_overlays_shift_on_edit() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::semantic_tokens_delay_script_path()
+            command: FakeLspServer::semantic_tokens_delay_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -1245,9 +1247,9 @@ fn test_semantic_tokens_overlays_shift_on_edit() -> anyhow::Result<()> {
 fn test_semantic_tokens_range_only_viewport_highlighting() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
-    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_range_only()?;
-
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_range_only(temp_dir.path())?;
     let test_file = temp_dir.path().join("semantic_range_only.rs");
     std::fs::write(&test_file, "fn main() { let value = 1; }\n")?;
 
@@ -1256,7 +1258,7 @@ fn test_semantic_tokens_range_only_viewport_highlighting() -> anyhow::Result<()>
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::semantic_tokens_range_only_script_path()
+            command: FakeLspServer::semantic_tokens_range_only_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -1411,10 +1413,10 @@ fn test_lsp_completion_canceled_on_cursor_move() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server
-    let _fake_server = FakeLspServer::spawn()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    test_\n}\n")?;
 
@@ -1423,7 +1425,9 @@ fn test_lsp_completion_canceled_on_cursor_move() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,
@@ -1478,10 +1482,10 @@ fn test_lsp_cursor_animation() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server
-    let _fake_server = FakeLspServer::spawn()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    test_\n}\n")?;
 
@@ -1490,7 +1494,9 @@ fn test_lsp_cursor_animation() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,
@@ -1546,10 +1552,10 @@ fn test_lsp_completion_canceled_on_text_edit() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server
-    let _fake_server = FakeLspServer::spawn()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    test_\n}\n")?;
 
@@ -1560,7 +1566,9 @@ fn test_lsp_completion_canceled_on_text_edit() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,
@@ -2132,10 +2140,11 @@ fn test_lsp_diagnostics_non_blocking() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Create a completely blocking fake LSP server that never responds
-    let _fake_server = FakeLspServer::spawn_blocking()?;
+    let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_blocking(temp_dir.path())?;
 
     // Create temporary directory and test file
-    let temp_dir = tempfile::tempdir()?;
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    // original code\n}\n")?;
 
@@ -2144,7 +2153,7 @@ fn test_lsp_diagnostics_non_blocking() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::blocking_script_path()
+            command: FakeLspServer::blocking_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -2901,10 +2910,11 @@ fn test_lsp_progress_status_display() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Create a fake LSP server that sends progress notifications
-    let _fake_server = FakeLspServer::spawn_with_progress()?;
+    let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_with_progress(temp_dir.path())?;
 
     // Create temporary directory and test file
-    let temp_dir = tempfile::tempdir()?;
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    println!(\"Hello\");\n}\n")?;
 
@@ -2913,7 +2923,7 @@ fn test_lsp_progress_status_display() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::progress_script_path()
+            command: FakeLspServer::progress_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -3063,10 +3073,11 @@ fn test_lsp_crash_detection_and_restart() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Create a fake LSP server that crashes after initialization
-    let _fake_server = FakeLspServer::spawn_crashing()?;
+    let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_crashing(temp_dir.path())?;
 
     // Create temporary directory and test file
-    let temp_dir = tempfile::tempdir()?;
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    let x = 5;\n}\n")?;
 
@@ -3075,7 +3086,7 @@ fn test_lsp_crash_detection_and_restart() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::crashing_script_path()
+            command: FakeLspServer::crashing_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -3365,15 +3376,18 @@ fn test_pull_diagnostics_unchanged_response() -> anyhow::Result<()> {
 fn test_pull_diagnostics_auto_trigger_after_open() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
+    // Create a temp directory and test file
+    let temp_dir = tempfile::TempDir::new()?;
+
     // Create fake LSP server with pull diagnostics support
-    let _server = FakeLspServer::spawn_with_pull_diagnostics()?;
+    let _server = FakeLspServer::spawn_with_pull_diagnostics(temp_dir.path())?;
 
     // Create config that uses the pull diagnostics fake server
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::pull_diagnostics_script_path()
+            command: FakeLspServer::pull_diagnostics_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -3385,9 +3399,6 @@ fn test_pull_diagnostics_auto_trigger_after_open() -> anyhow::Result<()> {
             language_id_overrides: Default::default(),
         },
     );
-
-    // Create a temp directory and test file
-    let temp_dir = tempfile::TempDir::new()?;
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "hello world")?;
 
@@ -3445,15 +3456,18 @@ fn test_pull_diagnostics_auto_trigger_after_open() -> anyhow::Result<()> {
 fn test_pull_diagnostics_result_id_tracking() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
+    // Create a temp directory and test file
+    let temp_dir = tempfile::TempDir::new()?;
+
     // Create fake LSP server with pull diagnostics support
-    let _server = FakeLspServer::spawn_with_pull_diagnostics()?;
+    let _server = FakeLspServer::spawn_with_pull_diagnostics(temp_dir.path())?;
 
     // Create config that uses the pull diagnostics fake server
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::pull_diagnostics_script_path()
+            command: FakeLspServer::pull_diagnostics_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -3465,9 +3479,6 @@ fn test_pull_diagnostics_result_id_tracking() -> anyhow::Result<()> {
             language_id_overrides: Default::default(),
         },
     );
-
-    // Create a temp directory and test file
-    let temp_dir = tempfile::TempDir::new()?;
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "hello world")?;
 
@@ -3703,10 +3714,11 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Create a fake LSP server
-    let _fake_server = FakeLspServer::spawn()?;
+    let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
 
     // Create temporary directory and test file
-    let temp_dir = tempfile::tempdir()?;
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    let x = 5;\n}\n")?;
 
@@ -3715,7 +3727,9 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true, // Auto-start so it starts when we open the file
@@ -4028,10 +4042,10 @@ fn test_hover_popup_persists_within_symbol_and_popup() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server (has hover support)
-    let _fake_server = FakeLspServer::spawn()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn example_function() {}\n")?;
 
@@ -4040,7 +4054,9 @@ fn test_hover_popup_persists_within_symbol_and_popup() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,
@@ -5670,10 +5686,10 @@ fn test_hover_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server script (but we don't want it to actually be used)
-    let _fake_server = FakeLspServer::spawn()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn example_function() {\n    let x = 42;\n}\n")?;
 
@@ -5682,7 +5698,9 @@ fn test_hover_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: false, // This is the key setting - LSP should NOT auto-start
@@ -5757,10 +5775,10 @@ fn test_typing_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
     use crossterm::event::KeyCode;
 
     // Spawn fake LSP server script (but we don't want it to actually be used)
-    let _fake_server = FakeLspServer::spawn()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n}\n")?;
 
@@ -5769,7 +5787,9 @@ fn test_typing_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: false, // This is the key setting - LSP should NOT auto-start
@@ -5828,10 +5848,10 @@ fn test_typing_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
 #[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
 fn test_completion_triggered_on_trigger_character() -> anyhow::Result<()> {
     // Spawn fake LSP server with logging
-    let _fake_server = FakeLspServer::spawn_with_logging()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_with_logging(temp_dir.path())?;
+
     let log_file = temp_dir.path().join("completion_trigger_test_log.txt");
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    foo\n}\n")?;
@@ -5842,7 +5862,7 @@ fn test_completion_triggered_on_trigger_character() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::logging_script_path()
+            command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
@@ -5910,10 +5930,10 @@ fn test_completion_triggered_on_trigger_character() -> anyhow::Result<()> {
 #[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
 fn test_completion_triggered_on_word_char_with_quick_suggestions() -> anyhow::Result<()> {
     // Spawn fake LSP server with logging
-    let _fake_server = FakeLspServer::spawn_with_logging()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_with_logging(temp_dir.path())?;
+
     let log_file = temp_dir.path().join("quick_suggestions_test_log.txt");
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    \n}\n")?;
@@ -5924,7 +5944,7 @@ fn test_completion_triggered_on_word_char_with_quick_suggestions() -> anyhow::Re
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::logging_script_path()
+            command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
@@ -5991,10 +6011,10 @@ fn test_completion_triggered_on_word_char_with_quick_suggestions() -> anyhow::Re
 #[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
 fn test_completion_not_triggered_on_word_char_without_quick_suggestions() -> anyhow::Result<()> {
     // Spawn fake LSP server with logging
-    let _fake_server = FakeLspServer::spawn_with_logging()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_with_logging(temp_dir.path())?;
+
     let log_file = temp_dir.path().join("no_quick_suggestions_test_log.txt");
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    \n}\n")?;
@@ -6005,7 +6025,7 @@ fn test_completion_not_triggered_on_word_char_without_quick_suggestions() -> any
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::logging_script_path()
+            command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
@@ -6074,10 +6094,10 @@ fn test_completion_not_triggered_on_word_char_without_quick_suggestions() -> any
 #[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
 fn test_completion_not_triggered_on_non_word_char() -> anyhow::Result<()> {
     // Spawn fake LSP server with logging
-    let _fake_server = FakeLspServer::spawn_with_logging()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_with_logging(temp_dir.path())?;
+
     let log_file = temp_dir.path().join("non_word_char_test_log.txt");
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    foo\n}\n")?;
@@ -6088,7 +6108,7 @@ fn test_completion_not_triggered_on_non_word_char() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::logging_script_path()
+            command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
@@ -6165,11 +6185,12 @@ fn test_hover_popup_follows_mouse_when_lsp_returns_no_range() -> anyhow::Result<
     use std::time::Duration;
 
     // Spawn fake LSP server that does NOT return range in hover response
-    let _fake_server = FakeLspServer::spawn_without_range()?;
+    let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_without_range(temp_dir.path())?;
 
     // Create temp dir and test file with multiple lines of code
     // This allows testing both horizontal and vertical mouse movement
-    let temp_dir = tempfile::tempdir()?;
     let test_file = temp_dir.path().join("test.rs");
     // Multiple lines with content so we can move mouse both horizontally and vertically
     let file_content = "fn example_function_name() {}\n\
@@ -6185,7 +6206,7 @@ fn test_hover_popup_follows_mouse_when_lsp_returns_no_range() -> anyhow::Result<
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::no_range_script_path()
+            command: FakeLspServer::no_range_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],
@@ -6398,10 +6419,10 @@ fn test_hover_does_not_trigger_past_end_of_line() -> anyhow::Result<()> {
     use std::time::Duration;
 
     // Spawn fake LSP server
-    let _fake_server = FakeLspServer::spawn()?;
-
-    // Create temp dir and test file with a short line
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let test_file = temp_dir.path().join("test.rs");
     // Short line - "fn foo() {}" is about 11 chars, so column 50 is way past end
     let file_content = "fn foo() {}\n";
@@ -6412,7 +6433,9 @@ fn test_hover_does_not_trigger_past_end_of_line() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,
@@ -6495,15 +6518,15 @@ fn test_hover_does_not_trigger_on_empty_line() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
     use std::time::Duration;
 
-    // Spawn fake LSP server
-    let _fake_server = FakeLspServer::spawn()?;
-
     // Create temp dir and test file matching user's scenario:
     // Line 1: import statement
     // Line 2: empty
     // Line 3: symbol (hover target)
     // Line 4: empty (this is where hover should NOT trigger)
     let temp_dir = tempfile::tempdir()?;
+
+    // Spawn fake LSP server
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
     let test_file = temp_dir.path().join("test.rs");
     let file_content = "use std;\n\nfn foo() {}\n\n";
     std::fs::write(&test_file, file_content)?;
@@ -6513,7 +6536,9 @@ fn test_hover_does_not_trigger_on_empty_line() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,
@@ -6602,10 +6627,10 @@ fn test_hover_no_duplicate_popup_when_moving_within_symbol() -> anyhow::Result<(
     use std::time::Duration;
 
     // Spawn fake LSP server
-    let _fake_server = FakeLspServer::spawn()?;
-
-    // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let test_file = temp_dir.path().join("test.rs");
     // "array_equal" is a long symbol - we'll hover on different columns within it
     let file_content = "fn array_equal() {}\n";
@@ -6616,7 +6641,9 @@ fn test_hover_no_duplicate_popup_when_moving_within_symbol() -> anyhow::Result<(
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,

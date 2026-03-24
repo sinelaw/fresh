@@ -464,10 +464,10 @@ fn test_folded_gutter_line_numbers_match_content_during_scroll() -> anyhow::Resu
 
     // 1. Spawn fake LSP that advertises foldingRangeProvider and returns
     //    a single range covering lines 10..30.
-    let _fake_server = FakeLspServer::spawn_with_folding_ranges()?;
-
     // 2. Create a 60-line file where every line is "line N\n".
     let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_with_folding_ranges(temp_dir.path())?;
     let content: String = (0..60).map(|i| format!("line {i}\n")).collect();
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, &content)?;
@@ -481,7 +481,7 @@ fn test_folded_gutter_line_numbers_match_content_during_scroll() -> anyhow::Resu
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::folding_ranges_script_path()
+            command: FakeLspServer::folding_ranges_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![],

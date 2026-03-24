@@ -22,7 +22,7 @@ use crate::common::harness::EditorTestHarness;
 /// 2. Checks for `publishDiagnostics` in the JSON
 /// 3. Logs whether the capability was found
 /// 4. Only sends diagnostics on didOpen/didChange if the capability was present
-fn create_strict_server_script() -> std::path::PathBuf {
+fn create_strict_server_script(dir: &std::path::Path) -> std::path::PathBuf {
     let script = r#"#!/bin/bash
 
 # Log file path (passed as first argument)
@@ -123,7 +123,7 @@ while true; do
 done
 "#;
 
-    let script_path = std::env::temp_dir().join("fake_lsp_strict_server.sh");
+    let script_path = dir.join("fake_lsp_strict_server.sh");
     std::fs::write(&script_path, script).expect("Failed to write strict server script");
 
     #[cfg(unix)]
@@ -141,7 +141,7 @@ done
 
 /// Create a fake LSP server that always sends publishDiagnostics regardless
 /// of client capabilities (mimics clangd behavior).
-fn create_permissive_server_script() -> std::path::PathBuf {
+fn create_permissive_server_script(dir: &std::path::Path) -> std::path::PathBuf {
     let script = r#"#!/bin/bash
 
 # Log file path (passed as first argument)
@@ -228,7 +228,7 @@ while true; do
 done
 "#;
 
-    let script_path = std::env::temp_dir().join("fake_lsp_permissive_server.sh");
+    let script_path = dir.join("fake_lsp_permissive_server.sh");
     std::fs::write(&script_path, script).expect("Failed to write permissive server script");
 
     #[cfg(unix)]
@@ -258,9 +258,8 @@ fn test_strict_server_sends_diagnostics_with_capability() -> anyhow::Result<()> 
         .with_env_filter("fresh=debug")
         .try_init();
 
-    let script_path = create_strict_server_script();
-
     let temp_dir = tempfile::tempdir()?;
+    let script_path = create_strict_server_script(temp_dir.path());
     let log_file = temp_dir.path().join("strict_server_log.txt");
     let test_file = temp_dir.path().join("test.py");
     std::fs::write(&test_file, "def main():\n    x = 1\n")?;
@@ -320,9 +319,8 @@ fn test_permissive_server_sends_diagnostics_without_capability() -> anyhow::Resu
         .with_env_filter("fresh=debug")
         .try_init();
 
-    let script_path = create_permissive_server_script();
-
     let temp_dir = tempfile::tempdir()?;
+    let script_path = create_permissive_server_script(temp_dir.path());
     let log_file = temp_dir.path().join("permissive_server_log.txt");
     let test_file = temp_dir.path().join("test.c");
     std::fs::write(&test_file, "int main() { return 0; }\n")?;

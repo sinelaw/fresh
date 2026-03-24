@@ -20,7 +20,7 @@ impl FakeLspServer {
     ///
     /// The server will listen on stdin/stdout and respond to LSP requests.
     /// It uses a Bash script that acts as a simple JSON-RPC server.
-    pub fn spawn() -> anyhow::Result<Self> {
+    pub fn spawn(dir: &std::path::Path) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that acts as a fake LSP server
@@ -133,7 +133,7 @@ done
 "#;
 
         // Write script to a temporary file
-        let script_path = std::env::temp_dir().join("fake_lsp_server.sh");
+        let script_path = dir.join("fake_lsp_server.sh");
         std::fs::write(&script_path, script)?;
 
         // Make it executable
@@ -158,7 +158,10 @@ done
     }
 
     /// Spawn a fake LSP server that delays semantic token responses.
-    pub fn spawn_with_semantic_tokens_delay(delay_ms: u64) -> anyhow::Result<Self> {
+    pub fn spawn_with_semantic_tokens_delay(
+        dir: &std::path::Path,
+        delay_ms: u64,
+    ) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
         let delay_secs = (delay_ms as f64) / 1000.0;
 
@@ -264,7 +267,7 @@ done
             delay = delay_secs
         );
 
-        let script_path = Self::semantic_tokens_delay_script_path();
+        let script_path = Self::semantic_tokens_delay_script_path(dir);
         std::fs::write(&script_path, script)?;
 
         #[cfg(unix)]
@@ -283,7 +286,7 @@ done
     }
 
     /// Spawn a fake LSP server that supports range semantic tokens only.
-    pub fn spawn_with_semantic_tokens_range_only() -> anyhow::Result<Self> {
+    pub fn spawn_with_semantic_tokens_range_only(dir: &std::path::Path) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         let script = r#"#!/bin/bash
@@ -380,7 +383,7 @@ esac
 done
 "#;
 
-        let script_path = Self::semantic_tokens_range_only_script_path();
+        let script_path = Self::semantic_tokens_range_only_script_path(dir);
         std::fs::write(&script_path, script)?;
 
         #[cfg(unix)]
@@ -399,18 +402,18 @@ done
     }
 
     /// Path to the semantic tokens delay script.
-    pub fn semantic_tokens_delay_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_semantic_tokens_delay.sh")
+    pub fn semantic_tokens_delay_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_semantic_tokens_delay.sh")
     }
 
     /// Path to the semantic tokens range-only script.
-    pub fn semantic_tokens_range_only_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_semantic_tokens_range_only.sh")
+    pub fn semantic_tokens_range_only_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_semantic_tokens_range_only.sh")
     }
 
     /// Get the path to the fake LSP server script
-    pub fn script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server.sh")
+    pub fn script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server.sh")
     }
 
     /// Spawn a blocking fake LSP server that never responds to requests
@@ -420,7 +423,7 @@ done
     /// but then blocks forever on all other requests without responding.
     /// This is useful for testing that the editor UI remains responsive even
     /// when the LSP server is completely stuck.
-    pub fn spawn_blocking() -> anyhow::Result<Self> {
+    pub fn spawn_blocking(dir: &std::path::Path) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that acts as a fake LSP server that blocks forever
@@ -488,7 +491,7 @@ done
 "#;
 
         // Write script to a temporary file
-        let script_path = std::env::temp_dir().join("fake_lsp_server_blocking.sh");
+        let script_path = dir.join("fake_lsp_server_blocking.sh");
         std::fs::write(&script_path, script)?;
 
         // Make it executable
@@ -509,15 +512,18 @@ done
     }
 
     /// Get the path to the blocking fake LSP server script
-    pub fn blocking_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_blocking.sh")
+    pub fn blocking_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_blocking.sh")
     }
 
     /// Spawn a fake LSP server that generates many diagnostics
     ///
     /// This version responds to didChange notifications with a large number of diagnostics
     /// across many lines. This is useful for testing performance with many diagnostics.
-    pub fn spawn_many_diagnostics(diagnostic_count: usize) -> anyhow::Result<Self> {
+    pub fn spawn_many_diagnostics(
+        dir: &std::path::Path,
+        diagnostic_count: usize,
+    ) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Generate JSON for many diagnostics
@@ -604,7 +610,7 @@ done
         );
 
         // Write script to a temporary file
-        let script_path = std::env::temp_dir().join("fake_lsp_server_many_diags.sh");
+        let script_path = dir.join("fake_lsp_server_many_diags.sh");
         std::fs::write(&script_path, script)?;
 
         // Make it executable
@@ -625,15 +631,15 @@ done
     }
 
     /// Get the path to the many-diagnostics fake LSP server script
-    pub fn many_diagnostics_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_many_diags.sh")
+    pub fn many_diagnostics_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_many_diags.sh")
     }
 
     /// Spawn a fake LSP server that sends progress notifications
     ///
     /// This version sends progress notifications (begin, report, end) after initialization.
     /// This is useful for testing LSP progress display in the status bar.
-    pub fn spawn_with_progress() -> anyhow::Result<Self> {
+    pub fn spawn_with_progress(dir: &std::path::Path) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that sends progress notifications
@@ -721,7 +727,7 @@ done
 "#;
 
         // Write script to a temporary file
-        let script_path = std::env::temp_dir().join("fake_lsp_server_progress.sh");
+        let script_path = dir.join("fake_lsp_server_progress.sh");
         std::fs::write(&script_path, script)?;
 
         // Make it executable
@@ -742,8 +748,8 @@ done
     }
 
     /// Get the path to the progress fake LSP server script
-    pub fn progress_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_progress.sh")
+    pub fn progress_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_progress.sh")
     }
 
     /// Spawn a fake LSP server that crashes after initialization
@@ -751,7 +757,7 @@ done
     /// This version initializes successfully but then crashes (exits with non-zero)
     /// after receiving any subsequent request. This is useful for testing LSP server
     /// crash detection and auto-restart functionality.
-    pub fn spawn_crashing() -> anyhow::Result<Self> {
+    pub fn spawn_crashing(dir: &std::path::Path) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that crashes after init
@@ -826,7 +832,7 @@ done
 "#;
 
         // Write script to a temporary file
-        let script_path = std::env::temp_dir().join("fake_lsp_server_crashing.sh");
+        let script_path = dir.join("fake_lsp_server_crashing.sh");
         std::fs::write(&script_path, script)?;
 
         // Make it executable
@@ -847,8 +853,8 @@ done
     }
 
     /// Get the path to the crashing fake LSP server script
-    pub fn crashing_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_crashing.sh")
+    pub fn crashing_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_crashing.sh")
     }
 
     /// Spawn a fake LSP server that supports pull diagnostics (textDocument/diagnostic)
@@ -857,7 +863,7 @@ done
     /// It also tracks result_id for incremental updates and returns "unchanged" responses
     /// when the same result_id is passed. This is useful for testing LSP 3.17+ pull
     /// diagnostics functionality.
-    pub fn spawn_with_pull_diagnostics() -> anyhow::Result<Self> {
+    pub fn spawn_with_pull_diagnostics(dir: &std::path::Path) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that supports pull diagnostics
@@ -960,7 +966,7 @@ done
 "#;
 
         // Write script to a temporary file
-        let script_path = std::env::temp_dir().join("fake_lsp_server_pull_diag.sh");
+        let script_path = dir.join("fake_lsp_server_pull_diag.sh");
         std::fs::write(&script_path, script)?;
 
         // Make it executable
@@ -981,15 +987,15 @@ done
     }
 
     /// Get the path to the pull diagnostics fake LSP server script
-    pub fn pull_diagnostics_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_pull_diag.sh")
+    pub fn pull_diagnostics_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_pull_diag.sh")
     }
 
     /// Spawn a fake LSP server that supports inlay hints (textDocument/inlayHint)
     ///
     /// This version responds to textDocument/inlayHint requests with sample hints.
     /// This is useful for testing LSP 3.17+ inlay hints functionality.
-    pub fn spawn_with_inlay_hints() -> anyhow::Result<Self> {
+    pub fn spawn_with_inlay_hints(dir: &std::path::Path) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that supports inlay hints
@@ -1063,7 +1069,7 @@ done
 "#;
 
         // Write script to a temporary file
-        let script_path = std::env::temp_dir().join("fake_lsp_server_inlay_hints.sh");
+        let script_path = dir.join("fake_lsp_server_inlay_hints.sh");
         std::fs::write(&script_path, script)?;
 
         // Make it executable
@@ -1084,15 +1090,15 @@ done
     }
 
     /// Get the path to the inlay hints fake LSP server script
-    pub fn inlay_hints_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_inlay_hints.sh")
+    pub fn inlay_hints_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_inlay_hints.sh")
     }
 
     /// Spawn a fake LSP server that logs all received methods to a file
     ///
     /// This variant logs each method name to a log file, which can be used
     /// to verify the order of LSP messages (e.g., that didOpen is sent before hover).
-    pub fn spawn_with_logging() -> anyhow::Result<Self> {
+    pub fn spawn_with_logging(dir: &std::path::Path) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that logs all methods to a file
@@ -1188,7 +1194,7 @@ done
 "#;
 
         // Write script to a temporary file
-        let script_path = std::env::temp_dir().join("fake_lsp_server_logging.sh");
+        let script_path = dir.join("fake_lsp_server_logging.sh");
         std::fs::write(&script_path, script)?;
 
         // Make it executable
@@ -1209,8 +1215,8 @@ done
     }
 
     /// Get the path to the logging fake LSP server script
-    pub fn logging_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_logging.sh")
+    pub fn logging_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_logging.sh")
     }
 
     /// Get the default log file path used by the logging server
@@ -1223,7 +1229,7 @@ done
     /// This simulates LSP servers like pyrefly that don't return the hover range.
     /// Used to test that hover popup doesn't move/duplicate when LSP doesn't
     /// provide symbol range information.
-    pub fn spawn_without_range() -> anyhow::Result<Self> {
+    pub fn spawn_without_range(dir: &std::path::Path) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that acts as a fake LSP server WITHOUT hover range
@@ -1298,7 +1304,7 @@ done
 "#;
 
         // Write script to a temporary file
-        let script_path = std::env::temp_dir().join("fake_lsp_server_no_range.sh");
+        let script_path = dir.join("fake_lsp_server_no_range.sh");
         std::fs::write(&script_path, script)?;
 
         // Make it executable
@@ -1319,8 +1325,8 @@ done
     }
 
     /// Get the path to the no-range fake LSP server script
-    pub fn no_range_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_no_range.sh")
+    pub fn no_range_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_no_range.sh")
     }
 
     /// Spawn a fake LSP server that supports folding ranges.
@@ -1328,7 +1334,7 @@ done
     /// Based on the standard fake LSP script with `foldingRangeProvider` added
     /// to the capabilities and a handler for `textDocument/foldingRange` that
     /// returns a single range covering lines 10..30.
-    pub fn spawn_with_folding_ranges() -> anyhow::Result<Self> {
+    pub fn spawn_with_folding_ranges(dir: &std::path::Path) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Same as the standard script but with foldingRangeProvider in capabilities
@@ -1430,7 +1436,7 @@ esac
 done
 "#;
 
-        let script_path = Self::folding_ranges_script_path();
+        let script_path = Self::folding_ranges_script_path(dir);
         std::fs::write(&script_path, script)?;
 
         #[cfg(unix)]
@@ -1449,8 +1455,8 @@ done
     }
 
     /// Get the path to the folding ranges fake LSP server script
-    pub fn folding_ranges_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_folding_ranges.sh")
+    pub fn folding_ranges_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_folding_ranges.sh")
     }
 
     /// Spawn a fake LSP server that echoes an environment variable in hover responses.
@@ -1461,7 +1467,7 @@ done
     ///
     /// Based on the standard fake LSP script but with the hover response
     /// modified to include the env var value.
-    pub fn spawn_env_echo() -> anyhow::Result<Self> {
+    pub fn spawn_env_echo(dir: &std::path::Path) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Same as the standard script, but hover returns the env var value
@@ -1563,7 +1569,7 @@ esac
 done
 "#;
 
-        let script_path = Self::env_echo_script_path();
+        let script_path = Self::env_echo_script_path(dir);
         std::fs::write(&script_path, script)?;
 
         #[cfg(unix)]
@@ -1582,8 +1588,8 @@ done
     }
 
     /// Get the path to the env echo fake LSP server script
-    pub fn env_echo_script_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("fake_lsp_server_env_echo.sh")
+    pub fn env_echo_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_env_echo.sh")
     }
 
     /// Stop the server
@@ -1607,14 +1613,16 @@ mod tests {
 
     #[test]
     fn test_fake_lsp_server_creation() {
-        let server = FakeLspServer::spawn();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let server = FakeLspServer::spawn(temp_dir.path());
         assert!(server.is_ok());
     }
 
     #[test]
     fn test_script_path_exists() {
-        let _server = FakeLspServer::spawn().unwrap();
-        let path = FakeLspServer::script_path();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _server = FakeLspServer::spawn(temp_dir.path()).unwrap();
+        let path = FakeLspServer::script_path(temp_dir.path());
         assert!(path.exists());
     }
 }

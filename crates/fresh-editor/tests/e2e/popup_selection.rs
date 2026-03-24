@@ -14,11 +14,11 @@ use fresh::view::popup::{Popup, PopupPosition};
 fn test_lsp_hover_popup_text_selection_copy() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
-    // Spawn fake LSP server (has hover support)
-    let _fake_server = FakeLspServer::spawn()?;
-
     // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    // Spawn fake LSP server (has hover support)
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn example_function() {}\n")?;
 
@@ -27,7 +27,9 @@ fn test_lsp_hover_popup_text_selection_copy() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: true,
             auto_start: true,

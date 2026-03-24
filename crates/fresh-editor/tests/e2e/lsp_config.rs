@@ -18,11 +18,12 @@ use crossterm::event::{KeyCode, KeyModifiers};
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
 fn test_start_lsp_command_works_when_config_disabled() -> anyhow::Result<()> {
-    // Spawn fake LSP server
-    let _fake_server = FakeLspServer::spawn()?;
-
     // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    // Spawn fake LSP server
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    println!(\"hello\");\n}\n")?;
 
@@ -31,7 +32,9 @@ fn test_start_lsp_command_works_when_config_disabled() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: false, // KEY: LSP is disabled in config
             auto_start: false,
@@ -106,11 +109,12 @@ fn test_start_lsp_command_works_when_config_disabled() -> anyhow::Result<()> {
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
 fn test_settings_ui_lsp_enabled_change_takes_effect() -> anyhow::Result<()> {
-    // Spawn fake LSP server
-    let _fake_server = FakeLspServer::spawn()?;
-
     // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    // Spawn fake LSP server
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    println!(\"hello\");\n}\n")?;
 
@@ -119,7 +123,9 @@ fn test_settings_ui_lsp_enabled_change_takes_effect() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: false,   // KEY: LSP is disabled in config initially
             auto_start: true, // auto_start=true so it will start when enabled
@@ -234,18 +240,20 @@ fn test_settings_ui_lsp_enabled_change_takes_effect() -> anyhow::Result<()> {
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
 fn test_lsp_manager_config_updated_via_set_lsp_config() -> anyhow::Result<()> {
-    // Spawn fake LSP server
-    let _fake_server = FakeLspServer::spawn()?;
-
     // Create temp dir
     let temp_dir = tempfile::tempdir()?;
+
+    // Spawn fake LSP server
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
 
     // Configure editor with LSP disabled
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
             args: vec![],
             enabled: false,
             auto_start: false,
@@ -281,7 +289,9 @@ fn test_lsp_manager_config_updated_via_set_lsp_config() -> anyhow::Result<()> {
     // Now use set_lsp_config to update the config to enabled=true
     // This simulates what save_settings() does after the fix
     let new_config = fresh::services::lsp::LspServerConfig {
-        command: FakeLspServer::script_path().to_string_lossy().to_string(),
+        command: FakeLspServer::script_path(temp_dir.path())
+            .to_string_lossy()
+            .to_string(),
         args: vec![],
         enabled: true, // Changed to true
         auto_start: false,

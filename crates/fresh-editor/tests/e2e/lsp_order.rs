@@ -21,13 +21,13 @@ fn test_did_open_sent_before_hover() -> anyhow::Result<()> {
 
     eprintln!("[TEST] Starting test_did_open_sent_before_hover");
 
-    // Spawn fake LSP server with logging
-    eprintln!("[TEST] Spawning fake LSP server");
-    let _fake_server = FakeLspServer::spawn_with_logging()?;
-    eprintln!("[TEST] Fake LSP server spawned");
-
     // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    // Spawn fake LSP server with logging
+    eprintln!("[TEST] Spawning fake LSP server");
+    let _fake_server = FakeLspServer::spawn_with_logging(temp_dir.path())?;
+    eprintln!("[TEST] Fake LSP server spawned");
 
     // Create unique log file for this test in the per-test temp directory
     let log_file = temp_dir.path().join("lsp_order_test_log.txt");
@@ -42,7 +42,7 @@ fn test_did_open_sent_before_hover() -> anyhow::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::logging_script_path()
+            command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
