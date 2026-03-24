@@ -9,3 +9,4 @@ cc ee01487dbbaa332bdf3f2fe2ecc664845727274dc3213934777c4c0cb8af09d0 # shrinks to
 cc 3074aa12274e839cfc7424befe1733ba639d2e3a1fa19293768c59dc31be0fbe # shrinks to ops = [SelectRight, Right, Right, Delete]
 cc 0ee4111c94a541a5208b4b6f6aab6815aca56802a7b31c4c5d8b682e1817c1a4 # shrinks to ops = [Backspace, Backspace, Right, SelectRight, SelectRight, SelectRight, SelectRight, TypeChar('0')]
 cc 8cc8936d3539743badeaecf00901a1c11c0696606d97fbf7c7f2e6623d6df24b # shrinks to ops = [Backspace, Backspace, Left, Backspace, TypeChar('A'), Backspace, TypeChar('A'), Backspace, Right, Delete, SelectLeft, TypeChar(' ')]
+cc e0a0ab238ec5fd75a8307673d8cfa036edecb502c484cbcca8a31c0799c03010 # shrinks to ops = [SelectLeft, SelectLeft, Left, TypeChar(' '), Delete, Right, Backspace]
