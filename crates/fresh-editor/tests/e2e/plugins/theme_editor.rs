@@ -3488,11 +3488,15 @@ fn test_named_color_swatch_uses_native_ansi_color() {
 
     // The "ui" section is collapsed by default. Navigate down until the
     // selection indicator (▸) is on the UI Elements section header.
+    // Use process_async_and_render() instead of render() to ensure the
+    // plugin's key handler runs before we check the screen. Without this,
+    // plugin key processing is async and may not complete before the next
+    // Down key is sent, causing the selection to overshoot past UI Elements.
     let selection_indicator = '\u{25B8}'; // ▸
     let mut found_ui_section = false;
     for _ in 0..50 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
+        harness.process_async_and_render().unwrap();
         let screen = harness.screen_to_string();
         // Check if the selected line (containing ▸) is the collapsed UI section
         if screen
@@ -3521,7 +3525,7 @@ fn test_named_color_swatch_uses_native_ansi_color() {
     // The UI section has many fields from the schema, so we need enough presses.
     for _ in 0..80 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
+        harness.process_async_and_render().unwrap();
         let screen = harness.screen_to_string();
         // Stop when the selected line contains tab_active_fg
         if screen
@@ -3535,7 +3539,7 @@ fn test_named_color_swatch_uses_native_ansi_color() {
     // Move selection away so the tab_active_fg row renders without selection
     // highlight (which changes bg color and breaks swatch detection where fg==bg).
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    harness.process_async_and_render().unwrap();
 
     // Wait for the tab_active_fg swatch to render with the correct native ANSI
     // Yellow color. On slow CI the plugin may not have finished painting yet.
