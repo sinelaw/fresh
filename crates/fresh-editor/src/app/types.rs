@@ -729,6 +729,8 @@ pub(super) struct MouseState {
     pub drag_selection_anchor: Option<usize>,
     /// When true, dragging extends selection by whole words (set by double-click)
     pub drag_selection_by_words: bool,
+    /// The end of the initially double-clicked word (used as anchor when dragging backward)
+    pub drag_selection_word_end: Option<usize>,
     /// Tab drag state (for drag-to-split functionality)
     pub dragging_tab: Option<TabDragState>,
     /// Whether we're currently dragging a popup scrollbar (popup index)

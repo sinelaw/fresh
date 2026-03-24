@@ -215,6 +215,7 @@ impl Editor {
                 self.mouse_state.drag_selection_split = None;
                 self.mouse_state.drag_selection_anchor = None;
                 self.mouse_state.drag_selection_by_words = false;
+                self.mouse_state.drag_selection_word_end = None;
                 // Clear popup scrollbar drag state
                 self.mouse_state.dragging_popup_scrollbar = None;
                 self.mouse_state.drag_start_popup_scroll = None;
@@ -1171,12 +1172,15 @@ impl Editor {
             .get(&leaf_id)
             .map(|vs| vs.cursors.primary())
         {
-            // Use selection start as anchor (left edge); extends right add words, left shrinks
+            // Store both edges of the selected word so we can use the appropriate
+            // anchor when dragging forward (use word start) vs backward (use word end).
             let sel_start = cursor.selection_start();
+            let sel_end = cursor.selection_end();
             self.mouse_state.dragging_text_selection = true;
             self.mouse_state.drag_selection_split = Some(split_id);
             self.mouse_state.drag_selection_anchor = Some(sel_start);
             self.mouse_state.drag_selection_by_words = true;
+            self.mouse_state.drag_selection_word_end = Some(sel_end);
         }
 
         Ok(())
@@ -2203,15 +2207,25 @@ impl Editor {
                 return Ok(());
             };
 
-            // When drag started with double-click, snap to word boundaries
-            let new_position = if self.mouse_state.drag_selection_by_words {
+            // When drag started with double-click, snap to word boundaries.
+            // When dragging forward, anchor at word start and extend to word end.
+            // When dragging backward, anchor at word end and extend to word start,
+            // so the initially double-clicked word stays selected.
+            let (new_position, anchor_position) = if self.mouse_state.drag_selection_by_words {
                 if target_position >= anchor_position {
-                    find_word_end(&state.buffer, target_position)
+                    (
+                        find_word_end(&state.buffer, target_position),
+                        anchor_position,
+                    )
                 } else {
-                    find_word_start(&state.buffer, target_position)
+                    let word_end = self
+                        .mouse_state
+                        .drag_selection_word_end
+                        .unwrap_or(anchor_position);
+                    (find_word_start(&state.buffer, target_position), word_end)
                 }
             } else {
-                target_position
+                (target_position, anchor_position)
             };
 
             let (primary_cursor_id, old_position, old_anchor, old_sticky_column) = self
