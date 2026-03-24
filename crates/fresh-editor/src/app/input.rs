@@ -112,10 +112,8 @@ impl Editor {
         // Only check buffer mode keybindings when the editor buffer has focus.
         // FileExplorer, Menu, Prompt, Popup contexts should not trigger mode bindings
         // (e.g. markdown-source's Enter handler should not fire while the explorer is focused).
-        let should_check_mode_bindings = matches!(
-            context,
-            crate::input::keybindings::KeyContext::Normal
-        );
+        let should_check_mode_bindings =
+            matches!(context, crate::input::keybindings::KeyContext::Normal);
 
         if should_check_mode_bindings {
             // effective_mode() returns buffer-local mode if present, else global mode.
