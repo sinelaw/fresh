@@ -1465,7 +1465,7 @@ fn test_large_file_gutter_indicators_after_line_scan() {
 
     // ── Step 5: Trigger plugin re-evaluation ──
     // Make a tiny no-op edit (type + backspace) on line 1 to trigger
-    // reapplyIndicatorsFromDiff which now has line_ranges available.
+    // reapplyIndicatorsFromDiff which now has byte_ranges available.
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .unwrap();
@@ -1617,7 +1617,7 @@ fn test_large_file_gutter_indicators_viewport_filtering() {
     // Use a real large file (~848MB) to reproduce the diff offset bug.
     // The bug requires enough chunks (~848) for diff_collect_leaves to skip
     // many identical subtrees via Arc::ptr_eq, producing span-relative
-    // line_ranges instead of document-absolute ones.
+    // byte_ranges instead of document-absolute ones.
     let huge_file = std::path::PathBuf::from(
         std::env::var("LARGE_FILE_TEST_PATH")
             .unwrap_or_else(|_| "/home/noam/Desktop/huge.txt".to_string()),
@@ -1704,7 +1704,7 @@ fn test_large_file_gutter_indicators_viewport_filtering() {
     harness.wait_until_stable(|_| true).unwrap();
     eprintln!("[test] Step 2: settled");
 
-    // Dump diff data to understand line_ranges
+    // Dump diff data for debugging
     {
         let diff = harness
             .editor_mut()
@@ -1712,8 +1712,8 @@ fn test_large_file_gutter_indicators_viewport_filtering() {
             .buffer
             .diff_since_saved();
         eprintln!(
-            "[test] DIFF after edit: equal={} byte_ranges={:?} line_ranges={:?} nodes_visited={}",
-            diff.equal, diff.byte_ranges, diff.line_ranges, diff.nodes_visited
+            "[test] DIFF after edit: equal={} byte_ranges={:?} nodes_visited={}",
+            diff.equal, diff.byte_ranges, diff.nodes_visited
         );
     }
 

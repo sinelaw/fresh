@@ -1656,7 +1656,6 @@ impl TextBuffer {
             return PieceTreeDiff {
                 equal: true,
                 byte_ranges: Vec::new(),
-                line_ranges: Some(Vec::new()),
                 nodes_visited: 0,
             };
         }
@@ -1668,7 +1667,6 @@ impl TextBuffer {
             return PieceTreeDiff {
                 equal: true,
                 byte_ranges: Vec::new(),
-                line_ranges: Some(Vec::new()),
                 nodes_visited: 0,
             };
         }
@@ -1679,13 +1677,7 @@ impl TextBuffer {
 
         // If structure says trees are equal (same pieces in same order), we're done
         if structure_diff.equal {
-            tracing::trace!(
-                "diff_since_saved: structure equal, line_ranges={}",
-                structure_diff
-                    .line_ranges
-                    .as_ref()
-                    .map_or("None".to_string(), |r| format!("Some({})", r.len()))
-            );
+            tracing::trace!("diff_since_saved: structure equal");
             return structure_diff;
         }
 
@@ -1706,12 +1698,8 @@ impl TextBuffer {
             // Check if content in the changed ranges is actually different
             if self.verify_content_differs_in_ranges(&structure_diff.byte_ranges) {
                 tracing::trace!(
-                    "diff_since_saved: content differs, byte_ranges={}, line_ranges={}",
+                    "diff_since_saved: content differs, byte_ranges={}",
                     structure_diff.byte_ranges.len(),
-                    structure_diff
-                        .line_ranges
-                        .as_ref()
-                        .map_or("None".to_string(), |r| format!("Some({})", r.len()))
                 );
                 // Content actually differs - return the structure diff result
                 return structure_diff;
@@ -1720,19 +1708,14 @@ impl TextBuffer {
                 return PieceTreeDiff {
                     equal: true,
                     byte_ranges: Vec::new(),
-                    line_ranges: Some(Vec::new()),
                     nodes_visited: structure_diff.nodes_visited,
                 };
             }
         }
 
         tracing::info!(
-            "diff_since_saved: large change, byte_ranges={}, line_ranges={}, nodes_visited={}",
+            "diff_since_saved: large change, byte_ranges={}, nodes_visited={}",
             structure_diff.byte_ranges.len(),
-            structure_diff
-                .line_ranges
-                .as_ref()
-                .map_or("None".to_string(), |r| format!("Some({})", r.len())),
             structure_diff.nodes_visited
         );
         // For large changes or when we can't verify, trust the structure diff
@@ -1870,40 +1853,6 @@ impl TextBuffer {
         crate::model::piece_tree_diff::diff_piece_trees(
             &self.saved_root,
             &self.piece_tree.root(),
-            &|leaf, start, len| {
-                if len == 0 {
-                    return Some(0);
-                }
-                // Try counting from raw byte data first
-                if let Some(buf) = self.buffers.get(leaf.location.buffer_id()) {
-                    if let Some(data) = buf.get_data() {
-                        let start = leaf.offset + start;
-                        let end = start + len;
-                        if let Some(slice) = data.get(start..end) {
-                            let line_feeds = slice.iter().filter(|&&b| b == b'\n').count();
-                            return Some(line_feeds);
-                        }
-                    }
-                }
-                // Fallback: use the leaf's cached line_feed_cnt when we're
-                // querying the entire leaf. This handles unloaded segments in
-                // large file mode after line scanning has populated the metadata.
-                if start == 0 && len == leaf.bytes {
-                    leaf.line_feed_cnt.map(|c| c)
-                } else {
-                    tracing::warn!(
-                        "diff line_counter: returning None for partial leaf query: \
-                         loc={:?} offset={} bytes={} lf_cnt={:?} query_start={} query_len={}",
-                        leaf.location,
-                        leaf.offset,
-                        leaf.bytes,
-                        leaf.line_feed_cnt,
-                        start,
-                        len
-                    );
-                    None
-                }
-            },
         )
     }
 
@@ -6420,14 +6369,13 @@ mod tests {
             assert!(!diff.byte_ranges.is_empty());
         }
 
-        /// After rebuild + insert near EOF, diff line_ranges must be
+        /// After rebuild + insert near EOF, diff byte_ranges must be
         /// document-absolute.  The bug: `with_doc_offsets` assigned consecutive
         /// offsets from 0 to the collected leaves, missing skipped (shared)
         /// subtrees' bytes.
         #[test]
-        fn test_diff_line_ranges_are_document_absolute_after_eof_insert() {
+        fn test_diff_byte_ranges_are_document_absolute_after_eof_insert() {
             let content = make_content(4 * 1024 * 1024); // 4MB → 4 chunks at 1MB each
-            let total_lf = content.iter().filter(|&&b| b == b'\n').count();
             let mut buf = large_file_buffer(&content);
             let updates = scan_line_feeds(&mut buf);
             buf.rebuild_with_pristine_saved_root(&updates);
@@ -6450,23 +6398,6 @@ mod tests {
                 "byte_ranges should be document-absolute (near EOF): got {:?}, expected near {}",
                 first_range,
                 insert_offset,
-            );
-
-            // line_ranges must also be document-absolute.
-            let line_ranges = diff
-                .line_ranges
-                .as_ref()
-                .expect("line_ranges should be Some");
-            assert!(!line_ranges.is_empty(), "line_ranges should not be empty");
-            let first_lr = &line_ranges[0];
-            // The insert is near EOF, so the line number should be near total_lf.
-            let expected_min_line = total_lf.saturating_sub(10);
-            assert!(
-                first_lr.start >= expected_min_line,
-                "line_ranges should be document-absolute: got {:?}, expected start >= {} (total lines ~{})",
-                first_lr,
-                expected_min_line,
-                total_lf,
             );
         }
 

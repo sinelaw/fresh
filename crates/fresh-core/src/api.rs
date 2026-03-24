@@ -370,27 +370,6 @@ where
     seq.end()
 }
 
-/// Serialize optional ranges as [start, end] tuples for JS compatibility
-fn serialize_opt_ranges_as_tuples<S>(
-    ranges: &Option<Vec<Range<usize>>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match ranges {
-        Some(ranges) => {
-            use serde::ser::SerializeSeq;
-            let mut seq = serializer.serialize_seq(Some(ranges.len()))?;
-            for range in ranges {
-                seq.serialize_element(&(range.start, range.end))?;
-            }
-            seq.end()
-        }
-        None => serializer.serialize_none(),
-    }
-}
-
 /// Diff between current buffer content and last saved snapshot
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -399,9 +378,6 @@ pub struct BufferSavedDiff {
     #[serde(serialize_with = "serialize_ranges_as_tuples")]
     #[ts(type = "Array<[number, number]>")]
     pub byte_ranges: Vec<Range<usize>>,
-    #[serde(serialize_with = "serialize_opt_ranges_as_tuples")]
-    #[ts(type = "Array<[number, number]> | null")]
-    pub line_ranges: Option<Vec<Range<usize>>>,
 }
 
 /// Information about the viewport

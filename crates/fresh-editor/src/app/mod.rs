@@ -5054,7 +5054,6 @@ impl Editor {
                     BufferSavedDiff {
                         equal: diff.equal,
                         byte_ranges: diff.byte_ranges.clone(),
-                        line_ranges: diff.line_ranges.clone(),
                     }
                 };
                 snapshot.buffer_saved_diffs.insert(*buffer_id, diff);
