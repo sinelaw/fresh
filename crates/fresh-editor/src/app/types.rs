@@ -222,13 +222,11 @@ impl BufferMetadata {
         // Use canonicalized forms first to handle macOS /var -> /private/var differences.
         let display_name = Self::display_name_for_path(&path, working_dir);
 
-        // Check if this is a library file (in vendor directories or standard libraries)
+        // Check if this is a library file (in vendor directories or standard libraries).
+        // Library files are read-only (to prevent accidental edits) but LSP stays
+        // enabled so that Goto Definition, Hover, Find References, etc. still work
+        // when the user navigates into library source code (issue #1344).
         let is_library = Self::is_library_path(&path, working_dir);
-        let (lsp_enabled, lsp_disabled_reason) = if is_library {
-            (false, Some(t!("lsp.disabled.library_file").to_string()))
-        } else {
-            (true, None)
-        };
 
         Self {
             kind: BufferKind::File {
@@ -236,8 +234,8 @@ impl BufferMetadata {
                 uri: file_uri,
             },
             display_name,
-            lsp_enabled,
-            lsp_disabled_reason,
+            lsp_enabled: true,
+            lsp_disabled_reason: None,
             read_only: is_library,
             binary: false,
             lsp_opened_with: HashSet::new(),

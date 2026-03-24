@@ -26,14 +26,13 @@ use crossterm::event::{KeyCode, KeyModifiers};
 #[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
 fn test_goto_definition_from_readonly_file() -> anyhow::Result<()> {
     let temp_dir = tempfile::TempDir::new()?;
-    let project_root = temp_dir.path().to_path_buf();
+    // On macOS, temp paths like /var/folders/... are symlinks to /private/var/folders/...
+    // The editor canonicalizes paths, so URIs must use the canonical path to match.
+    let project_root = temp_dir.path().canonicalize()?;
 
     // Create main.py (writable, in project root)
     let main_file = project_root.join("main.py");
-    std::fs::write(
-        &main_file,
-        "import lib\n\ndef main():\n    lib.helper()\n",
-    )?;
+    std::fs::write(&main_file, "import lib\n\ndef main():\n    lib.helper()\n")?;
 
     // Create lib.py inside a site-packages directory to trigger is_library_path.
     // This is the key: files in site-packages/ are detected as library files
