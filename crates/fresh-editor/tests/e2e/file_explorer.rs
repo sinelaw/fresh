@@ -2906,3 +2906,60 @@ fn test_file_explorer_border_drag_resizes() {
         actual_delta
     );
 }
+
+/// Test that clicking a markdown file in the file explorer keeps focus on the explorer,
+/// so pressing Enter does NOT modify the buffer.
+/// Reproduces bug: clicking a .md file in the explorer and pressing Enter leaks
+/// the keypress into the buffer (inserts a newline) even though the explorer should
+/// have focus. This appears to be related to the markdown source plugin.
+#[test]
+fn test_file_explorer_click_markdown_enter_does_not_modify_buffer() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    let test_content = "hello";
+    fs::write(project_dir.join("readme.md"), test_content).unwrap();
+
+    // Open file explorer with Ctrl+E (focuses the explorer)
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+
+    // Wait for the file to appear in the tree
+    harness.wait_for_file_explorer_item("readme.md").unwrap();
+
+    // Find the file's position on screen so we can click it
+    harness.render().unwrap();
+    let (click_col, click_row) = harness
+        .find_text_on_screen("readme.md")
+        .expect("readme.md should be visible in the file explorer");
+
+    // Click on the file in the explorer — this opens it but focus should stay on explorer
+    harness.mouse_click(click_col, click_row).unwrap();
+    harness.render().unwrap();
+
+    // Wait for the file to be opened in a buffer
+    harness
+        .wait_until(|h| h.screen_to_string().contains("hello"))
+        .unwrap();
+
+    // Focus is on the file explorer. Pressing Enter should NOT modify the buffer.
+    // Bug: for markdown files, Enter leaks through and inserts a newline.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content, "hello",
+        "After clicking a markdown file in the explorer, Enter should not modify the buffer \
+         (focus should be on the explorer). But buffer content changed to {:?} — \
+         the keypress leaked into the buffer.",
+        content
+    );
+}

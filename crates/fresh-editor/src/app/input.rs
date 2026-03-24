@@ -109,12 +109,12 @@ impl Editor {
             context = self.get_key_context();
         }
 
-        // Only check buffer mode keybindings if we're not in a higher-priority context
-        // (Menu, Prompt, Popup should take precedence over mode bindings)
+        // Only check buffer mode keybindings when the editor buffer has focus.
+        // FileExplorer, Menu, Prompt, Popup contexts should not trigger mode bindings
+        // (e.g. markdown-source's Enter handler should not fire while the explorer is focused).
         let should_check_mode_bindings = matches!(
             context,
             crate::input::keybindings::KeyContext::Normal
-                | crate::input::keybindings::KeyContext::FileExplorer
         );
 
         if should_check_mode_bindings {
