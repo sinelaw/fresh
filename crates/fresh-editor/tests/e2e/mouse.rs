@@ -2165,3 +2165,97 @@ fn test_hover_popup_position_with_file_explorer() {
         screen
     );
 }
+
+/// Test that after double-clicking a word, dragging *backward* keeps the initial word selected
+/// and extends selection to include previous words (issue #1334).
+/// Example: double-click "brown" and drag left → "brown" → "quick brown".
+/// Bug: dragging backward unselects the initial word before selecting previous words.
+#[test]
+fn test_double_click_drag_backward_keeps_initial_word_selected() {
+    let mut harness = EditorTestHarness::new_no_wrap(80, 24).unwrap();
+    let content = "quick brown fox\n";
+    let _fixture = harness.load_buffer_from_text(content).unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
+
+    // "quick" at cols gutter+0..gutter+5, "brown" at gutter+6..gutter+11, "fox" at gutter+12..gutter+15
+    let brown_col = gutter_width + 9; // middle of "brown"
+    let quick_col = gutter_width + 3; // middle of "quick"
+
+    // 1. First click on "brown"
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: brown_col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: brown_col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+
+    // 2. Second click (double-click) – selects "brown"
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: brown_col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let after_double = harness.get_selected_text();
+    assert_eq!(
+        after_double, "brown",
+        "After double-click, should have 'brown' selected, got '{}'",
+        after_double
+    );
+
+    // 3. Drag backward (left) to "quick" – selection should extend to "quick brown"
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: quick_col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let after_drag_back = harness.get_selected_text();
+    assert!(
+        after_drag_back.contains("quick") && after_drag_back.contains("brown"),
+        "After dragging backward to 'quick', selection should include both 'quick' and 'brown', got '{}'",
+        after_drag_back
+    );
+
+    // 4. Release
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: quick_col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify final selection still contains both words
+    let final_selection = harness.get_selected_text();
+    assert_eq!(
+        final_selection.trim(),
+        "quick brown",
+        "Final selection should be 'quick brown', got '{}'",
+        final_selection
+    );
+}
