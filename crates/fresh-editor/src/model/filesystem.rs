@@ -929,7 +929,9 @@ impl StdFileSystem {
 impl FileSystem for StdFileSystem {
     // File Content Operations
     fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
-        std::fs::read(path)
+        let data = std::fs::read(path)?;
+        crate::services::counters::global().inc_disk_bytes_read(data.len() as u64);
+        Ok(data)
     }
 
     fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
@@ -937,6 +939,7 @@ impl FileSystem for StdFileSystem {
         file.seek(io::SeekFrom::Start(offset))?;
         let mut buffer = vec![0u8; len];
         file.read_exact(&mut buffer)?;
+        crate::services::counters::global().inc_disk_bytes_read(len as u64);
         Ok(buffer)
     }
 

@@ -1,7 +1,7 @@
 // End-to-end tests for file recovery feature
 
 use crate::common::fixtures::TestFixture;
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::model::buffer::TextBuffer;
 use fresh::model::event::{CursorId, Event};
@@ -1164,5 +1164,124 @@ fn test_recovery_insert_at_end_of_large_file() {
         }
     } else {
         println!("No chunked recovery entry found");
+    }
+}
+
+/// Test that recovering a large file with small edits doesn't load the entire
+/// file into memory. Uses the global counters to verify bounded I/O.
+///
+/// Regression test for OOM during startup: a 418MB file with 3.2GB of recovery
+/// chunks was loaded entirely into memory during workspace restore.
+#[test]
+fn test_large_file_recovery_restore_has_bounded_io() {
+    use fresh::config::Config;
+    use fresh::config_io::DirectoryContext;
+    use fresh::services::counters;
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    fs::create_dir(&project_dir).unwrap();
+
+    let file_path = project_dir.join("big_file.txt");
+
+    // Create an 11MB file
+    let file_size = 11 * 1024 * 1024;
+    let original_content = "X".repeat(file_size);
+    fs::write(&file_path, &original_content).unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Session 1: open file, make small edit, shutdown
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+        config.editor.large_file_threshold_bytes = 1000; // Force large file mode
+
+        let mut harness = EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        harness.open_file(&file_path).unwrap();
+        assert!(
+            harness.editor().active_state().buffer.is_large_file(),
+            "Should be in large file mode"
+        );
+
+        // Make a small edit at the beginning
+        harness.type_text("EDIT").unwrap();
+
+        // Trigger recovery save
+        harness.advance_time(std::time::Duration::from_millis(2100));
+        let saved = harness
+            .editor_mut()
+            .auto_recovery_save_dirty_buffers()
+            .unwrap();
+        assert!(saved > 0, "Should have saved recovery data");
+
+        harness.shutdown(true).unwrap();
+    }
+
+    // Session 2: restore and check that I/O is bounded
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+        config.editor.large_file_threshold_bytes = 1000;
+
+        let mut harness = EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        // Reset counters before restore
+        counters::global().reset();
+
+        let restored = harness.startup(true, &[]).unwrap();
+        assert!(restored, "Session should have been restored");
+
+        // Check that recovery didn't load excessive data
+        let recovery_bytes = counters::global().get_recovery_bytes();
+        let disk_bytes = counters::global().get_disk_bytes_read();
+
+        // Recovery chunks should be tiny (just "EDIT" + metadata)
+        let max_recovery_bytes = 1024 * 1024; // 1MB max for recovery chunks
+        assert!(
+            recovery_bytes < max_recovery_bytes,
+            "Recovery loaded {} bytes of chunk data, expected less than {} bytes. \
+             This suggests the entire file is being saved/loaded as recovery data!",
+            recovery_bytes,
+            max_recovery_bytes,
+        );
+
+        // Total disk reads should be much less than the full file size.
+        // Lazy loading means only the viewport portion gets read, not the whole 11MB.
+        let max_disk_bytes = file_size as u64 / 2; // Less than half the file
+        assert!(
+            disk_bytes < max_disk_bytes,
+            "Disk I/O was {} bytes during restore, expected less than {} bytes. \
+             This suggests lazy loading is not working — the entire {}MB file was read!",
+            disk_bytes,
+            max_disk_bytes,
+            file_size / (1024 * 1024),
+        );
+
+        println!(
+            "Recovery restore I/O: recovery_chunks={} bytes, disk_reads={} bytes, file_size={} bytes",
+            recovery_bytes, disk_bytes, file_size
+        );
     }
 }

@@ -5,6 +5,7 @@
 
 pub mod async_bridge;
 pub mod clipboard;
+pub mod counters;
 pub mod fs;
 #[cfg(target_os = "linux")]
 pub mod gpm;

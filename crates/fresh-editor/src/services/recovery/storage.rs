@@ -416,6 +416,8 @@ impl RecoveryStorage {
             }
 
             let content = fs::read(&chunk_path)?;
+            crate::services::counters::global().inc_recovery_chunks(1);
+            crate::services::counters::global().inc_recovery_bytes(content.len() as u64);
 
             chunks.push(RecoveryChunk {
                 offset: chunk_meta.offset,

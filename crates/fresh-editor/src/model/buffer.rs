@@ -3229,6 +3229,26 @@ impl TextBuffer {
                 }
                 BufferLocation::Added(buffer_id) => {
                     if let Some(buffer) = self.buffers.iter().find(|b| b.id == buffer_id) {
+                        // Skip buffers that originate from the original file
+                        // (loaded by chunk_split_and_load for viewport display).
+                        // These have stored_file_offset set and are not user edits.
+                        //
+                        // Why Added and not Stored? The piece tree only has two
+                        // variants: Stored and Added. chunk_split_and_load marks
+                        // loaded chunks as Added(new_id) because
+                        // rebuild_with_pristine_saved_root interprets Stored
+                        // pieces' buffer_offset as a position in the original
+                        // file — but a chunk buffer starts at offset 0, so using
+                        // Stored would corrupt the rebuild logic. We rely on
+                        // stored_file_offset instead to distinguish "loaded from
+                        // disk" from "user edit". A third BufferLocation variant
+                        // (e.g. LoadedChunk) would make this distinction explicit
+                        // in the type system rather than requiring this runtime
+                        // check.
+                        if buffer.stored_file_offset.is_some() {
+                            stored_bytes_before += piece.bytes;
+                            continue;
+                        }
                         // Get the data from the buffer if loaded
                         if let Some(data) = buffer.get_data() {
                             // Extract just the portion this piece references
