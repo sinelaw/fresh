@@ -1850,10 +1850,7 @@ impl TextBuffer {
 
     /// Structure-based diff comparing piece tree leaves
     fn diff_trees_by_structure(&self) -> PieceTreeDiff {
-        crate::model::piece_tree_diff::diff_piece_trees(
-            &self.saved_root,
-            &self.piece_tree.root(),
-        )
+        crate::model::piece_tree_diff::diff_piece_trees(&self.saved_root, &self.piece_tree.root())
     }
 
     /// Convert a byte offset to a line/column position

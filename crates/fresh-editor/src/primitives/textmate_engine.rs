@@ -34,7 +34,8 @@ pub struct TextMateEngine {
     syntax_set: Arc<SyntaxSet>,
     syntax_index: usize,
     checkpoint_markers: MarkerList,
-    checkpoint_states: HashMap<MarkerId, (syntect::parsing::ParseState, syntect::parsing::ScopeStack)>,
+    checkpoint_states:
+        HashMap<MarkerId, (syntect::parsing::ParseState, syntect::parsing::ScopeStack)>,
     dirty_from: Option<usize>,
     cache: Option<TextMateCache>,
     last_buffer_len: usize,
@@ -291,10 +292,18 @@ impl TextMateEngine {
                     (cp_pos, s.clone(), sc.clone())
                 } else {
                     self.checkpoint_markers.delete(id);
-                    (0, syntect::parsing::ParseState::new(syntax), syntect::parsing::ScopeStack::new())
+                    (
+                        0,
+                        syntect::parsing::ParseState::new(syntax),
+                        syntect::parsing::ScopeStack::new(),
+                    )
                 }
             } else if walk_end <= MAX_PARSE_BYTES {
-                (0, syntect::parsing::ParseState::new(syntax), syntect::parsing::ScopeStack::new())
+                (
+                    0,
+                    syntect::parsing::ParseState::new(syntax),
+                    syntect::parsing::ScopeStack::new(),
+                )
             } else {
                 self.dirty_from = Some(dirty);
                 return;
@@ -399,11 +408,18 @@ impl TextMateEngine {
         desired_start: usize,
         parse_end: usize,
         syntax: &syntect::parsing::SyntaxReference,
-    ) -> (usize, syntect::parsing::ParseState, syntect::parsing::ScopeStack, bool) {
+    ) -> (
+        usize,
+        syntect::parsing::ParseState,
+        syntect::parsing::ScopeStack,
+        bool,
+    ) {
         use syntect::parsing::{ParseState, ScopeStack};
 
         let search_start = desired_start.saturating_sub(MAX_PARSE_BYTES);
-        let markers = self.checkpoint_markers.query_range(search_start, desired_start + 1);
+        let markers = self
+            .checkpoint_markers
+            .query_range(search_start, desired_start + 1);
         let nearest = markers.into_iter().max_by_key(|(_, start, _)| *start);
 
         if let Some((id, cp_pos, _)) = nearest {
@@ -414,7 +430,12 @@ impl TextMateEngine {
         if parse_end <= MAX_PARSE_BYTES {
             (0, ParseState::new(syntax), ScopeStack::new(), true)
         } else {
-            (desired_start, ParseState::new(syntax), ScopeStack::new(), true)
+            (
+                desired_start,
+                ParseState::new(syntax),
+                ScopeStack::new(),
+                true,
+            )
         }
     }
 

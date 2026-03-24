@@ -255,7 +255,8 @@ pub struct TextMateEngine {
     /// Marker-based checkpoint positions. Markers auto-adjust on buffer edits.
     checkpoint_markers: MarkerList,
     /// Parse state stored per checkpoint marker.
-    checkpoint_states: HashMap<MarkerId, (syntect::parsing::ParseState, syntect::parsing::ScopeStack)>,
+    checkpoint_states:
+        HashMap<MarkerId, (syntect::parsing::ParseState, syntect::parsing::ScopeStack)>,
     /// Earliest byte offset where an edit may have invalidated parse state.
     /// Consumed during the next highlight_viewport call.
     dirty_from: Option<usize>,
@@ -543,7 +544,11 @@ impl TextMateEngine {
                     return None; // orphan, fall back
                 }
             } else if parse_end <= MAX_PARSE_BYTES {
-                (0, syntect::parsing::ParseState::new(syntax), syntect::parsing::ScopeStack::new())
+                (
+                    0,
+                    syntect::parsing::ParseState::new(syntax),
+                    syntect::parsing::ScopeStack::new(),
+                )
             } else {
                 return None; // large file, no nearby checkpoint, fall back
             }
@@ -684,8 +689,7 @@ impl TextMateEngine {
             bytes_since_checkpoint += actual_line_byte_len;
 
             // Check convergence at checkpoint markers
-            while marker_idx < markers_ahead.len()
-                && markers_ahead[marker_idx].1 <= current_offset
+            while marker_idx < markers_ahead.len() && markers_ahead[marker_idx].1 <= current_offset
             {
                 let (marker_id, _) = markers_ahead[marker_idx];
                 marker_idx += 1;
@@ -720,9 +724,9 @@ impl TextMateEngine {
             // Remove old spans that overlap the re-parsed region
             let splice_start = actual_start;
             let splice_end = convergence_point;
-            cache.spans.retain(|span| {
-                span.range.end <= splice_start || span.range.start >= splice_end
-            });
+            cache
+                .spans
+                .retain(|span| span.range.end <= splice_start || span.range.start >= splice_end);
             // Insert new spans and re-sort by range start
             cache.spans.extend(new_spans);
             cache.spans.sort_by_key(|s| s.range.start);
@@ -876,7 +880,10 @@ impl TextMateEngine {
             // Update checkpoint states as we pass them
             let markers_here: Vec<(MarkerId, usize)> = self
                 .checkpoint_markers
-                .query_range(current_offset.saturating_sub(actual_line_byte_len), current_offset)
+                .query_range(
+                    current_offset.saturating_sub(actual_line_byte_len),
+                    current_offset,
+                )
                 .into_iter()
                 .map(|(id, start, _)| (id, start))
                 .collect();
@@ -916,17 +923,22 @@ impl TextMateEngine {
         desired_start: usize,
         parse_end: usize,
         syntax: &syntect::parsing::SyntaxReference,
-    ) -> (usize, syntect::parsing::ParseState, syntect::parsing::ScopeStack, bool) {
+    ) -> (
+        usize,
+        syntect::parsing::ParseState,
+        syntect::parsing::ScopeStack,
+        bool,
+    ) {
         use syntect::parsing::{ParseState, ScopeStack};
 
         // Look for a checkpoint near the desired start. For large files, only
         // consider checkpoints that are within MAX_PARSE_BYTES of desired_start
         // to avoid parsing hundreds of MB from a distant checkpoint.
         let search_start = desired_start.saturating_sub(MAX_PARSE_BYTES);
-        let markers = self.checkpoint_markers.query_range(search_start, desired_start + 1);
-        let nearest = markers
-            .into_iter()
-            .max_by_key(|(_, start, _)| *start);
+        let markers = self
+            .checkpoint_markers
+            .query_range(search_start, desired_start + 1);
+        let nearest = markers.into_iter().max_by_key(|(_, start, _)| *start);
 
         if let Some((id, cp_pos, _)) = nearest {
             if let Some((s, sc)) = self.checkpoint_states.get(&id) {
@@ -940,7 +952,12 @@ impl TextMateEngine {
         } else {
             // Large file, no nearby checkpoint — start fresh from desired_start.
             // Still create checkpoints so future visits to this region can resume.
-            (desired_start, ParseState::new(syntax), ScopeStack::new(), true)
+            (
+                desired_start,
+                ParseState::new(syntax),
+                ScopeStack::new(),
+                true,
+            )
         }
     }
 

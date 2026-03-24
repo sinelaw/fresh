@@ -21,10 +21,7 @@ pub struct PieceTreeDiff {
 /// Uses structural sharing (Arc::ptr_eq) to skip identical subtrees in O(1),
 /// falling back to leaf-level comparison only for subtrees that actually differ.
 /// After path-copying edits, this is O(changed_path) instead of O(all_leaves).
-pub fn diff_piece_trees(
-    before: &Arc<PieceTreeNode>,
-    after: &Arc<PieceTreeNode>,
-) -> PieceTreeDiff {
+pub fn diff_piece_trees(before: &Arc<PieceTreeNode>, after: &Arc<PieceTreeNode>) -> PieceTreeDiff {
     // Fast path: identical subtree (same Arc pointer)
     if Arc::ptr_eq(before, after) {
         return PieceTreeDiff {
@@ -144,18 +141,8 @@ fn diff_collect_leaves(
         }
         // Structure mismatch - fall back to full leaf collection for both subtrees
         _ => {
-            collect_leaves_with_offsets(
-                before,
-                before_out,
-                nodes_visited,
-                before_doc_offset,
-            );
-            collect_leaves_with_offsets(
-                after,
-                after_out,
-                nodes_visited,
-                after_doc_offset,
-            );
+            collect_leaves_with_offsets(before, before_out, nodes_visited, before_doc_offset);
+            collect_leaves_with_offsets(after, after_out, nodes_visited, after_doc_offset);
         }
     }
 }

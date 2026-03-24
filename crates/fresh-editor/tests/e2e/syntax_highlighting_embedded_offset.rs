@@ -147,9 +147,7 @@ fn test_embedded_css_highlighting_after_edit() {
     );
 
     // Type some CSS text (this triggers invalidate_range on the buffer)
-    harness
-        .send_key(KeyCode::End, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -187,9 +185,7 @@ fn test_embedded_css_highlighting_after_edit_before_style() {
     // Go to line 1 (before <style> tag) and insert a line.
     // This invalidates ALL checkpoints since the edit is at byte ~0.
     goto_line(&mut harness, 1);
-    harness
-        .send_key(KeyCode::End, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -229,9 +225,7 @@ fn test_embedded_css_highlighting_after_delete() {
 
     // Select and delete multiple lines (Shift+Down then Backspace)
     // This deletes content where checkpoint markers exist
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..5 {
         harness
             .send_key(KeyCode::Down, KeyModifiers::SHIFT)
@@ -251,7 +245,9 @@ fn test_embedded_css_highlighting_after_delete() {
     );
 
     // Type some text to trigger another convergence walk
-    harness.type_text("        .new-rule { color: red; }").unwrap();
+    harness
+        .type_text("        .new-rule { color: red; }")
+        .unwrap();
     harness.render().unwrap();
 
     let colors_final = collect_highlight_colors(&harness, 2, 20);
@@ -352,7 +348,9 @@ fn test_perf_cache_hit_no_reparse() {
     // Render again without any edits — should be a pure cache hit
     harness.render().unwrap();
 
-    let stats = harness.highlight_stats().expect("should have TextMate stats");
+    let stats = harness
+        .highlight_stats()
+        .expect("should have TextMate stats");
     assert!(
         stats.cache_hits >= 1,
         "Second render without edits should be a cache hit, got {} hits",
@@ -382,7 +380,9 @@ fn test_perf_single_char_edit_single_parse() {
         .send_key(KeyCode::Char('x'), KeyModifiers::NONE)
         .unwrap();
 
-    let stats = harness.highlight_stats().expect("should have TextMate stats");
+    let stats = harness
+        .highlight_stats()
+        .expect("should have TextMate stats");
     assert_eq!(
         stats.cache_misses, 1,
         "Single char edit should cause exactly 1 cache miss, got {}",
@@ -432,7 +432,9 @@ fn test_perf_convergence_after_state_change() {
             .unwrap();
     }
 
-    let stats = harness.highlight_stats().expect("should have TextMate stats");
+    let stats = harness
+        .highlight_stats()
+        .expect("should have TextMate stats");
 
     // With convergence, each keystroke should parse only from the checkpoint
     // before the edit to the first converging checkpoint (~256-512 bytes).
@@ -474,9 +476,7 @@ fn test_perf_no_highlight_drift_after_typing() {
 
     // Jump to a CSS rule and type initial chars to warm up checkpoints
     goto_line(&mut harness, 200);
-    harness
-        .send_key(KeyCode::End, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Char('x'), KeyModifiers::NONE)
         .unwrap();
@@ -501,7 +501,9 @@ fn test_perf_no_highlight_drift_after_typing() {
     harness.render().unwrap();
 
     // Check that convergence actually happened (not just full re-parses)
-    let stats = harness.highlight_stats().expect("should have TextMate stats");
+    let stats = harness
+        .highlight_stats()
+        .expect("should have TextMate stats");
     assert!(
         stats.convergences >= 1,
         "Expected convergence to kick in during typing, got {} convergences. \
