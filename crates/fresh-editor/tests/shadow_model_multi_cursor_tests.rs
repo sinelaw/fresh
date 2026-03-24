@@ -550,6 +550,57 @@ fn test_multi_cursor_select_then_backspace() {
     }
 }
 
+/// Debug test: reproduce the exact failing proptest case to trace state
+#[test]
+fn test_debug_proptest_regression() {
+    let (mut harness, mut shadow) = setup_multi_cursor_editor("aaa\nbbb\nccc", 2).unwrap();
+
+    let ops = vec![
+        MultiCursorOp::Backspace,
+        MultiCursorOp::Backspace,
+        MultiCursorOp::Left,
+        MultiCursorOp::Backspace,
+        MultiCursorOp::TypeChar('A'),
+        MultiCursorOp::Backspace,
+        MultiCursorOp::TypeChar('A'),
+        MultiCursorOp::Backspace,
+        MultiCursorOp::Right,
+        MultiCursorOp::Delete,
+        MultiCursorOp::SelectLeft,
+        MultiCursorOp::TypeChar(' '),
+    ];
+
+    for (i, op) in ops.iter().enumerate() {
+        op.apply_to_editor(&mut harness).unwrap();
+        op.apply_to_shadow(&mut shadow);
+
+        let buffer_content = harness.get_buffer_content().unwrap_or_default();
+
+        let mut editor_cursors: Vec<_> = harness
+            .editor()
+            .active_cursors()
+            .iter()
+            .map(|(id, c)| (id, c.position, c.anchor))
+            .collect();
+        editor_cursors.sort_by_key(|&(_, pos, _)| pos);
+
+        eprintln!(
+            "Step {}: {:?}\n  editor content={:?}\n  shadow content={:?}\n  editor cursors={:?}\n  shadow cursors={:?}\n",
+            i, op,
+            &buffer_content, &shadow.content,
+            editor_cursors,
+            shadow.cursors,
+        );
+
+        if buffer_content != shadow.content {
+            panic!(
+                "Content mismatch at step {} ({:?}): editor={:?} shadow={:?}",
+                i, op, buffer_content, shadow.content
+            );
+        }
+    }
+}
+
 /// Test with 3 cursors
 #[test]
 fn test_three_cursors_enter() {
