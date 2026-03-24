@@ -109,7 +109,7 @@ impl MultiCursorShadow {
             // Insert new text
             new_content.push_str(ins_text);
             // Skip over deleted content
-            read_pos = *edit_pos + *del_len;
+            read_pos = read_pos.max(*edit_pos + *del_len);
         }
         // Copy remaining content after last edit
         if read_pos < self.content.len() {
