@@ -498,6 +498,7 @@ impl MenuRenderer {
         keybindings: &crate::input::keybindings::KeybindingResolver,
         theme: &Theme,
         hover_target: Option<&crate::app::HoverTarget>,
+        mnemonics_enabled: bool,
     ) -> MenuLayout {
         let mut layout = MenuLayout::new(area);
         // Combine config menus with plugin menus, expanding any DynamicSubmenus
@@ -557,7 +558,11 @@ impl MenuRenderer {
                 .push((idx, Rect::new(current_x, area.y, label_width, 1)));
 
             // Check for mnemonic character (Alt+letter keybinding)
-            let mnemonic = keybindings.find_menu_mnemonic(&menu.label);
+            let mnemonic = if mnemonics_enabled {
+                keybindings.find_menu_mnemonic(&menu.label)
+            } else {
+                None
+            };
 
             // Build the label with underlined mnemonic
             spans.push(Span::styled(" ", base_style));

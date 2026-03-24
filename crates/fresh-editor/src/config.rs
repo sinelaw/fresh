@@ -581,6 +581,14 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_menu_bar: bool,
 
+    /// Whether menu bar mnemonics (Alt+letter shortcuts) are enabled.
+    /// When enabled, pressing Alt+F opens the File menu, Alt+E opens Edit, etc.
+    /// Disabling this frees up Alt+letter keybindings for other actions.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub menu_bar_mnemonics: bool,
+
     /// Whether the tab bar is visible by default.
     /// The tab bar shows open files in each split pane.
     /// Can be toggled at runtime via command palette or keybinding.
@@ -1139,6 +1147,7 @@ impl Default for EditorConfig {
             suggest_on_trigger_characters: true,
             accept_suggestion_on_enter: default_accept_suggestion_on_enter(),
             show_menu_bar: true,
+            menu_bar_mnemonics: true,
             show_tab_bar: true,
             show_status_bar: true,
             show_prompt_line: true,

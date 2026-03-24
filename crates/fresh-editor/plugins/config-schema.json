@@ -36,6 +36,7 @@
         "wrap_indent": true,
         "syntax_highlighting": true,
         "show_menu_bar": true,
+        "menu_bar_mnemonics": true,
         "show_tab_bar": true,
         "show_status_bar": true,
         "show_prompt_line": true,
@@ -268,6 +269,12 @@
         },
         "show_menu_bar": {
           "description": "Whether the menu bar is visible by default.\nThe menu bar provides access to menus (File, Edit, View, etc.) at the top of the screen.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "menu_bar_mnemonics": {
+          "description": "Whether menu bar mnemonics (Alt+letter shortcuts) are enabled.\nWhen enabled, pressing Alt+F opens the File menu, Alt+E opens Edit, etc.\nDisabling this frees up Alt+letter keybindings for other actions.\nDefault: true",
           "type": "boolean",
           "default": true,
           "x-section": "Display"

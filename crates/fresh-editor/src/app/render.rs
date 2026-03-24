@@ -965,6 +965,7 @@ impl Editor {
                 &self.keybindings,
                 &self.theme,
                 self.mouse_state.hover_target.as_ref(),
+                self.config.editor.menu_bar_mnemonics,
             ));
         } else {
             self.cached_layout.menu_layout = None;

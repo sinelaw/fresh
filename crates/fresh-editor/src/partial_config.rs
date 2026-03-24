@@ -183,6 +183,7 @@ pub struct PartialEditorConfig {
     pub suggest_on_trigger_characters: Option<bool>,
     pub accept_suggestion_on_enter: Option<AcceptSuggestionOnEnter>,
     pub show_menu_bar: Option<bool>,
+    pub menu_bar_mnemonics: Option<bool>,
     pub show_tab_bar: Option<bool>,
     pub show_status_bar: Option<bool>,
     pub show_prompt_line: Option<bool>,
@@ -274,6 +275,8 @@ impl Merge for PartialEditorConfig {
         self.accept_suggestion_on_enter
             .merge_from(&other.accept_suggestion_on_enter);
         self.show_menu_bar.merge_from(&other.show_menu_bar);
+        self.menu_bar_mnemonics
+            .merge_from(&other.menu_bar_mnemonics);
         self.show_tab_bar.merge_from(&other.show_tab_bar);
         self.show_status_bar.merge_from(&other.show_status_bar);
         self.show_prompt_line.merge_from(&other.show_prompt_line);
@@ -538,6 +541,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             suggest_on_trigger_characters: Some(cfg.suggest_on_trigger_characters),
             accept_suggestion_on_enter: Some(cfg.accept_suggestion_on_enter),
             show_menu_bar: Some(cfg.show_menu_bar),
+            menu_bar_mnemonics: Some(cfg.menu_bar_mnemonics),
             show_tab_bar: Some(cfg.show_tab_bar),
             show_status_bar: Some(cfg.show_status_bar),
             show_prompt_line: Some(cfg.show_prompt_line),
@@ -660,6 +664,9 @@ impl PartialEditorConfig {
                 .accept_suggestion_on_enter
                 .unwrap_or(defaults.accept_suggestion_on_enter),
             show_menu_bar: self.show_menu_bar.unwrap_or(defaults.show_menu_bar),
+            menu_bar_mnemonics: self
+                .menu_bar_mnemonics
+                .unwrap_or(defaults.menu_bar_mnemonics),
             show_tab_bar: self.show_tab_bar.unwrap_or(defaults.show_tab_bar),
             show_status_bar: self.show_status_bar.unwrap_or(defaults.show_status_bar),
             show_prompt_line: self.show_prompt_line.unwrap_or(defaults.show_prompt_line),

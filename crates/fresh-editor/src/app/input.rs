@@ -865,7 +865,9 @@ impl Editor {
                 }
             }
             Action::MenuOpen(menu_name) => {
-                self.handle_menu_open(&menu_name);
+                if self.config.editor.menu_bar_mnemonics {
+                    self.handle_menu_open(&menu_name);
+                }
             }
 
             Action::SwitchKeybindingMap(map_name) => {
