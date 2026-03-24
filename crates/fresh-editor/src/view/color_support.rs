@@ -331,6 +331,163 @@ fn indexed_to_16(idx: u8) -> Color {
     }
 }
 
+/// Minimum WCAG contrast ratio for readable text.
+/// WCAG AA requires 4.5:1 for normal text; we use 3.0 as a practical minimum
+/// since terminal fonts are typically large/monospace.
+const MIN_CONTRAST_RATIO: f64 = 3.0;
+
+/// The 6 discrete values used in the 256-color cube (indices 16-231)
+const CUBE_VALUES: [u8; 6] = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff];
+
+/// Convert a sRGB component to linear for luminance calculation
+fn srgb_to_linear(c: u8) -> f64 {
+    let s = c as f64 / 255.0;
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Compute relative luminance per WCAG 2.x
+fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
+    0.2126 * srgb_to_linear(r) + 0.7152 * srgb_to_linear(g) + 0.0722 * srgb_to_linear(b)
+}
+
+/// Compute WCAG contrast ratio between two colors given as (r, g, b)
+fn contrast_ratio(fg: (u8, u8, u8), bg: (u8, u8, u8)) -> f64 {
+    let l1 = relative_luminance(fg.0, fg.1, fg.2);
+    let l2 = relative_luminance(bg.0, bg.1, bg.2);
+    let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+/// Standard ANSI color RGB approximations (indices 0-15)
+const ANSI_COLORS: [(u8, u8, u8); 16] = [
+    (0, 0, 0),
+    (128, 0, 0),
+    (0, 128, 0),
+    (128, 128, 0),
+    (0, 0, 128),
+    (128, 0, 128),
+    (0, 128, 128),
+    (192, 192, 192),
+    (128, 128, 128),
+    (255, 0, 0),
+    (0, 255, 0),
+    (255, 255, 0),
+    (0, 0, 255),
+    (255, 0, 255),
+    (0, 255, 255),
+    (255, 255, 255),
+];
+
+/// Get the RGB values for a 256-color palette index
+fn idx_to_rgb(idx: u8) -> (u8, u8, u8) {
+    match idx {
+        0..=15 => ANSI_COLORS[idx as usize],
+        16..=231 => {
+            let i = idx - 16;
+            (
+                CUBE_VALUES[(i / 36) as usize],
+                CUBE_VALUES[((i % 36) / 6) as usize],
+                CUBE_VALUES[(i % 6) as usize],
+            )
+        }
+        232..=255 => {
+            let g = (idx - 232) * 10 + 8;
+            (g, g, g)
+        }
+    }
+}
+
+/// Resolve any Color to an RGB tuple for contrast computation.
+/// Returns None for Reset/default colors (which we can't reason about).
+fn color_to_rgb(color: Color) -> Option<(u8, u8, u8)> {
+    match color {
+        Color::Rgb(r, g, b) => Some((r, g, b)),
+        Color::Indexed(idx) => Some(idx_to_rgb(idx)),
+        Color::Black => Some((0, 0, 0)),
+        Color::Red => Some((128, 0, 0)),
+        Color::Green => Some((0, 128, 0)),
+        Color::Yellow => Some((128, 128, 0)),
+        Color::Blue => Some((0, 0, 128)),
+        Color::Magenta => Some((128, 0, 128)),
+        Color::Cyan => Some((0, 128, 128)),
+        Color::Gray => Some((192, 192, 192)),
+        Color::DarkGray => Some((128, 128, 128)),
+        Color::LightRed => Some((255, 0, 0)),
+        Color::LightGreen => Some((0, 255, 0)),
+        Color::LightYellow => Some((255, 255, 0)),
+        Color::LightBlue => Some((0, 0, 255)),
+        Color::LightMagenta => Some((255, 0, 255)),
+        Color::LightCyan => Some((0, 255, 255)),
+        Color::White => Some((255, 255, 255)),
+        _ => None, // Reset or other variants we can't resolve
+    }
+}
+
+/// Find the nearest 256-color index that has sufficient contrast against a background.
+/// Tries to stay close to the original color's hue while meeting the contrast minimum.
+fn find_readable_256_color(fg_idx: u8, bg_rgb: (u8, u8, u8)) -> u8 {
+    let fg_rgb = idx_to_rgb(fg_idx);
+    let bg_lum = relative_luminance(bg_rgb.0, bg_rgb.1, bg_rgb.2);
+
+    // If contrast is already sufficient, return as-is
+    if contrast_ratio(fg_rgb, bg_rgb) >= MIN_CONTRAST_RATIO {
+        return fg_idx;
+    }
+
+    // Strategy: search the 256-color palette for the closest color that meets
+    // the contrast threshold. "Closest" is measured as weighted RGB distance
+    // from the original fg color, so we preserve hue as much as possible.
+    let mut best_idx = fg_idx;
+    let mut best_distance = u32::MAX;
+
+    // Determine if we need to go lighter or darker than the background
+    let need_lighter = bg_lum < 0.5;
+
+    // Search color cube (16-231) and grayscale ramp (232-255)
+    for candidate in 16..=255u8 {
+        let c_rgb = idx_to_rgb(candidate);
+        let c_lum = relative_luminance(c_rgb.0, c_rgb.1, c_rgb.2);
+
+        // Skip candidates in the wrong direction (optimization)
+        if need_lighter && c_lum <= bg_lum {
+            continue;
+        }
+        if !need_lighter && c_lum >= bg_lum {
+            continue;
+        }
+
+        let cr = if c_lum > bg_lum {
+            (c_lum + 0.05) / (bg_lum + 0.05)
+        } else {
+            (bg_lum + 0.05) / (c_lum + 0.05)
+        };
+
+        if cr < MIN_CONTRAST_RATIO {
+            continue;
+        }
+
+        // Weighted RGB distance (compuphase formula — perceptually better than Euclidean)
+        let r_mean = (fg_rgb.0 as u32 + c_rgb.0 as u32) / 2;
+        let dr = fg_rgb.0 as i32 - c_rgb.0 as i32;
+        let dg = fg_rgb.1 as i32 - c_rgb.1 as i32;
+        let db = fg_rgb.2 as i32 - c_rgb.2 as i32;
+        let dist = ((2 * 512 + r_mean as i32) * dr * dr
+            + 4 * dg * dg * 256
+            + (2 * 767 - r_mean as i32) * db * db) as u32;
+
+        if dist < best_distance {
+            best_distance = dist;
+            best_idx = candidate;
+        }
+    }
+
+    best_idx
+}
+
 /// Convert all colors in a ratatui Buffer for the given color capability
 /// This is the main entry point - call once after all widgets have rendered
 pub fn convert_buffer_colors(buffer: &mut ratatui::buffer::Buffer, capability: ColorCapability) {
@@ -343,6 +500,45 @@ pub fn convert_buffer_colors(buffer: &mut ratatui::buffer::Buffer, capability: C
     for cell in buffer.content.iter_mut() {
         cell.fg = convert_color(cell.fg, capability);
         cell.bg = convert_color(cell.bg, capability);
+    }
+
+    // Enforce minimum contrast for 256-color mode
+    if capability == ColorCapability::Color256 {
+        enforce_minimum_contrast(buffer);
+    }
+}
+
+/// Post-conversion pass: ensure every fg/bg pair in the buffer has sufficient
+/// WCAG contrast ratio. Adjusts fg colors when contrast is too low.
+fn enforce_minimum_contrast(buffer: &mut ratatui::buffer::Buffer) {
+    for cell in buffer.content.iter_mut() {
+        let bg_rgb = match color_to_rgb(cell.bg) {
+            Some(rgb) => rgb,
+            None => continue, // Can't enforce contrast on unknown bg
+        };
+        let fg_rgb = match color_to_rgb(cell.fg) {
+            Some(rgb) => rgb,
+            None => continue,
+        };
+
+        if contrast_ratio(fg_rgb, bg_rgb) >= MIN_CONTRAST_RATIO {
+            continue;
+        }
+
+        // Try to fix the foreground color
+        match cell.fg {
+            Color::Indexed(idx) => {
+                cell.fg = Color::Indexed(find_readable_256_color(idx, bg_rgb));
+            }
+            _ => {
+                // For named ANSI colors that somehow have low contrast,
+                // convert to indexed and fix
+                if let Some((r, g, b)) = color_to_rgb(cell.fg) {
+                    let idx = rgb_to_256(r, g, b);
+                    cell.fg = Color::Indexed(find_readable_256_color(idx, bg_rgb));
+                }
+            }
+        }
     }
 }
 
@@ -460,150 +656,162 @@ mod tests {
     }
 
     // =========================================================================
-    // Issue #1239: 256-color theme reproduction tests
-    // These tests document the contrast problems when themes are rendered
-    // in 256-color mode. They currently demonstrate the broken behavior.
+    // Issue #1239: 256-color contrast enforcement tests
+    // These tests verify that minimum contrast enforcement fixes the
+    // previously broken theme pairs in 256-color mode.
     // =========================================================================
 
-    /// Helper: compute WCAG-like contrast ratio between two 256-color indices
+    /// Helper: compute WCAG contrast ratio between two 256-color indices
+    /// using the module-level functions
     fn contrast_ratio_256(idx1: u8, idx2: u8) -> f64 {
-        fn idx_to_rgb(idx: u8) -> (u8, u8, u8) {
-            match idx {
-                0..=15 => {
-                    let ansi: [(u8, u8, u8); 16] = [
-                        (0, 0, 0), (128, 0, 0), (0, 128, 0), (128, 128, 0),
-                        (0, 0, 128), (128, 0, 128), (0, 128, 128), (192, 192, 192),
-                        (128, 128, 128), (255, 0, 0), (0, 255, 0), (255, 255, 0),
-                        (0, 0, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255),
-                    ];
-                    ansi[idx as usize]
-                }
-                16..=231 => {
-                    let i = idx - 16;
-                    ((i / 36) * 51, ((i % 36) / 6) * 51, (i % 6) * 51)
-                }
-                232..=255 => {
-                    let g = (idx - 232) * 10 + 8;
-                    (g, g, g)
-                }
-            }
-        }
-        fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
-            let r = {
-                let s = r as f64 / 255.0;
-                if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
-            };
-            let g = {
-                let s = g as f64 / 255.0;
-                if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
-            };
-            let b = {
-                let s = b as f64 / 255.0;
-                if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
-            };
-            0.2126 * r + 0.7152 * g + 0.0722 * b
-        }
-        let (r1, g1, b1) = idx_to_rgb(idx1);
-        let (r2, g2, b2) = idx_to_rgb(idx2);
-        let l1 = relative_luminance(r1, g1, b1);
-        let l2 = relative_luminance(r2, g2, b2);
-        let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
-        (lighter + 0.05) / (darker + 0.05)
+        contrast_ratio(idx_to_rgb(idx1), idx_to_rgb(idx2))
     }
 
-    /// Solarized-dark: editor bg and selection_bg both map to the SAME index (black).
-    /// Selection is completely invisible.
-    #[test]
-    fn test_issue_1239_solarized_bg_and_selection_collapse() {
-        let bg_idx = rgb_to_256(0, 43, 54);        // solarized bg
-        let sel_idx = rgb_to_256(7, 54, 66);        // solarized selection_bg
-
-        // CURRENT BEHAVIOR: both map to 16 (black) — selection is invisible
-        // This test documents the bug. When fixed, these should map to
-        // different indices.
-        assert_eq!(bg_idx, sel_idx,
-            "BUG (issue #1239): solarized bg and selection_bg both map to idx {}, \
-             making selection invisible. Fix should make them different.", bg_idx);
+    /// Helper: simulate the contrast enforcement for a fg/bg pair
+    fn enforce_pair(fg_rgb: (u8, u8, u8), bg_rgb: (u8, u8, u8)) -> (u8, u8) {
+        let fg_idx = rgb_to_256(fg_rgb.0, fg_rgb.1, fg_rgb.2);
+        let bg_idx = rgb_to_256(bg_rgb.0, bg_rgb.1, bg_rgb.2);
+        let fixed_fg = find_readable_256_color(fg_idx, idx_to_rgb(bg_idx));
+        (fixed_fg, bg_idx)
     }
 
-    /// Solarized-dark: popup text on selection bg is unreadable (contrast ~1.09)
     #[test]
-    fn test_issue_1239_solarized_popup_selection_unreadable() {
-        let text_idx = rgb_to_256(131, 148, 150);   // popup_text_fg
-        let sel_idx = rgb_to_256(38, 139, 210);      // popup_selection_bg
-        let cr = contrast_ratio_256(text_idx, sel_idx);
-
-        // CURRENT BEHAVIOR: contrast ratio ~1.09 — practically identical
-        assert!(cr < 1.5,
-            "BUG (issue #1239): solarized popup selected text has contrast {:.2}, \
-             expected < 1.5 (currently broken). Minimum readable is ~3.0.", cr);
+    fn test_find_readable_256_color_already_good() {
+        // White text on black bg — already has great contrast
+        let result = find_readable_256_color(231, (0, 0, 0));
+        assert_eq!(result, 231); // Should not change
     }
 
-    /// Nord: line numbers are nearly invisible (contrast ~1.52)
     #[test]
-    fn test_issue_1239_nord_line_numbers_invisible() {
-        let ln_fg_idx = rgb_to_256(76, 86, 106);    // line_number_fg
-        let bg_idx = rgb_to_256(46, 52, 64);         // editor bg / line_number_bg
-        let cr = contrast_ratio_256(ln_fg_idx, bg_idx);
-
-        // CURRENT BEHAVIOR: both map to very dark colors, contrast ~1.52
-        assert!(cr < 2.0,
-            "BUG (issue #1239): nord line numbers have contrast {:.2}, \
-             expected < 2.0 (currently broken). Should be at least 3.0.", cr);
+    fn test_find_readable_256_color_fixes_low_contrast() {
+        // Two very dark colors — should adjust fg to be lighter
+        let bg_rgb = idx_to_rgb(16); // black
+        let fixed = find_readable_256_color(16, bg_rgb); // same color
+        let cr = contrast_ratio(idx_to_rgb(fixed), bg_rgb);
+        assert!(
+            cr >= MIN_CONTRAST_RATIO,
+            "Fixed fg idx {} should have contrast >= {}, got {:.2}",
+            fixed,
+            MIN_CONTRAST_RATIO,
+            cr
+        );
     }
 
-    /// Nord: popup border is unreadable (contrast ~1.45)
+    /// Solarized-dark: popup text on selection bg — contrast enforcement should fix it
     #[test]
-    fn test_issue_1239_nord_popup_border_unreadable() {
-        let border_idx = rgb_to_256(76, 86, 106);   // popup_border_fg
-        let popup_bg_idx = rgb_to_256(59, 66, 82);   // popup_bg
-        let cr = contrast_ratio_256(border_idx, popup_bg_idx);
-
-        assert!(cr < 2.0,
-            "BUG (issue #1239): nord popup border has contrast {:.2}, \
-             expected < 2.0 (currently broken).", cr);
+    fn test_issue_1239_solarized_popup_selection_fixed() {
+        let (fg, bg) = enforce_pair((131, 148, 150), (38, 139, 210));
+        let cr = contrast_ratio_256(fg, bg);
+        assert!(cr >= MIN_CONTRAST_RATIO,
+            "Solarized popup text (fg={}) on selection (bg={}) should have contrast >= {}, got {:.2}",
+            fg, bg, MIN_CONTRAST_RATIO, cr);
     }
 
-    /// Dracula: line numbers are hard to read (contrast ~1.81)
+    /// Nord: line numbers should be readable after enforcement
     #[test]
-    fn test_issue_1239_dracula_line_numbers_low_contrast() {
-        let ln_fg_idx = rgb_to_256(98, 114, 164);   // line_number_fg
-        let bg_idx = rgb_to_256(40, 42, 54);         // editor bg
-        let cr = contrast_ratio_256(ln_fg_idx, bg_idx);
-
-        assert!(cr < 2.0,
-            "BUG (issue #1239): dracula line numbers have contrast {:.2}, \
-             expected < 2.0 (currently broken).", cr);
+    fn test_issue_1239_nord_line_numbers_fixed() {
+        let (fg, bg) = enforce_pair((76, 86, 106), (46, 52, 64));
+        let cr = contrast_ratio_256(fg, bg);
+        assert!(
+            cr >= MIN_CONTRAST_RATIO,
+            "Nord line numbers (fg={}) on bg={} should have contrast >= {}, got {:.2}",
+            fg,
+            bg,
+            MIN_CONTRAST_RATIO,
+            cr
+        );
     }
 
-    /// Light theme: Ctrl+P helper text is completely unreadable (contrast ~1.03)
+    /// Nord: popup border should be readable after enforcement
     #[test]
-    fn test_issue_1239_light_palette_helper_unreadable() {
-        // The "file | >command | :line | #buffer" text at the bottom of Ctrl+P
-        // Light theme uses default fg (idx 7 = gray 192,192,192) on
-        // popup highlight bg mapped to idx 152 (153,204,204)
-        let cr = contrast_ratio_256(7, 152);
+    fn test_issue_1239_nord_popup_border_fixed() {
+        let (fg, bg) = enforce_pair((76, 86, 106), (59, 66, 82));
+        let cr = contrast_ratio_256(fg, bg);
+        assert!(
+            cr >= MIN_CONTRAST_RATIO,
+            "Nord popup border (fg={}) on bg={} should have contrast >= {}, got {:.2}",
+            fg,
+            bg,
+            MIN_CONTRAST_RATIO,
+            cr
+        );
+    }
 
-        assert!(cr < 1.5,
-            "BUG (issue #1239): light theme palette helper text has contrast {:.2}, \
-             virtually unreadable.", cr);
+    /// Dracula: line numbers should be readable after enforcement
+    #[test]
+    fn test_issue_1239_dracula_line_numbers_fixed() {
+        let (fg, bg) = enforce_pair((98, 114, 164), (40, 42, 54));
+        let cr = contrast_ratio_256(fg, bg);
+        assert!(
+            cr >= MIN_CONTRAST_RATIO,
+            "Dracula line numbers (fg={}) on bg={} should have contrast >= {}, got {:.2}",
+            fg,
+            bg,
+            MIN_CONTRAST_RATIO,
+            cr
+        );
+    }
+
+    /// Light theme: Ctrl+P helper text should be readable after enforcement
+    #[test]
+    fn test_issue_1239_light_palette_helper_fixed() {
+        // fg idx 7 (gray 192,192,192) on bg idx 152 (153,204,204)
+        let bg_rgb = idx_to_rgb(152);
+        let fixed_fg = find_readable_256_color(7, bg_rgb);
+        let cr = contrast_ratio(idx_to_rgb(fixed_fg), bg_rgb);
+        assert!(
+            cr >= MIN_CONTRAST_RATIO,
+            "Light theme palette helper (fg={}) on bg=152 should have contrast >= {}, got {:.2}",
+            fixed_fg,
+            MIN_CONTRAST_RATIO,
+            cr
+        );
     }
 
     /// Multiple dark theme backgrounds collapse to the same black (idx 16)
+    /// This documents a known limitation of rgb_to_256 mapping.
+    /// The contrast enforcement step fixes the *readability* issue even though
+    /// the backgrounds still collapse.
     #[test]
     fn test_issue_1239_dark_backgrounds_collapse_to_black() {
         // These are all conceptually different backgrounds but map to the same index
         let solarized_bg = rgb_to_256(0, 43, 54);
         let nord_bg = rgb_to_256(46, 52, 64);
         let dracula_bg = rgb_to_256(40, 42, 54);
-        let nord_sel = rgb_to_256(67, 76, 94);
-        let solarized_sel = rgb_to_256(7, 54, 66);
 
         // All map to idx 16 or 17 (pure black or near-black)
         assert!(solarized_bg <= 17, "solarized bg={}", solarized_bg);
         assert!(nord_bg <= 17, "nord bg={}", nord_bg);
         assert!(dracula_bg <= 17, "dracula bg={}", dracula_bg);
-        assert!(nord_sel <= 17, "nord sel={}", nord_sel);
-        assert!(solarized_sel <= 17, "solarized sel={}", solarized_sel);
+    }
+
+    /// Verify that contrast enforcement works end-to-end via convert_buffer_colors
+    #[test]
+    fn test_convert_buffer_colors_enforces_contrast() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+
+        let area = Rect::new(0, 0, 3, 1);
+        let mut buffer = Buffer::empty(area);
+
+        // Set up a low-contrast pair: dark fg on dark bg (both will map to near-black)
+        buffer.content[0].fg = Color::Rgb(40, 42, 54); // Dracula bg as fg
+        buffer.content[0].bg = Color::Rgb(46, 52, 64); // Nord bg as bg
+        buffer.content[0].set_symbol("X");
+
+        convert_buffer_colors(&mut buffer, ColorCapability::Color256);
+
+        // After conversion + enforcement, the fg should have been adjusted
+        let fg_rgb = color_to_rgb(buffer.content[0].fg).unwrap();
+        let bg_rgb = color_to_rgb(buffer.content[0].bg).unwrap();
+        let cr = contrast_ratio(fg_rgb, bg_rgb);
+        assert!(
+            cr >= MIN_CONTRAST_RATIO,
+            "Buffer cell should have contrast >= {} after conversion, got {:.2} (fg={:?}, bg={:?})",
+            MIN_CONTRAST_RATIO,
+            cr,
+            buffer.content[0].fg,
+            buffer.content[0].bg
+        );
     }
 }
