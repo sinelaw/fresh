@@ -2236,17 +2236,13 @@ fn test_ctrl_d_at_word_end() {
 fn test_select_word_with_accented_characters() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    let _fixture = harness
-        .load_buffer_from_text("hibajavítás\n")
-        .unwrap();
+    let _fixture = harness.load_buffer_from_text("hibajavítás\n").unwrap();
 
     // Move cursor to beginning of the word
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .unwrap();
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Select word with Ctrl+W
     harness

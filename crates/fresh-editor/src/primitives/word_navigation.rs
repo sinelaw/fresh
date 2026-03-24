@@ -1,6 +1,24 @@
 //! Word boundary detection and navigation helpers
 
 use crate::model::buffer::Buffer;
+use crate::primitives::grapheme::{next_grapheme_boundary, prev_grapheme_boundary};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CharClass {
+    Word,
+    Whitespace,
+    Punctuation,
+}
+
+fn get_grapheme_class(g: &str) -> CharClass {
+    if g.chars().any(|c| c.is_alphanumeric() || c == '_') {
+        CharClass::Word
+    } else if g.chars().all(|c| c.is_whitespace()) {
+        CharClass::Whitespace
+    } else {
+        CharClass::Punctuation
+    }
+}
 
 /// Check if a byte is a word character (alphanumeric or underscore)
 pub fn is_word_char(byte: u8) -> bool {
@@ -158,8 +176,8 @@ pub fn find_completion_word_start(buffer: &Buffer, pos: usize) -> usize {
 
 /// Find the start of the word at or before the given position
 ///
-/// Extracts a windowed byte slice from the buffer and uses the shared
-/// byte-level logic to find word boundaries.
+/// Uses grapheme-based classification to correctly handle Unicode characters
+/// (e.g., accented letters).
 pub fn find_word_start(buffer: &Buffer, pos: usize) -> usize {
     if pos == 0 {
         return 0;
@@ -172,17 +190,40 @@ pub fn find_word_start(buffer: &Buffer, pos: usize) -> usize {
     let start = pos.saturating_sub(1000);
     let end = (pos + 1).min(buf_len);
     let bytes = buffer.slice_bytes(start..end);
-    let offset = pos - start;
+    let text = String::from_utf8_lossy(&bytes);
 
-    // Use shared byte-level logic
-    let result = find_word_start_bytes(&bytes, offset);
-    start + result
+    let offset = text.len() - (end - pos); // map byte pos into text
+    let mut current_idx = offset;
+
+    // If we're at the end or at a non-word character, step left once
+    if current_idx >= text.len() || {
+        let next = next_grapheme_boundary(&text, current_idx);
+        get_grapheme_class(&text[current_idx..next]) != CharClass::Word
+    } {
+        if current_idx > 0 {
+            current_idx = prev_grapheme_boundary(&text, current_idx);
+        }
+    }
+
+    // Scan left while we're on word characters
+    while current_idx > 0 {
+        let prev = prev_grapheme_boundary(&text, current_idx);
+        if get_grapheme_class(&text[prev..current_idx]) == CharClass::Word {
+            current_idx = prev;
+        } else {
+            break;
+        }
+    }
+
+    // Convert back to absolute position
+    let delta = offset - current_idx;
+    pos - delta
 }
 
 /// Find the end of the word at or after the given position
 ///
-/// Extracts a windowed byte slice from the buffer and uses the shared
-/// byte-level logic to find word boundaries.
+/// Uses grapheme-based classification to correctly handle Unicode characters
+/// (e.g., accented letters).
 pub fn find_word_end(buffer: &Buffer, pos: usize) -> usize {
     let buf_len = buffer.len();
     if pos >= buf_len {
@@ -193,29 +234,31 @@ pub fn find_word_end(buffer: &Buffer, pos: usize) -> usize {
     let start = pos;
     let end = (pos + 1000).min(buf_len);
     let bytes = buffer.slice_bytes(start..end);
+    let text = String::from_utf8_lossy(&bytes);
 
-    // Use shared byte-level logic
-    let result = find_word_end_bytes(&bytes, 0);
-    start + result
-}
+    let mut current_idx = 0;
 
-use crate::primitives::grapheme::{next_grapheme_boundary, prev_grapheme_boundary};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CharClass {
-    Word,
-    Whitespace,
-    Punctuation,
-}
-
-fn get_grapheme_class(g: &str) -> CharClass {
-    if g.chars().any(|c| c.is_alphanumeric() || c == '_') {
-        CharClass::Word
-    } else if g.chars().all(|c| c.is_whitespace()) {
-        CharClass::Whitespace
-    } else {
-        CharClass::Punctuation
+    // Skip non-word characters to find start of next word
+    while current_idx < text.len() {
+        let next = next_grapheme_boundary(&text, current_idx);
+        if get_grapheme_class(&text[current_idx..next]) != CharClass::Word {
+            current_idx = next;
+        } else {
+            break;
+        }
     }
+
+    // Consume word characters
+    while current_idx < text.len() {
+        let next = next_grapheme_boundary(&text, current_idx);
+        if get_grapheme_class(&text[current_idx..next]) == CharClass::Word {
+            current_idx = next;
+        } else {
+            break;
+        }
+    }
+
+    start + current_idx
 }
 
 /// Find the start of the word to the left of the given position
