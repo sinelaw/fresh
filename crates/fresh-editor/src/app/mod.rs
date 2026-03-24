@@ -2565,6 +2565,20 @@ impl Editor {
         // Apply bulk edits
         let _delta = state.buffer.apply_bulk_edits(&edit_refs);
 
+        // Adjust markers and margins for each edit (descending position order,
+        // matching the order used by apply_bulk_edits — later positions first
+        // so earlier edits don't shift positions of later ones)
+        for (pos, del_len, text) in &edits {
+            if *del_len > 0 {
+                state.marker_list.adjust_for_delete(*pos, *del_len);
+                state.margins.adjust_for_delete(*pos, *del_len);
+            }
+            if !text.is_empty() {
+                state.marker_list.adjust_for_insert(*pos, text.len());
+                state.margins.adjust_for_insert(*pos, text.len());
+            }
+        }
+
         // Snapshot buffer state after edits (for redo)
         let new_snapshot = state.buffer.snapshot_buffer_state();
 
