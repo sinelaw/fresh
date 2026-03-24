@@ -4015,26 +4015,75 @@ impl Editor {
         }
 
         let ch = bytes[0] as char;
-        let (opening, closing, forward) = match ch {
-            '(' => ('(', ')', true),
-            ')' => ('(', ')', false),
-            '[' => ('[', ']', true),
-            ']' => ('[', ']', false),
-            '{' => ('{', '}', true),
-            '}' => ('{', '}', false),
-            '<' => ('<', '>', true),
-            '>' => ('<', '>', false),
-            _ => {
-                self.set_status_message(t!("diagnostics.bracket_none").to_string());
-                return;
-            }
+
+        // All supported bracket pairs
+        const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
+
+        let bracket_info = match ch {
+            '(' => Some(('(', ')', true)),
+            ')' => Some(('(', ')', false)),
+            '[' => Some(('[', ']', true)),
+            ']' => Some(('[', ']', false)),
+            '{' => Some(('{', '}', true)),
+            '}' => Some(('{', '}', false)),
+            '<' => Some(('<', '>', true)),
+            '>' => Some(('<', '>', false)),
+            _ => None,
         };
+
+        // If cursor is not on a bracket, search backward for the nearest
+        // enclosing opening bracket, then jump to its matching close.
+        let (opening, closing, search_start, forward) =
+            if let Some((opening, closing, forward)) = bracket_info {
+                (opening, closing, pos, forward)
+            } else {
+                let buffer_len = state.buffer.len();
+                // Search backward from cursor to find enclosing opening bracket.
+                // Track depth per bracket type to handle nesting correctly.
+                let mut depths: Vec<i32> = vec![0; BRACKET_PAIRS.len()];
+                let mut found = None;
+                let mut search_pos = pos.saturating_sub(1);
+                loop {
+                    let b = state.buffer.slice_bytes(search_pos..search_pos + 1);
+                    if !b.is_empty() {
+                        let c = b[0] as char;
+                        for (i, &(open, close)) in BRACKET_PAIRS.iter().enumerate() {
+                            if c == close {
+                                depths[i] += 1;
+                            } else if c == open {
+                                if depths[i] > 0 {
+                                    depths[i] -= 1;
+                                } else {
+                                    // Found an unmatched opening bracket — this encloses us
+                                    found = Some((open, close, search_pos));
+                                    break;
+                                }
+                            }
+                        }
+                        if found.is_some() {
+                            break;
+                        }
+                    }
+                    if search_pos == 0 {
+                        break;
+                    }
+                    search_pos -= 1;
+                }
+
+                if let Some((opening, closing, bracket_pos)) = found {
+                    // Jump forward from the enclosing opening bracket to its match
+                    (opening, closing, bracket_pos, true)
+                } else {
+                    self.set_status_message(t!("diagnostics.bracket_none").to_string());
+                    return;
+                }
+            };
 
         // Find matching bracket
         let buffer_len = state.buffer.len();
         let mut depth = 1;
         let matching_pos = if forward {
-            let mut search_pos = pos + 1;
+            let mut search_pos = search_start + 1;
             let mut found = None;
             while search_pos < buffer_len && depth > 0 {
                 let b = state.buffer.slice_bytes(search_pos..search_pos + 1);
@@ -4053,7 +4102,7 @@ impl Editor {
             }
             found
         } else {
-            let mut search_pos = pos.saturating_sub(1);
+            let mut search_pos = search_start.saturating_sub(1);
             let mut found = None;
             loop {
                 let b = state.buffer.slice_bytes(search_pos..search_pos + 1);

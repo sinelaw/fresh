@@ -28,6 +28,7 @@ pub mod file_explorer;
 pub mod file_permissions;
 pub mod folding;
 pub mod glob_language_detection;
+pub mod goto_matching_bracket;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod hanging_wrap_indent;
