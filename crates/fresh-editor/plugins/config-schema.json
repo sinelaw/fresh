@@ -1,3 +1,434 @@
+warning: /home/user/fresh/Cargo.toml: unused manifest key: profile.release.force-frame-pointers
+   Compiling unicode-ident v1.0.24
+   Compiling cfg-if v1.0.4
+   Compiling memchr v2.8.0
+   Compiling serde_core v1.0.228
+   Compiling equivalent v1.0.2
+   Compiling proc-macro2 v1.0.106
+   Compiling foldhash v0.2.0
+   Compiling itoa v1.0.17
+   Compiling allocator-api2 v0.2.21
+   Compiling quote v1.0.45
+   Compiling hashbrown v0.16.1
+   Compiling syn v2.0.117
+   Compiling libc v0.2.183
+   Compiling regex-syntax v0.8.10
+   Compiling bitflags v2.11.0
+   Compiling once_cell v1.21.4
+   Compiling aho-corasick v1.1.4
+   Compiling siphasher v1.0.2
+   Compiling log v0.4.29
+   Compiling unicode-segmentation v1.12.0
+   Compiling either v1.15.0
+   Compiling rustc-hash v2.1.1
+   Compiling stable_deref_trait v1.2.1
+   Compiling ryu v1.0.23
+   Compiling zmij v1.0.21
+   Compiling synstructure v0.13.2
+   Compiling indexmap v2.13.0
+   Compiling unicode-width v0.2.2
+   Compiling crossbeam-utils v0.8.21
+   Compiling tree-sitter-language v0.1.7
+   Compiling libloading v0.8.9
+   Compiling regex-automata v0.4.14
+   Compiling castaway v0.2.4
+   Compiling static_assertions v1.1.0
+   Compiling compact_str v0.9.0
+   Compiling phf_shared v0.13.1
+   Compiling str_indices v0.4.4
+   Compiling serde_derive v1.0.228
+   Compiling thiserror-impl v2.0.18
+   Compiling zerofrom-derive v0.1.6
+   Compiling thiserror v2.0.18
+   Compiling displaydoc v0.2.5
+   Compiling zerofrom v0.1.6
+   Compiling unicode-linebreak v0.1.5
+   Compiling linux-raw-sys v0.12.1
+   Compiling smawk v0.3.2
+   Compiling textwrap v0.16.2
+   Compiling regex v1.12.3
+   Compiling libm v0.2.16
+   Compiling serde v1.0.228
+   Compiling rustix v1.1.4
+   Compiling owo-colors v4.3.0
+   Compiling smallvec v1.15.1
+   Compiling ropey v1.6.1
+   Compiling oxc-miette-derive v2.7.0
+   Compiling percent-encoding v2.3.2
+   Compiling phf_generator v0.13.1
+   Compiling oxc_data_structures v0.115.0
+   Compiling oxc_allocator v0.115.0
+   Compiling num-traits v0.2.19
+   Compiling oxc-miette v2.7.0
+   Compiling phf v0.13.1
+   Compiling fnv v1.0.7
+   Compiling oxc_estree v0.115.0
+   Compiling same-file v1.0.6
+   Compiling oxc_str v0.115.0
+   Compiling walkdir v2.5.0
+   Compiling oxc_ast_macros v0.115.0
+   Compiling serde_json v1.0.149
+   Compiling phf_macros v0.13.1
+   Compiling yoke-derive v0.8.1
+   Compiling getrandom v0.2.17
+   Compiling cow-utils v0.1.3
+   Compiling oxc_span v0.115.0
+   Compiling yoke v0.8.1
+   Compiling pin-project-lite v0.2.17
+   Compiling strsim v0.11.1
+   Compiling unicode-id-start v1.4.0
+   Compiling nonmax v0.5.5
+   Compiling adler2 v2.0.1
+   Compiling nom v7.1.3
+   Compiling oxc_index v4.1.0
+   Compiling dragonbox_ecma v0.1.12
+   Compiling zerovec-derive v0.11.2
+   Compiling bstr v1.12.1
+   Compiling bitflags v1.3.2
+   Compiling oxc_syntax v0.115.0
+   Compiling zerovec v0.11.5
+   Compiling cexpr v0.6.0
+   Compiling crc32fast v1.5.0
+   Compiling clang-sys v1.8.1
+   Compiling prettyplease v0.2.37
+   Compiling oxc_diagnostics v0.115.0
+   Compiling crossbeam-epoch v0.9.18
+   Compiling itertools v0.14.0
+   Compiling itertools v0.13.0
+   Compiling errno v0.3.14
+   Compiling base64 v0.22.1
+   Compiling signal-hook-registry v1.4.8
+   Compiling bindgen v0.72.1
+   Compiling crossbeam-deque v0.8.6
+   Compiling oxc_regular_expression v0.115.0
+   Compiling yoke-derive v0.7.5
+   Compiling convert_case v0.10.0
+   Compiling scopeguard v1.2.0
+   Compiling yoke v0.7.5
+   Compiling oxc_ast v0.115.0
+   Compiling typenum v1.19.0
+   Compiling rand_core v0.6.4
+   Compiling num-integer v0.1.46
+   Compiling zerovec-derive v0.10.3
+   Compiling generic-array v0.14.7
+   Compiling num-bigint v0.4.6
+   Compiling zerovec v0.10.4
+   Compiling rand_chacha v0.3.1
+   Compiling parking_lot_core v0.9.12
+   Compiling lock_api v0.4.14
+   Compiling tinystr v0.8.2
+   Compiling concurrent-queue v2.5.0
+   Compiling mio v1.1.1
+   Compiling toml_write v0.1.2
+   Compiling litemap v0.8.1
+   Compiling winnow v0.7.15
+   Compiling writeable v0.6.2
+   Compiling simd-adler32 v0.3.8
+   Compiling miniz_oxide v0.8.9
+   Compiling rquickjs-sys v0.11.0
+   Compiling icu_locale_core v2.1.1
+   Compiling oxc_ecmascript v0.115.0
+   Compiling event-listener v5.4.1
+   Compiling parking_lot v0.12.5
+   Compiling rand v0.8.5
+   Compiling signal-hook v0.3.18
+   Compiling potential_utf v0.1.4
+   Compiling globset v0.4.18
+   Compiling zerotrie v0.2.3
+   Compiling dlib v0.5.3
+   Compiling phf_shared v0.11.3
+   Compiling encoding_index_tests v0.1.4
+   Compiling foldhash v0.1.5
+   Compiling downcast-rs v1.2.1
+   Compiling hashbrown v0.15.5
+   Compiling toml_edit v0.25.5+spec-1.1.0
+   Compiling phf_generator v0.11.3
+   Compiling wayland-sys v0.31.10
+   Compiling icu_provider v2.1.1
+   Compiling ignore v0.4.25
+   Compiling icu_collections v2.1.1
+   Compiling onig_sys v69.9.1
+   Compiling event-listener-strategy v0.5.4
+   Compiling oxc_ast_visit v0.115.0
+   Compiling flate2 v1.1.9
+   Compiling tinystr v0.7.6
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling derive_more-impl v2.1.1
+   Compiling darling_core v0.23.0
+   Compiling cobs v0.3.0
+   Compiling arc-swap v1.8.2
+   Compiling quick-xml v0.39.2
+   Compiling writeable v0.5.5
+   Compiling bytes v1.11.1
+   Compiling lazy_static v1.5.0
+   Compiling unsafe-libyaml v0.2.11
+   Compiling self_cell v1.2.2
+   Compiling scoped-tls v1.0.1
+   Compiling litemap v0.7.5
+   Compiling icu_locid v1.5.0
+   Compiling wayland-backend v0.3.14
+   Compiling oxc_semantic v0.115.0
+   Compiling darling_macro v0.23.0
+   Compiling wayland-scanner v0.31.9
+   Compiling postcard v1.1.3
+   Compiling derive_more v2.1.1
+   Compiling digest v0.10.7
+   Compiling async-lock v3.4.2
+   Compiling globwalk v0.8.1
+   Compiling proc-macro-crate v3.5.0
+   Compiling phf_codegen v0.11.3
+   Compiling icu_normalizer_data v2.1.1
+   Compiling icu_properties_data v2.1.2
+   Compiling signal-hook-mio v0.2.5
+   Compiling strum_macros v0.27.2
+   Compiling toml_datetime v0.6.11
+   Compiling serde_spanned v0.6.9
+   Compiling darling_core v0.20.11
+   Compiling icu_provider_macros v1.5.0
+   Compiling tracing-core v0.1.36
+   Compiling utf8_iter v1.0.4
+   Compiling powerfmt v0.2.0
+   Compiling outref v0.5.2
+   Compiling vsimd v0.8.0
+   Compiling zeroize v1.8.2
+   Compiling cpufeatures v0.2.17
+   Compiling linked-hash-map v0.5.6
+   Compiling yaml-rust v0.4.5
+   Compiling base64-simd v0.8.0
+   Compiling rustls-pki-types v1.14.0
+   Compiling darling_macro v0.20.11
+   Compiling deranged v0.5.8
+   Compiling strum v0.27.2
+   Compiling icu_provider v1.5.0
+   Compiling toml_edit v0.22.27
+   Compiling crossterm v0.29.0
+   Compiling icu_properties v2.1.2
+   Compiling icu_normalizer v2.1.1
+   Compiling unicode_names2_generator v2.0.0
+   Compiling wayland-client v0.31.13
+   Compiling const-random-macro v0.1.16
+   Compiling oxc-browserslist v2.3.1
+   Compiling rquickjs-core v0.11.0
+   Compiling anyhow v1.0.102
+   Compiling darling v0.23.0
+   Compiling icu_locid_transform_data v1.5.1
+   Compiling tree-sitter v0.26.7
+   Compiling unicode-truncate v2.0.1
+   Compiling rquickjs-macro v0.11.0
+   Compiling kasuari v0.4.12
+   Compiling zerocopy-derive v0.8.47
+   Compiling tracing-attributes v0.1.31
+   Compiling ref-cast-impl v1.0.25
+   Compiling serde_derive_internals v0.29.1
+   Compiling itertools v0.11.0
+   Compiling lru v0.16.3
+   Compiling normpath v1.5.0
+   Compiling untrusted v0.9.0
+   Compiling fixedbitset v0.5.7
+   Compiling base62 v2.2.4
+   Compiling num_threads v0.1.7
+   Compiling num-conv v0.2.0
+   Compiling json-escape-simd v3.0.1
+   Compiling time-core v0.1.8
+   Compiling schemars_derive v1.2.1
+   Compiling time v0.3.47
+   Compiling oxc_sourcemap v6.0.2
+   Compiling petgraph v0.8.3
+   Compiling triomphe v0.1.15
+   Compiling ring v0.17.14
+   Compiling rquickjs v0.11.0
+   Compiling ts-rs-macros v12.0.1
+   Compiling ratatui-core v0.1.0
+   Compiling zerocopy v0.8.47
+   Compiling ref-cast v1.0.25
+   Compiling tracing v0.1.44
+   Compiling icu_locid_transform v1.5.0
+   Compiling instability v0.3.12
+   Compiling oxc_compat v0.115.0
+   Compiling wayland-protocols v0.32.11
+   Compiling const-random v0.1.18
+   Compiling unicode_names2 v2.0.0
+   Compiling toml v0.8.23
+   Compiling idna_adapter v1.2.1
+   Compiling darling v0.20.11
+   Compiling getrandom v0.3.4
+   Compiling icu_properties_data v1.5.1
+   Compiling sha1 v0.10.6
+   Compiling oxc_traverse v0.115.0
+   Compiling serde_yaml v0.9.34+deprecated
+   Compiling onig v6.5.1
+   Compiling icu_collections v1.5.0
+   Compiling fluent-uri v0.1.4
+   Compiling bincode v1.3.3
+   Compiling tokio-macros v2.6.1
+   Compiling thiserror-impl v1.0.69
+   Compiling serde_repr v0.1.20
+   Compiling socket2 v0.6.3
+   Compiling nom v8.0.0
+   Compiling iana-time-zone v0.1.65
+   Compiling streaming-iterator v0.1.9
+   Compiling dyn-clone v1.0.20
+   Compiling oxc_parser v0.115.0
+   Compiling wayland-protocols-wlr v0.3.11
+   Compiling tree_magic_mini v3.2.2
+   Compiling schemars v1.2.1
+   Compiling chrono v0.4.44
+   Compiling thiserror v1.0.69
+   Compiling tokio v1.50.0
+   Compiling lsp-types v0.97.0
+   Compiling phf v0.11.3
+   Compiling syntect v5.3.0
+   Compiling oxc_transformer v0.115.0
+   Compiling icu_properties v1.5.1
+   Compiling rust-i18n-support v3.1.5
+   Compiling ahash v0.8.12
+   Compiling cached_proc_macro v0.25.0
+   Compiling idna v1.1.0
+   Compiling ts-rs v12.0.1
+   Compiling rustls-webpki v0.103.9
+   Compiling rquickjs-serde v0.5.0
+   Compiling icu_normalizer_data v1.5.1
+   Compiling oxc_codegen v0.115.0
+   Compiling httparse v1.10.1
+   Compiling rust-i18n v3.1.5
+   Compiling http v1.4.0
+   Compiling encoding-index-simpchinese v1.20141219.5
+   Compiling encoding-index-singlebyte v1.20141219.5
+   Compiling encoding-index-tradchinese v1.20141219.5
+   Compiling encoding-index-japanese v1.20141219.5
+   Compiling encoding-index-korean v1.20141219.5
+   Compiling gethostname v1.1.0
+   Compiling form_urlencoded v1.2.2
+   Compiling is-docker v0.2.0
+   Compiling os_pipe v1.2.3
+   Compiling line-clipping v0.3.5
+   Compiling write16 v1.0.0
+   Compiling utf16_iter v1.0.5
+   Compiling x11rb-protocol v0.13.2
+   Compiling cached_proc_macro_types v0.1.1
+   Compiling web-time v1.1.0
+   Compiling subtle v2.6.1
+   Compiling option-ext v0.2.0
+   Compiling as-raw-xcb-connection v1.0.1
+   Compiling anstyle v1.0.14
+   Compiling cursor-icon v1.2.0
+   Compiling clap_lex v1.1.0
+   Compiling urlencoding v2.1.3
+   Compiling arrayvec v0.7.6
+   Compiling clap_builder v4.6.0
+   Compiling trash v5.2.5
+   Compiling vte v0.15.0
+   Compiling rustls v0.23.37
+   Compiling dirs-sys v0.5.0
+   Compiling cached v0.56.0
+   Compiling icu_normalizer v1.5.0
+   Compiling ratatui-widgets v0.3.0
+   Compiling wl-clipboard-rs v0.9.3
+   Compiling url v2.5.8
+   Compiling is-wsl v0.4.0
+   Compiling encoding v0.2.33
+   Compiling ureq-proto v0.5.3
+   Compiling fresh-parser-js v0.2.18 (/home/user/fresh/crates/fresh-parser-js)
+   Compiling nix v0.28.0
+   Compiling fresh-core v0.2.18 (/home/user/fresh/crates/fresh-core)
+warning: failed to parse serde attribute
+  | 
+  | transparent 
+  | 
+  = note: ts-rs failed to parse this attribute. It will be ignored.
+warning: failed to parse serde attribute
+  | 
+  | serialize_with = "serialize_path"
+  | 
+  = note: ts-rs failed to parse this attribute. It will be ignored.
+warning: failed to parse serde attribute
+  | 
+  | serialize_with = "serialize_ranges_as_tuples"
+  | 
+  = note: ts-rs failed to parse this attribute. It will be ignored.
+   Compiling rust-i18n-macro v3.1.5
+   Compiling fresh-editor v0.2.18 (/home/user/fresh/crates/fresh-editor)
+warning: unused import: `SyntaxSetBuilder`
+   --> crates/fresh-editor/build.rs:259:57
+    |
+259 |     use syntect::parsing::{SyntaxDefinition, SyntaxSet, SyntaxSetBuilder};
+    |                                                         ^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling tree-sitter-javascript v0.25.0
+   Compiling tree-sitter-bash v0.25.1
+   Compiling tree-sitter-lua v0.4.1
+   Compiling tree-sitter-php v0.24.2
+   Compiling tree-sitter-python v0.25.0
+   Compiling tree-sitter-odin v1.3.0
+   Compiling tree-sitter-go v0.25.0
+   Compiling tree-sitter-cpp v0.23.4
+   Compiling tree-sitter-java v0.23.5
+   Compiling tree-sitter-rust v0.24.1
+   Compiling tree-sitter-css v0.25.0
+   Compiling tree-sitter-pascal v0.10.2
+warning: `fresh-editor` (build script) generated 1 warning
+   Compiling x11rb v0.13.2
+   Compiling tree-sitter-typescript v0.23.2
+   Compiling tree-sitter-ruby v0.23.1
+   Compiling tree-sitter-json v0.24.8
+   Compiling tree-sitter-c-sharp v0.23.1
+   Compiling tree-sitter-html v0.23.2
+   Compiling tree-sitter-c v0.24.1
+   Compiling filedescriptor v0.8.3
+   Compiling tree-sitter-highlight v0.26.7
+   Compiling ratatui-crossterm v0.1.0
+   Compiling webpki-roots v1.0.6
+   Compiling tracing-log v0.2.0
+   Compiling sharded-slab v0.1.7
+   Compiling clap_derive v4.6.0
+   Compiling matchers v0.2.0
+   Compiling polling v3.11.0
+   Compiling rustix-openpty v0.2.0
+   Compiling counter v0.7.0
+   Compiling ordered-float v3.9.2
+   Compiling fresh-plugin-api-macros v0.2.18 (/home/user/fresh/crates/fresh-plugin-api-macros)
+   Compiling serial2 v0.2.34
+   Compiling include_dir_macros v0.7.4
+   Compiling quick-xml v0.38.4
+   Compiling thread_local v1.1.9
+   Compiling encoding_rs v0.8.35
+   Compiling home v0.5.12
+   Compiling futures-core v0.3.32
+   Compiling pathdiff v0.2.3
+   Compiling unicase v2.9.0
+   Compiling utf-8 v0.7.6
+   Compiling shell-words v1.1.1
+   Compiling nu-ansi-term v0.50.3
+   Compiling tracing-subscriber v0.3.23
+   Compiling portable-pty v0.9.0
+   Compiling ureq v3.2.0
+   Compiling pulldown-cmark v0.13.1
+   Compiling open v5.3.3
+   Compiling chardetng v0.1.17
+   Compiling interprocess v2.4.0
+   Compiling fresh-plugin-runtime v0.2.18 (/home/user/fresh/crates/fresh-plugin-runtime)
+   Compiling alacritty_terminal v0.25.1
+   Compiling plist v1.8.0
+   Compiling include_dir v0.7.4
+   Compiling clap v4.6.0
+   Compiling charset-normalizer-rs v1.1.0
+   Compiling arboard v3.6.1
+   Compiling ratatui v0.30.0
+   Compiling nix v0.31.2
+   Compiling fresh-languages v0.2.18 (/home/user/fresh/crates/fresh-languages)
+   Compiling dirs v6.0.0
+   Compiling sha2 v0.10.9
+   Compiling async-trait v0.1.89
+warning: fresh-editor@0.2.18: Generated locale options with 14 locales
+warning: fresh-editor@0.2.18: Generated 7 builtin themes
+warning: fresh-editor@0.2.18: Generated syntax packdump: 114 syntaxes (39 embedded)
+warning: fresh-editor@0.2.18: Generated plugins hash: a11c88a44188998b
+   Compiling libloading v0.9.0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 09s
+     Running `target/debug/generate_schema config`
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Config",
@@ -41,6 +472,7 @@
         "show_prompt_line": true,
         "show_vertical_scrollbar": true,
         "show_horizontal_scrollbar": false,
+        "show_tilde": true,
         "use_terminal_bg": false,
         "cursor_style": "default",
         "rulers": [],
@@ -299,6 +731,12 @@
           "description": "Whether the horizontal scrollbar is visible in each split pane.\nThe horizontal scrollbar appears when line wrap is disabled and content extends beyond the viewport.\nCan be toggled at runtime via command palette or keybinding.\nDefault: false",
           "type": "boolean",
           "default": false,
+          "x-section": "Display"
+        },
+        "show_tilde": {
+          "description": "Show tilde (~) markers on lines after the end of the file.\nThese vim-style markers indicate lines that are not part of the file content.\nDefault: true",
+          "type": "boolean",
+          "default": true,
           "x-section": "Display"
         },
         "use_terminal_bg": {

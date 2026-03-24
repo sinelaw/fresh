@@ -426,6 +426,8 @@ struct LineRenderInput<'a> {
     /// Whether the gutter shows byte offsets instead of line numbers
     /// (large file without line index scan)
     byte_offset_mode: bool,
+    /// Whether to show tilde (~) markers on lines past end-of-file
+    show_tilde: bool,
 }
 
 /// Context for computing the style of a single character
@@ -874,6 +876,7 @@ impl SplitRenderer {
         show_vertical_scrollbar: bool,
         show_horizontal_scrollbar: bool,
         diagnostics_inline_text: bool,
+        show_tilde: bool,
     ) -> (
         Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
         HashMap<LeafId, crate::view::ui::tabs::TabLayout>, // tab layouts per split
@@ -1029,6 +1032,7 @@ impl SplitRenderer {
                             is_active,
                             view_state,
                             use_terminal_bg,
+                            show_tilde,
                         );
 
                         // Render scrollbar for composite buffer
@@ -1157,6 +1161,7 @@ impl SplitRenderer {
                     &view_prefs.rulers,
                     view_prefs.show_line_numbers,
                     diagnostics_inline_text,
+                    show_tilde,
                 );
 
                 drop(_render_buf_span);
@@ -1296,6 +1301,7 @@ impl SplitRenderer {
         show_vertical_scrollbar: bool,
         show_horizontal_scrollbar: bool,
         diagnostics_inline_text: bool,
+        show_tilde: bool,
     ) -> HashMap<LeafId, Vec<ViewLineMapping>> {
         let visible_buffers = split_manager.get_visible_buffers(area);
         let active_split_id = split_manager.active_split();
@@ -1388,6 +1394,7 @@ impl SplitRenderer {
                 software_cursor_only,
                 view_prefs.show_line_numbers,
                 diagnostics_inline_text,
+                show_tilde,
             );
 
             view_line_mappings.insert(split_id, layout_output.view_line_mappings);
@@ -1442,6 +1449,7 @@ impl SplitRenderer {
         _is_active: bool,
         view_state: &mut crate::view::composite_view::CompositeViewState,
         use_terminal_bg: bool,
+        show_tilde: bool,
     ) {
         use crate::model::composite_buffer::{CompositeLayout, RowType};
 
@@ -1629,14 +1637,16 @@ impl SplitRenderer {
         for view_row in 0..visible_rows {
             let display_row = scroll_row + view_row;
             if display_row >= total_rows {
-                // Fill with tildes for empty rows
-                let mut x = area.x;
-                for &width in &pane_widths {
-                    let tilde_area = Rect::new(x, content_y + view_row as u16, width, 1);
-                    let tilde =
-                        Paragraph::new("~").style(Style::default().fg(theme.line_number_fg));
-                    frame.render_widget(tilde, tilde_area);
-                    x += width + separator_width;
+                if show_tilde {
+                    // Fill with tildes for empty rows
+                    let mut x = area.x;
+                    for &width in &pane_widths {
+                        let tilde_area = Rect::new(x, content_y + view_row as u16, width, 1);
+                        let tilde =
+                            Paragraph::new("~").style(Style::default().fg(theme.line_number_fg));
+                        frame.render_widget(tilde, tilde_area);
+                        x += width + separator_width;
+                    }
                 }
                 continue;
             }
@@ -4325,6 +4335,7 @@ impl SplitRenderer {
             software_cursor_only,
             show_line_numbers,
             byte_offset_mode,
+            show_tilde,
         } = input;
 
         let selection_ranges = &selection.ranges;
@@ -5385,15 +5396,17 @@ impl SplitRenderer {
         // modifier can bleed through to overlays (like menus) rendered on top of these
         // lines due to how terminal escape sequences are output.
         // See: https://github.com/sinelaw/fresh/issues/458
-        let eof_fg = dim_color_for_tilde(theme.line_number_fg);
-        let eof_style = Style::default().fg(eof_fg);
-        while lines.len() < render_area.height as usize {
-            // Show tilde with dim styling, padded with spaces to fill the line
-            let tilde_line = format!(
-                "~{}",
-                " ".repeat(render_area.width.saturating_sub(1) as usize)
-            );
-            lines.push(Line::styled(tilde_line, eof_style));
+        if show_tilde {
+            let eof_fg = dim_color_for_tilde(theme.line_number_fg);
+            let eof_style = Style::default().fg(eof_fg);
+            while lines.len() < render_area.height as usize {
+                // Show tilde with dim styling, padded with spaces to fill the line
+                let tilde_line = format!(
+                    "~{}",
+                    " ".repeat(render_area.width.saturating_sub(1) as usize)
+                );
+                lines.push(Line::styled(tilde_line, eof_style));
+            }
         }
 
         LineRenderOutput {
@@ -5462,6 +5475,7 @@ impl SplitRenderer {
         software_cursor_only: bool,
         show_line_numbers: bool,
         diagnostics_inline_text: bool,
+        show_tilde: bool,
     ) -> BufferLayoutOutput {
         let _span = tracing::trace_span!("compute_buffer_layout").entered();
 
@@ -5682,6 +5696,7 @@ impl SplitRenderer {
             software_cursor_only,
             show_line_numbers,
             byte_offset_mode,
+            show_tilde,
         });
 
         let view_line_mappings = render_output.view_line_mappings.clone();
@@ -5877,6 +5892,7 @@ impl SplitRenderer {
         rulers: &[usize],
         show_line_numbers: bool,
         diagnostics_inline_text: bool,
+        show_tilde: bool,
     ) -> Vec<ViewLineMapping> {
         let layout_output = Self::compute_buffer_layout(
             state,
@@ -5898,6 +5914,7 @@ impl SplitRenderer {
             software_cursor_only,
             show_line_numbers,
             diagnostics_inline_text,
+            show_tilde,
         );
 
         let view_line_mappings = layout_output.view_line_mappings.clone();
@@ -6296,6 +6313,7 @@ mod tests {
             software_cursor_only: false,
             show_line_numbers: true, // Tests show line numbers
             byte_offset_mode: false, // Tests use exact line numbers
+            show_tilde: true,
         });
 
         (

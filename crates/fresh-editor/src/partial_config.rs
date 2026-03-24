@@ -188,6 +188,7 @@ pub struct PartialEditorConfig {
     pub show_prompt_line: Option<bool>,
     pub show_vertical_scrollbar: Option<bool>,
     pub show_horizontal_scrollbar: Option<bool>,
+    pub show_tilde: Option<bool>,
     pub use_terminal_bg: Option<bool>,
     pub rulers: Option<Vec<usize>>,
     pub whitespace_show: Option<bool>,
@@ -280,6 +281,7 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.show_vertical_scrollbar);
         self.show_horizontal_scrollbar
             .merge_from(&other.show_horizontal_scrollbar);
+        self.show_tilde.merge_from(&other.show_tilde);
         self.use_terminal_bg.merge_from(&other.use_terminal_bg);
         self.rulers.merge_from(&other.rulers);
         self.whitespace_show.merge_from(&other.whitespace_show);
@@ -541,6 +543,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             show_prompt_line: Some(cfg.show_prompt_line),
             show_vertical_scrollbar: Some(cfg.show_vertical_scrollbar),
             show_horizontal_scrollbar: Some(cfg.show_horizontal_scrollbar),
+            show_tilde: Some(cfg.show_tilde),
             use_terminal_bg: Some(cfg.use_terminal_bg),
             rulers: Some(cfg.rulers.clone()),
             whitespace_show: Some(cfg.whitespace_show),
@@ -666,6 +669,7 @@ impl PartialEditorConfig {
             show_horizontal_scrollbar: self
                 .show_horizontal_scrollbar
                 .unwrap_or(defaults.show_horizontal_scrollbar),
+            show_tilde: self.show_tilde.unwrap_or(defaults.show_tilde),
             use_terminal_bg: self.use_terminal_bg.unwrap_or(defaults.use_terminal_bg),
             rulers: self.rulers.unwrap_or_else(|| defaults.rulers.clone()),
             whitespace_show: self.whitespace_show.unwrap_or(defaults.whitespace_show),

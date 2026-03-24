@@ -458,6 +458,7 @@ impl Editor {
             self.config.editor.show_vertical_scrollbar,
             self.config.editor.show_horizontal_scrollbar,
             self.config.editor.diagnostics_inline_text,
+            self.config.editor.show_tilde,
         );
 
         drop(_content_span);
@@ -4390,6 +4391,7 @@ impl Editor {
             self.config.editor.show_vertical_scrollbar,
             self.config.editor.show_horizontal_scrollbar,
             self.config.editor.diagnostics_inline_text,
+            self.config.editor.show_tilde,
         );
 
         self.cached_layout.view_line_mappings = view_line_mappings;

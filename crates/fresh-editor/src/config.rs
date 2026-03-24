@@ -621,6 +621,13 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_horizontal_scrollbar: bool,
 
+    /// Show tilde (~) markers on lines after the end of the file.
+    /// These vim-style markers indicate lines that are not part of the file content.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_tilde: bool,
+
     /// Use the terminal's default background color instead of the theme's editor background.
     /// When enabled, the editor background inherits from the terminal emulator,
     /// allowing transparency or custom terminal backgrounds to show through.
@@ -1137,6 +1144,7 @@ impl Default for EditorConfig {
             show_prompt_line: true,
             show_vertical_scrollbar: true,
             show_horizontal_scrollbar: false,
+            show_tilde: true,
             use_terminal_bg: false,
             rulers: Vec::new(),
             whitespace_show: true,
