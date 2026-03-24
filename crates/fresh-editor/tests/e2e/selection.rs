@@ -2228,3 +2228,41 @@ fn test_ctrl_d_at_word_end() {
         "Ctrl+D at word end should select entire 'word'"
     );
 }
+
+/// Test select word with accented characters (issue #1332)
+/// Ctrl+W on a word like "hibajavítás" should select the entire word,
+/// not stop at the accented character.
+#[test]
+fn test_select_word_with_accented_characters() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    let _fixture = harness
+        .load_buffer_from_text("hibajavítás\n")
+        .unwrap();
+
+    // Move cursor to beginning of the word
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+
+    // Select word with Ctrl+W
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    let cursor = harness.editor().active_cursors().primary();
+    let range = cursor
+        .selection_range()
+        .expect("Cursor should have a selection after Ctrl+W");
+    let selected_text = harness
+        .editor_mut()
+        .active_state_mut()
+        .get_text_range(range.start, range.end);
+    assert_eq!(
+        selected_text, "hibajavítás",
+        "Ctrl+W should select the entire word including accented characters"
+    );
+}
