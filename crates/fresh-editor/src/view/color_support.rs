@@ -458,4 +458,152 @@ mod tests {
         assert!(!matches!(converted, Color::Rgb(_, _, _)));
         assert!(!matches!(converted, Color::Indexed(_)));
     }
+
+    // =========================================================================
+    // Issue #1239: 256-color theme reproduction tests
+    // These tests document the contrast problems when themes are rendered
+    // in 256-color mode. They currently demonstrate the broken behavior.
+    // =========================================================================
+
+    /// Helper: compute WCAG-like contrast ratio between two 256-color indices
+    fn contrast_ratio_256(idx1: u8, idx2: u8) -> f64 {
+        fn idx_to_rgb(idx: u8) -> (u8, u8, u8) {
+            match idx {
+                0..=15 => {
+                    let ansi: [(u8, u8, u8); 16] = [
+                        (0, 0, 0), (128, 0, 0), (0, 128, 0), (128, 128, 0),
+                        (0, 0, 128), (128, 0, 128), (0, 128, 128), (192, 192, 192),
+                        (128, 128, 128), (255, 0, 0), (0, 255, 0), (255, 255, 0),
+                        (0, 0, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255),
+                    ];
+                    ansi[idx as usize]
+                }
+                16..=231 => {
+                    let i = idx - 16;
+                    ((i / 36) * 51, ((i % 36) / 6) * 51, (i % 6) * 51)
+                }
+                232..=255 => {
+                    let g = (idx - 232) * 10 + 8;
+                    (g, g, g)
+                }
+            }
+        }
+        fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
+            let r = {
+                let s = r as f64 / 255.0;
+                if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+            };
+            let g = {
+                let s = g as f64 / 255.0;
+                if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+            };
+            let b = {
+                let s = b as f64 / 255.0;
+                if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+            };
+            0.2126 * r + 0.7152 * g + 0.0722 * b
+        }
+        let (r1, g1, b1) = idx_to_rgb(idx1);
+        let (r2, g2, b2) = idx_to_rgb(idx2);
+        let l1 = relative_luminance(r1, g1, b1);
+        let l2 = relative_luminance(r2, g2, b2);
+        let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+        (lighter + 0.05) / (darker + 0.05)
+    }
+
+    /// Solarized-dark: editor bg and selection_bg both map to the SAME index (black).
+    /// Selection is completely invisible.
+    #[test]
+    fn test_issue_1239_solarized_bg_and_selection_collapse() {
+        let bg_idx = rgb_to_256(0, 43, 54);        // solarized bg
+        let sel_idx = rgb_to_256(7, 54, 66);        // solarized selection_bg
+
+        // CURRENT BEHAVIOR: both map to 16 (black) — selection is invisible
+        // This test documents the bug. When fixed, these should map to
+        // different indices.
+        assert_eq!(bg_idx, sel_idx,
+            "BUG (issue #1239): solarized bg and selection_bg both map to idx {}, \
+             making selection invisible. Fix should make them different.", bg_idx);
+    }
+
+    /// Solarized-dark: popup text on selection bg is unreadable (contrast ~1.09)
+    #[test]
+    fn test_issue_1239_solarized_popup_selection_unreadable() {
+        let text_idx = rgb_to_256(131, 148, 150);   // popup_text_fg
+        let sel_idx = rgb_to_256(38, 139, 210);      // popup_selection_bg
+        let cr = contrast_ratio_256(text_idx, sel_idx);
+
+        // CURRENT BEHAVIOR: contrast ratio ~1.09 — practically identical
+        assert!(cr < 1.5,
+            "BUG (issue #1239): solarized popup selected text has contrast {:.2}, \
+             expected < 1.5 (currently broken). Minimum readable is ~3.0.", cr);
+    }
+
+    /// Nord: line numbers are nearly invisible (contrast ~1.52)
+    #[test]
+    fn test_issue_1239_nord_line_numbers_invisible() {
+        let ln_fg_idx = rgb_to_256(76, 86, 106);    // line_number_fg
+        let bg_idx = rgb_to_256(46, 52, 64);         // editor bg / line_number_bg
+        let cr = contrast_ratio_256(ln_fg_idx, bg_idx);
+
+        // CURRENT BEHAVIOR: both map to very dark colors, contrast ~1.52
+        assert!(cr < 2.0,
+            "BUG (issue #1239): nord line numbers have contrast {:.2}, \
+             expected < 2.0 (currently broken). Should be at least 3.0.", cr);
+    }
+
+    /// Nord: popup border is unreadable (contrast ~1.45)
+    #[test]
+    fn test_issue_1239_nord_popup_border_unreadable() {
+        let border_idx = rgb_to_256(76, 86, 106);   // popup_border_fg
+        let popup_bg_idx = rgb_to_256(59, 66, 82);   // popup_bg
+        let cr = contrast_ratio_256(border_idx, popup_bg_idx);
+
+        assert!(cr < 2.0,
+            "BUG (issue #1239): nord popup border has contrast {:.2}, \
+             expected < 2.0 (currently broken).", cr);
+    }
+
+    /// Dracula: line numbers are hard to read (contrast ~1.81)
+    #[test]
+    fn test_issue_1239_dracula_line_numbers_low_contrast() {
+        let ln_fg_idx = rgb_to_256(98, 114, 164);   // line_number_fg
+        let bg_idx = rgb_to_256(40, 42, 54);         // editor bg
+        let cr = contrast_ratio_256(ln_fg_idx, bg_idx);
+
+        assert!(cr < 2.0,
+            "BUG (issue #1239): dracula line numbers have contrast {:.2}, \
+             expected < 2.0 (currently broken).", cr);
+    }
+
+    /// Light theme: Ctrl+P helper text is completely unreadable (contrast ~1.03)
+    #[test]
+    fn test_issue_1239_light_palette_helper_unreadable() {
+        // The "file | >command | :line | #buffer" text at the bottom of Ctrl+P
+        // Light theme uses default fg (idx 7 = gray 192,192,192) on
+        // popup highlight bg mapped to idx 152 (153,204,204)
+        let cr = contrast_ratio_256(7, 152);
+
+        assert!(cr < 1.5,
+            "BUG (issue #1239): light theme palette helper text has contrast {:.2}, \
+             virtually unreadable.", cr);
+    }
+
+    /// Multiple dark theme backgrounds collapse to the same black (idx 16)
+    #[test]
+    fn test_issue_1239_dark_backgrounds_collapse_to_black() {
+        // These are all conceptually different backgrounds but map to the same index
+        let solarized_bg = rgb_to_256(0, 43, 54);
+        let nord_bg = rgb_to_256(46, 52, 64);
+        let dracula_bg = rgb_to_256(40, 42, 54);
+        let nord_sel = rgb_to_256(67, 76, 94);
+        let solarized_sel = rgb_to_256(7, 54, 66);
+
+        // All map to idx 16 or 17 (pure black or near-black)
+        assert!(solarized_bg <= 17, "solarized bg={}", solarized_bg);
+        assert!(nord_bg <= 17, "nord bg={}", nord_bg);
+        assert!(dracula_bg <= 17, "dracula bg={}", dracula_bg);
+        assert!(nord_sel <= 17, "nord sel={}", nord_sel);
+        assert!(solarized_sel <= 17, "solarized sel={}", solarized_sel);
+    }
 }
