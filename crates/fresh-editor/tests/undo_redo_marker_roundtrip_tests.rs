@@ -91,6 +91,24 @@ fn get_vtext_positions(state: &EditorState) -> Vec<usize> {
         .collect()
 }
 
+/// Undo one step: apply inverse events and restore displaced markers.
+fn do_undo(state: &mut EditorState, cursors: &mut Cursors, log: &mut EventLog) {
+    for (e, displaced) in log.undo() {
+        state.apply(cursors, &e);
+        for &(mid, pos) in &displaced {
+            state.marker_list.set_position(MarkerId(mid), pos);
+            state.margins.set_indicator_position(MarkerId(mid), pos);
+        }
+    }
+}
+
+/// Redo one step: apply forward events (no displaced marker restoration needed).
+fn do_redo(state: &mut EditorState, cursors: &mut Cursors, log: &mut EventLog) {
+    for e in log.redo() {
+        state.apply(cursors, &e);
+    }
+}
+
 // ============================================================================
 // Single-edit operations for proptest
 // ============================================================================
@@ -214,9 +232,7 @@ fn verify_roundtrip(
     let post_edit_margin = state.margins.get_indicator_position(margin_id).unwrap();
 
     // Undo
-    for e in log.undo() {
-        state.apply(cursors, &e);
-    }
+    do_undo(state, cursors, log);
     assert_eq!(
         state.buffer.to_string().unwrap(),
         orig_content,
@@ -233,9 +249,7 @@ fn verify_roundtrip(
     );
 
     // Redo
-    for e in log.redo() {
-        state.apply(cursors, &e);
-    }
+    do_redo(state, cursors, log);
     assert_eq!(
         state.buffer.to_string().unwrap(),
         post_edit_content,
@@ -392,6 +406,106 @@ fn test_each_single_edit_type_marker_roundtrip() {
     }
 }
 
+/// Test: Delete range containing a marker — undo must restore marker to its
+/// exact original position, not to the deletion boundary or the end of the
+/// re-inserted text.
+#[test]
+fn test_delete_containing_marker_restores_exact_position_on_undo() {
+    let (mut state, mut cursors, mut log) = setup_state("hello world");
+    let margin_id = add_margin_indicator(&mut state, 7);
+    let _vtext_id = add_virtual_text(&mut state, 7);
+
+    assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 7);
+    assert_eq!(get_vtext_positions(&state), vec![7]);
+
+    // Delete range 5..10 (" worl") — marker at 7 is inside this range
+    let event = Event::Delete {
+        range: 5..10,
+        deleted_text: " worl".to_string(),
+        cursor_id: cursors.primary_id(),
+    };
+    log.append(event.clone());
+    // Capture displaced markers and store on log entry BEFORE applying
+    state
+        .marker_list
+        .query_range(5, 10)
+        .iter()
+        .for_each(|(mid, start, _)| {
+            if *start > 5 && *start < 10 {
+                // Would be captured by log_and_apply_event in production
+            }
+        });
+    // Manually set displaced markers on the log entry (simulating what
+    // Editor::log_and_apply_event does in the real code path)
+    log.set_displaced_markers_on_last(vec![(margin_id.0, 7)]);
+    state.apply(&mut cursors, &event);
+    assert_eq!(state.buffer.to_string().unwrap(), "hellod");
+
+    // After delete, marker collapsed to 5 (start of deleted range)
+    let margin_after_delete = state.margins.get_indicator_position(margin_id).unwrap();
+    assert!(
+        margin_after_delete <= 5,
+        "Marker should collapse to deletion start, got {}",
+        margin_after_delete
+    );
+
+    // Undo: re-insert " worl" at position 5
+    do_undo(&mut state, &mut cursors, &mut log);
+    assert_eq!(state.buffer.to_string().unwrap(), "hello world");
+
+    // The marker must be restored to its EXACT original position (7),
+    // not to 5 (collapsed position) or 10 (end of re-inserted text).
+    assert_eq!(
+        state.margins.get_indicator_position(margin_id).unwrap(),
+        7,
+        "Margin marker should be restored to exact original position after undo"
+    );
+
+    // Redo should return to the collapsed state
+    do_redo(&mut state, &mut cursors, &mut log);
+    assert_eq!(state.buffer.to_string().unwrap(), "hellod");
+}
+
+/// Test: Multiple markers inside a deleted range — all restored on undo.
+#[test]
+fn test_delete_containing_multiple_markers_restores_all_on_undo() {
+    let (mut state, mut cursors, mut log) = setup_state("abcdefghij");
+    let m1 = add_margin_indicator(&mut state, 3);
+    let m2 = add_margin_indicator(&mut state, 5);
+    let m3 = add_margin_indicator(&mut state, 7);
+
+    // Delete range 2..8 ("cdefgh") — all three markers inside
+    let event = Event::Delete {
+        range: 2..8,
+        deleted_text: "cdefgh".to_string(),
+        cursor_id: cursors.primary_id(),
+    };
+    // Manually set displaced markers (simulating log_and_apply_event)
+    log.append(event.clone());
+    log.set_displaced_markers_on_last(vec![(m1.0, 3), (m2.0, 5), (m3.0, 7)]);
+    state.apply(&mut cursors, &event);
+    assert_eq!(state.buffer.to_string().unwrap(), "abij");
+
+    // Undo
+    do_undo(&mut state, &mut cursors, &mut log);
+    assert_eq!(state.buffer.to_string().unwrap(), "abcdefghij");
+    assert_eq!(
+        state.margins.get_indicator_position(m1).unwrap(),
+        3,
+        "Marker 1 should be restored to 3"
+    );
+    assert_eq!(
+        state.margins.get_indicator_position(m2).unwrap(),
+        5,
+        "Marker 2 should be restored to 5"
+    );
+    assert_eq!(
+        state.margins.get_indicator_position(m3).unwrap(),
+        7,
+        "Marker 3 should be restored to 7"
+    );
+}
+
 // ============================================================================
 // Deterministic tests: specific scenarios
 // ============================================================================
@@ -422,17 +536,13 @@ fn test_insert_after_markers_roundtrip() {
     assert_eq!(get_vtext_positions(&state), vec![3]);
 
     // Undo
-    for e in log.undo() {
-        state.apply(&mut cursors, &e);
-    }
+    do_undo(&mut state, &mut cursors, &mut log);
     assert_eq!(state.buffer.to_string().unwrap(), "hello");
     assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 0);
     assert_eq!(get_vtext_positions(&state), vec![3]);
 
     // Redo
-    for e in log.redo() {
-        state.apply(&mut cursors, &e);
-    }
+    do_redo(&mut state, &mut cursors, &mut log);
     assert_eq!(state.buffer.to_string().unwrap(), "helloX");
     assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 0);
     assert_eq!(get_vtext_positions(&state), vec![3]);
@@ -461,17 +571,13 @@ fn test_insert_before_markers_roundtrip() {
     assert_eq!(get_vtext_positions(&state), vec![5]);
 
     // Undo
-    for e in log.undo() {
-        state.apply(&mut cursors, &e);
-    }
+    do_undo(&mut state, &mut cursors, &mut log);
     assert_eq!(state.buffer.to_string().unwrap(), "hello");
     assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 2);
     assert_eq!(get_vtext_positions(&state), vec![3]);
 
     // Redo
-    for e in log.redo() {
-        state.apply(&mut cursors, &e);
-    }
+    do_redo(&mut state, &mut cursors, &mut log);
     assert_eq!(state.buffer.to_string().unwrap(), "hXXello");
     assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 4);
     assert_eq!(get_vtext_positions(&state), vec![5]);
@@ -500,17 +606,13 @@ fn test_delete_before_markers_roundtrip() {
     assert_eq!(get_vtext_positions(&state), vec![2]);
 
     // Undo
-    for e in log.undo() {
-        state.apply(&mut cursors, &e);
-    }
+    do_undo(&mut state, &mut cursors, &mut log);
     assert_eq!(state.buffer.to_string().unwrap(), "hello world");
     assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 6);
     assert_eq!(get_vtext_positions(&state), vec![8]);
 
     // Redo
-    for e in log.redo() {
-        state.apply(&mut cursors, &e);
-    }
+    do_redo(&mut state, &mut cursors, &mut log);
     assert_eq!(state.buffer.to_string().unwrap(), "world");
     assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 0);
     assert_eq!(get_vtext_positions(&state), vec![2]);
@@ -552,30 +654,22 @@ fn test_multi_edit_marker_roundtrip() {
     assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 0);
 
     // Undo step 2: inserts "de" back at 5 → "aXXbcdef", marker stays at 0
-    for e in log.undo() {
-        state.apply(&mut cursors, &e);
-    }
+    do_undo(&mut state, &mut cursors, &mut log);
     assert_eq!(state.buffer.to_string().unwrap(), "aXXbcdef");
     assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 0);
 
     // Undo step 1: deletes "XX" at 1..3 → "abcdef", marker stays at 0
-    for e in log.undo() {
-        state.apply(&mut cursors, &e);
-    }
+    do_undo(&mut state, &mut cursors, &mut log);
     assert_eq!(state.buffer.to_string().unwrap(), "abcdef");
     assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 0);
 
     // Redo step 1: inserts "XX" at 1 → "aXXbcdef", marker stays at 0
-    for e in log.redo() {
-        state.apply(&mut cursors, &e);
-    }
+    do_redo(&mut state, &mut cursors, &mut log);
     assert_eq!(state.buffer.to_string().unwrap(), "aXXbcdef");
     assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 0);
 
     // Redo step 2: deletes "de" at 5..7 → "aXXbcf", marker stays at 0
-    for e in log.redo() {
-        state.apply(&mut cursors, &e);
-    }
+    do_redo(&mut state, &mut cursors, &mut log);
     assert_eq!(state.buffer.to_string().unwrap(), "aXXbcf");
     assert_eq!(state.margins.get_indicator_position(margin_id).unwrap(), 0);
 }
@@ -624,10 +718,7 @@ fn run_marker_roundtrip(ops: &[SingleEditOp]) -> Result<(), proptest::test_runne
 
     // Undo all write events
     for _ in 0..write_count {
-        let events = log.undo();
-        for e in &events {
-            state.apply(&mut cursors, e);
-        }
+        do_undo(&mut state, &mut cursors, &mut log);
     }
 
     let after_undo_content = state.buffer.to_string().unwrap();
@@ -654,10 +745,7 @@ fn run_marker_roundtrip(ops: &[SingleEditOp]) -> Result<(), proptest::test_runne
 
     // Redo all write events
     for _ in 0..write_count {
-        let events = log.redo();
-        for e in events {
-            state.apply(&mut cursors, &e);
-        }
+        do_redo(&mut state, &mut cursors, &mut log);
     }
 
     let after_redo_content = state.buffer.to_string().unwrap();

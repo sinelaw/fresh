@@ -3790,8 +3790,7 @@ impl Editor {
             } else {
                 // Single cursor - apply normally
                 for event in events {
-                    self.active_event_log_mut().append(event.clone());
-                    self.apply_event_to_active_buffer(&event);
+                    self.log_and_apply_event(&event);
                     self.track_cursor_movement(&event);
                 }
             }

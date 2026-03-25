@@ -547,6 +547,13 @@ pub struct LogEntry {
 
     /// Optional description for debugging
     pub description: Option<String>,
+
+    /// Markers displaced by deletions in this event.
+    /// Stored as (marker_id_raw, original_byte_position).
+    /// When this event is undone, the inverse Insert restores these markers
+    /// to their exact original positions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub displaced_markers: Vec<(u64, usize)>,
 }
 
 impl LogEntry {
@@ -558,6 +565,7 @@ impl LogEntry {
                 .unwrap()
                 .as_millis() as u64,
             description: None,
+            displaced_markers: Vec::new(),
         }
     }
 
@@ -790,6 +798,15 @@ impl EventLog {
         self.current_index - 1
     }
 
+    /// Set displaced markers on the last appended entry.
+    /// Call this right after `append()` to record markers that were inside
+    /// the deleted range, so undo can restore them to exact positions.
+    pub fn set_displaced_markers_on_last(&mut self, markers: Vec<(u64, usize)>) {
+        if let Some(entry) = self.entries.last_mut() {
+            entry.displaced_markers = markers;
+        }
+    }
+
     /// Get the current event index
     pub fn current_index(&self) -> usize {
         self.current_index
@@ -816,25 +833,27 @@ impl EventLog {
     }
 
     /// Move back through events (for undo)
-    /// Collects all events up to and including the first write action, returns their inverses
+    /// Collects all events up to and including the first write action, returns their inverses.
+    /// Each inverse event is paired with displaced markers from the original event,
+    /// which should be restored after applying the inverse Insert.
     /// This processes readonly events (like scrolling) and stops at write events (like Insert/Delete)
-    pub fn undo(&mut self) -> Vec<Event> {
+    pub fn undo(&mut self) -> Vec<(Event, Vec<(u64, usize)>)> {
         let mut inverse_events = Vec::new();
         let mut found_write_action = false;
 
         // Keep moving backward until we find a write action
         while self.can_undo() && !found_write_action {
             self.current_index -= 1;
-            let event = &self.entries[self.current_index].event;
+            let entry = &self.entries[self.current_index];
 
             // Check if this is a write action - we'll stop after processing it
-            if event.is_write_action() {
+            if entry.event.is_write_action() {
                 found_write_action = true;
             }
 
             // Try to get the inverse of this event
-            if let Some(inverse) = event.inverse() {
-                inverse_events.push(inverse);
+            if let Some(inverse) = entry.event.inverse() {
+                inverse_events.push((inverse, entry.displaced_markers.clone()));
             }
             // If no inverse exists (like MoveCursor), we just skip it
         }

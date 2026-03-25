@@ -2398,6 +2398,41 @@ impl Editor {
     /// - Any other cross-cutting concerns
     ///
     /// All event applications MUST go through this method to ensure consistency.
+    /// Log an event and apply it to the active buffer.
+    /// For Delete events, captures displaced marker positions before applying
+    /// so undo can restore them to their exact original positions.
+    pub fn log_and_apply_event(&mut self, event: &Event) {
+        // Capture displaced markers before the event is applied
+        if let Event::Delete { range, .. } = event {
+            let state = self.active_state();
+            let mut displaced = Vec::new();
+            if range.len() > 0 {
+                for (marker_id, start, _end) in
+                    state.marker_list.query_range(range.start, range.end)
+                {
+                    if start > range.start && start < range.end {
+                        displaced.push((marker_id.0, start));
+                    }
+                }
+                for (marker_id, start, _end) in
+                    state.margins.query_indicator_range(range.start, range.end)
+                {
+                    if start > range.start && start < range.end {
+                        displaced.push((marker_id.0, start));
+                    }
+                }
+            }
+            self.active_event_log_mut().append(event.clone());
+            if !displaced.is_empty() {
+                self.active_event_log_mut()
+                    .set_displaced_markers_on_last(displaced);
+            }
+        } else {
+            self.active_event_log_mut().append(event.clone());
+        }
+        self.apply_event_to_active_buffer(event);
+    }
+
     pub fn apply_event_to_active_buffer(&mut self, event: &Event) {
         // Handle View events at Editor level - View events go to SplitViewState, not EditorState
         // This properly separates Buffer state from View state

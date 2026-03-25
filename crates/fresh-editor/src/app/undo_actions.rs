@@ -25,10 +25,25 @@ impl Editor {
             events.len()
         );
 
-        // Apply all inverse events collected during undo
-        for event in &events {
+        // Apply all inverse events collected during undo.
+        // Each event may carry displaced markers that need restoration after apply.
+        for (event, displaced_markers) in &events {
             tracing::debug!("Undo applying event: {:?}", event);
             self.apply_event_to_active_buffer(event);
+
+            // Restore displaced markers to their exact original positions.
+            // These were captured when the original Delete was logged and carried
+            // through the EventLog into the inverse Insert event.
+            if !displaced_markers.is_empty() {
+                let state = self.active_state_mut();
+                for &(marker_id_raw, original_pos) in displaced_markers {
+                    let marker_id = crate::model::marker::MarkerId(marker_id_raw);
+                    state.marker_list.set_position(marker_id, original_pos);
+                    state
+                        .margins
+                        .set_indicator_position(marker_id, original_pos);
+                }
+            }
         }
 
         // Update modified status based on event log position
