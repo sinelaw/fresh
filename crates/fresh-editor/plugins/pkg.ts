@@ -3035,34 +3035,9 @@ editor.registerCommand("%cmd.install_url", "%cmd.install_url_desc", "pkg_install
 // Note: Other commands (install_plugin, install_theme, update, remove, sync, etc.)
 // are available via the package manager UI and don't need global command palette entries.
 
-// =============================================================================
-// Startup: Load installed language packs and bundles
-// =============================================================================
-
-(async function loadInstalledPackages() {
-  // Load language packs
-  const languages = getInstalledPackages("language");
-  for (const pkg of languages) {
-    if (pkg.manifest) {
-      editor.debug(`[pkg] Loading language pack: ${pkg.name}`);
-      await loadLanguagePack(pkg.path, pkg.manifest);
-    }
-  }
-  if (languages.length > 0) {
-    editor.debug(`[pkg] Loaded ${languages.length} language pack(s)`);
-  }
-
-  // Load bundles
-  const bundles = getInstalledPackages("bundle");
-  for (const pkg of bundles) {
-    if (pkg.manifest) {
-      editor.debug(`[pkg] Loading bundle: ${pkg.name}`);
-      await loadBundle(pkg.path, pkg.manifest);
-    }
-  }
-  if (bundles.length > 0) {
-    editor.debug(`[pkg] Loaded ${bundles.length} bundle(s)`);
-  }
-})();
+// Note: Startup loading of installed language packs and bundles is now handled
+// by Rust (services::packages::scan_installed_packages) during editor init.
+// The loadLanguagePack() and loadBundle() functions above are still used for
+// runtime installs via the package manager UI.
 
 editor.debug("Package Manager plugin loaded");
