@@ -1093,7 +1093,7 @@ impl Editor {
             config
                 .lsp
                 .entry(lang_id.clone())
-                .or_insert_with(|| lsp_config.clone());
+                .or_insert_with(|| vec![lsp_config.clone()]);
         }
 
         let theme_registry = theme_loader.load_all(&scan_result.bundle_theme_dirs);
