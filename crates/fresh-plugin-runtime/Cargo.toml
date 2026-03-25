@@ -21,7 +21,6 @@ fresh-parser-js.workspace = true
 fresh-plugin-api-macros.workspace = true
 ts-rs.workspace = true
 lsp-types.workspace = true
-url = "2.5"
 oxc_allocator.workspace = true
 oxc_parser.workspace = true
 oxc_codegen.workspace = true

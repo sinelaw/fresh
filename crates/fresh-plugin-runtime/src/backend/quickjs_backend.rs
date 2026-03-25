@@ -1403,9 +1403,7 @@ impl JsEditorApi {
     /// Handles percent-decoding and Windows drive letters.
     /// Returns an empty string if the URI is not a valid file URI.
     pub fn file_uri_to_path(&self, uri: String) -> String {
-        url::Url::parse(&uri)
-            .ok()
-            .and_then(|u| u.to_file_path().ok())
+        fresh_core::file_uri::file_uri_to_path(&uri)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default()
     }
@@ -1414,9 +1412,7 @@ impl JsEditorApi {
     /// Handles Windows drive letters and special characters.
     /// Returns an empty string if the path cannot be converted.
     pub fn path_to_file_uri(&self, path: String) -> String {
-        url::Url::from_file_path(&path)
-            .map(|u| u.to_string())
-            .unwrap_or_default()
+        fresh_core::file_uri::path_to_file_uri(std::path::Path::new(&path)).unwrap_or_default()
     }
 
     /// Get the UTF-8 byte length of a JavaScript string.

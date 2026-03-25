@@ -266,7 +266,7 @@ fn helper() {
 /// Test that undo after successful rename restores all occurrences in one step
 #[test]
 fn test_lsp_rename_undo_restores_all() {
-    use lsp_types::{Position, Range, TextEdit, Uri, WorkspaceEdit};
+    use lsp_types::{Position, Range, TextEdit, WorkspaceEdit};
     use std::collections::HashMap;
     use std::io::Write;
 
@@ -293,11 +293,7 @@ fn test_lsp_rename_undo_restores_all() {
     assert_eq!(original_content.matches("value").count(), 3);
 
     // Create file URI from the temp file path
-    let file_uri = url::Url::from_file_path(&test_file)
-        .unwrap()
-        .as_str()
-        .parse::<Uri>()
-        .unwrap();
+    let file_uri = fresh_core::file_uri::path_to_lsp_uri(&test_file).unwrap();
 
     // Simulate LSP WorkspaceEdit response with multiple edits
     #[allow(clippy::mutable_key_type)]

@@ -48,7 +48,6 @@ runtime = [
     "dep:tracing-subscriber",
     "dep:fresh-languages",
     "dep:lsp-types",
-    "dep:url",
     "dep:tokio",
     "dep:async-trait",
     "dep:lru",
@@ -126,7 +125,6 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 lsp-types = { workspace = true, optional = true }
-url = { version = "2.5", optional = true }
 tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"], optional = true }
 async-trait = { version = "0.1", optional = true }
 lru = { version = "0.16", optional = true }

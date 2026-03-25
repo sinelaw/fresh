@@ -19,5 +19,8 @@ crossterm = { workspace = true, optional = true }
 rquickjs = { workspace = true, optional = true }
 rquickjs-serde = { workspace = true, optional = true }
 
+[dev-dependencies]
+proptest = "1.9"
+
 [features]
 plugins = ["dep:crossterm", "dep:rquickjs", "dep:rquickjs-serde"]

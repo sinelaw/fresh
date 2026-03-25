@@ -2036,7 +2036,7 @@ fn test_lsp_typing_performance_with_many_diagnostics() -> anyhow::Result<()> {
 fn test_handle_rename_response_with_document_changes() -> anyhow::Result<()> {
     use lsp_types::{
         DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range,
-        TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
+        TextDocumentEdit, TextEdit, WorkspaceEdit,
     };
 
     let mut harness = EditorTestHarness::new(80, 30)?;
@@ -2051,11 +2051,7 @@ fn test_handle_rename_response_with_document_changes() -> anyhow::Result<()> {
     harness.render()?;
 
     // Create a WorkspaceEdit with documentChanges (like rust-analyzer sends)
-    let uri = url::Url::from_file_path(&test_file)
-        .unwrap()
-        .as_str()
-        .parse::<Uri>()
-        .unwrap();
+    let uri = fresh_core::file_uri::path_to_lsp_uri(&test_file).unwrap();
     let text_edit_1 = TextEdit {
         range: Range {
             start: Position {
@@ -2487,7 +2483,7 @@ fn test_rust_analyzer_rename_real_scenario() -> anyhow::Result<()> {
 fn test_lsp_rename_consecutive_same_position() -> anyhow::Result<()> {
     use lsp_types::{
         DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range,
-        TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
+        TextDocumentEdit, TextEdit, WorkspaceEdit,
     };
 
     let mut harness = EditorTestHarness::new(80, 30)?;
@@ -2507,11 +2503,7 @@ fn test_lsp_rename_consecutive_same_position() -> anyhow::Result<()> {
     assert!(initial_content.contains("fn calculate(value: i32)"));
 
     // FIRST RENAME: value -> amount
-    let uri = url::Url::from_file_path(&test_file)
-        .unwrap()
-        .as_str()
-        .parse::<Uri>()
-        .unwrap();
+    let uri = fresh_core::file_uri::path_to_lsp_uri(&test_file).unwrap();
 
     let first_rename_edit = WorkspaceEdit {
         changes: None,
@@ -3275,10 +3267,7 @@ fn test_pull_diagnostics_message_handling() -> anyhow::Result<()> {
     harness.render()?;
 
     // Get the URI for the file
-    let uri = url::Url::from_file_path(&test_file)
-        .ok()
-        .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok())
-        .expect("Should create URI");
+    let uri = fresh_core::file_uri::path_to_lsp_uri(&test_file).expect("Should create URI");
 
     // Simulate receiving pulled diagnostics
     // Create a test diagnostic
@@ -3344,10 +3333,7 @@ fn test_pull_diagnostics_unchanged_response() -> anyhow::Result<()> {
     harness.render()?;
 
     // Get the URI
-    let uri = url::Url::from_file_path(&test_file)
-        .ok()
-        .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok())
-        .expect("Should create URI");
+    let uri = fresh_core::file_uri::path_to_lsp_uri(&test_file).expect("Should create URI");
 
     // Send an unchanged response (simulating server returning same diagnostics)
     if let Some(bridge) = harness.editor().async_bridge() {

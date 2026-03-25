@@ -208,11 +208,7 @@ pub use crate::model::event::BufferId;
 
 /// Helper function to convert lsp_types::Uri to PathBuf
 fn uri_to_path(uri: &lsp_types::Uri) -> Result<PathBuf, String> {
-    // Convert to url::Url for path conversion
-    url::Url::parse(uri.as_str())
-        .map_err(|e| format!("Failed to parse URI: {}", e))?
-        .to_file_path()
-        .map_err(|_| "URI is not a file path".to_string())
+    fresh_core::file_uri::lsp_uri_to_path(uri).ok_or_else(|| "URI is not a file path".to_string())
 }
 
 /// A pending grammar registration waiting for reload_grammars() to apply
