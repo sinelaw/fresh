@@ -183,7 +183,7 @@ fn test_state_eventlog_undo_redo() {
     // Undo all - log.undo() returns inverse events ready to apply
     while log.can_undo() {
         let events = log.undo();
-        for event in events {
+        for (event, _displaced) in events {
             state.apply(&mut cursors, &event);
         }
     }
@@ -234,7 +234,7 @@ fn test_undo_redo_cursor_positions() {
     // Undo twice (remove 'o' and 'l')
     for _ in 0..2 {
         let events = log.undo();
-        for event in events {
+        for (event, _displaced) in events {
             state.apply(&mut cursors, &event);
         }
     }
@@ -603,7 +603,7 @@ fn test_overlay_undo_redo() {
 
     // Undo - this should process AddOverlay (remove it) and undo the Insert
     let undo_events = log.undo();
-    for event in &undo_events {
+    for (event, _displaced) in &undo_events {
         state.apply(&mut cursors, event);
     }
 
