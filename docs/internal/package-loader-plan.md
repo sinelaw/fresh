@@ -36,10 +36,17 @@ both `languages/packages/` and `bundles/packages/`.
 - `LanguageConfig` in `config.rs` — has `comment_prefix`, `tab_size`, `use_tabs`, `auto_indent`, `formatter`, etc.
 - `LspServerConfig` in `types.rs` — has `command`, `args`, `auto_start`, `initialization_options`
 - `FreshPackageManifest` in `loader.rs` — only parses `name` + `fresh.grammar` (needs expansion)
+- `LanguagePackConfig` in `fresh_core::api` — already has `comment_prefix`, `block_comment_start`, etc. (used by plugin API)
+- `LspServerPackConfig` in `fresh_core::api` — already has `command`, `args`, `auto_start`, etc.
 
 ### Schema
 - `plugins/schemas/package.schema.json` — hand-maintained JSON schema covering all package types
 - CONTRIBUTING.md line 50: "Package schema: Manually maintained"
+
+### Theme loader
+- `view/theme/loader.rs` already scans `~/.config/fresh/themes/packages/*/` with `package.json`
+  manifest support. The gap is only loading themes from `bundles/packages/*/` — which means
+  adding one more scan directory to the existing `load_all()` method.
 
 ### Recent changes on master (parallel plugin loading)
 - `7a63ee07` — Plugin loading is now two-phase: Phase 1 reads files and
@@ -56,24 +63,28 @@ both `languages/packages/` and `bundles/packages/`.
 
 ## Design
 
-### 1. Define `PackageManifest` Rust struct with `#[derive(Deserialize, JsonSchema)]`
+### 1. Define `PackageManifest` Rust struct
 
 A single serde struct matching the full `package.schema.json` schema. Lives in
-a new module `crates/fresh-editor/src/services/packages.rs` (or
-`services/packages/manifest.rs` if it grows).
+a new module `crates/fresh-editor/src/services/packages.rs`.
+
+Fields use `#[serde(default)]` liberally so that unknown or missing fields
+are silently ignored — this ensures forward compatibility with manifests
+written for newer versions of Fresh.
 
 ```rust
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PackageManifest {
     pub name: String,
-    pub version: String,
-    pub description: String,
-    #[serde(rename = "type")]
-    pub package_type: PackageType,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(rename = "type", default)]
+    pub package_type: Option<PackageType>,
     #[serde(default)]
     pub fresh: Option<FreshManifestConfig>,
-    // author, license, repository, keywords — not needed at load time,
-    // but included for schema generation
+    // author, license, repository, keywords — not needed at load time
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -88,28 +99,29 @@ pub enum PackageType {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FreshManifestConfig {
-    pub grammar: Option<GrammarConfig>,
-    pub language: Option<LanguagePackConfig>,
-    pub lsp: Option<LspPackConfig>,
+    pub grammar: Option<GrammarManifestConfig>,
+    pub language: Option<LanguageManifestConfig>,
+    pub lsp: Option<LspManifestConfig>,
     pub languages: Option<Vec<BundleLanguage>>,  // bundles
     pub plugins: Option<Vec<BundlePlugin>>,      // bundles
     pub themes: Option<Vec<BundleTheme>>,         // bundles
     pub entry: Option<String>,                    // plugins
+    pub main: Option<String>,                     // alias for entry
     // ...
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct BundleLanguage {
     pub id: String,
-    pub grammar: Option<GrammarConfig>,
-    pub language: Option<LanguagePackConfig>,
-    pub lsp: Option<LspPackConfig>,
+    pub grammar: Option<GrammarManifestConfig>,
+    pub language: Option<LanguageManifestConfig>,
+    pub lsp: Option<LspManifestConfig>,
 }
 ```
 
-The `LanguagePackConfig` and `LspPackConfig` use camelCase serde rename to
-match the JSON schema (`commentPrefix`, `autoStart`, etc.), then convert to
-the existing Rust `LanguageConfig` / `LspServerConfig` types.
+The `LanguageManifestConfig` and `LspManifestConfig` use camelCase serde
+rename to match the JSON schema (`commentPrefix`, `autoStart`, etc.), then
+convert to the existing Rust `LanguageConfig` / `LspServerConfig` types.
 
 ### 2. Generate `package.schema.json` from Rust
 
@@ -132,40 +144,24 @@ plugin loading:
 
 ```rust
 pub struct PackageScanResult {
-    /// Language configs to merge into Config.languages
+    /// Language configs to insert into Config.languages (package defaults)
     pub language_configs: Vec<(String, LanguageConfig)>,
     /// LSP configs to apply
     pub lsp_configs: Vec<(String, LspServerConfig)>,
     /// Additional grammar files for the background build
     /// (bundle grammars not already in languages/packages/)
-    pub additional_grammars: Vec<(String, PathBuf, Vec<String>)>,
+    pub additional_grammars: Vec<GrammarSpec>,
     /// Bundle plugin directories to add to the plugin loading list
     pub bundle_plugin_dirs: Vec<PathBuf>,
     /// Bundle theme directories for theme reloading
-    pub bundle_theme_files: Vec<(PathBuf, String)>,
-}
-
-pub fn scan_installed_packages(config_dir: &Path) -> PackageScanResult {
-    let mut result = PackageScanResult::default();
-
-    // Scan languages/packages/
-    scan_directory(config_dir.join("languages/packages"), |manifest, pkg_dir| {
-        // For type: "language", extract language config + LSP config
-        // Grammar loading is already handled by the grammar loader
-    });
-
-    // Scan bundles/packages/
-    scan_directory(config_dir.join("bundles/packages"), |manifest, pkg_dir| {
-        // For type: "bundle":
-        //   - Extract language config + LSP config for each language entry
-        //   - Collect grammar paths for additional_grammars
-        //   - Collect plugin entry paths for bundle_plugin_dirs
-        //   - Collect theme files for bundle_theme_files
-    });
-
-    result
+    pub bundle_theme_dirs: Vec<PathBuf>,
 }
 ```
+
+Config precedence: **user config wins over package defaults**. The scanner
+uses `or_insert` (not `merge_from`) — package configs are inserted first,
+then user config overlays them during the normal config merge. This avoids
+the need for a `merge_from` method on `LanguageConfig`.
 
 ### 4. Integrate into `Editor::new()` (in `with_options`)
 
@@ -175,15 +171,14 @@ Insert the scan between config creation and plugin loading (~line 1210):
 // Scan installed packages (language packs + bundles)
 let scan_result = packages::scan_installed_packages(&dir_context.config_dir);
 
-// Apply language configs
+// Apply language configs (package defaults, user config takes priority)
 for (lang_id, lang_config) in scan_result.language_configs {
-    config.languages.entry(lang_id).or_default().merge_from(lang_config);
+    config.languages.entry(lang_id).or_insert(lang_config);
 }
 
-// Apply LSP configs
+// Apply LSP configs (package defaults)
 for (lang_id, lsp_config) in scan_result.lsp_configs {
-    config.lsp.insert(lang_id, lsp_config);
-    lsp.set_language_config(lang_id, lsp_config);
+    config.lsp.entry(lang_id).or_insert(lsp_config);
 }
 
 // Add bundle plugin dirs to the plugin loading list
@@ -192,7 +187,7 @@ for dir in scan_result.bundle_plugin_dirs {
 }
 
 // Store additional grammars for the deferred background build
-// (these get passed to start_background_grammar_build via flush_pending_grammars)
+editor.pending_grammars.extend(scan_result.additional_grammars);
 ```
 
 Bundle plugin dirs are added to `plugin_dirs` before the plugin loading loop.
@@ -207,37 +202,31 @@ loads each bundle plugin serially via a one-off `LoadPlugin` request during
 JS callback resolution — bypassing parallel preparation and dependency
 ordering entirely.
 
-### 5. Include bundle grammars in the background grammar build
+### 5. Extend grammar loader to scan `bundles/packages/`
 
-The grammar loader (`for_editor` / `load`) already scans `languages/packages/`
-for grammar files. Extend it to also scan `bundles/packages/*/` for grammar
-files in the `fresh.languages[].grammar` entries. This way all grammars are
-built in a single `builder.build()` pass.
+Extend the grammar loader to also scan `bundles/packages/*/` for grammar
+files. The `LocalGrammarLoader` grows a `bundles_packages_dir()` method,
+and `load_language_pack_grammars` is generalized to also handle bundle
+manifests (which have `fresh.languages[].grammar` instead of `fresh.grammar`).
 
-Alternatively, pass `scan_result.additional_grammars` to the deferred
-`start_background_grammar_build` so bundle grammars are included in the
-initial build alongside any plugin-registered grammars from the first
-event-loop tick.
+This means all grammars are built in a single `builder.build()` pass —
+zero grammar rebuilds from plugin callbacks.
 
-The second option is simpler because the grammar loader doesn't need to learn
-about bundles — we just feed it the paths. But the first is cleaner because
-it means zero grammar rebuilds from plugin callbacks (the initial
-`for_editor()` build has everything).
+### 6. Extend theme loader for bundle themes
 
-Preferred: extend the grammar loader to also scan `bundles/packages/`. This
-uses the same `FreshPackageManifest` struct (step 1) to find grammar files
-in `fresh.languages[].grammar`. The `load_language_pack_grammars` function
-in `loader.rs` already takes a `GrammarLoader` trait, and the existing
-`LocalGrammarLoader` can grow a `bundles_packages_dir()` method.
+The theme loader's `load_all()` already scans `themes/packages/*/`. Add a
+second scan for `bundles/packages/*/` using the same `load_package_themes()`
+function. This is a small addition (~10 lines) since the theme loading
+infrastructure already handles manifest-based theme discovery.
 
-### 6. Remove `loadInstalledPackages()` from pkg plugin
+### 7. Remove `loadInstalledPackages()` from pkg plugin
 
 Delete the startup IIFE at the bottom of `pkg.ts` (lines 3042-3066). The
 `loadLanguagePack()` and `loadBundle()` functions stay — they're still
 needed for dynamic install (when the user installs a package at runtime via
 the package manager UI).
 
-### 7. Update CONTRIBUTING.md
+### 8. Update CONTRIBUTING.md
 
 Change line 50 from:
 ```
@@ -256,15 +245,13 @@ to:
 2. **Add `scan_installed_packages()`** — new function, not yet called. Unit
    tests with mock package directories.
 
-3. **Integrate scan into `Editor::new()`** — apply language/LSP configs,
-   add bundle plugin dirs, pass bundle grammars to background build.
+3. **Integrate scan into `Editor::new()` + extend grammar loader for bundles
+   + extend theme loader for bundle themes** — apply language/LSP configs,
+   add bundle plugin dirs, pass bundle grammars to background build, load
+   bundle themes.
 
 4. **Remove `loadInstalledPackages()` from pkg plugin** — the startup
    loader is now dead code.
-
-5. **Extend grammar loader to scan `bundles/packages/`** (optional) — if we
-   want all grammars in the initial `for_editor()` build rather than going
-   through the "additional grammars" path.
 
 ## What Stays in the pkg Plugin
 
@@ -278,11 +265,16 @@ to:
 
 - **Manifest compatibility**: The Rust struct must parse all existing
   `package.json` files without error. Use `#[serde(default)]` liberally and
-  test against real installed packages.
+  test against real installed packages. Non-required fields should be
+  `Option<T>` or have defaults.
 
 - **Ordering**: Language/LSP configs must be applied before plugins load, so
   plugins that query language config during init see the right values. The
   scan runs before the plugin loading loop, so this is satisfied.
+
+- **Config precedence**: Package configs provide defaults. User-defined
+  language/LSP configs in `config.toml` must always take priority. Using
+  `entry().or_insert()` ensures user config is never overwritten.
 
 - **Bundle plugin loading**: Bundle plugins currently load via
   `editor.loadPlugin()` in JS, which uses the serial `LoadPlugin` request —
@@ -293,10 +285,9 @@ to:
   respects their dependencies), and safer (first-writer-wins collision
   detection applies).
 
-- **Themes from bundles**: Currently `loadBundle()` calls
-  `editor.reloadThemes()`. The Rust side would need to load theme files from
-  bundle paths during theme registry initialization. This is a minor addition
-  to the theme loader.
+- **Themes from bundles**: The theme loader already handles `themes/packages/`
+  with manifest support. Adding `bundles/packages/` is a small addition
+  (~10 lines) using the existing `load_package_themes()` function.
 
 - **Bundle plugins with dependencies on embedded plugins**: If a bundle
   plugin imports from an embedded plugin (e.g., `import type { T } from
