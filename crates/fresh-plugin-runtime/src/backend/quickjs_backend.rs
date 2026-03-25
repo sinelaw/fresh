@@ -4464,7 +4464,7 @@ impl QuickJsBackend {
     }
 
     /// Execute JavaScript code in the context
-    fn execute_js(&mut self, code: &str, source_name: &str) -> Result<()> {
+    pub(crate) fn execute_js(&mut self, code: &str, source_name: &str) -> Result<()> {
         // Extract plugin name from path (filename without extension)
         let plugin_name = Path::new(source_name)
             .file_stem()
