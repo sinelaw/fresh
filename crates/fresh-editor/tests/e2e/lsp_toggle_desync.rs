@@ -172,6 +172,7 @@ fn test_lsp_toggle_off_edit_toggle_on_causes_desync() -> anyhow::Result<()> {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 
@@ -294,6 +295,7 @@ fn test_lsp_toggle_off_sends_did_close() -> anyhow::Result<()> {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 

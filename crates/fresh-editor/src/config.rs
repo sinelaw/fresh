@@ -4214,6 +4214,11 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec![
+                    "Cargo.toml".to_string(),
+                    "rust-project.json".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
 
@@ -4229,6 +4234,13 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec![
+                    "pyproject.toml".to_string(),
+                    "setup.py".to_string(),
+                    "setup.cfg".to_string(),
+                    "pyrightconfig.json".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
 
@@ -4248,6 +4260,12 @@ impl Config {
                     "jsx".to_string(),
                     "javascriptreact".to_string(),
                 )]),
+                root_markers: vec![
+                    "tsconfig.json".to_string(),
+                    "jsconfig.json".to_string(),
+                    "package.json".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
         lsp.insert(
@@ -4264,6 +4282,12 @@ impl Config {
                     "tsx".to_string(),
                     "typescriptreact".to_string(),
                 )]),
+                root_markers: vec![
+                    "tsconfig.json".to_string(),
+                    "jsconfig.json".to_string(),
+                    "package.json".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
 
@@ -4279,6 +4303,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4294,6 +4319,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4309,6 +4335,12 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec![
+                    "compile_commands.json".to_string(),
+                    "CMakeLists.txt".to_string(),
+                    "Makefile".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
         lsp.insert(
@@ -4322,6 +4354,12 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec![
+                    "compile_commands.json".to_string(),
+                    "CMakeLists.txt".to_string(),
+                    "Makefile".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
 
@@ -4337,6 +4375,11 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec![
+                    "go.mod".to_string(),
+                    "go.work".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
 
@@ -4352,6 +4395,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4367,6 +4411,11 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec![
+                    "*.csproj".to_string(),
+                    "*.sln".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
 
@@ -4383,6 +4432,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4399,6 +4449,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4415,6 +4466,12 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec![
+                    "pom.xml".to_string(),
+                    "build.gradle".to_string(),
+                    "build.gradle.kts".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
 
@@ -4431,6 +4488,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4447,6 +4505,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4463,6 +4522,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4479,6 +4539,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4494,6 +4555,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4510,6 +4572,13 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec![
+                    ".luarc.json".to_string(),
+                    ".luarc.jsonc".to_string(),
+                    ".luacheckrc".to_string(),
+                    ".stylua.toml".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
 
@@ -4525,6 +4594,11 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec![
+                    "Gemfile".to_string(),
+                    ".ruby-version".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
 
@@ -4541,6 +4615,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec!["composer.json".to_string(), ".git".to_string()],
             },
         );
 
@@ -4556,6 +4631,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4572,6 +4648,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4588,6 +4665,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec!["pubspec.yaml".to_string(), ".git".to_string()],
             },
         );
 
@@ -4604,6 +4682,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4620,6 +4699,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4638,6 +4718,11 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec![
+                    "*.tf".to_string(),
+                    ".terraform".to_string(),
+                    ".git".to_string(),
+                ],
             },
         );
 
@@ -4654,6 +4739,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: vec!["CMakeLists.txt".to_string(), ".git".to_string()],
             },
         );
 
@@ -4670,6 +4756,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4686,6 +4773,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4702,6 +4790,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4719,6 +4808,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4734,6 +4824,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4749,6 +4840,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4764,6 +4856,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4782,6 +4875,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4798,6 +4892,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4813,6 +4908,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4829,6 +4925,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4845,6 +4942,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4860,6 +4958,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4876,6 +4975,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4892,6 +4992,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4908,6 +5009,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4928,6 +5030,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4949,6 +5052,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4965,6 +5069,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4981,6 +5086,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -4996,6 +5102,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
@@ -5012,6 +5119,7 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
     }

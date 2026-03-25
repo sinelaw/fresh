@@ -52,6 +52,7 @@ fn test_did_open_sent_before_hover() -> anyhow::Result<()> {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 

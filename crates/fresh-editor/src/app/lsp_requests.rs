@@ -293,20 +293,21 @@ impl Editor {
         use crate::services::lsp::manager::LspSpawnResult;
 
         // Get metadata and language from buffer state
-        let (uri, language) = {
+        let (uri, language, file_path) = {
             let metadata = self.buffer_metadata.get(&buffer_id)?;
             if !metadata.lsp_enabled {
                 return None;
             }
             let uri = metadata.file_uri()?.clone();
+            let file_path = metadata.file_path().cloned();
             let language = self.buffers.get(&buffer_id)?.language.clone();
-            (uri, language)
+            (uri, language, file_path)
         };
 
         // Try to spawn LSP (respects auto_start setting)
         // This will only spawn if auto_start=true or the language was manually allowed
         let lsp = self.lsp.as_mut()?;
-        if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
             return None;
         }
 
@@ -1712,6 +1713,7 @@ impl Editor {
                 return;
             }
         };
+        let file_path = metadata.file_path().cloned();
 
         // Get language from buffer state
         let language = match self.buffers.get(&buffer_id).map(|s| s.language.clone()) {
@@ -1738,7 +1740,7 @@ impl Editor {
             return;
         };
 
-        if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
             tracing::debug!(
                 "send_lsp_changes_for_buffer: LSP not running for {} (auto_start disabled)",
                 language
@@ -2027,6 +2029,7 @@ impl Editor {
         let Some(uri) = metadata.file_uri().cloned() else {
             return;
         };
+        let file_path = metadata.file_path().cloned();
 
         let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
             return;
@@ -2042,7 +2045,7 @@ impl Editor {
 
         // Ensure there is a running server
         use crate::services::lsp::manager::LspSpawnResult;
-        if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
             return;
         }
 
@@ -2096,6 +2099,7 @@ impl Editor {
         let Some(uri) = metadata.file_uri().cloned() else {
             return;
         };
+        let file_path_for_spawn = metadata.file_path().cloned();
         // Get language from buffer state
         let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
             return;
@@ -2114,7 +2118,7 @@ impl Editor {
 
         // Ensure there is a running server
         use crate::services::lsp::manager::LspSpawnResult;
-        if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+        if lsp.try_spawn(&language, file_path_for_spawn.as_deref()) != LspSpawnResult::Spawned {
             return;
         }
 
@@ -2218,6 +2222,7 @@ impl Editor {
         let Some(uri) = metadata.file_uri().cloned() else {
             return;
         };
+        let file_path = metadata.file_path().cloned();
         // Get language from buffer state
         let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
             return;
@@ -2238,7 +2243,7 @@ impl Editor {
 
         // Ensure there is a running server
         use crate::services::lsp::manager::LspSpawnResult;
-        if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
             return;
         }
 

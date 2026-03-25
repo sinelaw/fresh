@@ -1681,7 +1681,7 @@ impl Editor {
                     // Temporarily allow this language for spawning
                     lsp.allow_language(&language);
                     // Use force_spawn since user explicitly confirmed
-                    if lsp.force_spawn(&language).is_some() {
+                    if lsp.force_spawn(&language, None).is_some() {
                         tracing::info!("LSP server for {} started (allowed once)", language);
                         self.set_status_message(
                             t!("lsp.server_started", language = language).to_string(),
@@ -1700,7 +1700,7 @@ impl Editor {
                 if let Some(lsp) = &mut self.lsp {
                     lsp.allow_language(&language);
                     // Use force_spawn since user explicitly confirmed
-                    if lsp.force_spawn(&language).is_some() {
+                    if lsp.force_spawn(&language, None).is_some() {
                         tracing::info!("LSP server for {} started (always allowed)", language);
                         self.set_status_message(
                             t!("lsp.server_started_auto", language = language).to_string(),
@@ -1747,6 +1747,9 @@ impl Editor {
             tracing::debug!("notify_lsp_current_file_opened: LSP disabled for this buffer");
             return;
         }
+
+        // Get file path for LSP spawn
+        let file_path = metadata.file_path().cloned();
 
         // Get the URI (computed once in with_file)
         let uri = match metadata.file_uri() {
@@ -1797,7 +1800,7 @@ impl Editor {
 
         // Send didOpen to LSP (use force_spawn since this is called after user confirmation)
         if let Some(lsp) = &mut self.lsp {
-            if let Some(client) = lsp.force_spawn(language) {
+            if let Some(client) = lsp.force_spawn(language, file_path.as_deref()) {
                 tracing::info!("Sending didOpen to newly started LSP for: {}", uri.as_str());
                 if let Err(e) = client.did_open(uri.clone(), text, file_language) {
                     tracing::warn!("Failed to send didOpen to LSP: {}", e);
@@ -2049,6 +2052,9 @@ impl Editor {
             return;
         }
 
+        // Get file path for LSP spawn
+        let file_path = metadata.file_path().cloned();
+
         // Get the URI
         let uri = match metadata.file_uri() {
             Some(u) => u.clone(),
@@ -2089,7 +2095,7 @@ impl Editor {
         // Only send didSave if LSP is already running (respect auto_start setting)
         if let Some(lsp) = &mut self.lsp {
             use crate::services::lsp::manager::LspSpawnResult;
-            if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+            if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
                 tracing::debug!(
                     "notify_lsp_save: LSP not running for {} (auto_start disabled)",
                     language

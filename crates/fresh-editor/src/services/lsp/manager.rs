@@ -11,6 +11,7 @@ use crate::services::lsp::async_handler::LspHandle;
 use crate::types::LspServerConfig;
 use lsp_types::{SemanticTokensLegend, Uri};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 /// Result of attempting to spawn an LSP server
@@ -31,6 +32,79 @@ pub enum LspSpawnResult {
 const MAX_RESTARTS_IN_WINDOW: usize = 5;
 const RESTART_WINDOW_SECS: u64 = 180; // 3 minutes
 const RESTART_BACKOFF_BASE_MS: u64 = 1000; // 1s, 2s, 4s, 8s...
+
+/// Convert a directory path to an LSP `file://` URI without the `url` crate.
+fn path_to_uri(path: &Path) -> Option<Uri> {
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    // Percent-encode each path component for RFC 3986 compliance
+    let encoded: String = abs
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::RootDir => None, // handled by leading '/' in Normal
+            std::path::Component::Normal(s) => {
+                let s = s.to_str()?;
+                let mut out = String::with_capacity(s.len() + 1);
+                out.push('/');
+                for b in s.bytes() {
+                    if b.is_ascii_alphanumeric()
+                        || matches!(
+                            b,
+                            b'-' | b'.'
+                                | b'_'
+                                | b'~'
+                                | b'@'
+                                | b'!'
+                                | b'$'
+                                | b'&'
+                                | b'\''
+                                | b'('
+                                | b')'
+                                | b'+'
+                                | b','
+                                | b';'
+                                | b'='
+                        )
+                    {
+                        out.push(b as char);
+                    } else {
+                        out.push_str(&format!("%{:02X}", b));
+                    }
+                }
+                Some(out)
+            }
+            _ => None,
+        })
+        .collect();
+    format!("file://{}", encoded).parse().ok()
+}
+
+/// Detect workspace root by walking upward from a file looking for marker files/directories.
+///
+/// Returns the first directory containing any of the markers, or the file's parent
+/// directory if no marker is found.
+pub fn detect_workspace_root(file_path: &Path, root_markers: &[String]) -> std::path::PathBuf {
+    let file_dir = file_path.parent().unwrap_or(file_path).to_path_buf();
+
+    if root_markers.is_empty() {
+        return file_dir;
+    }
+
+    let mut dir = Some(file_dir.as_path());
+    while let Some(d) = dir {
+        for marker in root_markers {
+            if d.join(marker).exists() {
+                return d.to_path_buf();
+            }
+        }
+        dir = d.parent();
+    }
+
+    file_dir
+}
 
 /// Manager for multiple language servers (async version)
 pub struct LspManager {
@@ -225,9 +299,11 @@ impl LspManager {
     /// - `LspSpawnResult::NotConfigured` if no LSP server is configured for the language
     /// - `LspSpawnResult::Failed` if spawn failed or language is disabled
     ///
+    /// The `file_path` is used for workspace root detection via `root_markers`.
+    ///
     /// IMPORTANT: Callers should only call this when there is at least one buffer
     /// with a matching language. Do not call for languages with no open files.
-    pub fn try_spawn(&mut self, language: &str) -> LspSpawnResult {
+    pub fn try_spawn(&mut self, language: &str, file_path: Option<&Path>) -> LspSpawnResult {
         // If handle already exists, return success
         if self.handles.contains_key(language) {
             return LspSpawnResult::Spawned;
@@ -251,7 +327,7 @@ impl LspManager {
         }
 
         // Spawn the server (using force_spawn since we've already checked auto_start)
-        if self.force_spawn(language).is_some() {
+        if self.force_spawn(language, file_path).is_some() {
             LspSpawnResult::Spawned
         } else {
             LspSpawnResult::Failed
@@ -303,14 +379,40 @@ impl LspManager {
         false
     }
 
-    /// Get the effective root URI for a language
+    /// Resolve the root URI for a language, using root_markers for detection.
+    ///
+    /// Priority:
+    /// 1. Plugin-set per-language root (per_language_root_uris)
+    /// 2. Walk upward from file_path using config's root_markers
+    /// 3. File's parent directory
+    pub fn resolve_root_uri(&self, language: &str, file_path: Option<&Path>) -> Option<Uri> {
+        // 1. Plugin-set root takes priority
+        if let Some(uri) = self.per_language_root_uris.get(language) {
+            return Some(uri.clone());
+        }
+
+        // 2. Use root_markers to detect workspace root from file path
+        if let Some(path) = file_path {
+            let markers = self
+                .config
+                .get(language)
+                .map(|c| c.root_markers.as_slice())
+                .unwrap_or(&[]);
+            let root = detect_workspace_root(path, markers);
+            if let Some(uri) = path_to_uri(&root) {
+                return Some(uri);
+            }
+        }
+
+        // 3. No file path available — use the global root_uri
+        self.root_uri.clone()
+    }
+
+    /// Get the effective root URI for a language (legacy, without file-based detection)
     ///
     /// Returns the language-specific root if set, otherwise the default root.
     pub fn get_effective_root_uri(&self, language: &str) -> Option<Uri> {
-        self.per_language_root_uris
-            .get(language)
-            .cloned()
-            .or_else(|| self.root_uri.clone())
+        self.resolve_root_uri(language, None)
     }
 
     /// Reset the manager for a new project
@@ -361,8 +463,15 @@ impl LspManager {
     /// - Manually restarting a server (via command palette)
     /// - Internal operations that need to guarantee spawn (like retry_crashed_servers)
     ///
+    /// The `file_path` is used for workspace root detection via `root_markers`.
+    /// If None, falls back to `per_language_root_uris` or `root_uri`.
+    ///
     /// For normal operations, use `try_spawn()` + `get_handle_mut()` instead.
-    pub fn force_spawn(&mut self, language: &str) -> Option<&mut LspHandle> {
+    pub fn force_spawn(
+        &mut self,
+        language: &str,
+        file_path: Option<&Path>,
+    ) -> Option<&mut LspHandle> {
         tracing::debug!("force_spawn called for language: {}", language);
 
         // Return existing handle if available
@@ -439,8 +548,11 @@ impl LspManager {
             Ok(handle) => {
                 // Initialize the handle (non-blocking)
                 // The handle will become ready asynchronously
-                // Use per-language root URI if set, otherwise fall back to default
-                let effective_root = self.get_effective_root_uri(language);
+                // Root resolution priority:
+                // 1. Plugin-set per-language root (per_language_root_uris)
+                // 2. Walk upward from file_path using root_markers
+                // 3. File's parent directory
+                let effective_root = self.resolve_root_uri(language, file_path);
                 if let Err(e) =
                     handle.initialize(effective_root, config.initialization_options.clone())
                 {
@@ -566,7 +678,7 @@ impl LspManager {
                 .push(now);
 
             // Attempt to spawn the server (bypassing auto_start for crash recovery)
-            if self.force_spawn(&language).is_some() {
+            if self.force_spawn(&language, None).is_some() {
                 let message = format!("LSP server for {} restarted successfully", language);
                 tracing::info!("{}", message);
                 results.push((language, true, message));
@@ -621,7 +733,7 @@ impl LspManager {
         }
 
         // Spawn new server (bypassing auto_start for user-initiated restart)
-        if self.force_spawn(language).is_some() {
+        if self.force_spawn(language, None).is_some() {
             let message = format!("LSP server for {} started", language);
             tracing::info!("{}", message);
             (true, message)
@@ -796,6 +908,7 @@ mod tests {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         };
 
         manager.set_language_config("rust".to_string(), config);
@@ -821,11 +934,12 @@ mod tests {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
         // force_spawn should return None without runtime
-        let result = manager.force_spawn("rust");
+        let result = manager.force_spawn("rust", None);
         assert!(result.is_none());
     }
 
@@ -838,7 +952,7 @@ mod tests {
         manager.set_runtime(rt.handle().clone(), async_bridge);
 
         // force_spawn should return None for unconfigured language
-        let result = manager.force_spawn("rust");
+        let result = manager.force_spawn("rust", None);
         assert!(result.is_none());
     }
 
@@ -862,11 +976,12 @@ mod tests {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             },
         );
 
         // force_spawn should return None for disabled language
-        let result = manager.force_spawn("rust");
+        let result = manager.force_spawn("rust", None);
         assert!(result.is_none());
     }
 
@@ -1020,5 +1135,83 @@ mod tests {
             detect_language(Path::new("lfrc"), &languages),
             Some("shell".to_string())
         );
+    }
+
+    #[test]
+    fn test_detect_workspace_root_finds_marker_in_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("myproject");
+        let src = project.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(project.join("Cargo.toml"), "").unwrap();
+        let file = src.join("main.rs");
+        std::fs::write(&file, "").unwrap();
+
+        let root = detect_workspace_root(&file, &["Cargo.toml".to_string(), ".git".to_string()]);
+        assert_eq!(root, project);
+    }
+
+    #[test]
+    fn test_detect_workspace_root_finds_marker_two_levels_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("myproject");
+        let deep = project.join("src").join("nested");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(project.join("Cargo.toml"), "").unwrap();
+        let file = deep.join("lib.rs");
+        std::fs::write(&file, "").unwrap();
+
+        let root = detect_workspace_root(&file, &["Cargo.toml".to_string()]);
+        assert_eq!(root, project);
+    }
+
+    #[test]
+    fn test_detect_workspace_root_no_marker_returns_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("somedir");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("file.txt");
+        std::fs::write(&file, "").unwrap();
+
+        let root = detect_workspace_root(&file, &["nonexistent_marker".to_string()]);
+        assert_eq!(root, dir);
+    }
+
+    #[test]
+    fn test_detect_workspace_root_empty_markers_returns_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("somedir");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("file.txt");
+        std::fs::write(&file, "").unwrap();
+
+        let root = detect_workspace_root(&file, &[]);
+        assert_eq!(root, dir);
+    }
+
+    #[test]
+    fn test_detect_workspace_root_directory_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("myproject");
+        let src = project.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        let file = src.join("main.rs");
+        std::fs::write(&file, "").unwrap();
+
+        let root = detect_workspace_root(&file, &[".git".to_string()]);
+        assert_eq!(root, project);
+    }
+
+    #[test]
+    fn test_path_to_uri_basic() {
+        let uri = path_to_uri(Path::new("/tmp/test")).unwrap();
+        assert_eq!(uri.as_str(), "file:///tmp/test");
+    }
+
+    #[test]
+    fn test_path_to_uri_with_spaces() {
+        let uri = path_to_uri(Path::new("/tmp/my project/src")).unwrap();
+        assert_eq!(uri.as_str(), "file:///tmp/my%20project/src");
     }
 }

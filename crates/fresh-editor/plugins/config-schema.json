@@ -1120,6 +1120,14 @@
             "type": "string"
           },
           "default": {}
+        },
+        "root_markers": {
+          "description": "File/directory names to search for when detecting the workspace root.\nThe editor walks upward from the opened file's directory looking for\nany of these markers. The first directory containing a match becomes\nthe workspace root sent to the LSP server.\n\nIf empty, falls back to `[\".git\"]` as a universal marker.\nIf the walk reaches a filesystem boundary without a match, uses the\nfile's parent directory (never cwd or $HOME).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
         }
       },
       "x-display-field": "/command"

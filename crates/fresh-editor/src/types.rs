@@ -125,6 +125,17 @@ pub struct LspServerConfig {
     /// For example: `{"tsx": "typescriptreact", "jsx": "javascriptreact"}`
     #[serde(default)]
     pub language_id_overrides: HashMap<String, String>,
+
+    /// File/directory names to search for when detecting the workspace root.
+    /// The editor walks upward from the opened file's directory looking for
+    /// any of these markers. The first directory containing a match becomes
+    /// the workspace root sent to the LSP server.
+    ///
+    /// If empty, falls back to `[".git"]` as a universal marker.
+    /// If the walk reaches a filesystem boundary without a match, uses the
+    /// file's parent directory (never cwd or $HOME).
+    #[serde(default)]
+    pub root_markers: Vec<String>,
 }
 
 impl LspServerConfig {
@@ -159,6 +170,11 @@ impl LspServerConfig {
                 let mut merged = defaults.language_id_overrides.clone();
                 merged.extend(self.language_id_overrides);
                 merged
+            },
+            root_markers: if self.root_markers.is_empty() {
+                defaults.root_markers.clone()
+            } else {
+                self.root_markers
             },
         }
     }

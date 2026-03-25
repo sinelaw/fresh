@@ -89,7 +89,7 @@ impl Editor {
             if let Some(lsp) = self.lsp.as_mut() {
                 // Respect auto_start setting for this user action
                 use crate::services::lsp::manager::LspSpawnResult;
-                if lsp.try_spawn(&lang_id) == LspSpawnResult::Spawned {
+                if lsp.try_spawn(&lang_id, Some(&buf_path)) == LspSpawnResult::Spawned {
                     if let Some(handle) = lsp.get_handle_mut(&lang_id) {
                         let handle_id = handle.id();
                         if let Err(e) = handle.did_open(uri, content, lang_id) {
@@ -529,11 +529,16 @@ impl Editor {
 
         // Try to spawn and send didOpen
         use crate::services::lsp::manager::LspSpawnResult;
+        let file_path = self
+            .buffer_metadata
+            .get(&buffer_id)
+            .and_then(|m| m.file_path())
+            .cloned();
         let Some(lsp) = self.lsp.as_mut() else {
             return;
         };
 
-        if lsp.try_spawn(language) != LspSpawnResult::Spawned {
+        if lsp.try_spawn(language, file_path.as_deref()) != LspSpawnResult::Spawned {
             return;
         }
 

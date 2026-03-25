@@ -60,6 +60,7 @@ fn test_diagnostics_panel_enter_does_not_jump() {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 
@@ -208,6 +209,7 @@ fn test_diagnostics_panel_cursor_move_scrolls_editor() {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 

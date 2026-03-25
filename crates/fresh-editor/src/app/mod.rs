@@ -1190,6 +1190,7 @@ impl Editor {
                 initialization_options: Some(serde_json::json!({"enable": true})),
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                root_markers: Default::default(),
             };
             lsp.set_language_config("javascript".to_string(), deno_config.clone());
             lsp.set_language_config("typescript".to_string(), deno_config);

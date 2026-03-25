@@ -37,6 +37,7 @@ fn test_lsp_hover_popup_text_selection_copy() -> anyhow::Result<()> {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 

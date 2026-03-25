@@ -276,6 +276,7 @@ fn test_strict_server_sends_diagnostics_with_capability() -> anyhow::Result<()> 
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 
@@ -337,6 +338,7 @@ fn test_permissive_server_sends_diagnostics_without_capability() -> anyhow::Resu
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 

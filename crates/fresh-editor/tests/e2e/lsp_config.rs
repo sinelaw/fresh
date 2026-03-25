@@ -42,6 +42,7 @@ fn test_start_lsp_command_works_when_config_disabled() -> anyhow::Result<()> {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 
@@ -133,6 +134,7 @@ fn test_settings_ui_lsp_enabled_change_takes_effect() -> anyhow::Result<()> {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 
@@ -261,6 +263,7 @@ fn test_lsp_manager_config_updated_via_set_lsp_config() -> anyhow::Result<()> {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 
@@ -299,6 +302,7 @@ fn test_lsp_manager_config_updated_via_set_lsp_config() -> anyhow::Result<()> {
         initialization_options: None,
         env: Default::default(),
         language_id_overrides: Default::default(),
+        root_markers: Default::default(),
     };
     harness
         .editor_mut()

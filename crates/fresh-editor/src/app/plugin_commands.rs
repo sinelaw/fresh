@@ -1590,7 +1590,7 @@ impl Editor {
         let error = if let Some(lsp) = self.lsp.as_mut() {
             // Respect auto_start setting for plugin requests
             use crate::services::lsp::manager::LspSpawnResult;
-            if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+            if lsp.try_spawn(&language, None) != LspSpawnResult::Spawned {
                 Some(format!(
                     "LSP server for '{}' is not running (auto_start disabled)",
                     language

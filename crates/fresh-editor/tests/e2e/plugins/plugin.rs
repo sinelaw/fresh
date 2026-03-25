@@ -325,6 +325,7 @@ fn test_diagnostics_panel_plugin_loads() {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 
@@ -753,6 +754,7 @@ fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 
@@ -827,6 +829,7 @@ fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 
@@ -1058,6 +1061,7 @@ editor.setStatus("Test diagnostics plugin loaded");
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            root_markers: Default::default(),
         },
     );
 

@@ -573,7 +573,7 @@ impl Editor {
         tracing::debug!("Using URI from metadata: {}", uri.as_str());
         tracing::debug!("Attempting to spawn LSP client for language: {}", language);
 
-        match lsp.try_spawn(&language) {
+        match lsp.try_spawn(&language, Some(path.as_ref())) {
             LspSpawnResult::Spawned => {
                 if let Some(client) = lsp.get_handle_mut(&language) {
                     // Send didOpen
@@ -686,7 +686,7 @@ impl Editor {
             let Some(lsp) = self.lsp.as_mut() else {
                 return;
             };
-            lsp.try_spawn(&language)
+            lsp.try_spawn(&language, Some(path))
         };
 
         // Only proceed if spawned successfully (or already running)
