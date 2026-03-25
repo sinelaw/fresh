@@ -8,7 +8,7 @@
 
 use crate::services::async_bridge::AsyncBridge;
 use crate::services::lsp::async_handler::LspHandle;
-use crate::types::{FeatureFilter, LspServerConfig};
+use crate::types::{FeatureFilter, LspFeature, LspServerConfig};
 use lsp_types::{SemanticTokensLegend, Uri};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -497,6 +497,55 @@ impl LspManager {
             .get_mut(language)
             .map(|v| v.as_mut_slice())
             .unwrap_or(&mut [])
+    }
+
+    /// Get the first handle for a language that allows a given feature (for exclusive features).
+    /// Returns `None` if no handle matches.
+    pub fn handle_for_feature(&self, language: &str, feature: LspFeature) -> Option<&ServerHandle> {
+        self.handles
+            .get(language)?
+            .iter()
+            .find(|sh| sh.feature_filter.allows(feature))
+    }
+
+    /// Get the first mutable handle for a language that allows a given feature.
+    pub fn handle_for_feature_mut(
+        &mut self,
+        language: &str,
+        feature: LspFeature,
+    ) -> Option<&mut ServerHandle> {
+        self.handles
+            .get_mut(language)?
+            .iter_mut()
+            .find(|sh| sh.feature_filter.allows(feature))
+    }
+
+    /// Get all handles for a language that allow a given feature (for merged features).
+    pub fn handles_for_feature(&self, language: &str, feature: LspFeature) -> Vec<&ServerHandle> {
+        self.handles
+            .get(language)
+            .map(|v| {
+                v.iter()
+                    .filter(|sh| sh.feature_filter.allows(feature))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get all mutable handles for a language that allow a given feature.
+    pub fn handles_for_feature_mut(
+        &mut self,
+        language: &str,
+        feature: LspFeature,
+    ) -> Vec<&mut ServerHandle> {
+        self.handles
+            .get_mut(language)
+            .map(|v| {
+                v.iter_mut()
+                    .filter(|sh| sh.feature_filter.allows(feature))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Force spawn LSP server(s) for a language, bypassing auto_start checks.

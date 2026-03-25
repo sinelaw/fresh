@@ -610,9 +610,11 @@ impl Editor {
         };
 
         // LSP should already be running since we got a quiescent notification
-        let Some(client) = lsp.get_handle_mut(&language) else {
+        let Some(sh) = lsp.handle_for_feature_mut(&language, crate::types::LspFeature::InlayHints)
+        else {
             return;
         };
+        let client = &mut sh.handle;
 
         // Collect buffer info first to avoid borrow issues
         let buffer_infos: Vec<_> = self
@@ -682,9 +684,11 @@ impl Editor {
         let Some(lsp) = self.lsp.as_mut() else {
             return;
         };
-        let Some(client) = lsp.get_handle_mut(language) else {
+        let Some(sh) = lsp.handle_for_feature_mut(language, crate::types::LspFeature::Diagnostics)
+        else {
             return;
         };
+        let client = &mut sh.handle;
 
         for uri in uris {
             let request_id = self.next_lsp_request_id;

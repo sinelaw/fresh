@@ -21,6 +21,9 @@ use crate::model::event::{BufferId, Event};
 use crate::primitives::word_navigation::{find_word_end, find_word_start};
 use crate::view::prompt::{Prompt, PromptType};
 
+use crate::services::lsp::async_handler::LspHandle;
+use crate::types::LspFeature;
+
 use super::{uri_to_path, Editor, SemanticTokenRangeRequest};
 
 /// Ensure every line in a docstring is separated by a blank line.
@@ -288,11 +291,10 @@ impl Editor {
     /// hasn't been manually started, this will return None without spawning the server.
     pub(crate) fn with_lsp_for_buffer<F, R>(&mut self, buffer_id: BufferId, f: F) -> Option<R>
     where
-        F: FnOnce(&crate::services::lsp::async_handler::LspHandle, &lsp_types::Uri, &str) -> R,
+        F: FnOnce(&LspHandle, &lsp_types::Uri, &str) -> R,
     {
         use crate::services::lsp::manager::LspSpawnResult;
 
-        // Get metadata and language from buffer state
         let (uri, language, file_path) = {
             let metadata = self.buffer_metadata.get(&buffer_id)?;
             if !metadata.lsp_enabled {
@@ -304,21 +306,132 @@ impl Editor {
             (uri, language, file_path)
         };
 
-        // Try to spawn LSP (respects auto_start setting)
-        // This will only spawn if auto_start=true or the language was manually allowed
         let lsp = self.lsp.as_mut()?;
         if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
             return None;
         }
 
-        // Collect handle IDs that need didOpen
+        // Ensure didOpen is sent to all handles
+        self.ensure_did_open_all(buffer_id, &uri, &language)?;
+
+        // Call the closure with the primary handle
+        let lsp = self.lsp.as_mut()?;
+        let handle = lsp.get_handle_mut(&language)?;
+        Some(f(handle, &uri, &language))
+    }
+
+    /// Dispatch an exclusive LSP feature request to the first handle that allows the feature.
+    ///
+    /// Ensures all handles receive didOpen first, then calls the closure with the first
+    /// handle matching the feature filter. For features like hover, definition, rename, etc.
+    pub(crate) fn with_lsp_for_buffer_feature<F, R>(
+        &mut self,
+        buffer_id: BufferId,
+        feature: LspFeature,
+        f: F,
+    ) -> Option<R>
+    where
+        F: FnOnce(&LspHandle, &lsp_types::Uri, &str) -> R,
+    {
+        use crate::services::lsp::manager::LspSpawnResult;
+
+        let (uri, language, file_path) = {
+            let metadata = self.buffer_metadata.get(&buffer_id)?;
+            if !metadata.lsp_enabled {
+                return None;
+            }
+            let uri = metadata.file_uri()?.clone();
+            let file_path = metadata.file_path().cloned();
+            let language = self.buffers.get(&buffer_id)?.language.clone();
+            (uri, language, file_path)
+        };
+
+        let lsp = self.lsp.as_mut()?;
+        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
+            return None;
+        }
+
+        // Ensure didOpen is sent to all handles
+        self.ensure_did_open_all(buffer_id, &uri, &language)?;
+
+        // Dispatch to the first handle that allows this feature
+        let lsp = self.lsp.as_mut()?;
+        let sh = lsp.handle_for_feature_mut(&language, feature)?;
+        Some(f(&sh.handle, &uri, &language))
+    }
+
+    /// Dispatch a merged LSP feature request to all handles that allow the feature.
+    ///
+    /// Ensures all handles receive didOpen first, then calls the closure for each
+    /// handle matching the feature filter, collecting all results. For features like
+    /// completion, code actions, diagnostics, etc.
+    pub(crate) fn with_all_lsp_for_buffer_feature<F, R>(
+        &mut self,
+        buffer_id: BufferId,
+        feature: LspFeature,
+        f: F,
+    ) -> Vec<R>
+    where
+        F: Fn(&LspHandle, &lsp_types::Uri, &str) -> R,
+    {
+        use crate::services::lsp::manager::LspSpawnResult;
+
+        let (uri, language, file_path) = match (|| {
+            let metadata = self.buffer_metadata.get(&buffer_id)?;
+            if !metadata.lsp_enabled {
+                return None;
+            }
+            let uri = metadata.file_uri()?.clone();
+            let file_path = metadata.file_path().cloned();
+            let language = self.buffers.get(&buffer_id)?.language.clone();
+            Some((uri, language, file_path))
+        })() {
+            Some(v) => v,
+            None => return Vec::new(),
+        };
+
+        let lsp = match self.lsp.as_mut() {
+            Some(l) => l,
+            None => return Vec::new(),
+        };
+        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
+            return Vec::new();
+        }
+
+        // Ensure didOpen is sent to all handles
+        if self
+            .ensure_did_open_all(buffer_id, &uri, &language)
+            .is_none()
+        {
+            return Vec::new();
+        }
+
+        // Dispatch to all handles that allow this feature
+        let lsp = match self.lsp.as_mut() {
+            Some(l) => l,
+            None => return Vec::new(),
+        };
+        lsp.handles_for_feature_mut(&language, feature)
+            .into_iter()
+            .map(|sh| f(&sh.handle, &uri, &language))
+            .collect()
+    }
+
+    /// Ensure didOpen has been sent to all handles for the given buffer's language.
+    /// Returns Some(()) on success, None if we can't access required state.
+    fn ensure_did_open_all(
+        &mut self,
+        buffer_id: BufferId,
+        uri: &lsp_types::Uri,
+        language: &str,
+    ) -> Option<()> {
+        let lsp = self.lsp.as_mut()?;
         let handle_ids: Vec<u64> = lsp
-            .get_handles(&language)
+            .get_handles(language)
             .iter()
             .map(|sh| sh.handle.id())
             .collect();
 
-        // Check which handles need didOpen
         let needs_open: Vec<u64> = {
             let metadata = self.buffer_metadata.get(&buffer_id)?;
             handle_ids
@@ -329,25 +442,19 @@ impl Editor {
         };
 
         if !needs_open.is_empty() {
-            // Only now get the text (can be expensive for large buffers)
             let text = self.buffers.get(&buffer_id)?.buffer.to_string()?;
-
-            // Send didOpen to all handles that haven't received it yet
             let lsp = self.lsp.as_mut()?;
-            for sh in lsp.get_handles_mut(&language) {
+            for sh in lsp.get_handles_mut(language) {
                 if needs_open.contains(&sh.handle.id()) {
-                    if let Err(e) = sh
-                        .handle
-                        .did_open(uri.clone(), text.clone(), language.clone())
+                    if let Err(e) =
+                        sh.handle
+                            .did_open(uri.clone(), text.clone(), language.to_string())
                     {
                         tracing::warn!("Failed to send didOpen to '{}': {}", sh.name, e);
                         continue;
                     }
-
-                    // Mark as opened with this server instance
                     let metadata = self.buffer_metadata.get_mut(&buffer_id)?;
                     metadata.lsp_opened_with.insert(sh.handle.id());
-
                     tracing::debug!(
                         "Sent didOpen for {} to LSP handle '{}' (language: {})",
                         uri.as_str(),
@@ -358,10 +465,7 @@ impl Editor {
             }
         }
 
-        // Call the closure with the primary handle
-        let lsp = self.lsp.as_mut()?;
-        let handle = lsp.get_handle_mut(&language)?;
-        Some(f(handle, &uri, &language))
+        Some(())
     }
 
     /// Request LSP completion at current cursor position
@@ -377,19 +481,23 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
-                let result =
-                    handle.completion(request_id, uri.clone(), line as u32, character as u32);
-                if result.is_ok() {
-                    tracing::info!(
-                        "Requested completion at {}:{}:{}",
-                        uri.as_str(),
-                        line,
-                        character
-                    );
-                }
-                result.is_ok()
-            })
+            .with_lsp_for_buffer_feature(
+                buffer_id,
+                LspFeature::Completion,
+                |handle, uri, _language| {
+                    let result =
+                        handle.completion(request_id, uri.clone(), line as u32, character as u32);
+                    if result.is_ok() {
+                        tracing::info!(
+                            "Requested completion at {}:{}:{}",
+                            uri.as_str(),
+                            line,
+                            character
+                        );
+                    }
+                    result.is_ok()
+                },
+            )
             .unwrap_or(false);
 
         if sent {
@@ -473,19 +581,27 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
-                let result =
-                    handle.goto_definition(request_id, uri.clone(), line as u32, character as u32);
-                if result.is_ok() {
-                    tracing::info!(
-                        "Requested go-to-definition at {}:{}:{}",
-                        uri.as_str(),
-                        line,
-                        character
+            .with_lsp_for_buffer_feature(
+                buffer_id,
+                LspFeature::Definition,
+                |handle, uri, _language| {
+                    let result = handle.goto_definition(
+                        request_id,
+                        uri.clone(),
+                        line as u32,
+                        character as u32,
                     );
-                }
-                result.is_ok()
-            })
+                    if result.is_ok() {
+                        tracing::info!(
+                            "Requested go-to-definition at {}:{}:{}",
+                            uri.as_str(),
+                            line,
+                            character
+                        );
+                    }
+                    result.is_ok()
+                },
+            )
             .unwrap_or(false);
 
         if sent {
@@ -521,7 +637,7 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+            .with_lsp_for_buffer_feature(buffer_id, LspFeature::Hover, |handle, uri, _language| {
                 let result = handle.hover(request_id, uri.clone(), line as u32, character as u32);
                 if result.is_ok() {
                     tracing::info!(
@@ -570,7 +686,7 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+            .with_lsp_for_buffer_feature(buffer_id, LspFeature::Hover, |handle, uri, _language| {
                 let result = handle.hover(request_id, uri.clone(), line as u32, character as u32);
                 if result.is_ok() {
                     tracing::trace!(
@@ -872,20 +988,24 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
-                let result =
-                    handle.references(request_id, uri.clone(), line as u32, character as u32);
-                if result.is_ok() {
-                    tracing::info!(
-                        "Requested find references at {}:{}:{} (byte_pos={})",
-                        uri.as_str(),
-                        line,
-                        character,
-                        cursor_pos
-                    );
-                }
-                result.is_ok()
-            })
+            .with_lsp_for_buffer_feature(
+                buffer_id,
+                LspFeature::References,
+                |handle, uri, _language| {
+                    let result =
+                        handle.references(request_id, uri.clone(), line as u32, character as u32);
+                    if result.is_ok() {
+                        tracing::info!(
+                            "Requested find references at {}:{}:{} (byte_pos={})",
+                            uri.as_str(),
+                            line,
+                            character,
+                            cursor_pos
+                        );
+                    }
+                    result.is_ok()
+                },
+            )
             .unwrap_or(false);
 
         if sent {
@@ -911,20 +1031,28 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
-                let result =
-                    handle.signature_help(request_id, uri.clone(), line as u32, character as u32);
-                if result.is_ok() {
-                    tracing::info!(
-                        "Requested signature help at {}:{}:{} (byte_pos={})",
-                        uri.as_str(),
-                        line,
-                        character,
-                        cursor_pos
+            .with_lsp_for_buffer_feature(
+                buffer_id,
+                LspFeature::SignatureHelp,
+                |handle, uri, _language| {
+                    let result = handle.signature_help(
+                        request_id,
+                        uri.clone(),
+                        line as u32,
+                        character as u32,
                     );
-                }
-                result.is_ok()
-            })
+                    if result.is_ok() {
+                        tracing::info!(
+                            "Requested signature help at {}:{}:{} (byte_pos={})",
+                            uri.as_str(),
+                            line,
+                            character,
+                            cursor_pos
+                        );
+                    }
+                    result.is_ok()
+                },
+            )
             .unwrap_or(false);
 
         if sent {
@@ -1076,29 +1204,33 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
-                let result = handle.code_actions(
-                    request_id,
-                    uri.clone(),
-                    start_line,
-                    start_char,
-                    end_line,
-                    end_char,
-                    diagnostics,
-                );
-                if result.is_ok() {
-                    tracing::info!(
-                        "Requested code actions at {}:{}:{}-{}:{} (byte_pos={})",
-                        uri.as_str(),
+            .with_lsp_for_buffer_feature(
+                buffer_id,
+                LspFeature::CodeAction,
+                |handle, uri, _language| {
+                    let result = handle.code_actions(
+                        request_id,
+                        uri.clone(),
                         start_line,
                         start_char,
                         end_line,
                         end_char,
-                        cursor_pos
+                        diagnostics,
                     );
-                }
-                result.is_ok()
-            })
+                    if result.is_ok() {
+                        tracing::info!(
+                            "Requested code actions at {}:{}:{}-{}:{} (byte_pos={})",
+                            uri.as_str(),
+                            start_line,
+                            start_char,
+                            end_line,
+                            end_char,
+                            cursor_pos
+                        );
+                    }
+                    result.is_ok()
+                },
+            )
             .unwrap_or(false);
 
         if sent {
@@ -1949,7 +2081,7 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+            .with_lsp_for_buffer_feature(buffer_id, LspFeature::Rename, |handle, uri, _language| {
                 let result = handle.rename(
                     request_id,
                     uri.clone(),
@@ -2002,19 +2134,24 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
-                let result = handle.inlay_hints(request_id, uri.clone(), 0, 0, last_line, 10000);
-                if result.is_ok() {
-                    tracing::info!(
-                        "Requested inlay hints for {} (request_id={})",
-                        uri.as_str(),
-                        request_id
-                    );
-                } else if let Err(e) = &result {
-                    tracing::debug!("Failed to request inlay hints: {}", e);
-                }
-                result.is_ok()
-            })
+            .with_lsp_for_buffer_feature(
+                buffer_id,
+                LspFeature::InlayHints,
+                |handle, uri, _language| {
+                    let result =
+                        handle.inlay_hints(request_id, uri.clone(), 0, 0, last_line, 10000);
+                    if result.is_ok() {
+                        tracing::info!(
+                            "Requested inlay hints for {} (request_id={})",
+                            uri.as_str(),
+                            request_id
+                        );
+                    } else if let Err(e) = &result {
+                        tracing::debug!("Failed to request inlay hints: {}", e);
+                    }
+                    result.is_ok()
+                },
+            )
             .unwrap_or(false);
 
         if sent {
@@ -2077,9 +2214,10 @@ impl Editor {
             return;
         }
 
-        let Some(handle) = lsp.get_handle_mut(&language) else {
+        let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::FoldingRange) else {
             return;
         };
+        let handle = &mut sh.handle;
 
         let request_id = self.next_lsp_request_id;
         self.next_lsp_request_id += 1;
@@ -2167,9 +2305,10 @@ impl Editor {
         let supports_delta = lsp.semantic_tokens_full_delta_supported(&language);
         let use_delta = previous_result_id.is_some() && supports_delta;
 
-        let Some(handle) = lsp.get_handle_mut(&language) else {
+        let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::SemanticTokens) else {
             return;
         };
+        let handle = &mut sh.handle;
 
         let request_id = self.next_lsp_request_id;
         self.next_lsp_request_id += 1;
@@ -2275,9 +2414,10 @@ impl Editor {
             return;
         }
 
-        let Some(handle) = lsp.get_handle_mut(&language) else {
+        let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::SemanticTokens) else {
             return;
         };
+        let handle = &mut sh.handle;
         let Some(state) = self.buffers.get(&buffer_id) else {
             return;
         };

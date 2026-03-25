@@ -2146,9 +2146,11 @@ impl Editor {
         let Some(lsp) = self.lsp.as_mut() else {
             return false;
         };
-        let Some(client) = lsp.get_handle_mut(&language) else {
+        let Some(sh) = lsp.handle_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)
+        else {
             return false;
         };
+        let client = &mut sh.handle;
 
         let request_id = self.next_lsp_request_id;
         self.next_lsp_request_id += 1;

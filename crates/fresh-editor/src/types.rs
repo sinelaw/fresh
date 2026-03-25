@@ -362,3 +362,93 @@ impl LspServerConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_lsp_feature_is_merged() {
+        assert!(LspFeature::Diagnostics.is_merged());
+        assert!(LspFeature::Completion.is_merged());
+        assert!(LspFeature::CodeAction.is_merged());
+        assert!(LspFeature::DocumentSymbols.is_merged());
+        assert!(LspFeature::WorkspaceSymbols.is_merged());
+
+        assert!(!LspFeature::Hover.is_merged());
+        assert!(!LspFeature::Definition.is_merged());
+        assert!(!LspFeature::References.is_merged());
+        assert!(!LspFeature::Format.is_merged());
+        assert!(!LspFeature::Rename.is_merged());
+        assert!(!LspFeature::SignatureHelp.is_merged());
+        assert!(!LspFeature::InlayHints.is_merged());
+        assert!(!LspFeature::FoldingRange.is_merged());
+        assert!(!LspFeature::SemanticTokens.is_merged());
+        assert!(!LspFeature::DocumentHighlight.is_merged());
+    }
+
+    #[test]
+    fn test_feature_filter_all() {
+        let filter = FeatureFilter::All;
+        assert!(filter.allows(LspFeature::Hover));
+        assert!(filter.allows(LspFeature::Diagnostics));
+        assert!(filter.allows(LspFeature::Completion));
+        assert!(filter.allows(LspFeature::Rename));
+    }
+
+    #[test]
+    fn test_feature_filter_only() {
+        let mut set = HashSet::new();
+        set.insert(LspFeature::Diagnostics);
+        set.insert(LspFeature::Completion);
+        let filter = FeatureFilter::Only(set);
+
+        assert!(filter.allows(LspFeature::Diagnostics));
+        assert!(filter.allows(LspFeature::Completion));
+        assert!(!filter.allows(LspFeature::Hover));
+        assert!(!filter.allows(LspFeature::Definition));
+    }
+
+    #[test]
+    fn test_feature_filter_except() {
+        let mut set = HashSet::new();
+        set.insert(LspFeature::Format);
+        set.insert(LspFeature::Rename);
+        let filter = FeatureFilter::Except(set);
+
+        assert!(filter.allows(LspFeature::Hover));
+        assert!(filter.allows(LspFeature::Diagnostics));
+        assert!(!filter.allows(LspFeature::Format));
+        assert!(!filter.allows(LspFeature::Rename));
+    }
+
+    #[test]
+    fn test_feature_filter_from_config_none() {
+        let filter = FeatureFilter::from_config(&None, &None);
+        assert!(matches!(filter, FeatureFilter::All));
+    }
+
+    #[test]
+    fn test_feature_filter_from_config_only() {
+        let only = Some(vec![LspFeature::Diagnostics, LspFeature::Completion]);
+        let filter = FeatureFilter::from_config(&only, &None);
+        assert!(filter.allows(LspFeature::Diagnostics));
+        assert!(filter.allows(LspFeature::Completion));
+        assert!(!filter.allows(LspFeature::Hover));
+    }
+
+    #[test]
+    fn test_feature_filter_from_config_except() {
+        let except = Some(vec![LspFeature::Format]);
+        let filter = FeatureFilter::from_config(&None, &except);
+        assert!(filter.allows(LspFeature::Hover));
+        assert!(!filter.allows(LspFeature::Format));
+    }
+
+    #[test]
+    fn test_feature_filter_default() {
+        let filter = FeatureFilter::default();
+        assert!(matches!(filter, FeatureFilter::All));
+    }
+}
