@@ -47,6 +47,6 @@ When it is disabled (the default), no windowing or GPU crates are compiled.
 4. **Regenerate plugin types and schemas**: After modifying the plugin API or config types:
    - **TypeScript definitions** (`plugins/lib/fresh.d.ts`): Auto-generated from Rust types with `#[derive(TS)]`. Run: `cargo test -p fresh-plugin-runtime write_fresh_dts_file -- --ignored`
    - **JSON schemas** (`plugins/config-schema.json`, `plugins/schemas/theme.schema.json`): Auto-generated from Rust types with `#[derive(JsonSchema)]`. Run: `./scripts/gen_schema.sh`
-   - **Package schema** (`plugins/schemas/package.schema.json`): Manually maintained - edit directly when adding new language pack fields
+   - **Package schema** (`plugins/schemas/package.schema.json`): Auto-generated from Rust types with `#[derive(JsonSchema)]`. Run: `./scripts/gen_schema.sh`
 
 5. **Type check plugins**: Run `crates/fresh-editor/plugins/check-types.sh` (requires `tsc`)
