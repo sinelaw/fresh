@@ -32,7 +32,7 @@ png = "0.18"
 
 # macOS: native menu bar
 [target.'cfg(target_os = "macos")'.dependencies]
-muda = "0.15"
+muda = "0.17"
 # ObjC interop for NSNotificationCenter (menu tracking detection).
 # Versions match the ones muda 0.15 already pulls in.
 objc2-foundation = { version = "0.2", features = ["NSNotification", "NSString", "NSOperation", "block2"] }
