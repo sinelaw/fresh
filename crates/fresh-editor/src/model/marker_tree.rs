@@ -169,6 +169,17 @@ impl IntervalTree {
     /// Insert a marker with a specific ID and type (for set_position).
     /// The caller must ensure the ID is not already in use.
     fn insert_with_id(&mut self, id: MarkerId, start: u64, end: u64, marker_type: MarkerType) {
+        debug_assert!(
+            id < self.next_id,
+            "insert_with_id: id {} must be < next_id {}",
+            id,
+            self.next_id
+        );
+        debug_assert!(
+            !self.marker_map.contains_key(&id),
+            "insert_with_id: id {} already in use",
+            id
+        );
         let marker = Marker {
             id,
             interval: Interval { start, end },

@@ -114,8 +114,7 @@ impl Editor {
                 cursor_id,
             };
 
-            self.active_event_log_mut().append(delete_event.clone());
-            self.apply_event_to_active_buffer(&delete_event);
+            self.log_and_apply_event(&delete_event);
 
             let buffer_len = self.active_state().buffer.len();
             word_start.min(buffer_len)
@@ -129,8 +128,7 @@ impl Editor {
             cursor_id,
         };
 
-        self.active_event_log_mut().append(insert_event.clone());
-        self.apply_event_to_active_buffer(&insert_event);
+        self.log_and_apply_event(&insert_event);
 
         // If this was a snippet, position cursor at the snippet's $0 location
         if let Some(offset) = cursor_offset {
@@ -207,8 +205,7 @@ impl Editor {
             cursor_id,
         };
 
-        self.active_event_log_mut().append(insert_event.clone());
-        self.apply_event_to_active_buffer(&insert_event);
+        self.log_and_apply_event(&insert_event);
 
         // Now re-filter the completion list
         self.refilter_completion_popup();
@@ -250,8 +247,7 @@ impl Editor {
             cursor_id,
         };
 
-        self.active_event_log_mut().append(delete_event.clone());
-        self.apply_event_to_active_buffer(&delete_event);
+        self.log_and_apply_event(&delete_event);
 
         // Now re-filter the completion list
         self.refilter_completion_popup();

@@ -425,8 +425,7 @@ impl Editor {
                     self.active_event_log_mut().append(bulk_edit);
                 }
             } else if let Some(event) = events.into_iter().next() {
-                self.active_event_log_mut().append(event.clone());
-                self.apply_event_to_active_buffer(&event);
+                self.log_and_apply_event(&event);
             }
 
             if !deletions.is_empty() {
@@ -484,8 +483,7 @@ impl Editor {
                     self.active_event_log_mut().append(bulk_edit);
                 }
             } else if let Some(event) = events.into_iter().next() {
-                self.active_event_log_mut().append(event.clone());
-                self.apply_event_to_active_buffer(&event);
+                self.log_and_apply_event(&event);
             }
 
             if !deletions.is_empty() {
@@ -606,8 +604,7 @@ impl Editor {
                 self.active_event_log_mut().append(bulk_edit);
             }
         } else if let Some(event) = events.into_iter().next() {
-            self.active_event_log_mut().append(event.clone());
-            self.apply_event_to_active_buffer(&event);
+            self.log_and_apply_event(&event);
         }
 
         self.status_message = Some(t!("clipboard.pasted").to_string());

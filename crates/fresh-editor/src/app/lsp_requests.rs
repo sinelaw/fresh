@@ -1560,28 +1560,8 @@ impl Editor {
             .map(|(pos, del, text)| (*pos, *del, text.as_str()))
             .collect();
 
-        // Snapshot displaced markers before edits
-        let displaced_markers: Vec<(u64, usize)> = {
-            let mut displaced = Vec::new();
-            for (pos, del_len, _text) in &edits {
-                if *del_len > 0 {
-                    let range_end = pos + del_len;
-                    for (marker_id, start, _end) in state.marker_list.query_range(*pos, range_end) {
-                        if start > *pos && start < range_end {
-                            displaced.push((marker_id.0, start));
-                        }
-                    }
-                    for (marker_id, start, _end) in
-                        state.margins.query_indicator_range(*pos, range_end)
-                    {
-                        if start > *pos && start < range_end {
-                            displaced.push((marker_id.0 | (1u64 << 63), start));
-                        }
-                    }
-                }
-            }
-            displaced
-        };
+        // Snapshot displaced markers before edits so undo can restore them exactly.
+        let displaced_markers = state.capture_displaced_markers_bulk(&edits);
 
         // Apply bulk edits - O(n) instead of O(n²)
         let _delta = state.buffer.apply_bulk_edits(&edit_refs);
@@ -1654,15 +1634,22 @@ impl Editor {
             lengths
         };
 
-        // Adjust markers for the forward edits (same as apply_events_as_bulk_edit)
-        for (pos, del_len, text) in &edits {
-            if *del_len > 0 {
-                state.marker_list.adjust_for_delete(*pos, *del_len);
-                state.margins.adjust_for_delete(*pos, *del_len);
-            }
-            if !text.is_empty() {
-                state.marker_list.adjust_for_insert(*pos, text.len());
-                state.margins.adjust_for_insert(*pos, text.len());
+        // Adjust markers using merged net-delta (same logic as apply_events_as_bulk_edit)
+        for &(pos, del_len, ins_len) in &edit_lengths {
+            if del_len > 0 && ins_len > 0 {
+                if ins_len > del_len {
+                    state.marker_list.adjust_for_insert(pos, ins_len - del_len);
+                    state.margins.adjust_for_insert(pos, ins_len - del_len);
+                } else if del_len > ins_len {
+                    state.marker_list.adjust_for_delete(pos, del_len - ins_len);
+                    state.margins.adjust_for_delete(pos, del_len - ins_len);
+                }
+            } else if del_len > 0 {
+                state.marker_list.adjust_for_delete(pos, del_len);
+                state.margins.adjust_for_delete(pos, del_len);
+            } else if ins_len > 0 {
+                state.marker_list.adjust_for_insert(pos, ins_len);
+                state.margins.adjust_for_insert(pos, ins_len);
             }
         }
 

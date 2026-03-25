@@ -8,7 +8,7 @@ use crate::model::event::{
     PopupPositionData,
 };
 use crate::model::filesystem::FileSystem;
-use crate::model::marker::MarkerList;
+use crate::model::marker::{MarkerId, MarkerList};
 use crate::primitives::detected_language::DetectedLanguage;
 use crate::primitives::grammar::GrammarRegistry;
 use crate::primitives::highlight_engine::HighlightEngine;
@@ -31,6 +31,42 @@ use ratatui::style::{Color, Style};
 use std::cell::RefCell;
 use std::ops::Range;
 use std::sync::Arc;
+
+/// A marker whose position was displaced by a deletion.
+/// Stored in LogEntry (for single edits) or Event::BulkEdit (for bulk edits).
+/// On undo, the marker is restored to its exact original position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DisplacedMarker {
+    /// Marker from the main marker_list (virtual text, overlays)
+    Main { id: u64, position: usize },
+    /// Marker from margins.indicator_markers (breakpoints, line indicators)
+    Margin { id: u64, position: usize },
+}
+
+impl DisplacedMarker {
+    /// Encode as (u64, usize) for compact storage. Uses high bit to tag source.
+    pub fn encode(&self) -> (u64, usize) {
+        match self {
+            Self::Main { id, position } => (*id, *position),
+            Self::Margin { id, position } => (*id | (1u64 << 63), *position),
+        }
+    }
+
+    /// Decode from (u64, usize) compact representation.
+    pub fn decode(tagged_id: u64, position: usize) -> Self {
+        if (tagged_id >> 63) == 1 {
+            Self::Margin {
+                id: tagged_id & !(1u64 << 63),
+                position,
+            }
+        } else {
+            Self::Main {
+                id: tagged_id,
+                position,
+            }
+        }
+    }
+}
 
 /// Display mode for a buffer
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -737,16 +773,7 @@ impl EditorState {
                 // to the deletion boundary — they're now moved back to their exact
                 // original positions after the text has been restored by undo.
                 if !displaced_markers.is_empty() {
-                    for &(tagged_id, original_pos) in displaced_markers {
-                        let is_margin = (tagged_id >> 63) == 1;
-                        let raw_id = tagged_id & !(1u64 << 63);
-                        let marker_id = crate::model::marker::MarkerId(raw_id);
-                        if is_margin {
-                            self.margins.set_indicator_position(marker_id, original_pos);
-                        } else {
-                            self.marker_list.set_position(marker_id, original_pos);
-                        }
-                    }
+                    self.restore_displaced_markers(displaced_markers);
                 }
 
                 // Clear ephemeral decorations — their source systems will re-push
@@ -780,6 +807,67 @@ impl EditorState {
                     Some(pos) => crate::model::buffer::LineNumber::Absolute(pos.line),
                     None => crate::model::buffer::LineNumber::Absolute(0),
                 };
+            }
+        }
+    }
+
+    /// Capture positions of markers strictly inside a deleted range.
+    /// Call this BEFORE applying the delete. Returns encoded displaced markers.
+    pub fn capture_displaced_markers(&self, range: &Range<usize>) -> Vec<(u64, usize)> {
+        let mut displaced = Vec::new();
+        if range.is_empty() {
+            return displaced;
+        }
+        for (marker_id, start, _end) in self.marker_list.query_range(range.start, range.end) {
+            if start > range.start && start < range.end {
+                displaced.push(
+                    DisplacedMarker::Main {
+                        id: marker_id.0,
+                        position: start,
+                    }
+                    .encode(),
+                );
+            }
+        }
+        for (marker_id, start, _end) in self.margins.query_indicator_range(range.start, range.end) {
+            if start > range.start && start < range.end {
+                displaced.push(
+                    DisplacedMarker::Margin {
+                        id: marker_id.0,
+                        position: start,
+                    }
+                    .encode(),
+                );
+            }
+        }
+        displaced
+    }
+
+    /// Capture displaced markers for multiple delete ranges (BulkEdit).
+    pub fn capture_displaced_markers_bulk(
+        &self,
+        edits: &[(usize, usize, String)],
+    ) -> Vec<(u64, usize)> {
+        let mut displaced = Vec::new();
+        for (pos, del_len, _text) in edits {
+            if *del_len > 0 {
+                displaced.extend(self.capture_displaced_markers(&(*pos..*pos + *del_len)));
+            }
+        }
+        displaced
+    }
+
+    /// Restore displaced markers to their exact original positions.
+    pub fn restore_displaced_markers(&mut self, displaced: &[(u64, usize)]) {
+        for &(tagged_id, original_pos) in displaced {
+            let dm = DisplacedMarker::decode(tagged_id, original_pos);
+            match dm {
+                DisplacedMarker::Main { id, position } => {
+                    self.marker_list.set_position(MarkerId(id), position);
+                }
+                DisplacedMarker::Margin { id, position } => {
+                    self.margins.set_indicator_position(MarkerId(id), position);
+                }
             }
         }
     }

@@ -95,15 +95,8 @@ fn get_vtext_positions(state: &EditorState) -> Vec<usize> {
 fn do_undo(state: &mut EditorState, cursors: &mut Cursors, log: &mut EventLog) {
     for (e, displaced) in log.undo() {
         state.apply(cursors, &e);
-        for &(tagged_id, pos) in &displaced {
-            let is_margin = (tagged_id >> 63) == 1;
-            let raw_id = tagged_id & !(1u64 << 63);
-            let marker_id = MarkerId(raw_id);
-            if is_margin {
-                state.margins.set_indicator_position(marker_id, pos);
-            } else {
-                state.marker_list.set_position(marker_id, pos);
-            }
+        if !displaced.is_empty() {
+            state.restore_displaced_markers(&displaced);
         }
     }
 }

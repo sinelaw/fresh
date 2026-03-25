@@ -910,8 +910,7 @@ impl Editor {
 
             // Apply events
             for event in events {
-                self.active_event_log_mut().append(event.clone());
-                self.apply_event_to_active_buffer(&event);
+                self.log_and_apply_event(&event);
             }
         }
     }

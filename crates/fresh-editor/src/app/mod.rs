@@ -2404,26 +2404,7 @@ impl Editor {
     pub fn log_and_apply_event(&mut self, event: &Event) {
         // Capture displaced markers before the event is applied
         if let Event::Delete { range, .. } = event {
-            let state = self.active_state();
-            let mut displaced = Vec::new();
-            if range.len() > 0 {
-                for (marker_id, start, _end) in
-                    state.marker_list.query_range(range.start, range.end)
-                {
-                    if start > range.start && start < range.end {
-                        // source=0 (marker_list): no tag bit
-                        displaced.push((marker_id.0, start));
-                    }
-                }
-                for (marker_id, start, _end) in
-                    state.margins.query_indicator_range(range.start, range.end)
-                {
-                    if start > range.start && start < range.end {
-                        // source=1 (margins): tag high bit
-                        displaced.push((marker_id.0 | (1u64 << 63), start));
-                    }
-                }
-            }
+            let displaced = self.active_state().capture_displaced_markers(range);
             self.active_event_log_mut().append(event.clone());
             if !displaced.is_empty() {
                 self.active_event_log_mut()
@@ -2599,35 +2580,8 @@ impl Editor {
             .map(|(pos, del, text)| (*pos, *del, text.as_str()))
             .collect();
 
-        // Snapshot positions of markers inside any deleted ranges.
-        // These markers will collapse to the deletion boundary during adjustment.
-        // On undo, we'll restore them to their exact original positions.
-        // Snapshot displaced markers: (source, marker_id, original_pos)
-        // source: 0 = marker_list, 1 = margins.indicator_markers
-        // These separate trees have independent ID spaces, so we must tag the source.
-        let displaced_markers: Vec<(u64, usize)> = {
-            let mut displaced = Vec::new();
-            for (pos, del_len, _text) in &edits {
-                if *del_len > 0 {
-                    let range_end = pos + del_len;
-                    for (marker_id, start, _end) in state.marker_list.query_range(*pos, range_end) {
-                        if start > *pos && start < range_end {
-                            // Encode source=0 in high bit: raw_id | (0 << 63)
-                            displaced.push((marker_id.0, start));
-                        }
-                    }
-                    for (marker_id, start, _end) in
-                        state.margins.query_indicator_range(*pos, range_end)
-                    {
-                        if start > *pos && start < range_end {
-                            // Encode source=1 in high bit
-                            displaced.push((marker_id.0 | (1u64 << 63), start));
-                        }
-                    }
-                }
-            }
-            displaced
-        };
+        // Snapshot displaced markers before edits so undo can restore them exactly.
+        let displaced_markers = state.capture_displaced_markers_bulk(&edits);
 
         // Apply bulk edits
         let _delta = state.buffer.apply_bulk_edits(&edit_refs);
