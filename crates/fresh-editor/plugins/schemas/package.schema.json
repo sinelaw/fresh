@@ -1,346 +1,511 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/sinelaw/fresh/main/crates/fresh-editor/plugins/schemas/package.schema.json",
   "title": "Fresh Package Manifest",
   "description": "Schema for Fresh plugin and theme package.json files",
   "type": "object",
-  "required": ["name", "version", "description", "type"],
   "properties": {
     "name": {
+      "description": "Package name (lowercase, hyphens allowed)",
       "type": "string",
-      "pattern": "^[a-z0-9-]+$",
-      "description": "Package name (lowercase, hyphens allowed)"
+      "pattern": "^[a-z0-9-]+$"
     },
     "version": {
-      "type": "string",
+      "description": "Semantic version (e.g., 1.0.0)",
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^\\d+\\.\\d+\\.\\d+",
-      "description": "Semantic version (e.g., 1.0.0)"
+      "default": null
     },
     "description": {
-      "type": "string",
-      "description": "Short package description"
+      "description": "Short package description",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
     },
     "type": {
-      "type": "string",
-      "enum": ["plugin", "theme", "theme-pack", "language", "bundle"],
-      "description": "Package type"
-    },
-    "author": {
-      "type": "string",
-      "description": "Author name and optional email (e.g., 'Name <email>')"
-    },
-    "license": {
-      "type": "string",
-      "description": "SPDX license identifier"
-    },
-    "repository": {
-      "type": "string",
-      "format": "uri",
-      "description": "Git repository URL"
-    },
-    "keywords": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "Search keywords"
+      "description": "Package type",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PackageType"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "fresh": {
-      "type": "object",
       "description": "Fresh-specific configuration",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FreshManifestConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "author": {
+      "description": "Author name",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "license": {
+      "description": "SPDX license identifier",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "repository": {
+      "description": "Git repository URL",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "keywords": {
+      "description": "Search keywords",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "dependencies": {
+      "description": "Package dependencies (reserved for future use)",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "$defs": {
+    "PackageType": {
+      "description": "Package type discriminator.",
+      "type": "string",
+      "enum": [
+        "plugin",
+        "theme",
+        "theme-pack",
+        "language",
+        "bundle"
+      ]
+    },
+    "FreshManifestConfig": {
+      "description": "The `fresh` configuration block inside a package manifest.",
+      "type": "object",
       "properties": {
         "min_version": {
-          "type": "string",
-          "pattern": "^\\d+\\.\\d+\\.\\d+",
-          "description": "Minimum required Fresh version"
+          "description": "Minimum required Fresh version",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "min_api_version": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Minimum required plugin API version (integer, e.g. 2)"
+          "description": "Minimum required plugin API version",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
         },
         "entry": {
-          "type": "string",
-          "description": "Plugin entry point file (for plugins)"
+          "description": "Plugin entry point file",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "main": {
+          "description": "Plugin entry point file (alias for entry)",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "theme": {
+          "description": "Single theme JSON file path (for theme packages)",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "themes": {
+          "description": "Theme definitions (for theme packs and bundles)",
           "type": "array",
-          "description": "Theme definitions (for theme packs)",
           "items": {
-            "type": "object",
-            "required": ["file", "name"],
-            "properties": {
-              "file": {
-                "type": "string",
-                "description": "Theme JSON file path"
-              },
-              "name": {
-                "type": "string",
-                "description": "Display name for the theme"
-              },
-              "variant": {
-                "type": "string",
-                "enum": ["dark", "light"],
-                "description": "Theme variant (dark or light)"
-              }
-            }
+            "$ref": "#/$defs/BundleTheme"
           }
         },
         "config_schema": {
-          "type": "object",
-          "description": "JSON Schema for plugin configuration options"
-        },
-        "main": {
-          "type": "string",
-          "description": "Plugin entry point file (alias for entry)"
-        },
-        "theme": {
-          "type": "string",
-          "description": "Theme JSON file path (for single theme packages)"
+          "description": "JSON Schema for plugin configuration options",
+          "default": null
         },
         "grammar": {
-          "type": "object",
           "description": "Grammar configuration (for language packs)",
-          "required": ["file"],
-          "properties": {
-            "file": {
-              "type": "string",
-              "description": "Path to grammar file (.sublime-syntax recommended, or .tmLanguage)"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GrammarManifestConfig"
             },
-            "extensions": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "File extensions this grammar handles (e.g., [\"rs\", \"rust\"])"
-            },
-            "firstLine": {
-              "type": "string",
-              "description": "Regex pattern for shebang detection"
+            {
+              "type": "null"
             }
-          }
+          ]
         },
         "language": {
-          "type": "object",
           "description": "Language configuration (for language packs)",
-          "properties": {
-            "commentPrefix": {
-              "type": "string",
-              "description": "Line comment prefix (e.g., \"//\" or \"#\")"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LanguageManifestConfig"
             },
-            "blockCommentStart": {
-              "type": "string",
-              "description": "Block comment start marker (e.g., \"/*\")"
-            },
-            "blockCommentEnd": {
-              "type": "string",
-              "description": "Block comment end marker (e.g., \"*/\")"
-            },
-            "tabSize": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Default tab size for this language"
-            },
-            "useTabs": {
-              "type": "boolean",
-              "description": "Use tabs instead of spaces"
-            },
-            "autoIndent": {
-              "type": "boolean",
-              "description": "Enable automatic indentation"
-            },
-            "showWhitespaceTabs": {
-              "type": "boolean",
-              "description": "Whether to show whitespace tab indicators (→). Defaults to true. Set to false for languages like Go/Hare that use tabs for indentation."
-            },
-            "formatter": {
-              "type": "object",
-              "required": ["command"],
-              "properties": {
-                "command": {
-                  "type": "string",
-                  "description": "Formatter command (e.g., \"rustfmt\")"
-                },
-                "args": {
-                  "type": "array",
-                  "items": { "type": "string" },
-                  "description": "Arguments to pass to the formatter"
-                }
-              }
+            {
+              "type": "null"
             }
-          }
+          ]
         },
         "lsp": {
-          "type": "object",
           "description": "LSP server configuration (for language packs)",
-          "required": ["command"],
-          "properties": {
-            "command": {
-              "type": "string",
-              "description": "LSP server command"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LspManifestConfig"
             },
-            "args": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "Arguments to pass to the server"
-            },
-            "autoStart": {
-              "type": "boolean",
-              "description": "Auto-start the server when a matching file is opened"
-            },
-            "initializationOptions": {
-              "type": "object",
-              "description": "LSP initialization options"
+            {
+              "type": "null"
             }
-          }
+          ]
         },
         "languages": {
-          "type": "array",
           "description": "Language definitions (for bundles)",
+          "type": "array",
           "items": {
-            "type": "object",
-            "required": ["id"],
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Language identifier (e.g., 'elixir', 'heex')"
-              },
-              "grammar": {
-                "type": "object",
-                "description": "Grammar configuration",
-                "required": ["file"],
-                "properties": {
-                  "file": {
-                    "type": "string",
-                    "description": "Path to grammar file relative to package"
-                  },
-                  "extensions": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "File extensions this grammar handles"
-                  },
-                  "firstLine": {
-                    "type": "string",
-                    "description": "Regex pattern for shebang detection"
-                  }
-                }
-              },
-              "language": {
-                "type": "object",
-                "description": "Language configuration",
-                "properties": {
-                  "commentPrefix": {
-                    "type": "string",
-                    "description": "Line comment prefix"
-                  },
-                  "blockCommentStart": {
-                    "type": "string",
-                    "description": "Block comment start marker"
-                  },
-                  "blockCommentEnd": {
-                    "type": "string",
-                    "description": "Block comment end marker"
-                  },
-                  "tabSize": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "Default tab size for this language"
-                  },
-                  "useTabs": {
-                    "type": "boolean",
-                    "description": "Use tabs instead of spaces"
-                  },
-                  "autoIndent": {
-                    "type": "boolean",
-                    "description": "Enable automatic indentation"
-                  },
-                  "showWhitespaceTabs": {
-                    "type": "boolean",
-                    "description": "Whether to show whitespace tab indicators"
-                  },
-                  "formatter": {
-                    "type": "object",
-                    "required": ["command"],
-                    "properties": {
-                      "command": {
-                        "type": "string",
-                        "description": "Formatter command"
-                      },
-                      "args": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Arguments to pass to the formatter"
-                      }
-                    }
-                  }
-                }
-              },
-              "lsp": {
-                "type": "object",
-                "description": "LSP server configuration",
-                "required": ["command"],
-                "properties": {
-                  "command": {
-                    "type": "string",
-                    "description": "LSP server command"
-                  },
-                  "args": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Arguments to pass to the server"
-                  },
-                  "autoStart": {
-                    "type": "boolean",
-                    "description": "Auto-start the server when a matching file is opened"
-                  },
-                  "initializationOptions": {
-                    "type": "object",
-                    "description": "LSP initialization options"
-                  }
-                }
-              }
-            }
+            "$ref": "#/$defs/BundleLanguage"
           }
         },
         "plugins": {
-          "type": "array",
           "description": "Plugin definitions (for bundles)",
-          "items": {
-            "type": "object",
-            "required": ["entry"],
-            "properties": {
-              "entry": {
-                "type": "string",
-                "description": "Plugin entry point file relative to package"
-              }
-            }
-          }
-        },
-        "themes": {
           "type": "array",
-          "description": "Theme definitions (for bundles)",
           "items": {
-            "type": "object",
-            "required": ["file", "name"],
-            "properties": {
-              "file": {
-                "type": "string",
-                "description": "Theme JSON file path relative to package"
-              },
-              "name": {
-                "type": "string",
-                "description": "Display name for the theme"
-              },
-              "variant": {
-                "type": "string",
-                "enum": ["dark", "light"],
-                "description": "Theme variant (dark or light)"
-              }
-            }
+            "$ref": "#/$defs/BundlePlugin"
           }
         }
       }
     },
-    "dependencies": {
+    "BundleTheme": {
+      "description": "A theme entry within a package manifest.",
       "type": "object",
-      "description": "Package dependencies (reserved for future use)",
-      "additionalProperties": { "type": "string" }
+      "properties": {
+        "file": {
+          "description": "Theme JSON file path relative to package",
+          "type": "string"
+        },
+        "name": {
+          "description": "Display name for the theme",
+          "type": "string"
+        },
+        "variant": {
+          "description": "Theme variant (dark or light)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeVariant"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "file",
+        "name"
+      ]
+    },
+    "ThemeVariant": {
+      "description": "Theme variant (dark or light).",
+      "type": "string",
+      "enum": [
+        "dark",
+        "light"
+      ]
+    },
+    "GrammarManifestConfig": {
+      "description": "Grammar file configuration within a package manifest.",
+      "type": "object",
+      "properties": {
+        "file": {
+          "description": "Path to grammar file (.sublime-syntax or .tmLanguage), relative to package",
+          "type": "string"
+        },
+        "extensions": {
+          "description": "File extensions this grammar handles (e.g., [\"rs\", \"rust\"])",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "firstLine": {
+          "description": "Regex pattern for shebang/first-line detection",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "file"
+      ]
+    },
+    "LanguageManifestConfig": {
+      "description": "Language configuration within a package manifest (camelCase to match JSON schema).",
+      "type": "object",
+      "properties": {
+        "commentPrefix": {
+          "description": "Line comment prefix (e.g., \"//\" or \"#\")",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "blockCommentStart": {
+          "description": "Block comment start marker (e.g., \"/*\")",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "blockCommentEnd": {
+          "description": "Block comment end marker (e.g., \"*/\")",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "tabSize": {
+          "description": "Default tab size for this language",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null
+        },
+        "useTabs": {
+          "description": "Use tabs instead of spaces",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "autoIndent": {
+          "description": "Enable automatic indentation",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "showWhitespaceTabs": {
+          "description": "Whether to show whitespace tab indicators",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "formatter": {
+          "description": "Formatter configuration",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FormatterManifestConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "FormatterManifestConfig": {
+      "description": "Formatter configuration within a package manifest.",
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "Formatter command (e.g., \"rustfmt\", \"prettier\")",
+          "type": "string"
+        },
+        "args": {
+          "description": "Arguments to pass to the formatter",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "LspManifestConfig": {
+      "description": "LSP server configuration within a package manifest (camelCase to match JSON schema).",
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "LSP server command",
+          "type": "string"
+        },
+        "args": {
+          "description": "Arguments to pass to the server",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "autoStart": {
+          "description": "Auto-start the server when a matching file is opened",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "initializationOptions": {
+          "description": "LSP initialization options",
+          "default": null
+        },
+        "processLimits": {
+          "description": "Process resource limits",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProcessLimitsManifestConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "ProcessLimitsManifestConfig": {
+      "description": "Process limits within a package manifest (camelCase to match JSON schema).",
+      "type": "object",
+      "properties": {
+        "maxMemoryPercent": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "maxCpuPercent": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "enabled": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "BundleLanguage": {
+      "description": "A language entry within a bundle manifest.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Language identifier (e.g., \"elixir\", \"heex\")",
+          "type": "string"
+        },
+        "grammar": {
+          "description": "Grammar configuration for this language",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GrammarManifestConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "language": {
+          "description": "Language configuration for this language",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LanguageManifestConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lsp": {
+          "description": "LSP server configuration for this language",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LspManifestConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "BundlePlugin": {
+      "description": "A plugin entry within a bundle manifest.",
+      "type": "object",
+      "properties": {
+        "entry": {
+          "description": "Plugin entry point file relative to package",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entry"
+      ]
     }
-  }
+  },
+  "$id": "https://raw.githubusercontent.com/sinelaw/fresh/main/crates/fresh-editor/plugins/schemas/package.schema.json"
 }

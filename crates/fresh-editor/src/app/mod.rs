@@ -1085,12 +1085,18 @@ impl Editor {
 
         // Apply package language configs (user config takes priority via or_insert)
         for (lang_id, lang_config) in &scan_result.language_configs {
-            config.languages.entry(lang_id.clone()).or_insert_with(|| lang_config.clone());
+            config
+                .languages
+                .entry(lang_id.clone())
+                .or_insert_with(|| lang_config.clone());
         }
 
         // Apply package LSP configs (user config takes priority via or_insert)
         for (lang_id, lsp_config) in &scan_result.lsp_configs {
-            config.lsp.entry(lang_id.clone()).or_insert_with(|| lsp_config.clone());
+            config
+                .lsp
+                .entry(lang_id.clone())
+                .or_insert_with(|| lsp_config.clone());
         }
 
         let theme_registry = theme_loader.load_all(&scan_result.bundle_theme_dirs);

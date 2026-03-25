@@ -72,9 +72,7 @@ impl GrammarLoader for LocalGrammarLoader {
     }
 
     fn bundles_packages_dir(&self) -> Option<PathBuf> {
-        self.config_dir
-            .as_ref()
-            .map(|p| p.join("bundles/packages"))
+        self.config_dir.as_ref().map(|p| p.join("bundles/packages"))
     }
 
     fn read_file(&self, path: &Path) -> io::Result<String> {
@@ -136,10 +134,7 @@ impl GrammarRegistry {
     ///
     /// Same as `load()` but includes extra grammars (from plugins) in the same
     /// builder pass, so only one `builder.build()` call is needed.
-    pub fn load_with_additional(
-        loader: &dyn GrammarLoader,
-        additional: &[GrammarSpec],
-    ) -> Self {
+    pub fn load_with_additional(loader: &dyn GrammarLoader, additional: &[GrammarSpec]) -> Self {
         // Start with built-in extra extension mappings, user grammars override these
         let mut user_extensions = Self::build_extra_extensions();
 
@@ -270,7 +265,12 @@ impl GrammarRegistry {
             filename_scopes.len()
         );
 
-        Self::new_with_loaded_paths(syntax_set, user_extensions, filename_scopes, loaded_grammar_paths)
+        Self::new_with_loaded_paths(
+            syntax_set,
+            user_extensions,
+            filename_scopes,
+            loaded_grammar_paths,
+        )
     }
 
     /// Get the grammars directory path for the given config directory.
@@ -653,11 +653,7 @@ fn load_bundle_grammars(
                     });
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to parse bundle grammar for '{}': {}",
-                        lang.id,
-                        e
-                    );
+                    tracing::warn!("Failed to parse bundle grammar for '{}': {}", lang.id, e);
                 }
             }
         }

@@ -21,12 +21,18 @@ use crate::types::{LspServerConfig, ProcessLimits};
 /// All optional fields use `#[serde(default)]` so that unknown or missing
 /// fields are silently ignored — ensuring forward compatibility.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[schemars(
+    title = "Fresh Package Manifest",
+    description = "Schema for Fresh plugin and theme package.json files"
+)]
 pub struct PackageManifest {
     /// Package name (lowercase, hyphens allowed)
+    #[schemars(regex(pattern = r"^[a-z0-9-]+$"))]
     pub name: String,
 
-    /// Semantic version
+    /// Semantic version (e.g., 1.0.0)
     #[serde(default)]
+    #[schemars(regex(pattern = r"^\d+\.\d+\.\d+"))]
     pub version: Option<String>,
 
     /// Short package description
@@ -56,6 +62,10 @@ pub struct PackageManifest {
     /// Search keywords
     #[serde(default)]
     pub keywords: Vec<String>,
+
+    /// Package dependencies (reserved for future use)
+    #[serde(default)]
+    pub dependencies: std::collections::HashMap<String, String>,
 }
 
 /// Package type discriminator.
@@ -390,7 +400,11 @@ fn scan_language_packs(dir: &Path, result: &mut PackageScanResult) {
 }
 
 /// Process a single language pack manifest.
-fn process_language_pack(_pkg_dir: &Path, manifest: &PackageManifest, result: &mut PackageScanResult) {
+fn process_language_pack(
+    _pkg_dir: &Path,
+    manifest: &PackageManifest,
+    result: &mut PackageScanResult,
+) {
     let fresh = match &manifest.fresh {
         Some(f) => f,
         None => return,

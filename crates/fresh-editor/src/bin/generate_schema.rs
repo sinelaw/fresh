@@ -38,7 +38,17 @@ fn main() {
         }
         "package" => {
             let schema = schema_for!(PackageManifest);
-            serde_json::to_value(&schema).expect("Failed to serialize schema")
+            let mut json = serde_json::to_value(&schema).expect("Failed to serialize schema");
+            // Add $id for the package schema
+            if let Some(obj) = json.as_object_mut() {
+                obj.insert(
+                    "$id".to_string(),
+                    serde_json::Value::String(
+                        "https://raw.githubusercontent.com/sinelaw/fresh/main/crates/fresh-editor/plugins/schemas/package.schema.json".to_string()
+                    ),
+                );
+            }
+            json
         }
         other => {
             eprintln!(
