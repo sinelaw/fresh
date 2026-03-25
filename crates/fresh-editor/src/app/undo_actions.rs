@@ -31,10 +31,6 @@ impl Editor {
             tracing::debug!("Undo applying event: {:?}", event);
             self.apply_event_to_active_buffer(event);
 
-            // Restore displaced markers to their exact original positions.
-            // These were captured when the original Delete was logged.
-            // Skip for BulkEdit events — they handle displaced markers internally
-            // in state.apply(BulkEdit) via the Event's own displaced_markers field.
             // Restore displaced markers from LogEntry (for single Delete events).
             // Skip for BulkEdit — they handle displaced markers internally
             // in state.apply(BulkEdit) via the Event's own displaced_markers field.

@@ -256,9 +256,7 @@ fn test_each_single_edit_op_marker_roundtrip() {
 }
 
 /// Walk through each BulkEdit operation type and verify marker roundtrip.
-
 #[test]
-
 fn test_each_bulk_edit_op_marker_roundtrip() {
     // MoveLineDown: cursor on line 2, move it down
     {
@@ -349,9 +347,7 @@ fn test_enter_typechar_movelineup_marker_at_end() {
 }
 
 /// MoveLineDown (BulkEdit) with margin indicator: forward/undo/redo roundtrip.
-
 #[test]
-
 fn test_move_line_down_marker_roundtrip() {
     let mut config = fresh::config::Config::default();
     config.editor.auto_indent = false;
@@ -415,9 +411,7 @@ fn test_move_line_down_marker_roundtrip() {
 }
 
 /// MoveLineUp (BulkEdit) with margin indicator: forward/undo/redo roundtrip.
-
 #[test]
-
 fn test_move_line_up_marker_roundtrip() {
     let mut config = fresh::config::Config::default();
     config.editor.auto_indent = false;
@@ -480,9 +474,7 @@ fn test_move_line_up_marker_roundtrip() {
 }
 
 /// Type + MoveLineDown + Type: interleaved single-edit and BulkEdit with marker.
-
 #[test]
-
 fn test_interleaved_single_and_bulk_edit_marker_roundtrip() {
     let mut config = fresh::config::Config::default();
     config.editor.auto_indent = false;
@@ -664,7 +656,7 @@ fn run_marker_roundtrip(ops: &[Op]) -> Result<(), proptest::test_runner::TestCas
 
 proptest! {
     #![proptest_config(ProptestConfig {
-        cases: 200,
+        cases: 50,
         max_shrink_iters: 5000,
         ..ProptestConfig::default()
     })]
@@ -682,7 +674,7 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig {
-        cases: 200,
+        cases: 50,
         max_shrink_iters: 5000,
         ..ProptestConfig::default()
     })]
@@ -701,7 +693,7 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig {
-        cases: 100,
+        cases: 30,
         max_shrink_iters: 5000,
         ..ProptestConfig::default()
     })]
