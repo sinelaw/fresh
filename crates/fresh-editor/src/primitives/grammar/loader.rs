@@ -25,6 +25,9 @@ pub trait GrammarLoader: Send + Sync {
     /// Get the language packages directory path (installed via pkg manager).
     fn languages_packages_dir(&self) -> Option<PathBuf>;
 
+    /// Get the bundles packages directory path (installed bundles with grammars).
+    fn bundles_packages_dir(&self) -> Option<PathBuf>;
+
     /// Read file contents as string.
     fn read_file(&self, path: &Path) -> io::Result<String>;
 
@@ -66,6 +69,12 @@ impl GrammarLoader for LocalGrammarLoader {
         self.config_dir
             .as_ref()
             .map(|p| p.join("languages/packages"))
+    }
+
+    fn bundles_packages_dir(&self) -> Option<PathBuf> {
+        self.config_dir
+            .as_ref()
+            .map(|p| p.join("bundles/packages"))
     }
 
     fn read_file(&self, path: &Path) -> io::Result<String> {
@@ -139,8 +148,12 @@ impl GrammarRegistry {
         let has_language_packs = loader
             .languages_packages_dir()
             .is_some_and(|dir| loader.exists(&dir));
+        let has_bundle_packs = loader
+            .bundles_packages_dir()
+            .is_some_and(|dir| loader.exists(&dir));
 
-        let needs_builder = has_user_grammars || has_language_packs || !additional.is_empty();
+        let needs_builder =
+            has_user_grammars || has_language_packs || has_bundle_packs || !additional.is_empty();
         let mut loaded_grammar_paths = Vec::new();
 
         let syntax_set = if !needs_builder {
@@ -189,6 +202,21 @@ impl GrammarRegistry {
                     &packages_dir,
                     &mut builder,
                     &mut user_extensions,
+                );
+            }
+
+            if has_bundle_packs {
+                let bundles_dir = loader.bundles_packages_dir().unwrap();
+                tracing::info!(
+                    "[grammar-build] Loading bundle grammars from {:?}...",
+                    bundles_dir
+                );
+                load_bundle_grammars(
+                    loader,
+                    &bundles_dir,
+                    &mut builder,
+                    &mut user_extensions,
+                    &mut loaded_grammar_paths,
                 );
             }
 
@@ -515,6 +543,127 @@ fn load_language_pack_grammars(
     }
 }
 
+/// Load grammars from bundle packages (installed via pkg manager).
+///
+/// Bundles use a `fresh.languages` array in their `package.json`, where each
+/// language entry may have a `grammar` with a `file` path. This loads all
+/// grammar files found in bundle manifests.
+fn load_bundle_grammars(
+    loader: &dyn GrammarLoader,
+    bundles_dir: &Path,
+    builder: &mut SyntaxSetBuilder,
+    user_extensions: &mut HashMap<String, String>,
+    loaded_grammar_paths: &mut Vec<GrammarSpec>,
+) {
+    let entries = match loader.read_dir(bundles_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::debug!(
+                "Failed to read bundle packages directory {:?}: {}",
+                bundles_dir,
+                e
+            );
+            return;
+        }
+    };
+
+    for package_path in entries {
+        if !loader.is_dir(&package_path) {
+            continue;
+        }
+
+        let manifest_path = package_path.join("package.json");
+        if !loader.exists(&manifest_path) {
+            continue;
+        }
+
+        let content = match loader.read_file(&manifest_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!("Failed to read {:?}: {}", manifest_path, e);
+                continue;
+            }
+        };
+
+        // Parse the manifest to find bundle language grammars
+        let manifest: crate::services::packages::PackageManifest =
+            match serde_json::from_str(&content) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::debug!("Failed to parse {:?}: {}", manifest_path, e);
+                    continue;
+                }
+            };
+
+        let fresh = match &manifest.fresh {
+            Some(f) => f,
+            None => continue,
+        };
+
+        for lang in &fresh.languages {
+            let grammar_config = match &lang.grammar {
+                Some(g) => g,
+                None => continue,
+            };
+
+            let grammar_path = package_path.join(&grammar_config.file);
+            if !loader.exists(&grammar_path) {
+                tracing::warn!(
+                    "Bundle grammar file not found for '{}' in '{}': {:?}",
+                    lang.id,
+                    manifest.name,
+                    grammar_path
+                );
+                continue;
+            }
+
+            let content = match loader.read_file(&grammar_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!("Failed to read bundle grammar {:?}: {}", grammar_path, e);
+                    continue;
+                }
+            };
+
+            match syntect::parsing::SyntaxDefinition::load_from_str(
+                &content,
+                true,
+                grammar_path.file_stem().and_then(|s| s.to_str()),
+            ) {
+                Ok(syntax) => {
+                    let scope = syntax.scope.to_string();
+                    tracing::info!(
+                        "Loaded bundle grammar '{}' from {:?} (scope: {}, extensions: {:?})",
+                        lang.id,
+                        grammar_path,
+                        scope,
+                        grammar_config.extensions
+                    );
+                    builder.add(syntax);
+
+                    for ext in &grammar_config.extensions {
+                        let ext_clean = ext.trim_start_matches('.');
+                        user_extensions.insert(ext_clean.to_string(), scope.clone());
+                    }
+
+                    loaded_grammar_paths.push(GrammarSpec {
+                        language: lang.id.clone(),
+                        path: grammar_path,
+                        extensions: grammar_config.extensions.clone(),
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse bundle grammar for '{}': {}",
+                        lang.id,
+                        e
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,6 +697,10 @@ mod tests {
         }
 
         fn languages_packages_dir(&self) -> Option<PathBuf> {
+            None // Not used in current tests
+        }
+
+        fn bundles_packages_dir(&self) -> Option<PathBuf> {
             None // Not used in current tests
         }
 

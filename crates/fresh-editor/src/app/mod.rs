@@ -1077,7 +1077,23 @@ impl Editor {
         // Load all themes into registry
         tracing::info!("Loading themes...");
         let theme_loader = crate::view::theme::ThemeLoader::new(dir_context.themes_dir());
-        let theme_registry = theme_loader.load_all();
+        // Scan installed packages (language packs + bundles) before plugin loading.
+        // This replaces the JS loadInstalledPackages() — configs, grammars, plugin dirs,
+        // and theme dirs are all collected here and applied synchronously.
+        let scan_result =
+            crate::services::packages::scan_installed_packages(&dir_context.config_dir);
+
+        // Apply package language configs (user config takes priority via or_insert)
+        for (lang_id, lang_config) in &scan_result.language_configs {
+            config.languages.entry(lang_id.clone()).or_insert_with(|| lang_config.clone());
+        }
+
+        // Apply package LSP configs (user config takes priority via or_insert)
+        for (lang_id, lsp_config) in &scan_result.lsp_configs {
+            config.lsp.entry(lang_id.clone()).or_insert_with(|| lsp_config.clone());
+        }
+
+        let theme_registry = theme_loader.load_all(&scan_result.bundle_theme_dirs);
         tracing::info!("Themes loaded");
 
         // Get active theme from registry, falling back to default if not found
@@ -1288,6 +1304,12 @@ impl Editor {
                 }
             }
 
+            // Add bundle plugin directories from package scan
+            for dir in &scan_result.bundle_plugin_dirs {
+                tracing::info!("Found bundle plugin directory: {:?}", dir);
+                plugin_dirs.push(dir.clone());
+            }
+
             if plugin_dirs.is_empty() {
                 tracing::debug!(
                     "No plugins directory found next to executable or in working dir: {:?}",
@@ -1357,7 +1379,15 @@ impl Editor {
             user_config_raw,
             dir_context: dir_context.clone(),
             grammar_registry,
-            pending_grammars: Vec::new(),
+            pending_grammars: scan_result
+                .additional_grammars
+                .iter()
+                .map(|g| PendingGrammar {
+                    language: g.language.clone(),
+                    grammar_path: g.path.to_string_lossy().to_string(),
+                    extensions: g.extensions.clone(),
+                })
+                .collect(),
             grammar_reload_pending: false,
             grammar_build_in_progress: false,
             needs_full_grammar_build: true,

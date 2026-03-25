@@ -1714,7 +1714,7 @@ pub fn generate_dynamic_items(source: &str, themes_dir: &std::path::Path) -> Vec
         "copy_with_theme" => {
             // Generate theme options from available themes
             let loader = crate::view::theme::ThemeLoader::new(themes_dir.to_path_buf());
-            let registry = loader.load_all();
+            let registry = loader.load_all(&[]);
             registry
                 .list()
                 .iter()
@@ -5247,7 +5247,7 @@ mod tests {
                 assert_eq!(label, "Test");
                 // Should have items for each available theme (embedded themes only, no user themes in temp dir)
                 let loader = crate::view::theme::ThemeLoader::embedded_only();
-                let registry = loader.load_all();
+                let registry = loader.load_all(&[]);
                 assert_eq!(items.len(), registry.len());
 
                 // Each item should be an Action with copy_with_theme

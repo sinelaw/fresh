@@ -110,8 +110,12 @@ impl ThemeLoader {
         self.user_themes_dir.as_deref()
     }
 
-    /// Load all themes (embedded + user + packages) into a registry.
-    pub fn load_all(&self) -> ThemeRegistry {
+    /// Load all themes (embedded + user + packages + bundle dirs) into a registry.
+    ///
+    /// Pass `&[]` for `bundle_theme_dirs` if there are no bundle themes.
+    /// Each bundle directory should contain a `package.json` with a `fresh.themes`
+    /// array (same format as theme packages).
+    pub fn load_all(&self, bundle_theme_dirs: &[PathBuf]) -> ThemeRegistry {
         let mut themes = HashMap::new();
         let mut theme_list = Vec::new();
 
@@ -165,6 +169,16 @@ impl ThemeLoader {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // Load themes from bundle packages
+        for bundle_dir in bundle_theme_dirs {
+            if let Some(name) = bundle_dir.file_name().and_then(|n| n.to_str()) {
+                let manifest_path = bundle_dir.join("package.json");
+                if manifest_path.exists() {
+                    self.load_package_themes(bundle_dir, name, &mut themes, &mut theme_list);
                 }
             }
         }
@@ -324,7 +338,7 @@ mod tests {
     #[test]
     fn test_theme_registry_get() {
         let loader = ThemeLoader::embedded_only();
-        let registry = loader.load_all();
+        let registry = loader.load_all(&[]);
 
         // Should find builtin themes
         assert!(registry.get("dark").is_some());
@@ -344,7 +358,7 @@ mod tests {
     #[test]
     fn test_theme_registry_list() {
         let loader = ThemeLoader::embedded_only();
-        let registry = loader.load_all();
+        let registry = loader.load_all(&[]);
 
         let list = registry.list();
         assert!(list.len() >= 7); // At least the builtin themes
@@ -357,7 +371,7 @@ mod tests {
     #[test]
     fn test_theme_registry_contains() {
         let loader = ThemeLoader::embedded_only();
-        let registry = loader.load_all();
+        let registry = loader.load_all(&[]);
 
         assert!(registry.contains("dark"));
         assert!(registry.contains("Dark")); // normalized
@@ -367,7 +381,7 @@ mod tests {
     #[test]
     fn test_theme_loader_load_all() {
         let loader = ThemeLoader::embedded_only();
-        let registry = loader.load_all();
+        let registry = loader.load_all(&[]);
 
         // Should have loaded all embedded themes
         assert!(registry.len() >= 7); // 7 root themes (xscriptor moved to external repo)
@@ -401,7 +415,7 @@ mod tests {
 
         // Load themes with the custom themes directory
         let loader = ThemeLoader::new(themes_dir.clone());
-        let registry = loader.load_all();
+        let registry = loader.load_all(&[]);
 
         // Verify the custom theme is loaded
         assert!(
@@ -489,7 +503,7 @@ mod tests {
 
         // Load themes
         let loader = ThemeLoader::new(themes_dir);
-        let registry = loader.load_all();
+        let registry = loader.load_all(&[]);
 
         // Verify the packaged theme is loaded (name is normalized from "Packaged Theme")
         assert!(
@@ -541,7 +555,7 @@ mod tests {
             .expect("Failed to write theme file");
 
         let loader = ThemeLoader::new(themes_dir);
-        let registry = loader.load_all();
+        let registry = loader.load_all(&[]);
 
         // Should be findable by the normalized filename
         assert!(
@@ -595,7 +609,7 @@ mod tests {
 
         // Load themes
         let loader = ThemeLoader::new(themes_dir);
-        let registry = loader.load_all();
+        let registry = loader.load_all(&[]);
 
         // Verify the nested theme is loaded
         assert!(
@@ -618,7 +632,7 @@ mod tests {
     #[test]
     fn test_to_json_map() {
         let loader = ThemeLoader::embedded_only();
-        let registry = loader.load_all();
+        let registry = loader.load_all(&[]);
 
         let json_map = registry.to_json_map();
 
