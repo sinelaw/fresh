@@ -245,21 +245,21 @@ fn test_save_permission_denied_no_crash() {
     let _ = std::fs::set_permissions(&unwritable_dir, Permissions::from_mode(0o755));
 }
 
-/// Test saving a system file triggers in-place write path (issue #775)
+/// Test that opening a file owned by another user disables editing.
 ///
-/// This test attempts to reproduce the exact bug scenario:
-/// - Open a file owned by root (e.g., /etc/hosts)
-/// - The in-place write path is triggered because file owner != current user
-/// - Save should show sudo prompt, not crash
-///
-/// This test is ignored by default because it requires:
-/// 1. Running as non-root user
-/// 2. The system file to exist and be readable
-/// This test reproduces the bug from issue #775
+/// Files that the current user cannot write to (e.g. root-owned files with
+/// mode 0o644) should have editing disabled so the user can't accidentally
+/// modify them.
 #[test]
 #[cfg(unix)]
 fn test_save_root_owned_file_shows_sudo_prompt() {
     use std::os::unix::fs::MetadataExt;
+
+    // Root (uid 0) bypasses Unix file permission checks.
+    if unsafe { libc::getuid() } == 0 {
+        eprintln!("Skipping test: root bypasses file permission checks");
+        return;
+    }
 
     // Try to find a root-owned file that's world-readable
     let test_paths = ["/etc/hosts", "/etc/passwd", "/etc/resolv.conf"];
@@ -295,42 +295,15 @@ fn test_save_root_owned_file_shows_sudo_prompt() {
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
-    // Modify the content (add a space at the beginning)
+    // Try to type — editing should be disabled since the file is not writable
     harness.type_text(" ").unwrap();
     harness.render().unwrap();
 
-    // Verify buffer is modified
-    harness.assert_screen_contains("*");
-
-    // Try to save - this triggers the in-place write path because file is owned by root
-    // BUG: This crashes with "Permission denied (os error 13)"
-    // EXPECTED: Shows "Permission denied. Save with sudo?" prompt
-    let save_result = harness.send_key(KeyCode::Char('s'), KeyModifiers::CONTROL);
-    assert!(
-        save_result.is_ok(),
-        "Save operation should not crash with permission denied: {:?}",
-        save_result
-    );
-
-    let render_result = harness.render();
-    assert!(
-        render_result.is_ok(),
-        "Render after save should not crash: {:?}",
-        render_result
-    );
-
-    // Should show sudo save prompt
+    // Buffer should NOT be modified (no "*" indicator) because editing is disabled
     let screen = harness.screen_to_string();
-    let shows_sudo_prompt = screen.contains("sudo") || screen.contains("Permission denied");
     assert!(
-        shows_sudo_prompt,
-        "Expected sudo save prompt when saving root-owned file. Screen:\n{}",
+        !screen.contains(" *"),
+        "Editing should be disabled for files the current user cannot write. Screen:\n{}",
         screen
     );
-
-    // Cancel the save (don't actually modify system file)
-    harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
 }

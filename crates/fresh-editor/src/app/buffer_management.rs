@@ -304,12 +304,8 @@ impl Editor {
         }
 
         // Check if the file is read-only on disk (filesystem permissions)
-        if file_exists && !metadata.read_only {
-            if let Ok(file_meta) = self.filesystem.metadata(path) {
-                if file_meta.is_readonly {
-                    metadata.read_only = true;
-                }
-            }
+        if file_exists && !metadata.read_only && !self.filesystem.is_writable(path) {
+            metadata.read_only = true;
         }
 
         // Mark read-only files (library, binary, or filesystem-readonly) as editing-disabled

@@ -85,6 +85,14 @@ impl RemoteFileSystem {
 
         let is_hidden = name.starts_with('.');
         let permissions = FilePermissions::from_mode(rm.mode);
+
+        #[cfg(unix)]
+        let is_readonly = {
+            let (euid, user_groups) =
+                crate::model::filesystem::StdFileSystem::current_user_groups();
+            permissions.is_readonly_for_user(euid, rm.uid, rm.gid, &user_groups)
+        };
+        #[cfg(not(unix))]
         let is_readonly = permissions.is_readonly();
 
         let mut meta = FileMetadata::new(rm.size)
@@ -700,12 +708,22 @@ mod tests {
 
     #[test]
     fn test_convert_metadata() {
+        // Use the current user's uid/gid so the file appears writable regardless
+        // of which user runs the test (on Unix, is_readonly checks effective user).
+        #[cfg(unix)]
+        let (uid, gid) = {
+            let (euid, groups) = crate::model::filesystem::StdFileSystem::current_user_groups();
+            (euid, *groups.first().unwrap_or(&0u32))
+        };
+        #[cfg(not(unix))]
+        let (uid, gid) = (1000u32, 1000u32);
+
         let rm = RemoteMetadata {
             size: 1234,
             mtime: 1700000000,
             mode: 0o644,
-            uid: 1000,
-            gid: 1000,
+            uid,
+            gid,
             dir: false,
             file: true,
             link: false,

@@ -217,7 +217,11 @@ impl FilePermissions {
         self.mode
     }
 
-    /// Check if readonly
+    /// Check if no write bits are set at all (any user).
+    ///
+    /// NOTE: On Unix, this only checks whether the mode has zero write bits.
+    /// It does NOT check whether the *current user* can write. For that,
+    /// use [`is_readonly_for_user`] with the appropriate uid/gid.
     pub fn is_readonly(&self) -> bool {
         #[cfg(unix)]
         {
@@ -227,6 +231,31 @@ impl FilePermissions {
         {
             self.readonly
         }
+    }
+
+    /// Check if the file is read-only for a specific user identified by
+    /// `user_uid` and a set of group IDs the user belongs to.
+    ///
+    /// On non-Unix platforms, falls back to the simple readonly flag.
+    #[cfg(unix)]
+    pub fn is_readonly_for_user(
+        &self,
+        user_uid: u32,
+        file_uid: u32,
+        file_gid: u32,
+        user_groups: &[u32],
+    ) -> bool {
+        // root can write to anything
+        if user_uid == 0 {
+            return false;
+        }
+        if user_uid == file_uid {
+            return self.mode & 0o200 == 0;
+        }
+        if user_groups.contains(&file_gid) {
+            return self.mode & 0o020 == 0;
+        }
+        self.mode & 0o002 == 0
     }
 }
 
@@ -505,6 +534,17 @@ pub trait FileSystem: Send + Sync {
 
     /// Check if path is a file
     fn is_file(&self, path: &Path) -> io::Result<bool>;
+
+    /// Check if the current user has write permission to the given path.
+    ///
+    /// On Unix, this considers file ownership, group membership (including
+    /// supplementary groups), and the relevant permission bits. On other
+    /// platforms it falls back to the standard readonly check.
+    ///
+    /// Returns `false` if the path doesn't exist or metadata can't be read.
+    fn is_writable(&self, path: &Path) -> bool {
+        self.metadata(path).map(|m| !m.is_readonly).unwrap_or(false)
+    }
 
     /// Set file permissions
     fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()>;
@@ -898,19 +938,51 @@ impl StdFileSystem {
             .is_some_and(|n| n.starts_with('.'))
     }
 
+    /// Get the current user's effective UID and all group IDs (primary + supplementary).
+    #[cfg(unix)]
+    pub fn current_user_groups() -> (u32, Vec<u32>) {
+        // SAFETY: these libc calls are always safe and have no failure modes
+        let euid = unsafe { libc::geteuid() };
+        let egid = unsafe { libc::getegid() };
+        let mut groups = vec![egid];
+
+        // Get supplementary groups
+        let ngroups = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+        if ngroups > 0 {
+            let mut sup_groups = vec![0 as libc::gid_t; ngroups as usize];
+            let n = unsafe { libc::getgroups(ngroups, sup_groups.as_mut_ptr()) };
+            if n > 0 {
+                sup_groups.truncate(n as usize);
+                for g in sup_groups {
+                    if g != egid {
+                        groups.push(g);
+                    }
+                }
+            }
+        }
+
+        (euid, groups)
+    }
+
     /// Build FileMetadata from std::fs::Metadata
     fn build_metadata(path: &Path, meta: &std::fs::Metadata) -> FileMetadata {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
+            let file_uid = meta.uid();
+            let file_gid = meta.gid();
+            let permissions = FilePermissions::from_std(meta.permissions());
+            let (euid, user_groups) = Self::current_user_groups();
+            let is_readonly =
+                permissions.is_readonly_for_user(euid, file_uid, file_gid, &user_groups);
             FileMetadata {
                 size: meta.len(),
                 modified: meta.modified().ok(),
-                permissions: Some(FilePermissions::from_std(meta.permissions())),
+                permissions: Some(permissions),
                 is_hidden: Self::is_hidden(path),
-                is_readonly: meta.permissions().readonly(),
-                uid: Some(meta.uid()),
-                gid: Some(meta.gid()),
+                is_readonly,
+                uid: Some(file_uid),
+                gid: Some(file_gid),
             }
         }
         #[cfg(not(unix))]
