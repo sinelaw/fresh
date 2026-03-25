@@ -164,7 +164,6 @@ unicode-segmentation = { version = "1.12" }
 # Encoding support - detection and conversion for various text encodings
 encoding_rs = "0.8"
 chardetng = "0.1"
-charset-normalizer-rs = "1.1"
 
 # Terminal emulation (optional)
 alacritty_terminal = { version = "0.25", optional = true }
