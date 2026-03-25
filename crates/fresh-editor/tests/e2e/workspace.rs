@@ -2828,6 +2828,187 @@ fn test_no_panic_when_workspace_has_dead_terminal() {
     }
 }
 
+/// Regression test for issue #1362: manually crafted workspace JSON with a
+/// split layout where all files are deleted. Tests edge cases in workspace
+/// restore that the normal save/restore cycle might not produce.
+#[test]
+fn test_no_panic_crafted_split_workspace_all_deleted() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Write a workspace JSON directly (simulating an old saved workspace)
+    let workspace_path = get_workspace_path(&project_dir).unwrap();
+    std::fs::create_dir_all(workspace_path.parent().unwrap()).unwrap();
+
+    let canonical_dir = project_dir.canonicalize().unwrap();
+    let workspace_json = format!(
+        r#"{{
+  "version": 1,
+  "working_dir": "{}",
+  "split_layout": {{
+    "Split": {{
+      "direction": "Vertical",
+      "first": {{ "Leaf": {{ "file_path": "deleted_left.txt", "split_id": 0 }} }},
+      "second": {{ "Leaf": {{ "file_path": "deleted_right.txt", "split_id": 1 }} }},
+      "ratio": 0.5,
+      "split_id": 2
+    }}
+  }},
+  "active_split_id": 1,
+  "split_states": {{
+    "0": {{
+      "open_tabs": [{{"File": "deleted_left.txt"}}],
+      "active_tab_index": 0,
+      "open_files": [],
+      "active_file_index": 0,
+      "file_states": {{}},
+      "tab_scroll_offset": 0,
+      "view_mode": "Source"
+    }},
+    "1": {{
+      "open_tabs": [{{"File": "deleted_right.txt"}}],
+      "active_tab_index": 0,
+      "open_files": [],
+      "active_file_index": 0,
+      "file_states": {{}},
+      "tab_scroll_offset": 0,
+      "view_mode": "Source"
+    }}
+  }},
+  "config_overrides": {{}},
+  "file_explorer": {{ "visible": false, "width_percent": 20,
+                     "show_hidden": false, "show_gitignored": false }},
+  "histories": {{ "search": [], "replace": [], "goto_line": [] }},
+  "search_options": {{ "case_sensitive": false, "whole_word": false,
+                      "use_regex": false, "confirm_each": false }},
+  "bookmarks": {{}},
+  "terminals": [],
+  "external_files": [],
+  "saved_at": 0
+}}"#,
+        canonical_dir.display()
+    );
+
+    std::fs::write(&workspace_path, &workspace_json).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        24,
+        Config::default(),
+        project_dir.clone(),
+    )
+    .unwrap();
+
+    // This should not panic during restore or render
+    harness
+        .startup(true, &[])
+        .expect("startup must not panic with crafted split workspace");
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.is_empty(),
+        "Screen should render after crafted split workspace restore"
+    );
+
+    // Clean up workspace file
+    let _ = std::fs::remove_file(&workspace_path);
+}
+
+/// Regression test for issue #1362: closing the initial buffer via close_buffer
+/// must create a replacement and render must not panic.
+/// This directly tests the code path where a buffer is removed from self.buffers
+/// while the split manager still references it - the replacement buffer must
+/// be correctly wired up.
+#[test]
+fn test_no_panic_after_closing_initial_buffer() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Config::default(),
+        project_dir,
+    )
+    .unwrap();
+
+    // Get the initial buffer ID
+    let initial_buf = harness.editor().active_buffer();
+
+    // Close it - this should create a replacement
+    harness.editor_mut().close_buffer(initial_buf).unwrap();
+
+    // The render must not panic - the replacement buffer should be active
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(!screen.is_empty(), "Screen should render after closing initial buffer");
+}
+
+/// Regression test for issue #1362: workspace with backward-compat format
+/// (open_files instead of open_tabs) where all files are deleted.
+#[test]
+fn test_no_panic_backward_compat_workspace_all_deleted() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let workspace_path = get_workspace_path(&project_dir).unwrap();
+    std::fs::create_dir_all(workspace_path.parent().unwrap()).unwrap();
+
+    let canonical_dir = project_dir.canonicalize().unwrap();
+    let workspace_json = format!(
+        r#"{{
+  "version": 1,
+  "working_dir": "{}",
+  "split_layout": {{ "Leaf": {{ "file_path": "deleted.txt", "split_id": 0 }} }},
+  "active_split_id": 0,
+  "split_states": {{
+    "0": {{
+      "open_tabs": [],
+      "open_files": ["deleted.txt"],
+      "active_file_index": 0,
+      "file_states": {{}},
+      "tab_scroll_offset": 0,
+      "view_mode": "Source"
+    }}
+  }},
+  "config_overrides": {{}},
+  "file_explorer": {{ "visible": false, "width_percent": 20,
+                     "show_hidden": false, "show_gitignored": false }},
+  "histories": {{ "search": [], "replace": [], "goto_line": [] }},
+  "search_options": {{ "case_sensitive": false, "whole_word": false,
+                      "use_regex": false, "confirm_each": false }},
+  "bookmarks": {{}},
+  "terminals": [],
+  "external_files": [],
+  "saved_at": 0
+}}"#,
+        canonical_dir.display()
+    );
+
+    std::fs::write(&workspace_path, &workspace_json).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Config::default(),
+        project_dir.clone(),
+    )
+    .unwrap();
+
+    harness
+        .startup(true, &[])
+        .expect("startup must not panic with backward-compat workspace");
+
+    let screen = harness.screen_to_string();
+    assert!(!screen.is_empty(), "Screen should render");
+
+    let _ = std::fs::remove_file(&workspace_path);
+}
+
 /// Regression test for issue #1362: a workspace saved for a parent directory
 /// must not interfere when launching from a subdirectory.
 ///
