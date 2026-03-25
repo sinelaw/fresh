@@ -1575,7 +1575,7 @@ impl Editor {
                         state.margins.query_indicator_range(*pos, range_end)
                     {
                         if start > *pos && start < range_end {
-                            displaced.push((marker_id.0, start));
+                            displaced.push((marker_id.0 | (1u64 << 63), start));
                         }
                     }
                 }

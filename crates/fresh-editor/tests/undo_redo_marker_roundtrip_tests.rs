@@ -95,9 +95,15 @@ fn get_vtext_positions(state: &EditorState) -> Vec<usize> {
 fn do_undo(state: &mut EditorState, cursors: &mut Cursors, log: &mut EventLog) {
     for (e, displaced) in log.undo() {
         state.apply(cursors, &e);
-        for &(mid, pos) in &displaced {
-            state.marker_list.set_position(MarkerId(mid), pos);
-            state.margins.set_indicator_position(MarkerId(mid), pos);
+        for &(tagged_id, pos) in &displaced {
+            let is_margin = (tagged_id >> 63) == 1;
+            let raw_id = tagged_id & !(1u64 << 63);
+            let marker_id = MarkerId(raw_id);
+            if is_margin {
+                state.margins.set_indicator_position(marker_id, pos);
+            } else {
+                state.marker_list.set_position(marker_id, pos);
+            }
         }
     }
 }
@@ -437,7 +443,7 @@ fn test_delete_containing_marker_restores_exact_position_on_undo() {
         });
     // Manually set displaced markers on the log entry (simulating what
     // Editor::log_and_apply_event does in the real code path)
-    log.set_displaced_markers_on_last(vec![(margin_id.0, 7)]);
+    log.set_displaced_markers_on_last(vec![(margin_id.0 | (1u64 << 63), 7)]);
     state.apply(&mut cursors, &event);
     assert_eq!(state.buffer.to_string().unwrap(), "hellod");
 
@@ -482,7 +488,11 @@ fn test_delete_containing_multiple_markers_restores_all_on_undo() {
     };
     // Manually set displaced markers (simulating log_and_apply_event)
     log.append(event.clone());
-    log.set_displaced_markers_on_last(vec![(m1.0, 3), (m2.0, 5), (m3.0, 7)]);
+    log.set_displaced_markers_on_last(vec![
+        (m1.0 | (1u64 << 63), 3),
+        (m2.0 | (1u64 << 63), 5),
+        (m3.0 | (1u64 << 63), 7),
+    ]);
     state.apply(&mut cursors, &event);
     assert_eq!(state.buffer.to_string().unwrap(), "abij");
 

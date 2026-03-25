@@ -737,10 +737,15 @@ impl EditorState {
                 // to the deletion boundary — they're now moved back to their exact
                 // original positions after the text has been restored by undo.
                 if !displaced_markers.is_empty() {
-                    for &(marker_id_raw, original_pos) in displaced_markers {
-                        let marker_id = crate::model::marker::MarkerId(marker_id_raw);
-                        self.marker_list.set_position(marker_id, original_pos);
-                        self.margins.set_indicator_position(marker_id, original_pos);
+                    for &(tagged_id, original_pos) in displaced_markers {
+                        let is_margin = (tagged_id >> 63) == 1;
+                        let raw_id = tagged_id & !(1u64 << 63);
+                        let marker_id = crate::model::marker::MarkerId(raw_id);
+                        if is_margin {
+                            self.margins.set_indicator_position(marker_id, original_pos);
+                        } else {
+                            self.marker_list.set_position(marker_id, original_pos);
+                        }
                     }
                 }
 

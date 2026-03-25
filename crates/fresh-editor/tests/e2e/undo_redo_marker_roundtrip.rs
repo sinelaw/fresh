@@ -295,6 +295,59 @@ fn test_each_bulk_edit_op_marker_roundtrip() {
 // Deterministic tests: specific scenarios
 // ============================================================================
 
+/// Regression test: [Enter, TypeChar('}'), Home, MoveLineUp] with marker at end.
+#[test]
+fn test_enter_typechar_movelineup_marker_at_end() {
+    let mut config = fresh::config::Config::default();
+    config.editor.auto_indent = false;
+    config.editor.auto_close = false;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    harness.type_text("aaa").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("bbb").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("ccc").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    let buf_len = harness.buffer_len();
+    let margin_id = add_margin_indicator(&mut harness, buf_len);
+    let orig_margin = get_margin_position(&harness, margin_id).unwrap();
+    let orig_content = harness.get_buffer_content().unwrap();
+    assert_eq!(orig_content, "aaa\nbbb\nccc");
+    assert_eq!(orig_margin, 11);
+
+    // Apply ops
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('}'), KeyModifiers::NONE)
+        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::ALT).unwrap();
+
+    // Undo all three operations
+    undo(&mut harness);
+    undo(&mut harness);
+    undo(&mut harness);
+    let u3 = get_margin_position(&harness, margin_id).unwrap();
+
+    assert_eq!(harness.get_buffer_content().unwrap(), orig_content);
+    assert_eq!(
+        u3, orig_margin,
+        "Margin should be restored to {}, got {}",
+        orig_margin, u3
+    );
+}
+
 /// MoveLineDown (BulkEdit) with margin indicator: forward/undo/redo roundtrip.
 
 #[test]

@@ -32,16 +32,24 @@ impl Editor {
             self.apply_event_to_active_buffer(event);
 
             // Restore displaced markers to their exact original positions.
-            // These were captured when the original Delete was logged and carried
-            // through the EventLog into the inverse Insert event.
-            if !displaced_markers.is_empty() {
+            // These were captured when the original Delete was logged.
+            // Skip for BulkEdit events — they handle displaced markers internally
+            // in state.apply(BulkEdit) via the Event's own displaced_markers field.
+            if !displaced_markers.is_empty()
+                && !matches!(event, crate::model::event::Event::BulkEdit { .. })
+            {
                 let state = self.active_state_mut();
-                for &(marker_id_raw, original_pos) in displaced_markers {
-                    let marker_id = crate::model::marker::MarkerId(marker_id_raw);
-                    state.marker_list.set_position(marker_id, original_pos);
-                    state
-                        .margins
-                        .set_indicator_position(marker_id, original_pos);
+                for &(tagged_id, original_pos) in displaced_markers {
+                    let is_margin = (tagged_id >> 63) == 1;
+                    let raw_id = tagged_id & !(1u64 << 63);
+                    let marker_id = crate::model::marker::MarkerId(raw_id);
+                    if is_margin {
+                        state
+                            .margins
+                            .set_indicator_position(marker_id, original_pos);
+                    } else {
+                        state.marker_list.set_position(marker_id, original_pos);
+                    }
                 }
             }
         }

@@ -2411,6 +2411,7 @@ impl Editor {
                     state.marker_list.query_range(range.start, range.end)
                 {
                     if start > range.start && start < range.end {
+                        // source=0 (marker_list): no tag bit
                         displaced.push((marker_id.0, start));
                     }
                 }
@@ -2418,7 +2419,8 @@ impl Editor {
                     state.margins.query_indicator_range(range.start, range.end)
                 {
                     if start > range.start && start < range.end {
-                        displaced.push((marker_id.0, start));
+                        // source=1 (margins): tag high bit
+                        displaced.push((marker_id.0 | (1u64 << 63), start));
                     }
                 }
             }
@@ -2600,15 +2602,17 @@ impl Editor {
         // Snapshot positions of markers inside any deleted ranges.
         // These markers will collapse to the deletion boundary during adjustment.
         // On undo, we'll restore them to their exact original positions.
+        // Snapshot displaced markers: (source, marker_id, original_pos)
+        // source: 0 = marker_list, 1 = margins.indicator_markers
+        // These separate trees have independent ID spaces, so we must tag the source.
         let displaced_markers: Vec<(u64, usize)> = {
             let mut displaced = Vec::new();
             for (pos, del_len, _text) in &edits {
                 if *del_len > 0 {
                     let range_end = pos + del_len;
-                    // Query both marker_list (virtual text, overlays) and margins
                     for (marker_id, start, _end) in state.marker_list.query_range(*pos, range_end) {
-                        // Only save markers strictly inside the range (not at boundaries)
                         if start > *pos && start < range_end {
+                            // Encode source=0 in high bit: raw_id | (0 << 63)
                             displaced.push((marker_id.0, start));
                         }
                     }
@@ -2616,7 +2620,8 @@ impl Editor {
                         state.margins.query_indicator_range(*pos, range_end)
                     {
                         if start > *pos && start < range_end {
-                            displaced.push((marker_id.0, start));
+                            // Encode source=1 in high bit
+                            displaced.push((marker_id.0 | (1u64 << 63), start));
                         }
                     }
                 }
