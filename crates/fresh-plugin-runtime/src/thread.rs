@@ -1382,7 +1382,8 @@ async fn load_plugins_from_dir_with_config_internal(
         }
     }
 
-    // Second pass: build discovered_plugins map and load enabled plugins
+    // Second pass: build discovered_plugins map, collect enabled plugins with paths
+    let mut enabled_plugins: Vec<(String, std::path::PathBuf)> = Vec::new();
     for (plugin_name, path) in plugin_files {
         // Check if we have an existing config for this plugin
         let config = if let Some(existing_config) = plugin_configs.get(&plugin_name) {
@@ -1399,22 +1400,68 @@ async fn load_plugins_from_dir_with_config_internal(
         // Add to discovered plugins
         discovered_plugins.insert(plugin_name.clone(), config.clone());
 
-        // Only load if enabled
         if config.enabled {
-            tracing::debug!(
-                "load_plugins_from_dir_with_config_internal: loading enabled plugin '{}'",
-                plugin_name
-            );
-            if let Err(e) = load_plugin_internal(Rc::clone(&runtime), plugins, &path).await {
-                let err = format!("Failed to load {:?}: {}", path, e);
-                tracing::error!("{}", err);
-                errors.push(err);
-            }
+            enabled_plugins.push((plugin_name, path));
         } else {
             tracing::info!(
                 "load_plugins_from_dir_with_config_internal: skipping disabled plugin '{}'",
                 plugin_name
             );
+        }
+    }
+
+    // Third pass: extract dependencies and topologically sort enabled plugins
+    let mut dependency_map: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut path_map: std::collections::HashMap<String, std::path::PathBuf> =
+        std::collections::HashMap::new();
+
+    for (name, path) in &enabled_plugins {
+        path_map.insert(name.clone(), path.clone());
+        // Read source to extract dependencies (lightweight — just line scanning)
+        match std::fs::read_to_string(path) {
+            Ok(source) => {
+                let deps = fresh_parser_js::extract_plugin_dependencies(&source);
+                if !deps.is_empty() {
+                    tracing::debug!("Plugin '{}' declares dependencies: {:?}", name, deps);
+                    dependency_map.insert(name.clone(), deps);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Could not read plugin '{}' for dependency extraction: {}",
+                    name,
+                    e
+                );
+            }
+        }
+    }
+
+    let plugin_names: Vec<String> = enabled_plugins.iter().map(|(n, _)| n.clone()).collect();
+    let load_order = match fresh_parser_js::topological_sort_plugins(&plugin_names, &dependency_map)
+    {
+        Ok(order) => order,
+        Err(e) => {
+            // Log the error and fall back to the original order (alphabetical from dir scan)
+            let err = format!("Plugin dependency resolution failed: {}", e);
+            tracing::error!("{}", err);
+            errors.push(err);
+            plugin_names
+        }
+    };
+
+    // Fourth pass: load plugins in dependency order
+    for plugin_name in load_order {
+        if let Some(path) = path_map.get(&plugin_name) {
+            tracing::debug!(
+                "load_plugins_from_dir_with_config_internal: loading enabled plugin '{}'",
+                plugin_name
+            );
+            if let Err(e) = load_plugin_internal(Rc::clone(&runtime), plugins, path).await {
+                let err = format!("Failed to load {:?}: {}", path, e);
+                tracing::error!("{}", err);
+                errors.push(err);
+            }
         }
     }
 
