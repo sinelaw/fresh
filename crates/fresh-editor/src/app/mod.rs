@@ -488,8 +488,8 @@ pub struct Editor {
     /// Next LSP request ID
     next_lsp_request_id: u64,
 
-    /// Pending LSP completion request ID (if any)
-    pending_completion_request: Option<u64>,
+    /// Pending LSP completion request IDs (supports multiple servers)
+    pending_completion_requests: HashSet<u64>,
 
     /// Original LSP completion items (for type-to-filter)
     /// Stored when completion popup is shown, used for re-filtering as user types
@@ -1454,7 +1454,7 @@ impl Editor {
             position_history: PositionHistory::new(),
             in_navigation: false,
             next_lsp_request_id: 0,
-            pending_completion_request: None,
+            pending_completion_requests: HashSet::new(),
             completion_items: None,
             scheduled_completion_trigger: None,
             pending_goto_definition_request: None,

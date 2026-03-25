@@ -44,14 +44,16 @@ const SEMANTIC_TOKENS_RANGE_PADDING_LINES: usize = 10;
 const FOLDING_RANGES_DEBOUNCE_MS: u64 = 300;
 
 impl Editor {
-    /// Handle LSP completion response
+    /// Handle LSP completion response.
+    /// Supports merging from multiple servers: first response creates the menu,
+    /// subsequent responses extend it.
     pub(crate) fn handle_completion_response(
         &mut self,
         request_id: u64,
         items: Vec<lsp_types::CompletionItem>,
     ) -> AnyhowResult<()> {
-        // Check if this is the pending completion request
-        if self.pending_completion_request != Some(request_id) {
+        // Check if this is one of the pending completion requests
+        if !self.pending_completion_requests.remove(&request_id) {
             tracing::debug!(
                 "Ignoring completion response for outdated request {}",
                 request_id
@@ -59,8 +61,10 @@ impl Editor {
             return Ok(());
         }
 
-        self.pending_completion_request = None;
-        self.update_lsp_status_from_server_statuses();
+        // Update status when all completion responses have arrived
+        if self.pending_completion_requests.is_empty() {
+            self.update_lsp_status_from_server_statuses();
+        }
 
         if items.is_empty() {
             tracing::debug!("No completion items received");
@@ -109,8 +113,16 @@ impl Editor {
 
         let popup_data = crate::app::popup_actions::build_completion_popup(&filtered_items, 0);
 
-        // Store original items for type-to-filter
-        self.completion_items = Some(items);
+        // Store/extend original items for type-to-filter (merge from multiple servers)
+        match &mut self.completion_items {
+            Some(existing) => {
+                existing.extend(items);
+                tracing::debug!("Extended completion items, now {} total", existing.len());
+            }
+            None => {
+                self.completion_items = Some(items);
+            }
+        }
 
         {
             let buffer_id = self.active_buffer();
@@ -232,7 +244,8 @@ impl Editor {
 
     /// Check if there are any pending LSP requests
     pub fn has_pending_lsp_requests(&self) -> bool {
-        self.pending_completion_request.is_some() || self.pending_goto_definition_request.is_some()
+        !self.pending_completion_requests.is_empty()
+            || self.pending_goto_definition_request.is_some()
     }
 
     /// Cancel any pending LSP requests
@@ -241,10 +254,12 @@ impl Editor {
     pub(crate) fn cancel_pending_lsp_requests(&mut self) {
         // Cancel scheduled (not yet sent) completion trigger
         self.scheduled_completion_trigger = None;
-        if let Some(request_id) = self.pending_completion_request.take() {
-            tracing::debug!("Canceling pending LSP completion request {}", request_id);
-            // Send cancellation to the LSP server
-            self.send_lsp_cancel_request(request_id);
+        if !self.pending_completion_requests.is_empty() {
+            let ids: Vec<u64> = self.pending_completion_requests.drain().collect();
+            for request_id in ids {
+                tracing::debug!("Canceling pending LSP completion request {}", request_id);
+                self.send_lsp_cancel_request(request_id);
+            }
             self.update_lsp_status_from_server_statuses();
         }
         if let Some(request_id) = self.pending_goto_definition_request.take() {
@@ -468,7 +483,8 @@ impl Editor {
         Some(())
     }
 
-    /// Request LSP completion at current cursor position
+    /// Request LSP completion at current cursor position.
+    /// Sends completion requests to all eligible servers for merged results.
     pub(crate) fn request_completion(&mut self) {
         // Get the current buffer and cursor position
         let cursor_pos = self.active_cursors().primary().position;
@@ -477,32 +493,44 @@ impl Editor {
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
         let buffer_id = self.active_buffer();
-        let request_id = self.next_lsp_request_id;
 
-        // Use helper to ensure didOpen is sent before the request
-        let sent = self
-            .with_lsp_for_buffer_feature(
-                buffer_id,
-                LspFeature::Completion,
-                |handle, uri, _language| {
-                    let result =
-                        handle.completion(request_id, uri.clone(), line as u32, character as u32);
-                    if result.is_ok() {
-                        tracing::info!(
-                            "Requested completion at {}:{}:{}",
-                            uri.as_str(),
-                            line,
-                            character
-                        );
-                    }
-                    result.is_ok()
-                },
-            )
-            .unwrap_or(false);
+        // Pre-allocate request IDs for all eligible servers
+        let base_request_id = self.next_lsp_request_id;
+        // Use an atomic counter in the closure
+        let counter = std::sync::atomic::AtomicU64::new(0);
 
-        if sent {
-            self.next_lsp_request_id += 1;
-            self.pending_completion_request = Some(request_id);
+        let results = self.with_all_lsp_for_buffer_feature(
+            buffer_id,
+            LspFeature::Completion,
+            |handle, uri, _language| {
+                let idx = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let request_id = base_request_id + idx;
+                let result =
+                    handle.completion(request_id, uri.clone(), line as u32, character as u32);
+                if result.is_ok() {
+                    tracing::info!(
+                        "Requested completion at {}:{}:{} (request_id={})",
+                        uri.as_str(),
+                        line,
+                        character,
+                        request_id
+                    );
+                }
+                (request_id, result.is_ok())
+            },
+        );
+
+        let mut sent_ids = Vec::new();
+        for (request_id, ok) in &results {
+            if *ok {
+                sent_ids.push(*request_id);
+            }
+        }
+        // Advance the ID counter past all allocated IDs
+        self.next_lsp_request_id = base_request_id + results.len() as u64;
+
+        if !sent_ids.is_empty() {
+            self.pending_completion_requests.extend(sent_ids);
             self.lsp_status = "LSP: completion...".to_string();
         }
     }
