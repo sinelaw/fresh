@@ -1736,17 +1736,15 @@ impl Editor {
             let additional: Vec<_> = self
                 .pending_grammars
                 .drain(..)
-                .map(|g| {
-                    (
-                        g.language.clone(),
-                        std::path::PathBuf::from(g.grammar_path),
-                        g.extensions.clone(),
-                    )
+                .map(|g| crate::primitives::grammar::GrammarSpec {
+                    language: g.language.clone(),
+                    path: std::path::PathBuf::from(g.grammar_path),
+                    extensions: g.extensions.clone(),
                 })
                 .collect();
 
             // Update config.languages with the extensions so detect_language() works
-            for (language, _path, extensions) in &additional {
+            for crate::primitives::grammar::GrammarSpec { language, extensions, .. } in &additional {
                 let lang_config = self.config.languages.entry(language.clone()).or_default();
                 for ext in extensions {
                     if !lang_config.extensions.contains(ext) {
@@ -1831,20 +1829,18 @@ impl Editor {
         );
 
         // Collect pending grammars
-        let additional: Vec<_> = self
+        let additional: Vec<crate::primitives::grammar::GrammarSpec> = self
             .pending_grammars
             .drain(..)
-            .map(|g| {
-                (
-                    g.language.clone(),
-                    PathBuf::from(g.grammar_path),
-                    g.extensions.clone(),
-                )
+            .map(|g| crate::primitives::grammar::GrammarSpec {
+                language: g.language.clone(),
+                path: PathBuf::from(g.grammar_path),
+                extensions: g.extensions.clone(),
             })
             .collect();
 
         // Update config.languages with the extensions so detect_language() works
-        for (language, _path, extensions) in &additional {
+        for crate::primitives::grammar::GrammarSpec { language, extensions, .. } in &additional {
             let lang_config = self.config.languages.entry(language.clone()).or_default();
             for ext in extensions {
                 if !lang_config.extensions.contains(ext) {

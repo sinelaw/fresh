@@ -14,6 +14,20 @@ pub use crate::primitives::glob_match::{
     filename_glob_matches, is_glob_pattern, is_path_pattern, path_glob_matches,
 };
 
+/// A grammar specification: language name, path to grammar file, and associated file extensions.
+///
+/// Used to pass grammar information between the plugin layer, loader, and registry
+/// without relying on anonymous tuples.
+#[derive(Clone, Debug)]
+pub struct GrammarSpec {
+    /// Language identifier (e.g., "elixir")
+    pub language: String,
+    /// Path to the grammar file (.sublime-syntax)
+    pub path: PathBuf,
+    /// File extensions to associate with this grammar (e.g., ["ex", "exs"])
+    pub extensions: Vec<String>,
+}
+
 /// Embedded TOML grammar (syntect doesn't include one)
 pub const TOML_GRAMMAR: &str = include_str!("../../grammars/toml.sublime-syntax");
 
@@ -123,7 +137,7 @@ pub struct GrammarRegistry {
     /// Filename -> scope name mapping for dotfiles and special files
     filename_scopes: HashMap<String, String>,
     /// Paths to dynamically loaded grammar files (for reloading when adding more)
-    loaded_grammar_paths: Vec<(String, PathBuf, Vec<String>)>,
+    loaded_grammar_paths: Vec<GrammarSpec>,
 }
 
 impl GrammarRegistry {
@@ -136,11 +150,24 @@ impl GrammarRegistry {
         user_extensions: HashMap<String, String>,
         filename_scopes: HashMap<String, String>,
     ) -> Self {
+        Self::new_with_loaded_paths(syntax_set, user_extensions, filename_scopes, Vec::new())
+    }
+
+    /// Create a GrammarRegistry with pre-loaded grammar path tracking.
+    ///
+    /// Used by the loader when plugin grammars were included in the initial build,
+    /// so that `loaded_grammar_paths()` reflects what was actually loaded.
+    pub fn new_with_loaded_paths(
+        syntax_set: SyntaxSet,
+        user_extensions: HashMap<String, String>,
+        filename_scopes: HashMap<String, String>,
+        loaded_grammar_paths: Vec<GrammarSpec>,
+    ) -> Self {
         Self {
             syntax_set: Arc::new(syntax_set),
             user_extensions,
             filename_scopes,
-            loaded_grammar_paths: Vec::new(),
+            loaded_grammar_paths,
         }
     }
 
@@ -753,7 +780,7 @@ impl GrammarRegistry {
     }
 
     /// Get the loaded grammar paths (for deduplication in flush_pending_grammars)
-    pub fn loaded_grammar_paths(&self) -> &[(String, PathBuf, Vec<String>)] {
+    pub fn loaded_grammar_paths(&self) -> &[GrammarSpec] {
         &self.loaded_grammar_paths
     }
 
@@ -772,7 +799,7 @@ impl GrammarRegistry {
     /// A new GrammarRegistry with the additional grammars, or None if rebuilding fails
     pub fn with_additional_grammars(
         base: &GrammarRegistry,
-        additional: &[(String, PathBuf, Vec<String>)],
+        additional: &[GrammarSpec],
     ) -> Option<Self> {
         tracing::info!(
             "[SYNTAX DEBUG] with_additional_grammars: adding {} grammars to base with {} syntaxes",
@@ -792,14 +819,14 @@ impl GrammarRegistry {
         let mut loaded_grammar_paths = base.loaded_grammar_paths.clone();
 
         // Add each new grammar
-        for (language, path, extensions) in additional {
+        for spec in additional {
             tracing::info!(
                 "[SYNTAX DEBUG] loading new grammar file: lang='{}', path={:?}, extensions={:?}",
-                language,
-                path,
-                extensions
+                spec.language,
+                spec.path,
+                spec.extensions
             );
-            match Self::load_grammar_file(path) {
+            match Self::load_grammar_file(&spec.path) {
                 Ok(syntax) => {
                     let scope = syntax.scope.to_string();
                     tracing::info!(
@@ -810,22 +837,22 @@ impl GrammarRegistry {
                     builder.add(syntax);
                     tracing::info!(
                         "Loaded grammar for '{}' from {:?} with extensions {:?}",
-                        language,
-                        path,
-                        extensions
+                        spec.language,
+                        spec.path,
+                        spec.extensions
                     );
                     // Register extensions for this grammar
-                    for ext in extensions {
+                    for ext in &spec.extensions {
                         user_extensions.insert(ext.clone(), scope.clone());
                     }
                     // Track this grammar path for future reloads
-                    loaded_grammar_paths.push((language.clone(), path.clone(), extensions.clone()));
+                    loaded_grammar_paths.push(spec.clone());
                 }
                 Err(e) => {
                     tracing::warn!(
                         "Failed to load grammar for '{}' from {:?}: {}",
-                        language,
-                        path,
+                        spec.language,
+                        spec.path,
                         e
                     );
                 }
