@@ -1762,6 +1762,17 @@ impl JsEditorApi {
         id
     }
 
+    /// Get the directory where this plugin's files are stored.
+    /// For package plugins this is `<plugins_dir>/packages/<plugin_name>/`.
+    pub fn get_plugin_dir(&self) -> String {
+        self.services
+            .plugins_dir()
+            .join("packages")
+            .join(&self.plugin_name)
+            .to_string_lossy()
+            .to_string()
+    }
+
     /// Get config directory path
     pub fn get_config_dir(&self) -> String {
         self.services.config_dir().to_string_lossy().to_string()

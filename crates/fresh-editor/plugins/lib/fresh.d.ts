@@ -539,7 +539,6 @@ type BackgroundProcessResult = {
 type BufferSavedDiff = {
 	equal: boolean;
 	byte_ranges: Array<[number, number]>;
-	line_ranges: Array<[number, number]> | null;
 };
 type CreateVirtualBufferInExistingSplitOptions = {
 	/**
@@ -1095,6 +1094,11 @@ interface EditorAPI {
 	* Returns a Promise that resolves when the grammar rebuild completes.
 	*/
 	reloadGrammars(): Promise<void>;
+	/**
+	* Get the directory where this plugin's files are stored.
+	* For package plugins this is `<plugins_dir>/packages/<plugin_name>/`.
+	*/
+	getPluginDir(): string;
 	/**
 	* Get config directory path
 	*/
