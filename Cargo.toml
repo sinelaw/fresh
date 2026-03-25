@@ -45,7 +45,7 @@ oxc_allocator = "0.115.0"
 oxc_ast = "0.115.0"
 oxc_parser = "0.115.0"
 oxc_transformer = "0.115.0"
-oxc_codegen = "0.115.0"
+oxc_codegen = { version = "0.115.0", default-features = false }
 oxc_span = "0.115.0"
 oxc_semantic = "0.115.0"
 oxc_diagnostics = "0.115.0"

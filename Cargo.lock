@@ -265,16 +265,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "base64-simd"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "339abbe78e73178762e23bea9dfd08e697eb3f3301cd4be981c0f78ba5859195"
-dependencies = [
- "outref",
- "vsimd",
-]
-
-[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1486,7 +1476,6 @@ name = "fresh-core"
 version = "0.2.18"
 dependencies = [
  "anyhow",
- "crossterm",
  "lsp-types",
  "proptest",
  "rquickjs",
@@ -1527,12 +1516,10 @@ dependencies = [
  "interprocess",
  "libc",
  "libloading 0.9.0",
- "lru",
  "lsp-types",
  "nix 0.31.2",
  "once_cell",
  "open",
- "plist",
  "portable-pty",
  "proptest",
  "pulldown-cmark",
@@ -1551,7 +1538,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trash",
- "ts-rs",
  "unicode-segmentation",
  "unicode-width",
  "ureq",
@@ -1569,8 +1555,6 @@ dependencies = [
  "crossterm",
  "fresh-core",
  "muda",
- "objc2 0.5.2",
- "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
  "png 0.18.1",
  "ratatui",
@@ -1578,7 +1562,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "wgpu",
  "winit",
 ]
 
@@ -1586,7 +1569,6 @@ dependencies = [
 name = "fresh-languages"
 version = "0.2.18"
 dependencies = [
- "tracing",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
@@ -1621,7 +1603,6 @@ dependencies = [
  "oxc_semantic",
  "oxc_span",
  "oxc_transformer",
- "serde",
 ]
 
 [[package]]
@@ -1649,7 +1630,6 @@ dependencies = [
  "oxc_span",
  "rquickjs",
  "rquickjs-serde",
- "serde",
  "serde_json",
  "tokio",
  "tracing",
@@ -2515,12 +2495,6 @@ dependencies = [
  "once_cell",
  "wasm-bindgen",
 ]
-
-[[package]]
-name = "json-escape-simd"
-version = "3.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3c2a6c0b4b5637c41719973ef40c6a1cf564f9db6958350de6193fbee9c23f5"
 
 [[package]]
 name = "kasuari"
@@ -3444,12 +3418,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outref"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
-
-[[package]]
 name = "owned_ttf_parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3572,7 +3540,6 @@ dependencies = [
  "oxc_data_structures",
  "oxc_index",
  "oxc_semantic",
- "oxc_sourcemap",
  "oxc_span",
  "oxc_syntax",
  "rustc-hash 2.1.1",
@@ -3702,19 +3669,6 @@ dependencies = [
  "rustc-hash 2.1.1",
  "self_cell",
  "smallvec",
-]
-
-[[package]]
-name = "oxc_sourcemap"
-version = "6.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f89482522f3cd820817d48ee4ade5b10822060d6e5e4d419f05f6d8bd29d70"
-dependencies = [
- "base64-simd",
- "json-escape-simd",
- "rustc-hash 2.1.1",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -4075,19 +4029,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
-name = "plist"
-version = "1.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "740ebea15c5d1428f910cd1a5f52cebf8d25006245ed8ade92702f4943d91e07"
-dependencies = [
- "base64",
- "indexmap",
- "quick-xml 0.38.4",
- "serde",
- "time",
-]
-
-[[package]]
 name = "png"
 version = "0.17.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4308,15 +4249,6 @@ name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
-
-[[package]]
-name = "quick-xml"
-version = "0.38.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "quick-xml"
@@ -5591,14 +5523,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743bd48c283afc0388f9b8827b976905fb217ad9e647fae3a379a9283c4def2c"
 dependencies = [
  "deranged",
- "itoa",
  "libc",
  "num-conv",
  "num_threads",
  "powerfmt",
  "serde_core",
  "time-core",
- "time-macros",
 ]
 
 [[package]]
@@ -5606,16 +5536,6 @@ name = "time-core"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7694e1cfe791f8d31026952abf09c69ca6f6fa4e1a1229e18988f06a04a12dca"
-
-[[package]]
-name = "time-macros"
-version = "0.2.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e70e4c5a0e0a8a4823ad65dfe1a6930e4f4d756dcd9dd7939022b5e8c501215"
-dependencies = [
- "num-conv",
- "time-core",
-]
 
 [[package]]
 name = "tiny-keccak"
@@ -6387,12 +6307,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "vsimd"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
-
-[[package]]
 name = "vt100"
 version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6655,7 +6569,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c86287151a309799b821ca709b7345a048a2956af05957c89cb824ab919fa4e3"
 dependencies = [
  "proc-macro2",
- "quick-xml 0.39.2",
+ "quick-xml",
  "quote",
 ]
 
