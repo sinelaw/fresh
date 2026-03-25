@@ -99,6 +99,18 @@ impl MarkerList {
         self._affinity_map.remove(&id);
     }
 
+    /// Move a marker to a new byte position, preserving its ID and affinity.
+    ///
+    /// Implemented as delete + reinsert in the interval tree to maintain BST
+    /// ordering invariants. The MarkerId is preserved so external references
+    /// (VirtualTextManager, OverlayManager, MarginManager) remain valid.
+    /// Returns false if the marker doesn't exist.
+    /// Cost: O(log n)
+    pub fn set_position(&mut self, id: MarkerId, new_position: usize) -> bool {
+        let pos = new_position as u64;
+        self.tree.set_position(id.0, pos, pos)
+    }
+
     /// Get the current byte position of a marker
     ///
     /// For point markers (zero-length intervals), returns the start position.

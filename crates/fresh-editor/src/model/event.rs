@@ -221,6 +221,12 @@ pub enum Event {
         /// - On undo: inverse() swaps del_len/ins_len (reverse adjustments)
         #[serde(default)]
         edits: Vec<(usize, usize, usize)>,
+        /// Marker positions displaced by deletions: (marker_id_raw, original_byte_position).
+        /// On undo, after marker adjustments, these markers are restored to their
+        /// original positions. This fixes the limitation where markers inside a
+        /// deleted range collapse and can't be precisely restored by undo.
+        #[serde(default)]
+        displaced_markers: Vec<(u64, usize)>,
     },
 }
 
@@ -453,6 +459,7 @@ impl Event {
                 new_cursors,
                 description,
                 edits,
+                displaced_markers,
             } => {
                 // Inverse swaps both snapshots, cursor states, and edit directions.
                 // Swapping del_len/ins_len makes undo apply reverse marker adjustments.
@@ -468,6 +475,10 @@ impl Event {
                     new_cursors: old_cursors.clone(),
                     description: format!("Undo: {}", description),
                     edits: inverted_edits,
+                    // displaced_markers only applies to undo (restoring original positions).
+                    // The redo direction doesn't need them — forward adjustments are correct.
+                    // We pass them through so undo can use them.
+                    displaced_markers: displaced_markers.clone(),
                 })
             }
             // Other events (popups, margins, splits, etc.) are not automatically invertible

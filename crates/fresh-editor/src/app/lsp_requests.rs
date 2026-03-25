@@ -1560,6 +1560,29 @@ impl Editor {
             .map(|(pos, del, text)| (*pos, *del, text.as_str()))
             .collect();
 
+        // Snapshot displaced markers before edits
+        let displaced_markers: Vec<(u64, usize)> = {
+            let mut displaced = Vec::new();
+            for (pos, del_len, _text) in &edits {
+                if *del_len > 0 {
+                    let range_end = pos + del_len;
+                    for (marker_id, start, _end) in state.marker_list.query_range(*pos, range_end) {
+                        if start > *pos && start < range_end {
+                            displaced.push((marker_id.0, start));
+                        }
+                    }
+                    for (marker_id, start, _end) in
+                        state.margins.query_indicator_range(*pos, range_end)
+                    {
+                        if start > *pos && start < range_end {
+                            displaced.push((marker_id.0, start));
+                        }
+                    }
+                }
+            }
+            displaced
+        };
+
         // Apply bulk edits - O(n) instead of O(n²)
         let _delta = state.buffer.apply_bulk_edits(&edit_refs);
 
@@ -1651,6 +1674,7 @@ impl Editor {
             new_cursors,
             description,
             edits: edit_lengths,
+            displaced_markers,
         };
 
         // Add to event log

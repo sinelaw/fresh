@@ -2562,6 +2562,33 @@ impl Editor {
             .map(|(pos, del, text)| (*pos, *del, text.as_str()))
             .collect();
 
+        // Snapshot positions of markers inside any deleted ranges.
+        // These markers will collapse to the deletion boundary during adjustment.
+        // On undo, we'll restore them to their exact original positions.
+        let displaced_markers: Vec<(u64, usize)> = {
+            let mut displaced = Vec::new();
+            for (pos, del_len, _text) in &edits {
+                if *del_len > 0 {
+                    let range_end = pos + del_len;
+                    // Query both marker_list (virtual text, overlays) and margins
+                    for (marker_id, start, _end) in state.marker_list.query_range(*pos, range_end) {
+                        // Only save markers strictly inside the range (not at boundaries)
+                        if start > *pos && start < range_end {
+                            displaced.push((marker_id.0, start));
+                        }
+                    }
+                    for (marker_id, start, _end) in
+                        state.margins.query_indicator_range(*pos, range_end)
+                    {
+                        if start > *pos && start < range_end {
+                            displaced.push((marker_id.0, start));
+                        }
+                    }
+                }
+            }
+            displaced
+        };
+
         // Apply bulk edits
         let _delta = state.buffer.apply_bulk_edits(&edit_refs);
 
@@ -2755,6 +2782,7 @@ impl Editor {
             new_cursors,
             description,
             edits: edit_lengths,
+            displaced_markers,
         };
 
         // Post-processing (layout invalidation, split cursor sync, etc.)

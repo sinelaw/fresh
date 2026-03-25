@@ -689,6 +689,7 @@ impl EditorState {
                 new_snapshot,
                 new_cursors,
                 edits,
+                displaced_markers,
                 ..
             } => {
                 // Restore the target buffer state (piece tree + buffers) for this event.
@@ -728,6 +729,18 @@ impl EditorState {
                     } else if ins_len > 0 {
                         self.marker_list.adjust_for_insert(pos, ins_len);
                         self.margins.adjust_for_insert(pos, ins_len);
+                    }
+                }
+
+                // Restore displaced markers to their original positions.
+                // This fixes markers that were inside a deleted range and collapsed
+                // to the deletion boundary — they're now moved back to their exact
+                // original positions after the text has been restored by undo.
+                if !displaced_markers.is_empty() {
+                    for &(marker_id_raw, original_pos) in displaced_markers {
+                        let marker_id = crate::model::marker::MarkerId(marker_id_raw);
+                        self.marker_list.set_position(marker_id, original_pos);
+                        self.margins.set_indicator_position(marker_id, original_pos);
                     }
                 }
 
