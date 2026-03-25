@@ -813,9 +813,16 @@ impl JsEditorApi {
         );
 
         // First-writer-wins: check if another plugin already registered this command name
+        // Names starting with '%' are per-plugin i18n keys (e.g. "%cmd.reload") that resolve
+        // to different display strings per plugin, so they are scoped by plugin name.
+        let tracking_key = if name.starts_with('%') {
+            format!("{}:{}", plugin_name, name)
+        } else {
+            name.clone()
+        };
         {
             let names = self.registered_command_names.borrow();
-            if let Some(existing_plugin) = names.get(&name) {
+            if let Some(existing_plugin) = names.get(&tracking_key) {
                 if existing_plugin != &plugin_name {
                     let msg = format!(
                         "Command '{}' already registered by plugin '{}'",
@@ -833,7 +840,7 @@ impl JsEditorApi {
         // Record ownership
         self.registered_command_names
             .borrow_mut()
-            .insert(name.clone(), plugin_name.clone());
+            .insert(tracking_key, plugin_name.clone());
 
         // Store action handler mapping with its plugin name
         self.registered_actions.borrow_mut().insert(
@@ -862,7 +869,15 @@ impl JsEditorApi {
     /// Unregister a command by name
     pub fn unregister_command(&self, name: String) -> bool {
         // Clear ownership tracking so another plugin can register this name
-        self.registered_command_names.borrow_mut().remove(&name);
+        // Use same scoping logic as register_command for %-prefixed i18n keys
+        let tracking_key = if name.starts_with('%') {
+            format!("{}:{}", self.plugin_name, name)
+        } else {
+            name.clone()
+        };
+        self.registered_command_names
+            .borrow_mut()
+            .remove(&tracking_key);
         self.command_sender
             .send(PluginCommand::UnregisterCommand { name })
             .is_ok()
@@ -7816,5 +7831,67 @@ mod tests {
                 "plugin_b.js",
             )
             .unwrap();
+    }
+
+    #[test]
+    fn test_register_command_i18n_key_no_collision_across_plugins() {
+        let (mut backend, _rx) = create_test_backend();
+
+        // Plugin A registers a %-prefixed i18n command
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis.handlerA = function() { };
+            editor.registerCommand("%cmd.reload", "Reload A", "handlerA", null);
+        "#,
+                "plugin_a.js",
+            )
+            .unwrap();
+
+        // Plugin B registers the same %-prefixed i18n key — should NOT collide
+        // because %-prefixed names are scoped per plugin
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis.handlerB = function() { };
+            editor.registerCommand("%cmd.reload", "Reload B", "handlerB", null);
+        "#,
+                "plugin_b.js",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn test_register_command_non_i18n_still_collides() {
+        let (mut backend, _rx) = create_test_backend();
+
+        // Plugin A registers a plain (non-%) command
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis.handlerA = function() { };
+            editor.registerCommand("My Reload", "Reload A", "handlerA", null);
+        "#,
+                "plugin_a.js",
+            )
+            .unwrap();
+
+        // Plugin B tries the same plain name — should collide
+        let result = backend.execute_js(
+            r#"
+            const editor = getEditor();
+            globalThis.handlerB = function() { };
+            editor.registerCommand("My Reload", "Reload B", "handlerB", null);
+        "#,
+            "plugin_b.js",
+        );
+
+        assert!(
+            result.is_err(),
+            "Non-%-prefixed names should still collide across plugins"
+        );
     }
 }
