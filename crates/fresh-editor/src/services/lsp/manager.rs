@@ -886,6 +886,14 @@ impl LspManager {
         self.handles.keys().cloned().collect()
     }
 
+    /// Get the names of all running servers for a given language
+    pub fn server_names_for_language(&self, language: &str) -> Vec<String> {
+        self.handles
+            .get(language)
+            .map(|handles| handles.iter().map(|sh| sh.name.clone()).collect())
+            .unwrap_or_default()
+    }
+
     /// Check if any LSP server for a language is running and ready to serve requests
     pub fn is_server_ready(&self, language: &str) -> bool {
         self.handles

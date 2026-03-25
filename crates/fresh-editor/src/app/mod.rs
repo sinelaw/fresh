@@ -636,9 +636,9 @@ pub struct Editor {
     /// LSP progress tracking (token -> progress info)
     lsp_progress: std::collections::HashMap<String, LspProgressInfo>,
 
-    /// LSP server statuses (language -> status)
+    /// LSP server statuses ((language, server_name) -> status)
     lsp_server_statuses:
-        std::collections::HashMap<String, crate::services::async_bridge::LspServerStatus>,
+        std::collections::HashMap<(String, String), crate::services::async_bridge::LspServerStatus>,
 
     /// LSP window messages (recent messages from window/showMessage)
     lsp_window_messages: Vec<LspMessageEntry>,
@@ -1818,13 +1818,12 @@ impl Editor {
             .collect()
     }
 
-    /// Check if LSP server for a given language is running (ready)
+    /// Check if any LSP server for a given language is running (ready)
     pub fn is_lsp_server_ready(&self, language: &str) -> bool {
         use crate::services::async_bridge::LspServerStatus;
-        self.lsp_server_statuses
-            .get(language)
-            .map(|status| matches!(status, LspServerStatus::Running))
-            .unwrap_or(false)
+        self.lsp_server_statuses.iter().any(|((lang, _), status)| {
+            lang == language && matches!(status, LspServerStatus::Running)
+        })
     }
 
     /// Get the LSP status string (displayed in status bar)
@@ -4838,10 +4837,11 @@ impl Editor {
                 }
                 AsyncMessage::LspStatusUpdate {
                     language,
+                    server_name,
                     status,
                     message: _,
                 } => {
-                    self.handle_lsp_status_update(language, status);
+                    self.handle_lsp_status_update(language, server_name, status);
                 }
                 AsyncMessage::FileOpenDirectoryLoaded(result) => {
                     self.handle_file_open_directory_loaded(result);
@@ -5098,10 +5098,10 @@ impl Editor {
         use crate::services::async_bridge::LspServerStatus;
 
         // Collect all server statuses
-        let mut statuses: Vec<(String, LspServerStatus)> = self
+        let mut statuses: Vec<((String, String), LspServerStatus)> = self
             .lsp_server_statuses
             .iter()
-            .map(|(lang, status)| (lang.clone(), *status))
+            .map(|((lang, name), status)| ((lang.clone(), name.clone()), *status))
             .collect();
 
         if statuses.is_empty() {
@@ -5109,13 +5109,20 @@ impl Editor {
             return;
         }
 
-        // Sort by language name for consistent display
+        // Sort by language then server name for consistent display
         statuses.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Group by language to decide display format
+        let mut lang_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for ((lang, _), _) in &statuses {
+            *lang_counts.entry(lang.as_str()).or_default() += 1;
+        }
 
         // Build status string
         let status_parts: Vec<String> = statuses
             .iter()
-            .map(|(lang, status)| {
+            .map(|((lang, name), status)| {
                 let status_str = match status {
                     LspServerStatus::Starting => "starting",
                     LspServerStatus::Initializing => "initializing",
@@ -5123,7 +5130,12 @@ impl Editor {
                     LspServerStatus::Error => "error",
                     LspServerStatus::Shutdown => "shutdown",
                 };
-                format!("{}: {}", lang, status_str)
+                // Show server name when multiple servers exist for a language
+                if lang_counts.get(lang.as_str()).copied().unwrap_or(0) > 1 {
+                    format!("{}/{}: {}", lang, name, status_str)
+                } else {
+                    format!("{}: {}", lang, status_str)
+                }
             })
             .collect();
 

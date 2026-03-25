@@ -812,14 +812,21 @@ impl Editor {
     }
 
     /// Handle LSP server status update
-    pub(super) fn handle_lsp_status_update(&mut self, language: String, status: LspServerStatus) {
+    pub(super) fn handle_lsp_status_update(
+        &mut self,
+        language: String,
+        server_name: String,
+        status: LspServerStatus,
+    ) {
         use crate::services::async_bridge::LspServerStatus;
 
+        let key = (language.clone(), server_name);
+
         // Get old status for event
-        let old_status = self.lsp_server_statuses.get(&language).cloned();
+        let old_status = self.lsp_server_statuses.get(&key).cloned();
 
         // Update server status
-        self.lsp_server_statuses.insert(language.clone(), status);
+        self.lsp_server_statuses.insert(key, status);
         self.update_lsp_status_from_server_statuses();
 
         // Update warning domain for LSP status indicator

@@ -199,17 +199,17 @@ impl LspWarningDomain {
     pub fn update_from_statuses(
         &mut self,
         statuses: &std::collections::HashMap<
-            String,
+            (String, String),
             crate::services::async_bridge::LspServerStatus,
         >,
     ) {
         use crate::services::async_bridge::LspServerStatus;
 
-        // Find the first language with an error
+        // Find the first server with an error
         let error_lang = statuses
             .iter()
             .find(|(_, status)| matches!(status, LspServerStatus::Error))
-            .map(|(lang, _)| lang.clone());
+            .map(|((lang, _), _)| lang.clone());
 
         if let Some(lang) = error_lang {
             self.language = Some(lang);

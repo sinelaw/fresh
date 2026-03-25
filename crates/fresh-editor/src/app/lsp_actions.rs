@@ -112,21 +112,41 @@ impl Editor {
     /// Shows a prompt to select which LSP server to stop, with suggestions
     /// for all currently running servers.
     pub fn handle_lsp_stop(&mut self) {
-        let running_servers: Vec<String> = self
+        let running_languages: Vec<String> = self
             .lsp
             .as_ref()
             .map(|lsp| lsp.running_servers())
             .unwrap_or_default();
 
-        if running_servers.is_empty() {
+        if running_languages.is_empty() {
             self.set_status_message(t!("lsp.no_servers_running").to_string());
             return;
         }
 
-        // Create suggestions from running servers
-        let suggestions: Vec<Suggestion> = running_servers
-            .iter()
-            .map(|lang| {
+        // Build suggestions showing server names when multiple servers per language
+        let mut suggestions: Vec<Suggestion> = Vec::new();
+        for lang in &running_languages {
+            let server_names: Vec<String> = self
+                .lsp
+                .as_ref()
+                .map(|lsp| lsp.server_names_for_language(lang))
+                .unwrap_or_default();
+
+            if server_names.len() > 1 {
+                // Multiple servers: show each individually
+                for name in &server_names {
+                    let description = Some(format!("Server: {}", name));
+                    suggestions.push(Suggestion {
+                        text: format!("{}/{}", lang, name),
+                        description,
+                        value: Some(lang.clone()),
+                        disabled: false,
+                        keybinding: None,
+                        source: None,
+                    });
+                }
+            } else {
+                // Single server: show language only
                 let description = self
                     .lsp
                     .as_ref()
@@ -134,29 +154,29 @@ impl Editor {
                     .filter(|c| !c.command.is_empty())
                     .map(|c| format!("Command: {}", c.command));
 
-                Suggestion {
+                suggestions.push(Suggestion {
                     text: lang.clone(),
                     description,
                     value: Some(lang.clone()),
                     disabled: false,
                     keybinding: None,
                     source: None,
-                }
-            })
-            .collect();
+                });
+            }
+        }
 
         // Start prompt with suggestions
         self.prompt = Some(Prompt::with_suggestions(
             "Stop LSP server: ".to_string(),
             PromptType::StopLspServer,
-            suggestions,
+            suggestions.clone(),
         ));
 
         // Configure initial selection
         if let Some(prompt) = self.prompt.as_mut() {
-            if running_servers.len() == 1 {
-                // If only one server, pre-fill the input with it
-                prompt.input = running_servers[0].clone();
+            if suggestions.len() == 1 {
+                // If only one entry, pre-fill the input with it
+                prompt.input = suggestions[0].text.clone();
                 prompt.cursor_pos = prompt.input.len();
                 prompt.selected_suggestion = Some(0);
             } else if !prompt.suggestions.is_empty() {

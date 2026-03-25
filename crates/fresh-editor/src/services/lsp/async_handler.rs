@@ -582,6 +582,9 @@ struct LspState {
     /// Language ID (for error reporting)
     language: String,
 
+    /// Server name (for multi-server status tracking)
+    server_name: String,
+
     /// Mapping from editor request_id to LSP JSON-RPC id for cancellation
     /// Key: editor request_id, Value: LSP JSON-RPC id
     active_requests: HashMap<u64, i64>,
@@ -887,6 +890,7 @@ impl LspState {
         // Send running status
         let _ = self.async_tx.send(AsyncMessage::LspStatusUpdate {
             language: self.language.clone(),
+            server_name: self.server_name.clone(),
             status: LspServerStatus::Running,
             message: None,
         });
@@ -2348,6 +2352,7 @@ impl LspTask {
                             tracing::error!("Error reading from LSP server: {}", e);
                             let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
                                 language: language.clone(),
+                                server_name: server_name.clone(),
                                 status: LspServerStatus::Error,
                                 message: None,
                             });
@@ -2385,6 +2390,7 @@ impl LspTask {
             initialized: self.initialized,
             async_tx: self.async_tx.clone(),
             language: self.language.clone(),
+            server_name: self.server_name.clone(),
             active_requests: HashMap::new(),
             language_id_overrides: self.language_id_overrides.clone(),
         };
@@ -2392,6 +2398,7 @@ impl LspTask {
         let pending = Arc::new(Mutex::new(self.pending));
         let async_tx = state.async_tx.clone();
         let language_clone = state.language.clone();
+        let server_name = state.server_name.clone();
 
         // Flag to indicate intentional shutdown (prevents spurious error messages)
         let shutting_down = Arc::new(AtomicBool::new(false));
@@ -2425,6 +2432,7 @@ impl LspTask {
                             // Send initializing status
                             let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
                                 language: language_clone.clone(),
+                                server_name: server_name.clone(),
                                 status: LspServerStatus::Initializing,
                                 message: None,
                             });
@@ -3450,6 +3458,7 @@ impl LspHandle {
         // Send starting status
         let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
             language: language.clone(),
+            server_name: server_name_clone.clone(),
             status: LspServerStatus::Starting,
             message: None,
         });
@@ -3483,6 +3492,7 @@ impl LspHandle {
 
                     let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
                         language: language_clone.clone(),
+                        server_name: server_name_clone.clone(),
                         status: LspServerStatus::Error,
                         message: None,
                     });

@@ -240,6 +240,8 @@ pub enum AsyncMessage {
     /// LSP server status update (progress, messages, etc.)
     LspStatusUpdate {
         language: String,
+        /// Name of the specific server (for multi-server status tracking)
+        server_name: String,
         status: LspServerStatus,
         message: Option<String>,
     },
