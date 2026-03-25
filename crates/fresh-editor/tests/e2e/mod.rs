@@ -133,6 +133,7 @@ pub mod toggle_comment;
 pub mod triple_click;
 pub mod undo_bulk_edit_after_save;
 pub mod undo_redo;
+pub mod undo_redo_marker_roundtrip;
 pub mod unicode_cursor;
 pub mod unicode_prompt_bugs;
 pub mod unnamed_buffer_persistence;

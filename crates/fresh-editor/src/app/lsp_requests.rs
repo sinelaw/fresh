@@ -1614,6 +1614,35 @@ impl Editor {
             }
         }
 
+        // Convert edit list to lengths-only for undo/redo marker replay.
+        // Merge edits at the same position into a single replacement.
+        let edit_lengths: Vec<(usize, usize, usize)> = {
+            let mut lengths: Vec<(usize, usize, usize)> = Vec::new();
+            for (pos, del_len, text) in &edits {
+                if let Some(last) = lengths.last_mut() {
+                    if last.0 == *pos {
+                        last.1 += del_len;
+                        last.2 += text.len();
+                        continue;
+                    }
+                }
+                lengths.push((*pos, *del_len, text.len()));
+            }
+            lengths
+        };
+
+        // Adjust markers for the forward edits (same as apply_events_as_bulk_edit)
+        for (pos, del_len, text) in &edits {
+            if *del_len > 0 {
+                state.marker_list.adjust_for_delete(*pos, *del_len);
+                state.margins.adjust_for_delete(*pos, *del_len);
+            }
+            if !text.is_empty() {
+                state.marker_list.adjust_for_insert(*pos, text.len());
+                state.margins.adjust_for_insert(*pos, text.len());
+            }
+        }
+
         // Create BulkEdit event for undo log
         let bulk_edit = Event::BulkEdit {
             old_snapshot: Some(old_snapshot),
@@ -1621,6 +1650,7 @@ impl Editor {
             old_cursors,
             new_cursors,
             description,
+            edits: edit_lengths,
         };
 
         // Add to event log

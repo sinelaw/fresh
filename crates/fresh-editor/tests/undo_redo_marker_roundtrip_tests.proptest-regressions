@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 191d0ec71f198c5cf0666e64f15c06a23c6612aa4ade4c7640c6bb06da376966 # shrinks to ops = [Delete { start_frac: 0.0, end_frac: 0.6805204783404244 }]
+cc 6d1db596a6129c1abb3c01377fd6eb8b5fa8edd10443248aabf5e035e7242fb0 # shrinks to op = Delete { start_frac: 0.0, end_frac: 0.6460960548455583 }
+cc de0f6b5abe7ac956f9fc35f74e28e647440bfde2a702810eb9b13f4c4393aa97 # shrinks to ops = [Delete { start_frac: 0.0, end_frac: 0.0 }]
+cc 6fbfc7658137ef839f2a6fd32f90194949ac83a0be2b15679d84efa6caf11926 # shrinks to op1 = Insert { pos_frac: 0.0, text: "a" }, op2 = Delete { start_frac: 0.0, end_frac: 0.4133637100602506 }
+cc a4e56d899ed1f2929f0f81f0737a0bf01ed79503c97c8fa46197532f70eef3ec # shrinks to op = Delete { start_frac: 0.0, end_frac: 0.0 }

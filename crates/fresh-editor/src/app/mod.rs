@@ -2565,17 +2565,48 @@ impl Editor {
         // Apply bulk edits
         let _delta = state.buffer.apply_bulk_edits(&edit_refs);
 
-        // Adjust markers and margins for each edit (descending position order,
-        // matching the order used by apply_bulk_edits — later positions first
-        // so earlier edits don't shift positions of later ones)
-        for (pos, del_len, text) in &edits {
-            if *del_len > 0 {
-                state.marker_list.adjust_for_delete(*pos, *del_len);
-                state.margins.adjust_for_delete(*pos, *del_len);
+        // Convert edit list to lengths-only for marker replay.
+        // Merge edits at the same position into a single (pos, del_len, ins_len)
+        // tuple. This is necessary because delete+insert at the same position
+        // (e.g., line move: delete block, insert rearranged block) should be
+        // treated as a replacement, not two independent adjustments.
+        let edit_lengths: Vec<(usize, usize, usize)> = {
+            let mut lengths: Vec<(usize, usize, usize)> = Vec::new();
+            for (pos, del_len, text) in &edits {
+                if let Some(last) = lengths.last_mut() {
+                    if last.0 == *pos {
+                        // Same position: merge del and ins lengths
+                        last.1 += del_len;
+                        last.2 += text.len();
+                        continue;
+                    }
+                }
+                lengths.push((*pos, *del_len, text.len()));
             }
-            if !text.is_empty() {
-                state.marker_list.adjust_for_insert(*pos, text.len());
-                state.margins.adjust_for_insert(*pos, text.len());
+            lengths
+        };
+
+        // Adjust markers and margins using the merged edit lengths.
+        // Using merged edits (net delta for same-position replacements) avoids
+        // the marker-at-boundary problem where sequential delete+insert at the
+        // same position pushes markers incorrectly.
+        for &(pos, del_len, ins_len) in &edit_lengths {
+            if del_len > 0 && ins_len > 0 {
+                // Replacement: adjust by net delta only
+                if ins_len > del_len {
+                    state.marker_list.adjust_for_insert(pos, ins_len - del_len);
+                    state.margins.adjust_for_insert(pos, ins_len - del_len);
+                } else if del_len > ins_len {
+                    state.marker_list.adjust_for_delete(pos, del_len - ins_len);
+                    state.margins.adjust_for_delete(pos, del_len - ins_len);
+                }
+                // Equal: net delta 0, no adjustment needed
+            } else if del_len > 0 {
+                state.marker_list.adjust_for_delete(pos, del_len);
+                state.margins.adjust_for_delete(pos, del_len);
+            } else if ins_len > 0 {
+                state.marker_list.adjust_for_insert(pos, ins_len);
+                state.margins.adjust_for_insert(pos, ins_len);
             }
         }
 
@@ -2723,6 +2754,7 @@ impl Editor {
             old_cursors,
             new_cursors,
             description,
+            edits: edit_lengths,
         };
 
         // Post-processing (layout invalidation, split cursor sync, etc.)

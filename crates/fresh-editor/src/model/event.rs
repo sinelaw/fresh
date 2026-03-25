@@ -215,6 +215,12 @@ pub enum Event {
         new_cursors: Vec<(CursorId, usize, Option<usize>)>,
         /// Human-readable description
         description: String,
+        /// Edit operations as (position, delete_len, insert_len), sorted descending by position.
+        /// Used to replay marker adjustments on undo/redo:
+        /// - On redo: replayed as-is (same adjustments as the forward path)
+        /// - On undo: inverse() swaps del_len/ins_len (reverse adjustments)
+        #[serde(default)]
+        edits: Vec<(usize, usize, usize)>,
     },
 }
 
@@ -446,15 +452,22 @@ impl Event {
                 old_cursors,
                 new_cursors,
                 description,
+                edits,
             } => {
-                // Inverse swaps both snapshots and cursor states
-                // For undo: old becomes new, new becomes old
+                // Inverse swaps both snapshots, cursor states, and edit directions.
+                // Swapping del_len/ins_len makes undo apply reverse marker adjustments.
+                let inverted_edits: Vec<(usize, usize, usize)> = edits
+                    .iter()
+                    .map(|(pos, del_len, ins_len)| (*pos, *ins_len, *del_len))
+                    .collect();
+
                 Some(Self::BulkEdit {
                     old_snapshot: new_snapshot.clone(),
                     new_snapshot: old_snapshot.clone(),
                     old_cursors: new_cursors.clone(),
                     new_cursors: old_cursors.clone(),
                     description: format!("Undo: {}", description),
+                    edits: inverted_edits,
                 })
             }
             // Other events (popups, margins, splits, etc.) are not automatically invertible

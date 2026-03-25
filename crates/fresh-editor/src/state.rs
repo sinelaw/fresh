@@ -688,16 +688,60 @@ impl EditorState {
             Event::BulkEdit {
                 new_snapshot,
                 new_cursors,
+                edits,
                 ..
             } => {
                 // Restore the target buffer state (piece tree + buffers) for this event.
-                // - For original application: this is set after apply_events_as_bulk_edit
                 // - For undo: snapshots are swapped, so new_snapshot is the original state
                 // - For redo: new_snapshot is the state after edits
                 // Restoring buffers alongside the tree is critical because
                 // consolidate_after_save() can replace buffers between snapshot and restore.
                 if let Some(snapshot) = new_snapshot {
                     self.buffer.restore_buffer_state(snapshot);
+                }
+
+                // Replay marker adjustments from the edit list.
+                // For redo: same adjustments as the forward path.
+                // For undo: inverse() has swapped del/ins, so adjustments are reversed.
+                // Edits are in descending position order — process as-is so later
+                // positions are adjusted first (no cascading shift errors).
+                //
+                // For replacements (del > 0 AND ins > 0 at same position), we only
+                // adjust for the net delta to avoid the marker-at-boundary problem
+                // where sequential delete+insert pushes markers incorrectly.
+                for &(pos, del_len, ins_len) in edits {
+                    if del_len > 0 && ins_len > 0 {
+                        // Replacement: adjust by net delta only
+                        if ins_len > del_len {
+                            let net = ins_len - del_len;
+                            self.marker_list.adjust_for_insert(pos, net);
+                            self.margins.adjust_for_insert(pos, net);
+                        } else if del_len > ins_len {
+                            let net = del_len - ins_len;
+                            self.marker_list.adjust_for_delete(pos, net);
+                            self.margins.adjust_for_delete(pos, net);
+                        }
+                        // If equal: net delta 0, no adjustment needed
+                    } else if del_len > 0 {
+                        self.marker_list.adjust_for_delete(pos, del_len);
+                        self.margins.adjust_for_delete(pos, del_len);
+                    } else if ins_len > 0 {
+                        self.marker_list.adjust_for_insert(pos, ins_len);
+                        self.margins.adjust_for_insert(pos, ins_len);
+                    }
+                }
+
+                // Clear ephemeral decorations — their source systems will re-push
+                // correct positions after the edit notification.
+                self.virtual_texts.clear(&mut self.marker_list);
+
+                use crate::view::overlay::OverlayNamespace;
+                let namespaces = ["lsp-diagnostic", "reference-highlight", "bracket-highlight"];
+                for ns in &namespaces {
+                    self.overlays.clear_namespace(
+                        &OverlayNamespace::from_string(ns.to_string()),
+                        &mut self.marker_list,
+                    );
                 }
 
                 // Update cursor positions

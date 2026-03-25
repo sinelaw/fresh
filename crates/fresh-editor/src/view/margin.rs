@@ -473,6 +473,15 @@ impl MarginManager {
         by_line
     }
 
+    /// Get the byte position of a line indicator's marker.
+    ///
+    /// Returns the current byte offset for the given marker ID, or None if the
+    /// marker doesn't exist. Useful for testing that marker positions survive
+    /// undo/redo correctly.
+    pub fn get_indicator_position(&self, marker_id: MarkerId) -> Option<usize> {
+        self.indicator_markers.get_position(marker_id)
+    }
+
     /// Add an annotation to a margin
     pub fn add_annotation(&mut self, annotation: MarginAnnotation) {
         let annotations = match annotation.position {

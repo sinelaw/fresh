@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc dbb63a2e588d11802480e9dc7bc2779bd088b05bcffd28889e7333173e537570 # shrinks to op = Backspace
+cc a43d4490289297842b31e00d31d17e9b70420d6efcf0abc15d2c06247a931b38 # shrinks to ops = [MoveLineUp]
+cc 65d635c46e2a31237f12ebf5a09419fa492b350f89c793dd1a2078309e61561f # shrinks to op1 = MoveLineUp, op2 = TypeChar('0')
+cc f5eb6cdf1a722853e992d143168bff8bbf7a2017693e68b649d01d026a20ef0a # shrinks to op = Delete
+cc 3726fd8ee2ae13221b08b76443219636650f54ccbead01645a48bc3cdcff5ff3 # shrinks to op1 = Right, op2 = Backspace
