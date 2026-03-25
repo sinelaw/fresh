@@ -3,7 +3,7 @@
 //! This module allows plugins to register custom commands dynamically
 //! while maintaining the built-in command set.
 
-use crate::input::commands::{get_all_commands, Command, Suggestion};
+use crate::input::commands::{get_all_commands, Command, CommandSource, Suggestion};
 use crate::input::fuzzy::fuzzy_match;
 use crate::input::keybindings::Action;
 use crate::input::keybindings::KeyContext;
@@ -72,6 +72,9 @@ impl CommandRegistry {
     ///
     /// If a command with the same name already exists, it will be replaced.
     /// This allows plugins to override built-in commands.
+    /// Note: For plugin commands, prefer `try_register` which enforces
+    /// first-writer-wins semantics. This method is kept for internal use
+    /// and hot-reload scenarios.
     pub fn register(&self, command: Command) {
         tracing::debug!(
             "CommandRegistry::register: name='{}', action={:?}",
@@ -89,6 +92,28 @@ impl CommandRegistry {
             "CommandRegistry::register: plugin_commands now has {} items",
             commands.len()
         );
+    }
+
+    /// Try to register a command, failing if a command with the same name
+    /// is already registered by a different plugin (first-writer-wins).
+    ///
+    /// Returns `Ok(())` on success, or `Err` with the name of the existing
+    /// plugin that owns the command.
+    pub fn try_register(&self, command: Command) -> Result<(), (String, CommandSource)> {
+        let mut commands = self.plugin_commands.write().unwrap();
+
+        if let Some(existing) = commands.iter().find(|c| c.name == command.name) {
+            // Allow same plugin to re-register (hot-reload)
+            if existing.source == command.source {
+                commands.retain(|c| c.name != command.name);
+                commands.push(command);
+                return Ok(());
+            }
+            return Err((existing.name.clone(), existing.source.clone()));
+        }
+
+        commands.push(command);
+        Ok(())
     }
 
     /// Unregister a command by name
@@ -797,5 +822,107 @@ mod tests {
                 expected_action
             );
         }
+    }
+
+    #[test]
+    fn test_try_register_first_writer_wins() {
+        let registry = CommandRegistry::new();
+
+        let cmd_a = Command {
+            name: "My Command".to_string(),
+            description: "From plugin A".to_string(),
+            action: Action::None,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Plugin("plugin-a".to_string()),
+        };
+
+        let cmd_b = Command {
+            name: "My Command".to_string(),
+            description: "From plugin B".to_string(),
+            action: Action::None,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Plugin("plugin-b".to_string()),
+        };
+
+        // First registration succeeds
+        assert!(registry.try_register(cmd_a).is_ok());
+        assert_eq!(registry.plugin_command_count(), 1);
+
+        // Second registration by different plugin fails
+        let result = registry.try_register(cmd_b);
+        assert!(result.is_err());
+        assert_eq!(registry.plugin_command_count(), 1);
+
+        // Original plugin's command is still there
+        let found = registry.find_by_name("My Command").unwrap();
+        assert_eq!(found.description, "From plugin A");
+    }
+
+    #[test]
+    fn test_try_register_same_plugin_allowed() {
+        let registry = CommandRegistry::new();
+
+        let cmd1 = Command {
+            name: "My Command".to_string(),
+            description: "Version 1".to_string(),
+            action: Action::None,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Plugin("plugin-a".to_string()),
+        };
+
+        let cmd2 = Command {
+            name: "My Command".to_string(),
+            description: "Version 2".to_string(),
+            action: Action::None,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Plugin("plugin-a".to_string()),
+        };
+
+        assert!(registry.try_register(cmd1).is_ok());
+        // Same plugin re-registering is allowed (hot-reload)
+        assert!(registry.try_register(cmd2).is_ok());
+        assert_eq!(registry.plugin_command_count(), 1);
+
+        let found = registry.find_by_name("My Command").unwrap();
+        assert_eq!(found.description, "Version 2");
+    }
+
+    #[test]
+    fn test_try_register_after_unregister() {
+        let registry = CommandRegistry::new();
+
+        let cmd_a = Command {
+            name: "My Command".to_string(),
+            description: "From plugin A".to_string(),
+            action: Action::None,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Plugin("plugin-a".to_string()),
+        };
+
+        let cmd_b = Command {
+            name: "My Command".to_string(),
+            description: "From plugin B".to_string(),
+            action: Action::None,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Plugin("plugin-b".to_string()),
+        };
+
+        // Plugin A registers
+        assert!(registry.try_register(cmd_a).is_ok());
+
+        // Unregister clears the slot
+        registry.unregister("My Command");
+        assert_eq!(registry.plugin_command_count(), 0);
+
+        // Now plugin B can register
+        assert!(registry.try_register(cmd_b).is_ok());
+        let found = registry.find_by_name("My Command").unwrap();
+        assert_eq!(found.description, "From plugin B");
     }
 }
