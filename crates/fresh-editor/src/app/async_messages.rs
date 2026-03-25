@@ -69,10 +69,12 @@ impl Editor {
 impl Editor {
     /// Merge push + pull diagnostics for a URI and apply the combined set
     fn merge_and_apply_diagnostics(&mut self, uri: &str) {
-        // Merge push (flycheck/cargo) and pull (native RA) diagnostics
+        // Merge diagnostics from all servers (push model) and pull model
         let mut merged = Vec::new();
-        if let Some(push) = self.stored_push_diagnostics.get(uri) {
-            merged.extend(push.iter().cloned());
+        if let Some(server_map) = self.stored_push_diagnostics.get(uri) {
+            for diagnostics in server_map.values() {
+                merged.extend(diagnostics.iter().cloned());
+            }
         }
         if let Some(pull) = self.stored_pull_diagnostics.get(uri) {
             merged.extend(pull.iter().cloned());
@@ -116,18 +118,28 @@ impl Editor {
     }
 
     /// Handle LSP diagnostics (push model — publishDiagnostics from flycheck/cargo)
-    pub(super) fn handle_lsp_diagnostics(&mut self, uri: String, diagnostics: Vec<Diagnostic>) {
+    pub(super) fn handle_lsp_diagnostics(
+        &mut self,
+        uri: String,
+        diagnostics: Vec<Diagnostic>,
+        server_name: String,
+    ) {
         tracing::debug!(
-            "Processing {} push diagnostics for {}",
+            "Processing {} push diagnostics from '{}' for {}",
             diagnostics.len(),
+            server_name,
             uri
         );
 
+        let server_map = self.stored_push_diagnostics.entry(uri.clone()).or_default();
         if diagnostics.is_empty() {
-            self.stored_push_diagnostics.remove(&uri);
+            server_map.remove(&server_name);
+            // Clean up empty outer entry
+            if server_map.is_empty() {
+                self.stored_push_diagnostics.remove(&uri);
+            }
         } else {
-            self.stored_push_diagnostics
-                .insert(uri.clone(), diagnostics);
+            server_map.insert(server_name, diagnostics);
         }
 
         self.merge_and_apply_diagnostics(&uri);

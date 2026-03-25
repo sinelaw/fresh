@@ -639,6 +639,7 @@ impl LspManager {
                 &config.args,
                 config.env.clone(),
                 language.to_string(),
+                server_name.clone(),
                 &async_bridge,
                 config.process_limits.clone(),
                 config.language_id_overrides.clone(),

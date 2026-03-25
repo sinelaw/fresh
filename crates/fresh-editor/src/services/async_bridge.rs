@@ -35,6 +35,8 @@ pub enum AsyncMessage {
     LspDiagnostics {
         uri: String,
         diagnostics: Vec<Diagnostic>,
+        /// Name of the server that sent these diagnostics (for per-server tracking)
+        server_name: String,
     },
 
     /// LSP server initialized successfully
@@ -506,6 +508,7 @@ mod tests {
             .send(AsyncMessage::LspDiagnostics {
                 uri: "file:///test.rs".to_string(),
                 diagnostics: diagnostics.clone(),
+                server_name: "rust-analyzer".to_string(),
             })
             .unwrap();
 
@@ -516,10 +519,12 @@ mod tests {
             AsyncMessage::LspDiagnostics {
                 uri,
                 diagnostics: diags,
+                server_name,
             } => {
                 assert_eq!(uri, "file:///test.rs");
                 assert_eq!(diags.len(), 1);
                 assert_eq!(diags[0].message, "test error");
+                assert_eq!(server_name, "rust-analyzer");
             }
             _ => panic!("Expected LspDiagnostics message"),
         }

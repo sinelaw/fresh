@@ -654,8 +654,9 @@ pub struct Editor {
     /// When set, diagnostics will be re-pulled when this instant is reached
     scheduled_diagnostic_pull: Option<(BufferId, Instant)>,
 
-    /// Stored LSP diagnostics per URI (push model - publishDiagnostics from flycheck/cargo)
-    stored_push_diagnostics: HashMap<String, Vec<lsp_types::Diagnostic>>,
+    /// Stored LSP diagnostics per URI, per server (push model - publishDiagnostics)
+    /// Outer key: URI string, Inner key: server name
+    stored_push_diagnostics: HashMap<String, HashMap<String, Vec<lsp_types::Diagnostic>>>,
 
     /// Stored LSP diagnostics per URI (pull model - native RA diagnostics)
     stored_pull_diagnostics: HashMap<String, Vec<lsp_types::Diagnostic>>,
@@ -4510,8 +4511,12 @@ impl Editor {
 
         for message in messages {
             match message {
-                AsyncMessage::LspDiagnostics { uri, diagnostics } => {
-                    self.handle_lsp_diagnostics(uri, diagnostics);
+                AsyncMessage::LspDiagnostics {
+                    uri,
+                    diagnostics,
+                    server_name,
+                } => {
+                    self.handle_lsp_diagnostics(uri, diagnostics, server_name);
                 }
                 AsyncMessage::LspInitialized {
                     language,

@@ -2160,6 +2160,9 @@ struct LspTask {
     /// Language ID (for error reporting)
     language: String,
 
+    /// Display name for this server (for diagnostics attribution)
+    server_name: String,
+
     /// Server command (for plugin identification)
     server_command: String,
 
@@ -2177,6 +2180,7 @@ impl LspTask {
         args: &[String],
         env: &std::collections::HashMap<String, String>,
         language: String,
+        server_name: String,
         async_tx: std_mpsc::Sender<AsyncMessage>,
         process_limits: &ProcessLimits,
         stderr_log_path: std::path::PathBuf,
@@ -2253,6 +2257,7 @@ impl LspTask {
             initialized: false,
             async_tx,
             language,
+            server_name,
             server_command: command.to_string(),
             stderr_log_path,
             language_id_overrides,
@@ -2304,6 +2309,7 @@ impl LspTask {
         pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
         async_tx: std_mpsc::Sender<AsyncMessage>,
         language: String,
+        server_name: String,
         server_command: String,
         stdin_writer: Arc<tokio::sync::Mutex<ChildStdin>>,
         stderr_log_path: std::path::PathBuf,
@@ -2321,6 +2327,7 @@ impl LspTask {
                             &pending,
                             &async_tx,
                             &language,
+                            &server_name,
                             &server_command,
                             &stdin_writer,
                             &document_versions,
@@ -2395,6 +2402,7 @@ impl LspTask {
             pending.clone(),
             async_tx.clone(),
             language_clone.clone(),
+            self.server_name.clone(),
             self.server_command.clone(),
             stdin_writer.clone(),
             self.stderr_log_path,
@@ -2962,6 +2970,7 @@ async fn handle_message_dispatch(
     pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     async_tx: &std_mpsc::Sender<AsyncMessage>,
     language: &str,
+    server_name: &str,
     server_command: &str,
     stdin_writer: &Arc<tokio::sync::Mutex<ChildStdin>>,
     document_versions: &Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
@@ -3007,8 +3016,14 @@ async fn handle_message_dispatch(
         }
         JsonRpcMessage::Notification(notification) => {
             tracing::trace!("Received LSP notification: {}", notification.method);
-            handle_notification_dispatch(notification, async_tx, language, document_versions)
-                .await?;
+            handle_notification_dispatch(
+                notification,
+                async_tx,
+                language,
+                server_name,
+                document_versions,
+            )
+            .await?;
         }
         JsonRpcMessage::Request(request) => {
             // Handle server-to-client requests - MUST respond to avoid timeouts
@@ -3142,6 +3157,7 @@ async fn handle_notification_dispatch(
     notification: JsonRpcNotification,
     async_tx: &std_mpsc::Sender<AsyncMessage>,
     language: &str,
+    server_name: &str,
     document_versions: &Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
 ) -> Result<(), String> {
     match notification.method.as_str() {
@@ -3180,6 +3196,7 @@ async fn handle_notification_dispatch(
                 let _ = async_tx.send(AsyncMessage::LspDiagnostics {
                     uri: params.uri.to_string(),
                     diagnostics: params.diagnostics,
+                    server_name: server_name.to_string(),
                 });
             }
         }
@@ -3389,6 +3406,9 @@ pub struct LspHandle {
     /// Language this handle serves
     language: String,
 
+    /// Display name for this server (e.g., "rust-analyzer", "eslint")
+    server_name: String,
+
     /// Channel for sending commands to the task
     command_tx: mpsc::Sender<LspCommand>,
 
@@ -3411,6 +3431,7 @@ impl LspHandle {
         args: &[String],
         env: std::collections::HashMap<String, String>,
         language: String,
+        server_name: String,
         async_bridge: &AsyncBridge,
         process_limits: ProcessLimits,
         language_id_overrides: std::collections::HashMap<String, String>,
@@ -3418,6 +3439,7 @@ impl LspHandle {
         let (command_tx, command_rx) = mpsc::channel(100); // Buffer up to 100 commands
         let async_tx = async_bridge.sender();
         let language_clone = language.clone();
+        let server_name_clone = server_name.clone();
         let command = command.to_string();
         let args = args.to_vec();
         let state = Arc::new(Mutex::new(LspClientState::Starting));
@@ -3440,6 +3462,7 @@ impl LspHandle {
                 &args,
                 &env,
                 language_clone.clone(),
+                server_name_clone.clone(),
                 async_tx.clone(),
                 &process_limits,
                 stderr_log_path_clone.clone(),
@@ -3477,6 +3500,7 @@ impl LspHandle {
         Ok(Self {
             id,
             language,
+            server_name,
             command_tx,
             state,
             runtime: runtime.clone(),
@@ -4108,6 +4132,7 @@ mod tests {
             &[],
             Default::default(),
             "test".to_string(),
+            "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
@@ -4136,6 +4161,7 @@ mod tests {
             &[],
             Default::default(),
             "test".to_string(),
+            "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
@@ -4164,6 +4190,7 @@ mod tests {
             &[],
             Default::default(),
             "test".to_string(),
+            "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
@@ -4198,6 +4225,7 @@ mod tests {
             &[],
             Default::default(),
             "test".to_string(),
+            "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
@@ -4233,6 +4261,7 @@ mod tests {
             &[],
             Default::default(),
             "test".to_string(),
+            "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
@@ -4272,6 +4301,7 @@ mod tests {
                     &[],
                     Default::default(),
                     "test".to_string(),
+                    "test-server".to_string(),
                     &async_bridge,
                     ProcessLimits::unlimited(),
                     Default::default(),
@@ -4343,6 +4373,7 @@ mod tests {
             &[],
             Default::default(),
             "test".to_string(),
+            "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
@@ -4394,6 +4425,7 @@ mod tests {
             &["-c".to_string(), fake_lsp_script.to_string()],
             Default::default(),
             "fake".to_string(),
+            "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
