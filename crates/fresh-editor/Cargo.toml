@@ -32,7 +32,7 @@ path = "src/lib.rs"
 
 [features]
 default = ["plugins", "runtime", "embed-plugins"]
-plugins = ["dep:fresh-plugin-runtime", "dep:fresh-parser-js", "dep:fresh-plugin-api-macros", "dep:ts-rs"]
+plugins = ["dep:fresh-plugin-runtime", "dep:fresh-parser-js", "dep:fresh-plugin-api-macros"]
 # Embed plugins into the binary as a fallback when no disk plugins are found
 embed-plugins = ["plugins", "dep:include_dir", "dep:trash"]
 # Feature for optional development binaries (generate_schema, event_debug)
@@ -50,7 +50,7 @@ runtime = [
     "dep:lsp-types",
     "dep:tokio",
     "dep:async-trait",
-    "dep:lru",
+
     "dep:ignore",
     "dep:libc",
     "dep:libloading",
@@ -67,7 +67,7 @@ runtime = [
     "syntect/yaml-load",  # Needed for SyntaxDefinition::load_from_str
     "syntect/default-syntaxes",
     "syntect/default-themes",
-    "dep:plist",  # For loading TextMate grammar files (JSON → plist conversion)
+
     "dep:ureq",
     "dep:alacritty_terminal",
     "dep:portable-pty",
@@ -96,7 +96,7 @@ wasm = [
     "syntect/yaml-load",  # yaml-rust is pure Rust, WASM-compatible
     "syntect/default-syntaxes",
     "syntect/default-themes",
-    "dep:plist",  # plist is pure Rust, WASM-compatible
+
 ]
 
 [dependencies]
@@ -127,7 +127,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 lsp-types = { workspace = true, optional = true }
 tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"], optional = true }
 async-trait = { version = "0.1", optional = true }
-lru = { version = "0.16", optional = true }
+
 ignore = { version = "0.4", default-features = false, optional = true }
 # regex is always needed for model::buffer search functionality
 regex = { version = "1.12" }
@@ -137,8 +137,6 @@ nix = { version = "0.31", features = ["signal", "pthread", "resource", "poll", "
 
 # Plugin API proc macros for type-safe bindings
 fresh-plugin-api-macros = { workspace = true, optional = true }
-# TypeScript type generation from Rust structs
-ts-rs = { version = "12.0", optional = true }
 
 # anyhow is always needed for model error handling
 anyhow = { workspace = true }
@@ -154,8 +152,7 @@ arboard = { version = "3.6", default-features = false, features = ["wayland-data
 # syntect with default-features=false so we can choose regex engine per build target
 # runtime uses onig (faster), wasm uses fancy-regex (pure Rust, WASM-compatible)
 syntect = { version = "5.3", default-features = false, optional = true }
-# plist for parsing/generating TextMate grammar files
-plist = { version = "1.7", optional = true }
+
 ureq = { version = "3.1.4", default-features = false, features = ["rustls"], optional = true }
 # Unicode handling - always needed for primitives
 unicode-width = { version = "0.2" }

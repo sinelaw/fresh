@@ -17,4 +17,3 @@ oxc_transformer.workspace = true
 oxc_codegen.workspace = true
 oxc_span.workspace = true
 oxc_semantic.workspace = true
-serde.workspace = true

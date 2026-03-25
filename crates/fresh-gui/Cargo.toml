@@ -13,8 +13,6 @@ publish = false  # depends on git-only ratatui-wgpu, not publishable to crates.i
 fresh-core = { workspace = true }
 # Window management
 winit = { workspace = true }
-# GPU-accelerated rendering
-wgpu = { workspace = true }
 # ratatui backend for wgpu
 ratatui-wgpu = { git = "https://github.com/Jesterhearts/ratatui-wgpu", rev = "cdcf5c6" }
 # TUI framework (core types: Terminal, Frame, Backend)
@@ -37,7 +35,5 @@ png = "0.18"
 muda = "0.15"
 # ObjC interop for NSNotificationCenter (menu tracking detection).
 # Versions match the ones muda 0.15 already pulls in.
-objc2 = "0.5"
 objc2-foundation = { version = "0.2", features = ["NSNotification", "NSString", "NSOperation", "block2"] }
-objc2-app-kit = { version = "0.2", features = ["NSMenu"] }
 block2 = "0.5"
