@@ -737,16 +737,19 @@ impl Editor {
             }
         }
 
-        // Use full document sync - send the entire new content
+        // Use full document sync - broadcast to all handles
         if let Some(lsp) = &mut self.lsp {
-            if let Some(client) = lsp.get_handle_mut(&language) {
-                let content_change = TextDocumentContentChangeEvent {
-                    range: None, // None means full document replacement
-                    range_length: None,
-                    text: content,
-                };
-                if let Err(e) = client.did_change(lsp_uri, vec![content_change]) {
-                    tracing::warn!("Failed to notify LSP of file change: {}", e);
+            let content_change = TextDocumentContentChangeEvent {
+                range: None, // None means full document replacement
+                range_length: None,
+                text: content,
+            };
+            for sh in lsp.get_handles_mut(&language) {
+                if let Err(e) = sh
+                    .handle
+                    .did_change(lsp_uri.clone(), vec![content_change.clone()])
+                {
+                    tracing::warn!("Failed to notify LSP '{}' of file change: {}", sh.name, e);
                 }
             }
         }

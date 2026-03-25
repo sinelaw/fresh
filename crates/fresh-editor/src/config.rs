@@ -414,9 +414,10 @@ pub struct Config {
     #[serde(default)]
     pub fallback: Option<LanguageConfig>,
 
-    /// LSP server configurations by language
+    /// LSP server configurations by language.
+    /// Each language maps to one or more server configs (multi-LSP support).
     #[serde(default)]
-    pub lsp: HashMap<String, LspServerConfig>,
+    pub lsp: HashMap<String, Vec<LspServerConfig>>,
 
     /// Warning notification settings
     #[serde(default)]
@@ -4178,7 +4179,7 @@ impl Config {
 
     /// Create default LSP configurations
     #[cfg(feature = "runtime")]
-    fn default_lsp_config() -> HashMap<String, LspServerConfig> {
+    fn default_lsp_config() -> HashMap<String, Vec<LspServerConfig>> {
         let mut lsp = HashMap::new();
 
         // rust-analyzer (installed via rustup or package manager)
@@ -4193,19 +4194,19 @@ impl Config {
 
     /// Create empty LSP configurations for WASM builds
     #[cfg(not(feature = "runtime"))]
-    fn default_lsp_config() -> HashMap<String, LspServerConfig> {
+    fn default_lsp_config() -> HashMap<String, Vec<LspServerConfig>> {
         // LSP is not available in WASM builds
         HashMap::new()
     }
 
     #[cfg(feature = "runtime")]
-    fn populate_lsp_config(lsp: &mut HashMap<String, LspServerConfig>, ra_log_path: String) {
+    fn populate_lsp_config(lsp: &mut HashMap<String, Vec<LspServerConfig>>, ra_log_path: String) {
         // rust-analyzer: full mode by default (no init param restrictions, no process limits).
         // Users can switch to reduced-memory mode via the "Rust LSP: Reduced Memory Mode"
         // command palette command (provided by the rust-lsp plugin).
         lsp.insert(
             "rust".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "rust-analyzer".to_string(),
                 args: vec!["--log-file".to_string(), ra_log_path],
                 enabled: true,
@@ -4214,18 +4215,21 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     "Cargo.toml".to_string(),
                     "rust-project.json".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
 
         // pylsp (installed via pip)
         lsp.insert(
             "python".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "pylsp".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4234,6 +4238,9 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     "pyproject.toml".to_string(),
                     "setup.py".to_string(),
@@ -4241,14 +4248,14 @@ impl Config {
                     "pyrightconfig.json".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
 
         // typescript-language-server (installed via npm)
         // Alternative: use "deno lsp" with initialization_options: {"enable": true}
         lsp.insert(
             "javascript".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "typescript-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -4260,17 +4267,20 @@ impl Config {
                     "jsx".to_string(),
                     "javascriptreact".to_string(),
                 )]),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     "tsconfig.json".to_string(),
                     "jsconfig.json".to_string(),
                     "package.json".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
         lsp.insert(
             "typescript".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "typescript-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -4282,19 +4292,22 @@ impl Config {
                     "tsx".to_string(),
                     "typescriptreact".to_string(),
                 )]),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     "tsconfig.json".to_string(),
                     "jsconfig.json".to_string(),
                     "package.json".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
 
         // vscode-html-language-server (installed via npm install -g vscode-langservers-extracted)
         lsp.insert(
             "html".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "vscode-html-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -4303,14 +4316,17 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // vscode-css-language-server (installed via npm install -g vscode-langservers-extracted)
         lsp.insert(
             "css".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "vscode-css-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -4319,14 +4335,17 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // clangd (installed via package manager)
         lsp.insert(
             "c".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "clangd".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4335,17 +4354,20 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     "compile_commands.json".to_string(),
                     "CMakeLists.txt".to_string(),
                     "Makefile".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
         lsp.insert(
             "cpp".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "clangd".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4354,19 +4376,22 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     "compile_commands.json".to_string(),
                     "CMakeLists.txt".to_string(),
                     "Makefile".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
 
         // gopls (installed via go install)
         lsp.insert(
             "go".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "gopls".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4375,18 +4400,21 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     "go.mod".to_string(),
                     "go.work".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
 
         // vscode-json-language-server (installed via npm install -g vscode-langservers-extracted)
         lsp.insert(
             "json".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "vscode-json-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -4395,14 +4423,17 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // csharp-language-server (installed via dotnet tool install -g csharp-ls)
         lsp.insert(
             "csharp".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "csharp-ls".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4411,19 +4442,22 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     "*.csproj".to_string(),
                     "*.sln".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
 
         // ols - Odin Language Server (https://github.com/DanielGavin/ols)
         // Build from source: cd ols && ./build.sh (Linux/macOS) or ./build.bat (Windows)
         lsp.insert(
             "odin".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "ols".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4432,15 +4466,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // zls - Zig Language Server (https://github.com/zigtools/zls)
         // Install via package manager or download from releases
         lsp.insert(
             "zig".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "zls".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4449,15 +4486,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // jdtls - Eclipse JDT Language Server for Java
         // Install via package manager or download from Eclipse
         lsp.insert(
             "java".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "jdtls".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4466,20 +4506,23 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     "pom.xml".to_string(),
                     "build.gradle".to_string(),
                     "build.gradle.kts".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
 
         // texlab - LaTeX Language Server (https://github.com/latex-lsp/texlab)
         // Install via cargo install texlab or package manager
         lsp.insert(
             "latex".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "texlab".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4488,15 +4531,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // marksman - Markdown Language Server (https://github.com/artempyanykh/marksman)
         // Install via package manager or download from releases
         lsp.insert(
             "markdown".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "marksman".to_string(),
                 args: vec!["server".to_string()],
                 enabled: true,
@@ -4505,15 +4551,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // templ - Templ Language Server (https://templ.guide)
         // Install via go install github.com/a-h/templ/cmd/templ@latest
         lsp.insert(
             "templ".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "templ".to_string(),
                 args: vec!["lsp".to_string()],
                 enabled: true,
@@ -4522,15 +4571,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // tinymist - Typst Language Server (https://github.com/Myriad-Dreamin/tinymist)
         // Install via cargo install tinymist or download from releases
         lsp.insert(
             "typst".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "tinymist".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4539,14 +4591,17 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // bash-language-server (installed via npm install -g bash-language-server)
         lsp.insert(
             "bash".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "bash-language-server".to_string(),
                 args: vec!["start".to_string()],
                 enabled: true,
@@ -4555,15 +4610,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // lua-language-server (https://github.com/LuaLS/lua-language-server)
         // Install via package manager or download from releases
         lsp.insert(
             "lua".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "lua-language-server".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4572,6 +4630,9 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     ".luarc.json".to_string(),
                     ".luarc.jsonc".to_string(),
@@ -4579,13 +4640,13 @@ impl Config {
                     ".stylua.toml".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
 
         // solargraph - Ruby Language Server (installed via gem install solargraph)
         lsp.insert(
             "ruby".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "solargraph".to_string(),
                 args: vec!["stdio".to_string()],
                 enabled: true,
@@ -4594,19 +4655,22 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     "Gemfile".to_string(),
                     ".ruby-version".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
 
         // phpactor - PHP Language Server (https://phpactor.readthedocs.io)
         // Install via composer global require phpactor/phpactor
         lsp.insert(
             "php".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "phpactor".to_string(),
                 args: vec!["language-server".to_string()],
                 enabled: true,
@@ -4615,14 +4679,17 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec!["composer.json".to_string(), ".git".to_string()],
-            },
+            }],
         );
 
         // yaml-language-server (installed via npm install -g yaml-language-server)
         lsp.insert(
             "yaml".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "yaml-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -4631,15 +4698,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // taplo - TOML Language Server (https://taplo.tamasfe.dev)
         // Install via cargo install taplo-cli or npm install -g @taplo/cli
         lsp.insert(
             "toml".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "taplo".to_string(),
                 args: vec!["lsp".to_string(), "stdio".to_string()],
                 enabled: true,
@@ -4648,15 +4718,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // dart - Dart Language Server (#1252)
         // Included with the Dart SDK
         lsp.insert(
             "dart".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "dart".to_string(),
                 args: vec!["language-server".to_string(), "--protocol=lsp".to_string()],
                 enabled: true,
@@ -4665,15 +4738,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec!["pubspec.yaml".to_string(), ".git".to_string()],
-            },
+            }],
         );
 
         // nu - Nushell Language Server (#1031)
         // Built into the Nushell binary
         lsp.insert(
             "nushell".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "nu".to_string(),
                 args: vec!["--lsp".to_string()],
                 enabled: true,
@@ -4682,15 +4758,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // solc - Solidity Language Server (#857)
         // Install via npm install -g @nomicfoundation/solidity-language-server
         lsp.insert(
             "solidity".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "nomicfoundation-solidity-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -4699,8 +4778,11 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // --- DevOps / infrastructure LSP servers ---
@@ -4709,7 +4791,7 @@ impl Config {
         // Install via package manager or download from releases
         lsp.insert(
             "terraform".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "terraform-ls".to_string(),
                 args: vec!["serve".to_string()],
                 enabled: true,
@@ -4718,19 +4800,22 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec![
                     "*.tf".to_string(),
                     ".terraform".to_string(),
                     ".git".to_string(),
                 ],
-            },
+            }],
         );
 
         // cmake-language-server (https://github.com/regen100/cmake-language-server)
         // Install via pip: pip install cmake-language-server
         lsp.insert(
             "cmake".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "cmake-language-server".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4739,15 +4824,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: vec!["CMakeLists.txt".to_string(), ".git".to_string()],
-            },
+            }],
         );
 
         // buf - Protobuf Language Server (https://buf.build)
         // Install via package manager or curl
         lsp.insert(
             "protobuf".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "buf".to_string(),
                 args: vec!["beta".to_string(), "lsp".to_string()],
                 enabled: true,
@@ -4756,15 +4844,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // graphql-lsp (https://github.com/graphql/graphiql/tree/main/packages/graphql-language-service-cli)
         // Install via npm: npm install -g graphql-language-service-cli
         lsp.insert(
             "graphql".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "graphql-lsp".to_string(),
                 args: vec!["server".to_string(), "-m".to_string(), "stream".to_string()],
                 enabled: true,
@@ -4773,15 +4864,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // sqls - SQL Language Server (https://github.com/sqls-server/sqls)
         // Install via go: go install github.com/sqls-server/sqls@latest
         lsp.insert(
             "sql".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "sqls".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4790,8 +4884,11 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // --- Web framework LSP servers ---
@@ -4799,7 +4896,7 @@ impl Config {
         // vue-language-server (installed via npm install -g @vue/language-server)
         lsp.insert(
             "vue".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "vue-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -4808,14 +4905,17 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // svelte-language-server (installed via npm install -g svelte-language-server)
         lsp.insert(
             "svelte".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "svelteserver".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -4824,14 +4924,17 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // astro-ls - Astro Language Server (installed via npm install -g @astrojs/language-server)
         lsp.insert(
             "astro".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "astro-ls".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -4840,14 +4943,17 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // tailwindcss-language-server (installed via npm install -g @tailwindcss/language-server)
         lsp.insert(
             "tailwindcss".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "tailwindcss-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -4856,8 +4962,11 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // --- Programming language LSP servers ---
@@ -4866,7 +4975,7 @@ impl Config {
         // Install via nix profile install github:oxalica/nil
         lsp.insert(
             "nix".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "nil".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4875,15 +4984,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // kotlin-language-server (https://github.com/fwcd/kotlin-language-server)
         // Install via package manager or build from source
         lsp.insert(
             "kotlin".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "kotlin-language-server".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4892,14 +5004,17 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // sourcekit-lsp - Swift Language Server (included with Swift toolchain)
         lsp.insert(
             "swift".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "sourcekit-lsp".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4908,15 +5023,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // metals - Scala Language Server (https://scalameta.org/metals/)
         // Install via coursier: cs install metals
         lsp.insert(
             "scala".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "metals".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4925,15 +5043,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // elixir-ls - Elixir Language Server (https://github.com/elixir-lsp/elixir-ls)
         // Install via mix: mix escript.install hex elixir_ls
         lsp.insert(
             "elixir".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "elixir-ls".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4942,14 +5063,17 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // erlang_ls - Erlang Language Server (https://github.com/erlang-ls/erlang_ls)
         lsp.insert(
             "erlang".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "erlang_ls".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4958,15 +5082,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // haskell-language-server (https://github.com/haskell/haskell-language-server)
         // Install via ghcup: ghcup install hls
         lsp.insert(
             "haskell".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "haskell-language-server-wrapper".to_string(),
                 args: vec!["--lsp".to_string()],
                 enabled: true,
@@ -4975,15 +5102,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // ocamllsp - OCaml Language Server (https://github.com/ocaml/ocaml-lsp)
         // Install via opam: opam install ocaml-lsp-server
         lsp.insert(
             "ocaml".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "ocamllsp".to_string(),
                 args: vec![],
                 enabled: true,
@@ -4992,15 +5122,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // clojure-lsp (https://github.com/clojure-lsp/clojure-lsp)
         // Install via package manager or download from releases
         lsp.insert(
             "clojure".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "clojure-lsp".to_string(),
                 args: vec![],
                 enabled: true,
@@ -5009,15 +5142,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // r-languageserver (https://github.com/REditorSupport/languageserver)
         // Install via R: install.packages("languageserver")
         lsp.insert(
             "r".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "R".to_string(),
                 args: vec![
                     "--vanilla".to_string(),
@@ -5030,15 +5166,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // julia LanguageServer.jl (https://github.com/julia-vscode/LanguageServer.jl)
         // Install via Julia: using Pkg; Pkg.add("LanguageServer")
         lsp.insert(
             "julia".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "julia".to_string(),
                 args: vec![
                     "--startup-file=no".to_string(),
@@ -5052,15 +5191,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // PerlNavigator (https://github.com/bscan/PerlNavigator)
         // Install via npm: npm install -g perlnavigator-server
         lsp.insert(
             "perl".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "perlnavigator".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
@@ -5069,15 +5211,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // nimlangserver - Nim Language Server (https://github.com/nim-lang/langserver)
         // Install via nimble: nimble install nimlangserver
         lsp.insert(
             "nim".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "nimlangserver".to_string(),
                 args: vec![],
                 enabled: true,
@@ -5086,14 +5231,17 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // gleam lsp - Gleam Language Server (built into the gleam binary)
         lsp.insert(
             "gleam".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "gleam".to_string(),
                 args: vec!["lsp".to_string()],
                 enabled: true,
@@ -5102,15 +5250,18 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
 
         // fsharp - F# Language Server (https://github.com/fsharp/FsAutoComplete)
         // Install via dotnet: dotnet tool install -g fsautocomplete
         lsp.insert(
             "fsharp".to_string(),
-            LspServerConfig {
+            vec![LspServerConfig {
                 command: "fsautocomplete".to_string(),
                 args: vec!["--adaptive-lsp-server-enabled".to_string()],
                 enabled: true,
@@ -5119,8 +5270,11 @@ impl Config {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
-            },
+            }],
         );
     }
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -5294,7 +5448,7 @@ mod tests {
         // User's rust override should be present
         assert!(loaded.lsp.contains_key("rust"));
         assert_eq!(
-            loaded.lsp["rust"].command,
+            loaded.lsp["rust"][0].command,
             "custom-rust-analyzer".to_string()
         );
 

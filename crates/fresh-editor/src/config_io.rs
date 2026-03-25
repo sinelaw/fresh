@@ -1498,8 +1498,10 @@ mod tests {
         assert_eq!(config.editor.tab_size, 2);
 
         // User disables LSP via UI
-        if let Some(lsp_config) = config.lsp.get_mut("python") {
-            lsp_config.enabled = false;
+        if let Some(lsp_configs) = config.lsp.get_mut("python") {
+            for c in lsp_configs.iter_mut() {
+                c.enabled = false;
+            }
         }
 
         // Save using save_to_layer
@@ -1540,9 +1542,9 @@ mod tests {
         let reloaded = resolver.resolve().unwrap();
         assert_eq!(reloaded.theme.0, "dracula");
         assert_eq!(reloaded.editor.tab_size, 2);
-        assert!(!reloaded.lsp["python"].enabled);
+        assert!(!reloaded.lsp["python"][0].enabled);
         // Command should come from defaults
-        assert_eq!(reloaded.lsp["python"].command, "pylsp");
+        assert_eq!(reloaded.lsp["python"][0].command, "pylsp");
     }
 
     /// Test that toggling LSP enabled/disabled preserves the command field.
@@ -1562,7 +1564,7 @@ mod tests {
 
         // Load and verify default command
         let config = resolver.resolve().unwrap();
-        let original_command = config.lsp["python"].command.clone();
+        let original_command = config.lsp["python"][0].command.clone();
         assert!(
             !original_command.is_empty(),
             "Default python LSP should have a command"
@@ -1570,7 +1572,7 @@ mod tests {
 
         // Step 2: Disable python LSP, save
         let mut config = resolver.resolve().unwrap();
-        config.lsp.get_mut("python").unwrap().enabled = false;
+        config.lsp.get_mut("python").unwrap()[0].enabled = false;
         resolver.save_to_layer(&config, ConfigLayer::User).unwrap();
 
         // Verify saved file only has enabled:false, not empty command/args
@@ -1588,16 +1590,16 @@ mod tests {
 
         // Step 3: Load again, enable python LSP, save
         let mut config = resolver.resolve().unwrap();
-        assert!(!config.lsp["python"].enabled);
-        config.lsp.get_mut("python").unwrap().enabled = true;
+        assert!(!config.lsp["python"][0].enabled);
+        config.lsp.get_mut("python").unwrap()[0].enabled = true;
         resolver.save_to_layer(&config, ConfigLayer::User).unwrap();
 
         // Step 4: Load and verify command is still the same
         let config = resolver.resolve().unwrap();
         assert_eq!(
-            config.lsp["python"].command, original_command,
+            config.lsp["python"][0].command, original_command,
             "Command should be preserved after toggling enabled. Got: '{}'",
-            config.lsp["python"].command
+            config.lsp["python"][0].command
         );
     }
 
@@ -1668,12 +1670,12 @@ mod tests {
         // Load and check that command comes from defaults
         let config = resolver.resolve().unwrap();
         assert_eq!(
-            config.lsp["rust"].command, "rust-analyzer",
+            config.lsp["rust"][0].command, "rust-analyzer",
             "Command should come from defaults when not in file. Got: '{}'",
-            config.lsp["rust"].command
+            config.lsp["rust"][0].command
         );
         assert!(
-            !config.lsp["rust"].enabled,
+            !config.lsp["rust"][0].enabled,
             "enabled should be false from file"
         );
     }
@@ -1695,11 +1697,11 @@ mod tests {
         // Load resolved config - should have rust with command="rust-analyzer"
         let config = resolver.resolve().unwrap();
         assert_eq!(
-            config.lsp["rust"].command, "rust-analyzer",
+            config.lsp["rust"][0].command, "rust-analyzer",
             "Default rust command should be rust-analyzer"
         );
         assert!(
-            config.lsp["rust"].enabled,
+            config.lsp["rust"][0].enabled,
             "Default rust enabled should be true"
         );
 
@@ -1721,11 +1723,11 @@ mod tests {
         // Step 4: Reload and verify command is preserved
         let reloaded = resolver.resolve().unwrap();
         assert_eq!(
-            reloaded.lsp["rust"].command, "rust-analyzer",
+            reloaded.lsp["rust"][0].command, "rust-analyzer",
             "Command should be preserved after save/reload (disabled). Got: '{}'",
-            reloaded.lsp["rust"].command
+            reloaded.lsp["rust"][0].command
         );
-        assert!(!reloaded.lsp["rust"].enabled, "rust should be disabled");
+        assert!(!reloaded.lsp["rust"][0].enabled, "rust should be disabled");
 
         // Step 5: Re-enable rust LSP (simulating Settings UI)
         let mut changes = std::collections::HashMap::new();
@@ -1744,11 +1746,14 @@ mod tests {
         // Step 7: Reload and verify command is STILL preserved
         let final_config = resolver.resolve().unwrap();
         assert_eq!(
-            final_config.lsp["rust"].command, "rust-analyzer",
+            final_config.lsp["rust"][0].command, "rust-analyzer",
             "Command should be preserved after toggle cycle. Got: '{}'",
-            final_config.lsp["rust"].command
+            final_config.lsp["rust"][0].command
         );
-        assert!(final_config.lsp["rust"].enabled, "rust should be enabled");
+        assert!(
+            final_config.lsp["rust"][0].enabled,
+            "rust should be enabled"
+        );
     }
 
     /// Issue #806 REPRODUCTION: Manual config.json edits are lost when saving from Settings UI.
@@ -1792,7 +1797,7 @@ mod tests {
             config.lsp.contains_key("rust-analyzer"),
             "Config should contain manually-added 'rust-analyzer' LSP entry"
         );
-        let rust_analyzer = &config.lsp["rust-analyzer"];
+        let rust_analyzer = &config.lsp["rust-analyzer"][0];
         assert!(rust_analyzer.enabled, "rust-analyzer should be enabled");
         assert_eq!(
             rust_analyzer.command, "rust-analyzer",
@@ -1881,7 +1886,7 @@ mod tests {
             reloaded.lsp.contains_key("rust-analyzer"),
             "BUG #806: rust-analyzer should still exist after reload"
         );
-        let reloaded_ra = &reloaded.lsp["rust-analyzer"];
+        let reloaded_ra = &reloaded.lsp["rust-analyzer"][0];
         assert_eq!(
             reloaded_ra.args,
             vec!["--log-file", "/tmp/rust-analyzer-{pid}.log"],

@@ -198,7 +198,7 @@ fn test_rust_analyzer_push_diagnostics_displayed() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
             enabled: true,
@@ -208,7 +208,10 @@ fn test_rust_analyzer_push_diagnostics_displayed() -> anyhow::Result<()> {
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -288,7 +291,7 @@ fn test_rust_analyzer_diagnostics_cleared_after_fix() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
             enabled: true,
@@ -298,7 +301,10 @@ fn test_rust_analyzer_diagnostics_cleared_after_fix() -> anyhow::Result<()> {
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -545,7 +551,7 @@ fn test_edit_save_edit_save_diagnostic_flow() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
             enabled: true,
@@ -555,7 +561,10 @@ fn test_edit_save_edit_save_diagnostic_flow() -> anyhow::Result<()> {
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -693,7 +702,7 @@ fn test_workspace_diagnostic_refresh_handled() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
             enabled: true,
@@ -703,7 +712,10 @@ fn test_workspace_diagnostic_refresh_handled() -> anyhow::Result<()> {
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -900,7 +912,7 @@ fn test_stale_diagnostics_dropped_during_rapid_typing() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "python".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
             enabled: true,
@@ -910,7 +922,10 @@ fn test_stale_diagnostics_dropped_during_rapid_typing() -> anyhow::Result<()> {
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(

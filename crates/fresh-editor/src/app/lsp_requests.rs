@@ -311,40 +311,54 @@ impl Editor {
             return None;
         }
 
-        // Get handle ID (handle exists since try_spawn succeeded)
-        let handle_id = lsp.get_handle_mut(&language)?.id();
+        // Collect handle IDs that need didOpen
+        let handle_ids: Vec<u64> = lsp
+            .get_handles(&language)
+            .iter()
+            .map(|sh| sh.handle.id())
+            .collect();
 
-        // Check if didOpen is needed
-        let needs_open = {
+        // Check which handles need didOpen
+        let needs_open: Vec<u64> = {
             let metadata = self.buffer_metadata.get(&buffer_id)?;
-            !metadata.lsp_opened_with.contains(&handle_id)
+            handle_ids
+                .iter()
+                .filter(|id| !metadata.lsp_opened_with.contains(id))
+                .copied()
+                .collect()
         };
 
-        if needs_open {
+        if !needs_open.is_empty() {
             // Only now get the text (can be expensive for large buffers)
             let text = self.buffers.get(&buffer_id)?.buffer.to_string()?;
 
-            // Send didOpen
+            // Send didOpen to all handles that haven't received it yet
             let lsp = self.lsp.as_mut()?;
-            let handle = lsp.get_handle_mut(&language)?;
-            if let Err(e) = handle.did_open(uri.clone(), text, language.clone()) {
-                tracing::warn!("Failed to send didOpen: {}", e);
-                return None;
+            for sh in lsp.get_handles_mut(&language) {
+                if needs_open.contains(&sh.handle.id()) {
+                    if let Err(e) = sh
+                        .handle
+                        .did_open(uri.clone(), text.clone(), language.clone())
+                    {
+                        tracing::warn!("Failed to send didOpen to '{}': {}", sh.name, e);
+                        continue;
+                    }
+
+                    // Mark as opened with this server instance
+                    let metadata = self.buffer_metadata.get_mut(&buffer_id)?;
+                    metadata.lsp_opened_with.insert(sh.handle.id());
+
+                    tracing::debug!(
+                        "Sent didOpen for {} to LSP handle '{}' (language: {})",
+                        uri.as_str(),
+                        sh.name,
+                        language
+                    );
+                }
             }
-
-            // Mark as opened with this server instance
-            let metadata = self.buffer_metadata.get_mut(&buffer_id)?;
-            metadata.lsp_opened_with.insert(handle_id);
-
-            tracing::debug!(
-                "Sent didOpen for {} to LSP handle {} (language: {})",
-                uri.as_str(),
-                handle_id,
-                language
-            );
         }
 
-        // Call the closure with the handle
+        // Call the closure with the primary handle
         let lsp = self.lsp.as_mut()?;
         let handle = lsp.get_handle_mut(&language)?;
         Some(f(handle, &uri, &language))
@@ -1748,21 +1762,19 @@ impl Editor {
             return;
         }
 
-        // Get handle ID (handle exists since try_spawn succeeded)
-        let Some(handle) = lsp.get_handle_mut(&language) else {
-            return;
-        };
-        let handle_id = handle.id();
-
-        // Check if didOpen needs to be sent first
-        let needs_open = {
+        // Check which handles need didOpen first
+        let handles_needing_open: Vec<_> = {
             let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
                 return;
             };
-            !metadata.lsp_opened_with.contains(&handle_id)
+            lsp.get_handles(&language)
+                .iter()
+                .filter(|sh| !metadata.lsp_opened_with.contains(&sh.handle.id()))
+                .map(|sh| (sh.name.clone(), sh.handle.id()))
+                .collect()
         };
 
-        if needs_open {
+        if !handles_needing_open.is_empty() {
             // Get text for didOpen
             let text = match self
                 .buffers
@@ -1778,24 +1790,37 @@ impl Editor {
                 }
             };
 
-            // Send didOpen first
+            // Send didOpen to all handles that haven't been opened yet
             let Some(lsp) = self.lsp.as_mut() else { return };
-            let Some(handle) = lsp.get_handle_mut(&language) else {
-                return;
-            };
-            if let Err(e) = handle.did_open(uri.clone(), text, language.clone()) {
-                tracing::warn!("Failed to send didOpen before didChange: {}", e);
-                return;
+            for sh in lsp.get_handles_mut(&language) {
+                if handles_needing_open
+                    .iter()
+                    .any(|(_, id)| *id == sh.handle.id())
+                {
+                    if let Err(e) = sh
+                        .handle
+                        .did_open(uri.clone(), text.clone(), language.clone())
+                    {
+                        tracing::warn!(
+                            "Failed to send didOpen to '{}' before didChange: {}",
+                            sh.name,
+                            e
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Sent didOpen for {} to LSP handle '{}' before didChange",
+                            uri.as_str(),
+                            sh.name
+                        );
+                    }
+                }
             }
-            tracing::debug!(
-                "Sent didOpen for {} to LSP handle {} before didChange",
-                uri.as_str(),
-                handle_id
-            );
 
-            // Mark as opened
+            // Mark all as opened
             if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                metadata.lsp_opened_with.insert(handle_id);
+                for (_, handle_id) in &handles_needing_open {
+                    metadata.lsp_opened_with.insert(*handle_id);
+                }
             }
 
             // didOpen already contains the full current buffer content, so we must
@@ -1804,14 +1829,17 @@ impl Editor {
             return;
         }
 
-        // Now send didChange
+        // Now send didChange to all handles for this language
         let Some(lsp) = self.lsp.as_mut() else { return };
-        let Some(client) = lsp.get_handle_mut(&language) else {
-            return;
-        };
-        if let Err(e) = client.did_change(uri, changes) {
-            tracing::warn!("Failed to send didChange to LSP: {}", e);
-        } else {
+        let mut any_sent = false;
+        for sh in lsp.get_handles_mut(&language) {
+            if let Err(e) = sh.handle.did_change(uri.clone(), changes.clone()) {
+                tracing::warn!("Failed to send didChange to '{}': {}", sh.name, e);
+            } else {
+                any_sent = true;
+            }
+        }
+        if any_sent {
             tracing::trace!("Successfully sent batched didChange to LSP");
 
             // Invalidate diagnostic cache so the next diagnostic apply recomputes

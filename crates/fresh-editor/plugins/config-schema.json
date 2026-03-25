@@ -168,10 +168,13 @@
       "default": null
     },
     "lsp": {
-      "description": "LSP server configurations by language",
+      "description": "LSP server configurations by language.\nEach language maps to one or more server configs (multi-LSP support).",
       "type": "object",
       "additionalProperties": {
-        "$ref": "#/$defs/LspServerConfig"
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/LspServerConfig"
+        }
       },
       "default": {}
     },
@@ -1069,6 +1072,14 @@
       "description": "LSP server configuration",
       "type": "object",
       "properties": {
+        "name": {
+          "description": "Display name for this server (e.g., \"tsserver\", \"eslint\").\nDefaults to the command basename if not specified.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "command": {
           "description": "Command to spawn the server.\nRequired when enabled=true, ignored when enabled=false.",
           "type": "string",
@@ -1121,6 +1132,28 @@
           },
           "default": {}
         },
+        "only_features": {
+          "description": "Restrict this server to only handle the listed features.\nMutually exclusive with `except_features`. If neither is set, all features are handled.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/LspFeature"
+          },
+          "default": null
+        },
+        "except_features": {
+          "description": "Exclude the listed features from this server.\nMutually exclusive with `only_features`. If neither is set, all features are handled.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/LspFeature"
+          },
+          "default": null
+        },
         "root_markers": {
           "description": "File/directory names to search for when detecting the workspace root.\nThe editor walks upward from the opened file's directory looking for\nany of these markers. The first directory containing a match becomes\nthe workspace root sent to the LSP server.\n\nIf empty, falls back to `[\".git\"]` as a universal marker.\nIf the walk reaches a filesystem boundary without a match, uses the\nfile's parent directory (never cwd or $HOME).",
           "type": "array",
@@ -1162,6 +1195,86 @@
           "default": true
         }
       }
+    },
+    "LspFeature": {
+      "description": "LSP features that can be routed to specific servers in a multi-server setup.\n\nFeatures are classified as either \"merged\" (results from all servers are combined)\nor \"exclusive\" (first eligible server wins). This classification is used by the\ndispatch layer, not by this enum itself.",
+      "oneOf": [
+        {
+          "description": "Diagnostics (merged: combined from all servers)",
+          "type": "string",
+          "const": "diagnostics"
+        },
+        {
+          "description": "Code completion (merged: combined from all servers)",
+          "type": "string",
+          "const": "completion"
+        },
+        {
+          "description": "Code actions / quick fixes (merged: combined from all servers)",
+          "type": "string",
+          "const": "code_action"
+        },
+        {
+          "description": "Document symbols (merged: combined from all servers)",
+          "type": "string",
+          "const": "document_symbols"
+        },
+        {
+          "description": "Workspace symbols (merged: combined from all servers)",
+          "type": "string",
+          "const": "workspace_symbols"
+        },
+        {
+          "description": "Hover information (exclusive: first eligible server wins)",
+          "type": "string",
+          "const": "hover"
+        },
+        {
+          "description": "Go to definition, declaration, type definition, implementation (exclusive)",
+          "type": "string",
+          "const": "definition"
+        },
+        {
+          "description": "Find references (exclusive)",
+          "type": "string",
+          "const": "references"
+        },
+        {
+          "description": "Document formatting and range formatting (exclusive)",
+          "type": "string",
+          "const": "format"
+        },
+        {
+          "description": "Rename and prepare rename (exclusive)",
+          "type": "string",
+          "const": "rename"
+        },
+        {
+          "description": "Signature help (exclusive)",
+          "type": "string",
+          "const": "signature_help"
+        },
+        {
+          "description": "Inlay hints (exclusive)",
+          "type": "string",
+          "const": "inlay_hints"
+        },
+        {
+          "description": "Folding ranges (exclusive)",
+          "type": "string",
+          "const": "folding_range"
+        },
+        {
+          "description": "Semantic tokens (exclusive)",
+          "type": "string",
+          "const": "semantic_tokens"
+        },
+        {
+          "description": "Document highlight (exclusive)",
+          "type": "string",
+          "const": "document_highlight"
+        }
+      ]
     },
     "WarningsConfig": {
       "description": "Warning notification configuration",

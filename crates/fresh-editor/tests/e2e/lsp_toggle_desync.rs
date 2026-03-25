@@ -163,7 +163,7 @@ fn test_lsp_toggle_off_edit_toggle_on_causes_desync() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
             enabled: true,
@@ -173,7 +173,10 @@ fn test_lsp_toggle_off_edit_toggle_on_causes_desync() -> anyhow::Result<()> {
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     // Add keybinding for LspToggleForBuffer (Alt+T)
@@ -286,7 +289,7 @@ fn test_lsp_toggle_off_sends_did_close() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
             enabled: true,
@@ -296,7 +299,10 @@ fn test_lsp_toggle_off_sends_did_close() -> anyhow::Result<()> {
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     config.keybindings.push(fresh::config::Keybinding {

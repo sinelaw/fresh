@@ -1798,46 +1798,65 @@ impl Editor {
             return;
         };
 
-        // Send didOpen to LSP (use force_spawn since this is called after user confirmation)
+        // Send didOpen to all LSP handles (use force_spawn to ensure they're started)
         if let Some(lsp) = &mut self.lsp {
-            if let Some(client) = lsp.force_spawn(language, file_path.as_deref()) {
-                tracing::info!("Sending didOpen to newly started LSP for: {}", uri.as_str());
-                if let Err(e) = client.did_open(uri.clone(), text, file_language) {
-                    tracing::warn!("Failed to send didOpen to LSP: {}", e);
-                } else {
+            // force_spawn starts all servers for this language
+            if lsp.force_spawn(language, file_path.as_deref()).is_some() {
+                tracing::info!("Sending didOpen to LSP servers for: {}", uri.as_str());
+                let mut any_opened = false;
+                for sh in lsp.get_handles_mut(language) {
+                    if let Err(e) =
+                        sh.handle
+                            .did_open(uri.clone(), text.clone(), file_language.clone())
+                    {
+                        tracing::warn!("Failed to send didOpen to '{}': {}", sh.name, e);
+                    } else {
+                        any_opened = true;
+                    }
+                }
+
+                if any_opened {
                     tracing::info!("Successfully sent didOpen to LSP after confirmation");
 
-                    // Request pull diagnostics
-                    let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
-                    let request_id = self.next_lsp_request_id;
-                    self.next_lsp_request_id += 1;
-
-                    if let Err(e) =
-                        client.document_diagnostic(request_id, uri.clone(), previous_result_id)
-                    {
-                        tracing::debug!(
-                            "Failed to request pull diagnostics (server may not support): {}",
-                            e
-                        );
-                    }
-
-                    // Request inlay hints if enabled
-                    if self.config.editor.enable_inlay_hints {
+                    // Request pull diagnostics from primary handle
+                    if let Some(handle) = lsp.get_handle_mut(language) {
+                        let previous_result_id =
+                            self.diagnostic_result_ids.get(uri.as_str()).cloned();
                         let request_id = self.next_lsp_request_id;
                         self.next_lsp_request_id += 1;
-                        self.pending_inlay_hints_request = Some(request_id);
-
-                        let last_line = line_count.saturating_sub(1) as u32;
-                        let last_char = 10000u32;
 
                         if let Err(e) =
-                            client.inlay_hints(request_id, uri.clone(), 0, 0, last_line, last_char)
+                            handle.document_diagnostic(request_id, uri.clone(), previous_result_id)
                         {
                             tracing::debug!(
-                                "Failed to request inlay hints (server may not support): {}",
+                                "Failed to request pull diagnostics (server may not support): {}",
                                 e
                             );
-                            self.pending_inlay_hints_request = None;
+                        }
+
+                        // Request inlay hints if enabled
+                        if self.config.editor.enable_inlay_hints {
+                            let request_id = self.next_lsp_request_id;
+                            self.next_lsp_request_id += 1;
+                            self.pending_inlay_hints_request = Some(request_id);
+
+                            let last_line = line_count.saturating_sub(1) as u32;
+                            let last_char = 10000u32;
+
+                            if let Err(e) = handle.inlay_hints(
+                                request_id,
+                                uri.clone(),
+                                0,
+                                0,
+                                last_line,
+                                last_char,
+                            ) {
+                                tracing::debug!(
+                                    "Failed to request inlay hints (server may not support): {}",
+                                    e
+                                );
+                                self.pending_inlay_hints_request = None;
+                            }
                         }
                     }
                 }
@@ -2102,15 +2121,19 @@ impl Editor {
                 );
                 return;
             }
-            if let Some(client) = lsp.get_handle_mut(&language) {
-                // Send didSave with the full text content
-                if let Err(e) = client.did_save(uri, Some(full_text)) {
-                    tracing::warn!("Failed to send didSave to LSP: {}", e);
+            // Broadcast didSave to all handles for this language
+            let mut any_sent = false;
+            for sh in lsp.get_handles_mut(&language) {
+                if let Err(e) = sh.handle.did_save(uri.clone(), Some(full_text.clone())) {
+                    tracing::warn!("Failed to send didSave to '{}': {}", sh.name, e);
                 } else {
-                    tracing::info!("Successfully sent didSave to LSP");
+                    any_sent = true;
                 }
+            }
+            if any_sent {
+                tracing::info!("Successfully sent didSave to LSP");
             } else {
-                tracing::warn!("notify_lsp_save: failed to get LSP client for {}", language);
+                tracing::warn!("notify_lsp_save: no LSP handles for {}", language);
             }
         } else {
             tracing::debug!("notify_lsp_save: no LSP manager available");

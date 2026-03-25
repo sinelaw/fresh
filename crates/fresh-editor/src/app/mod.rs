@@ -1173,8 +1173,8 @@ impl Editor {
         }
 
         // Configure LSP servers from config
-        for (language, lsp_config) in &config.lsp {
-            lsp.set_language_config(language.clone(), lsp_config.clone());
+        for (language, lsp_configs) in &config.lsp {
+            lsp.set_language_configs(language.clone(), lsp_configs.clone());
         }
 
         // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
@@ -1188,9 +1188,7 @@ impl Editor {
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: Some(serde_json::json!({"enable": true})),
-                env: Default::default(),
-                language_id_overrides: Default::default(),
-                root_markers: Default::default(),
+                ..Default::default()
             };
             lsp.set_language_config("javascript".to_string(), deno_config.clone());
             lsp.set_language_config("typescript".to_string(), deno_config);
@@ -1876,9 +1874,9 @@ impl Editor {
     }
 
     /// Configure LSP server for a specific language
-    pub fn set_lsp_config(&mut self, language: String, config: LspServerConfig) {
+    pub fn set_lsp_config(&mut self, language: String, config: Vec<LspServerConfig>) {
         if let Some(ref mut lsp) = self.lsp {
-            lsp.set_language_config(language, config);
+            lsp.set_language_configs(language, config);
         }
     }
 
@@ -4564,6 +4562,7 @@ impl Editor {
                         .config
                         .lsp
                         .get(&language)
+                        .and_then(|configs| configs.first())
                         .map(|c| c.command.clone())
                         .unwrap_or_else(|| "unknown".to_string());
 
@@ -6467,9 +6466,11 @@ impl Editor {
                 }
 
                 // 2. Update the config to disable the language
-                if let Some(lsp_config) = self.config.lsp.get_mut(&language) {
-                    lsp_config.enabled = false;
-                    lsp_config.auto_start = false;
+                if let Some(lsp_configs) = self.config.lsp.get_mut(&language) {
+                    for c in lsp_configs.iter_mut() {
+                        c.enabled = false;
+                        c.auto_start = false;
+                    }
                     tracing::info!("Disabled LSP config for {}", language);
                 }
 

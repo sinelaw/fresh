@@ -121,7 +121,7 @@ done
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
             args: vec![],
             enabled: true,
@@ -131,7 +131,10 @@ done
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     // Create harness with config and working directory

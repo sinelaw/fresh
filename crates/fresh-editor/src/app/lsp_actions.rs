@@ -413,20 +413,25 @@ impl Editor {
                 .map(|s| s.language.clone())
                 .unwrap_or_default();
             if let Some(lsp) = self.lsp.as_mut() {
-                if let Some(handle) = lsp.get_handle_mut(&language) {
-                    tracing::info!(
-                        "Sending didClose for {} (language: {})",
-                        uri.as_str(),
-                        language
-                    );
-                    if let Err(e) = handle.did_close(uri) {
-                        tracing::warn!("Failed to send didClose to LSP: {}", e);
-                    }
-                } else {
+                // Broadcast didClose to all handles for this language
+                let handles = lsp.get_handles_mut(&language);
+                if handles.is_empty() {
                     tracing::warn!(
                         "disable_lsp_for_buffer: no handle for language '{}'",
                         language
                     );
+                } else {
+                    for sh in handles {
+                        tracing::info!(
+                            "Sending didClose for {} to '{}' (language: {})",
+                            uri.as_str(),
+                            sh.name,
+                            language
+                        );
+                        if let Err(e) = sh.handle.did_close(uri.clone()) {
+                            tracing::warn!("Failed to send didClose to '{}': {}", sh.name, e);
+                        }
+                    }
                 }
             } else {
                 tracing::warn!("disable_lsp_for_buffer: no LSP manager");

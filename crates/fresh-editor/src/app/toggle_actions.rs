@@ -367,8 +367,8 @@ impl Editor {
 
         // Update LSP configs
         if let Some(ref mut lsp) = self.lsp {
-            for (language, lsp_config) in &self.config.lsp {
-                lsp.set_language_config(language.clone(), lsp_config.clone());
+            for (language, lsp_configs) in &self.config.lsp {
+                lsp.set_language_configs(language.clone(), lsp_configs.clone());
             }
         }
 

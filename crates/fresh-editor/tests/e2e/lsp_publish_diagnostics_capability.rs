@@ -267,7 +267,7 @@ fn test_strict_server_sends_diagnostics_with_capability() -> anyhow::Result<()> 
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "python".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
             enabled: true,
@@ -277,7 +277,10 @@ fn test_strict_server_sends_diagnostics_with_capability() -> anyhow::Result<()> 
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -329,7 +332,7 @@ fn test_permissive_server_sends_diagnostics_without_capability() -> anyhow::Resu
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "c".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
             enabled: true,
@@ -339,7 +342,10 @@ fn test_permissive_server_sends_diagnostics_without_capability() -> anyhow::Resu
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(

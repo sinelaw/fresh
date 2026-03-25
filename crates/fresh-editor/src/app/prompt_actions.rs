@@ -1140,8 +1140,10 @@ impl Editor {
 
         if let Some(lsp) = &mut self.lsp {
             if lsp.shutdown_server(language) {
-                if let Some(lsp_config) = self.config.lsp.get_mut(language) {
-                    lsp_config.auto_start = false;
+                if let Some(lsp_configs) = self.config.lsp.get_mut(language) {
+                    for c in lsp_configs.iter_mut() {
+                        c.auto_start = false;
+                    }
                     if let Err(e) = self.save_config() {
                         tracing::warn!(
                             "Failed to save config after disabling LSP auto-start: {}",

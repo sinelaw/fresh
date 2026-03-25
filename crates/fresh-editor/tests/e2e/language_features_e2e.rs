@@ -193,7 +193,7 @@ fn test_default_lsp_configs_exist() {
             "Missing default LSP config for language: {}",
             language
         );
-        let lsp_config = lsp_config.unwrap();
+        let lsp_config = &lsp_config.unwrap()[0];
         assert_eq!(
             lsp_config.command, expected_command,
             "Wrong LSP command for {}: expected {}, got {}",

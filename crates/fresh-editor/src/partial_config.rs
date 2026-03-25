@@ -9,7 +9,7 @@ use crate::config::{
     LanguageConfig, LineEndingOption, OnSaveAction, PluginConfig, TerminalConfig, ThemeName,
     WarningsConfig,
 };
-use crate::types::LspServerConfig;
+use crate::types::LspLanguageConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -88,7 +88,7 @@ pub struct PartialConfig {
     pub active_keybinding_map: Option<KeybindingMapName>,
     pub languages: Option<HashMap<String, PartialLanguageConfig>>,
     pub fallback: Option<LanguageConfig>,
-    pub lsp: Option<HashMap<String, LspServerConfig>>,
+    pub lsp: Option<HashMap<String, LspLanguageConfig>>,
     pub warnings: Option<PartialWarningsConfig>,
     pub plugins: Option<HashMap<String, PartialPluginConfig>>,
     pub packages: Option<PartialPackagesConfig>,
@@ -117,7 +117,7 @@ impl Merge for PartialConfig {
         merge_hashmap(&mut self.keybinding_maps, &other.keybinding_maps);
         merge_hashmap_recursive(&mut self.languages, &other.languages);
         self.fallback.merge_from(&other.fallback);
-        merge_hashmap_recursive(&mut self.lsp, &other.lsp);
+        merge_hashmap(&mut self.lsp, &other.lsp);
         merge_hashmap_recursive(&mut self.plugins, &other.plugins);
 
         self.active_keybinding_map
@@ -451,41 +451,6 @@ impl Merge for PartialLanguageConfig {
         self.formatter.merge_from(&other.formatter);
         self.format_on_save.merge_from(&other.format_on_save);
         self.on_save.merge_from(&other.on_save);
-    }
-}
-
-impl Merge for LspServerConfig {
-    fn merge_from(&mut self, other: &Self) {
-        // If command is empty (serde default), use other's command
-        if self.command.is_empty() {
-            self.command = other.command.clone();
-        }
-        // If args is empty, use other's args
-        if self.args.is_empty() {
-            self.args = other.args.clone();
-        }
-        // For booleans, keep self's value (we can't tell if explicitly set)
-        // For process_limits, keep self's value
-        // For initialization_options, use self if Some, otherwise other
-        if self.initialization_options.is_none() {
-            self.initialization_options = other.initialization_options.clone();
-        }
-        // For env, merge: other's values first, then self's values override
-        if self.env.is_empty() {
-            self.env = other.env.clone();
-        } else if !other.env.is_empty() {
-            let mut merged = other.env.clone();
-            merged.extend(self.env.drain());
-            self.env = merged;
-        }
-        // For language_id_overrides, merge: other's values first, then self's values override
-        if self.language_id_overrides.is_empty() {
-            self.language_id_overrides = other.language_id_overrides.clone();
-        } else if !other.language_id_overrides.is_empty() {
-            let mut merged = other.language_id_overrides.clone();
-            merged.extend(self.language_id_overrides.drain());
-            self.language_id_overrides = merged;
-        }
     }
 }
 
@@ -911,7 +876,19 @@ impl From<&crate::config::Config> for PartialConfig {
                     .collect(),
             ),
             fallback: cfg.fallback.clone(),
-            lsp: Some(cfg.lsp.clone()),
+            lsp: Some(
+                cfg.lsp
+                    .iter()
+                    .map(|(k, v)| {
+                        let lang_config = if v.len() == 1 {
+                            LspLanguageConfig::Single(v[0].clone())
+                        } else {
+                            LspLanguageConfig::Multi(v.clone())
+                        };
+                        (k.clone(), lang_config)
+                    })
+                    .collect(),
+            ),
             warnings: Some(PartialWarningsConfig::from(&cfg.warnings)),
             // Only include plugins that differ from defaults
             // Path is auto-discovered at runtime and should never be saved
@@ -964,15 +941,30 @@ impl PartialConfig {
         };
 
         // Resolve lsp HashMap - merge with defaults
+        // Each language can have one or more server configs.
+        // User config (LspLanguageConfig) can be a single object or an array.
         let lsp = {
             let mut result = defaults.lsp.clone();
             if let Some(partial_lsp) = self.lsp {
-                for (key, partial_config) in partial_lsp {
-                    if let Some(default_config) = result.get(&key) {
-                        result.insert(key, partial_config.merge_with_defaults(default_config));
+                for (key, lang_config) in partial_lsp {
+                    let user_configs = lang_config.into_vec();
+                    if let Some(default_configs) = result.get(&key) {
+                        // For single-server user config, merge with the first default.
+                        // For multi-server user config, replace entirely (user is
+                        // explicitly configuring the full server list).
+                        if user_configs.len() == 1 && default_configs.len() == 1 {
+                            let merged = user_configs
+                                .into_iter()
+                                .next()
+                                .unwrap()
+                                .merge_with_defaults(&default_configs[0]);
+                            result.insert(key, vec![merged]);
+                        } else {
+                            result.insert(key, user_configs);
+                        }
                     } else {
                         // New language not in defaults - use as-is
-                        result.insert(key, partial_config);
+                        result.insert(key, user_configs);
                     }
                 }
             }

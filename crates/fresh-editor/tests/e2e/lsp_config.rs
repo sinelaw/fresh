@@ -31,7 +31,7 @@ fn test_start_lsp_command_works_when_config_disabled() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -43,7 +43,10 @@ fn test_start_lsp_command_works_when_config_disabled() -> anyhow::Result<()> {
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     // Create harness with config
@@ -123,7 +126,7 @@ fn test_settings_ui_lsp_enabled_change_takes_effect() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -135,7 +138,10 @@ fn test_settings_ui_lsp_enabled_change_takes_effect() -> anyhow::Result<()> {
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     // Create harness with config
@@ -148,7 +154,7 @@ fn test_settings_ui_lsp_enabled_change_takes_effect() -> anyhow::Result<()> {
 
     // Verify initial config has LSP disabled
     assert!(
-        !harness.editor().config().lsp.get("rust").unwrap().enabled,
+        !harness.editor().config().lsp.get("rust").unwrap()[0].enabled,
         "Initial config should have LSP disabled"
     );
 
@@ -204,7 +210,7 @@ fn test_settings_ui_lsp_enabled_change_takes_effect() -> anyhow::Result<()> {
     let lsp_config = harness.editor().config().lsp.get("rust");
     println!(
         "LSP config after settings save: {:?}",
-        lsp_config.map(|c| c.enabled)
+        lsp_config.map(|c| c[0].enabled)
     );
 
     // Close settings if still open
@@ -252,7 +258,7 @@ fn test_lsp_manager_config_updated_via_set_lsp_config() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        fresh::services::lsp::LspServerConfig {
+        vec![fresh::services::lsp::LspServerConfig {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -264,7 +270,10 @@ fn test_lsp_manager_config_updated_via_set_lsp_config() -> anyhow::Result<()> {
             env: Default::default(),
             language_id_overrides: Default::default(),
             root_markers: Default::default(),
-        },
+            name: None,
+            only_features: None,
+            except_features: None,
+        }],
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -303,10 +312,13 @@ fn test_lsp_manager_config_updated_via_set_lsp_config() -> anyhow::Result<()> {
         env: Default::default(),
         language_id_overrides: Default::default(),
         root_markers: Default::default(),
+        name: None,
+        only_features: None,
+        except_features: None,
     };
     harness
         .editor_mut()
-        .set_lsp_config("rust".to_string(), new_config);
+        .set_lsp_config("rust".to_string(), vec![new_config]);
 
     // Trigger LSP start via command
     harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;

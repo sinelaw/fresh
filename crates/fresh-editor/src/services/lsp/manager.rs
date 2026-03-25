@@ -8,7 +8,7 @@
 
 use crate::services::async_bridge::AsyncBridge;
 use crate::services::lsp::async_handler::LspHandle;
-use crate::types::LspServerConfig;
+use crate::types::{FeatureFilter, LspServerConfig};
 use lsp_types::{SemanticTokensLegend, Uri};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -106,13 +106,24 @@ pub fn detect_workspace_root(file_path: &Path, root_markers: &[String]) -> std::
     file_dir
 }
 
+/// A named LSP handle with feature filter metadata.
+/// Wraps an LspHandle with the server's display name and feature routing filter.
+pub struct ServerHandle {
+    /// Display name for this server (e.g., "rust-analyzer", "eslint")
+    pub name: String,
+    /// The underlying LSP handle
+    pub handle: LspHandle,
+    /// Feature filter controlling which LSP features this server handles
+    pub feature_filter: FeatureFilter,
+}
+
 /// Manager for multiple language servers (async version)
 pub struct LspManager {
-    /// Map from language ID to LSP handle
-    handles: HashMap<String, LspHandle>,
+    /// Map from language ID to LSP handles (supports multiple servers per language)
+    handles: HashMap<String, Vec<ServerHandle>>,
 
-    /// Configuration for each language
-    config: HashMap<String, LspServerConfig>,
+    /// Configuration for each language (supports multiple servers per language)
+    config: HashMap<String, Vec<LspServerConfig>>,
 
     /// Default root URI for workspace (used if no per-language root is set)
     root_uri: Option<Uri>,
@@ -202,9 +213,14 @@ impl LspManager {
         &self.allowed_languages
     }
 
-    /// Get the configuration for a specific language
+    /// Get the configurations for a specific language (one or more servers).
+    pub fn get_configs(&self, language: &str) -> Option<&[LspServerConfig]> {
+        self.config.get(language).map(|v| v.as_slice())
+    }
+
+    /// Get the primary (first) configuration for a specific language.
     pub fn get_config(&self, language: &str) -> Option<&LspServerConfig> {
-        self.config.get(language)
+        self.config.get(language).and_then(|v| v.first())
     }
 
     /// Set completion trigger characters for a language
@@ -304,29 +320,34 @@ impl LspManager {
     /// IMPORTANT: Callers should only call this when there is at least one buffer
     /// with a matching language. Do not call for languages with no open files.
     pub fn try_spawn(&mut self, language: &str, file_path: Option<&Path>) -> LspSpawnResult {
-        // If handle already exists, return success
-        if self.handles.contains_key(language) {
+        // If handles already exist for this language, return success
+        if self.handles.get(language).map_or(false, |v| !v.is_empty()) {
             return LspSpawnResult::Spawned;
         }
 
-        // Check if language is configured and enabled
-        let config = match self.config.get(language) {
-            Some(c) if c.enabled => c,
-            Some(_) => return LspSpawnResult::Failed, // Disabled
-            None => return LspSpawnResult::NotConfigured, // Not configured
+        // Check if language is configured
+        let configs = match self.config.get(language) {
+            Some(configs) if !configs.is_empty() => configs,
+            _ => return LspSpawnResult::NotConfigured,
         };
+
+        // Check if any config is enabled
+        if !configs.iter().any(|c| c.enabled) {
+            return LspSpawnResult::Failed;
+        }
 
         // Check if we have runtime and bridge
         if self.runtime.is_none() || self.async_bridge.is_none() {
             return LspSpawnResult::Failed;
         }
 
-        // Check if auto_start is enabled or language was manually allowed
-        if !config.auto_start && !self.allowed_languages.contains(language) {
+        // Check if auto_start is enabled (on any config) or language was manually allowed
+        let any_auto_start = configs.iter().any(|c| c.auto_start && c.enabled);
+        if !any_auto_start && !self.allowed_languages.contains(language) {
             return LspSpawnResult::NotAutoStart;
         }
 
-        // Spawn the server (using force_spawn since we've already checked auto_start)
+        // Spawn all enabled servers for this language
         if self.force_spawn(language, file_path).is_some() {
             LspSpawnResult::Spawned
         } else {
@@ -342,9 +363,14 @@ impl LspManager {
         self.async_bridge = Some(async_bridge);
     }
 
-    /// Set configuration for a language
+    /// Set configuration for a language (single server).
     pub fn set_language_config(&mut self, language: String, config: LspServerConfig) {
-        self.config.insert(language, config);
+        self.config.insert(language, vec![config]);
+    }
+
+    /// Set configurations for a language (one or more servers).
+    pub fn set_language_configs(&mut self, language: String, configs: Vec<LspServerConfig>) {
+        self.config.insert(language, configs);
     }
 
     /// Set a new root URI for the workspace
@@ -396,6 +422,7 @@ impl LspManager {
             let markers = self
                 .config
                 .get(language)
+                .and_then(|configs| configs.first())
                 .map(|c| c.root_markers.as_slice())
                 .unwrap_or(&[]);
             let root = detect_workspace_root(path, markers);
@@ -440,33 +467,44 @@ impl LspManager {
         );
     }
 
-    /// Get an existing LSP handle for a language (no spawning)
-    ///
-    /// This is the safe way to get a handle - it only returns an existing handle
-    /// and never spawns a new server. Use this after calling `try_spawn()`.
+    /// Get the primary (first) existing LSP handle for a language (no spawning).
     pub fn get_handle(&self, language: &str) -> Option<&LspHandle> {
-        self.handles.get(language)
+        self.handles
+            .get(language)
+            .and_then(|v| v.first())
+            .map(|sh| &sh.handle)
     }
 
-    /// Get a mutable existing LSP handle for a language (no spawning)
-    ///
-    /// This is the safe way to get a handle - it only returns an existing handle
-    /// and never spawns a new server. Use this after calling `try_spawn()`.
+    /// Get the primary (first) mutable existing LSP handle for a language (no spawning).
     pub fn get_handle_mut(&mut self, language: &str) -> Option<&mut LspHandle> {
-        self.handles.get_mut(language)
+        self.handles
+            .get_mut(language)
+            .and_then(|v| v.first_mut())
+            .map(|sh| &mut sh.handle)
     }
 
-    /// Force spawn an LSP handle, bypassing auto_start checks
+    /// Get all handles for a language (for broadcasting operations like didOpen/didChange).
+    pub fn get_handles(&self, language: &str) -> &[ServerHandle] {
+        self.handles
+            .get(language)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Get all mutable handles for a language.
+    pub fn get_handles_mut(&mut self, language: &str) -> &mut [ServerHandle] {
+        self.handles
+            .get_mut(language)
+            .map(|v| v.as_mut_slice())
+            .unwrap_or(&mut [])
+    }
+
+    /// Force spawn LSP server(s) for a language, bypassing auto_start checks.
     ///
-    /// **WARNING**: This bypasses the auto_start setting! Only use this when:
-    /// - User has explicitly confirmed they want to start the LSP (via popup)
-    /// - Manually restarting a server (via command palette)
-    /// - Internal operations that need to guarantee spawn (like retry_crashed_servers)
+    /// Spawns all enabled servers configured for the language.
+    /// Returns a mutable reference to the primary (first) handle if any were spawned.
     ///
     /// The `file_path` is used for workspace root detection via `root_markers`.
-    /// If None, falls back to `per_language_root_uris` or `root_uri`.
-    ///
-    /// For normal operations, use `try_spawn()` + `get_handle_mut()` instead.
     pub fn force_spawn(
         &mut self,
         language: &str,
@@ -475,13 +513,16 @@ impl LspManager {
         tracing::debug!("force_spawn called for language: {}", language);
 
         // Return existing handle if available
-        if self.handles.contains_key(language) {
+        if self.handles.get(language).map_or(false, |v| !v.is_empty()) {
             tracing::debug!("force_spawn: returning existing handle for {}", language);
-            return self.handles.get_mut(language);
+            return self
+                .handles
+                .get_mut(language)
+                .and_then(|v| v.first_mut())
+                .map(|sh| &mut sh.handle);
         }
 
         // Check if language was explicitly disabled by user (via stop command)
-        // Don't auto-spawn disabled languages
         if self.disabled_languages.contains(language) {
             tracing::debug!(
                 "LSP for {} is disabled, not spawning (use manual restart to re-enable)",
@@ -490,10 +531,10 @@ impl LspManager {
             return None;
         }
 
-        // Get config for this language
-        let config = match self.config.get(language) {
-            Some(c) => c,
-            None => {
+        // Get configs for this language
+        let configs = match self.config.get(language) {
+            Some(configs) if !configs.is_empty() => configs.clone(),
+            _ => {
                 tracing::warn!(
                     "force_spawn: no config found for language '{}', available configs: {:?}",
                     language,
@@ -503,75 +544,102 @@ impl LspManager {
             }
         };
 
-        // Skip enabled check if user explicitly requested start (via allowed_languages)
-        if !config.enabled && !self.allowed_languages.contains(language) {
-            tracing::debug!("force_spawn: LSP for {} is not enabled in config", language);
-            return None;
-        }
-
-        // Check command is specified (required when enabled)
-        if config.command.is_empty() {
-            tracing::warn!("force_spawn: LSP command is empty for {}", language);
-            return None;
-        }
-        let command = &config.command;
-
         // Check we have runtime and bridge
         let runtime = match self.runtime.as_ref() {
-            Some(r) => r,
+            Some(r) => r.clone(),
             None => {
                 tracing::error!("force_spawn: no tokio runtime available for {}", language);
                 return None;
             }
         };
         let async_bridge = match self.async_bridge.as_ref() {
-            Some(b) => b,
+            Some(b) => b.clone(),
             None => {
                 tracing::error!("force_spawn: no async bridge available for {}", language);
                 return None;
             }
         };
 
-        // Spawn new handle
-        tracing::info!("Spawning async LSP server for language: {}", language);
+        let mut spawned_handles = Vec::new();
 
-        match LspHandle::spawn(
-            runtime,
-            command,
-            &config.args,
-            config.env.clone(),
-            language.to_string(),
-            async_bridge,
-            config.process_limits.clone(),
-            config.language_id_overrides.clone(),
-        ) {
-            Ok(handle) => {
-                // Initialize the handle (non-blocking)
-                // The handle will become ready asynchronously
-                // Root resolution priority:
-                // 1. Plugin-set per-language root (per_language_root_uris)
-                // 2. Walk upward from file_path using root_markers
-                // 3. File's parent directory
-                let effective_root = self.resolve_root_uri(language, file_path);
-                if let Err(e) =
-                    handle.initialize(effective_root, config.initialization_options.clone())
-                {
-                    tracing::error!("Failed to send initialize command for {}: {}", language, e);
-                    return None;
-                }
-
-                tracing::info!(
-                    "LSP initialization started for {}, will be ready asynchronously",
-                    language
-                );
-                self.handles.insert(language.to_string(), handle);
-                self.handles.get_mut(language)
+        for config in &configs {
+            // Skip disabled configs (unless user explicitly allowed)
+            if !config.enabled && !self.allowed_languages.contains(language) {
+                continue;
             }
-            Err(e) => {
-                tracing::error!("Failed to spawn LSP handle for {}: {}", language, e);
-                None
+
+            if config.command.is_empty() {
+                tracing::warn!(
+                    "force_spawn: LSP command is empty for {} server '{}'",
+                    language,
+                    config.display_name()
+                );
+                continue;
+            }
+
+            let server_name = config.display_name();
+            tracing::info!(
+                "Spawning LSP server '{}' for language: {}",
+                server_name,
+                language
+            );
+
+            match LspHandle::spawn(
+                &runtime,
+                &config.command,
+                &config.args,
+                config.env.clone(),
+                language.to_string(),
+                &async_bridge,
+                config.process_limits.clone(),
+                config.language_id_overrides.clone(),
+            ) {
+                Ok(handle) => {
+                    let effective_root = self.resolve_root_uri(language, file_path);
+                    if let Err(e) =
+                        handle.initialize(effective_root, config.initialization_options.clone())
+                    {
+                        tracing::error!(
+                            "Failed to send initialize command for {} ({}): {}",
+                            language,
+                            server_name,
+                            e
+                        );
+                        continue;
+                    }
+
+                    tracing::info!(
+                        "LSP initialization started for {} ({}), will be ready asynchronously",
+                        language,
+                        server_name
+                    );
+
+                    spawned_handles.push(ServerHandle {
+                        name: server_name,
+                        handle,
+                        feature_filter: config.feature_filter(),
+                    });
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to spawn LSP handle for {} ({}): {}",
+                        language,
+                        server_name,
+                        e
+                    );
+                }
             }
         }
+
+        if spawned_handles.is_empty() {
+            return None;
+        }
+
+        self.handles.insert(language.to_string(), spawned_handles);
+        self.handles
+            .get_mut(language)
+            .and_then(|v| v.first_mut())
+            .map(|sh| &mut sh.handle)
     }
 
     /// Handle a server crash by scheduling a restart with exponential backoff
@@ -579,9 +647,11 @@ impl LspManager {
     /// Returns a message describing the action taken (for UI notification)
     #[allow(clippy::let_underscore_must_use)] // shutdown() is best-effort cleanup of a crashed server
     pub fn handle_server_crash(&mut self, language: &str) -> String {
-        // Remove the crashed handle
-        if let Some(handle) = self.handles.remove(language) {
-            let _ = handle.shutdown(); // Best-effort cleanup
+        // Remove all handles for this language
+        if let Some(handles) = self.handles.remove(language) {
+            for sh in handles {
+                let _ = sh.handle.shutdown(); // Best-effort cleanup
+            }
         }
 
         // Check if server was explicitly disabled by user (via stop command)
@@ -727,9 +797,11 @@ impl LspManager {
         // Add to allowed languages so it stays active even if auto_start=false
         self.allowed_languages.insert(language.to_string());
 
-        // Remove existing handle
-        if let Some(handle) = self.handles.remove(language) {
-            let _ = handle.shutdown();
+        // Remove existing handles
+        if let Some(handles) = self.handles.remove(language) {
+            for sh in handles {
+                let _ = sh.handle.shutdown();
+            }
         }
 
         // Spawn new server (bypassing auto_start for user-initiated restart)
@@ -764,38 +836,38 @@ impl LspManager {
         self.handles.keys().cloned().collect()
     }
 
-    /// Check if an LSP server for a language is running and ready to serve requests
+    /// Check if any LSP server for a language is running and ready to serve requests
     pub fn is_server_ready(&self, language: &str) -> bool {
         self.handles
             .get(language)
-            .map(|handle| handle.state().can_send_requests())
+            .map(|handles| {
+                handles
+                    .iter()
+                    .any(|sh| sh.handle.state().can_send_requests())
+            })
             .unwrap_or(false)
     }
 
-    /// Shutdown a specific language server
+    /// Shutdown all servers for a specific language.
     ///
-    /// This marks the server as disabled, preventing auto-restart until the user
+    /// This marks the language as disabled, preventing auto-restart until the user
     /// explicitly restarts it using the restart command.
-    ///
-    /// Returns true if the server was found and shutdown, false otherwise
-    #[allow(clippy::let_underscore_must_use)] // shutdown() is best-effort; server is being removed regardless
+    #[allow(clippy::let_underscore_must_use)]
     pub fn shutdown_server(&mut self, language: &str) -> bool {
-        if let Some(handle) = self.handles.remove(language) {
-            tracing::info!(
-                "Shutting down LSP server for {} (disabled until manual restart)",
-                language
-            );
-            let _ = handle.shutdown();
-            // Mark as disabled to prevent auto-restart
+        if let Some(handles) = self.handles.remove(language) {
+            for sh in &handles {
+                tracing::info!(
+                    "Shutting down LSP server '{}' for {} (disabled until manual restart)",
+                    sh.name,
+                    language
+                );
+                let _ = sh.handle.shutdown();
+            }
             self.disabled_languages.insert(language.to_string());
-            // Cancel any pending restarts
             self.pending_restarts.remove(language);
-            // Remove from restart cooldown
             self.restart_cooldown.remove(language);
-            // Also remove from allowed languages so it will require confirmation again
-            // if user tries to start it later
             self.allowed_languages.remove(language);
-            true
+            !handles.is_empty()
         } else {
             tracing::warn!("No running LSP server found for {}", language);
             false
@@ -803,11 +875,13 @@ impl LspManager {
     }
 
     /// Shutdown all language servers
-    #[allow(clippy::let_underscore_must_use)] // shutdown() is best-effort; handles are cleared regardless
+    #[allow(clippy::let_underscore_must_use)]
     pub fn shutdown_all(&mut self) {
-        for (language, handle) in self.handles.iter() {
-            tracing::info!("Shutting down LSP server for {}", language);
-            let _ = handle.shutdown();
+        for (language, handles) in self.handles.iter() {
+            for sh in handles {
+                tracing::info!("Shutting down LSP server '{}' for {}", sh.name, language);
+                let _ = sh.handle.shutdown();
+            }
         }
         self.handles.clear();
     }
@@ -908,6 +982,9 @@ mod tests {
             initialization_options: None,
             env: Default::default(),
             language_id_overrides: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
             root_markers: Default::default(),
         };
 
@@ -915,7 +992,7 @@ mod tests {
 
         assert_eq!(manager.config.len(), 1);
         assert!(manager.config.contains_key("rust"));
-        assert!(manager.config.get("rust").unwrap().enabled);
+        assert!(manager.config.get("rust").unwrap().first().unwrap().enabled);
     }
 
     #[test]
@@ -934,6 +1011,9 @@ mod tests {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
             },
         );
@@ -976,6 +1056,9 @@ mod tests {
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
                 root_markers: Default::default(),
             },
         );
