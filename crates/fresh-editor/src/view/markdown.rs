@@ -248,9 +248,7 @@ impl<'a> Iterator for WordSplitter<'a> {
     type Item = (String, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.chars.peek().is_none() {
-            return None;
-        }
+        self.chars.peek()?;
 
         let mut word = String::new();
         let mut width = 0;

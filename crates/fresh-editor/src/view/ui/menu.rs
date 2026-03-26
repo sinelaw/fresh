@@ -140,6 +140,7 @@ fn is_checkbox_checked(checkbox: &Option<String>, context: &MenuContext) -> bool
 /// 1. Accept a pure data value representing the entire expanded menu system
 /// 2. Have the "dynamic" item expansion done externally by the caller
 /// 3. Allow updating the menu data by re-setting with a new expanded value
+///
 /// This would decouple menu rendering/navigation from theme loading concerns.
 #[derive(Debug, Clone)]
 pub struct MenuState {

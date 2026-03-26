@@ -115,7 +115,7 @@ impl Editor {
         }
 
         // 3. Check tab bars
-        for (_split_id, tab_layout) in &self.cached_layout.tab_layouts {
+        for tab_layout in self.cached_layout.tab_layouts.values() {
             use crate::view::ui::tabs::TabHit;
             if let Some(hit) = tab_layout.hit_test(col, row) {
                 let is_active = match &hit {

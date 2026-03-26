@@ -174,13 +174,9 @@ impl Editor {
         let active_split = self.split_manager.active_split();
         let active_buf_id = self.split_manager.buffer_for_split(active_split);
         if let Some(buf_id) = active_buf_id {
-            self.split_view_states
-                .keys()
-                .filter(|&&s| {
-                    s != active_split && self.split_manager.buffer_for_split(s) == Some(buf_id)
-                })
-                .next()
-                .is_some()
+            self.split_view_states.keys().any(|&s| {
+                s != active_split && self.split_manager.buffer_for_split(s) == Some(buf_id)
+            })
         } else {
             false
         }

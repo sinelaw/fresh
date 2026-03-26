@@ -220,10 +220,10 @@ impl RecoveryService {
             let entries = self.storage.list_entries()?;
             let mut cleaned = 0;
             for entry in entries {
-                if !preserve_ids.contains(&entry.id) {
-                    if self.storage.delete_recovery(&entry.id).is_ok() {
-                        cleaned += 1;
-                    }
+                if !preserve_ids.contains(&entry.id)
+                    && self.storage.delete_recovery(&entry.id).is_ok()
+                {
+                    cleaned += 1;
                 }
             }
             tracing::info!(

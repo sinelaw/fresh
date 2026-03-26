@@ -223,7 +223,7 @@ impl FileExplorerRenderer {
 
         // Calculate the left side width for padding calculation
         let indent_width = indent * 2;
-        let indicator_width = if node.is_dir() { 2 } else { 2 }; // "▼ " or "  "
+        let indicator_width = 2; // "▼ " or "  "
         let name_width = str_width(&node.entry.name);
         let left_side_width = indent_width + indicator_width + name_width;
 

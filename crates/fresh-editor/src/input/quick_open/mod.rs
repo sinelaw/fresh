@@ -150,7 +150,7 @@ impl QuickOpenRegistry {
     ) -> Option<(&'a dyn QuickOpenProvider, &'a str)> {
         // Try prefixes in order (longest first to handle overlapping prefixes)
         let mut prefixes: Vec<_> = self.providers.keys().collect();
-        prefixes.sort_by(|a, b| b.len().cmp(&a.len()));
+        prefixes.sort_by_key(|b| std::cmp::Reverse(b.len()));
 
         for prefix in prefixes {
             if prefix.is_empty() {

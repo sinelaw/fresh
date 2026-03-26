@@ -148,17 +148,12 @@ impl LspFeature {
 /// - `All`: The server handles all features (default).
 /// - `Only(set)`: The server handles only the listed features.
 /// - `Except(set)`: The server handles all features except the listed ones.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum FeatureFilter {
+    #[default]
     All,
     Only(HashSet<LspFeature>),
     Except(HashSet<LspFeature>),
-}
-
-impl Default for FeatureFilter {
-    fn default() -> Self {
-        FeatureFilter::All
-    }
 }
 
 impl FeatureFilter {
@@ -197,14 +192,14 @@ pub enum LspLanguageConfig {
     /// Multiple servers for this language (array form)
     Multi(Vec<LspServerConfig>),
     /// A single server for this language (object form)
-    Single(LspServerConfig),
+    Single(Box<LspServerConfig>),
 }
 
 impl LspLanguageConfig {
     /// Convert to a Vec of server configs.
     pub fn into_vec(self) -> Vec<LspServerConfig> {
         match self {
-            LspLanguageConfig::Single(c) => vec![c],
+            LspLanguageConfig::Single(c) => vec![*c],
             LspLanguageConfig::Multi(v) => v,
         }
     }
@@ -212,7 +207,7 @@ impl LspLanguageConfig {
     /// Get a reference as a slice of server configs.
     pub fn as_slice(&self) -> &[LspServerConfig] {
         match self {
-            LspLanguageConfig::Single(c) => std::slice::from_ref(c),
+            LspLanguageConfig::Single(c) => std::slice::from_ref(c.as_ref()),
             LspLanguageConfig::Multi(v) => v,
         }
     }
@@ -220,7 +215,7 @@ impl LspLanguageConfig {
 
 impl Default for LspLanguageConfig {
     fn default() -> Self {
-        LspLanguageConfig::Single(LspServerConfig::default())
+        LspLanguageConfig::Single(Box::default())
     }
 }
 

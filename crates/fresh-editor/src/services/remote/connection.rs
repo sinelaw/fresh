@@ -63,13 +63,14 @@ impl ConnectionParams {
             identity_file: None,
         })
     }
+}
 
-    /// Format as connection string
-    pub fn to_string(&self) -> String {
+impl std::fmt::Display for ConnectionParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(port) = self.port {
-            format!("{}@{}:{}", self.user, self.host, port)
+            write!(f, "{}@{}:{}", self.user, self.host, port)
         } else {
-            format!("{}@{}", self.user, self.host)
+            write!(f, "{}@{}", self.user, self.host)
         }
     }
 }

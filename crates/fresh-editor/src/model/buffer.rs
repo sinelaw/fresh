@@ -729,7 +729,7 @@ impl TextBuffer {
         let sample_size = file_size.min(8 * 1024);
         let sample = fs.read_range(path, 0, sample_size)?;
         let (encoding, is_binary) =
-            Self::detect_encoding_or_binary(&sample, file_size as usize > sample_size);
+            Self::detect_encoding_or_binary(&sample, file_size > sample_size);
 
         // Binary files don't need confirmation (loaded as-is)
         if is_binary {
@@ -790,7 +790,7 @@ impl TextBuffer {
 
         // Use unified encoding/binary detection
         let (encoding, is_binary) =
-            Self::detect_encoding_or_binary(&sample, file_size as usize > sample_size);
+            Self::detect_encoding_or_binary(&sample, file_size > sample_size);
 
         // Binary files skip encoding conversion to preserve raw bytes
         if is_binary {
@@ -2733,7 +2733,7 @@ impl TextBuffer {
         // Load the chunk bytes
         let chunk_bytes = self
             .get_text_range_mut(doc_offset, chunk_info.byte_len)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
 
         // Build search buffer: overlap tail + new chunk
         let overlap_len = state.overlap_tail.len();

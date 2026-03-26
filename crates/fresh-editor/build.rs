@@ -271,7 +271,7 @@ pub const GENERATED_LOCALE_OPTIONS: &[Option<&str>] = &[
 /// runtime to build time, reducing startup from ~12s to ~300ms.
 fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
     use syntect::dumps::dump_to_uncompressed_file;
-    use syntect::parsing::{SyntaxDefinition, SyntaxSet, SyntaxSetBuilder};
+    use syntect::parsing::{SyntaxDefinition, SyntaxSet};
 
     let out_dir = std::env::var("OUT_DIR")?;
     let dest_path = Path::new(&out_dir).join("default_syntaxes.packdump");

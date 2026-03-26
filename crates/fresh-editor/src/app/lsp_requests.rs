@@ -33,9 +33,7 @@ use super::{uri_to_path, Editor, SemanticTokenRangeRequest};
 /// doubles all single newlines so each line becomes its own paragraph with
 /// spacing between them.
 fn space_doc_paragraphs(text: &str) -> String {
-    text.replace("\n\n", "\x00")
-        .replace('\n', "\n\n")
-        .replace('\x00', "\n\n")
+    text.replace("\n\n", "\x00").replace(['\n', '\x00'], "\n\n")
 }
 
 const SEMANTIC_TOKENS_FULL_DEBOUNCE_MS: u64 = 500;

@@ -178,13 +178,8 @@ impl PatternIndentCalculator {
         };
 
         // Check if line ends with an indent trigger
-        if let Some(&last_char) = last_non_whitespace {
-            match last_char {
-                b'{' | b'[' | b'(' | b':' => {
-                    return Some(reference_indent + tab_size);
-                }
-                _ => {}
-            }
+        if let Some(b'{' | b'[' | b'(' | b':') = last_non_whitespace {
+            return Some(reference_indent + tab_size);
         }
 
         // No pattern match - use reference indent

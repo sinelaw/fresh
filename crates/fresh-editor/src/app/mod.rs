@@ -56,31 +56,35 @@ pub fn editor_tick(
 ) -> AnyhowResult<bool> {
     let mut needs_render = false;
 
-    if {
+    let async_messages = {
         let _s = tracing::info_span!("process_async_messages").entered();
         editor.process_async_messages()
-    } {
+    };
+    if async_messages {
         needs_render = true;
     }
-    if {
+    let pending_file_opens = {
         let _s = tracing::info_span!("process_pending_file_opens").entered();
         editor.process_pending_file_opens()
-    } {
+    };
+    if pending_file_opens {
         needs_render = true;
     }
     if editor.process_line_scan() {
         needs_render = true;
     }
-    if {
+    let search_scan = {
         let _s = tracing::info_span!("process_search_scan").entered();
         editor.process_search_scan()
-    } {
+    };
+    if search_scan {
         needs_render = true;
     }
-    if {
+    let search_overlay_refresh = {
         let _s = tracing::info_span!("check_search_overlay_refresh").entered();
         editor.check_search_overlay_refresh()
-    } {
+    };
+    if search_overlay_refresh {
         needs_render = true;
     }
     if editor.check_mouse_hover_timer() {

@@ -901,7 +901,7 @@ impl From<&crate::config::Config> for PartialConfig {
                     .iter()
                     .map(|(k, v)| {
                         let lang_config = if v.len() == 1 {
-                            LspLanguageConfig::Single(v[0].clone())
+                            LspLanguageConfig::Single(Box::new(v[0].clone()))
                         } else {
                             LspLanguageConfig::Multi(v.clone())
                         };

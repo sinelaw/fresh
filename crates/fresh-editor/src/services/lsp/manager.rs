@@ -321,7 +321,7 @@ impl LspManager {
     /// with a matching language. Do not call for languages with no open files.
     pub fn try_spawn(&mut self, language: &str, file_path: Option<&Path>) -> LspSpawnResult {
         // If handles already exist for this language, return success
-        if self.handles.get(language).map_or(false, |v| !v.is_empty()) {
+        if self.handles.get(language).is_some_and(|v| !v.is_empty()) {
             return LspSpawnResult::Spawned;
         }
 
@@ -562,7 +562,7 @@ impl LspManager {
         tracing::debug!("force_spawn called for language: {}", language);
 
         // Return existing handle if available
-        if self.handles.get(language).map_or(false, |v| !v.is_empty()) {
+        if self.handles.get(language).is_some_and(|v| !v.is_empty()) {
             tracing::debug!("force_spawn: returning existing handle for {}", language);
             return self
                 .handles

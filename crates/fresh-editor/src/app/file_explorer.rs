@@ -566,7 +566,7 @@ impl Editor {
         let delete_result = if self.filesystem.remote_connection_info().is_some() {
             self.move_to_remote_trash(&path)
         } else {
-            trash::delete(&path).map_err(|e| std::io::Error::other(e))
+            trash::delete(&path).map_err(std::io::Error::other)
         };
 
         match delete_result {

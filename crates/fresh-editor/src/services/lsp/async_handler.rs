@@ -2926,7 +2926,7 @@ impl LspTask {
                 } => {
                     if state.initialized {
                         tracing::trace!("Processing plugin request {} ({})", request_id, method);
-                        let _ = await_draining!(
+                        await_draining!(
                             state.handle_plugin_request(request_id, method, params, &pending,),
                             command_rx,
                             draining_buffer

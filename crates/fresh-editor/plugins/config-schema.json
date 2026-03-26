@@ -486,7 +486,7 @@
           "x-section": "Completion"
         },
         "accept_suggestion_on_enter": {
-          "description": "Controls whether pressing Enter accepts the selected completion.\n- \"on\": Enter always accepts the completion\n- \"off\": Enter inserts a newline (use Tab to accept)\n- \"smart\": Enter accepts only if the completion text differs from typed text\nDefault: \"on\"",
+          "description": "Controls whether pressing Enter accepts the selected completion.\n  - \"on\": Enter always accepts the completion\n  - \"off\": Enter inserts a newline (use Tab to accept)\n  - \"smart\": Enter accepts only if the completion text differs from typed text\n\nDefault: \"on\"",
           "$ref": "#/$defs/AcceptSuggestionOnEnter",
           "default": "on",
           "x-section": "Completion"

@@ -426,8 +426,8 @@ pub mod indent_folding {
         // Convert line index back to byte offset: sum lengths of lines 0..last_non_blank_line
         // (each line was separated by a `\n`).
         let mut byte_offset = 0;
-        for i in 0..last_non_blank_line {
-            byte_offset += lines[i].len() + 1; // +1 for the \n
+        for line in &lines[..last_non_blank_line] {
+            byte_offset += line.len() + 1; // +1 for the \n
         }
         Some(header_byte + byte_offset)
     }

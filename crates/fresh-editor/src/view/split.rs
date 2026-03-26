@@ -988,14 +988,12 @@ impl SplitManager {
     pub fn get_visible_buffers(&self, viewport_rect: Rect) -> Vec<(LeafId, BufferId, Rect)> {
         // If a split is maximized, only show that split taking up the full viewport
         if let Some(maximized_id) = self.maximized_split {
-            if let Some(node) = self.root.find(maximized_id) {
-                if let SplitNode::Leaf {
-                    buffer_id,
-                    split_id,
-                } = node
-                {
-                    return vec![(*split_id, *buffer_id, viewport_rect)];
-                }
+            if let Some(SplitNode::Leaf {
+                buffer_id,
+                split_id,
+            }) = self.root.find(maximized_id)
+            {
+                return vec![(*split_id, *buffer_id, viewport_rect)];
             }
             // Maximized split no longer exists, clear it and fall through
         }

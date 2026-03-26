@@ -24,7 +24,7 @@ use fresh::{
 use ratatui::Terminal;
 use std::{
     io::{self, stdout},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -230,7 +230,7 @@ impl From<Cli> for Args {
                     } else {
                         Some((*name).to_string())
                     };
-                    let wait = files.iter().any(|s| *s == "--wait");
+                    let wait = files.contains(&"--wait");
                     let file_list: Vec<String> = files
                         .iter()
                         .filter(|s| **s != "--wait")
@@ -1644,7 +1644,7 @@ fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
 }
 
 /// Write a validation script that checks package.json against the official schema
-fn write_validate_script(dir: &PathBuf) -> AnyhowResult<()> {
+fn write_validate_script(dir: &Path) -> AnyhowResult<()> {
     let validate_sh = r#"#!/bin/bash
 # Validate package.json against the official Fresh package schema
 #
@@ -1655,7 +1655,7 @@ curl -sSL https://raw.githubusercontent.com/sinelaw/fresh/main/scripts/validate-
 }
 
 /// Write a validation script for themes (validates both package.json and theme.json)
-fn write_theme_validate_script(dir: &PathBuf) -> AnyhowResult<()> {
+fn write_theme_validate_script(dir: &Path) -> AnyhowResult<()> {
     let validate_sh = r#"#!/bin/bash
 # Validate Fresh theme package
 #
@@ -1688,7 +1688,7 @@ except jsonschema.ValidationError as e:
     write_script_file(dir, "validate.sh", validate_sh)
 }
 
-fn write_script_file(dir: &PathBuf, name: &str, content: &str) -> AnyhowResult<()> {
+fn write_script_file(dir: &Path, name: &str, content: &str) -> AnyhowResult<()> {
     std::fs::write(dir.join(name), content)?;
 
     // Make executable on Unix
@@ -1704,7 +1704,7 @@ fn write_script_file(dir: &PathBuf, name: &str, content: &str) -> AnyhowResult<(
 }
 
 fn create_plugin_package(
-    dir: &PathBuf,
+    dir: &Path,
     name: &str,
     description: &str,
     author: &str,
@@ -1812,7 +1812,7 @@ MIT
 }
 
 fn create_theme_package(
-    dir: &PathBuf,
+    dir: &Path,
     name: &str,
     description: &str,
     author: &str,
@@ -1925,7 +1925,7 @@ MIT
 }
 
 fn create_language_package(
-    dir: &PathBuf,
+    dir: &Path,
     name: &str,
     description: &str,
     author: &str,

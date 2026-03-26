@@ -1033,15 +1033,12 @@ impl SettingsState {
     /// Handle control increment (Right arrow on numbers/dropdowns)
     fn handle_control_increment(&mut self) {
         if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::Number(ref mut state) => {
-                    state.value += 1;
-                    if let Some(max) = state.max {
-                        state.value = state.value.min(max);
-                    }
-                    self.on_value_changed();
+            if let SettingControl::Number(ref mut state) = &mut item.control {
+                state.value += 1;
+                if let Some(max) = state.max {
+                    state.value = state.value.min(max);
                 }
-                _ => {}
+                self.on_value_changed();
             }
         }
     }
@@ -1049,17 +1046,14 @@ impl SettingsState {
     /// Handle control decrement (Left arrow on numbers)
     fn handle_control_decrement(&mut self) {
         if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::Number(ref mut state) => {
-                    if state.value > 0 {
-                        state.value -= 1;
-                    }
-                    if let Some(min) = state.min {
-                        state.value = state.value.max(min);
-                    }
-                    self.on_value_changed();
+            if let SettingControl::Number(ref mut state) = &mut item.control {
+                if state.value > 0 {
+                    state.value -= 1;
                 }
-                _ => {}
+                if let Some(min) = state.min {
+                    state.value = state.value.max(min);
+                }
+                self.on_value_changed();
             }
         }
     }

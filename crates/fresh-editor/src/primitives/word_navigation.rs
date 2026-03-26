@@ -196,13 +196,12 @@ pub fn find_word_start(buffer: &Buffer, pos: usize) -> usize {
     let mut current_idx = offset;
 
     // If we're at the end or at a non-word character, step left once
-    if current_idx >= text.len() || {
+    let is_non_word = current_idx >= text.len() || {
         let next = next_grapheme_boundary(&text, current_idx);
         get_grapheme_class(&text[current_idx..next]) != CharClass::Word
-    } {
-        if current_idx > 0 {
-            current_idx = prev_grapheme_boundary(&text, current_idx);
-        }
+    };
+    if is_non_word && current_idx > 0 {
+        current_idx = prev_grapheme_boundary(&text, current_idx);
     }
 
     // Scan left while we're on word characters

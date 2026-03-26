@@ -318,7 +318,7 @@ fn apply_memory_limit_setrlimit(bytes: u64) -> io::Result<()> {
     // Set RLIMIT_AS (address space / virtual memory limit)
     // On 32-bit platforms, rlim_t is u32, so we need to convert carefully.
     // If bytes exceeds what rlim_t can represent, clamp to rlim_t::MAX.
-    let limit = bytes.min(nix::libc::rlim_t::MAX) as nix::libc::rlim_t;
+    let limit = bytes as nix::libc::rlim_t;
     setrlimit(Resource::RLIMIT_AS, limit, limit)
         .map_err(|e| io::Error::other(format!("setrlimit AS failed: {}", e)))
 }

@@ -2968,6 +2968,7 @@ impl SplitRenderer {
     /// When a token's `source_offset` matches a break position:
     /// - For Space tokens: replace with Newline + indent Spaces
     /// - For other tokens: insert Newline + indent Spaces before the token
+    ///
     /// Tokens without source_offset (injected/virtual) pass through unchanged.
     fn apply_soft_breaks(
         tokens: Vec<fresh_core::api::ViewTokenWire>,
@@ -4264,9 +4265,9 @@ impl SplitRenderer {
             // Scan forward for \n within [lo..hi] to find subsequent line starts
             let rel_lo = lo - viewport_start;
             let rel_hi = (hi - viewport_start).min(bytes.len());
-            for i in rel_lo..rel_hi {
-                if bytes[i] == b'\n' {
-                    let next_line_start = viewport_start + i + 1;
+            for (i, &byte) in bytes[rel_lo..rel_hi].iter().enumerate() {
+                if byte == b'\n' {
+                    let next_line_start = viewport_start + rel_lo + i + 1;
                     if next_line_start < viewport_end {
                         indicators
                             .entry(next_line_start)

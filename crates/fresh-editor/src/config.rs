@@ -821,9 +821,10 @@ pub struct EditorConfig {
     pub suggest_on_trigger_characters: bool,
 
     /// Controls whether pressing Enter accepts the selected completion.
-    /// - "on": Enter always accepts the completion
-    /// - "off": Enter inserts a newline (use Tab to accept)
-    /// - "smart": Enter accepts only if the completion text differs from typed text
+    ///   - "on": Enter always accepts the completion
+    ///   - "off": Enter inserts a newline (use Tab to accept)
+    ///   - "smart": Enter accepts only if the completion text differs from typed text
+    ///
     /// Default: "on"
     #[serde(default = "default_accept_suggestion_on_enter")]
     #[schemars(extend("x-section" = "Completion"))]
@@ -1606,7 +1607,7 @@ impl BufferConfig {
         // try the fallback config (#1219).
         let lang_config_ref = language_id
             .and_then(|id| global_config.languages.get(id))
-            .or_else(|| {
+            .or({
                 // Apply fallback only when language is unknown ("text" or None)
                 match language_id {
                     None | Some("text") => global_config.fallback.as_ref(),

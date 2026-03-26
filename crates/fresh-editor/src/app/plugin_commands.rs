@@ -1552,7 +1552,7 @@ impl Editor {
                     if let Some(mode_bindings) =
                         self.keybindings.get_plugin_defaults().get(&mode_context)
                     {
-                        for ((key_code, modifiers), _action) in mode_bindings {
+                        for (key_code, modifiers) in mode_bindings.keys() {
                             let label =
                                 crate::input::keybindings::format_keybinding(key_code, modifiers);
                             if let Some((_key_str, cmd)) = bindings

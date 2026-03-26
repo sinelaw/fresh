@@ -128,7 +128,7 @@ pub fn run_client_relay(
     {
         let resize_flag = Arc::new(AtomicBool::new(false));
         relay_unix::setup_resize_handler(resize_flag.clone())?;
-        return relay_unix::relay_loop(&mut conn, resize_flag);
+        relay_unix::relay_loop(&mut conn, resize_flag)
     }
 
     #[cfg(windows)]

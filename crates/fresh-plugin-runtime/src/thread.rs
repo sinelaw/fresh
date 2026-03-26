@@ -971,17 +971,6 @@ async fn plugin_thread_loop(
     }
 }
 
-/// Execute an action while processing incoming hook requests concurrently.
-///
-/// This prevents deadlock when an action awaits a response from the main thread
-/// while the main thread is waiting for a blocking hook to complete.
-///
-/// # Safety (clippy::await_holding_refcell_ref)
-/// The RefCell borrow held across await is safe because:
-/// - This runs on a single-threaded tokio runtime (no parallel task execution)
-/// - No spawn_local calls exist that could create concurrent access to `runtime`
-/// - The runtime Rc<RefCell<>> is never shared with other concurrent tasks
-
 /// Run a hook with Rc<RefCell<QuickJsBackend>>
 ///
 /// # Safety (clippy::await_holding_refcell_ref)
@@ -1018,6 +1007,7 @@ async fn run_hook_internal_rc(
 }
 
 /// Handle a single request in the plugin thread
+#[allow(clippy::await_holding_refcell_ref)]
 async fn handle_request(
     request: PluginRequest,
     runtime: Rc<RefCell<QuickJsBackend>>,
@@ -1199,14 +1189,6 @@ async fn handle_request(
     false
 }
 
-/// Load a plugin from a file
-///
-/// # Safety (clippy::await_holding_refcell_ref)
-/// The RefCell borrow held across await is safe because:
-/// - This runs on a single-threaded tokio runtime (no parallel task execution)
-/// - No spawn_local calls exist that could create concurrent access to `runtime`
-/// - The runtime Rc<RefCell<>> is never shared with other concurrent tasks
-#[allow(clippy::await_holding_refcell_ref)]
 /// Result of the parallel preparation phase for a single plugin.
 /// Contains everything needed to execute the plugin — no further I/O or transpilation required.
 struct PreparedPlugin {
@@ -1329,6 +1311,7 @@ fn execute_prepared_plugin(
     Ok(())
 }
 
+#[allow(clippy::await_holding_refcell_ref)]
 async fn load_plugin_internal(
     runtime: Rc<RefCell<QuickJsBackend>>,
     plugins: &mut HashMap<String, TsPluginInfo>,

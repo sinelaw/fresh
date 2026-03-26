@@ -710,7 +710,8 @@ impl Editor {
                 // Fallback: check active cursors
                 self.split_view_states
                     .values()
-                    .find_map(|vs| Some(vs.cursors.primary().position))
+                    .map(|vs| vs.cursors.primary().position)
+                    .next()
             })
     }
 

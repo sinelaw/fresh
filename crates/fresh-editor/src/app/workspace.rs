@@ -755,7 +755,7 @@ impl Editor {
         if self.config.editor.hot_exit {
             let entries = self.recovery_service.list_recoverable().unwrap_or_default();
             if !entries.is_empty() {
-                for (_, &buffer_id) in &path_to_buffer {
+                for &buffer_id in path_to_buffer.values() {
                     let file_path = self
                         .buffers
                         .get(&buffer_id)
@@ -994,17 +994,17 @@ impl Editor {
             .values()
             .flat_map(|vs| vs.open_buffers.iter().copied())
             .collect();
-        let orphans: Vec<BufferId> = self
-            .buffers
-            .keys()
-            .copied()
-            .filter(|id| {
-                !referenced.contains(id)
-                    && self.buffers.get(id).map_or(false, |s| {
-                        s.buffer.file_path().is_none() && !s.buffer.is_modified()
-                    })
-            })
-            .collect();
+        let orphans: Vec<BufferId> =
+            self.buffers
+                .keys()
+                .copied()
+                .filter(|id| {
+                    !referenced.contains(id)
+                        && self.buffers.get(id).is_some_and(|s| {
+                            s.buffer.file_path().is_none() && !s.buffer.is_modified()
+                        })
+                })
+                .collect();
         for id in orphans {
             tracing::debug!("Removing orphaned empty unnamed buffer {:?}", id);
             self.buffers.remove(&id);
@@ -1019,7 +1019,7 @@ impl Editor {
             .filter(|id| {
                 self.buffer_metadata
                     .get(id)
-                    .map_or(false, |m| !m.hidden_from_tabs && !m.is_virtual())
+                    .is_some_and(|m| !m.hidden_from_tabs && !m.is_virtual())
             })
             .count();
         if restored_count > 0 {

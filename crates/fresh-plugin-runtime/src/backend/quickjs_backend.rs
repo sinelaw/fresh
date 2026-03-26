@@ -126,6 +126,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 /// Convert a QuickJS Value to serde_json::Value
+#[allow(clippy::only_used_in_recursion)]
 fn js_to_json(ctx: &rquickjs::Ctx<'_>, val: Value<'_>) -> serde_json::Value {
     use rquickjs::Type;
     match val.type_of() {
@@ -1442,10 +1443,8 @@ impl JsEditorApi {
     pub fn write_file(&self, path: String, content: String) -> bool {
         let p = Path::new(&path);
         if let Some(parent) = p.parent() {
-            if !parent.exists() {
-                if std::fs::create_dir_all(parent).is_err() {
-                    return false;
-                }
+            if !parent.exists() && std::fs::create_dir_all(parent).is_err() {
+                return false;
             }
         }
         std::fs::write(p, content).is_ok()
@@ -1575,10 +1574,8 @@ impl JsEditorApi {
         } else {
             // Ensure parent directory exists
             if let Some(parent) = to_path.parent() {
-                if !parent.exists() {
-                    if std::fs::create_dir_all(parent).is_err() {
-                        return false;
-                    }
+                if !parent.exists() && std::fs::create_dir_all(parent).is_err() {
+                    return false;
                 }
             }
             std::fs::copy(from_path, to_path).is_ok()

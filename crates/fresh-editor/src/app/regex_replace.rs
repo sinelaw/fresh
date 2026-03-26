@@ -1,5 +1,5 @@
 /// Pure, buffer-agnostic helpers for regex find-and-replace.
-
+///
 /// Build a [`regex::bytes::Regex`] from user-supplied search settings.
 /// Returns `None` when `use_regex` is false.
 pub fn build_regex(
