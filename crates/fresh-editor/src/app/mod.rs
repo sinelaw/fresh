@@ -5179,7 +5179,7 @@ impl Editor {
                     .and_then(|vs| vs.buffer_state(*buffer_id))
                     .map(|bs| match bs.view_mode {
                         crate::state::ViewMode::Source => "source",
-                        crate::state::ViewMode::Compose => "compose",
+                        crate::state::ViewMode::PageView => "page_view",
                     })
                     .unwrap_or("source");
                 let compose_width = active_vs
@@ -5187,7 +5187,7 @@ impl Editor {
                     .and_then(|bs| bs.compose_width);
                 let is_composing_in_any_split = self.split_view_states.values().any(|vs| {
                     vs.buffer_state(*buffer_id)
-                        .map(|bs| matches!(bs.view_mode, crate::state::ViewMode::Compose))
+                        .map(|bs| matches!(bs.view_mode, crate::state::ViewMode::PageView))
                         .unwrap_or(false)
                 });
                 let buffer_info = BufferInfo {

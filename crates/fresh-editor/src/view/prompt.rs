@@ -67,8 +67,8 @@ pub enum PromptType {
     SetBookmark,
     /// Jump to a bookmark - prompts for register (0-9)
     JumpToBookmark,
-    /// Set compose width (empty clears to viewport)
-    SetComposeWidth,
+    /// Set page width (empty clears to viewport)
+    SetPageWidth,
     /// Add a vertical ruler at a column position
     AddRuler,
     /// Remove a vertical ruler (select from list)

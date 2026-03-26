@@ -38,7 +38,7 @@ impl Editor {
         // Simple state lookups
         let line_numbers = self.is_line_numbers_visible();
         let line_wrap = self.is_line_wrap_enabled();
-        let compose_mode = self.is_compose_mode();
+        let page_view = self.is_page_view();
         let file_explorer_visible = self.file_explorer_visible;
         let file_explorer_focused = self.is_file_explorer_focused();
         let mouse_capture = self.mouse_enabled;
@@ -76,7 +76,9 @@ impl Editor {
             .set(context_keys::KEYMAP_MACOS_GUI, active_keymap == "macos-gui")
             .set(context_keys::LINE_NUMBERS, line_numbers)
             .set(context_keys::LINE_WRAP, line_wrap)
-            .set(context_keys::COMPOSE_MODE, compose_mode)
+            .set(context_keys::PAGE_VIEW, page_view)
+            // Keep backward-compatible key for existing keybindings/menus
+            .set(context_keys::COMPOSE_MODE, page_view)
             .set(context_keys::FILE_EXPLORER, file_explorer_visible)
             .set(context_keys::FILE_EXPLORER_FOCUSED, file_explorer_focused)
             .set(context_keys::MOUSE_CAPTURE, mouse_capture)
@@ -114,11 +116,11 @@ impl Editor {
     }
 
     /// Check if compose mode is active in the current buffer.
-    fn is_compose_mode(&self) -> bool {
+    fn is_page_view(&self) -> bool {
         let active_split = self.split_manager.active_split();
         self.split_view_states
             .get(&active_split)
-            .map(|vs| vs.view_mode == crate::state::ViewMode::Compose)
+            .map(|vs| vs.view_mode == crate::state::ViewMode::PageView)
             .unwrap_or(false)
     }
 

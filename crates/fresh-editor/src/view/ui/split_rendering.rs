@@ -2572,7 +2572,7 @@ impl SplitRenderer {
 
         // Apply soft breaks — marker-based line wrapping that survives edits without flicker.
         // Only apply in Compose mode; Source mode shows the raw unwrapped text.
-        let is_compose = matches!(view_mode, ViewMode::Compose);
+        let is_compose = matches!(view_mode, ViewMode::PageView);
         if is_compose && !state.soft_breaks.is_empty() {
             let viewport_end = tokens
                 .iter()
@@ -3849,7 +3849,7 @@ impl SplitRenderer {
         // Enable centering/margins if:
         // 1. View mode is explicitly Compose, OR
         // 2. compose_width is set (plugin-driven compose mode)
-        let should_compose = view_mode == &ViewMode::Compose || compose_width.is_some();
+        let should_compose = view_mode == &ViewMode::PageView || compose_width.is_some();
 
         if !should_compose {
             return ComposeLayout {
@@ -4046,7 +4046,7 @@ impl SplitRenderer {
 
         // Semantic tokens are stored as overlays so their ranges track edits.
         // Convert them into highlight spans for the render pipeline.
-        let is_compose = matches!(view_mode, ViewMode::Compose);
+        let is_compose = matches!(view_mode, ViewMode::PageView);
         let md_emphasis_ns =
             fresh_core::overlay::OverlayNamespace::from_string("md-emphasis".to_string());
         let mut semantic_token_spans = Vec::new();

@@ -1066,7 +1066,7 @@ impl Editor {
     pub(super) fn handle_set_view_mode(&mut self, buffer_id: BufferId, mode: &str) {
         use crate::state::ViewMode;
         let view_mode = match mode {
-            "compose" => ViewMode::Compose,
+            "page_view" | "compose" => ViewMode::PageView,
             _ => ViewMode::Source,
         };
         // Set on the specified buffer's per-split view state.

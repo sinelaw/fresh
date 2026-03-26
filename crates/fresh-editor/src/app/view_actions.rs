@@ -8,7 +8,7 @@ use rust_i18n::t;
 
 impl Editor {
     /// Toggle between Compose and Source view modes.
-    pub fn handle_toggle_compose_mode(&mut self) {
+    pub fn handle_toggle_page_view(&mut self) {
         let active_split = self.split_manager.active_split();
         let active_buffer = self
             .split_manager
@@ -29,8 +29,8 @@ impl Editor {
                 .map(|vs| vs.view_mode.clone())
                 .unwrap_or(ViewMode::Source);
             match current {
-                ViewMode::Compose => ViewMode::Source,
-                _ => ViewMode::Compose,
+                ViewMode::PageView => ViewMode::Source,
+                _ => ViewMode::PageView,
             }
         };
 
@@ -41,11 +41,11 @@ impl Editor {
             // wrapping by inserting Break tokens in the view transform pipeline.
             // In Source mode, respect the user's default_wrap preference.
             vs.viewport.line_wrap_enabled = match view_mode {
-                ViewMode::Compose => false,
+                ViewMode::PageView => false,
                 ViewMode::Source => default_wrap,
             };
             match view_mode {
-                ViewMode::Compose => {
+                ViewMode::PageView => {
                     vs.show_line_numbers = false;
                     // Apply page_width from language config if available
                     if let Some(width) = page_width {
@@ -62,7 +62,7 @@ impl Editor {
         }
 
         let mode_label = match view_mode {
-            ViewMode::Compose => t!("view.compose").to_string(),
+            ViewMode::PageView => t!("view.page_view").to_string(),
             ViewMode::Source => "Source".to_string(),
         };
         self.set_status_message(t!("view.mode", mode = mode_label).to_string());

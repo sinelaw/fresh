@@ -563,10 +563,10 @@ impl Editor {
                 };
                 self.set_status_message(t!("view.read_only_state", state = state_str).to_string());
             }
-            Action::ToggleComposeMode => {
-                self.handle_toggle_compose_mode();
+            Action::TogglePageView => {
+                self.handle_toggle_page_view();
             }
-            Action::SetComposeWidth => {
+            Action::SetPageWidth => {
                 let active_split = self.split_manager.active_split();
                 let current = self
                     .split_view_states
@@ -574,8 +574,8 @@ impl Editor {
                     .and_then(|v| v.compose_width.map(|w| w.to_string()))
                     .unwrap_or_default();
                 self.start_prompt_with_initial_text(
-                    "Compose width (empty = viewport): ".to_string(),
-                    PromptType::SetComposeWidth,
+                    "Page width (empty = viewport): ".to_string(),
+                    PromptType::SetPageWidth,
                     current,
                 );
             }

@@ -1509,7 +1509,7 @@ impl Editor {
             // Restore per-buffer view mode and compose width
             buf_state.view_mode = match file_state.view_mode {
                 SerializedViewMode::Source => ViewMode::Source,
-                SerializedViewMode::Compose => ViewMode::Compose,
+                SerializedViewMode::PageView => ViewMode::PageView,
             };
             buf_state.compose_width = file_state.compose_width;
             buf_state.plugin_state = file_state.plugin_state.clone();
@@ -1550,7 +1550,7 @@ impl Editor {
         // view_mode/compose_width as fallback (backward compatibility)
         let restored_view_mode = match split_state.view_mode {
             SerializedViewMode::Source => ViewMode::Source,
-            SerializedViewMode::Compose => ViewMode::Compose,
+            SerializedViewMode::PageView => ViewMode::PageView,
         };
 
         if let Some(active_id) = active_buffer_id {
@@ -1829,7 +1829,7 @@ fn serialize_split_view_state(
                 },
                 view_mode: match buf_state.view_mode {
                     ViewMode::Source => SerializedViewMode::Source,
-                    ViewMode::Compose => SerializedViewMode::Compose,
+                    ViewMode::PageView => SerializedViewMode::PageView,
                 },
                 compose_width: buf_state.compose_width,
                 plugin_state: buf_state.plugin_state.clone(),
@@ -1843,7 +1843,7 @@ fn serialize_split_view_state(
         .and_then(|id| view_state.keyed_states.get(&id))
         .map(|bs| match bs.view_mode {
             ViewMode::Source => SerializedViewMode::Source,
-            ViewMode::Compose => SerializedViewMode::Compose,
+            ViewMode::PageView => SerializedViewMode::PageView,
         })
         .unwrap_or(SerializedViewMode::Source);
     let active_compose_width = active_buffer

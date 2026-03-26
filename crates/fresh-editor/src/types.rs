@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 pub mod context_keys {
     pub const LINE_NUMBERS: &str = "line_numbers";
     pub const LINE_WRAP: &str = "line_wrap";
+    pub const PAGE_VIEW: &str = "page_view";
+    /// Backward-compatible alias for PAGE_VIEW
     pub const COMPOSE_MODE: &str = "compose_mode";
     pub const FILE_EXPLORER: &str = "file_explorer";
     pub const MENU_BAR: &str = "menu_bar";

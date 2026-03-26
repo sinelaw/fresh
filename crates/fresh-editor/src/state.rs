@@ -73,8 +73,9 @@ impl DisplacedMarker {
 pub enum ViewMode {
     /// Plain source rendering
     Source,
-    /// Semi-WYSIWYG compose rendering
-    Compose,
+    /// Document-style page view with centered content, concealed markers,
+    /// and plugin-driven word wrapping (previously called "compose mode")
+    PageView,
 }
 
 /// Per-buffer user settings that should be preserved across file reloads (auto-revert).

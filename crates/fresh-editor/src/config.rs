@@ -2107,8 +2107,8 @@ impl MenuConfig {
                         checkbox: None,
                     },
                     MenuItem::Action {
-                        label: t!("menu.view.set_compose_width").to_string(),
-                        action: "set_compose_width".to_string(),
+                        label: t!("menu.view.set_page_width").to_string(),
+                        action: "set_page_width".to_string(),
                         args: HashMap::new(),
                         when: None,
                         checkbox: None,

@@ -249,7 +249,10 @@ pub struct SerializedScroll {
 pub enum SerializedViewMode {
     #[default]
     Source,
-    Compose,
+    /// Page view (document-style layout with centering and concealment).
+    /// Accepts "Compose" for backward compatibility with saved workspaces.
+    #[serde(alias = "Compose")]
+    PageView,
 }
 
 /// Config overrides that differ from base config

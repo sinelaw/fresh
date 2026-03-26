@@ -171,7 +171,7 @@ impl BufferViewState {
     /// (the compose plugin handles wrapping), hides line numbers,
     /// and optionally sets the compose width for centering.
     pub fn activate_page_view(&mut self, page_width: Option<usize>) {
-        self.view_mode = ViewMode::Compose;
+        self.view_mode = ViewMode::PageView;
         self.show_line_numbers = false;
         self.viewport.line_wrap_enabled = false;
         if let Some(width) = page_width {

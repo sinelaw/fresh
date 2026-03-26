@@ -265,8 +265,8 @@ impl Editor {
                     self.set_status_message(t!("error.invalid_blend", input = &input).to_string());
                 }
             },
-            PromptType::SetComposeWidth => {
-                self.handle_set_compose_width(&input);
+            PromptType::SetPageWidth => {
+                self.handle_set_page_width(&input);
             }
             PromptType::RecordMacro => {
                 self.handle_register_input(
@@ -664,8 +664,8 @@ impl Editor {
         }
     }
 
-    /// Handle SetComposeWidth prompt confirmation.
-    fn handle_set_compose_width(&mut self, input: &str) {
+    /// Handle SetPageWidth prompt confirmation.
+    fn handle_set_page_width(&mut self, input: &str) {
         let active_split = self.split_manager.active_split();
         let trimmed = input.trim();
 
@@ -673,20 +673,18 @@ impl Editor {
             if let Some(vs) = self.split_view_states.get_mut(&active_split) {
                 vs.compose_width = None;
             }
-            self.set_status_message(t!("settings.compose_width_cleared").to_string());
+            self.set_status_message(t!("settings.page_width_cleared").to_string());
         } else {
             match trimmed.parse::<u16>() {
                 Ok(val) if val > 0 => {
                     if let Some(vs) = self.split_view_states.get_mut(&active_split) {
                         vs.compose_width = Some(val);
                     }
-                    self.set_status_message(
-                        t!("settings.compose_width_set", value = val).to_string(),
-                    );
+                    self.set_status_message(t!("settings.page_width_set", value = val).to_string());
                 }
                 _ => {
                     self.set_status_message(
-                        t!("error.invalid_compose_width", input = input).to_string(),
+                        t!("error.invalid_page_width", input = input).to_string(),
                     );
                 }
             }
