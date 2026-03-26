@@ -26,6 +26,11 @@ name = "event_debug"
 path = "src/bin/event_debug.rs"
 required-features = ["dev-bins", "runtime"]
 
+[[bin]]
+name = "measure_startup"
+path = "src/bin/measure_startup.rs"
+required-features = ["dev-bins", "runtime"]
+
 [lib]
 name = "fresh"
 path = "src/lib.rs"
@@ -37,7 +42,7 @@ plugins = ["dep:fresh-plugin-runtime", "dep:fresh-parser-js", "dep:fresh-plugin-
 embed-plugins = ["plugins", "dep:include_dir", "dep:trash"]
 # Feature for optional development binaries (generate_schema, event_debug)
 # Includes ratatui for theme type definitions needed by schema generation
-dev-bins = ["dep:ratatui"]
+dev-bins = ["dep:ratatui", "dep:vt100"]
 # Runtime feature includes all heavy dependencies needed for the actual editor
 runtime = [
     "dep:crossterm",
@@ -174,6 +179,7 @@ include_dir = { version = "0.7", optional = true }
 tempfile = { version = "3.25", optional = true }
 trash = { version = "5.2.5", optional = true }
 open = { version = "5.3", optional = true }
+vt100 = { version = "0.16", optional = true }
 
 # GUI mode — all windowing/GPU deps are encapsulated in fresh-gui
 fresh-gui = { workspace = true, optional = true }
