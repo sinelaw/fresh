@@ -554,7 +554,10 @@ mod tests {
                 let path = PathBuf::from(format!("/tmp/{comp}/file.txt"));
                 if let Some(uri) = path_to_file_uri(&path) {
                     let back = file_uri_to_path(&uri).unwrap();
-                    prop_assert_eq!(back, path, "roundtrip failed");
+                    // path_to_file_uri uses Path::components() which normalises
+                    // away `.` and `..`, matching the `url` crate's behaviour.
+                    let normalised: PathBuf = path.components().collect();
+                    prop_assert_eq!(back, normalised, "roundtrip failed");
                 }
             }
 
@@ -593,7 +596,10 @@ mod tests {
                 let path = PathBuf::from(format!("/tmp/{comp}/file.txt"));
                 if let Some(uri) = path_to_lsp_uri(&path) {
                     let back = lsp_uri_to_path(&uri).unwrap();
-                    prop_assert_eq!(back, path);
+                    // path_to_lsp_uri uses Path::components() which normalises
+                    // away `.` and `..`, matching the `url` crate's behaviour.
+                    let normalised: PathBuf = path.components().collect();
+                    prop_assert_eq!(back, normalised);
                 }
             }
 
