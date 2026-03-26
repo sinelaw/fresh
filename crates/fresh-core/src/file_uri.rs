@@ -551,6 +551,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dotdot_resolved_in_uri() {
+        // `..` must navigate to the parent, not be silently dropped.
+        let uri = path_to_file_uri(Path::new("/tmp/../file.txt")).unwrap();
+        assert_eq!(uri, "file:///file.txt");
+        let back = file_uri_to_path(&uri).unwrap();
+        assert_eq!(back, PathBuf::from("/file.txt"));
+    }
+
     // ── Property tests ──────────────────────────────────────────
 
     mod prop {
