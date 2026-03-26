@@ -10,6 +10,15 @@ members = [
     "crates/fresh-plugin-api-macros",
     "crates/fresh-winterm",
 ]
+default-members = [
+    "crates/fresh-editor",
+    "crates/fresh-core",
+    "crates/fresh-parser-js",
+    "crates/fresh-languages",
+    "crates/fresh-plugin-runtime",
+    "crates/fresh-plugin-api-macros",
+    "crates/fresh-winterm",
+]
 
 [workspace.package]
 version = "0.2.18"
