@@ -3488,15 +3488,19 @@ fn test_named_color_swatch_uses_native_ansi_color() {
 
     // The "ui" section is collapsed by default. Navigate down until the
     // selection indicator (▸) is on the UI Elements section header.
-    // Use process_async_and_render() instead of render() to ensure the
-    // plugin's key handler runs before we check the screen. Without this,
-    // plugin key processing is async and may not complete before the next
-    // Down key is sent, causing the selection to overshoot past UI Elements.
+    // After each Down key, wait for the screen to actually change before
+    // checking and sending the next key. Without this wait, the plugin's
+    // async key processing can batch multiple keys, causing the selection
+    // to skip positions and miss the UI Elements line entirely.
     let selection_indicator = '\u{25B8}'; // ▸
     let mut found_ui_section = false;
     for _ in 0..50 {
+        let screen_before = harness.screen_to_string();
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.process_async_and_render().unwrap();
+        // Wait for the screen to reflect the key press before proceeding
+        harness
+            .wait_until(|h| h.screen_to_string() != screen_before)
+            .unwrap();
         let screen = harness.screen_to_string();
         // Check if the selected line (containing ▸) is the collapsed UI section
         if screen
@@ -3523,9 +3527,13 @@ fn test_named_color_swatch_uses_native_ansi_color() {
 
     // Navigate down to tab_active_fg within the expanded UI section.
     // The UI section has many fields from the schema, so we need enough presses.
+    // Wait for each key to take effect (same reason as above: async batching).
     for _ in 0..80 {
+        let screen_before = harness.screen_to_string();
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.process_async_and_render().unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string() != screen_before)
+            .unwrap();
         let screen = harness.screen_to_string();
         // Stop when the selected line contains tab_active_fg
         if screen
