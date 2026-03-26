@@ -5179,7 +5179,7 @@ impl Editor {
                     .and_then(|vs| vs.buffer_state(*buffer_id))
                     .map(|bs| match bs.view_mode {
                         crate::state::ViewMode::Source => "source",
-                        crate::state::ViewMode::PageView => "page_view",
+                        crate::state::ViewMode::PageView => "compose",
                     })
                     .unwrap_or("source");
                 let compose_width = active_vs

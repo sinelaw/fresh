@@ -2312,3 +2312,78 @@ fn test_per_language_wrap_column() {
         screen
     );
 }
+
+/// Test per-language page_view auto-activation: markdown opens in page view mode
+#[test]
+fn test_per_language_page_view_auto_activation() {
+    let mut config = Config::default();
+
+    // Enable page_view for markdown with a page_width
+    config.languages.insert(
+        "markdown".to_string(),
+        LanguageConfig {
+            extensions: vec!["md".to_string()],
+            page_view: Some(true),
+            page_width: Some(60),
+            ..Default::default()
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+
+    let md_content = "# Hello World\n\nSome markdown content here.";
+    let fixture =
+        crate::common::fixtures::TestFixture::new("test_page_view.md", md_content).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // In page view mode, line numbers should be hidden.
+    // A normal file shows "  1 │" gutter; in page view this disappears.
+    assert!(
+        !screen.contains(" 1 │"),
+        "Page view should hide line numbers for markdown. Screen:\n{}",
+        screen
+    );
+
+    // Content should still be visible
+    assert!(
+        screen.contains("Hello World") || screen.contains("markdown content"),
+        "Markdown content should still be visible in page view. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test page_view does NOT activate for non-matching languages
+#[test]
+fn test_page_view_not_activated_for_other_languages() {
+    let mut config = Config::default();
+
+    // Enable page_view only for markdown
+    config.languages.insert(
+        "markdown".to_string(),
+        LanguageConfig {
+            extensions: vec!["md".to_string()],
+            page_view: Some(true),
+            ..Default::default()
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+
+    let txt_content = "Just a plain text file.";
+    let fixture =
+        crate::common::fixtures::TestFixture::new("test_no_page_view.txt", txt_content).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Non-markdown file should show line numbers (not in page view)
+    assert!(
+        screen.contains(" 1 │") || screen.contains("1 │"),
+        "Non-markdown file should show line numbers (no page view). Screen:\n{}",
+        screen
+    );
+}
