@@ -2915,6 +2915,224 @@ fn test_no_panic_crafted_split_workspace_all_deleted() {
     let _ = std::fs::remove_file(&workspace_path);
 }
 
+/// Regression test for issue #1362: panic when launching from a directory on a
+/// separate filesystem mount. Creates a loop mount and runs the editor from it.
+///
+/// This reproduces the exact scenario from the bug: /mnt/testdir is on a
+/// different filesystem than the root. Skips gracefully if not running as root.
+#[test]
+fn test_no_panic_launching_from_separate_mount() {
+    use std::process::Command;
+
+    // Create a loop mount - requires root, skip if not available
+    let img_path = std::env::temp_dir().join("fresh_test_mount.img");
+    let mount_dir = std::path::PathBuf::from("/mnt/fresh_test_mount");
+
+    // Create image file
+    let dd = Command::new("dd")
+        .args([
+            "if=/dev/zero",
+            &format!("of={}", img_path.display()),
+            "bs=1M",
+            "count=10",
+        ])
+        .stderr(std::process::Stdio::null())
+        .output();
+    if dd.is_err() || !dd.as_ref().unwrap().status.success() {
+        eprintln!("Skipping mount test: cannot create image file");
+        return;
+    }
+
+    // Format as ext4
+    let mkfs = Command::new("mkfs.ext4")
+        .args(["-q", &img_path.display().to_string()])
+        .output();
+    if mkfs.is_err() || !mkfs.as_ref().unwrap().status.success() {
+        let _ = std::fs::remove_file(&img_path);
+        eprintln!("Skipping mount test: cannot format filesystem");
+        return;
+    }
+
+    // Create mount point and mount
+    let _ = std::fs::create_dir_all(&mount_dir);
+    let mount = Command::new("mount")
+        .args([
+            "-o",
+            "loop",
+            &img_path.display().to_string(),
+            &mount_dir.display().to_string(),
+        ])
+        .output();
+    if mount.is_err() || !mount.as_ref().unwrap().status.success() {
+        let _ = std::fs::remove_file(&img_path);
+        let _ = std::fs::remove_dir(&mount_dir);
+        eprintln!("Skipping mount test: cannot mount (need root)");
+        return;
+    }
+
+    // Cleanup helper
+    let cleanup = || {
+        let _ = Command::new("umount").arg(&mount_dir).output();
+        let _ = std::fs::remove_dir(&mount_dir);
+        let _ = std::fs::remove_file(&img_path);
+    };
+
+    // Run editor from the mount point - catch panics for cleanup
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            mount_dir.clone(),
+        )
+        .unwrap();
+
+        // Full startup sequence matching production
+        let _restored = harness.editor_mut().try_restore_workspace();
+        harness.editor_mut().show_file_explorer();
+        harness.editor_mut().process_async_messages();
+
+        // This is where the panic would occur (render.rs:622)
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        assert!(
+            !screen.is_empty(),
+            "Screen should render from separate mount point"
+        );
+    }));
+
+    cleanup();
+
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+/// Regression test for issue #1362: stale workspace on a remounted filesystem.
+/// Simulates: run fresh on mount → save workspace → unmount → remount empty → run fresh again.
+#[test]
+fn test_no_panic_stale_workspace_on_remounted_fs() {
+    use std::process::Command;
+
+    let img_path = std::env::temp_dir().join("fresh_test_remount.img");
+    let mount_dir = std::path::PathBuf::from("/mnt/fresh_test_remount");
+
+    // Setup: create and mount filesystem
+    let setup = || -> bool {
+        let dd = Command::new("dd")
+            .args([
+                "if=/dev/zero",
+                &format!("of={}", img_path.display()),
+                "bs=1M",
+                "count=10",
+            ])
+            .stderr(std::process::Stdio::null())
+            .output();
+        if dd.is_err() || !dd.as_ref().unwrap().status.success() {
+            return false;
+        }
+        let mkfs = Command::new("mkfs.ext4")
+            .args(["-q", &img_path.display().to_string()])
+            .output();
+        if mkfs.is_err() || !mkfs.as_ref().unwrap().status.success() {
+            return false;
+        }
+        let _ = std::fs::create_dir_all(&mount_dir);
+        let mount = Command::new("mount")
+            .args([
+                "-o",
+                "loop",
+                &img_path.display().to_string(),
+                &mount_dir.display().to_string(),
+            ])
+            .output();
+        mount.is_ok() && mount.unwrap().status.success()
+    };
+
+    let cleanup = || {
+        let _ = Command::new("umount").arg(&mount_dir).output();
+        let _ = std::fs::remove_dir(&mount_dir);
+        let _ = std::fs::remove_file(&img_path);
+    };
+
+    if !setup() {
+        let _ = std::fs::remove_file(&img_path);
+        let _ = std::fs::remove_dir(&mount_dir);
+        eprintln!("Skipping remount test: cannot create mount");
+        return;
+    }
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Session 1: create a file on the mount, open it, save workspace
+        let file_on_mount = mount_dir.join("data.txt");
+        std::fs::write(&file_on_mount, "mounted data").unwrap();
+
+        {
+            let mut harness = EditorTestHarness::with_config_and_working_dir(
+                80,
+                24,
+                Config::default(),
+                mount_dir.clone(),
+            )
+            .unwrap();
+
+            harness.open_file(&file_on_mount).unwrap();
+            harness.render().unwrap();
+            harness.editor_mut().save_workspace().unwrap();
+        }
+
+        // "Unmount and remount" - reformatting the filesystem loses all files
+        let _ = Command::new("umount").arg(&mount_dir).output();
+        let mkfs = Command::new("mkfs.ext4")
+            .args(["-q", "-F", &img_path.display().to_string()])
+            .output();
+        assert!(mkfs.is_ok() && mkfs.unwrap().status.success());
+        let mount = Command::new("mount")
+            .args([
+                "-o",
+                "loop",
+                &img_path.display().to_string(),
+                &mount_dir.display().to_string(),
+            ])
+            .output();
+        assert!(mount.is_ok() && mount.unwrap().status.success());
+
+        // Session 2: workspace exists but all files are gone - must not panic
+        {
+            let mut harness = EditorTestHarness::with_config_and_working_dir(
+                80,
+                24,
+                Config::default(),
+                mount_dir.clone(),
+            )
+            .unwrap();
+
+            // Use startup() to match production flow as closely as possible
+            harness
+                .startup(true, &[])
+                .expect("startup must not panic after remount with stale workspace");
+
+            let screen = harness.screen_to_string();
+            assert!(
+                !screen.is_empty(),
+                "Screen should render after remount with stale workspace"
+            );
+        }
+    }));
+
+    // Clean up workspace file for the mount path
+    if let Ok(ws_path) = get_workspace_path(&mount_dir) {
+        let _ = std::fs::remove_file(&ws_path);
+    }
+
+    cleanup();
+
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
 /// Regression test for issue #1362: closing the initial buffer via close_buffer
 /// must create a replacement and render must not panic.
 /// This directly tests the code path where a buffer is removed from self.buffers
