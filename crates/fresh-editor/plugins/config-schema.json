@@ -34,6 +34,7 @@
         "relative_line_numbers": false,
         "line_wrap": true,
         "wrap_indent": true,
+        "wrap_column": null,
         "syntax_highlighting": true,
         "show_menu_bar": true,
         "menu_bar_mnemonics": true,
@@ -262,6 +263,17 @@
           "description": "Indent wrapped continuation lines to match the leading whitespace of the original line",
           "type": "boolean",
           "default": true,
+          "x-section": "Display"
+        },
+        "wrap_column": {
+          "description": "Column at which to wrap lines when line wrapping is enabled.\nIf not specified (`null`), lines wrap at the viewport edge (default behavior).\nExample: `80` wraps at column 80. The actual wrap column is clamped to the\nviewport width (lines can't wrap beyond the visible area).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null,
           "x-section": "Display"
         },
         "syntax_highlighting": {
@@ -920,6 +932,42 @@
           "description": "Whether to show whitespace tab indicators (→) for this language\nDefaults to true. Set to false for languages like Go that use tabs for indentation.",
           "type": "boolean",
           "default": true
+        },
+        "line_wrap": {
+          "description": "Whether to enable line wrapping for this language.\nIf not specified (`null`), falls back to the global `editor.line_wrap` setting.\nUseful for prose-heavy languages like Markdown where wrapping is desirable\neven if globally disabled.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "wrap_column": {
+          "description": "Column at which to wrap lines for this language.\nIf not specified (`null`), falls back to the global `editor.wrap_column` setting.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null
+        },
+        "page_view": {
+          "description": "Whether to automatically enable page view (compose mode) for this language.\nPage view provides a document-style layout with centered content,\nconcealed formatting markers, and intelligent word wrapping.\nIf not specified (`null`), page view is not auto-activated.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "page_width": {
+          "description": "Width of the page in page view mode (in columns).\nControls the content width when page view is active, with centering margins.\nIf not specified (`null`), uses the viewport width.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null
         },
         "use_tabs": {
           "description": "Whether pressing Tab should insert a tab character instead of spaces.\nIf not specified (`null`), falls back to the global `editor.use_tabs` setting.\nSet to true for languages like Go and Makefile that require tabs.",
