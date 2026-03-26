@@ -480,7 +480,7 @@ fn test_folded_gutter_line_numbers_match_content_during_scroll() -> anyhow::Resu
     config.editor.enable_semantic_tokens_full = true;
     config.lsp.insert(
         "rust".to_string(),
-        vec![fresh::services::lsp::LspServerConfig {
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: FakeLspServer::folding_ranges_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -495,7 +495,7 @@ fn test_folded_gutter_line_numbers_match_content_during_scroll() -> anyhow::Resu
             name: None,
             only_features: None,
             except_features: None,
-        }],
+        }]),
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(

@@ -177,7 +177,7 @@ use crate::services::plugins::PluginManager;
 use crate::services::recovery::{RecoveryConfig, RecoveryService};
 use crate::services::time_source::{RealTimeSource, SharedTimeSource};
 use crate::state::EditorState;
-use crate::types::{LspServerConfig, ProcessLimits};
+use crate::types::{LspLanguageConfig, LspServerConfig, ProcessLimits};
 use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::{Prompt, PromptType};
 use crate::view::scroll_sync::ScrollSyncManager;
@@ -1097,7 +1097,7 @@ impl Editor {
             config
                 .lsp
                 .entry(lang_id.clone())
-                .or_insert_with(|| vec![lsp_config.clone()]);
+                .or_insert_with(|| LspLanguageConfig::Multi(vec![lsp_config.clone()]));
         }
 
         let theme_registry = theme_loader.load_all(&scan_result.bundle_theme_dirs);
@@ -1179,7 +1179,7 @@ impl Editor {
 
         // Configure LSP servers from config
         for (language, lsp_configs) in &config.lsp {
-            lsp.set_language_configs(language.clone(), lsp_configs.clone());
+            lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());
         }
 
         // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
@@ -4573,7 +4573,7 @@ impl Editor {
                         .config
                         .lsp
                         .get(&language)
-                        .and_then(|configs| configs.first())
+                        .and_then(|configs| configs.as_slice().first())
                         .map(|c| c.command.clone())
                         .unwrap_or_else(|| "unknown".to_string());
 
@@ -6493,7 +6493,7 @@ impl Editor {
 
                 // 2. Update the config to disable the language
                 if let Some(lsp_configs) = self.config.lsp.get_mut(&language) {
-                    for c in lsp_configs.iter_mut() {
+                    for c in lsp_configs.as_mut_slice() {
                         c.enabled = false;
                         c.auto_start = false;
                     }

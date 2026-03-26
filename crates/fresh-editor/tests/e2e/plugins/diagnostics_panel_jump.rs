@@ -49,7 +49,7 @@ fn test_diagnostics_panel_enter_does_not_jump() {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        vec![fresh::services::lsp::LspServerConfig {
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: FakeLspServer::many_diagnostics_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -64,7 +64,7 @@ fn test_diagnostics_panel_enter_does_not_jump() {
             name: None,
             only_features: None,
             except_features: None,
-        }],
+        }]),
     );
 
     let mut harness =
@@ -201,7 +201,7 @@ fn test_diagnostics_panel_cursor_move_scrolls_editor() {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        vec![fresh::services::lsp::LspServerConfig {
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: FakeLspServer::many_diagnostics_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -216,7 +216,7 @@ fn test_diagnostics_panel_cursor_move_scrolls_editor() {
             name: None,
             only_features: None,
             except_features: None,
-        }],
+        }]),
     );
 
     let mut harness =

@@ -8,6 +8,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use fresh::services::lsp::LspServerConfig;
 use fresh::services::process_limits::ProcessLimits;
+use fresh::types::LspLanguageConfig;
 use std::fs;
 use std::time::Duration;
 
@@ -314,7 +315,7 @@ fn test_diagnostics_panel_plugin_loads() {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        vec![fresh::services::lsp::LspServerConfig {
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: FakeLspServer::many_diagnostics_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -329,7 +330,7 @@ fn test_diagnostics_panel_plugin_loads() {
             name: None,
             only_features: None,
             except_features: None,
-        }],
+        }]),
     );
 
     // Create harness with the project directory and LSP config
@@ -746,7 +747,7 @@ fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
     let mut config = Config::default();
     config.lsp.insert(
         "cpp".to_string(),
-        vec![LspServerConfig {
+        LspLanguageConfig::Multi(vec![LspServerConfig {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -761,7 +762,7 @@ fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
             name: None,
             only_features: None,
             except_features: None,
-        }],
+        }]),
     );
 
     let mut harness =
@@ -824,7 +825,7 @@ fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
     let mut config = Config::default();
     config.lsp.insert(
         "cpp".to_string(),
-        vec![LspServerConfig {
+        LspLanguageConfig::Multi(vec![LspServerConfig {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -839,7 +840,7 @@ fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
             name: None,
             only_features: None,
             except_features: None,
-        }],
+        }]),
     );
 
     let mut harness =
@@ -1059,7 +1060,7 @@ editor.setStatus("Test diagnostics plugin loaded");
     let mut config = Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        vec![LspServerConfig {
+        LspLanguageConfig::Multi(vec![LspServerConfig {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -1074,7 +1075,7 @@ editor.setStatus("Test diagnostics plugin loaded");
             name: None,
             only_features: None,
             except_features: None,
-        }],
+        }]),
     );
 
     let mut harness =

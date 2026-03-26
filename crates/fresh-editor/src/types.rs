@@ -186,13 +186,30 @@ impl FeatureFilter {
 /// { "lsp": { "rust": { "command": "rust-analyzer" } } }          // single
 /// { "lsp": { "python": [{ "command": "pyright" }, { "command": "ruff" }] } }  // multi
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum LspLanguageConfig {
     /// Multiple servers for this language (array form)
     Multi(Vec<LspServerConfig>),
     /// A single server for this language (object form)
     Single(Box<LspServerConfig>),
+}
+
+/// Custom JsonSchema: always advertise the canonical array form so the settings
+/// UI renders a structured array editor. The `#[serde(untagged)]` on the enum
+/// still accepts both single-object and array forms during deserialization.
+impl JsonSchema for LspLanguageConfig {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("LspLanguageConfig")
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "One or more LSP server configs for this language.\nAccepts both a single object and an array for backwards compatibility.",
+            "type": "array",
+            "items": generator.subschema_for::<LspServerConfig>()
+        })
+    }
 }
 
 impl LspLanguageConfig {
@@ -208,6 +225,14 @@ impl LspLanguageConfig {
     pub fn as_slice(&self) -> &[LspServerConfig] {
         match self {
             LspLanguageConfig::Single(c) => std::slice::from_ref(c.as_ref()),
+            LspLanguageConfig::Multi(v) => v,
+        }
+    }
+
+    /// Get a mutable reference as a slice of server configs.
+    pub fn as_mut_slice(&mut self) -> &mut [LspServerConfig] {
+        match self {
+            LspLanguageConfig::Single(c) => std::slice::from_mut(c),
             LspLanguageConfig::Multi(v) => v,
         }
     }

@@ -139,7 +139,7 @@ impl Editor {
         // Update LSP configs
         if let Some(ref mut lsp) = self.lsp {
             for (language, lsp_configs) in &self.config.lsp {
-                lsp.set_language_configs(language.clone(), lsp_configs.clone());
+                lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());
             }
         }
 

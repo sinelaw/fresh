@@ -41,7 +41,7 @@ fn test_did_open_sent_before_hover() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        vec![fresh::services::lsp::LspServerConfig {
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -56,7 +56,7 @@ fn test_did_open_sent_before_hover() -> anyhow::Result<()> {
             name: None,
             only_features: None,
             except_features: None,
-        }],
+        }]),
     );
 
     // Create harness with config

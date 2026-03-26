@@ -1696,7 +1696,10 @@ impl Editor {
             lsp.set_language_config(language.clone(), lsp_config.clone());
         }
         // Also update runtime config
-        self.config.lsp.insert(language.clone(), vec![lsp_config]);
+        self.config.lsp.insert(
+            language.clone(),
+            crate::types::LspLanguageConfig::Multi(vec![lsp_config]),
+        );
         tracing::info!("LSP server registered for '{}'", language);
     }
 

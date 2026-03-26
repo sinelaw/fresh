@@ -28,7 +28,7 @@ fn test_lsp_env_vars_passed_to_server() -> anyhow::Result<()> {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        vec![fresh::services::lsp::LspServerConfig {
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: FakeLspServer::env_echo_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
@@ -46,7 +46,7 @@ fn test_lsp_env_vars_passed_to_server() -> anyhow::Result<()> {
             name: None,
             only_features: None,
             except_features: None,
-        }],
+        }]),
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(

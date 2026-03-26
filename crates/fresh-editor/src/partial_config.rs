@@ -900,10 +900,14 @@ impl From<&crate::config::Config> for PartialConfig {
                 cfg.lsp
                     .iter()
                     .map(|(k, v)| {
-                        let lang_config = if v.len() == 1 {
-                            LspLanguageConfig::Single(Box::new(v[0].clone()))
-                        } else {
-                            LspLanguageConfig::Multi(v.clone())
+                        // Normalize to Single for 1-element arrays so that
+                        // json_diff can compare object fields recursively
+                        // (arrays are compared wholesale, not element-wise).
+                        let lang_config = match v {
+                            LspLanguageConfig::Multi(vec) if vec.len() == 1 => {
+                                LspLanguageConfig::Single(Box::new(vec[0].clone()))
+                            }
+                            other => other.clone(),
                         };
                         (k.clone(), lang_config)
                     })
@@ -969,22 +973,23 @@ impl PartialConfig {
                 for (key, lang_config) in partial_lsp {
                     let user_configs = lang_config.into_vec();
                     if let Some(default_configs) = result.get(&key) {
+                        let default_slice = default_configs.as_slice();
                         // For single-server user config, merge with the first default.
                         // For multi-server user config, replace entirely (user is
                         // explicitly configuring the full server list).
-                        if user_configs.len() == 1 && default_configs.len() == 1 {
+                        if user_configs.len() == 1 && default_slice.len() == 1 {
                             let merged = user_configs
                                 .into_iter()
                                 .next()
                                 .unwrap()
-                                .merge_with_defaults(&default_configs[0]);
-                            result.insert(key, vec![merged]);
+                                .merge_with_defaults(&default_slice[0]);
+                            result.insert(key, LspLanguageConfig::Multi(vec![merged]));
                         } else {
-                            result.insert(key, user_configs);
+                            result.insert(key, LspLanguageConfig::Multi(user_configs));
                         }
                     } else {
                         // New language not in defaults - use as-is
-                        result.insert(key, user_configs);
+                        result.insert(key, LspLanguageConfig::Multi(user_configs));
                     }
                 }
             }

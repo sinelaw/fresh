@@ -1139,7 +1139,7 @@ impl Editor {
         if let Some(lsp) = &mut self.lsp {
             if lsp.shutdown_server(language) {
                 if let Some(lsp_configs) = self.config.lsp.get_mut(language) {
-                    for c in lsp_configs.iter_mut() {
+                    for c in lsp_configs.as_mut_slice() {
                         c.auto_start = false;
                     }
                     if let Err(e) = self.save_config() {
