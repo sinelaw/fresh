@@ -7,6 +7,21 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
+    // Embed git commit hash (gracefully falls back to "unknown" outside git)
+    let git_hash = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo::rustc-env=FRESH_GIT_HASH={}", git_hash);
+    if Path::new("../../.git/HEAD").exists() {
+        println!("cargo::rerun-if-changed=../../.git/HEAD");
+        println!("cargo::rerun-if-changed=../../.git/refs");
+    }
+
     // Rerun if locales change
     println!("cargo::rerun-if-changed=locales");
 

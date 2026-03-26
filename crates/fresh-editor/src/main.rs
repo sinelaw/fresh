@@ -1169,7 +1169,11 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     // Clean up stale log files from dead processes on startup
     fresh::services::log_dirs::cleanup_stale_logs();
 
-    tracing::info!("Editor starting");
+    tracing::info!(
+        "Editor starting (v{} {})",
+        env!("CARGO_PKG_VERSION"),
+        env!("FRESH_GIT_HASH")
+    );
 
     signal_handler::install_signal_handlers();
     tracing::info!("Signal handlers installed");
