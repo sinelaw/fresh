@@ -429,7 +429,7 @@ fn test_delete_containing_marker_restores_exact_position_on_undo() {
         .marker_list
         .query_range(5, 10)
         .iter()
-        .for_each(|(mid, start, _)| {
+        .for_each(|(_mid, start, _)| {
             if *start > 5 && *start < 10 {
                 // Would be captured by log_and_apply_event in production
             }

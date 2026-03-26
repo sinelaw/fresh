@@ -6,8 +6,11 @@
 // Re-export the type from the shared types module
 pub use crate::types::ProcessLimits;
 
-use std::fs;
 use std::io;
+
+#[cfg(target_os = "linux")]
+use std::fs;
+#[cfg(target_os = "linux")]
 use std::path::{Path, PathBuf};
 
 impl ProcessLimits {
@@ -24,14 +27,14 @@ impl ProcessLimits {
     ///
     /// On Linux, tries user-delegated cgroups v2, otherwise falls back to setrlimit.
     /// Memory and CPU limits are handled independently.
-    pub fn apply_to_command(&self, cmd: &mut tokio::process::Command) -> io::Result<()> {
+    pub fn apply_to_command(&self, _cmd: &mut tokio::process::Command) -> io::Result<()> {
         if !self.enabled {
             return Ok(());
         }
 
         #[cfg(target_os = "linux")]
         {
-            self.apply_linux_limits(cmd)
+            self.apply_linux_limits(_cmd)
         }
 
         #[cfg(not(target_os = "linux"))]
