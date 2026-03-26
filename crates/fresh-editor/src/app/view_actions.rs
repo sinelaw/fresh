@@ -16,6 +16,11 @@ impl Editor {
             .unwrap_or(crate::model::event::BufferId(0));
         let default_wrap = self.resolve_line_wrap_for_buffer(active_buffer);
         let default_line_numbers = self.config.editor.line_numbers;
+        let page_width = self
+            .buffers
+            .get(&active_buffer)
+            .and_then(|s| self.config.languages.get(&s.language))
+            .and_then(|lc| lc.page_width);
 
         let view_mode = {
             let current = self
@@ -42,6 +47,10 @@ impl Editor {
             match view_mode {
                 ViewMode::Compose => {
                     vs.show_line_numbers = false;
+                    // Apply page_width from language config if available
+                    if let Some(width) = page_width {
+                        vs.compose_width = Some(width as u16);
+                    }
                 }
                 ViewMode::Source => {
                     // Clear compose width to remove margins

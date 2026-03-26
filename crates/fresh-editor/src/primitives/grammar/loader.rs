@@ -776,6 +776,8 @@ mod tests {
                 show_whitespace_tabs: true,
                 line_wrap: None,
                 wrap_column: None,
+                page_view: None,
+                page_width: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,

@@ -37,6 +37,23 @@ impl Editor {
         self.config.editor.line_wrap
     }
 
+    /// Resolve page view settings for a buffer from its language config.
+    ///
+    /// Returns `Some((page_width))` if page_view is enabled for this buffer's language,
+    /// `None` otherwise.
+    pub(super) fn resolve_page_view_for_buffer(
+        &self,
+        buffer_id: BufferId,
+    ) -> Option<Option<usize>> {
+        let state = self.buffers.get(&buffer_id)?;
+        let lang_config = self.config.languages.get(&state.language)?;
+        if lang_config.page_view == Some(true) {
+            Some(lang_config.page_width)
+        } else {
+            None
+        }
+    }
+
     /// Resolve the effective wrap_column for a buffer, considering language overrides.
     ///
     /// Returns the language-specific `wrap_column` if set, otherwise the global `editor.wrap_column`.
@@ -356,6 +373,7 @@ impl Editor {
         let target_split = self.preferred_split_for_file();
         let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        let page_view = self.resolve_page_view_for_buffer(buffer_id);
         if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
             view_state.add_buffer(buffer_id);
             // Initialize per-buffer view state for the new buffer with config defaults
@@ -367,6 +385,10 @@ impl Editor {
                 wrap_column,
                 self.config.editor.rulers.clone(),
             );
+            // Auto-activate page view if configured for this language
+            if let Some(page_width) = page_view {
+                buf_state.activate_page_view(page_width);
+            }
         }
 
         // Restore global file state (scroll/cursor position) if available
