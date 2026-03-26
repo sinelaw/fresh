@@ -2385,6 +2385,13 @@ fn navigate_to_lsp_json_editor(harness: &mut EditorTestHarness) {
     // Verify we're in an Edit dialog
     harness.assert_screen_contains("Edit Value");
 
+    // LSP values are now arrays of server configs. The dialog shows the array.
+    // Press Enter to drill into the first server item's nested dialog.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
     // Navigate down to "Initialization Options" field
     // Navigate until we see the focus indicator on Initialization Options
     // Format: ">  " (3-char indicator area: focus, modified, space)

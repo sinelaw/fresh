@@ -48,6 +48,9 @@ pub struct EntryDialogState {
     pub first_editable_index: usize,
     /// Whether deletion is disabled (for auto-managed entries like plugins)
     pub no_delete: bool,
+    /// When true, the dialog wraps a single non-Object value (e.g., an ObjectArray).
+    /// `to_value()` returns the raw control value instead of wrapping in an Object.
+    pub is_single_value: bool,
 }
 
 impl EntryDialogState {
@@ -84,6 +87,7 @@ impl EntryDialogState {
         items.push(key_item);
 
         // Add schema-driven items from object properties
+        let is_single_value = !matches!(&schema.setting_type, SettingType::Object { .. });
         if let SettingType::Object { properties } = &schema.setting_type {
             for prop in properties {
                 let field_name = prop.path.trim_start_matches('/');
@@ -91,6 +95,11 @@ impl EntryDialogState {
                 let item = build_item_from_value(prop, field_value);
                 items.push(item);
             }
+        } else {
+            // For non-object types (e.g., ObjectArray, Map), build a single item
+            // from the entire value so the dialog can render it
+            let item = build_item_from_value(schema, Some(value));
+            items.push(item);
         }
 
         // Sort items: read-only first, then editable
@@ -116,7 +125,7 @@ impl EntryDialogState {
             format!("Edit {}", schema.name)
         };
 
-        Self {
+        let mut result = Self {
             entry_key: key,
             map_path: map_path.to_string(),
             title,
@@ -135,7 +144,12 @@ impl EntryDialogState {
             original_value: value.clone(),
             first_editable_index,
             no_delete,
-        }
+            is_single_value,
+        };
+        // Pre-focus the first item in any ObjectArray controls so pressing
+        // Enter opens the item editor instead of "Add new".
+        result.init_object_array_focus();
+        result
     }
 
     /// Create a dialog for an array item (no key field)
@@ -202,6 +216,7 @@ impl EntryDialogState {
             original_value: value.clone(),
             first_editable_index,
             no_delete: false, // Arrays typically allow deletion
+            is_single_value: false,
         }
     }
 
@@ -229,6 +244,16 @@ impl EntryDialogState {
 
     /// Convert dialog state back to JSON value (excludes the __key__ item)
     pub fn to_value(&self) -> Value {
+        // For single-value dialogs (non-Object schemas like ObjectArray),
+        // return the control's value directly instead of wrapping in an Object.
+        if self.is_single_value {
+            for item in &self.items {
+                if item.path != "__key__" {
+                    return control_to_value(&item.control);
+                }
+            }
+        }
+
         let mut obj = serde_json::Map::new();
 
         for item in &self.items {
