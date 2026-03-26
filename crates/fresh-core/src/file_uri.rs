@@ -100,7 +100,6 @@ pub fn path_to_file_uri(path: &Path) -> Option<String> {
     Some(uri)
 }
 
-
 /// Convert a `file://` URI string to a filesystem path.
 ///
 /// Returns `None` if the URI is not a valid `file://` URI.
