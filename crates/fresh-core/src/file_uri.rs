@@ -27,10 +27,6 @@ pub fn path_to_file_uri(path: &Path) -> Option<String> {
         return None;
     }
 
-    // Resolve `.` and `..` without touching the filesystem (unlike
-    // std::fs::canonicalize which requires the path to exist).
-    let path = normalize_path(path);
-
     let mut uri = String::from("file://");
 
     #[cfg(windows)]
@@ -58,7 +54,18 @@ pub fn path_to_file_uri(path: &Path) -> Option<String> {
                     let s = seg.to_str()?;
                     percent_encode_segment(&mut uri, s);
                 }
-                _ => {}
+                Component::CurDir => {
+                    if !first && !uri.ends_with('/') {
+                        uri.push('/');
+                    }
+                    uri.push('.');
+                }
+                Component::ParentDir => {
+                    if !first && !uri.ends_with('/') {
+                        uri.push('/');
+                    }
+                    uri.push_str("..");
+                }
             }
             first = false;
         }
@@ -75,6 +82,12 @@ pub fn path_to_file_uri(path: &Path) -> Option<String> {
                     percent_encode_segment(&mut uri, s);
                     uri.push('/');
                 }
+                Component::CurDir => {
+                    uri.push_str("./");
+                }
+                Component::ParentDir => {
+                    uri.push_str("../");
+                }
                 _ => {}
             }
         }
@@ -87,34 +100,6 @@ pub fn path_to_file_uri(path: &Path) -> Option<String> {
     Some(uri)
 }
 
-/// Normalize a path by resolving `.` and `..` components purely
-/// lexically (without touching the filesystem).
-fn normalize_path(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut parts: Vec<&std::ffi::OsStr> = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                parts.pop();
-            }
-            Component::Normal(seg) => {
-                parts.push(seg);
-            }
-            Component::RootDir | Component::Prefix(_) => {}
-            Component::CurDir => {}
-        }
-    }
-    // Rebuild as absolute path
-    let mut result = PathBuf::from(
-        path.components()
-            .take_while(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
-            .collect::<PathBuf>(),
-    );
-    for part in parts {
-        result.push(part);
-    }
-    result
-}
 
 /// Convert a `file://` URI string to a filesystem path.
 ///
@@ -552,12 +537,22 @@ mod tests {
     }
 
     #[test]
-    fn dotdot_resolved_in_uri() {
-        // `..` must navigate to the parent, not be silently dropped.
-        let uri = path_to_file_uri(Path::new("/tmp/../file.txt")).unwrap();
-        assert_eq!(uri, "file:///file.txt");
-        let back = file_uri_to_path(&uri).unwrap();
-        assert_eq!(back, PathBuf::from("/file.txt"));
+    fn dotdot_preserved_in_uri() {
+        // `..` should be preserved in the URI, matching the `url` crate.
+        #[cfg(not(windows))]
+        {
+            let uri = path_to_file_uri(Path::new("/tmp/../file.txt")).unwrap();
+            assert_eq!(uri, "file:///tmp/../file.txt");
+            let back = file_uri_to_path(&uri).unwrap();
+            assert_eq!(back, PathBuf::from("/tmp/../file.txt"));
+        }
+        #[cfg(windows)]
+        {
+            let uri = path_to_file_uri(Path::new(r"C:\tmp\..\file.txt")).unwrap();
+            assert_eq!(uri, "file:///C:/tmp/../file.txt");
+            let back = file_uri_to_path(&uri).unwrap();
+            assert_eq!(back, PathBuf::from(r"C:\tmp\..\file.txt"));
+        }
     }
 
     // ── Property tests ──────────────────────────────────────────
@@ -596,8 +591,9 @@ mod tests {
                 let path = PathBuf::from(format!("/tmp/{comp}/file.txt"));
                 if let Some(uri) = path_to_file_uri(&path) {
                     let back = file_uri_to_path(&uri).unwrap();
-                    // path_to_file_uri resolves `.` and `..` lexically.
-                    let normalised = normalize_path(&path);
+                    // `..` and `.` are preserved in the URI, matching the `url` crate.
+                    // Path::components().collect() also preserves them.
+                    let normalised: PathBuf = path.components().collect();
                     prop_assert_eq!(back, normalised, "roundtrip failed");
                 }
             }
@@ -637,8 +633,7 @@ mod tests {
                 let path = PathBuf::from(format!("/tmp/{comp}/file.txt"));
                 if let Some(uri) = path_to_lsp_uri(&path) {
                     let back = lsp_uri_to_path(&uri).unwrap();
-                    // path_to_lsp_uri resolves `.` and `..` lexically.
-                    let normalised = normalize_path(&path);
+                    let normalised: PathBuf = path.components().collect();
                     prop_assert_eq!(back, normalised);
                 }
             }
