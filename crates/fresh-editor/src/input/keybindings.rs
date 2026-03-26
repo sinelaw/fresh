@@ -664,14 +664,16 @@ pub enum Action {
 /// bodies. This is needed so that macro hygiene allows the custom body expressions to reference
 /// the function parameter (both the definition and usage share the call-site span).
 ///
-/// Three categories of action mappings:
+/// Four categories of action mappings:
 /// - `simple`: `"name" => Variant` — no args needed
+/// - `alias`: `"name" => Variant` — like simple, but only for from_str (not to_action_str)
 /// - `with_char`: `"name" => Variant` — passes through `with_char(args, ...)` for char-arg actions
 /// - `custom`: `"name" => { body }` — arbitrary expression using `$args_name` for complex arg parsing
 macro_rules! define_action_str_mapping {
     (
         $args_name:ident;
         simple { $($s_name:literal => $s_variant:ident),* $(,)? }
+        alias { $($a_name:literal => $a_variant:ident),* $(,)? }
         with_char { $($c_name:literal => $c_variant:ident),* $(,)? }
         custom { $($x_name:literal => $x_variant:ident : $x_body:expr),* $(,)? }
     ) => {
@@ -679,6 +681,7 @@ macro_rules! define_action_str_mapping {
         pub fn from_str(s: &str, $args_name: &HashMap<String, serde_json::Value>) -> Option<Self> {
             Some(match s {
                 $($s_name => Self::$s_variant,)*
+                $($a_name => Self::$a_variant,)*
                 $($c_name => return Self::with_char($args_name, Self::$c_variant),)*
                 $($x_name => $x_body,)*
                 // Unrecognized action names are treated as plugin actions, allowing
@@ -703,6 +706,7 @@ macro_rules! define_action_str_mapping {
         pub fn all_action_names() -> Vec<String> {
             let mut names = vec![
                 $($s_name.to_string(),)*
+                $($a_name.to_string(),)*
                 $($c_name.to_string(),)*
                 $($x_name.to_string(),)*
             ];
@@ -857,9 +861,7 @@ impl Action {
             "toggle_line_wrap" => ToggleLineWrap,
             "toggle_read_only" => ToggleReadOnly,
             "toggle_page_view" => TogglePageView,
-            "toggle_compose_mode" => TogglePageView,
             "set_page_width" => SetPageWidth,
-            "set_compose_width" => SetPageWidth,
 
             "next_buffer" => NextBuffer,
             "prev_buffer" => PrevBuffer,
@@ -1031,6 +1033,10 @@ impl Action {
             "settings_help" => SettingsHelp,
             "settings_increment" => SettingsIncrement,
             "settings_decrement" => SettingsDecrement,
+        }
+        alias {
+            "toggle_compose_mode" => TogglePageView,
+            "set_compose_width" => SetPageWidth,
         }
         with_char {
             "insert_char" => InsertChar,

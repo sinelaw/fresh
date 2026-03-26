@@ -3451,9 +3451,6 @@ pub struct LspHandle {
     /// Language this handle serves
     language: String,
 
-    /// Display name for this server (e.g., "rust-analyzer", "eslint")
-    server_name: String,
-
     /// Channel for sending commands to the task
     command_tx: mpsc::Sender<LspCommand>,
 
@@ -3547,7 +3544,6 @@ impl LspHandle {
         Ok(Self {
             id,
             language,
-            server_name,
             command_tx,
             state,
             runtime: runtime.clone(),

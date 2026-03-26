@@ -17,7 +17,7 @@
 //! │                              │                                          │
 //! │                              ▼                                          │
 //! │  ┌─────────────────────────────────────────────────────────────────┐   │
-//! │  │  with_lsp_for_buffer() helper                                    │   │
+//! │  │  with_lsp_for_buffer() helper                              │   │
 //! │  │  - Ensures didOpen is sent before any request                   │   │
 //! │  │  - Lazy text fetching (only if didOpen needed)                  │   │
 //! │  │  - Per-server-instance tracking via handle IDs                  │   │

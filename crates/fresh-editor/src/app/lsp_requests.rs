@@ -293,53 +293,11 @@ impl Editor {
         }
     }
 
-    /// Execute a closure with LSP handle, ensuring didOpen was sent first.
-    ///
-    /// This helper centralizes the logic for:
-    /// 1. Getting buffer metadata, URI, and language
-    /// 2. Checking if LSP can be spawned (respects auto_start setting)
-    /// 3. Ensuring didOpen was sent to this server instance (lazy - only gets text if needed)
-    /// 4. Calling the provided closure with the handle
-    ///
-    /// Returns None if any step fails (no file, no language, LSP disabled, auto_start=false, etc.)
-    /// Note: This respects the auto_start setting. If auto_start is false and the server
-    /// hasn't been manually started, this will return None without spawning the server.
-    pub(crate) fn with_lsp_for_buffer<F, R>(&mut self, buffer_id: BufferId, f: F) -> Option<R>
-    where
-        F: FnOnce(&LspHandle, &lsp_types::Uri, &str) -> R,
-    {
-        use crate::services::lsp::manager::LspSpawnResult;
-
-        let (uri, language, file_path) = {
-            let metadata = self.buffer_metadata.get(&buffer_id)?;
-            if !metadata.lsp_enabled {
-                return None;
-            }
-            let uri = metadata.file_uri()?.clone();
-            let file_path = metadata.file_path().cloned();
-            let language = self.buffers.get(&buffer_id)?.language.clone();
-            (uri, language, file_path)
-        };
-
-        let lsp = self.lsp.as_mut()?;
-        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
-            return None;
-        }
-
-        // Ensure didOpen is sent to all handles
-        self.ensure_did_open_all(buffer_id, &uri, &language)?;
-
-        // Call the closure with the primary handle
-        let lsp = self.lsp.as_mut()?;
-        let handle = lsp.get_handle_mut(&language)?;
-        Some(f(handle, &uri, &language))
-    }
-
     /// Dispatch an exclusive LSP feature request to the first handle that allows the feature.
     ///
     /// Ensures all handles receive didOpen first, then calls the closure with the first
     /// handle matching the feature filter. For features like hover, definition, rename, etc.
-    pub(crate) fn with_lsp_for_buffer_feature<F, R>(
+    pub(crate) fn with_lsp_for_buffer<F, R>(
         &mut self,
         buffer_id: BufferId,
         feature: LspFeature,
@@ -609,7 +567,7 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer_feature(
+            .with_lsp_for_buffer(
                 buffer_id,
                 LspFeature::Definition,
                 |handle, uri, _language| {
@@ -665,7 +623,7 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer_feature(buffer_id, LspFeature::Hover, |handle, uri, _language| {
+            .with_lsp_for_buffer(buffer_id, LspFeature::Hover, |handle, uri, _language| {
                 let result = handle.hover(request_id, uri.clone(), line as u32, character as u32);
                 if result.is_ok() {
                     tracing::info!(
@@ -714,7 +672,7 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer_feature(buffer_id, LspFeature::Hover, |handle, uri, _language| {
+            .with_lsp_for_buffer(buffer_id, LspFeature::Hover, |handle, uri, _language| {
                 let result = handle.hover(request_id, uri.clone(), line as u32, character as u32);
                 if result.is_ok() {
                     tracing::trace!(
@@ -1016,7 +974,7 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer_feature(
+            .with_lsp_for_buffer(
                 buffer_id,
                 LspFeature::References,
                 |handle, uri, _language| {
@@ -1059,7 +1017,7 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer_feature(
+            .with_lsp_for_buffer(
                 buffer_id,
                 LspFeature::SignatureHelp,
                 |handle, uri, _language| {
@@ -1232,7 +1190,7 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer_feature(
+            .with_lsp_for_buffer(
                 buffer_id,
                 LspFeature::CodeAction,
                 |handle, uri, _language| {
@@ -2109,7 +2067,7 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer_feature(buffer_id, LspFeature::Rename, |handle, uri, _language| {
+            .with_lsp_for_buffer(buffer_id, LspFeature::Rename, |handle, uri, _language| {
                 let result = handle.rename(
                     request_id,
                     uri.clone(),
@@ -2162,7 +2120,7 @@ impl Editor {
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
-            .with_lsp_for_buffer_feature(
+            .with_lsp_for_buffer(
                 buffer_id,
                 LspFeature::InlayHints,
                 |handle, uri, _language| {

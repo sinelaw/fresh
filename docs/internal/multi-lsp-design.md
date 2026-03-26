@@ -587,7 +587,7 @@ Based on research across all editors, features naturally divide into two categor
 For exclusive features, the dispatch helper becomes:
 
 ```rust
-fn with_lsp_for_buffer_feature(
+fn with_lsp_for_buffer(
     &mut self,
     buffer_id: BufferId,
     feature: LspFeature,
@@ -878,7 +878,7 @@ Based on the research and analysis above, we recommend:
 
 **Phase 2: Dispatch routing**
 - Implement `handles_for_feature(language, feature)` → `Vec<&LspHandle>` / `Option<&LspHandle>`.
-- Refactor `with_lsp_for_buffer` into `with_lsp_for_buffer_feature` (exclusive) and
+- Refactor `with_lsp_for_buffer` into `with_lsp_for_buffer` (exclusive) and
   `with_all_lsp_for_buffer_feature` (merged).
 - Update all request dispatch methods in `lsp_requests.rs` to use new dispatch helpers.
 - For merged features: send requests concurrently, collect and merge responses.
