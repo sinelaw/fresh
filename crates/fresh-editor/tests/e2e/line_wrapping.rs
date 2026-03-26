@@ -1,6 +1,6 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::config::Config;
+use fresh::config::{Config, LanguageConfig};
 
 /// Test basic line wrapping rendering
 #[test]
@@ -2154,5 +2154,96 @@ fn test_add_cursor_below_with_line_wrap_enabled() {
     assert_eq!(
         cursor_count, 2,
         "Should have 2 cursors after add cursor below"
+    );
+}
+
+/// Test per-language line wrap: markdown wraps while global wrapping is disabled
+#[test]
+fn test_per_language_line_wrap_override() {
+    let mut config = Config {
+        editor: fresh::config::EditorConfig {
+            line_wrap: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    // Enable line_wrap only for markdown
+    config.languages.insert(
+        "markdown".to_string(),
+        LanguageConfig {
+            extensions: vec!["md".to_string(), "markdown".to_string()],
+            line_wrap: Some(true),
+            ..Default::default()
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config(60, 24, config).unwrap();
+
+    // Create a markdown file with a long line that exceeds 60 cols
+    let long_md = "This is a very long markdown line that should wrap because per-language line_wrap is enabled for markdown even though global wrapping is off.";
+    let fixture =
+        crate::common::fixtures::TestFixture::new("test_wrap.md", long_md).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // The markdown file should be wrapped: we should see text from the line
+    // appearing on multiple visual lines (i.e., both the beginning and a
+    // portion from mid-line should be visible).
+    assert!(
+        screen.contains("long markdown line")
+            && screen.contains("per-language"),
+        "Markdown file should have line wrapping enabled via per-language config. Screen:\n{}",
+        screen
+    );
+
+    // Buffer content should still be a single line (wrapping is visual only)
+    let content = harness.get_buffer_content().unwrap();
+    assert!(
+        !content.contains('\n'),
+        "Buffer should be a single line (visual wrap only)"
+    );
+}
+
+/// Test per-language line wrap: non-markdown file stays unwrapped when global is off
+#[test]
+fn test_per_language_line_wrap_non_matching_language() {
+    let mut config = Config {
+        editor: fresh::config::EditorConfig {
+            line_wrap: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    // Enable line_wrap only for markdown
+    config.languages.insert(
+        "markdown".to_string(),
+        LanguageConfig {
+            extensions: vec!["md".to_string()],
+            line_wrap: Some(true),
+            ..Default::default()
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config(60, 24, config).unwrap();
+
+    // Create a .txt file with a long line
+    let long_txt = "This is a very long plaintext line that should NOT wrap because per-language line_wrap is only enabled for markdown and global wrapping is off.";
+    let fixture =
+        crate::common::fixtures::TestFixture::new("test_nowrap.txt", long_txt).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // With wrapping off, the text should be truncated at viewport width.
+    // The end of the line should NOT be visible since there's no wrapping.
+    assert!(
+        !screen.contains("global wrapping is off"),
+        "Non-markdown file should NOT wrap when global line_wrap is off. Screen:\n{}",
+        screen
     );
 }

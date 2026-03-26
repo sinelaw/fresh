@@ -9,9 +9,13 @@ use rust_i18n::t;
 impl Editor {
     /// Toggle between Compose and Source view modes.
     pub fn handle_toggle_compose_mode(&mut self) {
-        let default_wrap = self.config.editor.line_wrap;
-        let default_line_numbers = self.config.editor.line_numbers;
         let active_split = self.split_manager.active_split();
+        let active_buffer = self
+            .split_manager
+            .get_buffer_id(active_split.into())
+            .unwrap_or(crate::model::event::BufferId(0));
+        let default_wrap = self.resolve_line_wrap_for_buffer(active_buffer);
+        let default_line_numbers = self.config.editor.line_numbers;
 
         let view_mode = {
             let current = self

@@ -1463,6 +1463,13 @@ pub struct LanguageConfig {
     #[serde(default = "default_true")]
     pub show_whitespace_tabs: bool,
 
+    /// Whether to enable line wrapping for this language.
+    /// If not specified (`null`), falls back to the global `editor.line_wrap` setting.
+    /// Useful for prose-heavy languages like Markdown where wrapping is desirable
+    /// even if globally disabled.
+    #[serde(default)]
+    pub line_wrap: Option<bool>,
+
     /// Whether pressing Tab should insert a tab character instead of spaces.
     /// If not specified (`null`), falls back to the global `editor.use_tabs` setting.
     /// Set to true for languages like Go and Makefile that require tabs.
@@ -1512,6 +1519,9 @@ pub struct BufferConfig {
     /// Whether to surround selected text with matching pairs
     pub auto_surround: bool,
 
+    /// Whether line wrapping is enabled for this buffer
+    pub line_wrap: bool,
+
     /// Resolved whitespace indicator visibility
     pub whitespace: WhitespaceVisibility,
 
@@ -1551,6 +1561,7 @@ impl BufferConfig {
             auto_indent: editor.auto_indent,
             auto_close: editor.auto_close,
             auto_surround: editor.auto_surround,
+            line_wrap: editor.line_wrap,
             whitespace,
             formatter: None,
             format_on_save: false,
@@ -1580,6 +1591,11 @@ impl BufferConfig {
             // Use tabs: language override (only if explicitly set)
             if let Some(use_tabs) = lang_config.use_tabs {
                 config.use_tabs = use_tabs;
+            }
+
+            // Line wrap: language override (only if explicitly set)
+            if let Some(line_wrap) = lang_config.line_wrap {
+                config.line_wrap = line_wrap;
             }
 
             // Auto indent: language override
@@ -2646,6 +2662,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2672,6 +2689,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2698,6 +2716,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2724,6 +2743,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2754,6 +2774,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2787,6 +2808,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2813,6 +2835,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -2849,6 +2872,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -2874,6 +2898,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: Some(true), // Makefiles require tabs for recipes
                 tab_size: Some(8),    // Makefiles traditionally use 8-space tabs
                 formatter: None,
@@ -2895,6 +2920,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -2916,6 +2942,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2942,6 +2969,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -2963,6 +2991,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2989,6 +3018,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3011,6 +3041,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
+                line_wrap: None,
                 use_tabs: Some(true), // Go convention is to use tabs
                 tab_size: Some(8),    // Go convention is 8-space tab width
                 formatter: Some(FormatterConfig {
@@ -3037,6 +3068,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
+                line_wrap: None,
                 use_tabs: Some(true),
                 tab_size: Some(8),
                 formatter: None,
@@ -3058,6 +3090,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3079,6 +3112,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3107,6 +3141,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3128,6 +3163,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3150,6 +3186,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3176,6 +3213,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3202,6 +3240,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3223,6 +3262,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3244,6 +3284,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3265,6 +3306,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3290,6 +3332,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3311,6 +3354,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3332,6 +3376,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3353,6 +3398,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3374,6 +3420,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3395,6 +3442,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3416,6 +3464,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3437,6 +3486,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3463,6 +3513,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3484,6 +3535,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3505,6 +3557,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3526,6 +3579,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3547,6 +3601,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3568,6 +3623,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3589,6 +3645,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3610,6 +3667,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3631,6 +3689,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3652,6 +3711,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3677,6 +3737,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3698,6 +3759,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3719,6 +3781,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3740,6 +3803,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3761,6 +3825,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3782,6 +3847,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3803,6 +3869,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3824,6 +3891,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3845,6 +3913,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3866,6 +3935,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3887,6 +3957,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3908,6 +3979,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3929,6 +4001,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3952,6 +4025,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3973,6 +4047,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3994,6 +4069,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4015,6 +4091,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4036,6 +4113,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4061,6 +4139,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: Some(true),
                 tab_size: None,
                 formatter: None,
@@ -4082,6 +4161,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4103,6 +4183,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: Some(true),
                 tab_size: None,
                 formatter: None,
@@ -4124,6 +4205,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4145,6 +4227,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4166,6 +4249,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                line_wrap: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -5591,8 +5675,9 @@ mod tests {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: false, // Go hides tab indicators
-                use_tabs: Some(true),        // Go uses tabs
-                tab_size: Some(8),           // Go uses 8-space tabs
+                line_wrap: None,
+                use_tabs: Some(true), // Go uses tabs
+                tab_size: Some(8),    // Go uses 8-space tabs
                 formatter: Some(FormatterConfig {
                     command: "gofmt".to_string(),
                     args: vec![],
@@ -5622,6 +5707,34 @@ mod tests {
         // Should fall back to global settings
         assert_eq!(buffer_config.tab_size, config.editor.tab_size);
         assert!(!buffer_config.use_tabs);
+    }
+
+    #[test]
+    fn test_buffer_config_per_language_line_wrap() {
+        let mut config = Config::default();
+        config.editor.line_wrap = false;
+
+        // Add markdown with line_wrap override
+        config.languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                extensions: vec!["md".to_string()],
+                line_wrap: Some(true),
+                ..Default::default()
+            },
+        );
+
+        // Markdown should override global line_wrap=false
+        let md_config = BufferConfig::resolve(&config, Some("markdown"));
+        assert!(md_config.line_wrap, "Markdown should have line_wrap=true");
+
+        // Other languages should use global default (false)
+        let other_config = BufferConfig::resolve(&config, Some("rust"));
+        assert!(!other_config.line_wrap, "Non-configured languages should use global line_wrap=false");
+
+        // No language should use global default
+        let no_lang_config = BufferConfig::resolve(&config, None);
+        assert!(!no_lang_config.line_wrap, "No language should use global line_wrap=false");
     }
 
     #[test]

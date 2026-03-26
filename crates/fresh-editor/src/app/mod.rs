@@ -6217,7 +6217,8 @@ impl Editor {
                         );
                         view_state.apply_config_defaults(
                             self.config.editor.line_numbers,
-                            line_wrap.unwrap_or(self.config.editor.line_wrap),
+                            line_wrap
+                                .unwrap_or_else(|| self.resolve_line_wrap_for_buffer(buffer_id)),
                             self.config.editor.wrap_indent,
                             self.config.editor.rulers.clone(),
                         );

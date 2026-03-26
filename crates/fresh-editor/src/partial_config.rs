@@ -426,6 +426,7 @@ pub struct PartialLanguageConfig {
     pub highlighter: Option<HighlighterPreference>,
     pub textmate_grammar: Option<std::path::PathBuf>,
     pub show_whitespace_tabs: Option<bool>,
+    pub line_wrap: Option<bool>,
     pub use_tabs: Option<bool>,
     pub tab_size: Option<usize>,
     pub formatter: Option<FormatterConfig>,
@@ -446,6 +447,7 @@ impl Merge for PartialLanguageConfig {
         self.textmate_grammar.merge_from(&other.textmate_grammar);
         self.show_whitespace_tabs
             .merge_from(&other.show_whitespace_tabs);
+        self.line_wrap.merge_from(&other.line_wrap);
         self.use_tabs.merge_from(&other.use_tabs);
         self.tab_size.merge_from(&other.tab_size);
         self.formatter.merge_from(&other.formatter);
@@ -815,6 +817,7 @@ impl From<&LanguageConfig> for PartialLanguageConfig {
             highlighter: Some(cfg.highlighter),
             textmate_grammar: cfg.textmate_grammar.clone(),
             show_whitespace_tabs: Some(cfg.show_whitespace_tabs),
+            line_wrap: cfg.line_wrap,
             use_tabs: cfg.use_tabs,
             tab_size: cfg.tab_size,
             formatter: cfg.formatter.clone(),
@@ -845,6 +848,7 @@ impl PartialLanguageConfig {
             show_whitespace_tabs: self
                 .show_whitespace_tabs
                 .unwrap_or(defaults.show_whitespace_tabs),
+            line_wrap: self.line_wrap.or(defaults.line_wrap),
             use_tabs: self.use_tabs.or(defaults.use_tabs),
             tab_size: self.tab_size.or(defaults.tab_size),
             formatter: self.formatter.or_else(|| defaults.formatter.clone()),
@@ -1058,6 +1062,7 @@ impl Default for LanguageConfig {
             highlighter: HighlighterPreference::default(),
             textmate_grammar: None,
             show_whitespace_tabs: true,
+            line_wrap: None,
             use_tabs: None,
             tab_size: None,
             formatter: None,

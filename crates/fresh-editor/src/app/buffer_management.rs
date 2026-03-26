@@ -23,6 +23,20 @@ use super::help;
 use super::Editor;
 
 impl Editor {
+    /// Resolve the effective line_wrap setting for a buffer, considering language overrides.
+    ///
+    /// Returns the language-specific `line_wrap` if set, otherwise the global `editor.line_wrap`.
+    pub(super) fn resolve_line_wrap_for_buffer(&self, buffer_id: BufferId) -> bool {
+        if let Some(state) = self.buffers.get(&buffer_id) {
+            if let Some(lang_config) = self.config.languages.get(&state.language) {
+                if let Some(line_wrap) = lang_config.line_wrap {
+                    return line_wrap;
+                }
+            }
+        }
+        self.config.editor.line_wrap
+    }
+
     /// Get the preferred split for opening a file.
     /// If the active split has no label, use it (normal case).
     /// Otherwise find an unlabeled leaf so files don't open in labeled splits (e.g., sidebars).
@@ -326,13 +340,14 @@ impl Editor {
         // Add buffer to the preferred split's tabs (but don't switch to it)
         // Uses preferred_split_for_file() to avoid opening in labeled splits (e.g., sidebars)
         let target_split = self.preferred_split_for_file();
+        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
             view_state.add_buffer(buffer_id);
             // Initialize per-buffer view state for the new buffer with config defaults
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
-                self.config.editor.line_wrap,
+                line_wrap,
                 self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
@@ -431,12 +446,13 @@ impl Editor {
 
         // Add to preferred split's tabs (avoids labeled splits like sidebars)
         let target_split = self.preferred_split_for_file();
+        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
-                self.config.editor.line_wrap,
+                line_wrap,
                 self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
@@ -533,12 +549,13 @@ impl Editor {
 
         // Add to preferred split's tabs (avoids labeled splits like sidebars)
         let target_split = self.preferred_split_for_file();
+        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
-                self.config.editor.line_wrap,
+                line_wrap,
                 self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
@@ -671,12 +688,13 @@ impl Editor {
 
         // Add to preferred split's tabs (avoids labeled splits like sidebars)
         let target_split = self.preferred_split_for_file();
+        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
-                self.config.editor.line_wrap,
+                line_wrap,
                 self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
@@ -1005,10 +1023,11 @@ impl Editor {
         // Must happen AFTER set_active_buffer, because switch_buffer creates
         // the new BufferViewState with defaults (show_line_numbers=true).
         let active_split = self.split_manager.active_split();
+        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
             view_state.apply_config_defaults(
                 self.config.editor.line_numbers,
-                self.config.editor.line_wrap,
+                line_wrap,
                 self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
@@ -1106,12 +1125,13 @@ impl Editor {
 
         // Add buffer to the active split's tabs
         let active_split = self.split_manager.active_split();
+        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
-                self.config.editor.line_wrap,
+                line_wrap,
                 self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
@@ -1282,12 +1302,13 @@ impl Editor {
 
         // Add buffer to the active split's open_buffers (tabs)
         let active_split = self.split_manager.active_split();
+        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
-                self.config.editor.line_wrap,
+                line_wrap,
                 self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );
@@ -1297,7 +1318,7 @@ impl Editor {
                 SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buffer_id);
             view_state.apply_config_defaults(
                 self.config.editor.line_numbers,
-                self.config.editor.line_wrap,
+                line_wrap,
                 self.config.editor.wrap_indent,
                 self.config.editor.rulers.clone(),
             );

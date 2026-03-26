@@ -523,10 +523,19 @@ impl Editor {
             Action::ToggleLineWrap => {
                 self.config.editor.line_wrap = !self.config.editor.line_wrap;
 
-                // Update all viewports to reflect the new line wrap setting
-                for view_state in self.split_view_states.values_mut() {
-                    view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
-                    view_state.viewport.wrap_indent = self.config.editor.wrap_indent;
+                // Update all viewports to reflect the new line wrap setting,
+                // respecting per-language overrides
+                let leaf_ids: Vec<_> = self.split_view_states.keys().copied().collect();
+                for leaf_id in leaf_ids {
+                    let buffer_id = self
+                        .split_manager
+                        .get_buffer_id(leaf_id.into())
+                        .unwrap_or(BufferId(0));
+                    let effective_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
+                    if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
+                        view_state.viewport.line_wrap_enabled = effective_wrap;
+                        view_state.viewport.wrap_indent = self.config.editor.wrap_indent;
+                    }
                 }
 
                 let state = if self.config.editor.line_wrap {
