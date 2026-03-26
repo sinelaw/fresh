@@ -159,13 +159,8 @@ fn test_lsp_toggle_off_edit_toggle_on_causes_desync() -> anyhow::Result<()> {
     let initial_content = "fn main() {\n    let x = 5;\n}\n";
     std::fs::write(&test_file, initial_content)?;
 
-    // Configure editor with fake LSP and a keybinding for toggle.
-    // Disable inlay hints to prevent the LspTask from blocking on a
-    // sequential inlayHint request while we send the toggle command —
-    // the LspTask processes commands one at a time, so any pending
-    // send_request_sequential blocks DidClose from being delivered.
+    // Configure editor with fake LSP and a keybinding for toggle
     let mut config = fresh::config::Config::default();
-    config.editor.enable_inlay_hints = false;
     config.lsp.insert(
         "rust".to_string(),
         vec![fresh::services::lsp::LspServerConfig {
@@ -194,7 +189,7 @@ fn test_lsp_toggle_off_edit_toggle_on_causes_desync() -> anyhow::Result<()> {
         when: None,
     });
 
-    // Create harness with empty plugins dir to prevent loading 72 embedded
+    // Create harness with empty plugins dir to prevent loading embedded
     // plugins (unnecessary for this test and improves isolation/speed).
     let mut harness = EditorTestHarness::create(
         120,
@@ -293,13 +288,7 @@ fn test_lsp_toggle_off_sends_did_close() -> anyhow::Result<()> {
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {}\n")?;
 
-    // Disable inlay hints to prevent the LspTask from blocking on a
-    // sequential inlayHint request while we send the toggle command.
-    // The LspTask processes commands one at a time via send_request_sequential,
-    // so a pending inlayHint await would block DidClose from being processed,
-    // causing a flaky timeout when the toggle fires before the response arrives.
     let mut config = fresh::config::Config::default();
-    config.editor.enable_inlay_hints = false;
     config.lsp.insert(
         "rust".to_string(),
         vec![fresh::services::lsp::LspServerConfig {
