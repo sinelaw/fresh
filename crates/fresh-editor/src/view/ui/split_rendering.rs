@@ -2609,11 +2609,16 @@ impl SplitRenderer {
         }
 
         // Apply wrapping transform - always enabled for safety, but with different thresholds.
-        // When line_wrap is on: wrap at viewport width for normal text flow.
+        // When line_wrap is on: wrap at viewport width (or wrap_column if set) for normal text flow.
         // When line_wrap is off: wrap at MAX_SAFE_LINE_WIDTH to prevent memory exhaustion
         // from extremely long lines (e.g., 10MB single-line JSON files).
         let effective_width = if line_wrap_enabled {
-            content_width
+            if let Some(col) = viewport.wrap_column {
+                // Wrap at the configured column, but never beyond viewport width
+                col.min(content_width)
+            } else {
+                content_width
+            }
         } else {
             MAX_SAFE_LINE_WIDTH
         };

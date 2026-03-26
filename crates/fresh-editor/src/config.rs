@@ -569,6 +569,14 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub wrap_indent: bool,
 
+    /// Column at which to wrap lines when line wrapping is enabled.
+    /// If not specified (`null`), lines wrap at the viewport edge (default behavior).
+    /// Example: `80` wraps at column 80. The actual wrap column is clamped to the
+    /// viewport width (lines can't wrap beyond the visible area).
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Display"))]
+    pub wrap_column: Option<usize>,
+
     /// Enable syntax highlighting for code files
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
@@ -1114,6 +1122,7 @@ impl Default for EditorConfig {
             syntax_highlighting: true,
             line_wrap: true,
             wrap_indent: true,
+            wrap_column: None,
             highlight_timeout_ms: default_highlight_timeout(),
             snapshot_interval: default_snapshot_interval(),
             large_file_threshold_bytes: default_large_file_threshold(),
@@ -1470,6 +1479,11 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub line_wrap: Option<bool>,
 
+    /// Column at which to wrap lines for this language.
+    /// If not specified (`null`), falls back to the global `editor.wrap_column` setting.
+    #[serde(default)]
+    pub wrap_column: Option<usize>,
+
     /// Whether pressing Tab should insert a tab character instead of spaces.
     /// If not specified (`null`), falls back to the global `editor.use_tabs` setting.
     /// Set to true for languages like Go and Makefile that require tabs.
@@ -1522,6 +1536,9 @@ pub struct BufferConfig {
     /// Whether line wrapping is enabled for this buffer
     pub line_wrap: bool,
 
+    /// Column at which to wrap lines (None = viewport width)
+    pub wrap_column: Option<usize>,
+
     /// Resolved whitespace indicator visibility
     pub whitespace: WhitespaceVisibility,
 
@@ -1562,6 +1579,7 @@ impl BufferConfig {
             auto_close: editor.auto_close,
             auto_surround: editor.auto_surround,
             line_wrap: editor.line_wrap,
+            wrap_column: editor.wrap_column,
             whitespace,
             formatter: None,
             format_on_save: false,
@@ -1596,6 +1614,11 @@ impl BufferConfig {
             // Line wrap: language override (only if explicitly set)
             if let Some(line_wrap) = lang_config.line_wrap {
                 config.line_wrap = line_wrap;
+            }
+
+            // Wrap column: language override (only if explicitly set)
+            if lang_config.wrap_column.is_some() {
+                config.wrap_column = lang_config.wrap_column;
             }
 
             // Auto indent: language override
@@ -2663,6 +2686,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2690,6 +2714,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2717,6 +2742,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2744,6 +2770,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2775,6 +2802,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2809,6 +2837,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2836,6 +2865,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -2873,6 +2903,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -2899,6 +2930,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: Some(true), // Makefiles require tabs for recipes
                 tab_size: Some(8),    // Makefiles traditionally use 8-space tabs
                 formatter: None,
@@ -2921,6 +2953,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -2943,6 +2976,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -2970,6 +3004,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -2992,6 +3027,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: Some(FormatterConfig {
@@ -3019,6 +3055,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3042,6 +3079,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: Some(true), // Go convention is to use tabs
                 tab_size: Some(8),    // Go convention is 8-space tab width
                 formatter: Some(FormatterConfig {
@@ -3069,6 +3107,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: Some(true),
                 tab_size: Some(8),
                 formatter: None,
@@ -3091,6 +3130,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3113,6 +3153,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3142,6 +3183,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3164,6 +3206,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3187,6 +3230,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3214,6 +3258,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3241,6 +3286,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3263,6 +3309,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3285,6 +3332,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3307,6 +3355,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3333,6 +3382,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3355,6 +3405,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3377,6 +3428,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3399,6 +3451,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3421,6 +3474,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3443,6 +3497,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3465,6 +3520,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3487,6 +3543,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3514,6 +3571,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3536,6 +3594,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3558,6 +3617,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3580,6 +3640,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3602,6 +3663,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3624,6 +3686,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3646,6 +3709,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3668,6 +3732,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3690,6 +3755,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3712,6 +3778,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3738,6 +3805,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3760,6 +3828,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3782,6 +3851,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3804,6 +3874,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3826,6 +3897,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3848,6 +3920,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3870,6 +3943,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3892,6 +3966,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3914,6 +3989,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3936,6 +4012,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3958,6 +4035,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -3980,6 +4058,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4002,6 +4081,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4026,6 +4106,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4048,6 +4129,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4070,6 +4152,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4092,6 +4175,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4114,6 +4198,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4140,6 +4225,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: Some(true),
                 tab_size: None,
                 formatter: None,
@@ -4162,6 +4248,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4184,6 +4271,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: Some(true),
                 tab_size: None,
                 formatter: None,
@@ -4206,6 +4294,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4228,6 +4317,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -4250,6 +4340,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,
@@ -5676,6 +5767,7 @@ mod tests {
                 textmate_grammar: None,
                 show_whitespace_tabs: false, // Go hides tab indicators
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: Some(true), // Go uses tabs
                 tab_size: Some(8),    // Go uses 8-space tabs
                 formatter: Some(FormatterConfig {
@@ -5730,11 +5822,45 @@ mod tests {
 
         // Other languages should use global default (false)
         let other_config = BufferConfig::resolve(&config, Some("rust"));
-        assert!(!other_config.line_wrap, "Non-configured languages should use global line_wrap=false");
+        assert!(
+            !other_config.line_wrap,
+            "Non-configured languages should use global line_wrap=false"
+        );
 
         // No language should use global default
         let no_lang_config = BufferConfig::resolve(&config, None);
-        assert!(!no_lang_config.line_wrap, "No language should use global line_wrap=false");
+        assert!(
+            !no_lang_config.line_wrap,
+            "No language should use global line_wrap=false"
+        );
+    }
+
+    #[test]
+    fn test_buffer_config_per_language_wrap_column() {
+        let mut config = Config::default();
+        config.editor.wrap_column = Some(120);
+
+        // Add markdown with wrap_column override
+        config.languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                extensions: vec!["md".to_string()],
+                wrap_column: Some(80),
+                ..Default::default()
+            },
+        );
+
+        // Markdown should use its own wrap_column
+        let md_config = BufferConfig::resolve(&config, Some("markdown"));
+        assert_eq!(md_config.wrap_column, Some(80));
+
+        // Other languages should use global wrap_column
+        let other_config = BufferConfig::resolve(&config, Some("rust"));
+        assert_eq!(other_config.wrap_column, Some(120));
+
+        // No language should use global wrap_column
+        let no_lang_config = BufferConfig::resolve(&config, None);
+        assert_eq!(no_lang_config.wrap_column, Some(120));
     }
 
     #[test]

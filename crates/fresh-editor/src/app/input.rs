@@ -532,9 +532,11 @@ impl Editor {
                         .get_buffer_id(leaf_id.into())
                         .unwrap_or(BufferId(0));
                     let effective_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
+                    let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
                     if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
                         view_state.viewport.line_wrap_enabled = effective_wrap;
                         view_state.viewport.wrap_indent = self.config.editor.wrap_indent;
+                        view_state.viewport.wrap_column = wrap_column;
                     }
                 }
 

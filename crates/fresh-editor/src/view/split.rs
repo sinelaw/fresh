@@ -146,20 +146,22 @@ impl BufferViewState {
 
     /// Apply editor config defaults for display settings.
     ///
-    /// Sets `show_line_numbers`, `line_wrap`, and `rulers` from the given
-    /// config values. Call this after creating a new `BufferViewState` (via
-    /// `new()` or `ensure_buffer_state()`) to ensure the view respects the
+    /// Sets `show_line_numbers`, `line_wrap`, `wrap_column`, and `rulers` from
+    /// the given config values. Call this after creating a new `BufferViewState`
+    /// (via `new()` or `ensure_buffer_state()`) to ensure the view respects the
     /// user's settings.
     pub fn apply_config_defaults(
         &mut self,
         line_numbers: bool,
         line_wrap: bool,
         wrap_indent: bool,
+        wrap_column: Option<usize>,
         rulers: Vec<usize>,
     ) {
         self.show_line_numbers = line_numbers;
         self.viewport.line_wrap_enabled = line_wrap;
         self.viewport.wrap_indent = wrap_indent;
+        self.viewport.wrap_column = wrap_column;
         self.rulers = rulers;
     }
 }

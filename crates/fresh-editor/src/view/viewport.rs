@@ -38,6 +38,9 @@ pub struct Viewport {
     /// Whether wrapped continuation lines should be indented to match leading whitespace
     pub wrap_indent: bool,
 
+    /// Column at which to wrap lines (None = viewport width)
+    pub wrap_column: Option<usize>,
+
     /// Whether viewport needs synchronization with cursor positions
     /// When true, ensure_visible needs to be called before rendering
     /// This allows batching multiple cursor movements into a single viewport update
@@ -77,6 +80,7 @@ impl Viewport {
             horizontal_scroll_offset: 5,
             line_wrap_enabled: false,
             wrap_indent: true,
+            wrap_column: None,
             needs_sync: false,
             skip_resize_sync: false,
             skip_ensure_visible: false,

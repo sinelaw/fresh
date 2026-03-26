@@ -1206,6 +1206,7 @@ impl Editor {
             config.editor.line_numbers,
             config.editor.line_wrap,
             config.editor.wrap_indent,
+            config.editor.wrap_column,
             config.editor.rulers.clone(),
         );
         split_view_states.insert(initial_split_id, initial_view_state);
@@ -6220,6 +6221,7 @@ impl Editor {
                             line_wrap
                                 .unwrap_or_else(|| self.resolve_line_wrap_for_buffer(buffer_id)),
                             self.config.editor.wrap_indent,
+                            self.resolve_wrap_column_for_buffer(buffer_id),
                             self.config.editor.rulers.clone(),
                         );
                         // Override with plugin-requested show_line_numbers
@@ -6741,6 +6743,7 @@ impl Editor {
                                         self.config.editor.line_numbers,
                                         false,
                                         false,
+                                        None,
                                         self.config.editor.rulers.clone(),
                                     );
                                     self.split_view_states.insert(new_split_id, view_state);

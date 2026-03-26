@@ -149,6 +149,7 @@ pub struct PartialEditorConfig {
     pub syntax_highlighting: Option<bool>,
     pub line_wrap: Option<bool>,
     pub wrap_indent: Option<bool>,
+    pub wrap_column: Option<Option<usize>>,
     pub highlight_timeout_ms: Option<u64>,
     pub snapshot_interval: Option<usize>,
     pub large_file_threshold_bytes: Option<u64>,
@@ -216,6 +217,7 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.syntax_highlighting);
         self.line_wrap.merge_from(&other.line_wrap);
         self.wrap_indent.merge_from(&other.wrap_indent);
+        self.wrap_column.merge_from(&other.wrap_column);
         self.highlight_timeout_ms
             .merge_from(&other.highlight_timeout_ms);
         self.snapshot_interval.merge_from(&other.snapshot_interval);
@@ -427,6 +429,7 @@ pub struct PartialLanguageConfig {
     pub textmate_grammar: Option<std::path::PathBuf>,
     pub show_whitespace_tabs: Option<bool>,
     pub line_wrap: Option<bool>,
+    pub wrap_column: Option<Option<usize>>,
     pub use_tabs: Option<bool>,
     pub tab_size: Option<usize>,
     pub formatter: Option<FormatterConfig>,
@@ -448,6 +451,7 @@ impl Merge for PartialLanguageConfig {
         self.show_whitespace_tabs
             .merge_from(&other.show_whitespace_tabs);
         self.line_wrap.merge_from(&other.line_wrap);
+        self.wrap_column.merge_from(&other.wrap_column);
         self.use_tabs.merge_from(&other.use_tabs);
         self.tab_size.merge_from(&other.tab_size);
         self.formatter.merge_from(&other.formatter);
@@ -472,6 +476,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             syntax_highlighting: Some(cfg.syntax_highlighting),
             line_wrap: Some(cfg.line_wrap),
             wrap_indent: Some(cfg.wrap_indent),
+            wrap_column: Some(cfg.wrap_column),
             highlight_timeout_ms: Some(cfg.highlight_timeout_ms),
             snapshot_interval: Some(cfg.snapshot_interval),
             large_file_threshold_bytes: Some(cfg.large_file_threshold_bytes),
@@ -547,6 +552,7 @@ impl PartialEditorConfig {
                 .unwrap_or(defaults.syntax_highlighting),
             line_wrap: self.line_wrap.unwrap_or(defaults.line_wrap),
             wrap_indent: self.wrap_indent.unwrap_or(defaults.wrap_indent),
+            wrap_column: self.wrap_column.unwrap_or(defaults.wrap_column),
             highlight_timeout_ms: self
                 .highlight_timeout_ms
                 .unwrap_or(defaults.highlight_timeout_ms),
@@ -818,6 +824,7 @@ impl From<&LanguageConfig> for PartialLanguageConfig {
             textmate_grammar: cfg.textmate_grammar.clone(),
             show_whitespace_tabs: Some(cfg.show_whitespace_tabs),
             line_wrap: cfg.line_wrap,
+            wrap_column: Some(cfg.wrap_column),
             use_tabs: cfg.use_tabs,
             tab_size: cfg.tab_size,
             formatter: cfg.formatter.clone(),
@@ -849,6 +856,7 @@ impl PartialLanguageConfig {
                 .show_whitespace_tabs
                 .unwrap_or(defaults.show_whitespace_tabs),
             line_wrap: self.line_wrap.or(defaults.line_wrap),
+            wrap_column: self.wrap_column.unwrap_or(defaults.wrap_column),
             use_tabs: self.use_tabs.or(defaults.use_tabs),
             tab_size: self.tab_size.or(defaults.tab_size),
             formatter: self.formatter.or_else(|| defaults.formatter.clone()),
@@ -1063,6 +1071,7 @@ impl Default for LanguageConfig {
             textmate_grammar: None,
             show_whitespace_tabs: true,
             line_wrap: None,
+            wrap_column: None,
             use_tabs: None,
             tab_size: None,
             formatter: None,

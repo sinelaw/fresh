@@ -775,6 +775,7 @@ mod tests {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
+                wrap_column: None,
                 use_tabs: None,
                 tab_size: None,
                 formatter: None,

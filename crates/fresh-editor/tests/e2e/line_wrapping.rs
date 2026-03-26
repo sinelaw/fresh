@@ -2182,8 +2182,7 @@ fn test_per_language_line_wrap_override() {
 
     // Create a markdown file with a long line that exceeds 60 cols
     let long_md = "This is a very long markdown line that should wrap because per-language line_wrap is enabled for markdown even though global wrapping is off.";
-    let fixture =
-        crate::common::fixtures::TestFixture::new("test_wrap.md", long_md).unwrap();
+    let fixture = crate::common::fixtures::TestFixture::new("test_wrap.md", long_md).unwrap();
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
 
@@ -2193,8 +2192,7 @@ fn test_per_language_line_wrap_override() {
     // appearing on multiple visual lines (i.e., both the beginning and a
     // portion from mid-line should be visible).
     assert!(
-        screen.contains("long markdown line")
-            && screen.contains("per-language"),
+        screen.contains("long markdown line") && screen.contains("per-language"),
         "Markdown file should have line wrapping enabled via per-language config. Screen:\n{}",
         screen
     );
@@ -2232,8 +2230,7 @@ fn test_per_language_line_wrap_non_matching_language() {
 
     // Create a .txt file with a long line
     let long_txt = "This is a very long plaintext line that should NOT wrap because per-language line_wrap is only enabled for markdown and global wrapping is off.";
-    let fixture =
-        crate::common::fixtures::TestFixture::new("test_nowrap.txt", long_txt).unwrap();
+    let fixture = crate::common::fixtures::TestFixture::new("test_nowrap.txt", long_txt).unwrap();
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
 
@@ -2244,6 +2241,74 @@ fn test_per_language_line_wrap_non_matching_language() {
     assert!(
         !screen.contains("global wrapping is off"),
         "Non-markdown file should NOT wrap when global line_wrap is off. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test wrap_column: text wraps at a specific column, not viewport edge
+#[test]
+fn test_wrap_column_wraps_at_configured_column() {
+    // Use a wide terminal (100 cols) but wrap at column 30
+    let config = Config {
+        editor: fresh::config::EditorConfig {
+            line_wrap: true,
+            wrap_column: Some(30),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+
+    // Type text that's longer than 30 chars but shorter than 100
+    let text = "AAAA BBBB CCCC DDDD EEEE FFFF GGGG HHHH";
+    harness.type_text(text).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // With wrap_column=30 on a 100-col terminal, the text should wrap.
+    // Both the beginning and end of the text should be visible (wrapped).
+    assert!(
+        screen.contains("AAAA") && screen.contains("HHHH"),
+        "Text should wrap at column 30 so both start and end are visible. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test per-language wrap_column: markdown wraps at 40 while global is None
+#[test]
+fn test_per_language_wrap_column() {
+    let mut config = Config {
+        editor: fresh::config::EditorConfig {
+            line_wrap: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    config.languages.insert(
+        "markdown".to_string(),
+        LanguageConfig {
+            extensions: vec!["md".to_string()],
+            wrap_column: Some(30),
+            ..Default::default()
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+
+    let long_md = "AAAA BBBB CCCC DDDD EEEE FFFF GGGG HHHH IIII JJJJ";
+    let fixture = crate::common::fixtures::TestFixture::new("test_wrap_col.md", long_md).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Markdown should wrap at column 30 despite wide terminal.
+    // Both start and end should be visible.
+    assert!(
+        screen.contains("AAAA") && screen.contains("JJJJ"),
+        "Markdown should wrap at column 30. Screen:\n{}",
         screen
     );
 }

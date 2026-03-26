@@ -1342,6 +1342,7 @@ impl Editor {
                             self.config.editor.line_numbers,
                             self.resolve_line_wrap_for_buffer(second_buffer_id),
                             self.config.editor.wrap_indent,
+                            self.resolve_wrap_column_for_buffer(second_buffer_id),
                             self.config.editor.rulers.clone(),
                         );
                         self.split_view_states.insert(new_leaf_id, view_state);
