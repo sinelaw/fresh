@@ -493,8 +493,14 @@ fn determine_type(
                         let value_schema =
                             parse_setting("value", "", inner_resolved, defs, enum_values_map);
 
-                        // Get display_field from x-display-field in the referenced schema
-                        let display_field = inner_resolved.display_field.clone();
+                        // Get display_field from x-display-field in the referenced schema.
+                        // If the value schema is an array, also check the array items for display_field.
+                        let display_field = inner_resolved.display_field.clone().or_else(|| {
+                            inner_resolved.items.as_ref().and_then(|items| {
+                                let items_resolved = resolve_ref(items, defs);
+                                items_resolved.display_field.clone()
+                            })
+                        });
 
                         // Get no_add from the parent schema (resolved)
                         let no_add = resolved.no_add;
