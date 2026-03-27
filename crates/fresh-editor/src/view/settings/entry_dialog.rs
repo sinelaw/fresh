@@ -288,171 +288,91 @@ impl EntryDialogState {
         }
     }
 
-    /// Move focus to next item or button
+    /// Move focus to next editable item (simple sequential navigation).
+    ///
+    /// Skips read-only items. When at the last editable item, wraps to buttons.
+    /// When on the last button, wraps back to the first editable item.
     pub fn focus_next(&mut self) {
         if self.editing_text {
-            return; // Don't change focus while editing
+            return;
         }
 
         if self.focus_on_buttons {
             if self.focused_button + 1 < self.button_count() {
-                // Move to next button
                 self.focused_button += 1;
             } else {
-                // Wrap to first editable item (skip read-only items)
+                // Wrap to first editable item
                 if self.first_editable_index < self.items.len() {
                     self.focus_on_buttons = false;
                     self.selected_item = self.first_editable_index;
+                    self.sub_focus = None;
                 }
-                // If all items are read-only, stay on buttons (don't wrap)
             }
+        } else if self.selected_item + 1 < self.items.len() {
+            self.selected_item += 1;
+            self.sub_focus = None;
         } else {
-            // Check if current item is an ObjectArray that can navigate internally
-            let array_nav_result = self.items.get(self.selected_item).and_then(|item| {
-                if let SettingControl::ObjectArray(state) = &item.control {
-                    // Navigation order: entries -> add-new -> exit
-                    match state.focused_index {
-                        Some(idx) if idx + 1 < state.bindings.len() => {
-                            // On entry, can go to next entry
-                            Some(true)
-                        }
-                        Some(_) => {
-                            // On last entry, can go to add-new
-                            Some(true)
-                        }
-                        None => {
-                            // On add-new, exit to next dialog item
-                            Some(false)
-                        }
-                    }
-                } else {
-                    None
-                }
-            });
-
-            match array_nav_result {
-                Some(true) => {
-                    // Navigate within the ObjectArray
-                    if let Some(item) = self.items.get_mut(self.selected_item) {
-                        if let SettingControl::ObjectArray(state) = &mut item.control {
-                            state.focus_next();
-                        }
-                    }
-                }
-                Some(false) => {
-                    // Exit ObjectArray, go to next item
-                    if self.selected_item + 1 < self.items.len() {
-                        self.selected_item += 1;
-                        self.sub_focus = None;
-                        // Initialize next item's ObjectArray if it has entries
-                        self.init_object_array_focus();
-                    } else {
-                        self.focus_on_buttons = true;
-                        self.focused_button = 0;
-                    }
-                }
-                None => {
-                    // Not an ObjectArray, normal navigation
-                    // All items after first_editable_index are editable (sorted)
-                    if self.selected_item + 1 < self.items.len() {
-                        self.selected_item += 1;
-                        self.sub_focus = None;
-                        // Initialize next item's ObjectArray if it has entries
-                        self.init_object_array_focus();
-                    } else {
-                        self.focus_on_buttons = true;
-                        self.focused_button = 0;
-                    }
-                }
-            }
+            // Past last item, go to buttons
+            self.focus_on_buttons = true;
+            self.focused_button = 0;
         }
 
         self.update_focus_states();
         self.ensure_selected_visible(self.viewport_height);
     }
 
-    /// Move focus to previous item or button
+    /// Move focus to previous editable item (simple sequential navigation).
+    ///
+    /// Skips read-only items. When at the first editable item, wraps to buttons.
+    /// When on the first button, wraps back to the last editable item.
     pub fn focus_prev(&mut self) {
         if self.editing_text {
-            return; // Don't change focus while editing
+            return;
         }
 
         if self.focus_on_buttons {
             if self.focused_button > 0 {
                 self.focused_button -= 1;
             } else {
-                // Move back to last editable item
+                // Wrap to last editable item
                 if self.first_editable_index < self.items.len() {
                     self.focus_on_buttons = false;
                     self.selected_item = self.items.len().saturating_sub(1);
+                    self.sub_focus = None;
                 }
-                // If all items are read-only, stay on buttons (don't wrap)
+            }
+        } else if self.selected_item > self.first_editable_index {
+            self.selected_item -= 1;
+            self.sub_focus = None;
+        } else {
+            // Before first editable item, go to buttons
+            self.focus_on_buttons = true;
+            self.focused_button = self.button_count().saturating_sub(1);
+        }
+
+        self.update_focus_states();
+        self.ensure_selected_visible(self.viewport_height);
+    }
+
+    /// Toggle focus between items region and buttons region.
+    /// Used by Tab key to provide region-level navigation.
+    pub fn toggle_focus_region(&mut self) {
+        if self.editing_text {
+            return;
+        }
+
+        if self.focus_on_buttons {
+            // Move back to items (restore last selected item or first editable)
+            if self.first_editable_index < self.items.len() {
+                self.focus_on_buttons = false;
+                if self.selected_item < self.first_editable_index {
+                    self.selected_item = self.first_editable_index;
+                }
             }
         } else {
-            // Check if current item is an ObjectArray that can navigate internally
-            let array_nav_result = self.items.get(self.selected_item).and_then(|item| {
-                if let SettingControl::ObjectArray(state) = &item.control {
-                    // Navigation order (reverse): exit <- entries <- add-new
-                    match state.focused_index {
-                        None => {
-                            // On add-new, can go back to last entry (if any)
-                            if !state.bindings.is_empty() {
-                                Some(true)
-                            } else {
-                                Some(false) // No entries, exit
-                            }
-                        }
-                        Some(0) => {
-                            // On first entry, exit to previous dialog item
-                            Some(false)
-                        }
-                        Some(_) => {
-                            // On entry, can go to previous entry
-                            Some(true)
-                        }
-                    }
-                } else {
-                    None
-                }
-            });
-
-            match array_nav_result {
-                Some(true) => {
-                    // Navigate within the ObjectArray
-                    if let Some(item) = self.items.get_mut(self.selected_item) {
-                        if let SettingControl::ObjectArray(state) = &mut item.control {
-                            state.focus_prev();
-                        }
-                    }
-                }
-                Some(false) => {
-                    // Exit ObjectArray, go to previous editable item (not into read-only)
-                    if self.selected_item > self.first_editable_index {
-                        self.selected_item -= 1;
-                        self.sub_focus = None;
-                        // Initialize previous item's ObjectArray to add-new (end)
-                        self.init_object_array_focus_end();
-                    } else {
-                        // At first editable item, go to buttons
-                        self.focus_on_buttons = true;
-                        self.focused_button = self.button_count().saturating_sub(1);
-                    }
-                }
-                None => {
-                    // Not an ObjectArray, normal navigation
-                    // Don't go below first_editable_index (read-only items)
-                    if self.selected_item > self.first_editable_index {
-                        self.selected_item -= 1;
-                        self.sub_focus = None;
-                        // Initialize previous item's ObjectArray to add-new (end)
-                        self.init_object_array_focus_end();
-                    } else {
-                        // At first editable item, go to buttons
-                        self.focus_on_buttons = true;
-                        self.focused_button = self.button_count().saturating_sub(1);
-                    }
-                }
-            }
+            // Move to buttons
+            self.focus_on_buttons = true;
+            self.focused_button = 0;
         }
 
         self.update_focus_states();
@@ -463,60 +383,10 @@ impl EntryDialogState {
     fn init_object_array_focus(&mut self) {
         if let Some(item) = self.items.get_mut(self.selected_item) {
             if let SettingControl::ObjectArray(state) = &mut item.control {
-                // Start at first entry if there are any, otherwise stay on add-new
                 if !state.bindings.is_empty() {
                     state.focused_index = Some(0);
                 }
             }
-        }
-    }
-
-    /// Initialize ObjectArray focus to add-new (when arriving from below)
-    fn init_object_array_focus_end(&mut self) {
-        if let Some(item) = self.items.get_mut(self.selected_item) {
-            if let SettingControl::ObjectArray(state) = &mut item.control {
-                // Start at add-new row (None)
-                state.focused_index = None;
-            }
-        }
-    }
-
-    /// Move to next sub-item within current control (for TextList, Map)
-    pub fn sub_focus_next(&mut self) {
-        if let Some(item) = self.items.get(self.selected_item) {
-            let max_sub = match &item.control {
-                SettingControl::TextList(state) => state.items.len(), // +1 for add-new
-                SettingControl::Map(state) => state.entries.len(),    // +1 for add-new
-                _ => 0,
-            };
-
-            if max_sub > 0 {
-                let current = self.sub_focus.unwrap_or(0);
-                if current < max_sub {
-                    self.sub_focus = Some(current + 1);
-                } else {
-                    // Move to next item
-                    self.sub_focus = None;
-                    self.focus_next();
-                }
-            } else {
-                self.focus_next();
-            }
-        } else {
-            self.focus_next();
-        }
-    }
-
-    /// Move to previous sub-item within current control
-    pub fn sub_focus_prev(&mut self) {
-        if let Some(sub) = self.sub_focus {
-            if sub > 0 {
-                self.sub_focus = Some(sub - 1);
-            } else {
-                self.sub_focus = None;
-            }
-        } else {
-            self.focus_prev();
         }
     }
 

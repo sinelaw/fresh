@@ -83,6 +83,14 @@ impl SettingsState {
         event: &KeyEvent,
         ctx: &mut InputContext,
     ) -> InputResult {
+        // Ctrl+S saves entry dialog from any mode
+        if event.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(event.code, KeyCode::Char('s') | KeyCode::Char('S'))
+        {
+            self.save_entry_dialog();
+            return InputResult::Consumed;
+        }
+
         // Check if we're in a special editing mode
         let (editing_text, dropdown_open) = if let Some(dialog) = self.entry_dialog() {
             let dropdown_open = dialog
@@ -100,7 +108,7 @@ impl SettingsState {
         } else if dropdown_open {
             self.handle_entry_dialog_dropdown(event)
         } else {
-            self.handle_entry_dialog_navigation(event)
+            self.handle_entry_dialog_navigation(event, ctx)
         }
     }
 
@@ -292,7 +300,11 @@ impl SettingsState {
     }
 
     /// Handle navigation and activation in entry dialog (same pattern as handle_settings_input)
-    fn handle_entry_dialog_navigation(&mut self, event: &KeyEvent) -> InputResult {
+    fn handle_entry_dialog_navigation(
+        &mut self,
+        event: &KeyEvent,
+        ctx: &mut InputContext,
+    ) -> InputResult {
         match event.code {
             KeyCode::Esc => {
                 self.close_entry_dialog();
@@ -308,17 +320,18 @@ impl SettingsState {
                 }
             }
             KeyCode::Tab => {
+                // Tab toggles between items region and buttons region
                 if let Some(dialog) = self.entry_dialog_mut() {
-                    dialog.focus_next();
+                    dialog.toggle_focus_region();
                 }
             }
             KeyCode::BackTab => {
+                // Shift+Tab also toggles between items and buttons (reverse)
                 if let Some(dialog) = self.entry_dialog_mut() {
-                    dialog.focus_prev();
+                    dialog.toggle_focus_region();
                 }
             }
             KeyCode::Left => {
-                // Decrement number or navigate within control
                 if let Some(dialog) = self.entry_dialog_mut() {
                     if !dialog.focus_on_buttons {
                         dialog.decrement_number();
@@ -328,7 +341,6 @@ impl SettingsState {
                 }
             }
             KeyCode::Right => {
-                // Increment number or navigate within control
                 if let Some(dialog) = self.entry_dialog_mut() {
                     if !dialog.focus_on_buttons {
                         dialog.increment_number();
@@ -337,14 +349,15 @@ impl SettingsState {
                     }
                 }
             }
-            KeyCode::Enter | KeyCode::Char(' ') => {
+            KeyCode::Enter => {
                 // Check button state first with immutable borrow
                 let button_action = self.entry_dialog().and_then(|dialog| {
                     if dialog.focus_on_buttons {
                         let cancel_idx = dialog.button_count() - 1;
                         if dialog.focused_button == 0 {
                             Some(ButtonAction::Save)
-                        } else if !dialog.is_new && dialog.focused_button == 1 {
+                        } else if !dialog.is_new && !dialog.no_delete && dialog.focused_button == 1
+                        {
                             Some(ButtonAction::Delete)
                         } else if dialog.focused_button == cancel_idx {
                             Some(ButtonAction::Cancel)
@@ -403,11 +416,68 @@ impl SettingsState {
                                 }
                             }
                             ControlAction::OpenNestedDialog => {
-                                // Handle nested Map or ObjectArray - open a nested dialog
                                 self.open_nested_entry_dialog();
                             }
                         }
                     }
+                }
+            }
+            KeyCode::Char(' ') => {
+                // Space toggles booleans, activates dropdowns (but doesn't submit form)
+                let control_action = self.entry_dialog().and_then(|dialog| {
+                    if dialog.focus_on_buttons {
+                        return None; // Space on buttons does nothing (Enter activates)
+                    }
+                    dialog.current_item().and_then(|item| match &item.control {
+                        SettingControl::Toggle(_) => Some(ControlAction::ToggleBool),
+                        SettingControl::Dropdown(_) => Some(ControlAction::ToggleDropdown),
+                        _ => None,
+                    })
+                });
+
+                if let Some(action) = control_action {
+                    match action {
+                        ControlAction::ToggleBool => {
+                            if let Some(dialog) = self.entry_dialog_mut() {
+                                dialog.toggle_bool();
+                            }
+                        }
+                        ControlAction::ToggleDropdown => {
+                            if let Some(dialog) = self.entry_dialog_mut() {
+                                dialog.toggle_dropdown();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            KeyCode::Char(c) => {
+                // Auto-enter edit mode when typing on a text or number field
+                let can_auto_edit = self
+                    .entry_dialog()
+                    .and_then(|dialog| {
+                        if dialog.focus_on_buttons {
+                            return None;
+                        }
+                        dialog.current_item().map(|item| match &item.control {
+                            SettingControl::Text(_) | SettingControl::TextList(_) => true,
+                            SettingControl::Number(_) => {
+                                c.is_ascii_digit() || c == '-' || c == '.'
+                            }
+                            _ => false,
+                        })
+                    })
+                    .unwrap_or(false);
+
+                if can_auto_edit {
+                    if let Some(dialog) = self.entry_dialog_mut() {
+                        dialog.start_editing();
+                    }
+                    // Now forward the character to the text editing handler
+                    return self.handle_entry_dialog_text_editing(
+                        &KeyEvent::new(KeyCode::Char(c), event.modifiers),
+                        ctx,
+                    );
                 }
             }
             _ => {}

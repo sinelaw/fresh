@@ -3130,7 +3130,8 @@ fn render_entry_dialog(
         let help_style = Style::default().fg(theme.line_number_fg);
         frame.render_widget(Paragraph::new(help).style(help_style), help_area);
     } else {
-        let help = "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit/Confirm  Esc:Cancel";
+        let help =
+            "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit  Ctrl+S:Save  Esc:Cancel";
         let help_style = Style::default().fg(theme.line_number_fg);
         frame.render_widget(Paragraph::new(help).style(help_style), help_area);
     }
