@@ -2962,6 +2962,39 @@ fn render_entry_dialog_inner(
             content_y = separator_end;
         }
 
+        // Render section header if this is the first item in a section
+        if item.is_section_start {
+            if let Some(ref section_name) = item.section {
+                let header_start = content_y;
+                let header_end = content_y + 2; // 2 lines: label + separator
+
+                if header_end > scroll_offset && screen_y < inner.y + inner.height {
+                    let skip_h = if header_start < scroll_offset {
+                        (scroll_offset - header_start) as u16
+                    } else {
+                        0
+                    };
+                    if skip_h == 0 {
+                        // Section label
+                        let section_style = Style::default()
+                            .fg(theme.line_number_fg)
+                            .add_modifier(Modifier::BOLD);
+                        frame.render_widget(
+                            Paragraph::new(format!("── {} ──", section_name))
+                                .style(section_style),
+                            Rect::new(inner.x + 1, screen_y, inner.width.saturating_sub(2), 1),
+                        );
+                        screen_y += 1;
+                    }
+                    if skip_h <= 1 && screen_y < inner.y + inner.height {
+                        // Blank line after section header
+                        screen_y += 1;
+                    }
+                }
+                content_y = header_end;
+            }
+        }
+
         let control_height = item.control.control_height() as usize;
 
         // Check if this item is visible in the viewport

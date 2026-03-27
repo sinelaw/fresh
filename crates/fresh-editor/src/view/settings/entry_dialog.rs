@@ -102,8 +102,11 @@ impl EntryDialogState {
             items.push(item);
         }
 
-        // Sort items: read-only first, then editable
+        // Sort items: read-only first, then editable (stable sort preserves x-order)
         items.sort_by_key(|item| !item.read_only);
+
+        // Compute is_section_start for section headers in entry dialogs
+        Self::compute_section_starts(&mut items);
 
         // Find the first editable item index
         let first_editable_index = items
@@ -177,6 +180,9 @@ impl EntryDialogState {
         // Sort items: read-only first, then editable
         items.sort_by_key(|item| !item.read_only);
 
+        // Compute is_section_start for section headers
+        Self::compute_section_starts(&mut items);
+
         // Find the first editable item index
         let first_editable_index = items
             .iter()
@@ -217,6 +223,21 @@ impl EntryDialogState {
             first_editable_index,
             no_delete: false, // Arrays typically allow deletion
             is_single_value: false,
+        }
+    }
+
+    /// Compute is_section_start flags for section headers.
+    /// Marks the first item in each new section so the renderer can draw headers.
+    fn compute_section_starts(items: &mut [SettingItem]) {
+        let mut last_section: Option<&str> = None;
+        for item in items.iter_mut() {
+            let current = item.section.as_deref();
+            if current.is_some() && current != last_section {
+                item.is_section_start = true;
+            }
+            if current.is_some() {
+                last_section = current;
+            }
         }
     }
 
@@ -413,12 +434,22 @@ impl EntryDialogState {
         }
     }
 
-    /// Calculate total content height for all items (including separator)
+    /// Height of a section header (label + blank line)
+    const SECTION_HEADER_HEIGHT: usize = 2;
+
+    /// Calculate total content height for all items (including separator and section headers)
     pub fn total_content_height(&self) -> usize {
         let items_height: usize = self
             .items
             .iter()
-            .map(|item| item.control.control_height() as usize)
+            .map(|item| {
+                let section_h = if item.is_section_start {
+                    Self::SECTION_HEADER_HEIGHT
+                } else {
+                    0
+                };
+                item.control.control_height() as usize + section_h
+            })
             .sum();
         // Add 1 for separator if we have both read-only and editable items
         let separator_height =
@@ -430,13 +461,20 @@ impl EntryDialogState {
         items_height + separator_height
     }
 
-    /// Calculate the Y offset of the selected item (including separator)
+    /// Calculate the Y offset of the selected item (including separator and section headers)
     pub fn selected_item_offset(&self) -> usize {
         let items_offset: usize = self
             .items
             .iter()
             .take(self.selected_item)
-            .map(|item| item.control.control_height() as usize)
+            .map(|item| {
+                let section_h = if item.is_section_start {
+                    Self::SECTION_HEADER_HEIGHT
+                } else {
+                    0
+                };
+                item.control.control_height() as usize + section_h
+            })
             .sum();
         // Add 1 for separator if selected item is after it
         let separator_offset = if self.first_editable_index > 0
@@ -447,7 +485,19 @@ impl EntryDialogState {
         } else {
             0
         };
-        items_offset + separator_offset
+        // Add section header height if the selected item itself starts a section
+        let own_section_h = self
+            .items
+            .get(self.selected_item)
+            .map(|item| {
+                if item.is_section_start {
+                    Self::SECTION_HEADER_HEIGHT
+                } else {
+                    0
+                }
+            })
+            .unwrap_or(0);
+        items_offset + separator_offset + own_section_h
     }
 
     /// Calculate the height of the selected item
@@ -1025,6 +1075,7 @@ mod tests {
                         default: Some(serde_json::json!(true)),
                         read_only: false,
                         section: None,
+                        order: None,
                     },
                     SettingSchema {
                         path: "/command".to_string(),
@@ -1034,12 +1085,14 @@ mod tests {
                         default: Some(serde_json::json!("")),
                         read_only: false,
                         section: None,
+                        order: None,
                     },
                 ],
             },
             default: None,
             read_only: false,
             section: None,
+            order: None,
         }
     }
 

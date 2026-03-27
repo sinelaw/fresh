@@ -3548,27 +3548,11 @@ fn test_usability_entry_dialog_button_focus_indicator() {
         .unwrap();
     harness.render().unwrap();
 
-    // Navigate down past all items to reach the buttons
-    loop {
-        harness.render().unwrap();
-        let screen = harness.screen_to_string();
-        if screen.contains("> [ Save ]") || screen.contains(">[ Save ]") {
-            break;
-        }
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
-
-    // The entry dialog buttons should show ">" focus indicator
-    let screen = harness.screen_to_string();
-    let has_focused_button = screen.contains(">[ Save ]")
-        || screen.contains(">[ Delete ]")
-        || screen.contains(">[ Cancel ]");
-
-    if !has_focused_button {
-        // Try Tab to cycle to buttons (some dialogs use Tab for items<->buttons)
-        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-    }
+    // Tab toggles between items and buttons — press Tab to reach buttons
+    harness
+        .send_key(KeyCode::Tab, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
 
     let screen = harness.screen_to_string();
     // The ">" indicator is rendered with a gap before the button bracket

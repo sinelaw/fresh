@@ -1124,18 +1124,26 @@
       "description": "LSP server configuration",
       "type": "object",
       "properties": {
+        "command": {
+          "description": "Command to spawn the server.\nRequired when enabled=true, ignored when enabled=false.",
+          "type": "string",
+          "default": "",
+          "x-order": 1
+        },
+        "enabled": {
+          "description": "Whether the server is enabled",
+          "type": "boolean",
+          "default": true,
+          "x-order": 2
+        },
         "name": {
           "description": "Display name for this server (e.g., \"tsserver\", \"eslint\").\nDefaults to the command basename if not specified.",
           "type": [
             "string",
             "null"
           ],
-          "default": null
-        },
-        "command": {
-          "description": "Command to spawn the server.\nRequired when enabled=true, ignored when enabled=false.",
-          "type": "string",
-          "default": ""
+          "default": null,
+          "x-order": 3
         },
         "args": {
           "description": "Arguments to pass to the server",
@@ -1143,30 +1151,23 @@
           "items": {
             "type": "string"
           },
-          "default": []
-        },
-        "enabled": {
-          "description": "Whether the server is enabled",
-          "type": "boolean",
-          "default": true
+          "default": [],
+          "x-order": 4
         },
         "auto_start": {
           "description": "Whether to auto-start this LSP server when opening matching files\nIf false (default), the server must be started manually via command palette",
           "type": "boolean",
-          "default": false
+          "default": false,
+          "x-order": 5
         },
-        "process_limits": {
-          "description": "Process resource limits (memory and CPU)",
-          "$ref": "#/$defs/ProcessLimits",
-          "default": {
-            "max_memory_percent": 50,
-            "max_cpu_percent": 90,
-            "enabled": true
-          }
-        },
-        "initialization_options": {
-          "description": "Custom initialization options to send to the server\nThese are passed in the `initializationOptions` field of the LSP Initialize request",
-          "default": null
+        "root_markers": {
+          "description": "File/directory names to search for when detecting the workspace root.\nThe editor walks upward from the opened file's directory looking for\nany of these markers. The first directory containing a match becomes\nthe workspace root sent to the LSP server.\n\nIf empty, falls back to `[\".git\"]` as a universal marker.\nIf the walk reaches a filesystem boundary without a match, uses the\nfile's parent directory (never cwd or $HOME).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "x-order": 6
         },
         "env": {
           "description": "Environment variables to set for the LSP server process.\nThese are added to (or override) the inherited parent environment.",
@@ -1174,7 +1175,9 @@
           "additionalProperties": {
             "type": "string"
           },
-          "default": {}
+          "default": {},
+          "x-section": "Advanced",
+          "x-order": 10
         },
         "language_id_overrides": {
           "description": "Override the LSP languageId sent in textDocument/didOpen based on file extension.\nMaps file extension (without dot) to LSP language ID string.\nFor example: `{\"tsx\": \"typescriptreact\", \"jsx\": \"javascriptreact\"}`",
@@ -1182,7 +1185,15 @@
           "additionalProperties": {
             "type": "string"
           },
-          "default": {}
+          "default": {},
+          "x-section": "Advanced",
+          "x-order": 11
+        },
+        "initialization_options": {
+          "description": "Custom initialization options to send to the server\nThese are passed in the `initializationOptions` field of the LSP Initialize request",
+          "default": null,
+          "x-section": "Advanced",
+          "x-order": 12
         },
         "only_features": {
           "description": "Restrict this server to only handle the listed features.\nMutually exclusive with `except_features`. If neither is set, all features are handled.",
@@ -1193,7 +1204,9 @@
           "items": {
             "$ref": "#/$defs/LspFeature"
           },
-          "default": null
+          "default": null,
+          "x-section": "Advanced",
+          "x-order": 13
         },
         "except_features": {
           "description": "Exclude the listed features from this server.\nMutually exclusive with `only_features`. If neither is set, all features are handled.",
@@ -1204,15 +1217,20 @@
           "items": {
             "$ref": "#/$defs/LspFeature"
           },
-          "default": null
+          "default": null,
+          "x-section": "Advanced",
+          "x-order": 14
         },
-        "root_markers": {
-          "description": "File/directory names to search for when detecting the workspace root.\nThe editor walks upward from the opened file's directory looking for\nany of these markers. The first directory containing a match becomes\nthe workspace root sent to the LSP server.\n\nIf empty, falls back to `[\".git\"]` as a universal marker.\nIf the walk reaches a filesystem boundary without a match, uses the\nfile's parent directory (never cwd or $HOME).",
-          "type": "array",
-          "items": {
-            "type": "string"
+        "process_limits": {
+          "description": "Process resource limits (memory and CPU)",
+          "$ref": "#/$defs/ProcessLimits",
+          "default": {
+            "max_memory_percent": 50,
+            "max_cpu_percent": 90,
+            "enabled": true
           },
-          "default": []
+          "x-section": "Advanced",
+          "x-order": 15
         }
       },
       "x-display-field": "/command"

@@ -1164,6 +1164,7 @@ mod tests {
             default: Some(serde_json::Value::Bool(true)),
             read_only: false,
             section: None,
+            order: None,
         };
 
         let config = sample_config();
@@ -1193,6 +1194,7 @@ mod tests {
             default: Some(serde_json::Value::Bool(true)),
             read_only: false,
             section: None,
+            order: None,
         };
 
         let config = sample_config();
@@ -1220,6 +1222,7 @@ mod tests {
             default: Some(serde_json::Value::Number(4.into())),
             read_only: false,
             section: None,
+            order: None,
         };
 
         let config = sample_config();
@@ -1248,6 +1251,7 @@ mod tests {
             default: Some(serde_json::Value::String("high-contrast".to_string())),
             read_only: false,
             section: None,
+            order: None,
         };
 
         let config = sample_config();

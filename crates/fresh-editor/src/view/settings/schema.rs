@@ -73,6 +73,9 @@ pub struct SettingSchema {
     pub read_only: bool,
     /// Section/group within the category (from x-section)
     pub section: Option<String>,
+    /// Sort order override (from x-order). Lower values sort first.
+    /// When set, overrides alphabetical sorting.
+    pub order: Option<i32>,
 }
 
 /// Type of a setting, determines which control to render
@@ -180,6 +183,9 @@ struct RawSchema {
     /// Section/group within the category for organizing related settings
     #[serde(rename = "x-section")]
     section: Option<String>,
+    /// Sort order override for field ordering in entry dialogs
+    #[serde(rename = "x-order")]
+    order: Option<i32>,
 }
 
 /// An entry in the x-enum-values array
@@ -336,8 +342,16 @@ fn parse_properties(
         settings.push(setting);
     }
 
-    // Sort settings alphabetically by name
-    settings.sort_by(|a, b| a.name.cmp(&b.name));
+    // Sort settings: by x-order (if set) first, then alphabetically by name.
+    // Settings with x-order come before those without.
+    settings.sort_by(|a, b| {
+        match (a.order, b.order) {
+            (Some(a_ord), Some(b_ord)) => a_ord.cmp(&b_ord).then_with(|| a.name.cmp(&b.name)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.name.cmp(&b.name),
+        }
+    });
 
     settings
 }
@@ -365,6 +379,9 @@ fn parse_setting(
     // Get section from schema or resolved ref
     let section = schema.section.clone().or_else(|| resolved.section.clone());
 
+    // Get order from schema or resolved ref
+    let order = schema.order.or(resolved.order);
+
     SettingSchema {
         path: path.to_string(),
         name: i18n_name(path, name),
@@ -373,6 +390,7 @@ fn parse_setting(
         default: schema.default.clone(),
         read_only,
         section,
+        order,
     }
 }
 
