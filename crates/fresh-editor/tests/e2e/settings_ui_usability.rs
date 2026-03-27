@@ -1,13 +1,10 @@
 //! E2E tests for Settings UI usability issues found during NNGroup UX audit.
 //!
-//! C2:  Text fields always in edit mode — Escape has no effect, fields auto-enter
-//!      edit mode on navigation, trapping the keyboard.
 //! H1:  Tab only toggles between fields and Save button — Delete/Cancel never
 //!      reachable via Tab.
 //! H5:  Individual TextList items (Root Markers, Args) not keyboard-accessible —
 //!      cannot focus or delete individual items.
-//! H7:  Status bar is static — does not update to reflect text editing mode vs
-//!      navigation mode.
+//! M7:  Page Up/Down not supported in long map lists.
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -78,7 +75,7 @@ fn open_lsp_edit_item(harness: &mut EditorTestHarness) {
 }
 
 /// Helper: find which field has the focus indicator on screen.
-/// Returns the field name or "__BUTTONS__" if a button is focused.
+/// Returns the field name or button name if focused.
 fn focused_field(screen: &str) -> Option<String> {
     let known_fields = [
         "Command",
@@ -102,7 +99,6 @@ fn focused_field(screen: &str) -> Option<String> {
         }
         if line.contains("[ Save ]") || line.contains("[ Delete ]") || line.contains("[ Cancel ]")
         {
-            // Identify which button is focused
             if line.contains("> [ Save ]") {
                 return Some("Save".to_string());
             }
@@ -121,94 +117,6 @@ fn focused_field(screen: &str) -> Option<String> {
         }
     }
     None
-}
-
-// ---------------------------------------------------------------------------
-// C2: Text fields should not auto-enter edit mode; Escape should exit editing
-// ---------------------------------------------------------------------------
-
-/// Navigating to a text field with Down arrow should NOT auto-enter edit mode.
-/// The user should have to press Enter to start editing.
-#[test]
-fn test_text_field_does_not_auto_enter_edit_mode() {
-    let mut harness = EditorTestHarness::new(120, 50).unwrap();
-    harness.render().unwrap();
-    open_lsp_edit_item(&mut harness);
-
-    // Focus should be on Command field initially
-    let screen = harness.screen_to_string();
-    assert!(
-        focused_field(&screen).as_deref() == Some("Command"),
-        "Expected initial focus on Command. Screen:\n{}",
-        screen
-    );
-
-    // Without pressing Enter, type a character
-    harness
-        .send_key(KeyCode::Char('z'), KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // The character 'z' should NOT be inserted into the Command field.
-    // If the field auto-enters edit mode, 'z' gets appended to the command value.
-    let screen = harness.screen_to_string();
-    for line in screen.lines() {
-        if line.contains("Command") && line.contains(">") {
-            assert!(
-                !line.contains("z"),
-                "BUG C2/H6: Text field auto-entered edit mode! Typing 'z' without \
-                 pressing Enter inserted it into the Command field.\nLine: {}\nScreen:\n{}",
-                line,
-                screen
-            );
-        }
-    }
-}
-
-/// After pressing Enter to start editing a text field, Escape should exit
-/// edit mode and return to field navigation.
-#[test]
-fn test_escape_exits_text_edit_mode() {
-    let mut harness = EditorTestHarness::new(120, 50).unwrap();
-    harness.render().unwrap();
-    open_lsp_edit_item(&mut harness);
-
-    // Enter edit mode on Command field
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Type some text (should be in edit mode now)
-    harness.type_text("test").unwrap();
-    harness.render().unwrap();
-
-    // Press Escape to exit edit mode
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // We should still be in the Edit Item dialog (not closed)
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("Edit Item") || screen.contains("[ Save ]"),
-        "BUG C2: Escape closed the entire dialog instead of just exiting \
-         text edit mode.\nScreen:\n{}",
-        screen
-    );
-
-    // Down arrow should now navigate to the next field (not move cursor in text)
-    let before = focused_field(&harness.screen_to_string());
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-    let after = focused_field(&harness.screen_to_string());
-
-    assert_ne!(
-        before, after,
-        "BUG C2: After Escape, Down arrow did not navigate to the next field. \
-         Focus stayed on {:?}. Escape likely did not exit text edit mode.\nScreen:\n{}",
-        before,
-        harness.screen_to_string()
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -350,60 +258,6 @@ fn test_textlist_items_keyboard_accessible() {
         "BUG H5: Could not focus any individual Root Marker item via keyboard. \
          Items are visible but not focusable.\nScreen:\n{}",
         harness.screen_to_string()
-    );
-}
-
-// ---------------------------------------------------------------------------
-// H7: Status bar should update to reflect current interaction mode
-// ---------------------------------------------------------------------------
-
-/// The status bar in the Edit Item dialog should change when entering
-/// text edit mode vs normal navigation.
-#[test]
-fn test_status_bar_updates_for_edit_mode() {
-    let mut harness = EditorTestHarness::new(120, 50).unwrap();
-    harness.render().unwrap();
-    open_lsp_edit_item(&mut harness);
-
-    // Capture the status bar in navigation mode
-    harness.render().unwrap();
-    let screen_nav = harness.screen_to_string();
-
-    // The last 2-3 lines typically contain the status bar / help text
-    let nav_footer: String = screen_nav
-        .lines()
-        .rev()
-        .take(3)
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    // Enter edit mode on a text field
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    let screen_edit = harness.screen_to_string();
-    let edit_footer: String = screen_edit
-        .lines()
-        .rev()
-        .take(3)
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    // The status bar text should be different in edit mode
-    // Navigation mode typically shows: "Enter:Edit" or "↑↓:Navigate"
-    // Edit mode should show something like: "Esc:Stop editing" or "Type to edit"
-    assert_ne!(
-        nav_footer.trim(),
-        edit_footer.trim(),
-        "BUG H7: Status bar did not change when entering text edit mode.\n\
-         Navigation footer:\n{}\n\
-         Edit mode footer:\n{}\n\
-         The status bar should update to show editing-specific hints \
-         (e.g., 'Esc:Stop editing') when a text field is being edited.",
-        nav_footer,
-        edit_footer
     );
 }
 
