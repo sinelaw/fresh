@@ -2874,7 +2874,6 @@ fn render_entry_dialog_inner(
     dialog: &mut super::entry_dialog::EntryDialogState,
     theme: &Theme,
 ) {
-
     // Calculate dialog size - use most of available space for editing
     let dialog_width = (parent_area.width * 85 / 100).clamp(50, 90);
     let dialog_height = (parent_area.height * 90 / 100).max(15);
@@ -2980,8 +2979,7 @@ fn render_entry_dialog_inner(
                             .fg(theme.line_number_fg)
                             .add_modifier(Modifier::BOLD);
                         frame.render_widget(
-                            Paragraph::new(format!("── {} ──", section_name))
-                                .style(section_style),
+                            Paragraph::new(format!("── {} ──", section_name)).style(section_style),
                             Rect::new(inner.x + 1, screen_y, inner.width.saturating_sub(2), 1),
                         );
                         screen_y += 1;
@@ -3191,8 +3189,7 @@ fn render_entry_dialog_inner(
         let help_style = Style::default().fg(theme.line_number_fg);
         frame.render_widget(Paragraph::new(help).style(help_style), help_area);
     } else {
-        let help =
-            "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit  Ctrl+S:Save  Esc:Cancel";
+        let help = "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit  Ctrl+S:Save  Esc:Cancel";
         let help_style = Style::default().fg(theme.line_number_fg);
         frame.render_widget(Paragraph::new(help).style(help_style), help_area);
     }

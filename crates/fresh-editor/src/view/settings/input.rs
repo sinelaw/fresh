@@ -461,9 +461,7 @@ impl SettingsState {
                         }
                         dialog.current_item().map(|item| match &item.control {
                             SettingControl::Text(_) | SettingControl::TextList(_) => true,
-                            SettingControl::Number(_) => {
-                                c.is_ascii_digit() || c == '-' || c == '.'
-                            }
+                            SettingControl::Number(_) => c.is_ascii_digit() || c == '-' || c == '.',
                             _ => false,
                         })
                     })

@@ -248,58 +248,33 @@ impl Default for LspLanguageConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/command"))]
 pub struct LspServerConfig {
-    /// Display name for this server (e.g., "tsserver", "eslint").
-    /// Defaults to the command basename if not specified.
-    #[serde(default)]
-    pub name: Option<String>,
-
     /// Command to spawn the server.
     /// Required when enabled=true, ignored when enabled=false.
     #[serde(default)]
+    #[schemars(extend("x-order" = 1))]
     pub command: String,
-
-    /// Arguments to pass to the server
-    #[serde(default)]
-    pub args: Vec<String>,
 
     /// Whether the server is enabled
     #[serde(default = "default_true")]
+    #[schemars(extend("x-order" = 2))]
     pub enabled: bool,
+
+    /// Display name for this server (e.g., "tsserver", "eslint").
+    /// Defaults to the command basename if not specified.
+    #[serde(default)]
+    #[schemars(extend("x-order" = 3))]
+    pub name: Option<String>,
+
+    /// Arguments to pass to the server
+    #[serde(default)]
+    #[schemars(extend("x-order" = 4))]
+    pub args: Vec<String>,
 
     /// Whether to auto-start this LSP server when opening matching files
     /// If false (default), the server must be started manually via command palette
     #[serde(default)]
+    #[schemars(extend("x-order" = 5))]
     pub auto_start: bool,
-
-    /// Process resource limits (memory and CPU)
-    #[serde(default)]
-    pub process_limits: ProcessLimits,
-
-    /// Custom initialization options to send to the server
-    /// These are passed in the `initializationOptions` field of the LSP Initialize request
-    #[serde(default)]
-    pub initialization_options: Option<serde_json::Value>,
-
-    /// Environment variables to set for the LSP server process.
-    /// These are added to (or override) the inherited parent environment.
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-
-    /// Override the LSP languageId sent in textDocument/didOpen based on file extension.
-    /// Maps file extension (without dot) to LSP language ID string.
-    /// For example: `{"tsx": "typescriptreact", "jsx": "javascriptreact"}`
-    #[serde(default)]
-    pub language_id_overrides: HashMap<String, String>,
-
-    /// Restrict this server to only handle the listed features.
-    /// Mutually exclusive with `except_features`. If neither is set, all features are handled.
-    #[serde(default)]
-    pub only_features: Option<Vec<LspFeature>>,
-
-    /// Exclude the listed features from this server.
-    /// Mutually exclusive with `only_features`. If neither is set, all features are handled.
-    #[serde(default)]
-    pub except_features: Option<Vec<LspFeature>>,
 
     /// File/directory names to search for when detecting the workspace root.
     /// The editor walks upward from the opened file's directory looking for
@@ -310,7 +285,44 @@ pub struct LspServerConfig {
     /// If the walk reaches a filesystem boundary without a match, uses the
     /// file's parent directory (never cwd or $HOME).
     #[serde(default)]
+    #[schemars(extend("x-order" = 6))]
     pub root_markers: Vec<String>,
+
+    /// Environment variables to set for the LSP server process.
+    /// These are added to (or override) the inherited parent environment.
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Advanced", "x-order" = 10))]
+    pub env: HashMap<String, String>,
+
+    /// Override the LSP languageId sent in textDocument/didOpen based on file extension.
+    /// Maps file extension (without dot) to LSP language ID string.
+    /// For example: `{"tsx": "typescriptreact", "jsx": "javascriptreact"}`
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Advanced", "x-order" = 11))]
+    pub language_id_overrides: HashMap<String, String>,
+
+    /// Custom initialization options to send to the server
+    /// These are passed in the `initializationOptions` field of the LSP Initialize request
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Advanced", "x-order" = 12))]
+    pub initialization_options: Option<serde_json::Value>,
+
+    /// Restrict this server to only handle the listed features.
+    /// Mutually exclusive with `except_features`. If neither is set, all features are handled.
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Advanced", "x-order" = 13))]
+    pub only_features: Option<Vec<LspFeature>>,
+
+    /// Exclude the listed features from this server.
+    /// Mutually exclusive with `only_features`. If neither is set, all features are handled.
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Advanced", "x-order" = 14))]
+    pub except_features: Option<Vec<LspFeature>>,
+
+    /// Process resource limits (memory and CPU)
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Advanced", "x-order" = 15))]
+    pub process_limits: ProcessLimits,
 }
 
 impl LspServerConfig {

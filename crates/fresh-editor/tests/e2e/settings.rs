@@ -3549,9 +3549,7 @@ fn test_usability_entry_dialog_button_focus_indicator() {
     harness.render().unwrap();
 
     // Tab toggles between items and buttons — press Tab to reach buttons
-    harness
-        .send_key(KeyCode::Tab, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();

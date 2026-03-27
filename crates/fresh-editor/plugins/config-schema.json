@@ -1235,37 +1235,6 @@
       },
       "x-display-field": "/command"
     },
-    "ProcessLimits": {
-      "description": "Configuration for process resource limits",
-      "type": "object",
-      "properties": {
-        "max_memory_percent": {
-          "description": "Maximum memory usage as percentage of total system memory (None = no limit)\nDefault is 50% of total system memory",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0,
-          "default": null
-        },
-        "max_cpu_percent": {
-          "description": "Maximum CPU usage as percentage of total CPU (None = no limit)\nFor multi-core systems, 100% = 1 core, 200% = 2 cores, etc.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0,
-          "default": null
-        },
-        "enabled": {
-          "description": "Enable resource limiting (can be disabled per-platform)",
-          "type": "boolean",
-          "default": true
-        }
-      }
-    },
     "LspFeature": {
       "description": "LSP features that can be routed to specific servers in a multi-server setup.\n\nFeatures are classified as either \"merged\" (results from all servers are combined)\nor \"exclusive\" (first eligible server wins). This classification is used by the\ndispatch layer, not by this enum itself.",
       "oneOf": [
@@ -1345,6 +1314,37 @@
           "const": "document_highlight"
         }
       ]
+    },
+    "ProcessLimits": {
+      "description": "Configuration for process resource limits",
+      "type": "object",
+      "properties": {
+        "max_memory_percent": {
+          "description": "Maximum memory usage as percentage of total system memory (None = no limit)\nDefault is 50% of total system memory",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "max_cpu_percent": {
+          "description": "Maximum CPU usage as percentage of total CPU (None = no limit)\nFor multi-core systems, 100% = 1 core, 200% = 2 cores, etc.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "enabled": {
+          "description": "Enable resource limiting (can be disabled per-platform)",
+          "type": "boolean",
+          "default": true
+        }
+      }
     },
     "WarningsConfig": {
       "description": "Warning notification configuration",

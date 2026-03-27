@@ -344,13 +344,11 @@ fn parse_properties(
 
     // Sort settings: by x-order (if set) first, then alphabetically by name.
     // Settings with x-order come before those without.
-    settings.sort_by(|a, b| {
-        match (a.order, b.order) {
-            (Some(a_ord), Some(b_ord)) => a_ord.cmp(&b_ord).then_with(|| a.name.cmp(&b.name)),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.name.cmp(&b.name),
-        }
+    settings.sort_by(|a, b| match (a.order, b.order) {
+        (Some(a_ord), Some(b_ord)) => a_ord.cmp(&b_ord).then_with(|| a.name.cmp(&b.name)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.name.cmp(&b.name),
     });
 
     settings
