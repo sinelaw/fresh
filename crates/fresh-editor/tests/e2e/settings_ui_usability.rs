@@ -97,22 +97,47 @@ fn focused_field(screen: &str) -> Option<String> {
         if !trimmed.starts_with('>') && !trimmed.contains(">●") && !trimmed.contains("> ●") {
             continue;
         }
-        if line.contains("[ Save ]") || line.contains("[ Delete ]") || line.contains("[ Cancel ]")
-        {
-            if line.contains("> [ Save ]") {
-                return Some("Save".to_string());
-            }
-            if line.contains("> [ Delete ]") {
-                return Some("Delete".to_string());
-            }
-            if line.contains("> [ Cancel ]") {
-                return Some("Cancel".to_string());
-            }
-            return Some("__BUTTONS__".to_string());
-        }
         for field in &known_fields {
             if line.contains(field) {
                 return Some(field.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Helper: find which button has focus by looking for the ">" indicator
+/// rendered before button text. The ">" is at a separate cell position,
+/// so we search for it in the vicinity of button labels.
+fn focused_button(harness: &EditorTestHarness) -> Option<String> {
+    let screen = harness.screen_to_string();
+    let buttons = ["Save", "Delete", "Cancel"];
+
+    for (row_idx, line) in screen.lines().enumerate() {
+        for button in &buttons {
+            let label = format!("[ {} ]", button);
+            if let Some(col) = line.find(&label) {
+                // Check for ">" indicator in the 1-3 cells before the button
+                let col = col as u16;
+                let row = row_idx as u16;
+                for offset in 1..=3 {
+                    if col >= offset {
+                        if let Some(cell) = harness.get_cell(col - offset, row) {
+                            if cell.trim() == ">" {
+                                return Some(button.to_string());
+                            }
+                        }
+                    }
+                }
+                // Also check style — focused buttons use REVERSED modifier
+                if let Some(style) = harness.get_cell_style(col + 2, row) {
+                    if style
+                        .add_modifier
+                        .contains(ratatui::style::Modifier::REVERSED)
+                    {
+                        return Some(button.to_string());
+                    }
+                }
             }
         }
     }
@@ -130,46 +155,45 @@ fn test_tab_cycles_through_all_buttons() {
     harness.render().unwrap();
     open_lsp_edit_item(&mut harness);
 
-    // Collect distinct focused elements via repeated Tab presses.
-    // We need to find Save, Delete, and Cancel all reachable via Tab.
-    let mut visited: Vec<String> = Vec::new();
+    // Collect distinct focused buttons via repeated Tab presses.
+    let mut visited_buttons: Vec<String> = Vec::new();
 
     for _ in 0..20 {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
-        if let Some(f) = focused_field(&harness.screen_to_string()) {
-            if visited.last().map(|s| s.as_str()) != Some(f.as_str()) {
-                visited.push(f.clone());
+        if let Some(btn) = focused_button(&harness) {
+            if visited_buttons.last().map(|s| s.as_str()) != Some(btn.as_str()) {
+                visited_buttons.push(btn.clone());
             }
         }
 
         // Stop if we've seen all 3 buttons
-        if visited.contains(&"Save".to_string())
-            && visited.contains(&"Delete".to_string())
-            && visited.contains(&"Cancel".to_string())
+        if visited_buttons.contains(&"Save".to_string())
+            && visited_buttons.contains(&"Delete".to_string())
+            && visited_buttons.contains(&"Cancel".to_string())
         {
             break;
         }
     }
 
     assert!(
-        visited.contains(&"Save".to_string()),
-        "Tab never reached Save button. Visited: {:?}\nScreen:\n{}",
-        visited,
+        visited_buttons.contains(&"Save".to_string()),
+        "Tab never reached Save button. Visited buttons: {:?}\nScreen:\n{}",
+        visited_buttons,
         harness.screen_to_string()
     );
     assert!(
-        visited.contains(&"Delete".to_string()),
+        visited_buttons.contains(&"Delete".to_string()),
         "BUG H1: Tab never reached Delete button. Only visited: {:?}\n\
          Delete is only reachable via Right arrow from Save, which is non-standard.\nScreen:\n{}",
-        visited,
+        visited_buttons,
         harness.screen_to_string()
     );
     assert!(
-        visited.contains(&"Cancel".to_string()),
+        visited_buttons.contains(&"Cancel".to_string()),
         "BUG H1: Tab never reached Cancel button. Only visited: {:?}\nScreen:\n{}",
-        visited,
+        visited_buttons,
         harness.screen_to_string()
     );
 }

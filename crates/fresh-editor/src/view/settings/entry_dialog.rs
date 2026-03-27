@@ -547,22 +547,59 @@ impl EntryDialogState {
     /// Toggle focus between items region and buttons region.
     /// Used by Tab key to provide region-level navigation.
     pub fn toggle_focus_region(&mut self) {
+        self.toggle_focus_region_direction(true);
+    }
+
+    /// Toggle between items and buttons regions.
+    /// When in buttons region, Tab cycles through buttons before returning to items.
+    /// `forward` controls direction: true = Tab, false = Shift+Tab.
+    pub fn toggle_focus_region_direction(&mut self, forward: bool) {
         if self.editing_text {
             return;
         }
 
         if self.focus_on_buttons {
-            // Move back to items (restore last selected item or first editable)
-            if self.first_editable_index < self.items.len() {
-                self.focus_on_buttons = false;
-                if self.selected_item < self.first_editable_index {
-                    self.selected_item = self.first_editable_index;
+            if forward {
+                // Tab forward through buttons, then back to items
+                if self.focused_button + 1 < self.button_count() {
+                    self.focused_button += 1;
+                } else {
+                    // Past last button — return to items
+                    if self.first_editable_index < self.items.len() {
+                        self.focus_on_buttons = false;
+                        if self.selected_item < self.first_editable_index {
+                            self.selected_item = self.first_editable_index;
+                        }
+                    } else {
+                        // All items read-only, wrap to first button
+                        self.focused_button = 0;
+                    }
+                }
+            } else {
+                // Shift+Tab backward through buttons, then back to items
+                if self.focused_button > 0 {
+                    self.focused_button -= 1;
+                } else {
+                    // Before first button — return to items
+                    if self.first_editable_index < self.items.len() {
+                        self.focus_on_buttons = false;
+                        if self.selected_item < self.first_editable_index {
+                            self.selected_item = self.first_editable_index;
+                        }
+                    } else {
+                        // All items read-only, wrap to last button
+                        self.focused_button = self.button_count().saturating_sub(1);
+                    }
                 }
             }
         } else {
             // Move to buttons
             self.focus_on_buttons = true;
-            self.focused_button = 0;
+            self.focused_button = if forward {
+                0
+            } else {
+                self.button_count().saturating_sub(1)
+            };
         }
 
         self.update_focus_states();

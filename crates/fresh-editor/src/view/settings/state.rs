@@ -413,6 +413,22 @@ impl SettingsState {
         }
     }
 
+    /// Move selection down by a page (viewport height worth of items)
+    pub fn select_next_page(&mut self) {
+        let page_size = self.scroll_panel.viewport_height().max(1);
+        for _ in 0..page_size {
+            self.select_next();
+        }
+    }
+
+    /// Move selection up by a page (viewport height worth of items)
+    pub fn select_prev_page(&mut self) {
+        let page_size = self.scroll_panel.viewport_height().max(1);
+        for _ in 0..page_size {
+            self.select_prev();
+        }
+    }
+
     /// Switch focus between panels: Categories -> Settings -> Footer -> Categories
     pub fn toggle_focus(&mut self) {
         let old_panel = self.focus_panel();

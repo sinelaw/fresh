@@ -328,7 +328,7 @@ impl SettingsState {
             KeyCode::BackTab => {
                 // Shift+Tab also toggles between items and buttons (reverse)
                 if let Some(dialog) = self.entry_dialog_mut() {
-                    dialog.toggle_focus_region();
+                    dialog.toggle_focus_region_direction(false);
                 }
             }
             KeyCode::Left => {
@@ -699,6 +699,14 @@ impl SettingsState {
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 self.handle_control_activate(ctx);
+                InputResult::Consumed
+            }
+            KeyCode::PageDown => {
+                self.select_next_page();
+                InputResult::Consumed
+            }
+            KeyCode::PageUp => {
+                self.select_prev_page();
                 InputResult::Consumed
             }
             KeyCode::Char('/') => {
