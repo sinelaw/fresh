@@ -85,21 +85,43 @@ impl MapState {
     /// Get the display value for an entry (either from display_field or fallback to field count)
     pub fn get_display_value(&self, value: &serde_json::Value) -> String {
         if let Some(ref field) = self.display_field {
-            if let Some(v) = value.pointer(field) {
-                return match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Bool(b) => b.to_string(),
-                    serde_json::Value::Number(n) => n.to_string(),
-                    serde_json::Value::Null => "null".to_string(),
-                    serde_json::Value::Array(arr) => format!("[{} items]", arr.len()),
-                    serde_json::Value::Object(obj) => format!("{{{} fields}}", obj.len()),
-                };
+            // For array values, apply display_field to the first element
+            let target = if let serde_json::Value::Array(arr) = value {
+                arr.first()
+            } else {
+                Some(value)
+            };
+            if let Some(target) = target {
+                if let Some(v) = target.pointer(field) {
+                    return match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::Null => "null".to_string(),
+                        serde_json::Value::Array(arr) => format!("[{} items]", arr.len()),
+                        serde_json::Value::Object(obj) => format!("{{{} fields}}", obj.len()),
+                    };
+                }
             }
         }
-        // Fallback to showing field count
+        // Fallback to showing field count with correct pluralization
         match value {
-            serde_json::Value::Object(obj) => format!("{{{} fields}}", obj.len()),
-            serde_json::Value::Array(arr) => format!("[{} items]", arr.len()),
+            serde_json::Value::Object(obj) => {
+                let n = obj.len();
+                if n == 1 {
+                    "1 field".to_string()
+                } else {
+                    format!("{n} fields")
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                let n = arr.len();
+                if n == 1 {
+                    "1 item".to_string()
+                } else {
+                    format!("{n} items")
+                }
+            }
             other => other.to_string(),
         }
     }

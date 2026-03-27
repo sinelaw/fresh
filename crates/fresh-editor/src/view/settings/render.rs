@@ -113,6 +113,20 @@ pub fn render_settings(
     state: &mut SettingsState,
     theme: &Theme,
 ) -> SettingsLayout {
+    // Minimum size guard — prevent panics from zero-sized layout arithmetic
+    if area.width < 40 || area.height < 10 {
+        let msg = "[Terminal too small for settings]";
+        let x = area.x + area.width.saturating_sub(msg.len() as u16) / 2;
+        let y = area.y + area.height / 2;
+        if area.width > 0 && area.height > 0 {
+            frame.render_widget(
+                Paragraph::new(msg).style(Style::default().fg(theme.diagnostic_warning_fg)),
+                Rect::new(x, y, msg.len() as u16, 1),
+            );
+        }
+        return SettingsLayout::new(Rect::ZERO);
+    }
+
     // Calculate modal size (90% of screen width, 90% height to fill most of available space)
     let modal_width = (area.width * 90 / 100).min(160);
     let modal_height = area.height * 90 / 100;
@@ -203,12 +217,15 @@ pub fn render_settings(
         render_reset_dialog(frame, modal_area, state, theme);
     }
 
-    // Render entry detail dialog if showing
+    // Render entry dialog stack — dim between each level
     if has_entry {
-        if !has_help {
-            crate::view::dimming::apply_dimming(frame, modal_area);
+        let stack_depth = state.entry_dialog_stack.len();
+        for dialog_idx in 0..stack_depth {
+            if !has_help || dialog_idx < stack_depth - 1 {
+                crate::view::dimming::apply_dimming(frame, modal_area);
+            }
+            render_entry_dialog_at(frame, modal_area, state, theme, dialog_idx);
         }
-        render_entry_dialog(frame, modal_area, state, theme);
     }
 
     // Render help overlay if showing
@@ -2833,19 +2850,30 @@ fn render_reset_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
     );
 }
 
-/// Render the entry detail dialog for editing Language/LSP/Keybinding entries
-///
-/// Now uses the same SettingItem/SettingControl infrastructure as the main settings UI,
-/// eliminating duplication and ensuring consistent rendering.
-fn render_entry_dialog(
+/// Render a specific entry dialog from the stack by index.
+fn render_entry_dialog_at(
     frame: &mut Frame,
     parent_area: Rect,
     state: &mut SettingsState,
     theme: &Theme,
+    dialog_idx: usize,
 ) {
-    let Some(dialog) = state.entry_dialog_mut() else {
+    let Some(dialog) = state.entry_dialog_stack.get_mut(dialog_idx) else {
         return;
     };
+    render_entry_dialog_inner(frame, parent_area, dialog, theme);
+}
+
+/// Render the entry detail dialog for editing Language/LSP/Keybinding entries
+///
+/// Now uses the same SettingItem/SettingControl infrastructure as the main settings UI,
+/// eliminating duplication and ensuring consistent rendering.
+fn render_entry_dialog_inner(
+    frame: &mut Frame,
+    parent_area: Rect,
+    dialog: &mut super::entry_dialog::EntryDialogState,
+    theme: &Theme,
+) {
 
     // Calculate dialog size - use most of available space for editing
     let dialog_width = (parent_area.width * 85 / 100).clamp(50, 90);
