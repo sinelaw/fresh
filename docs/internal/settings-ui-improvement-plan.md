@@ -2,7 +2,7 @@
 
 ## Overview
 
-This plan systematically UX tests the Settings UI dialogs against UI design principles and NNGroup best practices, identifies gaps, and defines fixes in priority order. Two rounds of testing have been completed; this document reflects the current state after significant fixes were applied.
+This plan tracks systematic UX testing of the Settings UI dialogs against UI design principles and NNGroup best practices. Three rounds of testing completed; this document reflects the current state.
 
 ## Architecture Context
 
@@ -20,36 +20,28 @@ Key files:
 
 ---
 
-## Testing Methodology
+## Testing History
 
-- Three parallel test agents using tmux with `capture-pane -p -e` (ANSI color capture)
-- Evaluated against NNGroup's 10 usability heuristics
-- Tested at all 4 dialog nesting levels
-- ANSI escape code analysis for highlight/focus consistency
-
-### Dialog Hierarchy
-
-```
-Level 1: Main Settings panel (sidebar + content)
-Level 2: Edit Value dialog (e.g., LSP language entry — shows array of servers)
-Level 3: Edit/Add Item dialog (e.g., individual LSP server — shows all fields)
-Level 4: Inline editing / sub-dialogs (text edit, JSON code block, nested map Add Value)
-```
+| Round | Rebased On | Agents | Key Changes Found |
+|-------|-----------|--------|-------------------|
+| 1 | Initial | 4 agents | Identified 20 bugs across all categories |
+| 2 | master (ced0969) | 3 agents | C1, H3, H4, M1, M3, M4 fixed. C2 behavior changed (no longer closes dialog, but Esc now does nothing) |
+| 3 | master (efbf75f) | 3 agents | C3 fixed, M8 fixed (sticky headers), "Advanced" section divider added. Composite control navigation improved. |
 
 ---
 
-## Fixed Issues (Verified in Round 2)
+## Fixed Issues (All Rounds)
 
-These bugs from Round 1 are now confirmed fixed:
-
-| ID | Description | Status |
-|----|-------------|--------|
-| C1 | Text input not rendering in Edit Item dialog | **FIXED** — Characters appear immediately, rendered in white (`38;5;15`) on dark bg (`48;5;16`) |
-| H3 | Down-arrow skips Command field | **FIXED** — Navigation is fully symmetric. Complete order: Command → Enabled → Name → Args → Auto Start → Root Markers → Advanced |
-| H4 | Ctrl+S doesn't work in entry dialogs | **FIXED** — Ctrl+S saves and closes Edit Item from any field, including during text editing |
-| M1 | Name field opens wrong dialog type | **FIXED** — Name field is now inline text edit with bracket-style input `[ ]` |
-| M3 | LSP entries display `[1 items]` instead of command | **FIXED** — Entries show command names (e.g., `python → pylsp`, `rust → rust-analyzer`). Long names truncated with `...` |
-| M4 | Parent dialog not dimmed when child opens | **FIXED** — Progressive dimming implemented. Active dialog: bright cyan borders (`38;5;14`). Parent dimmed: gray text (`38;5;59`), dark teal borders (`38;5;29`) |
+| ID | Description | Fixed In |
+|----|-------------|----------|
+| C1 | Text input not rendering in Edit Item dialog | Round 2 |
+| C3 | Enter on array item in Edit Value closes dialog | Round 3 |
+| H3 | Down-arrow skips Command field | Round 2 |
+| H4 | Ctrl+S doesn't work in entry dialogs | Round 2 |
+| M1 | Name field opens wrong dialog type | Round 2 |
+| M3 | LSP entries display `[1 items]` instead of command | Round 2 |
+| M4 | Parent dialog not dimmed when child opens | Round 2 |
+| M8 | Section header scrolls away, losing context | Round 3 (sticky headers) |
 
 ---
 
@@ -57,86 +49,87 @@ These bugs from Round 1 are now confirmed fixed:
 
 ### Critical Bugs
 
-#### C2: Text fields trap keyboard — no way to exit edit mode
-**Tested (Round 2):** Navigate to Command field in Edit Item dialog, press Enter to edit, type text (renders correctly now). Press Escape.
-**Expected:** Exit text edit mode, return to field navigation.
-**Actual:** Escape does nothing. Field stays in edit mode (cursor `[7m]` still active, label still blue `38;5;25`). Down/Up/Tab all captured and do nothing. The ONLY way out is Ctrl+S (which saves and closes the entire dialog).
-**Impact:** Users cannot navigate away from a text field once they start editing. They must Ctrl+S to escape, which also closes the dialog — preventing them from editing other fields.
-**NNGroup violation:** User Control and Freedom — "Users often perform actions by mistake. They need a clearly marked 'emergency exit'."
-
-#### C3: Enter on existing array item in Edit Value (Level 2) closes dialog
-**Tested (Round 2):** In Level 2 Edit Value dialog showing `-> pylsp [x]`, navigate to array item and press Enter.
-**Expected:** Opens Edit Item dialog (Level 3) for that server entry.
-**Actual:** Dialog closes, back at Settings (Level 1).
-**Workaround:** Press Enter on the "Value:" header label instead.
+#### C2: Text fields always in edit mode — no way to exit
+**Round 3 status:** NOT FIXED
+**Behavior:** Text fields (Command, Name, Comment Prefix, etc.) auto-enter edit mode when navigated to. The inverse video cursor (`[7m]`) appears and the label turns blue (`38;5;25`) immediately on focus — no Enter press required. Escape has zero visible effect: cursor stays, label stays blue, characters can still be typed. The status bar says "Enter:Edit" but Enter is not required.
+**Impact:** Users cannot distinguish "navigating fields" from "editing a field value." Accidental keystrokes modify field values. The only way to leave the dialog is Ctrl+S (save+close) or multiple Escapes (which eventually close the dialog).
+**ANSI evidence:**
+```
+Navigating to field:  [38;5;25mCommand : [astro-ls[7m ]   <- blue label, cursor active
+After pressing Esc:   [38;5;25mCommand : [astro-ls[7m ]   <- IDENTICAL
+After pressing Down:  [38;5;15mCommand : [astro-ls]        <- normal white (left field)
+```
+**Root cause:** `editing_text` flag may not be properly toggled, or text fields use a different edit-mode mechanism (always-inline) that bypasses the `start_editing()`/`stop_editing()` flow.
+**NNGroup violations:**
+- User Control and Freedom — no "emergency exit" from edit mode
+- Error Prevention — accidental keystrokes modify values
+- Consistency — contradicts "Enter:Edit" status bar text
 
 ### High Priority Bugs
 
-#### H1: Tab only toggles to Save button, never reaches Delete/Cancel
-**Tested (Round 2):** In Edit Item dialog, Tab acts as binary toggle:
-- Odd presses: Focus jumps to Save button only (bold+reverse `[1;7m]`)
-- Even presses: Focus jumps back to current field
-Tab NEVER reaches Delete or Cancel buttons. Shift+Tab is identical to Tab.
-**Workaround:** Down arrow navigates sequentially through all fields AND all three buttons (Save → Delete → Cancel → wraps to first field).
-**NNGroup violation:** Consistency and Standards — Tab should cycle through all interactive controls per platform conventions.
+#### H1: Tab only toggles between fields and Save button
+**Round 3 status:** NOT FIXED
+**Behavior:** Tab alternates between current field and Save button. Never reaches Delete or Cancel. Shift+Tab identical to Tab.
+**Workaround:** Down arrow from last field cycles through Save → Delete → Cancel. Right arrow from Save reaches Delete → Cancel.
+**NNGroup violation:** Consistency and Standards — Tab should cycle through all interactive controls.
 
-#### H2: [+] Add new buttons not keyboard-focusable in Level 3 sub-sections
-**Tested (Round 2):** In Edit Item dialog, Args/Env/Language Id Overrides/Root Markers show `[+] Add new` buttons. Down arrow navigation skips all of them.
-**Note:** At Level 1 settings, `[+] Add new` buttons (e.g., under Keybindings) ARE reachable. Bug is specific to Level 3 context.
-**Additional:** When pressing Enter on a section like Args, an "expanded sub-edit mode" activates where Down no longer navigates away and Tab does nothing. Only Esc escapes.
-**NNGroup violation:** Keyboard Accessibility (WCAG 2.1 Level A) — All visible interactive elements must be keyboard-reachable.
+#### H2: [+] Add new buttons not directly focusable in Level 3
+**Round 3 status:** PARTIALLY FIXED
+**Behavior:** Down arrow navigation visits composite control items (e.g., Args → "--stdio" item) but still skips [+] Add new buttons.
+**Workaround:** Enter on section headers (Args, Root Markers) opens inline text input with [+]. Enter on map sections (Env, Language Id Overrides) opens "Add Value" dialog. Adding items IS possible, just not through the visible [+] buttons.
+**NNGroup violation:** WCAG 2.1 Level A — visible interactive elements must be keyboard-reachable.
 
-#### H5: Individual Root Marker/TextList items not keyboard-accessible
-**Tested (Round 2):** Root Markers shows items (pyproject.toml, setup.py, etc.) with [x] delete buttons. Cannot focus individual markers or delete buttons via keyboard.
+#### H5: Individual TextList items not keyboard-editable/deletable
+**Round 3 status:** NOT FIXED
+**Behavior:** Root Markers shows items with [x] delete buttons. Cannot focus individual items or delete buttons via keyboard.
 
-#### H6 (NEW): Text field auto-enters edit mode — accidental modifications
-**Tested (Round 2):** When navigating to a text field (Command, Name), it auto-enters edit mode without pressing Enter. Any accidental keystrokes while navigating modify the field value with no undo.
-**NNGroup violation:** Error Prevention — "Eliminate error-prone conditions or present users with a confirmation option."
+#### H6: Text fields auto-enter edit mode on navigation
+**Round 3 status:** NOT FIXED (see C2 — same root cause)
+**Behavior:** Navigating to any text field with Down/Up immediately activates edit mode without pressing Enter. This makes it impossible to "select" a text field without editing it.
 
-#### H7 (NEW): Status bar is static — doesn't reflect current mode
-**Tested (Round 2):** Edit Item footer always shows `Enter:Edit  Ctrl+S:Save  Esc:Cancel` regardless of mode.
-- In text editing mode: no change (should show "Esc:Stop editing")
-- In expanded sub-section: no change
-- In dropdown: no change
-The only edit-mode indicators are subtle: cursor inverse video (`[7m]`) and label color change (white→blue `38;5;25`).
-**NNGroup violation:** Visibility of System Status — "The design should always keep users informed about what is going on."
+#### H7: Status bar is static — doesn't reflect current mode
+**Round 3 status:** NOT FIXED
+**Behavior:** Footer always shows `↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit  Ctrl+S:Save  Esc:Cancel` regardless of:
+- Text field in auto-edit mode (should show "Esc:Stop editing")
+- Dropdown open (should show "↑↓:Select  Enter:Confirm")
+- Button focused (should show "Enter:Activate  ←→:Navigate")
 
 ### Medium Priority Bugs
 
 #### M2: Numeric spinner typed input leaks to adjacent fields
-**Status:** Not re-tested in Round 2. Likely still present.
+**Status:** Not re-tested in Round 3. Likely still present.
 
 #### M5: No position indicator in long lists
-**Tested (Round 2):** Scrollbar IS present (thumb: `48;5;3` yellow, track: `48;5;15` white in main panel; thumb: `38;5;70` green, track: `38;5;58` olive in dialogs). However there is no numeric position indicator ("X of Y items").
-**NNGroup violation:** Recognition Rather Than Recall — Users can't see total items or their position.
+**Round 3 status:** NOT FIXED
+**Tested:** Scrollbar IS present with proportional thumb size. Colors: main panel thumb `48;5;3` (olive), track `48;5;15` (white). Dialog thumb `38;5;70` (green), track `48;5;239` (dark gray). But no numeric "X of Y" indicator anywhere.
 
-#### M6: Crash on very small terminal
-**Status:** Not re-tested in Round 2. Likely still present.
+#### M7: No Page Up/Down or Home/End in long lists
+**Round 3 status:** NOT FIXED
+**Tested:** PageDown, PageUp, Home, End keys have zero effect in map lists (Languages ~60 entries, LSP ~40 entries). Only one-at-a-time Up/Down navigation.
 
-#### M7 (NEW): No Page Up/Down or Home/End in long lists
-**Tested (Round 2):** LSP list has 40+ entries. Only Up/Down one-at-a-time navigation. No Page Up/Down for jumping, no Home/End for first/last.
-**NNGroup violation:** Flexibility and Efficiency of Use — Power users need accelerators.
+#### M9: No confirmation when discarding changes via Esc
+**Status:** Not re-tested in Round 3. Likely still present.
 
-#### M8 (NEW): Section header scrolls away, losing context
-**Tested (Round 2):** When scrolling deep into the LSP list, the `> Lsp:` header scrolls off-screen. User loses context about which section they're in.
+#### M10: No search/filter within map lists
+**Status:** Not re-tested in Round 3.
 
-#### M9 (NEW): No confirmation when discarding changes via Esc
-**Tested (Round 2):** Modified Command field, pressed Esc. Dialog closed immediately, changes discarded. No "Discard changes?" confirmation.
-**NNGroup violation:** Error Prevention — Destructive actions should require confirmation.
+#### M11 (NEW): Map table entries have weakest focus indicator
+**Round 3 finding:** Map entries (Languages, LSP) use only text color change (cyan `38;5;14` → white `38;5;231`) for focus. No background highlight, no `>` arrow. This is significantly weaker than:
+- Sidebar: blue background `48;5;25` + `>` arrow
+- Settings fields: dark gray background `48;5;16` + `>●` indicator
+- Buttons: inverse video `[1;7m]` + `>` arrow
+**NNGroup violation:** Consistency — focus indication strength should not vary by context.
 
-#### M10 (NEW): No search/filter within map lists
-**Tested (Round 2):** While `/` searches settings sections, there is no way to filter within a long map list (e.g., find "python" within 40+ LSP entries).
+#### M12 (NEW): Inconsistent scrollbar colors between contexts
+**Round 3 finding:** Main panel scrollbar (olive `48;5;3` on white `48;5;15`) vs dialog scrollbar (green `38;5;70` on dark gray `48;5;239`). Minor but noticeable inconsistency.
 
 ### Low Priority Issues
 
 #### L1: Complex types rendered as raw JSON
-Process Limits shows `{ "max_memory_percent": 50, ... }` as raw JSON textarea. Except/Only Features show `null`. Should have structured controls.
+Process Limits, Except/Only Features, Initialization Options shown as raw JSON textareas.
 
-#### L2: All fields shown flat, no collapsible sections
-Add Item form shows 12 fields alphabetically with no grouping. Most users only need Command, Args, Enabled, Name.
-
-#### L3 (UPDATED): Left panel uses different highlight style
-Left sidebar: blue background (`48;5;25`) with white text, no `>` arrow. Right panel: dark gray background (`48;5;16`) with `>` arrow and bold white. Intentional differentiation but mildly inconsistent.
+#### L2: No collapsible sections (PARTIALLY ADDRESSED)
+An "Advanced" section divider (`── Advanced ──` in `38;5;244` gray, bold) now separates basic from advanced fields in the Edit Item dialog. However it's not collapsible — all fields remain visible.
 
 #### L4: No command validation on save
 Can enter nonexistent commands with no feedback.
@@ -145,200 +138,100 @@ Can enter nonexistent commands with no feedback.
 
 ## What Works Well
 
-- **Text input rendering:** Characters appear immediately in all text fields (C1 fix confirmed)
+- **Text input rendering:** Characters appear immediately in all text fields
 - **Ctrl+S save shortcut:** Works from any field in entry dialogs, including during text editing
-- **Focus indicators:** `>` prefix with `>●` markers. Consistent `48;5;16` dark bg + `38;5;231` bright white across contexts
-- **Button focus:** Bold+reverse video (`[1;7m]`) with `>` arrow prefix. Delete button uses red (`38;5;160`)
+- **Focus indicators (non-map contexts):** `>` prefix with `>●` markers. Consistent `48;5;16` dark bg + `38;5;231` bright white
+- **Button focus:** Bold+reverse video (`[1;7m]`) with `>` arrow. Delete button uses red (`38;5;160`)
 - **Esc cascade:** Clean unwinding through all nesting levels with correct focus restoration
-- **Progressive parent dimming:** Each nesting level dims parent content darker. Clear visual hierarchy
+- **Progressive parent dimming:** Each level dims parent. Active: bright cyan borders `38;5;14`. Parent: gray `38;5;59`, dark teal `38;5;29`
 - **Focus return:** After closing child dialog, focus returns to exact spawning element
-- **LSP display field:** Shows command names (pylsp, rust-analyzer) with proper truncation
-- **Scrollbar:** Present in both main panel and dialogs, moves with viewport position
-- **Checkbox toggle:** Immediate visual feedback, arrow keys still navigate away
-- **JSON code block editing:** Process Limits editor works correctly, Esc properly exits
-- **Responsive layout:** Sidebar→tab bar adaptation at smaller terminal sizes
-- **Column alignment:** Map entries use fixed-width key column for clean alignment
-- **[Enter to edit] hint:** Appears inline with focused items in map views, `DIM` styled
-
----
-
-## Reproduction Steps
-
-Each bug below includes full steps to reproduce from a clean state:
-
-```bash
-# Prerequisites (run once)
-cargo build
-mkdir -p /tmp/fresh-test && echo 'print("hello")' > /tmp/fresh-test/test.py
-
-# Launch fresh in tmux (reusable for all tests)
-tmux kill-session -t fresh 2>/dev/null
-tmux new-session -d -s fresh -x 160 -y 50 \
-  "TERM=xterm-256color ./target/debug/fresh /tmp/fresh-test/test.py"
-sleep 2
-
-# Helper: navigate to Settings > LSP > first language entry > Edit Item dialog
-navigate_to_lsp_edit_item() {
-  tmux send-keys -t fresh C-p && sleep 0.5
-  tmux send-keys -t fresh "Open Settings" && sleep 0.5
-  tmux send-keys -t fresh Enter && sleep 1
-  tmux send-keys -t fresh "/" && sleep 0.3
-  tmux send-keys -t fresh "lsp" && sleep 0.3
-  tmux send-keys -t fresh Enter && sleep 0.5
-  tmux send-keys -t fresh Enter && sleep 0.5
-  tmux send-keys -t fresh Down && sleep 0.2
-  tmux send-keys -t fresh Enter && sleep 0.5
-}
-
-# Capture helper (with ANSI colors)
-cap() { tmux capture-pane -t fresh -p -e; }
-```
-
-### C2: Text field traps keyboard (cannot exit edit mode)
-
-```bash
-navigate_to_lsp_edit_item
-# Focus should land on Command field (first editable)
-# Press Enter to edit (or field auto-enters edit mode)
-tmux send-keys -t fresh Enter && sleep 0.3
-tmux send-keys -t fresh "test" && sleep 0.3
-# Verify text renders (should show "astro-lstest" or similar)
-cap | grep "test"
-# Now try to exit edit mode
-tmux send-keys -t fresh Escape && sleep 0.3
-cap  # Check: is cursor still active? Is label still blue?
-# Try Down arrow
-tmux send-keys -t fresh Down && sleep 0.3
-cap  # Check: did focus move to next field?
-# EXPECTED: Esc exits edit mode, Down navigates to next field
-# ACTUAL: Nothing works. Only Ctrl+S exits (by saving and closing)
-```
-
-### C3: Enter on array item closes Edit Value dialog
-
-```bash
-# Navigate to Level 2 only (Edit Value)
-tmux kill-session -t fresh 2>/dev/null
-tmux new-session -d -s fresh -x 160 -y 50 \
-  "TERM=xterm-256color ./target/debug/fresh /tmp/fresh-test/test.py"
-sleep 2
-tmux send-keys -t fresh C-p && sleep 0.5
-tmux send-keys -t fresh "Open Settings" && sleep 0.5
-tmux send-keys -t fresh Enter && sleep 1
-tmux send-keys -t fresh "/" && sleep 0.3
-tmux send-keys -t fresh "lsp" && sleep 0.3
-tmux send-keys -t fresh Enter && sleep 0.5
-tmux send-keys -t fresh Enter && sleep 0.5
-# Now in Level 2. Navigate to array item
-tmux send-keys -t fresh Down && sleep 0.2
-cap | grep ">"  # should show "-> server [x]" focused
-tmux send-keys -t fresh Enter && sleep 0.5
-cap
-# EXPECTED: Edit Item dialog opens for the server
-# ACTUAL: Dialog closes, back at Settings Level 1
-```
-
-### H1: Tab only toggles to Save
-
-```bash
-navigate_to_lsp_edit_item
-for i in $(seq 1 6); do
-  tmux send-keys -t fresh Tab && sleep 0.2
-  echo "=== Tab $i ===" && cap | grep -E "> \[|>●"
-done
-# EXPECTED: Tab reaches Save, Delete, Cancel in sequence
-# ACTUAL: Tab toggles between current field and Save only
-```
-
-### H2: [+] Add new unreachable in Level 3
-
-```bash
-navigate_to_lsp_edit_item
-# Navigate through all fields with Down
-for i in $(seq 1 20); do
-  tmux send-keys -t fresh Down && sleep 0.1
-done
-cap | grep "> .*Add new"
-# EXPECTED: Focus lands on [+] Add new at some point
-# ACTUAL: Focus never reaches any [+] Add new button
-```
+- **Enter on array items:** Now correctly opens Edit Item dialog (C3 fixed)
+- **LSP display field:** Shows command names with proper truncation
+- **Sticky section headers:** Section labels stay pinned while scrolling through long lists
+- **Scrollbar:** Present with proportional thumb. Position tracks viewport accurately
+- **Checkbox toggle:** Immediate visual feedback, arrows navigate away cleanly
+- **JSON code block editing:** Works correctly with proper Esc handling
+- **Responsive layout:** Sidebar→tab bar adaptation at smaller terminals
+- **Advanced section divider:** Visual separation between basic and advanced fields
+- **Composite control navigation:** Down arrow now visits individual items within Args, Root Markers, etc.
 
 ---
 
 ## Implementation Plan
 
-### Phase 1: Critical Fix (C2)
+### Phase 1: Text Field Edit Mode (C2, H6)
 
-**C2 fix (text field keyboard trap):** The text field edit mode captures all input including Escape. Need to make Escape exit edit mode by calling `dialog.stop_editing()` and returning `InputResult::Consumed` before the navigation handler sees the event. Check `input.rs` `handle_entry_dialog_text_editing()` — the Esc branch calls `dialog.stop_editing()` but either:
-1. The `editing_text` flag is not being checked correctly (field auto-enters edit mode so the flag may be wrong)
-2. The `stop_editing()` call is not clearing the edit state properly
-3. The event is still propagating after being consumed
+The most impactful fix — makes the entire Edit Item dialog usable for text fields.
 
-Also investigate why text fields auto-enter edit mode on navigation (H6) — this may be the root cause. If fields don't auto-enter edit mode, Escape handling becomes simpler.
+**Problem:** Text fields behave as "always-inline-editing" rather than using the explicit `start_editing()`/`stop_editing()` pattern that JSON controls use.
 
-### Phase 2: Entry Dialog Navigation (C3, H1, H2)
+**Fix approach:**
+1. In `entry_dialog.rs`, ensure text fields do NOT auto-enter edit mode on focus. The `editing_text` flag should only be set when the user presses Enter/Space.
+2. In `input.rs` `handle_entry_dialog_text_editing()`, ensure Escape calls `dialog.stop_editing()` and returns `InputResult::Consumed`, properly clearing the edit state.
+3. When NOT in edit mode, text fields should display their value normally (no cursor, label in default color). The `[Enter to edit]` hint should appear.
+4. When in edit mode, arrow keys should move the cursor within the text, not navigate fields. Tab/Esc should exit edit mode.
 
-**C3 fix:** In `state.rs`, Enter on an ObjectArray item within Edit Value should open a nested Edit Item dialog, not trigger save/close.
+### Phase 2: Tab & Button Navigation (H1)
 
-**H1 fix:** Differentiate Tab from Down in `input.rs`. Tab should toggle between fields region and buttons region (cycling through all buttons). Down should navigate sequentially.
+**Fix:** In `input.rs`, differentiate Tab from Down:
+- Tab: toggle between fields region and buttons region. When in buttons region, Tab/Shift+Tab cycles through all buttons (Save → Delete → Cancel → Save).
+- Down/Up: sequential navigation through all fields and buttons.
 
-**H2 fix:** Include composite control sub-items ([+] Add new, individual list items) in the `focus_next()`/`focus_prev()` navigation order within `entry_dialog.rs`.
+### Phase 3: Status Bar (H7)
 
-### Phase 3: Status & Feedback (H5, H6, H7, M9)
+**Fix:** In `render.rs`, make the help text dynamic based on current state:
+```
+Normal:       ↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit  Ctrl+S:Save  Esc:Cancel
+Text editing: Type to edit  Tab/Esc:Stop editing  Ctrl+S:Save
+Dropdown:     ↑↓:Select  Enter:Confirm  Esc:Cancel
+On buttons:   ←→:Navigate  Enter:Activate  Tab:Back to fields  Esc:Cancel
+```
 
-**H5 fix:** Make TextList items individually focusable with Delete key support.
+### Phase 4: List Navigation & Visual Polish (H2, H5, M5, M7, M11)
 
-**H6 fix:** Don't auto-enter edit mode on text fields when navigating. Require explicit Enter/Space to start editing.
+- **H2:** Make [+] Add new buttons focusable in navigation order
+- **H5:** Make TextList items individually focusable with Delete key
+- **M5:** Add "X of Y" position indicator
+- **M7:** Add Page Up/Down (or Ctrl+U/D) and Home/End support for map lists
+- **M11:** Add background highlight or `>` indicator to focused map table entries
 
-**H7 fix:** Update status bar text dynamically based on current mode:
-- Normal: `↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit  Ctrl+S:Save  Esc:Cancel`
-- Text editing: `Type to edit  Esc:Stop editing  Ctrl+S:Save`
-- Dropdown open: `↑↓:Select  Enter:Confirm  Esc:Cancel`
+### Phase 5: Remaining Medium & Low (M2, M9, M10, M12, L1, L2, L4)
 
-**M9 fix:** Show confirmation dialog when Esc would discard modifications.
-
-### Phase 4: Efficiency (M2, M5, M7, M8, M10)
-
-**M2:** Fix spinner input routing.
-**M5:** Add "X of Y" position indicator near scrollbar.
-**M7:** Add Page Up/Down (or Ctrl+U/D) and Home/End support.
-**M8:** Pin section header while scrolling.
-**M10:** Add inline filter/search for map lists.
-
-### Phase 5: Polish (L1-L4)
-
-**L1:** Structured controls for ProcessLimits, LspFeature enums.
-**L2:** Collapsible "Advanced" sections in entry dialogs.
-**L3-L4:** Cosmetic consistency fixes.
+- **M2:** Fix spinner input routing
+- **M9:** Unsaved changes confirmation on Esc
+- **M10:** Inline filter for map lists
+- **M12:** Unify scrollbar colors
+- **L1:** Structured controls for ProcessLimits, LspFeature
+- **L2:** Make Advanced section collapsible
+- **L4:** Command PATH validation
 
 ---
 
 ## Verification Checklist
 
-After each phase, re-test with tmux using `capture-pane -p -e`:
-
 ### Phase 1
-- [ ] **C2:** Escape exits text edit mode, returns to field navigation
-- [ ] **C2:** Down/Up arrows work after exiting text edit mode
-- [ ] **C2:** Tab works after exiting text edit mode
+- [ ] Text fields do NOT auto-enter edit mode on navigation
+- [ ] Enter activates text editing (cursor appears, label turns blue)
+- [ ] Escape exits text editing (cursor gone, label normal, characters no longer insertable)
+- [ ] Down/Up navigate fields when not editing
+- [ ] Status bar shows "Enter:Edit" when field focused but not editing
 
 ### Phase 2
-- [ ] **C3:** Enter on array item opens Edit Item dialog
-- [ ] **H1:** Tab cycles through all buttons (Save, Delete, Cancel)
-- [ ] **H1:** Shift+Tab reverses through buttons
-- [ ] **H2:** [+] Add new reachable via keyboard in Args, Env, Root Markers
+- [ ] Tab from fields jumps to Save button
+- [ ] Tab from Save goes to Delete
+- [ ] Tab from Delete goes to Cancel
+- [ ] Tab from Cancel wraps to first field
+- [ ] Shift+Tab reverses
 
 ### Phase 3
-- [ ] **H5:** Individual TextList items focusable, deletable via Delete key
-- [ ] **H6:** Text fields don't auto-enter edit mode on navigation
-- [ ] **H7:** Status bar updates to reflect text editing / dropdown modes
-- [ ] **M9:** Esc shows confirmation when changes would be lost
+- [ ] Status bar changes when entering text edit mode
+- [ ] Status bar changes when on buttons
+- [ ] Status bar changes for dropdown
 
 ### Phase 4
-- [ ] **M5:** Position indicator visible (e.g., "15 of 42")
-- [ ] **M7:** Page Up/Down jumps through long lists
-- [ ] **M8:** Section header stays visible while scrolling
-
-### Phase 5
-- [ ] **L1:** ProcessLimits has structured number/checkbox controls
-- [ ] **L2:** Advanced section is collapsible in Add Item
+- [ ] [+] Add new focusable via Down arrow
+- [ ] TextList items individually focusable
+- [ ] Delete key removes focused TextList item
+- [ ] Page Up/Down works in LSP/Languages lists
+- [ ] "X of Y" indicator visible
+- [ ] Map entry focus has background highlight
