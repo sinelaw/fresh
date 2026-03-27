@@ -102,6 +102,7 @@ pub mod settings_lsp_entry_dialog_bugs;
 pub mod settings_paste;
 pub mod settings_ruler_keyboard_nav;
 pub mod settings_scrolled_list_click;
+pub mod settings_ui_usability;
 pub mod shell_command;
 pub mod side_by_side_diff_scroll;
 pub mod slow_filesystem;
