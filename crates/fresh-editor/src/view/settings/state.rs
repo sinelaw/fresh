@@ -7,7 +7,7 @@ use super::entry_dialog::EntryDialogState;
 use super::items::{control_to_value, SettingControl, SettingItem, SettingsPage};
 use super::layout::SettingsHit;
 use super::schema::{parse_schema, SettingCategory, SettingSchema};
-use super::search::{search_settings, SearchResult};
+use super::search::{search_settings, DeepMatch, SearchResult};
 use crate::config::Config;
 use crate::config_io::ConfigLayer;
 use crate::view::controls::FocusState;
@@ -849,14 +849,15 @@ impl SettingsState {
     /// Jump to the currently selected search result
     pub fn jump_to_search_result(&mut self) {
         // Extract values first to avoid borrow issues
-        let Some(&SearchResult {
-            page_index,
-            item_index,
-            ..
-        }) = self.search_results.get(self.selected_search_result)
+        let Some(result) = self
+            .search_results
+            .get(self.selected_search_result)
+            .cloned()
         else {
             return;
         };
+        let page_index = result.page_index;
+        let item_index = result.item_index;
 
         // Unfocus old item first
         self.update_control_focus(false);
@@ -872,9 +873,38 @@ impl SettingsState {
         }
         self.sub_focus = None;
         self.init_map_focus(true);
+
+        // Navigate into the deep match target if present
+        if let Some(ref deep_match) = result.deep_match {
+            self.jump_to_deep_match(deep_match);
+        }
+
         self.update_control_focus(true); // Focus the new item
         self.ensure_visible();
         self.cancel_search();
+    }
+
+    /// Navigate into a composite control to focus a specific deep match
+    fn jump_to_deep_match(&mut self, deep_match: &DeepMatch) {
+        match deep_match {
+            DeepMatch::MapKey { entry_index, .. } | DeepMatch::MapValue { entry_index, .. } => {
+                if let Some(item) = self.current_item_mut() {
+                    if let SettingControl::Map(ref mut map_state) = item.control {
+                        map_state.focused_entry = Some(*entry_index);
+                    }
+                }
+                self.update_map_sub_focus();
+            }
+            DeepMatch::TextListItem { item_index, .. } => {
+                if let Some(item) = self.current_item_mut() {
+                    if let SettingControl::TextList(ref mut list_state) = item.control {
+                        list_state.focused_item = Some(*item_index);
+                    }
+                }
+                // Update sub_focus for TextList
+                self.sub_focus = Some(1 + *item_index);
+            }
+        }
     }
 
     /// Get the currently selected search result

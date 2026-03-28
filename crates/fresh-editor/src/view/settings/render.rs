@@ -8,7 +8,7 @@ use crate::primitives::display_width::str_width;
 
 use super::items::SettingControl;
 use super::layout::{SettingsHit, SettingsLayout};
-use super::search::SearchResult;
+use super::search::{DeepMatch, SearchResult};
 use super::state::SettingsState;
 use crate::view::controls::{
     render_dropdown_aligned, render_number_input_aligned, render_text_input_aligned,
@@ -2504,6 +2504,21 @@ fn render_search_result_item(
         }
     }
 
+    // Determine display name and description based on deep match
+    let (display_name, display_desc) = match &result.deep_match {
+        Some(DeepMatch::MapKey { key, .. }) => (key.clone(), Some(result.item.name.clone())),
+        Some(DeepMatch::MapValue {
+            matched_text, key, ..
+        }) => (
+            matched_text.clone(),
+            Some(format!("{} > {}", result.item.name, key)),
+        ),
+        Some(DeepMatch::TextListItem { text, .. }) => {
+            (text.clone(), Some(result.item.name.clone()))
+        }
+        None => (result.item.name.clone(), result.item.description.clone()),
+    };
+
     // First line: Setting name with highlighting
     let name_style = if is_selected {
         Style::default().fg(theme.settings_selected_fg)
@@ -2515,7 +2530,7 @@ fn render_search_result_item(
 
     // Build name with match highlighting
     let name_line = build_highlighted_text(
-        &result.item.name,
+        &display_name,
         &result.name_matches,
         name_style,
         Style::default()
@@ -2539,7 +2554,7 @@ fn render_search_result_item(
     );
 
     // Third line: Description (if any)
-    if let Some(ref desc) = result.item.description {
+    if let Some(ref desc) = display_desc {
         let desc_style = Style::default().fg(theme.line_number_fg);
         let truncated_desc = if desc.len() > area.width as usize - 2 {
             format!("  {}...", &desc[..area.width as usize - 5])
