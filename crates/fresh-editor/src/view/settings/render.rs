@@ -2528,8 +2528,16 @@ fn render_search_result_item(
         Style::default().fg(theme.popup_text_fg)
     };
 
-    // Build name with match highlighting
-    let name_line = build_highlighted_text(
+    // Build name with match highlighting, prefixed with selection indicator
+    let indicator = if is_selected { "▸ " } else { "  " };
+    let indicator_style = if is_selected {
+        Style::default()
+            .fg(theme.settings_selected_fg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        name_style
+    };
+    let mut name_line = build_highlighted_text(
         &display_name,
         &result.name_matches,
         name_style,
@@ -2537,6 +2545,9 @@ fn render_search_result_item(
             .fg(theme.diagnostic_warning_fg)
             .add_modifier(Modifier::BOLD),
     );
+    name_line
+        .spans
+        .insert(0, Span::styled(indicator, indicator_style));
     frame.render_widget(
         Paragraph::new(name_line),
         Rect::new(area.x, area.y, area.width, 1),

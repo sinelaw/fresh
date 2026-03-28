@@ -146,6 +146,9 @@ fn search_composite_control(
                             entry_index: entry_idx,
                         }),
                     });
+                    // Skip searching nested values when the key already matches,
+                    // to avoid duplicate results like "grammar: bash" alongside "bash"
+                    continue;
                 }
 
                 // Match on nested string values within the map entry
@@ -582,6 +585,41 @@ mod tests {
             matches!(&deep_results[0].deep_match, Some(DeepMatch::MapKey { key, .. }) if key == "python")
         );
         assert_eq!(deep_results[0].breadcrumb, "Languages > python");
+    }
+
+    #[test]
+    fn test_search_map_key_no_duplicate_nested_values() {
+        // When a map key matches, nested values inside that entry should NOT
+        // produce additional results (avoids duplicates like "grammar: bash"
+        // alongside the "bash" key match).
+        let pages = vec![make_page(
+            "General",
+            vec![make_map_item(
+                "Languages",
+                "/languages",
+                vec![(
+                    "bash".to_string(),
+                    serde_json::json!({"grammar": "bash", "files": ["1.bash"]}),
+                )],
+            )],
+        )];
+
+        let results = search_settings(&pages, "bash");
+        let deep_results: Vec<_> = results.iter().filter(|r| r.deep_match.is_some()).collect();
+        // Should only have the MapKey match, not MapValue matches for "grammar: bash" etc.
+        assert_eq!(
+            deep_results.len(),
+            1,
+            "Expected exactly 1 deep match (MapKey), got {}: {:?}",
+            deep_results.len(),
+            deep_results
+                .iter()
+                .map(|r| &r.deep_match)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            matches!(&deep_results[0].deep_match, Some(DeepMatch::MapKey { key, .. }) if key == "bash")
+        );
     }
 
     #[test]
