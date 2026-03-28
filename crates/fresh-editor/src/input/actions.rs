@@ -9,8 +9,8 @@ use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
 use crate::primitives::highlighter::HighlightCategory;
 use crate::primitives::indent_pattern::PatternIndentCalculator;
 use crate::primitives::word_navigation::{
-    find_vi_word_end, find_word_end, find_word_end_right, find_word_start,
-    find_word_start_left, find_word_start_right,
+    find_vi_word_end, find_word_end, find_word_end_right, find_word_start, find_word_start_left,
+    find_word_start_right,
 };
 use crate::state::EditorState;
 use std::ops::Range;
@@ -1634,7 +1634,9 @@ pub fn action_to_events(
                 let new_pos = state.buffer.prev_grapheme_boundary(cursor.position);
                 let new_pos = adjust_position_for_crlf_left(&state.buffer, new_pos);
                 // Check if moving left would cross a line boundary
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 let line_start = iter.next_line().map(|(ls, _)| ls).unwrap_or(0);
                 let clamped = new_pos.max(line_start);
                 let new_anchor = if cursor.deselect_on_move {
@@ -1659,8 +1661,11 @@ pub fn action_to_events(
                 let max_pos = max_cursor_position(&state.buffer);
                 let new_pos = next_position_for_crlf(&state.buffer, cursor.position, max_pos);
                 // Check if moving right would cross a line boundary
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
-                let line_end = iter.next_line()
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
+                let line_end = iter
+                    .next_line()
                     .map(|(ls, lc)| ls + content_len_without_line_ending(&lc))
                     .unwrap_or(max_pos);
                 let clamped = new_pos.min(line_end);
@@ -2577,13 +2582,16 @@ pub fn action_to_events(
                 if text.is_empty() || text == "\n" || text == "\r\n" {
                     continue;
                 }
-                let toggled: String = text.chars().map(|c| {
-                    if c.is_uppercase() {
-                        c.to_lowercase().to_string()
-                    } else {
-                        c.to_uppercase().to_string()
-                    }
-                }).collect();
+                let toggled: String = text
+                    .chars()
+                    .map(|c| {
+                        if c.is_uppercase() {
+                            c.to_lowercase().to_string()
+                        } else {
+                            c.to_uppercase().to_string()
+                        }
+                    })
+                    .collect();
                 if toggled != text {
                     events.push(Event::Delete {
                         range: pos..next_pos,

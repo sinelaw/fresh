@@ -290,10 +290,10 @@ pub enum Action {
     MoveDown,
     MoveWordLeft,
     MoveWordRight,
-    MoveWordEnd,      // Move to end of current word (Ctrl+Right style, past the end)
-    ViMoveWordEnd,    // Vim 'e' - move to end of word (ON last char, advances from word-end)
-    MoveLeftInLine,   // Move left without crossing line boundaries
-    MoveRightInLine,  // Move right without crossing line boundaries
+    MoveWordEnd,     // Move to end of current word (Ctrl+Right style, past the end)
+    ViMoveWordEnd,   // Vim 'e' - move to end of word (ON last char, advances from word-end)
+    MoveLeftInLine,  // Move left without crossing line boundaries
+    MoveRightInLine, // Move right without crossing line boundaries
     MoveLineStart,
     MoveLineEnd,
     MoveLineUp,
@@ -312,8 +312,8 @@ pub enum Action {
     SelectToParagraphDown, // Jump to next empty line with selection
     SelectWordLeft,
     SelectWordRight,
-    SelectWordEnd,      // Select to end of current word
-    ViSelectWordEnd,    // Vim 'e' selection - select to end of word (ON last char)
+    SelectWordEnd,   // Select to end of current word
+    ViSelectWordEnd, // Vim 'e' selection - select to end of word (ON last char)
     SelectLineStart,
     SelectLineEnd,
     SelectDocumentStart,

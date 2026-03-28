@@ -825,12 +825,9 @@ impl Editor {
                 CursorMovement::WordEnd,
                 false,
             ),
-            Action::MoveLeftInLine => self.handle_cursor_movement_action(
-                split_id,
-                buffer_id,
-                CursorMovement::Left,
-                false,
-            ),
+            Action::MoveLeftInLine => {
+                self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Left, false)
+            }
             Action::MoveRightInLine => self.handle_cursor_movement_action(
                 split_id,
                 buffer_id,

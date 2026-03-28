@@ -101,9 +101,7 @@ fn wait_insert(harness: &mut EditorTestHarness) {
 
 /// Helper: escape to normal mode
 fn escape(harness: &mut EditorTestHarness) {
-    harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     wait_normal(harness);
 }
@@ -125,9 +123,7 @@ fn test_vi_bug_C_does_not_delete_to_eol() {
     // Move to 'w' in "world"
     let pos0 = harness.cursor_position();
     send_key(&mut harness, 'w');
-    harness
-        .wait_until(|h| h.cursor_position() > pos0)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() > pos0).unwrap();
 
     // Press C — should delete "world" and enter insert mode
     send_key(&mut harness, 'C');
@@ -159,9 +155,7 @@ fn test_vi_bug_D_does_not_delete_to_eol() {
     // Move to 'w' in "world"
     let pos0 = harness.cursor_position();
     send_key(&mut harness, 'w');
-    harness
-        .wait_until(|h| h.cursor_position() > pos0)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() > pos0).unwrap();
 
     // Press D — should delete "world", stay in normal mode
     send_key(&mut harness, 'D');
@@ -218,9 +212,7 @@ fn test_vi_bug_S_does_not_clear_line() {
     harness.render().unwrap();
     escape(&mut harness);
 
-    harness
-        .wait_for_buffer_content("NEW\nline two\n")
-        .unwrap();
+    harness.wait_for_buffer_content("NEW\nline two\n").unwrap();
 }
 
 // =============================================================================
@@ -276,9 +268,7 @@ fn test_vi_bug_e_off_by_one() {
 
     // From position 0 ('h'), press 'e' — should land on 'o' (offset 4)
     send_key(&mut harness, 'e');
-    harness
-        .wait_until(|h| h.cursor_position() > 0)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() > 0).unwrap();
     assert_eq!(
         harness.cursor_position(),
         4,
@@ -298,9 +288,7 @@ fn test_vi_bug_e_gets_stuck() {
 
     // First e: land on last char of "hello" (offset 4)
     send_key(&mut harness, 'e');
-    harness
-        .wait_until(|h| h.cursor_position() > 0)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() > 0).unwrap();
     let pos_after_first_e = harness.cursor_position();
 
     // Second e: should advance to last char of "world" (offset 10)
@@ -365,8 +353,7 @@ fn test_vi_bug_ce_not_working() {
 #[test]
 fn test_vi_bug_nG_ignores_count() {
     let (mut harness, _td) = vi_mode_harness(80, 24);
-    let fixture =
-        TestFixture::new("test.txt", "line1\nline2\nline3\nline4\nline5\n").unwrap();
+    let fixture = TestFixture::new("test.txt", "line1\nline2\nline3\nline4\nline5\n").unwrap();
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
     enable_vi_mode(&mut harness);
@@ -378,9 +365,7 @@ fn test_vi_bug_nG_ignores_count() {
     send_key(&mut harness, '3');
     send_key(&mut harness, 'G');
 
-    harness
-        .wait_until(|h| h.cursor_position() > 0)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() > 0).unwrap();
 
     // Line 3 starts at byte offset 12
     assert_eq!(
@@ -428,18 +413,14 @@ fn test_vi_bug_l_wraps_across_lines() {
 
     // Move to 'b' (offset 1) — last char of line 1
     send_key(&mut harness, 'l');
-    harness
-        .wait_until(|h| h.cursor_position() == 1)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
 
     // Press l again — should stay at offset 1 (vim doesn't wrap l)
     send_key(&mut harness, 'l');
     harness.render().unwrap();
 
     // Give a moment for any async processing
-    harness
-        .wait_until(|h| h.cursor_position() <= 1)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() <= 1).unwrap();
 
     assert_eq!(
         harness.cursor_position(),
@@ -460,17 +441,13 @@ fn test_vi_bug_h_wraps_across_lines() {
 
     // Move to line 2 (offset 3 = 'c')
     send_key(&mut harness, 'j');
-    harness
-        .wait_until(|h| h.cursor_position() == 3)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
 
     // Press h — should stay at offset 3 (beginning of line 2, vim doesn't wrap h)
     send_key(&mut harness, 'h');
     harness.render().unwrap();
 
-    harness
-        .wait_until(|h| h.cursor_position() >= 3)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() >= 3).unwrap();
 
     assert_eq!(
         harness.cursor_position(),
@@ -496,15 +473,11 @@ fn test_vi_bug_caret_same_as_zero() {
 
     // Move to end of line to start from a known position
     send_key(&mut harness, '$');
-    harness
-        .wait_until(|h| h.cursor_position() > 0)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() > 0).unwrap();
 
     // Press ^ — should go to offset 4 ('h' in "hello"), NOT offset 0
     send_key(&mut harness, '^');
-    harness
-        .wait_until(|h| h.cursor_position() < 8)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() < 8).unwrap();
 
     assert_eq!(
         harness.cursor_position(),
@@ -642,9 +615,7 @@ fn test_vi_bug_dw_does_not_yank() {
 
     // Move to end of "world", then p should paste "hello " after cursor
     send_key(&mut harness, '$');
-    harness
-        .wait_until(|h| h.cursor_position() > 0)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() > 0).unwrap();
 
     send_key(&mut harness, 'p');
 
@@ -776,9 +747,7 @@ fn test_vi_bug_dollar_past_eol() {
     enable_vi_mode(&mut harness);
 
     send_key(&mut harness, '$');
-    harness
-        .wait_until(|h| h.cursor_position() > 0)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() > 0).unwrap();
 
     assert_eq!(
         harness.cursor_position(),
@@ -812,8 +781,7 @@ fn test_vi_bug_tilde_not_implemented() {
 #[test]
 fn test_vi_bug_star_not_implemented() {
     let (mut harness, _td) = vi_mode_harness(80, 24);
-    let fixture =
-        TestFixture::new("test.txt", "hello world\nhello again\n").unwrap();
+    let fixture = TestFixture::new("test.txt", "hello world\nhello again\n").unwrap();
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
     enable_vi_mode(&mut harness);
@@ -821,9 +789,7 @@ fn test_vi_bug_star_not_implemented() {
     // * should search for "hello" and move to next occurrence (line 2, offset 12)
     send_key(&mut harness, '*');
 
-    harness
-        .wait_until(|h| h.cursor_position() == 12)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() == 12).unwrap();
 }
 
 // =============================================================================
@@ -835,8 +801,7 @@ fn test_vi_bug_star_not_implemented() {
 #[test]
 fn test_vi_bug_count_persists_in_status() {
     let (mut harness, _td) = vi_mode_harness(80, 24);
-    let fixture =
-        TestFixture::new("test.txt", "a\nb\nc\nd\ne\n").unwrap();
+    let fixture = TestFixture::new("test.txt", "a\nb\nc\nd\ne\n").unwrap();
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
     enable_vi_mode(&mut harness);
@@ -844,9 +809,7 @@ fn test_vi_bug_count_persists_in_status() {
     // Send 3j (move down 3 lines)
     send_key(&mut harness, '3');
     send_key(&mut harness, 'j');
-    harness
-        .wait_until(|h| h.cursor_position() > 0)
-        .unwrap();
+    harness.wait_until(|h| h.cursor_position() > 0).unwrap();
 
     // The status bar should show "-- NORMAL --" without "(3)"
     // Check that the screen contains clean NORMAL indicator
@@ -869,8 +832,7 @@ fn test_vi_bug_count_persists_in_status() {
 #[test]
 fn test_vi_2dd_delete_two_lines() {
     let (mut harness, _td) = vi_mode_harness(80, 24);
-    let fixture =
-        TestFixture::new("test.txt", "line1\nline2\nline3\nline4\n").unwrap();
+    let fixture = TestFixture::new("test.txt", "line1\nline2\nline3\nline4\n").unwrap();
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
     enable_vi_mode(&mut harness);
@@ -883,7 +845,5 @@ fn test_vi_2dd_delete_two_lines() {
         .unwrap();
     send_key(&mut harness, 'd');
 
-    harness
-        .wait_for_buffer_content("line3\nline4\n")
-        .unwrap();
+    harness.wait_for_buffer_content("line3\nline4\n").unwrap();
 }
