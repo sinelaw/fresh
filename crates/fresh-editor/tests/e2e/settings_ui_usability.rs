@@ -361,7 +361,8 @@ fn test_composite_focus_indicator_on_subrow_not_header() {
             if line.contains(">") && line.contains("Args:") {
                 // This would mean the indicator is on the header — check if there are
                 // sub-items below that should have focus instead
-                if i + 1 < lines.len() && (lines[i + 1].contains("[") || lines[i + 1].contains("--"))
+                if i + 1 < lines.len()
+                    && (lines[i + 1].contains("[") || lines[i + 1].contains("--"))
                 {
                     panic!(
                         "Focus indicator '>' is on the Args header line instead of a sub-item.\n\

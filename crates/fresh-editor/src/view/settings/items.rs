@@ -338,7 +338,7 @@ impl SettingControl {
             Self::TextList(state) => {
                 // Row 0 = label, rows 1..N = items, row N+1 = add-new
                 match state.focused_item {
-                    Some(idx) => 1 + idx as u16, // item rows start at offset 1
+                    Some(idx) => 1 + idx as u16,          // item rows start at offset 1
                     None => 1 + state.items.len() as u16, // add-new row
                 }
             }
@@ -351,11 +351,7 @@ impl SettingControl {
             }
             Self::Map(state) => {
                 // Row 0 = label, row 1 = header (if display_field), then entries, then add-new
-                let header_offset = if state.display_field.is_some() {
-                    1
-                } else {
-                    0
-                };
+                let header_offset = if state.display_field.is_some() { 1 } else { 0 };
                 match state.focused_entry {
                     Some(idx) => 1 + header_offset + idx as u16,
                     None => 1 + header_offset + state.entries.len() as u16,
