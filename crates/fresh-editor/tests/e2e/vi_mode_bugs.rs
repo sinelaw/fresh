@@ -220,8 +220,16 @@ fn test_vi_bug_S_does_not_clear_line() {
 // =============================================================================
 
 /// `I` in visual block mode should enter insert mode for block insertion.
-/// BUG: `I` is ignored; stays in visual block mode.
-/// NOTE: ignored — visual block insert is not yet implemented in the editor.
+///
+/// Root cause: The editor has no block-insert mechanism. In vim, `I` in visual
+/// block mode enters insert on the first selected line; after Escape, the typed
+/// text is replicated on every line of the block. This requires multi-cursor
+/// insert support tied to the block selection, which the editor doesn't have.
+///
+/// To fix: Add a new editor action (e.g. `BlockInsert`) that creates cursors at
+/// the start of each line in the block selection, enters insert mode, and on
+/// Escape replicates the inserted text to all cursor positions. Then bind `I` in
+/// vi-visual-block mode to trigger it.
 #[test]
 #[ignore]
 fn test_vi_bug_visual_block_I_ignored() {
@@ -602,8 +610,21 @@ fn test_vi_bug_find_char_slash() {
 // =============================================================================
 
 /// After `dw`, pasting with `p` should paste the deleted word.
-/// BUG: atomic delete actions (delete_word_forward) don't populate the clipboard.
-/// NOTE: ignored — requires atomic delete actions to also yank deleted text.
+///
+/// Root cause: `dw` maps to the atomic action `delete_word_forward` (in
+/// `atomicOperatorActions`). This Rust action deletes the text but does NOT
+/// copy it to the clipboard. In vim, every `d` command populates the unnamed
+/// register so the deleted text can be pasted with `p`.
+///
+/// To fix (option A — Rust side): Make `DeleteWordForward`, `DeleteWordBackward`,
+/// `DeleteToLineEnd`, and `DeleteToLineStart` also copy the deleted text to the
+/// internal clipboard before deleting.
+///
+/// To fix (option B — plugin side): Stop using atomic delete actions in
+/// `applyOperatorWithMotion`. Instead, use the selection-based path for all
+/// operators: `select_word_right` + `cut` (which copies to clipboard). This
+/// avoids the stale-snapshot problem because `cut` operates on the current
+/// selection, not on positions read via `getCursorPosition()`.
 #[test]
 #[ignore]
 fn test_vi_bug_dw_does_not_yank() {
@@ -781,8 +802,14 @@ fn test_vi_bug_tilde_not_implemented() {
 }
 
 /// `*` should search for the word under cursor.
-/// BUG: `*` is not bound in vi-normal mode — requires select_word + find_selection_next.
-/// NOTE: ignored — not yet implemented.
+///
+/// Root cause: `*` is not bound in vi-normal mode. The plugin has no handler
+/// for it.
+///
+/// To fix: Add a `vi_search_word` handler that does `select_word` (to select
+/// the word under cursor) followed by `find_selection_next` (to search for the
+/// next occurrence). Bind `*` to this handler in vi-normal mode. Similarly,
+/// add `#` bound to `find_selection_previous` for reverse search.
 #[test]
 #[ignore]
 fn test_vi_bug_star_not_implemented() {
@@ -803,8 +830,16 @@ fn test_vi_bug_star_not_implemented() {
 // =============================================================================
 
 /// After a counted motion like `3j`, the count should not persist in the status bar.
-/// BUG: Status bar update races with the motion — setStatus is async via channel.
-/// NOTE: ignored — flaky due to async status bar update timing.
+///
+/// Root cause: `consumeCount()` calls `editor.setStatus()` to clear the "(3)"
+/// display, but `setStatus` sends the update via an async channel. The test
+/// checks the rendered screen before the status bar update is processed, so
+/// "(3)" is still visible.
+///
+/// To fix: Use `wait_until_stable` with a condition that checks the screen
+/// does NOT contain "(3)". Alternatively, add a render cycle after the motion
+/// completes and before checking. The underlying plugin fix (clearing count in
+/// `consumeCount`) is correct — only the test timing is the issue.
 #[test]
 #[ignore]
 fn test_vi_bug_count_persists_in_status() {
