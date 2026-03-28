@@ -320,15 +320,15 @@ impl SettingsState {
                 }
             }
             KeyCode::Tab => {
-                // Tab toggles between items region and buttons region
+                // Tab cycles sequentially through all fields, sub-fields, and buttons
                 if let Some(dialog) = self.entry_dialog_mut() {
-                    dialog.toggle_focus_region();
+                    dialog.focus_next();
                 }
             }
             KeyCode::BackTab => {
-                // Shift+Tab also toggles between items and buttons (reverse)
+                // Shift+Tab cycles in reverse
                 if let Some(dialog) = self.entry_dialog_mut() {
-                    dialog.toggle_focus_region_direction(false);
+                    dialog.focus_prev();
                 }
             }
             KeyCode::Left => {

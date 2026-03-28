@@ -3034,15 +3034,26 @@ fn render_entry_dialog_inner(
 
         // Draw selection or hover highlight background (only for editable items)
         if is_focused || is_hovered {
-            // Use dedicated settings colors for focused items
             let bg_style = if is_focused {
                 Style::default().bg(theme.settings_selected_bg)
             } else {
                 Style::default().bg(theme.menu_hover_bg)
             };
-            for row in 0..render_height as u16 {
-                let row_area = Rect::new(inner.x, screen_y + row, inner.width, 1);
-                frame.render_widget(Paragraph::new("").style(bg_style), row_area);
+
+            if item.control.is_composite() {
+                // For composite controls, only highlight the focused sub-row
+                let sub_row = item.control.focused_sub_row();
+                if sub_row >= skip_rows && (sub_row - skip_rows) < render_height as u16 {
+                    let highlight_y = screen_y + sub_row - skip_rows;
+                    let row_area = Rect::new(inner.x, highlight_y, inner.width, 1);
+                    frame.render_widget(Paragraph::new("").style(bg_style), row_area);
+                }
+            } else {
+                // For simple controls, highlight the entire area
+                for row in 0..render_height as u16 {
+                    let row_area = Rect::new(inner.x, screen_y + row, inner.width, 1);
+                    frame.render_widget(Paragraph::new("").style(bg_style), row_area);
+                }
             }
         }
 
@@ -3050,15 +3061,42 @@ fn render_entry_dialog_inner(
         // Examples: ">● ", ">  ", " ● ", "   "
         let focus_indicator_width: u16 = 3;
 
-        // Render focus indicator ">" at position 0 for the focused item
+        // Render focus indicator ">" — on sub-row for composites, first row for simple controls
         if is_focused && skip_rows == 0 {
             let indicator_style = Style::default()
                 .fg(theme.settings_selected_fg)
                 .add_modifier(Modifier::BOLD);
+
+            let indicator_y = if item.control.is_composite() {
+                let sub_row = item.control.focused_sub_row();
+                if sub_row < render_height as u16 {
+                    screen_y + sub_row
+                } else {
+                    screen_y
+                }
+            } else {
+                screen_y
+            };
+
             frame.render_widget(
                 Paragraph::new(">").style(indicator_style),
-                Rect::new(inner.x, screen_y, 1, 1),
+                Rect::new(inner.x, indicator_y, 1, 1),
             );
+        } else if is_focused && skip_rows > 0 {
+            // If the item is partially scrolled, check if the focused sub-row is visible
+            if item.control.is_composite() {
+                let sub_row = item.control.focused_sub_row();
+                if sub_row >= skip_rows && (sub_row - skip_rows) < render_height as u16 {
+                    let indicator_style = Style::default()
+                        .fg(theme.settings_selected_fg)
+                        .add_modifier(Modifier::BOLD);
+                    let indicator_y = screen_y + sub_row - skip_rows;
+                    frame.render_widget(
+                        Paragraph::new(">").style(indicator_style),
+                        Rect::new(inner.x, indicator_y, 1, 1),
+                    );
+                }
+            }
         }
 
         // Render modified indicator "●" at position 1 for modified items

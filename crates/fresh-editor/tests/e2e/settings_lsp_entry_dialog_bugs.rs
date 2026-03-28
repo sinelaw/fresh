@@ -266,17 +266,32 @@ fn test_entry_dialog_down_visits_every_field_once() {
     ];
 
     // Helper: identify which known field (if any) has the focus indicator ">"
+    // For composite controls (TextList, Map, ObjectArray), the ">" indicator may be
+    // on a sub-item line below the section header, so we also check nearby lines above.
     let identify_focused = |screen: &str| -> Option<String> {
-        for line in screen.lines() {
+        let lines: Vec<&str> = screen.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
             if !line.contains(">") {
                 continue;
             }
             if line.contains("[ Save ]") || line.contains("[ Cancel ]") {
                 return Some("__BUTTONS__".to_string());
             }
+            // Check the focused line itself
             for field in &known_fields {
                 if line.contains(field) {
                     return Some(field.to_string());
+                }
+            }
+            // For composite controls, check up to 10 lines above for the section header
+            for offset in 1..=10 {
+                if i >= offset {
+                    let above = lines[i - offset];
+                    for field in &known_fields {
+                        if above.contains(field) && above.contains(":") {
+                            return Some(field.to_string());
+                        }
+                    }
                 }
             }
         }

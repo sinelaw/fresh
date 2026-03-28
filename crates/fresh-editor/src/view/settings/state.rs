@@ -1216,9 +1216,19 @@ impl SettingsState {
 
         if is_nested {
             // Nested dialog - update the parent dialog's ObjectArray item
-            // Extract the array field name from the path (last segment)
-            let array_field = array_path.rsplit('/').next().unwrap_or("").to_string();
-            let item_path = format!("/{}", array_field);
+            // Extract the item path within the parent dialog by removing the parent's
+            // map_path prefix. For example, if array_path is "/lsp/" and the parent's
+            // map_path is "/lsp", the item path should be "" (the root value item).
+            let parent_map_path = self
+                .entry_dialog_stack
+                .last()
+                .map(|p| p.map_path.as_str())
+                .unwrap_or("");
+            let item_path = array_path
+                .strip_prefix(parent_map_path)
+                .unwrap_or(&array_path)
+                .trim_end_matches('/')
+                .to_string();
 
             // Find and update the ObjectArray in the parent dialog
             if let Some(parent) = self.entry_dialog_stack.last_mut() {
