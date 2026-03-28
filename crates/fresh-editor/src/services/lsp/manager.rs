@@ -106,8 +106,42 @@ pub fn detect_workspace_root(file_path: &Path, root_markers: &[String]) -> std::
     file_dir
 }
 
-/// A named LSP handle with feature filter metadata.
-/// Wraps an LspHandle with the server's display name and feature routing filter.
+/// Summary of capabilities reported by an LSP server during initialization.
+///
+/// This is extracted from `ServerCapabilities` in the `initialize` response
+/// and stored per-server so that requests are only sent to servers that
+/// actually support them. Follows the LSP 3.17 specification.
+///
+#[derive(Debug, Clone, Default)]
+pub struct ServerCapabilitySummary {
+    /// Whether capabilities have been received from the server.
+    /// When false, `has_capability()` defers to the handle's readiness state.
+    pub initialized: bool,
+    pub hover: bool,
+    pub completion: bool,
+    pub completion_trigger_characters: Vec<String>,
+    pub definition: bool,
+    pub references: bool,
+    pub document_formatting: bool,
+    pub document_range_formatting: bool,
+    pub rename: bool,
+    pub signature_help: bool,
+    pub inlay_hints: bool,
+    pub folding_ranges: bool,
+    pub semantic_tokens_full: bool,
+    pub semantic_tokens_full_delta: bool,
+    pub semantic_tokens_range: bool,
+    pub semantic_tokens_legend: Option<SemanticTokensLegend>,
+    pub document_highlight: bool,
+    pub code_action: bool,
+    pub document_symbols: bool,
+    pub workspace_symbols: bool,
+    pub diagnostics: bool,
+}
+
+/// A named LSP handle with feature filter metadata and per-server capabilities.
+/// Wraps an LspHandle with the server's display name, feature routing filter,
+/// and the capabilities reported by this specific server during initialization.
 pub struct ServerHandle {
     /// Display name for this server (e.g., "rust-analyzer", "eslint")
     pub name: String,
@@ -115,6 +149,45 @@ pub struct ServerHandle {
     pub handle: LspHandle,
     /// Feature filter controlling which LSP features this server handles
     pub feature_filter: FeatureFilter,
+    /// Capabilities reported by this server during initialization.
+    pub capabilities: ServerCapabilitySummary,
+}
+
+impl ServerHandle {
+    /// Check if this server has the actual capability for a feature.
+    ///
+    /// Checks the server's reported capabilities (from the `initialize` response).
+    /// Before initialization completes (capabilities not yet received), returns
+    /// `false` — the main loop must not route feature requests to servers whose
+    /// capabilities are unknown. Callers handle `None` from `handle_for_feature_mut`
+    /// by relying on existing retry mechanisms (render-cycle polling, timer retries,
+    /// or explicit re-requests from the `LspInitialized` handler).
+    pub fn has_capability(&self, feature: LspFeature) -> bool {
+        if !self.capabilities.initialized {
+            return false;
+        }
+        match feature {
+            LspFeature::Hover => self.capabilities.hover,
+            LspFeature::Completion => self.capabilities.completion,
+            LspFeature::Definition => self.capabilities.definition,
+            LspFeature::References => self.capabilities.references,
+            LspFeature::Format => {
+                self.capabilities.document_formatting || self.capabilities.document_range_formatting
+            }
+            LspFeature::Rename => self.capabilities.rename,
+            LspFeature::SignatureHelp => self.capabilities.signature_help,
+            LspFeature::InlayHints => self.capabilities.inlay_hints,
+            LspFeature::FoldingRange => self.capabilities.folding_ranges,
+            LspFeature::SemanticTokens => {
+                self.capabilities.semantic_tokens_full || self.capabilities.semantic_tokens_range
+            }
+            LspFeature::DocumentHighlight => self.capabilities.document_highlight,
+            LspFeature::CodeAction => self.capabilities.code_action,
+            LspFeature::DocumentSymbols => self.capabilities.document_symbols,
+            LspFeature::WorkspaceSymbols => self.capabilities.workspace_symbols,
+            LspFeature::Diagnostics => self.capabilities.diagnostics,
+        }
+    }
 }
 
 /// Manager for multiple language servers (async version)
@@ -153,24 +226,6 @@ pub struct LspManager {
     /// Languages that have been explicitly disabled/stopped by the user
     /// These will not auto-restart until user manually restarts them
     disabled_languages: HashSet<String>,
-
-    /// Completion trigger characters per language (from server capabilities)
-    completion_trigger_characters: HashMap<String, Vec<String>>,
-
-    /// Semantic token legends per language (from server capabilities)
-    semantic_token_legends: HashMap<String, SemanticTokensLegend>,
-
-    /// Whether a language supports full document semantic tokens
-    semantic_tokens_full_support: HashMap<String, bool>,
-
-    /// Whether a language supports full document semantic token deltas
-    semantic_tokens_full_delta_support: HashMap<String, bool>,
-
-    /// Whether a language supports range semantic tokens
-    semantic_tokens_range_support: HashMap<String, bool>,
-
-    /// Whether a language supports folding ranges
-    folding_ranges_support: HashMap<String, bool>,
 }
 
 impl LspManager {
@@ -188,12 +243,6 @@ impl LspManager {
             pending_restarts: HashMap::new(),
             allowed_languages: HashSet::new(),
             disabled_languages: HashSet::new(),
-            completion_trigger_characters: HashMap::new(),
-            semantic_token_legends: HashMap::new(),
-            semantic_tokens_full_support: HashMap::new(),
-            semantic_tokens_full_delta_support: HashMap::new(),
-            semantic_tokens_range_support: HashMap::new(),
-            folding_ranges_support: HashMap::new(),
         }
     }
 
@@ -223,87 +272,85 @@ impl LspManager {
         self.config.get(language).and_then(|v| v.first())
     }
 
-    /// Set completion trigger characters for a language
-    pub fn set_completion_trigger_characters(&mut self, language: &str, chars: Vec<String>) {
-        self.completion_trigger_characters
-            .insert(language.to_string(), chars);
-    }
-
-    /// Get completion trigger characters for a language
-    pub fn get_completion_trigger_characters(&self, language: &str) -> Option<&Vec<String>> {
-        self.completion_trigger_characters.get(language)
-    }
-
-    /// Store semantic token capability information for a language
-    pub fn set_semantic_tokens_capabilities(
+    /// Store capabilities on the specific server handle identified by server_name.
+    pub fn set_server_capabilities(
         &mut self,
         language: &str,
-        legend: Option<SemanticTokensLegend>,
-        full_support: bool,
-        full_delta_support: bool,
-        range_support: bool,
+        server_name: &str,
+        mut capabilities: ServerCapabilitySummary,
     ) {
-        if let Some(legend) = legend {
-            self.semantic_token_legends
-                .insert(language.to_string(), legend);
-        } else {
-            self.semantic_token_legends.remove(language);
+        capabilities.initialized = true;
+        if let Some(handles) = self.handles.get_mut(language) {
+            if let Some(sh) = handles.iter_mut().find(|sh| sh.name == server_name) {
+                sh.capabilities = capabilities;
+            }
         }
-        self.semantic_tokens_full_support
-            .insert(language.to_string(), full_support);
-        self.semantic_tokens_full_delta_support
-            .insert(language.to_string(), full_delta_support);
-        self.semantic_tokens_range_support
-            .insert(language.to_string(), range_support);
     }
 
-    /// Get the semantic token legend for a language (if provided by server)
+    /// Get the semantic token legend for a language from the first eligible server.
     pub fn semantic_tokens_legend(&self, language: &str) -> Option<&SemanticTokensLegend> {
-        self.semantic_token_legends.get(language)
+        self.handles.get(language)?.iter().find_map(|sh| {
+            if sh.feature_filter.allows(LspFeature::SemanticTokens)
+                && sh.has_capability(LspFeature::SemanticTokens)
+            {
+                sh.capabilities.semantic_tokens_legend.as_ref()
+            } else {
+                None
+            }
+        })
     }
 
-    /// Check if the language supports full semantic tokens
+    /// Check if any eligible server for the language supports full semantic tokens.
     pub fn semantic_tokens_full_supported(&self, language: &str) -> bool {
-        *self
-            .semantic_tokens_full_support
-            .get(language)
-            .unwrap_or(&false)
+        self.handles.get(language).is_some_and(|handles| {
+            handles.iter().any(|sh| {
+                sh.feature_filter.allows(LspFeature::SemanticTokens)
+                    && sh.capabilities.semantic_tokens_full
+            })
+        })
     }
 
-    /// Check if the language supports full semantic token deltas
+    /// Check if any eligible server for the language supports full semantic token deltas.
     pub fn semantic_tokens_full_delta_supported(&self, language: &str) -> bool {
-        *self
-            .semantic_tokens_full_delta_support
-            .get(language)
-            .unwrap_or(&false)
+        self.handles.get(language).is_some_and(|handles| {
+            handles.iter().any(|sh| {
+                sh.feature_filter.allows(LspFeature::SemanticTokens)
+                    && sh.capabilities.semantic_tokens_full_delta
+            })
+        })
     }
 
-    /// Check if the language supports range semantic tokens
+    /// Check if any eligible server for the language supports range semantic tokens.
     pub fn semantic_tokens_range_supported(&self, language: &str) -> bool {
-        *self
-            .semantic_tokens_range_support
-            .get(language)
-            .unwrap_or(&false)
+        self.handles.get(language).is_some_and(|handles| {
+            handles.iter().any(|sh| {
+                sh.feature_filter.allows(LspFeature::SemanticTokens)
+                    && sh.capabilities.semantic_tokens_range
+            })
+        })
     }
 
-    /// Store folding range capability information for a language
-    pub fn set_folding_ranges_supported(&mut self, language: &str, supported: bool) {
-        self.folding_ranges_support
-            .insert(language.to_string(), supported);
-    }
-
-    /// Check if the language supports folding ranges
+    /// Check if any eligible server for the language supports folding ranges.
     pub fn folding_ranges_supported(&self, language: &str) -> bool {
-        *self.folding_ranges_support.get(language).unwrap_or(&false)
+        self.handles.get(language).is_some_and(|handles| {
+            handles.iter().any(|sh| {
+                sh.feature_filter.allows(LspFeature::FoldingRange) && sh.capabilities.folding_ranges
+            })
+        })
     }
 
-    /// Check if a character is a completion trigger for any running language server
+    /// Check if a character is a completion trigger for any running language server.
     pub fn is_completion_trigger_char(&self, ch: char, language: &str) -> bool {
         let ch_str = ch.to_string();
-        self.completion_trigger_characters
-            .get(language)
-            .map(|chars| chars.contains(&ch_str))
-            .unwrap_or(false)
+        self.handles.get(language).is_some_and(|handles| {
+            handles.iter().any(|sh| {
+                sh.feature_filter.allows(LspFeature::Completion)
+                    && sh
+                        .capabilities
+                        .completion_trigger_characters
+                        .contains(&ch_str)
+            })
+        })
     }
 
     /// Try to spawn an LSP server, checking auto_start configuration
@@ -500,15 +547,18 @@ impl LspManager {
     }
 
     /// Get the first handle for a language that allows a given feature (for exclusive features).
+    /// For capability-gated features (semantic tokens, folding ranges), this also checks
+    /// that the server actually reported the capability during initialization.
     /// Returns `None` if no handle matches.
     pub fn handle_for_feature(&self, language: &str, feature: LspFeature) -> Option<&ServerHandle> {
         self.handles
             .get(language)?
             .iter()
-            .find(|sh| sh.feature_filter.allows(feature))
+            .find(|sh| sh.feature_filter.allows(feature) && sh.has_capability(feature))
     }
 
     /// Get the first mutable handle for a language that allows a given feature.
+    /// For capability-gated features, this also checks the server's actual capabilities.
     pub fn handle_for_feature_mut(
         &mut self,
         language: &str,
@@ -517,22 +567,24 @@ impl LspManager {
         self.handles
             .get_mut(language)?
             .iter_mut()
-            .find(|sh| sh.feature_filter.allows(feature))
+            .find(|sh| sh.feature_filter.allows(feature) && sh.has_capability(feature))
     }
 
     /// Get all handles for a language that allow a given feature (for merged features).
+    /// Like `handle_for_feature`, also checks per-server capabilities.
     pub fn handles_for_feature(&self, language: &str, feature: LspFeature) -> Vec<&ServerHandle> {
         self.handles
             .get(language)
             .map(|v| {
                 v.iter()
-                    .filter(|sh| sh.feature_filter.allows(feature))
+                    .filter(|sh| sh.feature_filter.allows(feature) && sh.has_capability(feature))
                     .collect()
             })
             .unwrap_or_default()
     }
 
     /// Get all mutable handles for a language that allow a given feature.
+    /// Like `handle_for_feature_mut`, also checks per-server capabilities.
     pub fn handles_for_feature_mut(
         &mut self,
         language: &str,
@@ -542,7 +594,7 @@ impl LspManager {
             .get_mut(language)
             .map(|v| {
                 v.iter_mut()
-                    .filter(|sh| sh.feature_filter.allows(feature))
+                    .filter(|sh| sh.feature_filter.allows(feature) && sh.has_capability(feature))
                     .collect()
             })
             .unwrap_or_default()
@@ -668,6 +720,7 @@ impl LspManager {
                         name: server_name,
                         handle,
                         feature_filter: config.feature_filter(),
+                        capabilities: ServerCapabilitySummary::default(),
                     });
                 }
                 Err(e) => {

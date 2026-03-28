@@ -2460,16 +2460,20 @@ impl Editor {
     /// Force check the mouse hover timer (for testing)
     /// This bypasses the normal 500ms delay
     pub fn force_check_mouse_hover(&mut self) -> bool {
-        // Temporarily mark the hover as ready by checking if state exists
         if let Some((byte_pos, _, screen_x, screen_y)) = self.mouse_state.lsp_hover_state {
             if !self.mouse_state.lsp_hover_request_sent {
-                self.mouse_state.lsp_hover_request_sent = true;
                 self.mouse_hover_screen_position = Some((screen_x, screen_y));
-                if let Err(e) = self.request_hover_at_position(byte_pos) {
-                    tracing::debug!("Failed to request hover: {}", e);
-                    return false;
+                match self.request_hover_at_position(byte_pos) {
+                    Ok(true) => {
+                        self.mouse_state.lsp_hover_request_sent = true;
+                        return true;
+                    }
+                    Ok(false) => return false, // no server ready, retry later
+                    Err(e) => {
+                        tracing::debug!("Failed to request hover: {}", e);
+                        return false;
+                    }
                 }
-                return true;
             }
         }
         false

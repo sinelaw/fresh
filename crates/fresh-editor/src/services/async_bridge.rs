@@ -14,8 +14,7 @@ use crate::services::terminal::TerminalId;
 use crate::view::file_tree::{FileTreeView, NodeId};
 use lsp_types::{
     CodeActionOrCommand, CompletionItem, Diagnostic, FoldingRange, InlayHint, Location,
-    SemanticTokensFullDeltaResult, SemanticTokensLegend, SemanticTokensRangeResult,
-    SemanticTokensResult, SignatureHelp,
+    SemanticTokensFullDeltaResult, SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp,
 };
 use serde_json::Value;
 use std::sync::mpsc;
@@ -42,18 +41,10 @@ pub enum AsyncMessage {
     /// LSP server initialized successfully
     LspInitialized {
         language: String,
-        /// Completion trigger characters from server capabilities
-        completion_trigger_characters: Vec<String>,
-        /// Legend describing semantic token types supported by the server
-        semantic_tokens_legend: Option<SemanticTokensLegend>,
-        /// Whether the server supports full document semantic tokens
-        semantic_tokens_full: bool,
-        /// Whether the server supports full document semantic token deltas
-        semantic_tokens_full_delta: bool,
-        /// Whether the server supports range semantic tokens
-        semantic_tokens_range: bool,
-        /// Whether the server supports folding ranges
-        folding_ranges_supported: bool,
+        /// Name of the specific server (for per-server capability tracking)
+        server_name: String,
+        /// Capabilities reported by this server
+        capabilities: crate::services::lsp::manager::ServerCapabilitySummary,
     },
 
     /// LSP server crashed or failed
@@ -376,12 +367,8 @@ mod tests {
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
-                completion_trigger_characters: vec![".".to_string()],
-                semantic_tokens_legend: None,
-                semantic_tokens_full: false,
-                semantic_tokens_full_delta: false,
-                semantic_tokens_range: false,
-                folding_ranges_supported: false,
+                server_name: "test".to_string(),
+                capabilities: Default::default(),
             })
             .unwrap();
 
@@ -392,11 +379,11 @@ mod tests {
         match &messages[0] {
             AsyncMessage::LspInitialized {
                 language,
-                completion_trigger_characters,
+                server_name,
                 ..
             } => {
                 assert_eq!(language, "rust");
-                assert_eq!(completion_trigger_characters, &vec![".".to_string()]);
+                assert_eq!(server_name, "test");
             }
             _ => panic!("Wrong message type"),
         }
@@ -411,23 +398,15 @@ mod tests {
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
-                completion_trigger_characters: vec![],
-                semantic_tokens_legend: None,
-                semantic_tokens_full: false,
-                semantic_tokens_full_delta: false,
-                semantic_tokens_range: false,
-                folding_ranges_supported: false,
+                server_name: "test".to_string(),
+                capabilities: Default::default(),
             })
             .unwrap();
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "typescript".to_string(),
-                completion_trigger_characters: vec![],
-                semantic_tokens_legend: None,
-                semantic_tokens_full: false,
-                semantic_tokens_full_delta: false,
-                semantic_tokens_range: false,
-                folding_ranges_supported: false,
+                server_name: "test".to_string(),
+                capabilities: Default::default(),
             })
             .unwrap();
 
@@ -455,23 +434,15 @@ mod tests {
         sender1
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
-                completion_trigger_characters: vec![],
-                semantic_tokens_legend: None,
-                semantic_tokens_full: false,
-                semantic_tokens_full_delta: false,
-                semantic_tokens_range: false,
-                folding_ranges_supported: false,
+                server_name: "test".to_string(),
+                capabilities: Default::default(),
             })
             .unwrap();
         sender2
             .send(AsyncMessage::LspInitialized {
                 language: "typescript".to_string(),
-                completion_trigger_characters: vec![],
-                semantic_tokens_legend: None,
-                semantic_tokens_full: false,
-                semantic_tokens_full_delta: false,
-                semantic_tokens_range: false,
-                folding_ranges_supported: false,
+                server_name: "test".to_string(),
+                capabilities: Default::default(),
             })
             .unwrap();
 
@@ -572,12 +543,8 @@ mod tests {
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
-                completion_trigger_characters: vec![],
-                semantic_tokens_legend: None,
-                semantic_tokens_full: false,
-                semantic_tokens_full_delta: false,
-                semantic_tokens_range: false,
-                folding_ranges_supported: false,
+                server_name: "test".to_string(),
+                capabilities: Default::default(),
             })
             .unwrap();
 
@@ -594,12 +561,8 @@ mod tests {
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
-                completion_trigger_characters: vec![],
-                semantic_tokens_legend: None,
-                semantic_tokens_full: false,
-                semantic_tokens_full_delta: false,
-                semantic_tokens_range: false,
-                folding_ranges_supported: false,
+                server_name: "test".to_string(),
+                capabilities: Default::default(),
             })
             .unwrap();
 
@@ -621,34 +584,22 @@ mod tests {
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
-                completion_trigger_characters: vec![],
-                semantic_tokens_legend: None,
-                semantic_tokens_full: false,
-                semantic_tokens_full_delta: false,
-                semantic_tokens_range: false,
-                folding_ranges_supported: false,
+                server_name: "test".to_string(),
+                capabilities: Default::default(),
             })
             .unwrap();
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "typescript".to_string(),
-                completion_trigger_characters: vec![],
-                semantic_tokens_legend: None,
-                semantic_tokens_full: false,
-                semantic_tokens_full_delta: false,
-                semantic_tokens_range: false,
-                folding_ranges_supported: false,
+                server_name: "test".to_string(),
+                capabilities: Default::default(),
             })
             .unwrap();
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "python".to_string(),
-                completion_trigger_characters: vec![],
-                semantic_tokens_legend: None,
-                semantic_tokens_full: false,
-                semantic_tokens_full_delta: false,
-                semantic_tokens_range: false,
-                folding_ranges_supported: false,
+                server_name: "test".to_string(),
+                capabilities: Default::default(),
             })
             .unwrap();
 

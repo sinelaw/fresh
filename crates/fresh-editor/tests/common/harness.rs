@@ -2009,9 +2009,10 @@ impl EditorTestHarness {
         self.render()?;
         Ok(())
     }
-    /// Wait indefinitely for async operations until condition is met
-    /// Repeatedly processes async messages until condition is met (no timeout)
-    /// Use this for semantic events that must eventually occur
+    /// Wait indefinitely for async operations until condition is met.
+    /// Runs a full editor tick each iteration — the same work the real event
+    /// loop performs between frames — so that hover timers, debounced requests,
+    /// diagnostic pulls, and all other periodic checks fire naturally.
     ///
     /// Note: Uses a short real wall-clock sleep between iterations to allow
     /// async I/O operations (running on tokio runtime) time to complete.
@@ -2023,7 +2024,7 @@ impl EditorTestHarness {
 
         tracing::info!("waiting...");
         loop {
-            self.process_async_and_render()?;
+            self.tick_and_render()?;
             if condition(self) {
                 return Ok(());
             }

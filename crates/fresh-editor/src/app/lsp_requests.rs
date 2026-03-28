@@ -647,7 +647,9 @@ impl Editor {
 
     /// Request LSP hover documentation at a specific byte position
     /// Used for mouse-triggered hover
-    pub(crate) fn request_hover_at_position(&mut self, byte_pos: usize) -> AnyhowResult<()> {
+    /// Returns `Ok(true)` if the request was dispatched, `Ok(false)` if no
+    /// eligible server was available (e.g. not yet initialized).
+    pub(crate) fn request_hover_at_position(&mut self, byte_pos: usize) -> AnyhowResult<bool> {
         // Get the current buffer
         let state = self.active_state();
 
@@ -691,7 +693,7 @@ impl Editor {
             self.lsp_status = "LSP: hover...".to_string();
         }
 
-        Ok(())
+        Ok(sent)
     }
 
     /// Handle hover response from LSP
@@ -2259,16 +2261,17 @@ impl Editor {
             return;
         };
 
+        // Ensure there is a running server
+        use crate::services::lsp::manager::LspSpawnResult;
+        if lsp.try_spawn(&language, file_path_for_spawn.as_deref()) != LspSpawnResult::Spawned {
+            return;
+        }
+
+        // Check that a server actually supports full semantic tokens
         if !lsp.semantic_tokens_full_supported(&language) {
             return;
         }
         if lsp.semantic_tokens_legend(&language).is_none() {
-            return;
-        }
-
-        // Ensure there is a running server
-        use crate::services::lsp::manager::LspSpawnResult;
-        if lsp.try_spawn(&language, file_path_for_spawn.as_deref()) != LspSpawnResult::Spawned {
             return;
         }
 
@@ -2286,12 +2289,13 @@ impl Editor {
             .semantic_tokens
             .as_ref()
             .and_then(|store| store.result_id.clone());
-        let supports_delta = lsp.semantic_tokens_full_delta_supported(&language);
-        let use_delta = previous_result_id.is_some() && supports_delta;
 
         let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::SemanticTokens) else {
             return;
         };
+        // Check capabilities on the specific server we'll send to
+        let supports_delta = sh.capabilities.semantic_tokens_full_delta;
+        let use_delta = previous_result_id.is_some() && supports_delta;
         let handle = &mut sh.handle;
 
         let request_id = self.next_lsp_request_id;
@@ -2383,8 +2387,14 @@ impl Editor {
             return;
         };
 
+        // Ensure there is a running server
+        use crate::services::lsp::manager::LspSpawnResult;
+        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
+            return;
+        }
+
         if !lsp.semantic_tokens_range_supported(&language) {
-            // Fall back to full document tokens if range not supported.
+            // Fall back to full document tokens if no server supports range.
             self.maybe_request_semantic_tokens(buffer_id);
             return;
         }
@@ -2392,15 +2402,14 @@ impl Editor {
             return;
         }
 
-        // Ensure there is a running server
-        use crate::services::lsp::manager::LspSpawnResult;
-        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
-            return;
-        }
-
         let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::SemanticTokens) else {
             return;
         };
+        // The handle_for_feature_mut check ensures has_capability(SemanticTokens) which is
+        // full || range. Double-check this specific server supports range.
+        if !sh.capabilities.semantic_tokens_range {
+            return;
+        }
         let handle = &mut sh.handle;
         let Some(state) = self.buffers.get(&buffer_id) else {
             return;

@@ -1637,18 +1637,12 @@ fn test_force_check_mouse_hover() {
         "Should have hover state"
     );
 
-    // Force check should return true (would trigger hover if LSP was available)
+    // Force check returns false when no LSP server is available — the request
+    // is not dispatched and the sent flag is not set, allowing retry later.
     let triggered = harness.editor_mut().force_check_mouse_hover();
     assert!(
-        triggered,
-        "force_check_mouse_hover should return true when hover state exists"
-    );
-
-    // Second call should return false (already sent)
-    let triggered_again = harness.editor_mut().force_check_mouse_hover();
-    assert!(
-        !triggered_again,
-        "Second force_check should return false (already sent)"
+        !triggered,
+        "force_check_mouse_hover should return false when no LSP server is available"
     );
 }
 

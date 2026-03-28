@@ -26,7 +26,7 @@ use lsp_types::{
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, InitializeParams, InitializeResult,
     InitializedParams, PublishDiagnosticsParams, SemanticTokenModifier, SemanticTokenType,
     SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
-    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensFullOptions, SemanticTokensParams, SemanticTokensResult,
     SemanticTokensServerCapabilities, ServerCapabilities, TextDocumentContentChangeEvent,
     TextDocumentIdentifier, TextDocumentItem, TokenFormat, Uri, VersionedTextDocumentIdentifier,
     WindowClientCapabilities, WorkspaceFolder,
@@ -356,52 +356,118 @@ fn create_client_capabilities() -> ClientCapabilities {
     }
 }
 
-fn extract_semantic_token_capability(
-    capabilities: &ServerCapabilities,
-) -> (Option<SemanticTokensLegend>, bool, bool, bool) {
-    capabilities
+use crate::services::lsp::manager::ServerCapabilitySummary;
+
+/// Extract a complete capability summary from the server's initialize response.
+///
+/// Follows the LSP 3.17 specification for each capability field:
+/// - `boolean | XxxOptions` → true if `true` or options present
+/// - Options-only fields (e.g. completionProvider) → true if present
+fn extract_capability_summary(caps: &ServerCapabilities) -> ServerCapabilitySummary {
+    let (sem_legend, sem_full, sem_full_delta, sem_range) = caps
         .semantic_tokens_provider
         .as_ref()
-        .map(|provider| match provider {
-            SemanticTokensServerCapabilities::SemanticTokensOptions(options) => (
-                Some(options.legend.clone()),
-                semantic_tokens_full_supported(&options.full),
-                semantic_tokens_full_delta_supported(&options.full),
-                options.range.unwrap_or(false),
-            ),
-            SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(options) => {
-                let legend = options.semantic_tokens_options.legend.clone();
-                let full = semantic_tokens_full_supported(&options.semantic_tokens_options.full);
-                let delta =
-                    semantic_tokens_full_delta_supported(&options.semantic_tokens_options.full);
-                let range = options.semantic_tokens_options.range.unwrap_or(false);
-                (Some(legend), full, delta, range)
-            }
+        .map(|provider| {
+            let (legend, full_opt) = match provider {
+                SemanticTokensServerCapabilities::SemanticTokensOptions(o) => {
+                    (o.legend.clone(), &o.full)
+                }
+                SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(o) => (
+                    o.semantic_tokens_options.legend.clone(),
+                    &o.semantic_tokens_options.full,
+                ),
+            };
+            let range = match provider {
+                SemanticTokensServerCapabilities::SemanticTokensOptions(o) => {
+                    o.range.unwrap_or(false)
+                }
+                SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(o) => {
+                    o.semantic_tokens_options.range.unwrap_or(false)
+                }
+            };
+            let full = match full_opt {
+                Some(SemanticTokensFullOptions::Bool(v)) => *v,
+                Some(SemanticTokensFullOptions::Delta { .. }) => true,
+                None => false,
+            };
+            let delta = match full_opt {
+                Some(SemanticTokensFullOptions::Delta { delta }) => delta.unwrap_or(false),
+                _ => false,
+            };
+            (Some(legend), full, delta, range)
         })
-        .unwrap_or((None, false, false, false))
-}
+        .unwrap_or((None, false, false, false));
 
-fn semantic_tokens_full_supported(full: &Option<SemanticTokensFullOptions>) -> bool {
-    match full {
-        Some(SemanticTokensFullOptions::Bool(v)) => *v,
-        Some(SemanticTokensFullOptions::Delta { .. }) => true,
-        None => false,
+    ServerCapabilitySummary {
+        initialized: false, // set to true by set_server_capabilities
+        hover: bool_or_options(&caps.hover_provider, |p| match p {
+            lsp_types::HoverProviderCapability::Simple(v) => *v,
+            lsp_types::HoverProviderCapability::Options(_) => true,
+        }),
+        completion: caps.completion_provider.is_some(),
+        completion_trigger_characters: caps
+            .completion_provider
+            .as_ref()
+            .and_then(|cp| cp.trigger_characters.clone())
+            .unwrap_or_default(),
+        definition: bool_or_options(&caps.definition_provider, |p| match p {
+            lsp_types::OneOf::Left(v) => *v,
+            lsp_types::OneOf::Right(_) => true,
+        }),
+        references: bool_or_options(&caps.references_provider, |p| match p {
+            lsp_types::OneOf::Left(v) => *v,
+            lsp_types::OneOf::Right(_) => true,
+        }),
+        document_formatting: bool_or_options(&caps.document_formatting_provider, |p| match p {
+            lsp_types::OneOf::Left(v) => *v,
+            lsp_types::OneOf::Right(_) => true,
+        }),
+        document_range_formatting: bool_or_options(&caps.document_range_formatting_provider, |p| {
+            match p {
+                lsp_types::OneOf::Left(v) => *v,
+                lsp_types::OneOf::Right(_) => true,
+            }
+        }),
+        rename: bool_or_options(&caps.rename_provider, |p| match p {
+            lsp_types::OneOf::Left(v) => *v,
+            lsp_types::OneOf::Right(_) => true,
+        }),
+        signature_help: caps.signature_help_provider.is_some(),
+        inlay_hints: bool_or_options(&caps.inlay_hint_provider, |p| match p {
+            lsp_types::OneOf::Left(v) => *v,
+            lsp_types::OneOf::Right(_) => true,
+        }),
+        folding_ranges: bool_or_options(&caps.folding_range_provider, |p| match p {
+            lsp_types::FoldingRangeProviderCapability::Simple(v) => *v,
+            _ => true,
+        }),
+        semantic_tokens_full: sem_full,
+        semantic_tokens_full_delta: sem_full_delta,
+        semantic_tokens_range: sem_range,
+        semantic_tokens_legend: sem_legend,
+        document_highlight: bool_or_options(&caps.document_highlight_provider, |p| match p {
+            lsp_types::OneOf::Left(v) => *v,
+            lsp_types::OneOf::Right(_) => true,
+        }),
+        code_action: bool_or_options(&caps.code_action_provider, |p| match p {
+            lsp_types::CodeActionProviderCapability::Simple(v) => *v,
+            lsp_types::CodeActionProviderCapability::Options(_) => true,
+        }),
+        document_symbols: bool_or_options(&caps.document_symbol_provider, |p| match p {
+            lsp_types::OneOf::Left(v) => *v,
+            lsp_types::OneOf::Right(_) => true,
+        }),
+        workspace_symbols: bool_or_options(&caps.workspace_symbol_provider, |p| match p {
+            lsp_types::OneOf::Left(v) => *v,
+            lsp_types::OneOf::Right(_) => true,
+        }),
+        diagnostics: caps.diagnostic_provider.is_some(),
     }
 }
 
-fn semantic_tokens_full_delta_supported(full: &Option<SemanticTokensFullOptions>) -> bool {
-    match full {
-        Some(SemanticTokensFullOptions::Delta { delta }) => delta.unwrap_or(false),
-        _ => false,
-    }
-}
-
-fn folding_ranges_supported(capabilities: &ServerCapabilities) -> bool {
-    match capabilities.folding_range_provider.as_ref() {
-        Some(lsp_types::FoldingRangeProviderCapability::Simple(v)) => *v,
-        Some(_) => true,
-        None => false,
-    }
+/// Helper: check an `Option<T>` capability field using a predicate.
+fn bool_or_options<T>(opt: &Option<T>, check: impl FnOnce(&T) -> bool) -> bool {
+    opt.as_ref().is_some_and(check)
 }
 
 /// Commands sent from the main loop to the LSP task
@@ -860,31 +926,13 @@ impl LspState {
 
         self.initialized = true;
 
-        // Extract completion trigger characters from server capabilities
-        let completion_trigger_characters = result
-            .capabilities
-            .completion_provider
-            .as_ref()
-            .and_then(|cp| cp.trigger_characters.clone())
-            .unwrap_or_default();
-
-        let (
-            semantic_tokens_legend,
-            semantic_tokens_full,
-            semantic_tokens_full_delta,
-            semantic_tokens_range,
-        ) = extract_semantic_token_capability(&result.capabilities);
-        let folding_ranges_supported = folding_ranges_supported(&result.capabilities);
+        let capabilities = extract_capability_summary(&result.capabilities);
 
         // Notify main loop
         let _ = self.async_tx.send(AsyncMessage::LspInitialized {
             language: self.language.clone(),
-            completion_trigger_characters,
-            semantic_tokens_legend,
-            semantic_tokens_full,
-            semantic_tokens_full_delta,
-            semantic_tokens_range,
-            folding_ranges_supported,
+            server_name: self.server_name.clone(),
+            capabilities,
         });
 
         // Send running status

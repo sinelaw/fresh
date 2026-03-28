@@ -1592,6 +1592,108 @@ done
         dir.join("fake_lsp_server_env_echo.sh")
     }
 
+    /// Spawn a fake LSP server that does NOT support semantic tokens at all.
+    /// Used to reproduce multi-LSP capability mismatch bugs.
+    pub fn spawn_no_semantic_tokens(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let script = r#"#!/bin/bash
+
+# Function to read a message
+read_message() {
+    # Read headers
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        # Empty line marks end of headers
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+
+    # Read content
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+# Function to send a message
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+
+# Main loop
+while true; do
+    # Read incoming message
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    # Extract method from JSON
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+case "$method" in
+    "initialize")
+        # No semanticTokensProvider in capabilities
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1}}}'
+        ;;
+    "textDocument/hover")
+        line=$(echo "$msg" | grep -o '"line":[0-9]*' | head -1 | cut -d':' -f2)
+        char=$(echo "$msg" | grep -o '"character":[0-9]*' | head -1 | cut -d':' -f2)
+        end_char=$((char + 10))
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"contents":{"kind":"markdown","value":"No semantic tokens server"},"range":{"start":{"line":'$line',"character":'$char'},"end":{"line":'$line',"character":'$end_char'}}}}'
+        ;;
+    "textDocument/completion")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[]}}'
+        ;;
+    "textDocument/didOpen")
+        ;;
+    "textDocument/didClose")
+        ;;
+    "textDocument/didChange")
+        ;;
+    "textDocument/didSave")
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+esac
+done
+"#;
+
+        let script_path = Self::no_semantic_tokens_script_path(dir);
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Path to the no-semantic-tokens script.
+    pub fn no_semantic_tokens_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_no_semantic_tokens.sh")
+    }
+
     /// Stop the server
     pub fn stop(&mut self) {
         let _ = self.stop_tx.send(());

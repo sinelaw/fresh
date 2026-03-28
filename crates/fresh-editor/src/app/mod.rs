@@ -2091,19 +2091,21 @@ impl Editor {
             return false;
         };
 
-        // Mark as sent before requesting (to prevent double-sending)
-        self.mouse_state.lsp_hover_request_sent = true;
-
         // Store mouse position for popup positioning
         self.mouse_hover_screen_position = Some((screen_x, screen_y));
 
-        // Request hover at the byte position
-        if let Err(e) = self.request_hover_at_position(byte_pos) {
-            tracing::debug!("Failed to request hover: {}", e);
-            return false;
+        // Request hover at the byte position — only mark as sent if dispatched
+        match self.request_hover_at_position(byte_pos) {
+            Ok(true) => {
+                self.mouse_state.lsp_hover_request_sent = true;
+                true
+            }
+            Ok(false) => false, // no server ready, timer will retry
+            Err(e) => {
+                tracing::debug!("Failed to request hover: {}", e);
+                false
+            }
         }
-
-        true
     }
 
     /// Check if semantic highlight debounce timer has expired
@@ -4524,35 +4526,19 @@ impl Editor {
                 }
                 AsyncMessage::LspInitialized {
                     language,
-                    completion_trigger_characters,
-                    semantic_tokens_legend,
-                    semantic_tokens_full,
-                    semantic_tokens_full_delta,
-                    semantic_tokens_range,
-                    folding_ranges_supported,
+                    server_name,
+                    capabilities,
                 } => {
-                    tracing::info!("LSP server initialized for language: {}", language);
-                    tracing::debug!(
-                        "LSP completion trigger characters for {}: {:?}",
-                        language,
-                        completion_trigger_characters
+                    tracing::info!(
+                        "LSP server '{}' initialized for language: {}",
+                        server_name,
+                        language
                     );
                     self.status_message = Some(format!("LSP ({}) ready", language));
 
-                    // Store completion trigger characters
+                    // Store capabilities on the specific server handle
                     if let Some(lsp) = &mut self.lsp {
-                        lsp.set_completion_trigger_characters(
-                            &language,
-                            completion_trigger_characters,
-                        );
-                        lsp.set_semantic_tokens_capabilities(
-                            &language,
-                            semantic_tokens_legend,
-                            semantic_tokens_full,
-                            semantic_tokens_full_delta,
-                            semantic_tokens_range,
-                        );
-                        lsp.set_folding_ranges_supported(&language, folding_ranges_supported);
+                        lsp.set_server_capabilities(&language, &server_name, capabilities);
                     }
 
                     // Send didOpen for all open buffers of this language
