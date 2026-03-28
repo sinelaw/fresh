@@ -3597,8 +3597,7 @@ fn test_usability_entry_dialog_button_focus_indicator() {
         if screen.contains("[ Save ]") || screen.contains("[ Cancel ]") {
             // Check if any button row has a focus indicator nearby
             for line in screen.lines() {
-                if (line.contains("[ Save ]") || line.contains("[ Cancel ]"))
-                    && line.contains(">")
+                if (line.contains("[ Save ]") || line.contains("[ Cancel ]")) && line.contains(">")
                 {
                     has_focused_button = true;
                     break;
