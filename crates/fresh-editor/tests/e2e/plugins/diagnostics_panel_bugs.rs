@@ -2,12 +2,12 @@
 //!
 //! These tests reproduce the following issues discovered during manual usability testing:
 //!
-//! 1. **isOpen state desync**: Pressing Escape closes the panel visually but the plugin's
-//!    `isOpen` flag remains `true`, so "Show Diagnostics Panel" silently fails to reopen.
+//! 1. **isOpen state desync**: Pressing Escape closes the panel visually (via the
+//!    Finder's built-in handler), but the diagnostics plugin's `isOpen` flag is not
+//!    reset. So the next "Show Diagnostics Panel" silently fails to reopen.
 //!
-//! 2. **Jump-to-location wrong line**: Pressing Enter on a diagnostic jumps to the wrong
-//!    line — the panel's internal line number is used instead of the diagnostic's source
-//!    line number.
+//! 2. **Jump-to-location wrong line**: Pressing Enter on a diagnostic shows "Jumped to"
+//!    in the status bar but the cursor does not actually move to the diagnostic location.
 
 use crate::common::fake_lsp::FakeLspServer;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
@@ -102,11 +102,13 @@ fn open_diagnostics_panel(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
-// ─── Bug 1: isOpen state desyncs when closing with Escape ───────────────────
+// ─── Bug 1: Escape closes the panel but isOpen state desyncs ────────────────
 
 /// After closing the diagnostics panel with Escape, "Show Diagnostics Panel"
-/// should reopen it. Currently, Escape closes the visual panel but the plugin's
-/// `isOpen` flag stays `true`, so the show command silently does nothing.
+/// should reopen it. The Escape key closes the visual panel (via the Finder's
+/// built-in handler), but the diagnostics plugin's `isOpen` flag is not reset.
+/// So the next "Show Diagnostics Panel" call sees isOpen=true and just calls
+/// provider.notify() on a dead panel instead of creating a new one.
 ///
 /// This test will hang (timeout in CI) if the bug is present, because the
 /// second `open_diagnostics_panel` call waits for the panel to appear but it
@@ -115,13 +117,17 @@ fn open_diagnostics_panel(harness: &mut EditorTestHarness) {
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_diagnostics_panel_reopen_after_escape() {
     init_tracing_from_env();
+    eprintln!("[TEST reopen] Starting test...");
 
     let temp_dir = tempfile::TempDir::new().unwrap();
     let _fake_server = FakeLspServer::spawn_many_diagnostics(temp_dir.path(), 3).unwrap();
+    eprintln!("[TEST reopen] Fake LSP spawned, setting up harness...");
     let (mut harness, _test_file) = setup_harness(&temp_dir);
+    eprintln!("[TEST reopen] Harness ready, opening panel...");
 
     // Open the diagnostics panel
     open_diagnostics_panel(&mut harness);
+    eprintln!("[TEST reopen] Panel opened");
 
     let screen = harness.screen_to_string();
     assert!(
@@ -133,18 +139,18 @@ fn test_diagnostics_panel_reopen_after_escape() {
     // Close the panel with Escape
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-
-    // Wait for panel to disappear (the split should close)
-    harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            !screen.contains("Enter:select | Esc:close")
-        })
-        .unwrap();
+    harness.render().unwrap();
 
     let screen_after_close = harness.screen_to_string();
     eprintln!(
         "[TEST] Screen after Escape close:\n{}",
+        screen_after_close
+    );
+
+    // Verify the panel actually closed visually
+    assert!(
+        !screen_after_close.contains("Esc:close"),
+        "Panel should be visually closed after Escape.\nScreen:\n{}",
         screen_after_close
     );
 
@@ -170,15 +176,15 @@ fn test_diagnostics_panel_reopen_after_escape() {
     );
 }
 
-// ─── Bug 2: Jump-to-location navigates to wrong line ────────────────────────
+// ─── Bug 2: Jump-to-location does not move the cursor ───────────────────────
 
 /// Pressing Enter on the first diagnostic should jump to line 1 (display) in the
 /// source file (LSP line 0). The test moves the cursor far from line 1 first, then
 /// opens the panel and presses Enter. If the jump works correctly, the cursor should
 /// be back near the top of the file.
 ///
-/// Uses the existing `test_diagnostics_panel_enter_does_not_jump` approach but with
-/// a clearer assertion on the cursor's final position.
+/// Currently, the status bar shows "Jumped to test.rs:1" but the cursor stays at
+/// its previous position (Ln 21).
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_diagnostics_panel_jump_to_correct_line() {
@@ -191,7 +197,9 @@ fn test_diagnostics_panel_jump_to_correct_line() {
 
     // Move cursor far away from the diagnostic lines (line 0-1) to line 20
     for _ in 0..20 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::NONE)
+            .unwrap();
     }
     harness.render().unwrap();
 
@@ -207,7 +215,9 @@ fn test_diagnostics_panel_jump_to_correct_line() {
     // Navigate to the first diagnostic item
     // Panel layout: line 1=title, line 2=blank, line 3=file header, line 4=first [E] item
     for _ in 0..10 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::NONE)
+            .unwrap();
         harness.render().unwrap();
         let screen = harness.screen_to_string();
         if screen.contains("Item 1/") {
@@ -240,22 +250,13 @@ fn test_diagnostics_panel_jump_to_correct_line() {
         after_jump
     );
 
-    // After jumping, the viewport should show the file's first lines
-    // (since the diagnostic is at line 0, "line 00 content here" should be visible)
-    assert!(
-        after_jump.contains("line 00 content here"),
-        "After jumping to a diagnostic at line 0, the viewport should show \
-         'line 00 content here'. The jump may have gone to the wrong line \
-         (using the panel's internal cursor line instead of the diagnostic's \
-         source line).\nScreen:\n{}",
-        after_jump
-    );
-
-    // The status bar should show Ln 1 (1-indexed display for LSP line 0)
+    // The status bar should show Ln 1 (1-indexed display for LSP line 0).
+    // BUG: The status bar shows "Jumped to test.rs:1" but the cursor stays at Ln 21.
     assert!(
         after_jump.contains("Ln 1,"),
         "After jumping to LSP line 0, the status bar should show 'Ln 1'. \
-         The cursor jumped to the wrong line.\nScreen:\n{}",
+         The cursor did not actually move to the diagnostic location even though \
+         the 'Jumped to' message appeared.\nScreen:\n{}",
         after_jump
     );
 }
