@@ -563,45 +563,46 @@ fn test_add_new_lsp_server_persists() {
 // ---------------------------------------------------------------------------
 
 /// When editing in a TextList (e.g., typing a new arg after pressing Enter on
-/// [+] Add new), pressing Tab should accept the text and add it as a new entry.
+/// [+] Add new), pressing Down or Tab should auto-accept the text and add it
+/// as a new entry.
 #[test]
-fn test_textlist_tab_accepts_new_entry() {
+fn test_textlist_down_accepts_new_entry() {
     let mut harness = EditorTestHarness::new(120, 50).unwrap();
     harness.render().unwrap();
     open_lsp_edit_item(&mut harness);
 
-    // Navigate to Args section
-    let mut found_args = false;
-    for _ in 0..20 {
+    // Navigate to Args section's [+] Add new sub-item
+    let mut found_args_add = false;
+    for _ in 0..30 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
         let screen = harness.screen_to_string();
         let lines: Vec<&str> = screen.lines().collect();
         for (i, line) in lines.iter().enumerate() {
-            if line.contains(">") {
-                // Check if this is within the Args section
-                for offset in 0..=5 {
+            if line.contains(">") && line.contains("[+]") {
+                // Check if this [+] Add new is under Args (within 5 lines above)
+                for offset in 1..=5 {
                     if i >= offset && lines[i - offset].contains("Args:") {
-                        found_args = true;
+                        found_args_add = true;
                         break;
                     }
                 }
             }
-            if found_args {
+            if found_args_add {
                 break;
             }
         }
-        if found_args {
+        if found_args_add {
             break;
         }
     }
 
-    if !found_args {
-        eprintln!("Could not navigate to Args section, skipping test.");
+    if !found_args_add {
+        eprintln!("Could not navigate to Args [+] Add new, skipping test.");
         return;
     }
 
-    // Press Enter to start editing / enter the TextList
+    // Press Enter to start editing the add-new field
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -611,15 +612,26 @@ fn test_textlist_tab_accepts_new_entry() {
     harness.type_text("--verbose").unwrap();
     harness.render().unwrap();
 
-    // Press Tab to accept and exit
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Press Down to auto-accept and navigate
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // The new arg should be visible in the Args list
+    // The new arg should be accepted and visible as a committed entry
+    // (not just in the add-new text field)
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("--verbose"),
-        "New arg '--verbose' should be visible after typing and pressing Tab.\nScreen:\n{}",
+        "New arg '--verbose' should be accepted after pressing Down.\nScreen:\n{}",
+        screen
+    );
+
+    // Verify it was actually added as an entry (has [x] delete button)
+    let has_committed_entry = screen
+        .lines()
+        .any(|line| line.contains("--verbose") && line.contains("[x]"));
+    assert!(
+        has_committed_entry,
+        "Entry '--verbose' should be committed (shown with [x] delete button).\nScreen:\n{}",
         screen
     );
 }

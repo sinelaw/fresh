@@ -216,9 +216,10 @@ impl SettingsState {
                         dialog.cursor_up();
                     }
                 } else {
-                    // Move to previous item in TextList
+                    // Auto-accept pending text in TextList before navigating
                     if let Some(item) = dialog.current_item_mut() {
                         if let SettingControl::TextList(state) = &mut item.control {
+                            state.add_item();
                             state.focus_prev();
                         }
                     }
@@ -233,9 +234,10 @@ impl SettingsState {
                         dialog.cursor_down();
                     }
                 } else {
-                    // Move to next item in TextList
+                    // Auto-accept pending text in TextList before navigating
                     if let Some(item) = dialog.current_item_mut() {
                         if let SettingControl::TextList(state) = &mut item.control {
+                            state.add_item();
                             state.focus_next();
                         }
                     }
@@ -266,6 +268,12 @@ impl SettingsState {
                     }
                     // If not valid, Tab is ignored (user must fix or press Esc)
                 } else {
+                    // Auto-accept pending text in TextList before exiting
+                    if let Some(item) = dialog.current_item_mut() {
+                        if let SettingControl::TextList(state) = &mut item.control {
+                            state.add_item();
+                        }
+                    }
                     // Tab exits text editing mode for non-JSON controls (TextList, Text)
                     dialog.stop_editing();
                 }
