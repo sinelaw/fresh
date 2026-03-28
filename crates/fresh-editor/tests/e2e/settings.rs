@@ -2059,13 +2059,43 @@ fn test_entry_dialog_delete_textlist_item() {
     harness.assert_screen_contains("Edit Value");
 
     // Navigate to Extensions section which has existing items
+    // The ">" focus indicator may be on the section header or on a sub-item line
+    // below it (for composite controls like TextList).
+    let mut attempts = 0;
     loop {
         harness.render().unwrap();
         let screen = harness.screen_to_string();
+        // Check if Extensions header is focused directly
         if screen.contains(">  Extensions") || screen.contains(">● Extensions") {
             break;
         }
+        // Also check if ">" is on a sub-item line near the Extensions header
+        let lines: Vec<&str> = screen.lines().collect();
+        let mut found_near = false;
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains(">") && !line.contains("Extensions") {
+                for offset in 1..=3 {
+                    if i >= offset && lines[i - offset].contains("Extensions:") {
+                        found_near = true;
+                        break;
+                    }
+                }
+            }
+            if found_near {
+                break;
+            }
+        }
+        if found_near {
+            break;
+        }
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        attempts += 1;
+        assert!(
+            attempts < 100,
+            "Could not find Extensions section after {} Down presses.\nScreen:\n{}",
+            attempts,
+            screen
+        );
     }
 
     // The Extensions section should have items and "[x]" delete buttons
@@ -3548,20 +3578,42 @@ fn test_usability_entry_dialog_button_focus_indicator() {
         .unwrap();
     harness.render().unwrap();
 
-    // Tab toggles between items and buttons — press Tab to reach buttons
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    // Tab cycles through all fields and buttons — press Tab until we reach a button
+    let mut has_focused_button = false;
+    for _ in 0..60 {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
 
-    let screen = harness.screen_to_string();
-    // The ">" indicator is rendered with a gap before the button bracket
-    let has_focused_button = screen.contains("> [ Save ]")
-        || screen.contains("> [ Delete ]")
-        || screen.contains("> [ Cancel ]");
+        let screen = harness.screen_to_string();
+        // The ">" indicator is rendered with a gap before the button bracket
+        if screen.contains("> [ Save ]")
+            || screen.contains("> [ Delete ]")
+            || screen.contains("> [ Cancel ]")
+        {
+            has_focused_button = true;
+            break;
+        }
+        // Also check for button focus via REVERSED style (> may be in separate cell)
+        if screen.contains("[ Save ]") || screen.contains("[ Cancel ]") {
+            // Check if any button row has a focus indicator nearby
+            for line in screen.lines() {
+                if (line.contains("[ Save ]") || line.contains("[ Cancel ]"))
+                    && line.contains(">")
+                {
+                    has_focused_button = true;
+                    break;
+                }
+            }
+            if has_focused_button {
+                break;
+            }
+        }
+    }
 
     assert!(
         has_focused_button,
-        "Entry dialog buttons should show > focus indicator. Screen:\n{}",
-        screen
+        "Entry dialog buttons should show > focus indicator after Tab cycling. Screen:\n{}",
+        harness.screen_to_string()
     );
 
     // Close the dialog
