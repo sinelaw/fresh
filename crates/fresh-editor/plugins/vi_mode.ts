@@ -224,6 +224,7 @@ const motionToSelection: Record<string, string> = {
   move_down: "select_down",
   move_word_left: "select_word_left",
   move_word_right: "select_word_right",
+  vi_move_word_end: "vi_select_word_end",
   move_line_start: "select_line_start",
   move_line_end: "select_line_end",
   move_document_start: "select_document_start",
@@ -337,18 +338,8 @@ function handleMotionWithOperator(motionAction: string): void {
 
 // Navigation (all support count prefix, e.g., 5j moves down 5 lines)
 function vi_left() : void {
-  // h should not wrap to previous line — check line before/after
-  const count = consumeCount();
-  for (let i = 0; i < count; i++) {
-    const lineBefore = editor.getCursorLine();
-    editor.executeAction("move_left");
-    const lineAfter = editor.getCursorLine();
-    if (lineAfter !== lineBefore) {
-      // Wrapped to previous line — undo by moving right
-      editor.executeAction("move_right");
-      break;
-    }
-  }
+  // h — line-bounded move left (vim doesn't wrap across lines)
+  executeWithCount("move_left_in_line");
 }
 registerHandler("vi_left", vi_left);
 
@@ -363,18 +354,8 @@ function vi_up() : void {
 registerHandler("vi_up", vi_up);
 
 function vi_right() : void {
-  // l should not wrap to next line — check line before/after
-  const count = consumeCount();
-  for (let i = 0; i < count; i++) {
-    const lineBefore = editor.getCursorLine();
-    editor.executeAction("move_right");
-    const lineAfter = editor.getCursorLine();
-    if (lineAfter !== lineBefore) {
-      // Wrapped to next line — undo by moving left
-      editor.executeAction("move_left");
-      break;
-    }
-  }
+  // l — line-bounded move right (vim doesn't wrap across lines)
+  executeWithCount("move_right_in_line");
 }
 registerHandler("vi_right", vi_right);
 
@@ -388,43 +369,9 @@ function vi_word_back() : void {
 }
 registerHandler("vi_word_back", vi_word_back);
 
-async function vi_word_end() : Promise<void> {
-  // Move to end of word - vim 'e' motion
-  // We use getBufferText to find the correct word end position
-  const count = consumeCount();
-  const bufferId = editor.getActiveBufferId();
-  for (let i = 0; i < count; i++) {
-    const pos = editor.getCursorPosition();
-    if (pos === null) break;
-    // Read a chunk of text ahead to find the word end
-    const bufLen = editor.getBufferLength(bufferId);
-    const end = Math.min(pos + 200, bufLen);
-    if (end <= pos) break;
-    const text = await safeGetBufferText(bufferId, pos, end);
-    if (!text || text.length === 0) break;
-    // Skip current char (so 'e' at end of word advances to next word's end)
-    let j = 0;
-    if (text.length > 1) j = 1;
-    // Skip whitespace
-    while (j < text.length && (text[j] === ' ' || text[j] === '\t' || text[j] === '\n' || text[j] === '\r')) {
-      j++;
-    }
-    // Skip word characters to find end of word
-    if (j < text.length) {
-      // Determine if word char or punctuation
-      const isWordChar = (c: string) => /[a-zA-Z0-9_]/.test(c);
-      const startIsWord = isWordChar(text[j]);
-      while (j + 1 < text.length) {
-        const nextIsWord = isWordChar(text[j + 1]);
-        const nextIsSpace = text[j + 1] === ' ' || text[j + 1] === '\t' || text[j + 1] === '\n' || text[j + 1] === '\r';
-        if (nextIsSpace || (startIsWord !== nextIsWord)) break;
-        j++;
-      }
-    }
-    if (j > 0) {
-      editor.setBufferCursor(bufferId, pos + j);
-    }
-  }
+function vi_word_end() : void {
+  // Vim 'e' motion — uses native vi_move_word_end action
+  executeWithCount("vi_move_word_end");
 }
 registerHandler("vi_word_end", vi_word_end);
 
@@ -833,24 +780,9 @@ function vi_join() : void {
 }
 registerHandler("vi_join", vi_join);
 
-// Toggle case (~)
-async function vi_toggle_case() : Promise<void> {
-  const count = consumeCount();
-  const bufferId = editor.getActiveBufferId();
-  for (let i = 0; i < count; i++) {
-    const pos = editor.getCursorPosition();
-    if (pos === null) break;
-    const text = await safeGetBufferText(bufferId, pos, pos + 1);
-    if (!text || text.length === 0 || text === '\n') break;
-    const ch = text[0];
-    const toggled = ch === ch.toUpperCase() ? ch.toLowerCase() : ch.toUpperCase();
-    if (toggled !== ch) {
-      editor.deleteRange(bufferId, pos, pos + 1);
-      editor.insertAtCursor(toggled);
-    } else {
-      editor.executeAction("move_right");
-    }
-  }
+// Toggle case (~) — uses native toggle_case action
+function vi_toggle_case() : void {
+  executeWithCount("toggle_case");
 }
 registerHandler("vi_toggle_case", vi_toggle_case);
 
@@ -1111,33 +1043,9 @@ function vi_vis_word_back() : void {
 }
 registerHandler("vi_vis_word_back", vi_vis_word_back);
 
-async function vi_vis_word_end() : Promise<void> {
-  // Extend selection to end of word — same logic as vi_word_end but using selection
-  const count = consumeCount();
-  const bufferId = editor.getActiveBufferId();
-  for (let i = 0; i < count; i++) {
-    const pos = editor.getCursorPosition();
-    if (pos === null) break;
-    const text = await safeGetBufferText(bufferId, pos, pos + 200);
-    if (!text || text.length === 0) break;
-    let j = 0;
-    if (text.length > 1) j = 1;
-    while (j < text.length && (text[j] === ' ' || text[j] === '\t' || text[j] === '\n' || text[j] === '\r')) j++;
-    if (j < text.length) {
-      const isWordChar = (c: string) => /[a-zA-Z0-9_]/.test(c);
-      const startIsWord = isWordChar(text[j]);
-      while (j + 1 < text.length) {
-        const nextIsWord = isWordChar(text[j + 1]);
-        const nextIsSpace = text[j + 1] === ' ' || text[j + 1] === '\t' || text[j + 1] === '\n' || text[j + 1] === '\r';
-        if (nextIsSpace || (startIsWord !== nextIsWord)) break;
-        j++;
-      }
-    }
-    // Extend selection by j positions
-    if (j > 0) {
-      editor.executeActions([{ action: "select_right", count: j }]);
-    }
-  }
+function vi_vis_word_end() : void {
+  // Extend selection to end of word — uses native vi_select_word_end action
+  executeWithCount("vi_select_word_end");
 }
 registerHandler("vi_vis_word_end", vi_vis_word_end);
 
@@ -1702,59 +1610,9 @@ function vi_op_word_back(): void {
 registerHandler("vi_op_word_back", vi_op_word_back);
 
 // Operator-pending e (word end) - select to word end, then apply operator
-async function vi_op_word_end(): Promise<void> {
-  if (!state.pendingOperator) {
-    switchMode("normal");
-    return;
-  }
-  const operator = state.pendingOperator;
-  const count = consumeCount();
-  const bufferId = editor.getActiveBufferId();
-  const pos = editor.getCursorPosition();
-  if (pos === null) {
-    switchMode("normal");
-    return;
-  }
-  // Find word end position (same logic as vi_word_end)
-  const text = await safeGetBufferText(bufferId, pos, pos + 200);
-  if (!text || text.length === 0) {
-    switchMode("normal");
-    return;
-  }
-  let j = 0;
-  if (text.length > 1) j = 1;
-  // Repeat for count
-  for (let c = 0; c < count; c++) {
-    while (j < text.length && (text[j] === ' ' || text[j] === '\t' || text[j] === '\n' || text[j] === '\r')) j++;
-    if (j < text.length) {
-      const isWordChar = (ch: string) => /[a-zA-Z0-9_]/.test(ch);
-      const startIsWord = isWordChar(text[j]);
-      while (j + 1 < text.length) {
-        const nextIsWord = isWordChar(text[j + 1]);
-        const nextIsSpace = text[j + 1] === ' ' || text[j + 1] === '\t' || text[j + 1] === '\n' || text[j + 1] === '\r';
-        if (nextIsSpace || (startIsWord !== nextIsWord)) break;
-        j++;
-      }
-    }
-    if (c < count - 1 && j + 1 < text.length) j++;
-  }
-  // Delete range from pos to pos+j+1 (inclusive of the end char)
-  const endPos = pos + j + 1;
-  if (operator === "d" || operator === "c") {
-    state.lastChange = { type: "operator-motion", operator, motion: "move_word_end", count };
-    editor.deleteRange(bufferId, pos, endPos);
-    if (operator === "c") {
-      switchMode("insert");
-      return;
-    }
-  } else if (operator === "y") {
-    const yankedText = await editor.getBufferText(bufferId, pos, endPos);
-    if (yankedText) {
-      editor.executeAction("copy");
-    }
-    state.lastYankWasLinewise = false;
-  }
-  switchMode("normal");
+// Operator-pending e (word end) — uses native vi_move_word_end motion
+function vi_op_word_end(): void {
+  handleMotionWithOperator("vi_move_word_end");
 }
 registerHandler("vi_op_word_end", vi_op_word_end);
 

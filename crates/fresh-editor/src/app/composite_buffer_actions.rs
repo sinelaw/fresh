@@ -819,10 +819,22 @@ impl Editor {
                 CursorMovement::WordRight,
                 false,
             ),
-            Action::MoveWordEnd => self.handle_cursor_movement_action(
+            Action::MoveWordEnd | Action::ViMoveWordEnd => self.handle_cursor_movement_action(
                 split_id,
                 buffer_id,
                 CursorMovement::WordEnd,
+                false,
+            ),
+            Action::MoveLeftInLine => self.handle_cursor_movement_action(
+                split_id,
+                buffer_id,
+                CursorMovement::Left,
+                false,
+            ),
+            Action::MoveRightInLine => self.handle_cursor_movement_action(
+                split_id,
+                buffer_id,
+                CursorMovement::Right,
                 false,
             ),
 
@@ -863,7 +875,7 @@ impl Editor {
                 CursorMovement::WordRight,
                 true,
             ),
-            Action::SelectWordEnd => self.handle_cursor_movement_action(
+            Action::SelectWordEnd | Action::ViSelectWordEnd => self.handle_cursor_movement_action(
                 split_id,
                 buffer_id,
                 CursorMovement::WordEnd,

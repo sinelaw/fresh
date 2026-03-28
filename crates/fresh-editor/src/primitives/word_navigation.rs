@@ -404,6 +404,73 @@ pub fn find_word_end_right(buffer: &Buffer, pos: usize) -> usize {
     start + current_idx
 }
 
+/// Find the end of the word at or after the given position (vim 'e' behavior).
+///
+/// Unlike `find_word_end_right` (Ctrl+Right style), this function:
+/// - Lands ON the last character of the word, not past it
+/// - If already at a word-end, advances to the end of the next word
+///
+/// Vim 'e' behavior:
+/// - From 'h' in "hello world": lands on 'o' (offset 4)
+/// - From 'o' in "hello world": lands on 'd' (offset 10)
+/// - From space in "hello world": lands on 'd' (offset 10)
+pub fn find_vi_word_end(buffer: &Buffer, pos: usize) -> usize {
+    let buf_len = buffer.len();
+    if pos >= buf_len {
+        return buf_len;
+    }
+
+    let start = pos;
+    let end = (pos + 1000).min(buf_len);
+    let bytes = buffer.slice_bytes(start..end);
+    let text = String::from_utf8_lossy(&bytes);
+
+    if text.is_empty() {
+        return start;
+    }
+
+    let mut idx = 0;
+
+    // Step 1: advance past the current character (so 'e' at word-end moves forward)
+    if text.len() > 1 {
+        idx = next_grapheme_boundary(&text, idx);
+    }
+
+    // Step 2: skip any whitespace
+    while idx < text.len() {
+        let next = next_grapheme_boundary(&text, idx);
+        let g = &text[idx..next];
+        if get_grapheme_class(g) == CharClass::Whitespace {
+            idx = next;
+        } else {
+            break;
+        }
+    }
+
+    // Step 3: consume word/punctuation characters of the same class
+    if idx < text.len() {
+        let next = next_grapheme_boundary(&text, idx);
+        let target_class = get_grapheme_class(&text[idx..next]);
+        while idx < text.len() {
+            let next = next_grapheme_boundary(&text, idx);
+            if next >= text.len() {
+                break;
+            }
+            let next_g = &text[next..next_grapheme_boundary(&text, next).min(text.len())];
+            if next_g.is_empty() {
+                break;
+            }
+            if get_grapheme_class(next_g) == target_class {
+                idx = next;
+            } else {
+                break;
+            }
+        }
+    }
+
+    start + idx
+}
+
 /// Find the start of the word to the right of the given position
 pub fn find_word_start_right(buffer: &Buffer, pos: usize) -> usize {
     let buf_len = buffer.len();

@@ -290,7 +290,10 @@ pub enum Action {
     MoveDown,
     MoveWordLeft,
     MoveWordRight,
-    MoveWordEnd, // Move to end of current word
+    MoveWordEnd,      // Move to end of current word (Ctrl+Right style, past the end)
+    ViMoveWordEnd,    // Vim 'e' - move to end of word (ON last char, advances from word-end)
+    MoveLeftInLine,   // Move left without crossing line boundaries
+    MoveRightInLine,  // Move right without crossing line boundaries
     MoveLineStart,
     MoveLineEnd,
     MoveLineUp,
@@ -309,7 +312,8 @@ pub enum Action {
     SelectToParagraphDown, // Jump to next empty line with selection
     SelectWordLeft,
     SelectWordRight,
-    SelectWordEnd, // Select to end of current word
+    SelectWordEnd,      // Select to end of current word
+    ViSelectWordEnd,    // Vim 'e' selection - select to end of word (ON last char)
     SelectLineStart,
     SelectLineEnd,
     SelectDocumentStart,
@@ -639,6 +643,7 @@ pub enum Action {
     // Case conversion
     ToUpperCase, // Convert selection to uppercase
     ToLowerCase, // Convert selection to lowercase
+    ToggleCase,  // Toggle case of character under cursor (vim ~)
     SortLines,   // Sort selected lines alphabetically
 
     // Input calibration
@@ -741,6 +746,9 @@ impl Action {
             "move_word_left" => MoveWordLeft,
             "move_word_right" => MoveWordRight,
             "move_word_end" => MoveWordEnd,
+            "vi_move_word_end" => ViMoveWordEnd,
+            "move_left_in_line" => MoveLeftInLine,
+            "move_right_in_line" => MoveRightInLine,
             "move_line_start" => MoveLineStart,
             "move_line_end" => MoveLineEnd,
             "move_line_up" => MoveLineUp,
@@ -759,6 +767,7 @@ impl Action {
             "select_word_left" => SelectWordLeft,
             "select_word_right" => SelectWordRight,
             "select_word_end" => SelectWordEnd,
+            "vi_select_word_end" => ViSelectWordEnd,
             "select_line_start" => SelectLineStart,
             "select_line_end" => SelectLineEnd,
             "select_document_start" => SelectDocumentStart,
@@ -1014,6 +1023,7 @@ impl Action {
 
             "to_upper_case" => ToUpperCase,
             "to_lower_case" => ToLowerCase,
+            "toggle_case" => ToggleCase,
             "sort_lines" => SortLines,
 
             "calibrate_input" => CalibrateInput,
@@ -1081,6 +1091,9 @@ impl Action {
                 | Action::MoveWordLeft
                 | Action::MoveWordRight
                 | Action::MoveWordEnd
+                | Action::ViMoveWordEnd
+                | Action::MoveLeftInLine
+                | Action::MoveRightInLine
                 | Action::MoveLineStart
                 | Action::MoveLineEnd
                 | Action::MovePageUp
@@ -1097,6 +1110,7 @@ impl Action {
                 | Action::SelectWordLeft
                 | Action::SelectWordRight
                 | Action::SelectWordEnd
+                | Action::ViSelectWordEnd
                 | Action::SelectLineStart
                 | Action::SelectLineEnd
                 | Action::SelectDocumentStart
@@ -1925,6 +1939,9 @@ impl KeybindingResolver {
             Action::MoveWordLeft => t!("action.move_word_left"),
             Action::MoveWordRight => t!("action.move_word_right"),
             Action::MoveWordEnd => t!("action.move_word_end"),
+            Action::ViMoveWordEnd => t!("action.move_word_end"),
+            Action::MoveLeftInLine => t!("action.move_left"),
+            Action::MoveRightInLine => t!("action.move_right"),
             Action::MoveLineStart => t!("action.move_line_start"),
             Action::MoveLineEnd => t!("action.move_line_end"),
             Action::MoveLineUp => t!("action.move_line_up"),
@@ -1942,6 +1959,7 @@ impl KeybindingResolver {
             Action::SelectWordLeft => t!("action.select_word_left"),
             Action::SelectWordRight => t!("action.select_word_right"),
             Action::SelectWordEnd => t!("action.select_word_end"),
+            Action::ViSelectWordEnd => t!("action.select_word_end"),
             Action::SelectLineStart => t!("action.select_line_start"),
             Action::SelectLineEnd => t!("action.select_line_end"),
             Action::SelectDocumentStart => t!("action.select_document_start"),
@@ -2195,6 +2213,7 @@ impl KeybindingResolver {
             Action::ShellCommandReplace => t!("action.shell_command_replace"),
             Action::ToUpperCase => t!("action.to_uppercase"),
             Action::ToLowerCase => t!("action.to_lowercase"),
+            Action::ToggleCase => t!("action.to_uppercase"),
             Action::SortLines => t!("action.sort_lines"),
             Action::CalibrateInput => t!("action.calibrate_input"),
             Action::EventDebug => t!("action.event_debug"),

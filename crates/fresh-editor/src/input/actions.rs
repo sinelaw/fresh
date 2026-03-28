@@ -9,8 +9,8 @@ use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
 use crate::primitives::highlighter::HighlightCategory;
 use crate::primitives::indent_pattern::PatternIndentCalculator;
 use crate::primitives::word_navigation::{
-    find_word_end, find_word_end_right, find_word_start, find_word_start_left,
-    find_word_start_right,
+    find_vi_word_end, find_word_end, find_word_end_right, find_word_start,
+    find_word_start_left, find_word_start_right,
 };
 use crate::state::EditorState;
 use std::ops::Range;
@@ -1609,6 +1609,78 @@ pub fn action_to_events(
             }
         }
 
+        Action::ViMoveWordEnd => {
+            for (cursor_id, cursor) in cursors.iter() {
+                let new_pos = find_vi_word_end(&state.buffer, cursor.position);
+                let new_anchor = if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
+                events.push(Event::MoveCursor {
+                    cursor_id,
+                    old_position: cursor.position,
+                    new_position: new_pos,
+                    old_anchor: cursor.anchor,
+                    new_anchor,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0,
+                });
+            }
+        }
+
+        Action::MoveLeftInLine => {
+            for (cursor_id, cursor) in cursors.iter() {
+                let new_pos = state.buffer.prev_grapheme_boundary(cursor.position);
+                let new_pos = adjust_position_for_crlf_left(&state.buffer, new_pos);
+                // Check if moving left would cross a line boundary
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let line_start = iter.next_line().map(|(ls, _)| ls).unwrap_or(0);
+                let clamped = new_pos.max(line_start);
+                let new_anchor = if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
+                events.push(Event::MoveCursor {
+                    cursor_id,
+                    old_position: cursor.position,
+                    new_position: clamped,
+                    old_anchor: cursor.anchor,
+                    new_anchor,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0,
+                });
+            }
+        }
+
+        Action::MoveRightInLine => {
+            for (cursor_id, cursor) in cursors.iter() {
+                let max_pos = max_cursor_position(&state.buffer);
+                let new_pos = next_position_for_crlf(&state.buffer, cursor.position, max_pos);
+                // Check if moving right would cross a line boundary
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let line_end = iter.next_line()
+                    .map(|(ls, lc)| ls + content_len_without_line_ending(&lc))
+                    .unwrap_or(max_pos);
+                let clamped = new_pos.min(line_end);
+                let new_anchor = if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
+                events.push(Event::MoveCursor {
+                    cursor_id,
+                    old_position: cursor.position,
+                    new_position: clamped,
+                    old_anchor: cursor.anchor,
+                    new_anchor,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0,
+                });
+            }
+        }
+
         Action::MoveDocumentStart => {
             for (cursor_id, cursor) in cursors.iter() {
                 // Preserve anchor if deselect_on_move is false (Emacs mark mode)
@@ -2013,6 +2085,22 @@ pub fn action_to_events(
                     new_anchor: Some(anchor),
                     old_sticky_column: cursor.sticky_column,
                     new_sticky_column: 0, // Reset sticky column
+                });
+            }
+        }
+
+        Action::ViSelectWordEnd => {
+            for (cursor_id, cursor) in cursors.iter() {
+                let new_pos = find_vi_word_end(&state.buffer, cursor.position);
+                let anchor = cursor.anchor.unwrap_or(cursor.position);
+                events.push(Event::MoveCursor {
+                    cursor_id,
+                    old_position: cursor.position,
+                    new_position: new_pos,
+                    old_anchor: cursor.anchor,
+                    new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0,
                 });
             }
         }
@@ -2471,6 +2559,55 @@ pub fn action_to_events(
 
         Action::ToLowerCase => {
             transform_case(state, cursors, &mut events, |s| s.to_lowercase());
+        }
+
+        Action::ToggleCase => {
+            // Toggle case of char under cursor (vim ~ behavior) and advance cursor
+            for (cursor_id, cursor) in cursors.iter() {
+                let pos = cursor.position;
+                let buf_len = state.buffer.len();
+                if pos >= buf_len {
+                    continue;
+                }
+                let next_pos = state.buffer.next_grapheme_boundary(pos);
+                if next_pos <= pos || next_pos > buf_len {
+                    continue;
+                }
+                let text = state.get_text_range(pos, next_pos);
+                if text.is_empty() || text == "\n" || text == "\r\n" {
+                    continue;
+                }
+                let toggled: String = text.chars().map(|c| {
+                    if c.is_uppercase() {
+                        c.to_lowercase().to_string()
+                    } else {
+                        c.to_uppercase().to_string()
+                    }
+                }).collect();
+                if toggled != text {
+                    events.push(Event::Delete {
+                        range: pos..next_pos,
+                        deleted_text: text,
+                        cursor_id,
+                    });
+                    events.push(Event::Insert {
+                        position: pos,
+                        text: toggled,
+                        cursor_id,
+                    });
+                }
+                // Advance cursor to next character
+                let advance_pos = next_pos.min(buf_len);
+                events.push(Event::MoveCursor {
+                    cursor_id,
+                    old_position: pos,
+                    new_position: advance_pos,
+                    old_anchor: cursor.anchor,
+                    new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0,
+                });
+            }
         }
 
         Action::SortLines => {
