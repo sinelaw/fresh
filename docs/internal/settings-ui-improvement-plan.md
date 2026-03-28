@@ -27,6 +27,7 @@ Key files:
 | 1 | Initial | 4 agents | Identified 20 bugs across all categories |
 | 2 | master (ced0969) | 3 agents | C1, H3, H4, M1, M3, M4 fixed. C2 behavior changed (no longer closes dialog, but Esc now does nothing) |
 | 3 | master (efbf75f) | 3 agents | C3 fixed, M8 fixed (sticky headers), "Advanced" section divider added. Composite control navigation improved. |
+| 4 | master (efbf75f) | 3 agents + tmux | H1 fixed (Tab sequential), M7 fixed (PageDown), composite highlight per-row, add-server persistence, TextList auto-accept |
 
 ---
 
@@ -36,12 +37,18 @@ Key files:
 |----|-------------|----------|
 | C1 | Text input not rendering in Edit Item dialog | Round 2 |
 | C3 | Enter on array item in Edit Value closes dialog | Round 3 |
+| H1 | Tab only toggles between fields and Save button | Round 4 — Tab now cycles sequentially through all fields, sub-fields, and buttons |
 | H3 | Down-arrow skips Command field | Round 2 |
 | H4 | Ctrl+S doesn't work in entry dialogs | Round 2 |
+| H5 | Individual TextList items not keyboard-focusable | Round 3/4 — composite navigation visits sub-items |
 | M1 | Name field opens wrong dialog type | Round 2 |
 | M3 | LSP entries display `[1 items]` instead of command | Round 2 |
 | M4 | Parent dialog not dimmed when child opens | Round 2 |
+| M7 | No Page Up/Down in long lists | Round 4 — PageDown/PageUp jump by viewport height |
 | M8 | Section header scrolls away, losing context | Round 3 (sticky headers) |
+| NEW | Composite highlight covers entire section | Round 4 — highlight now only on focused sub-row, `>` on sub-item not header |
+| NEW | Adding new LSP server doesn't persist | Round 4 — fixed path computation in save_array_item_dialog_inner |
+| NEW | TextList edits lost on Down/Up/Tab | Round 4 — auto-accept pending text before navigating away |
 
 ---
 
@@ -68,10 +75,8 @@ After pressing Down:  [38;5;15mCommand : [astro-ls]        <- normal white (left
 ### High Priority Bugs
 
 #### H1: Tab only toggles between fields and Save button
-**Round 3 status:** NOT FIXED
-**Behavior:** Tab alternates between current field and Save button. Never reaches Delete or Cancel. Shift+Tab identical to Tab.
-**Workaround:** Down arrow from last field cycles through Save → Delete → Cancel. Right arrow from Save reaches Delete → Cancel.
-**NNGroup violation:** Consistency and Standards — Tab should cycle through all interactive controls.
+**Round 4 status:** FIXED
+**Fix:** Tab now calls `focus_next()` (same as Down), cycling sequentially through all fields, sub-fields, and buttons. Shift+Tab calls `focus_prev()`. Verified with tmux: 20 Tab stops including all 3 buttons.
 
 #### H2: [+] Add new buttons not directly focusable in Level 3
 **Round 3 status:** PARTIALLY FIXED
@@ -80,8 +85,8 @@ After pressing Down:  [38;5;15mCommand : [astro-ls]        <- normal white (left
 **NNGroup violation:** WCAG 2.1 Level A — visible interactive elements must be keyboard-reachable.
 
 #### H5: Individual TextList items not keyboard-editable/deletable
-**Round 3 status:** NOT FIXED
-**Behavior:** Root Markers shows items with [x] delete buttons. Cannot focus individual items or delete buttons via keyboard.
+**Round 4 status:** FIXED
+**Fix:** Composite control navigation now visits individual TextList items. Down arrow enters the section and visits each item. E2e test `test_textlist_items_keyboard_accessible` passes.
 
 #### H6: Text fields auto-enter edit mode on navigation
 **Round 3 status:** NOT FIXED (see C2 — same root cause)
@@ -103,9 +108,9 @@ After pressing Down:  [38;5;15mCommand : [astro-ls]        <- normal white (left
 **Round 3 status:** NOT FIXED
 **Tested:** Scrollbar IS present with proportional thumb size. Colors: main panel thumb `48;5;3` (olive), track `48;5;15` (white). Dialog thumb `38;5;70` (green), track `48;5;239` (dark gray). But no numeric "X of Y" indicator anywhere.
 
-#### M7: No Page Up/Down or Home/End in long lists
-**Round 3 status:** NOT FIXED
-**Tested:** PageDown, PageUp, Home, End keys have zero effect in map lists (Languages ~60 entries, LSP ~40 entries). Only one-at-a-time Up/Down navigation.
+#### M7: No Page Up/Down in long lists
+**Round 4 status:** FIXED
+**Fix:** Added `select_next_page()`/`select_prev_page()` to SettingsState. PageDown/PageUp jump by viewport height. Home/End not yet implemented.
 
 #### M9: No confirmation when discarding changes via Esc
 **Status:** Not re-tested in Round 3. Likely still present.
@@ -154,6 +159,11 @@ Can enter nonexistent commands with no feedback.
 - **Responsive layout:** Sidebar→tab bar adaptation at smaller terminals
 - **Advanced section divider:** Visual separation between basic and advanced fields
 - **Composite control navigation:** Down arrow now visits individual items within Args, Root Markers, etc.
+- **Tab sequential cycling:** Tab visits every field, sub-field, and all buttons sequentially. Shift+Tab reverses.
+- **Per-row composite highlighting:** Only the focused sub-row gets highlight background and `>` indicator, not the entire section
+- **PageDown/PageUp:** Jump by viewport height in settings panel for fast navigation through long lists
+- **Add new LSP server:** Adding a server via [+] Add new correctly persists in the parent dialog
+- **TextList auto-accept:** Down/Up/Tab auto-accept pending text in TextList add-new fields
 
 ---
 
@@ -171,11 +181,9 @@ The most impactful fix — makes the entire Edit Item dialog usable for text fie
 3. When NOT in edit mode, text fields should display their value normally (no cursor, label in default color). The `[Enter to edit]` hint should appear.
 4. When in edit mode, arrow keys should move the cursor within the text, not navigate fields. Tab/Esc should exit edit mode.
 
-### Phase 2: Tab & Button Navigation (H1)
+### Phase 2: Tab & Button Navigation (H1) — DONE
 
-**Fix:** In `input.rs`, differentiate Tab from Down:
-- Tab: toggle between fields region and buttons region. When in buttons region, Tab/Shift+Tab cycles through all buttons (Save → Delete → Cancel → Save).
-- Down/Up: sequential navigation through all fields and buttons.
+Tab now calls `focus_next()`, identical to Down. Cycles through all fields, sub-fields, and buttons sequentially. Shift+Tab mirrors in reverse.
 
 ### Phase 3: Status Bar (H7)
 
@@ -187,12 +195,12 @@ Dropdown:     ↑↓:Select  Enter:Confirm  Esc:Cancel
 On buttons:   ←→:Navigate  Enter:Activate  Tab:Back to fields  Esc:Cancel
 ```
 
-### Phase 4: List Navigation & Visual Polish (H2, H5, M5, M7, M11)
+### Phase 4: List Navigation & Visual Polish (H2, M5, M11)
 
-- **H2:** Make [+] Add new buttons focusable in navigation order
-- **H5:** Make TextList items individually focusable with Delete key
+- **H2:** Make [+] Add new buttons directly focusable (currently reachable via Enter on headers)
+- **H5:** DONE — TextList items individually focusable via composite navigation
 - **M5:** Add "X of Y" position indicator
-- **M7:** Add Page Up/Down (or Ctrl+U/D) and Home/End support for map lists
+- **M7:** DONE — PageDown/PageUp jump by viewport height
 - **M11:** Add background highlight or `>` indicator to focused map table entries
 
 ### Phase 5: Remaining Medium & Low (M2, M9, M10, M12, L1, L2, L4)
@@ -216,12 +224,11 @@ On buttons:   ←→:Navigate  Enter:Activate  Tab:Back to fields  Esc:Cancel
 - [ ] Down/Up navigate fields when not editing
 - [ ] Status bar shows "Enter:Edit" when field focused but not editing
 
-### Phase 2
-- [ ] Tab from fields jumps to Save button
-- [ ] Tab from Save goes to Delete
-- [ ] Tab from Delete goes to Cancel
-- [ ] Tab from Cancel wraps to first field
-- [ ] Shift+Tab reverses
+### Phase 2 — DONE
+- [x] Tab cycles sequentially through all fields, sub-fields, and buttons
+- [x] Tab reaches Save, Delete, and Cancel
+- [x] Shift+Tab reverses
+- [x] 94 settings e2e tests pass
 
 ### Phase 3
 - [ ] Status bar changes when entering text edit mode
@@ -229,9 +236,12 @@ On buttons:   ←→:Navigate  Enter:Activate  Tab:Back to fields  Esc:Cancel
 - [ ] Status bar changes for dropdown
 
 ### Phase 4
-- [ ] [+] Add new focusable via Down arrow
-- [ ] TextList items individually focusable
+- [ ] [+] Add new directly focusable via Down arrow (workaround: Enter on header)
+- [x] TextList items individually focusable (composite navigation)
 - [ ] Delete key removes focused TextList item
-- [ ] Page Up/Down works in LSP/Languages lists
+- [x] Page Up/Down works in LSP/Languages lists
 - [ ] "X of Y" indicator visible
 - [ ] Map entry focus has background highlight
+- [x] Composite highlight only on focused sub-row
+- [x] Adding new LSP server persists in parent dialog
+- [x] TextList auto-accepts edits on Down/Up/Tab
