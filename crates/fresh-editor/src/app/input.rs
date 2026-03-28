@@ -446,6 +446,7 @@ impl Editor {
             Action::YankWordBackward => self.yank_word_backward(),
             Action::YankToLineEnd => self.yank_to_line_end(),
             Action::YankToLineStart => self.yank_to_line_start(),
+            Action::YankViWordEnd => self.yank_vi_word_end(),
             Action::Undo => {
                 self.handle_undo();
             }

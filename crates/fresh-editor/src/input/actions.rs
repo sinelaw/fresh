@@ -1660,15 +1660,22 @@ pub fn action_to_events(
             for (cursor_id, cursor) in cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
                 let new_pos = next_position_for_crlf(&state.buffer, cursor.position, max_pos);
-                // Check if moving right would cross a line boundary
+                // Clamp to last character on the line (before the newline)
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
-                let line_end = iter
+                let line_last_char = iter
                     .next_line()
-                    .map(|(ls, lc)| ls + content_len_without_line_ending(&lc))
+                    .map(|(ls, lc)| {
+                        let content_len = content_len_without_line_ending(&lc);
+                        if content_len > 0 {
+                            ls + content_len - 1
+                        } else {
+                            ls
+                        }
+                    })
                     .unwrap_or(max_pos);
-                let clamped = new_pos.min(line_end);
+                let clamped = new_pos.min(line_last_char);
                 let new_anchor = if cursor.deselect_on_move {
                     None
                 } else {
@@ -2440,6 +2447,29 @@ pub fn action_to_events(
             apply_deletions(state, deletions, &mut events);
         }
 
+        Action::DeleteViWordEnd => {
+            // Delete from cursor to vim word end (inclusive of last char)
+            let deletions: Vec<_> = cursors
+                .iter()
+                .filter_map(|(cursor_id, cursor)| {
+                    if let Some(range) = cursor.selection_range() {
+                        Some((cursor_id, range))
+                    } else {
+                        let word_end = find_vi_word_end(&state.buffer, cursor.position);
+                        // +1 because vim 'de' is inclusive of the last character
+                        let end = (word_end + 1).min(state.buffer.len());
+                        if cursor.position < end {
+                            Some((cursor_id, cursor.position..end))
+                        } else {
+                            None
+                        }
+                    }
+                })
+                .collect();
+
+            apply_deletions(state, deletions, &mut events);
+        }
+
         Action::DeleteLine => {
             // Collect line ranges first to avoid borrow checker issues
             let deletions: Vec<_> = cursors
@@ -2831,6 +2861,7 @@ pub fn action_to_events(
         | Action::YankWordBackward
         | Action::YankToLineEnd
         | Action::YankToLineStart
+        | Action::YankViWordEnd
         | Action::AddCursorNextMatch
         | Action::AddCursorAbove
         | Action::AddCursorBelow

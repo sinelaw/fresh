@@ -13,7 +13,9 @@ use crate::input::multi_cursor::{
 use crate::model::buffer::Buffer;
 use crate::model::cursor::Position2D;
 use crate::model::event::{CursorId, Event};
-use crate::primitives::word_navigation::{find_word_start_left, find_word_start_right};
+use crate::primitives::word_navigation::{
+    find_vi_word_end, find_word_start_left, find_word_start_right,
+};
 
 use super::Editor;
 
@@ -785,6 +787,50 @@ impl Editor {
         }
 
         // Copy text from all ranges
+        let mut text = String::new();
+        let state = self.active_state_mut();
+        for range in ranges {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            let range_text = state.get_text_range(range.start, range.end);
+            text.push_str(&range_text);
+        }
+
+        if !text.is_empty() {
+            let len = text.len();
+            self.clipboard.copy(text);
+            self.status_message = Some(t!("clipboard.yanked", count = len).to_string());
+        }
+    }
+
+    /// Yank (copy) from cursor to vim word end (inclusive)
+    pub fn yank_vi_word_end(&mut self) {
+        let cursor_positions: Vec<_> = self
+            .active_cursors()
+            .iter()
+            .map(|(_, c)| c.position)
+            .collect();
+        let ranges: Vec<_> = {
+            let state = self.active_state();
+            cursor_positions
+                .into_iter()
+                .filter_map(|start| {
+                    let word_end = find_vi_word_end(&state.buffer, start);
+                    let end = (word_end + 1).min(state.buffer.len());
+                    if end > start {
+                        Some(start..end)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        if ranges.is_empty() {
+            return;
+        }
+
         let mut text = String::new();
         let state = self.active_state_mut();
         for range in ranges {

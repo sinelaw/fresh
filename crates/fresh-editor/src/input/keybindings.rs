@@ -339,6 +339,7 @@ pub enum Action {
     DeleteLine,
     DeleteToLineEnd,
     DeleteToLineStart,
+    DeleteViWordEnd, // Delete from cursor to end of word (vim de)
     TransposeChars,
     OpenLine,
     DuplicateLine,
@@ -360,6 +361,7 @@ pub enum Action {
     YankWordBackward,
     YankToLineEnd,
     YankToLineStart,
+    YankViWordEnd, // Yank from cursor to end of word (vim ye)
 
     // Multi-cursor
     AddCursorAbove,
@@ -791,6 +793,7 @@ impl Action {
             "delete_line" => DeleteLine,
             "delete_to_line_end" => DeleteToLineEnd,
             "delete_to_line_start" => DeleteToLineStart,
+            "delete_vi_word_end" => DeleteViWordEnd,
             "transpose_chars" => TransposeChars,
             "open_line" => OpenLine,
             "duplicate_line" => DuplicateLine,
@@ -805,6 +808,7 @@ impl Action {
             "yank_word_backward" => YankWordBackward,
             "yank_to_line_end" => YankToLineEnd,
             "yank_to_line_start" => YankToLineStart,
+            "yank_vi_word_end" => YankViWordEnd,
 
             "add_cursor_above" => AddCursorAbove,
             "add_cursor_below" => AddCursorBelow,
@@ -1166,6 +1170,7 @@ impl Action {
                 | Action::DeleteLine
                 | Action::DeleteToLineEnd
                 | Action::DeleteToLineStart
+                | Action::DeleteViWordEnd
                 | Action::TransposeChars
                 | Action::OpenLine
                 | Action::DuplicateLine
@@ -1981,6 +1986,7 @@ impl KeybindingResolver {
             Action::DeleteLine => t!("action.delete_line"),
             Action::DeleteToLineEnd => t!("action.delete_to_line_end"),
             Action::DeleteToLineStart => t!("action.delete_to_line_start"),
+            Action::DeleteViWordEnd => t!("action.delete_word_forward"),
             Action::TransposeChars => t!("action.transpose_chars"),
             Action::OpenLine => t!("action.open_line"),
             Action::DuplicateLine => t!("action.duplicate_line"),
@@ -1995,6 +2001,7 @@ impl KeybindingResolver {
             Action::YankWordBackward => t!("action.yank_word_backward"),
             Action::YankToLineEnd => t!("action.yank_to_line_end"),
             Action::YankToLineStart => t!("action.yank_to_line_start"),
+            Action::YankViWordEnd => t!("action.yank_word_forward"),
             Action::AddCursorAbove => t!("action.add_cursor_above"),
             Action::AddCursorBelow => t!("action.add_cursor_below"),
             Action::AddCursorNextMatch => t!("action.add_cursor_next_match"),

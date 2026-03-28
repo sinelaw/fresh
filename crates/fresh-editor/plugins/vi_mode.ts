@@ -240,6 +240,7 @@ const atomicOperatorActions: OperatorMotionMap = {
     // Delete operators
     move_word_right: "delete_word_forward",
     move_word_left: "delete_word_backward",
+    vi_move_word_end: "delete_vi_word_end",
     move_line_end: "delete_to_line_end",
     move_line_start: "delete_to_line_start",
   },
@@ -247,6 +248,7 @@ const atomicOperatorActions: OperatorMotionMap = {
     // Yank operators
     move_word_right: "yank_word_forward",
     move_word_left: "yank_word_backward",
+    vi_move_word_end: "yank_vi_word_end",
     move_line_end: "yank_to_line_end",
     move_line_start: "yank_to_line_start",
   },
