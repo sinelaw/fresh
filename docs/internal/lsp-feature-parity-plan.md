@@ -6,9 +6,9 @@ Several LSP features are missing or incomplete compared to VS Code. This documen
 the gaps and implementation plan, starting with the code action gaps that are causing
 real user-visible bugs, then covering broader feature parity.
 
-## Phase 1: Code Action Gaps (blocking real workflows)
+## Phase 1: Code Action Gaps (blocking real workflows) — DONE
 
-### 0. Fix apply_workspace_edit: version checking + resource operations
+### 0. Fix apply_workspace_edit: version checking + resource operations — DONE
 
 **Current bugs:**
 - `TextDocumentEdit.text_document.version` is completely ignored. Stale edits can corrupt buffers.
@@ -21,7 +21,7 @@ real user-visible bugs, then covering broader feature parity.
 
 **Files:** `crates/fresh-editor/src/app/lsp_requests.rs` (~line 1579)
 
-### 1. Handle `workspace/applyEdit` (server→client request)
+### 1. Handle `workspace/applyEdit` (server→client request) — DONE
 
 Currently falls through to the default handler which returns null — edits are silently dropped.
 
@@ -34,7 +34,7 @@ Currently falls through to the default handler which returns null — edits are 
 
 **Files:** `async_handler.rs`, `async_bridge.rs`, `mod.rs`
 
-### 2. Add `workspace/executeCommand` (client→server request)
+### 2. Add `workspace/executeCommand` (client→server request) — DONE
 
 Code actions with a `command` field (but no `edit`) currently log a warning and do nothing.
 
@@ -46,7 +46,7 @@ Code actions with a `command` field (but no `edit`) currently log a warning and 
 
 **Files:** `async_handler.rs`, `lsp_requests.rs`
 
-### 3. Add `codeAction/resolve` (client→server request)
+### 3. Add `codeAction/resolve` (client→server request) — DONE
 
 Servers can return lightweight code actions without `edit`; the client must resolve before execution. Currently these actions silently do nothing.
 
@@ -61,7 +61,7 @@ Servers can return lightweight code actions without `edit`; the client must reso
 
 **Files:** `async_handler.rs`, `async_bridge.rs`, `manager.rs`
 
-### 4. Fix `execute_code_action` to use all three
+### 4. Fix `execute_code_action` to use all three — DONE
 
 Rewrite the dispatch in `lsp_requests.rs` (~line 1301):
 - `CodeAction` with no edit/command but has `data` + server supports resolve → send `codeAction/resolve`
@@ -72,7 +72,7 @@ Rewrite the dispatch in `lsp_requests.rs` (~line 1301):
 
 Handle `LspCodeActionResolved` in `mod.rs` to execute the resolved action.
 
-### 5. E2E tests
+### 5. E2E tests — DONE
 
 New file: `tests/e2e/lsp_code_action_resolve_and_commands.rs`
 
