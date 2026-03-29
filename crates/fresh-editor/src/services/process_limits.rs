@@ -41,7 +41,7 @@ impl ProcessLimits {
         {
             // TODO: Implement for macOS using setrlimit
             // TODO: Implement for Windows using Job Objects
-            tracing::warn!("Process resource limits are not yet implemented for this platform");
+            tracing::info!("Process resource limits are not yet implemented for this platform");
             Ok(())
         }
     }
