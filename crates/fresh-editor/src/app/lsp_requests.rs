@@ -1610,11 +1610,43 @@ impl Editor {
     }
 
     /// Apply a single TextDocumentEdit from a workspace edit.
+    ///
+    /// Per LSP spec: if `text_document.version` is non-null, it must match the
+    /// version we last sent via didOpen/didChange. On mismatch the edit is stale
+    /// and we skip it to avoid corrupting the buffer.
     fn apply_text_document_edit(
         &mut self,
         text_doc_edit: lsp_types::TextDocumentEdit,
     ) -> AnyhowResult<usize> {
         let uri = text_doc_edit.text_document.uri;
+
+        // Version check: if the server specifies a version, verify it matches
+        // what we sent. A mismatch means the edit was computed against stale content.
+        if let Some(expected_version) = text_doc_edit.text_document.version {
+            if let Ok(path) = uri_to_path(&uri) {
+                if let Some(lsp) = &self.lsp {
+                    let language = self
+                        .buffers
+                        .get(&self.active_buffer())
+                        .map(|s| s.language.clone())
+                        .unwrap_or_default();
+                    for sh in lsp.get_handles(&language) {
+                        if let Some(current_version) = sh.handle.document_version(&path) {
+                            if (expected_version as i64) != current_version {
+                                tracing::warn!(
+                                    "Rejecting stale TextDocumentEdit for {:?}: \
+                                     server version {} != our version {}",
+                                    path,
+                                    expected_version,
+                                    current_version,
+                                );
+                                return Ok(0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         if let Ok(path) = uri_to_path(&uri) {
             let buffer_id = match self.open_file(&path) {

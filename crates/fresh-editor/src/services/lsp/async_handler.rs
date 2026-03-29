@@ -2329,6 +2329,7 @@ impl LspTask {
         process_limits: &ProcessLimits,
         stderr_log_path: std::path::PathBuf,
         language_id_overrides: HashMap<String, String>,
+        document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
     ) -> Result<Self, String> {
         tracing::info!("Spawning async LSP server: {} {:?}", command, args);
         tracing::info!("Process limits: {:?}", process_limits);
@@ -2396,7 +2397,7 @@ impl LspTask {
             next_id: 0,
             pending: HashMap::new(),
             capabilities: None,
-            document_versions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            document_versions,
             pending_opens: HashMap::new(),
             initialized: false,
             async_tx,
@@ -3666,6 +3667,10 @@ pub struct LspHandle {
 
     /// Runtime handle for blocking operations
     runtime: tokio::runtime::Handle,
+
+    /// Document version tracking (shared with the async LSP task).
+    /// Used to check document versions in workspace/applyEdit.
+    document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
 }
 
 // Channel sends and state transitions in LspHandle are best-effort: async_tx.send()
@@ -3704,6 +3709,13 @@ impl LspHandle {
             message: None,
         });
 
+        // Create shared document version tracking — shared between
+        // the async LSP task and the LspHandle so the editor can check
+        // versions when applying workspace edits from the server.
+        let document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>> =
+            Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let document_versions_for_task = document_versions.clone();
+
         let state_clone = state.clone();
         let stderr_log_path_clone = stderr_log_path.clone();
         runtime.spawn(async move {
@@ -3717,6 +3729,7 @@ impl LspHandle {
                 &process_limits,
                 stderr_log_path_clone.clone(),
                 language_id_overrides,
+                document_versions_for_task,
             )
             .await
             {
@@ -3754,6 +3767,7 @@ impl LspHandle {
             command_tx,
             state,
             runtime: runtime.clone(),
+            document_versions,
         })
     }
 
@@ -3765,6 +3779,15 @@ impl LspHandle {
     /// Get the language this handle serves
     pub fn language(&self) -> &str {
         &self.language
+    }
+
+    /// Get the document version for a file path, as last sent via didOpen/didChange.
+    /// Returns None if the document hasn't been opened with this server.
+    pub fn document_version(&self, path: &std::path::Path) -> Option<i64> {
+        self.document_versions
+            .lock()
+            .ok()
+            .and_then(|versions| versions.get(path).copied())
     }
 
     /// Initialize the server (non-blocking)
