@@ -26,3 +26,7 @@ oxc_codegen.workspace = true
 oxc_span.workspace = true
 oxc_diagnostics.workspace = true
 trash = "5.2.5"
+
+# rquickjs-sys has no pre-generated bindings for FreeBSD
+[target.'cfg(target_os = "freebsd")'.dependencies]
+rquickjs = { workspace = true, features = ["bindgen"] }

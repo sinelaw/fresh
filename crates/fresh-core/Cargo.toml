@@ -18,6 +18,10 @@ ts-rs.workspace = true
 rquickjs = { workspace = true, optional = true }
 rquickjs-serde = { workspace = true, optional = true }
 
+# rquickjs-sys has no pre-generated bindings for FreeBSD
+[target.'cfg(target_os = "freebsd")'.dependencies]
+rquickjs = { workspace = true, optional = true, features = ["bindgen"] }
+
 [dev-dependencies]
 proptest = "1.9"
 
