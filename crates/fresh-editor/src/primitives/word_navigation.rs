@@ -186,13 +186,27 @@ pub fn find_word_start(buffer: &Buffer, pos: usize) -> usize {
     let buf_len = buffer.len();
     let pos = pos.min(buf_len);
 
-    // Only read a small window around the position for efficiency
+    // Only read a small window around the position for efficiency.
+    // Extend `end` past `pos` so we never truncate a multi-byte UTF-8 character
+    // at the cursor position.
+    const MAX_UTF8_CHAR_LEN: usize = 4;
     let start = pos.saturating_sub(1000);
-    let end = (pos + 1).min(buf_len);
+    let end = (pos + MAX_UTF8_CHAR_LEN).min(buf_len);
     let bytes = buffer.slice_bytes(start..end);
     let text = String::from_utf8_lossy(&bytes);
 
-    let offset = text.len() - (end - pos); // map byte pos into text
+    // Map `pos` into the (possibly lossy-decoded) string. When the window
+    // start splits a multi-byte sequence, `from_utf8_lossy` replaces it with a
+    // 3-byte U+FFFD which shifts byte offsets. Snap to the nearest grapheme
+    // boundary so we never index into the middle of a character.
+    let offset = {
+        let raw = (pos - start).min(text.len());
+        if text.is_char_boundary(raw) {
+            raw
+        } else {
+            next_grapheme_boundary(&text, raw)
+        }
+    };
     let mut current_idx = offset;
 
     // If we're at the end or at a non-word character, step left once

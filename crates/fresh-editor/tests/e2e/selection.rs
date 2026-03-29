@@ -196,6 +196,94 @@ fn test_select_word_at_end() {
     assert_eq!(selected_text, "hello", "Should select the word 'hello'");
 }
 
+/// Test select word with accented characters (issue #1332)
+/// Ctrl+W on "hibajavítás" with cursor on 'í' should select the entire word,
+/// not just "hibajav".
+///
+/// Iterates character-by-character over words from multiple languages (including
+/// accented Latin, Cyrillic, CJK, Thai, emoji, and combining diacritics) and
+/// verifies that Ctrl+W selects the correct word at every cursor position.
+#[test]
+fn test_select_word_accented_characters() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use unicode_segmentation::UnicodeSegmentation;
+
+    // Each entry: (full word, expected Ctrl+W selection at every grapheme position)
+    // For single-word entries the expected selection equals the word itself.
+    // Spaces between words let us also test that Ctrl+W from whitespace selects
+    // an adjacent word rather than nothing.
+    let test_words: &[(&str, &str)] = &[
+        // Original bug report - Hungarian
+        ("hibajavítás", "hibajavítás"),
+        // German
+        ("Änderung", "Änderung"),
+        // French
+        ("résumé", "résumé"),
+        // Czech
+        ("příliš", "příliš"),
+        // Polish
+        ("żółć", "żółć"),
+        // Cyrillic (Russian)
+        ("Привет", "Привет"),
+        // Greek
+        ("Ελληνικά", "Ελληνικά"),
+        // Korean (Hangul)
+        ("안녕하세요", "안녕하세요"),
+        // Japanese Hiragana
+        ("こんにちは", "こんにちは"),
+        // CJK
+        ("你好世界", "你好世界"),
+        // Combining diacritics: e + combining acute = "é"
+        ("caf\u{0065}\u{0301}", "caf\u{0065}\u{0301}"),
+        // Emoji (single grapheme word) — treated as punctuation by the classifier,
+        // so Ctrl+W from the emoji should select the emoji cluster itself.
+        ("🇫🇷", "🇫🇷"),
+        ("👨\u{200D}👩\u{200D}👧", "👨\u{200D}👩\u{200D}👧"),
+    ];
+
+    for &(word, expected) in test_words {
+        let grapheme_count = word.graphemes(true).count();
+
+        for grapheme_idx in 0..grapheme_count {
+            let mut harness = EditorTestHarness::new(80, 24).unwrap();
+            let _fixture = harness.load_buffer_from_text(word).unwrap();
+
+            // Position cursor at grapheme_idx
+            harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+            for _ in 0..grapheme_idx {
+                harness
+                    .send_key(KeyCode::Right, KeyModifiers::NONE)
+                    .unwrap();
+            }
+
+            // Select word with Ctrl+W
+            harness
+                .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+                .unwrap();
+
+            let cursor = harness.editor().active_cursors().primary();
+            let selection = cursor.selection_range();
+            assert!(
+                selection.is_some(),
+                "No selection for word {:?} at grapheme index {}",
+                word,
+                grapheme_idx,
+            );
+
+            let range = selection.unwrap();
+            let selected_text = harness
+                .editor_mut()
+                .active_state_mut()
+                .get_text_range(range.start, range.end);
+            assert_eq!(
+                selected_text, expected,
+                "Wrong selection for word {:?} at grapheme index {}: got {:?}",
+                word, grapheme_idx, selected_text,
+            );
+        }
+    }
+}
+
 /// Test select line functionality (Ctrl+L)
 #[test]
 fn test_select_line() {
