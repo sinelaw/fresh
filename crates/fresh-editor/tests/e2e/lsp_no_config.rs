@@ -80,8 +80,10 @@ fn test_toggle_lsp_disabled_for_unconfigured_language() -> anyhow::Result<()> {
     harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
     harness.wait_for_prompt()?;
 
-    // Type the full command name to ensure exact match
-    harness.type_text("Toggle LSP for Buffer")?;
+    // Type a single-term query to match only "Toggle LSP for Current Buffer".
+    // Using a single term (no spaces) avoids multi-term description matching
+    // which could match enabled commands (sorted before disabled ones).
+    harness.type_text("ToggleLspBuffer")?;
     harness.render()?;
 
     // Try to execute the command - it should be disabled

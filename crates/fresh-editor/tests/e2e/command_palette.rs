@@ -318,8 +318,10 @@ fn test_command_palette_tab_all_disabled() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Type enough to filter to only "Focus Editor" which is disabled in Normal context
-    harness.type_text("focus ed").unwrap();
+    // Type a single-term query to match only "Focus Editor" which is disabled in Normal context.
+    // Using a single term (no spaces) avoids multi-term description matching which could
+    // match enabled commands and change the selected suggestion.
+    harness.type_text("FocusEditor").unwrap();
     harness.render().unwrap();
 
     // Check that "Focus Editor" is shown (should be greyed out)
@@ -330,12 +332,12 @@ fn test_command_palette_tab_all_disabled() {
     harness.render().unwrap();
 
     // The input should NOT have been auto-completed to disabled command
-    // It should still be "focus ed" not "Focus Editor"
+    // It should still be "FocusEditor" not "Focus Editor"
     let screen = harness.screen_to_string();
-    println!("Screen after Tab on disabled 'focus ed': {screen}");
+    println!("Screen after Tab on disabled 'FocusEditor': {screen}");
 
     // Check that input didn't change (tab should do nothing on disabled suggestions)
-    harness.assert_screen_contains("focus ed");
+    harness.assert_screen_contains("FocusEditor");
 }
 
 /// Test Enter executes the selected (highlighted) command, not the typed text
@@ -536,14 +538,14 @@ fn test_command_palette_file_explorer_toggles() {
     // Should show "Toggle Hidden Files" command
     harness.assert_screen_contains("Toggle Hidden Files");
 
-    // Clear and search for gitignored
+    // Clear and search for gitignored (use specific term to avoid description matches)
     for _ in 0..13 {
         harness
             .send_key(KeyCode::Backspace, KeyModifiers::NONE)
             .unwrap();
     }
 
-    harness.type_text("toggle git").unwrap();
+    harness.type_text("gitignored").unwrap();
     harness.render().unwrap();
 
     // Should show "Toggle Gitignored Files" command
@@ -641,30 +643,32 @@ fn test_command_palette_down_no_wraparound() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Filter to get only two commands
+    // Filter to get a small set of commands
     harness.type_text("save f").unwrap();
     harness.render().unwrap();
 
-    // Should match "Save File" and "Save File As"
+    // Should match "Save File" and "Save File As" (plus possible description matches)
     harness.assert_screen_contains("Save File");
 
-    // First suggestion (Save File) should be selected
-    // Press Down to go to second (Save File As)
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // Press Down many times - way past the end of the list
+    for _ in 0..200 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
     harness.render().unwrap();
+    let screen_at_end = harness.screen_to_string();
 
-    // Press Down again - should stay at the last item, not wrap to first
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // Press Down many more times - should stay at the last item (no wraparound)
+    for _ in 0..200 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
     harness.render().unwrap();
+    let screen_still_at_end = harness.screen_to_string();
 
-    // Press Tab to accept the selected suggestion
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // If we wrapped around, we'd be back at "Save File"
-    // If we stayed at the end, we'd still be at "Save File As"
-    // The tab should complete to the selected command
-    harness.assert_screen_contains(">Save File As");
+    // If no wraparound, the screen should be identical (cursor stayed at the end)
+    assert_eq!(
+        screen_at_end, screen_still_at_end,
+        "Down arrow should not wrap around at the end of the list"
+    );
 }
 
 /// Test that PageUp stops at the beginning of the list instead of wrapping

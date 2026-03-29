@@ -19,17 +19,17 @@ expression: "&screen_text"
 ~                                                                                                                       
 ~                                                                                                                       
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- file1.rs ×   file2.rs* ×                                                                                           □ × 
-    1 │                                                                                                                 
-▾   2 │ fn helper() {                                                                                                   
-    3 │     let x = 42;                                                                                                 
-    4 │     let y = x * 2;                                                                                              
-    5 │     println!("Result: {}", y);                                                                                  
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │  Plugin Demo: Open Help                             Open the editor help page (uses built-in action)          welcome│
 │  Show Signature Help                                Show function parameter hints                             builtin│
 │  Shell Command (Replace)              Alt+Shift+|   Run shell command on buffer/selection, replac...          builtin│
 │  Search and Replace in Project                      Search and replace text across all git-tracke...   search_replace│
+│  Show Manual                          F1            Open the help manual                                      builtin│
+│  Git Log: Close                                     Close the git log panel                                   git_log│
+│  Toggle Inlay Hints                                 Show or hide LSP inlay hints (type hints, par...          builtin│
+│  Start/Restart LSP Server                           Start or restart the LSP server for the curre...          builtin│
+│  Git Blame: Close                                   Close the git blame panel                               git_blame│
+│  Next Split                           Alt+]         Move focus to the next split pane                         builtin│
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   file  |  >command  |  :line  |  #buffer                                                                               
 >help
