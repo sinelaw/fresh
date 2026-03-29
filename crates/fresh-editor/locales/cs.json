@@ -906,7 +906,7 @@
   "lsp.cannot_open_definition": "Nelze otevřít umístění definice",
   "lsp.cannot_rename_unsaved": "Nelze přejmenovat v neuloženém bufferu",
   "lsp.code_action_hint": "Stiskněte číslo pro výběr, Esc pro zrušení",
-  "lsp.code_action_applied": "Applied: %{title} (%{count} change(s))",
+  "lsp.code_action_applied": "Použito: %{title} (%{count} změn)",
   "lsp.disabled.library_file": "Knihovní soubor (mimo projekt)",
   "lsp.disabled.unnamed": "Nepojmenovaný buffer",
   "lsp.disabled.user": "Zakázáno uživatelem",

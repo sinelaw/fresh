@@ -906,7 +906,7 @@
   "lsp.cannot_open_definition": "ไม่สามารถเปิดตำแหน่งคำนิยามได้",
   "lsp.cannot_rename_unsaved": "ไม่สามารถเปลี่ยนชื่อในบัฟเฟอร์ที่ไม่ได้บันทึก",
   "lsp.code_action_hint": "กดตัวเลขเพื่อเลือก หรือ Esc เพื่อยกเลิก",
-  "lsp.code_action_applied": "Applied: %{title} (%{count} change(s))",
+  "lsp.code_action_applied": "นำไปใช้แล้ว: %{title} (มีการเปลี่ยนแปลง %{count} จุด)",
   "lsp.disabled.library_file": "ไฟล์ไลบรารี (นอกโปรเจกต์)",
   "lsp.disabled.unnamed": "บัฟเฟอร์ไม่มีชื่อ",
   "lsp.disabled.user": "ถูกปิดใช้งานโดยผู้ใช้",

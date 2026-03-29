@@ -906,7 +906,7 @@
   "lsp.cannot_open_definition": "Не удалось открыть расположение определения",
   "lsp.cannot_rename_unsaved": "Невозможно переименовать в несохранённом буфере",
   "lsp.code_action_hint": "Нажмите цифру для выбора, Esc для отмены",
-  "lsp.code_action_applied": "Applied: %{title} (%{count} change(s))",
+  "lsp.code_action_applied": "Применено: %{title} (%{count} изменений)",
   "lsp.disabled.library_file": "Файл библиотеки (вне проекта)",
   "lsp.disabled.unnamed": "Безымянный буфер",
   "lsp.disabled.user": "Отключено пользователем",

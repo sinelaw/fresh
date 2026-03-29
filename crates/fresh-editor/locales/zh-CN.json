@@ -906,7 +906,7 @@
   "lsp.cannot_open_definition": "无法打开定义：%{error}",
   "lsp.cannot_rename_unsaved": "无法重命名未保存的缓冲区",
   "lsp.code_action_hint": "按数字选择，Esc 取消",
-  "lsp.code_action_applied": "Applied: %{title} (%{count} change(s))",
+  "lsp.code_action_applied": "已应用: %{title}（%{count} 处更改）",
   "lsp.disabled.library_file": "库文件（项目外部）",
   "lsp.disabled.unnamed": "未命名缓冲区",
   "lsp.disabled.user": "用户已禁用",

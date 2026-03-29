@@ -752,7 +752,7 @@
     },
     {
       "key": ".",
-      "modifiers": ["ctrl"],
+      "modifiers": ["alt"],
       "action": "lsp_code_actions",
       "args": {},
       "when": "normal"

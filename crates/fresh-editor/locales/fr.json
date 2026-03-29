@@ -906,7 +906,7 @@
   "lsp.cannot_open_definition": "Impossible d'ouvrir l'emplacement de la définition",
   "lsp.cannot_rename_unsaved": "Impossible de renommer dans un tampon non enregistré",
   "lsp.code_action_hint": "Appuyez sur un numéro pour sélectionner, Échap pour annuler",
-  "lsp.code_action_applied": "Applied: %{title} (%{count} change(s))",
+  "lsp.code_action_applied": "Appliqué : %{title} (%{count} modifications)",
   "lsp.disabled.library_file": "Fichier de bibliothèque (hors du projet)",
   "lsp.disabled.unnamed": "Tampon sans nom",
   "lsp.disabled.user": "Désactivé par l'utilisateur",

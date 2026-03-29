@@ -906,7 +906,7 @@
   "lsp.cannot_open_definition": "Não foi possível abrir o local da definição",
   "lsp.cannot_rename_unsaved": "Não é possível renomear em buffer não salvo",
   "lsp.code_action_hint": "Pressione um número para selecionar, Esc para cancelar",
-  "lsp.code_action_applied": "Applied: %{title} (%{count} change(s))",
+  "lsp.code_action_applied": "Aplicado: %{title} (%{count} alterações)",
   "lsp.disabled.library_file": "Arquivo de biblioteca (fora do projeto)",
   "lsp.disabled.unnamed": "Buffer sem nome",
   "lsp.disabled.user": "Desativado pelo usuário",

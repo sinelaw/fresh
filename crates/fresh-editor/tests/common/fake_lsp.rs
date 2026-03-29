@@ -1728,7 +1728,8 @@ read_message() {
 # Function to send a message
 send_message() {
     local message="$1"
-    local length=${#message}
+    # Use printf %s to get the exact byte length after echo -en processing
+    local length=$(echo -en "$message" | wc -c)
     echo -en "Content-Length: $length\r\n\r\n$message"
 }
 
@@ -1750,7 +1751,8 @@ case "$method" in
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"textDocumentSync":1,"codeActionProvider":true}}}'
         ;;
     "textDocument/codeAction")
-        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"title":"Extract function","kind":"refactor.extract","edit":{"changes":{}}},{"title":"Inline variable","kind":"refactor.inline","edit":{"changes":{}}},{"title":"Add missing import","kind":"quickfix","edit":{"changes":{}}}]}'
+        uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"title":"Extract function","kind":"refactor.extract","edit":{"changes":{}}},{"title":"Inline variable","kind":"refactor.inline","edit":{"changes":{}}},{"title":"Add missing import","kind":"quickfix","edit":{"changes":{"'$uri'":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"use std::io;\\n"}]}}}]}'
         ;;
     "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didClose")
         # Notifications — no response needed
@@ -1761,9 +1763,21 @@ case "$method" in
     "textDocument/inlayHint")
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
         ;;
+    "textDocument/foldingRange")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "textDocument/documentSymbol")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
     "shutdown")
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
         break
+        ;;
+    *)
+        # Respond to any unknown request so the client doesn't block
+        if [ -n "$msg_id" ]; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"error":{"code":-32601,"message":"Method not found"}}'
+        fi
         ;;
 esac
 done

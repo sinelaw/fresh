@@ -906,7 +906,7 @@
   "lsp.cannot_open_definition": "Không thể mở vị trí định nghĩa",
   "lsp.cannot_rename_unsaved": "Không thể đổi tên trong buffer chưa lưu",
   "lsp.code_action_hint": "Nhấn số để chọn, Esc để hủy",
-  "lsp.code_action_applied": "Applied: %{title} (%{count} change(s))",
+  "lsp.code_action_applied": "Đã áp dụng: %{title} (%{count} thay đổi)",
   "lsp.disabled.library_file": "Tệp thư viện (ngoài dự án)",
   "lsp.disabled.unnamed": "Buffer không có tên",
   "lsp.disabled.user": "Đã tắt bởi người dùng",
