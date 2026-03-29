@@ -1253,11 +1253,19 @@ impl Editor {
                 if let Some(uri) = uri {
                     let lang_id = state.language.clone();
                     if let Some(lsp) = self.lsp.as_mut() {
-                        // LSP should already be running since we just restarted it
-                        if let Some(handle) = lsp.get_handle_mut(&lang_id) {
-                            let handle_id = handle.id();
-                            if let Err(e) = handle.did_open(uri, content, lang_id) {
-                                tracing::warn!("LSP did_open failed after restart: {}", e);
+                        // Send didOpen to ALL handles for this language, not just the first.
+                        // Each server needs its own didOpen notification.
+                        for sh in lsp.get_handles_mut(&lang_id) {
+                            let handle_id = sh.handle.id();
+                            if let Err(e) =
+                                sh.handle
+                                    .did_open(uri.clone(), content.clone(), lang_id.clone())
+                            {
+                                tracing::warn!(
+                                    "LSP did_open failed for '{}' after restart: {}",
+                                    sh.name,
+                                    e
+                                );
                             } else {
                                 // Mark buffer as opened with this handle so that
                                 // send_lsp_changes_for_buffer doesn't re-send didOpen
