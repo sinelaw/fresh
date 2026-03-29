@@ -918,6 +918,10 @@ impl LspState {
             .send_request_sequential(Initialize::METHOD, Some(params), pending)
             .await?;
 
+        tracing::info!(
+            "LSP initialize result: position_encoding={:?}",
+            result.capabilities.position_encoding
+        );
         self.capabilities = Some(result.capabilities.clone());
 
         // Send initialized notification

@@ -153,6 +153,20 @@ pub fn diagnostic_to_overlay(
     let start_byte = buffer.lsp_position_to_byte(start_line, start_char);
     let end_byte = buffer.lsp_position_to_byte(end_line, end_char);
 
+    // Log the conversion for debugging diagnostic highlight positions
+    tracing::debug!(
+        "DIAG OVERLAY: LSP {}:{}..{}:{} -> bytes {}..{} (len={}) severity={:?} msg={:?}",
+        start_line,
+        start_char,
+        end_line,
+        end_char,
+        start_byte,
+        end_byte,
+        end_byte.saturating_sub(start_byte),
+        diagnostic.severity,
+        diagnostic.message,
+    );
+
     // Determine overlay face based on diagnostic severity using theme colors
     let (face, priority) = match diagnostic.severity {
         Some(DiagnosticSeverity::ERROR) => (

@@ -2570,7 +2570,22 @@ impl Editor {
         self.trigger_plugin_hooks_for_event(event, line_info);
 
         // 4. Notify LSP of the change using pre-calculated positions
-        self.send_lsp_changes_for_buffer(self.active_buffer(), lsp_changes);
+        // For BulkEdit events (undo/redo of code actions, renames, etc.),
+        // collect_lsp_changes returns empty because there are no incremental byte
+        // positions to convert — BulkEdit restores a tree snapshot.  Send a
+        // full-document replacement so the LSP server stays in sync.
+        if lsp_changes.is_empty() && event.modifies_buffer() {
+            if let Some(full_text) = self.active_state().buffer.to_string() {
+                let full_change = vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: full_text,
+                }];
+                self.send_lsp_changes_for_buffer(self.active_buffer(), full_change);
+            }
+        } else {
+            self.send_lsp_changes_for_buffer(self.active_buffer(), lsp_changes);
+        }
     }
 
     /// Apply multiple Insert/Delete events efficiently using bulk edit optimization.
