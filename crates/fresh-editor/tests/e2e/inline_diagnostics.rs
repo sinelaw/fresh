@@ -1,6 +1,8 @@
 use crate::common::harness::EditorTestHarness;
+use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::model::event::{Event, OverlayFace};
 use fresh::view::overlay::OverlayNamespace;
+use ratatui::style::Color;
 
 fn diagnostic_overlay(range: std::ops::Range<usize>, priority: i32, message: &str) -> Event {
     Event::AddOverlay {
@@ -112,4 +114,87 @@ fn test_inline_diagnostic_truncation() {
     harness.assert_screen_not_contains("should be truncated");
     // But the beginning should appear (truncated with ellipsis)
     harness.assert_screen_contains("this is a very lon…");
+}
+
+/// Reproduces the bug where a multi-line diagnostic highlight overlay disappears
+/// entirely when part of the highlighted region is scrolled out of the viewport.
+/// The overlay should still be visible on the lines that remain in view.
+#[test]
+fn test_multiline_diagnostic_highlight_visible_when_partially_scrolled() {
+    let mut config = fresh::config::Config::default();
+    config.editor.line_numbers = false;
+
+    // Use a small viewport so we can scroll easily
+    // Height 10: menu bar (1) + tab bar (1) + content (6) + status (1) + prompt (1)
+    let mut harness = EditorTestHarness::with_config(80, 10, config).unwrap();
+    harness.new_buffer().unwrap();
+
+    // Create 20 lines of content so we have enough to scroll
+    for i in 1..=20 {
+        harness.type_text(&format!("line {}", i)).unwrap();
+        if i < 20 {
+            harness
+                .send_key(KeyCode::Enter, KeyModifiers::empty())
+                .unwrap();
+        }
+    }
+    harness.render().unwrap();
+
+    // Move cursor back to top
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Calculate byte offsets for lines 1-4 (each "line N\n" is 7 bytes for 1-digit, 8 for 2-digit)
+    // "line 1\nline 2\nline 3\nline 4\n" = bytes 0..28
+    // We'll add a background overlay spanning lines 1 through 4
+    let line1_start = 0; // "line 1"
+    let line4_end = "line 1\nline 2\nline 3\nline 4".len(); // end of "line 4"
+
+    // Add a bright background overlay across lines 1-4
+    harness
+        .apply_event(Event::AddOverlay {
+            namespace: Some(OverlayNamespace::from_string("lsp-diagnostic".to_string())),
+            range: line1_start..line4_end,
+            face: OverlayFace::Background {
+                color: (60, 20, 20),
+            },
+            priority: 100,
+            message: Some("multi-line error".to_string()),
+            extend_to_line_end: false,
+            url: None,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify the overlay is visible on line 1 (content row 2) before scrolling
+    let style_before = harness.get_cell_style(0, 2).unwrap();
+    assert_eq!(
+        style_before.bg,
+        Some(Color::Rgb(60, 20, 20)),
+        "Overlay background should be visible on line 1 before scrolling"
+    );
+
+    // Scroll down 1 event (3 lines by default), so lines 4-9+ are visible.
+    // Lines 1-3 go out of view, but line 4 is still visible with the overlay.
+    harness.mouse_scroll_down(40, 5).unwrap();
+    harness.render().unwrap();
+
+    // After scrolling down 3 lines, line 4 should be at the top of content area (row 2)
+    let row_text = harness.get_row_text(2);
+    assert!(
+        row_text.contains("line 4"),
+        "Expected line 4 at top of content area, got: {:?}",
+        row_text.trim()
+    );
+
+    // The overlay spans lines 1-4, so line 4 should still show the highlight
+    // even though lines 1-3 (including the overlay start) are scrolled out of view.
+    let style_after = harness.get_cell_style(0, 2).unwrap();
+    assert_eq!(
+        style_after.bg,
+        Some(Color::Rgb(60, 20, 20)),
+        "Overlay background should still be visible on line 4 after scrolling lines 1-3 out of view"
+    );
 }

@@ -421,16 +421,29 @@ impl OverlayManager {
             .map(|(id, start, _end)| (id, start))
             .collect();
 
-        // Find overlays whose markers are in the viewport
-        // Only resolve positions for overlays that are actually visible
+        // Find overlays whose markers overlap with the viewport.
+        // At least one marker must be in the viewport, but the other may be
+        // outside (e.g. a multi-line overlay partially scrolled out of view).
+        // For the out-of-viewport marker, fall back to resolving its position
+        // directly from the marker list.
         self.overlays
             .iter()
             .filter_map(|overlay| {
-                // Try to get positions from our viewport query results
-                let start_pos = marker_positions.get(&overlay.start_marker)?;
-                let end_pos = marker_positions.get(&overlay.end_marker)?;
+                let start_in_vp = marker_positions.get(&overlay.start_marker).copied();
+                let end_in_vp = marker_positions.get(&overlay.end_marker).copied();
 
-                let range = *start_pos..*end_pos;
+                // At least one marker must be in the viewport for the overlay
+                // to be visible at all
+                if start_in_vp.is_none() && end_in_vp.is_none() {
+                    return None;
+                }
+
+                // For the marker outside the viewport, resolve its position directly
+                let start_pos =
+                    start_in_vp.or_else(|| marker_list.get_position(overlay.start_marker))?;
+                let end_pos = end_in_vp.or_else(|| marker_list.get_position(overlay.end_marker))?;
+
+                let range = start_pos..end_pos;
 
                 // Only include if actually overlaps viewport.
                 // For zero-width ranges (e.g. diagnostics at a single position),
