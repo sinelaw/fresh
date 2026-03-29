@@ -4701,6 +4701,25 @@ impl Editor {
                         self.set_status_message(format!("Code action resolve failed: {e}"));
                     }
                 },
+                AsyncMessage::LspCompletionResolved {
+                    request_id: _,
+                    item,
+                } => {
+                    if let Ok(resolved) = item {
+                        self.handle_completion_resolved(resolved);
+                    }
+                }
+                AsyncMessage::LspFormatting {
+                    request_id: _,
+                    uri,
+                    edits,
+                } => {
+                    if !edits.is_empty() {
+                        if let Err(e) = self.apply_formatting_edits(&uri, edits) {
+                            tracing::error!("Failed to apply formatting: {}", e);
+                        }
+                    }
+                }
                 AsyncMessage::LspPulledDiagnostics {
                     request_id: _,
                     uri,

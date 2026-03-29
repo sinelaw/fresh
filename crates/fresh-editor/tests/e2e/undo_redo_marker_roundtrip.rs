@@ -44,7 +44,6 @@ impl Op {
             Self::MoveLineDown => harness.send_key(KeyCode::Down, KeyModifiers::ALT),
         }
     }
-
 }
 
 fn op_strategy() -> impl Strategy<Value = Op> {

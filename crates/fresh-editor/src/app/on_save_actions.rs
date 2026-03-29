@@ -136,7 +136,11 @@ impl Editor {
 
         let formatter = match formatter {
             Some(f) => f,
-            None => return Err(format!("No formatter configured for {}", language)),
+            None => {
+                // No external formatter — try LSP formatting
+                self.request_formatting();
+                return Ok(());
+            }
         };
 
         match self.run_formatter(&formatter, &path) {

@@ -103,6 +103,19 @@ pub enum AsyncMessage {
         actions: Vec<CodeActionOrCommand>,
     },
 
+    /// LSP completionItem/resolve response
+    LspCompletionResolved {
+        request_id: u64,
+        item: Result<lsp_types::CompletionItem, String>,
+    },
+
+    /// LSP textDocument/formatting response
+    LspFormatting {
+        request_id: u64,
+        uri: String,
+        edits: Vec<lsp_types::TextEdit>,
+    },
+
     /// LSP pulled diagnostics response (textDocument/diagnostic)
     LspPulledDiagnostics {
         request_id: u64,

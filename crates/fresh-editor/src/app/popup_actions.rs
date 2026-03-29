@@ -81,17 +81,22 @@ impl Editor {
         }
 
         // If it's a completion popup, insert the selected item
-        let completion_text = self
+        let completion_info = self
             .active_state()
             .popups
             .top()
             .filter(|p| p.kind == crate::view::popup::PopupKind::Completion)
             .and_then(|p| p.selected_item())
-            .and_then(|item| item.data.clone());
+            .map(|item| (item.text.clone(), item.data.clone()));
 
         // Perform the completion if we have text
-        if let Some(text) = completion_text {
-            self.insert_completion_text(text);
+        if let Some((label, insert_text)) = completion_info {
+            if let Some(text) = insert_text {
+                self.insert_completion_text(text);
+            }
+
+            // Apply additional_text_edits (e.g., auto-imports) from the matching CompletionItem
+            self.apply_completion_additional_edits(&label);
         }
 
         self.hide_popup();
@@ -168,6 +173,31 @@ impl Editor {
                 let state = self.buffers.get_mut(&buffer_id).unwrap();
                 let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
                 state.apply(cursors, &move_event);
+            }
+        }
+    }
+
+    /// Apply additional_text_edits from the accepted completion item (e.g. auto-imports).
+    /// Finds the matching CompletionItem by label from the stored completion_items.
+    fn apply_completion_additional_edits(&mut self, label: &str) {
+        // Find the matching CompletionItem from stored items
+        let additional_edits = self
+            .completion_items
+            .as_ref()
+            .and_then(|items| items.iter().find(|item| item.label == label))
+            .and_then(|item| item.additional_text_edits.clone());
+
+        if let Some(edits) = additional_edits {
+            if !edits.is_empty() {
+                tracing::info!(
+                    "Applying {} additional text edits from completion '{}'",
+                    edits.len(),
+                    label
+                );
+                let buffer_id = self.active_buffer();
+                if let Err(e) = self.apply_lsp_text_edits(buffer_id, edits) {
+                    tracing::error!("Failed to apply completion additional_text_edits: {}", e);
+                }
             }
         }
     }

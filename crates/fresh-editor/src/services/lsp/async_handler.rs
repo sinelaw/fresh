@@ -405,6 +405,11 @@ fn extract_capability_summary(caps: &ServerCapabilities) -> ServerCapabilitySumm
             lsp_types::HoverProviderCapability::Options(_) => true,
         }),
         completion: caps.completion_provider.is_some(),
+        completion_resolve: caps
+            .completion_provider
+            .as_ref()
+            .and_then(|cp| cp.resolve_provider)
+            .unwrap_or(false),
         completion_trigger_characters: caps
             .completion_provider
             .as_ref()
@@ -620,6 +625,20 @@ enum LspCommand {
     CodeActionResolve {
         request_id: u64,
         action: Box<lsp_types::CodeAction>,
+    },
+
+    /// Resolve a completion item to get full details (completionItem/resolve)
+    CompletionResolve {
+        request_id: u64,
+        item: Box<lsp_types::CompletionItem>,
+    },
+
+    /// Format a document (textDocument/formatting)
+    DocumentFormatting {
+        request_id: u64,
+        uri: Uri,
+        tab_size: u32,
+        insert_spaces: bool,
     },
 
     /// Cancel a pending request
@@ -1745,6 +1764,83 @@ impl LspState {
                     request_id,
                     action: Err(e.clone()),
                 });
+                Err(e)
+            }
+        }
+    }
+
+    /// Handle completionItem/resolve request
+    #[allow(clippy::type_complexity)]
+    async fn handle_completion_resolve(
+        &mut self,
+        request_id: u64,
+        item: lsp_types::CompletionItem,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        match self
+            .send_request_sequential::<_, Value>("completionItem/resolve", Some(item), pending)
+            .await
+        {
+            Ok(result) => {
+                let resolved = serde_json::from_value::<lsp_types::CompletionItem>(result)
+                    .map_err(|e| format!("Failed to parse completionItem/resolve response: {}", e));
+                let _ = self.async_tx.send(AsyncMessage::LspCompletionResolved {
+                    request_id,
+                    item: resolved,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::debug!("completionItem/resolve failed: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Handle textDocument/formatting request
+    #[allow(clippy::type_complexity)]
+    async fn handle_document_formatting(
+        &mut self,
+        request_id: u64,
+        uri: Uri,
+        tab_size: u32,
+        insert_spaces: bool,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{
+            DocumentFormattingParams, FormattingOptions, TextDocumentIdentifier,
+            WorkDoneProgressParams,
+        };
+
+        let params = DocumentFormattingParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            options: FormattingOptions {
+                tab_size,
+                insert_spaces,
+                ..Default::default()
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+
+        match self
+            .send_request_sequential::<_, Value>("textDocument/formatting", Some(params), pending)
+            .await
+        {
+            Ok(result) => {
+                let edits = if result.is_null() {
+                    Vec::new()
+                } else {
+                    serde_json::from_value::<Vec<lsp_types::TextEdit>>(result).unwrap_or_default()
+                };
+                let _ = self.async_tx.send(AsyncMessage::LspFormatting {
+                    request_id,
+                    uri: uri.as_str().to_string(),
+                    edits,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::debug!("textDocument/formatting failed: {}", e);
                 Err(e)
             }
         }
@@ -3075,6 +3171,36 @@ impl LspTask {
                         });
                     }
                 }
+                LspCommand::CompletionResolve { request_id, item } => {
+                    if state.initialized {
+                        let _ = await_draining!(
+                            state.handle_completion_resolve(request_id, *item, &pending),
+                            command_rx,
+                            draining_buffer
+                        );
+                    }
+                }
+                LspCommand::DocumentFormatting {
+                    request_id,
+                    uri,
+                    tab_size,
+                    insert_spaces,
+                } => {
+                    if state.initialized {
+                        tracing::info!("Processing DocumentFormatting for {}", uri.as_str());
+                        let _ = await_draining!(
+                            state.handle_document_formatting(
+                                request_id,
+                                uri,
+                                tab_size,
+                                insert_spaces,
+                                &pending,
+                            ),
+                            command_rx,
+                            draining_buffer
+                        );
+                    }
+                }
                 LspCommand::CancelRequest { request_id } => {
                     tracing::info!("Processing CancelRequest for editor_id={}", request_id);
                     let _ = state.handle_cancel_request(request_id).await;
@@ -4093,6 +4219,38 @@ impl LspHandle {
                 action: Box::new(action),
             })
             .map_err(|_| "Failed to send code_action_resolve command".to_string())
+    }
+
+    /// Resolve a completion item to get full details (completionItem/resolve)
+    pub fn completion_resolve(
+        &self,
+        request_id: u64,
+        item: lsp_types::CompletionItem,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::CompletionResolve {
+                request_id,
+                item: Box::new(item),
+            })
+            .map_err(|_| "Failed to send completion_resolve command".to_string())
+    }
+
+    /// Format a document (textDocument/formatting)
+    pub fn document_formatting(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        tab_size: u32,
+        insert_spaces: bool,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::DocumentFormatting {
+                request_id,
+                uri,
+                tab_size,
+                insert_spaces,
+            })
+            .map_err(|_| "Failed to send document_formatting command".to_string())
     }
 
     /// Request document diagnostics (pull model)

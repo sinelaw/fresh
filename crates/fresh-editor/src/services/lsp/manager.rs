@@ -119,6 +119,7 @@ pub struct ServerCapabilitySummary {
     pub initialized: bool,
     pub hover: bool,
     pub completion: bool,
+    pub completion_resolve: bool,
     pub completion_trigger_characters: Vec<String>,
     pub definition: bool,
     pub references: bool,

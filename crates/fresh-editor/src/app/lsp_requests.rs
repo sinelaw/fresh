@@ -1436,6 +1436,86 @@ impl Editor {
         false
     }
 
+    /// Handle a resolved completion item — apply additional_text_edits (e.g. auto-imports).
+    pub(crate) fn handle_completion_resolved(&mut self, item: lsp_types::CompletionItem) {
+        if let Some(additional_edits) = item.additional_text_edits {
+            if !additional_edits.is_empty() {
+                tracing::info!(
+                    "Applying {} additional text edits from completion resolve",
+                    additional_edits.len()
+                );
+                let buffer_id = self.active_buffer();
+                if let Err(e) = self.apply_lsp_text_edits(buffer_id, additional_edits) {
+                    tracing::error!("Failed to apply completion additional_text_edits: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Apply formatting edits from textDocument/formatting response.
+    pub(crate) fn apply_formatting_edits(
+        &mut self,
+        uri: &str,
+        edits: Vec<lsp_types::TextEdit>,
+    ) -> AnyhowResult<usize> {
+        // Find the buffer for this URI
+        let buffer_id = self
+            .buffer_metadata
+            .iter()
+            .find(|(_, meta)| meta.file_uri().map(|u| u.as_str() == uri).unwrap_or(false))
+            .map(|(id, _)| *id);
+
+        if let Some(buffer_id) = buffer_id {
+            let count = self.apply_lsp_text_edits(buffer_id, edits)?;
+            self.set_status_message(format!("Formatted ({} edits)", count));
+            Ok(count)
+        } else {
+            tracing::warn!("Cannot apply formatting: no buffer for URI {}", uri);
+            Ok(0)
+        }
+    }
+
+    /// Request document formatting from LSP.
+    pub(crate) fn request_formatting(&mut self) {
+        let buffer_id = self.active_buffer();
+        let metadata = match self.buffer_metadata.get(&buffer_id) {
+            Some(m) if m.lsp_enabled => m,
+            _ => {
+                self.set_status_message("LSP not available for this buffer".to_string());
+                return;
+            }
+        };
+
+        let uri = match metadata.file_uri() {
+            Some(u) => u.clone(),
+            None => return,
+        };
+
+        let language = match self.buffers.get(&buffer_id).map(|s| s.language.clone()) {
+            Some(l) => l,
+            None => return,
+        };
+
+        let tab_size = self.config.editor.tab_size as u32;
+        let insert_spaces = !self.config.editor.use_tabs;
+
+        self.next_lsp_request_id += 1;
+        let request_id = self.next_lsp_request_id;
+
+        if let Some(lsp) = &mut self.lsp {
+            if let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::Format) {
+                if let Err(e) =
+                    sh.handle
+                        .document_formatting(request_id, uri, tab_size, insert_spaces)
+                {
+                    tracing::warn!("Failed to request formatting: {}", e);
+                }
+            } else {
+                self.set_status_message("Formatting not supported by LSP server".to_string());
+            }
+        }
+    }
+
     /// Handle find references response from LSP
     pub(crate) fn handle_references_response(
         &mut self,
