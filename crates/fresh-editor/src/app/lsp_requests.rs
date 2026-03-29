@@ -1358,13 +1358,14 @@ impl Editor {
 
     /// Send workspace/executeCommand to the LSP server
     fn send_execute_command(&mut self, cmd: lsp_types::Command) {
-        tracing::info!(
-            "Executing LSP command: {} ({})",
-            cmd.title,
-            cmd.command
-        );
+        tracing::info!("Executing LSP command: {} ({})", cmd.title, cmd.command);
         self.set_status_message(
-            t!("lsp.code_action_applied", title = &cmd.title, count = 0_usize).to_string(),
+            t!(
+                "lsp.code_action_applied",
+                title = &cmd.title,
+                count = 0_usize
+            )
+            .to_string(),
         );
 
         // Get the language for this buffer to find the right LSP handle
@@ -1379,10 +1380,10 @@ impl Editor {
 
         if let Some(lsp) = &mut self.lsp {
             for sh in lsp.get_handles_mut(&language) {
-                if let Err(e) = sh.handle.execute_command(
-                    cmd.command.clone(),
-                    cmd.arguments.clone(),
-                ) {
+                if let Err(e) = sh
+                    .handle
+                    .execute_command(cmd.command.clone(), cmd.arguments.clone())
+                {
                     tracing::warn!("Failed to send executeCommand to '{}': {}", sh.name, e);
                 }
             }
@@ -1694,10 +1695,7 @@ impl Editor {
     }
 
     /// Apply a resource operation (CreateFile, RenameFile, DeleteFile) from a workspace edit.
-    fn apply_resource_operation(
-        &mut self,
-        op: lsp_types::ResourceOp,
-    ) -> AnyhowResult<()> {
+    fn apply_resource_operation(&mut self, op: lsp_types::ResourceOp) -> AnyhowResult<()> {
         match op {
             lsp_types::ResourceOp::Create(create) => {
                 let path = std::path::PathBuf::from(create.uri.path().as_str());
@@ -1851,8 +1849,7 @@ impl Editor {
             match document_changes {
                 DocumentChanges::Edits(edits) => {
                     for text_doc_edit in edits {
-                        total_changes +=
-                            self.apply_text_document_edit(text_doc_edit)?;
+                        total_changes += self.apply_text_document_edit(text_doc_edit)?;
                     }
                 }
                 DocumentChanges::Operations(ops) => {
@@ -1861,8 +1858,7 @@ impl Editor {
                     for op in ops {
                         match op {
                             lsp_types::DocumentChangeOperation::Edit(text_doc_edit) => {
-                                total_changes +=
-                                    self.apply_text_document_edit(text_doc_edit)?;
+                                total_changes += self.apply_text_document_edit(text_doc_edit)?;
                             }
                             lsp_types::DocumentChangeOperation::Op(resource_op) => {
                                 self.apply_resource_operation(resource_op)?;

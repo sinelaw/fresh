@@ -4674,10 +4674,7 @@ impl Editor {
                     self.handle_code_actions_response(request_id, actions);
                 }
                 AsyncMessage::LspApplyEdit { edit, label } => {
-                    tracing::info!(
-                        "Applying workspace edit from server (label: {:?})",
-                        label
-                    );
+                    tracing::info!("Applying workspace edit from server (label: {:?})", label);
                     match self.apply_workspace_edit(edit) {
                         Ok(n) => {
                             if let Some(label) = label {
@@ -4695,17 +4692,15 @@ impl Editor {
                 AsyncMessage::LspCodeActionResolved {
                     request_id: _,
                     action,
-                } => {
-                    match action {
-                        Ok(resolved) => {
-                            self.execute_resolved_code_action(resolved);
-                        }
-                        Err(e) => {
-                            tracing::warn!("codeAction/resolve failed: {}", e);
-                            self.set_status_message(format!("Code action resolve failed: {e}"));
-                        }
+                } => match action {
+                    Ok(resolved) => {
+                        self.execute_resolved_code_action(resolved);
                     }
-                }
+                    Err(e) => {
+                        tracing::warn!("codeAction/resolve failed: {}", e);
+                        self.set_status_message(format!("Code action resolve failed: {e}"));
+                    }
+                },
                 AsyncMessage::LspPulledDiagnostics {
                     request_id: _,
                     uri,

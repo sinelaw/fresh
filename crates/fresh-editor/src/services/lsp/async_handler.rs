@@ -453,15 +453,12 @@ fn extract_capability_summary(caps: &ServerCapabilities) -> ServerCapabilitySumm
             lsp_types::CodeActionProviderCapability::Simple(v) => *v,
             lsp_types::CodeActionProviderCapability::Options(_) => true,
         }),
-        code_action_resolve: caps
-            .code_action_provider
-            .as_ref()
-            .is_some_and(|p| match p {
-                lsp_types::CodeActionProviderCapability::Options(opts) => {
-                    opts.resolve_provider.unwrap_or(false)
-                }
-                _ => false,
-            }),
+        code_action_resolve: caps.code_action_provider.as_ref().is_some_and(|p| match p {
+            lsp_types::CodeActionProviderCapability::Options(opts) => {
+                opts.resolve_provider.unwrap_or(false)
+            }
+            _ => false,
+        }),
         document_symbols: bool_or_options(&caps.document_symbol_provider, |p| match p {
             lsp_types::OneOf::Left(v) => *v,
             lsp_types::OneOf::Right(_) => true,
@@ -1707,11 +1704,7 @@ impl LspState {
         };
 
         match self
-            .send_request_sequential::<_, Value>(
-                "workspace/executeCommand",
-                Some(params),
-                pending,
-            )
+            .send_request_sequential::<_, Value>("workspace/executeCommand", Some(params), pending)
             .await
         {
             Ok(_) => {
@@ -1738,10 +1731,8 @@ impl LspState {
             .await
         {
             Ok(result) => {
-                let resolved =
-                    serde_json::from_value::<lsp_types::CodeAction>(result).map_err(|e| {
-                        format!("Failed to parse codeAction/resolve response: {}", e)
-                    });
+                let resolved = serde_json::from_value::<lsp_types::CodeAction>(result)
+                    .map_err(|e| format!("Failed to parse codeAction/resolve response: {}", e));
                 let _ = self.async_tx.send(AsyncMessage::LspCodeActionResolved {
                     request_id,
                     action: resolved,
@@ -3056,10 +3047,7 @@ impl LspTask {
                         });
                     }
                 }
-                LspCommand::ExecuteCommand {
-                    command,
-                    arguments,
-                } => {
+                LspCommand::ExecuteCommand { command, arguments } => {
                     if state.initialized {
                         tracing::info!("Processing ExecuteCommand: {}", command);
                         let _ = await_draining!(
@@ -3071,10 +3059,7 @@ impl LspTask {
                         tracing::trace!("LSP not initialized, cannot execute command");
                     }
                 }
-                LspCommand::CodeActionResolve {
-                    request_id,
-                    action,
-                } => {
+                LspCommand::CodeActionResolve { request_id, action } => {
                     if state.initialized {
                         tracing::info!("Processing CodeActionResolve (request_id={})", request_id);
                         let _ = await_draining!(
