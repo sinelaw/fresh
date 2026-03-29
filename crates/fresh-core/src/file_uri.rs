@@ -31,27 +31,41 @@ pub fn path_to_file_uri(path: &Path) -> Option<String> {
 
     #[cfg(windows)]
     {
-        // file:///C:/path/to/file
-        uri.push('/');
+        use std::path::Component;
+        use std::path::Prefix;
+
+        // Peek at the prefix to decide the URI structure.
+        let prefix_kind = path.components().next().and_then(|c| match c {
+            Component::Prefix(p) => Some(p.kind()),
+            _ => None,
+        });
+
+        match prefix_kind {
+            // C:\ or \\?\C:\ → file:///C:/...
+            Some(Prefix::Disk(drive)) | Some(Prefix::VerbatimDisk(drive)) => {
+                uri.push('/');
+                uri.push(drive as char);
+                uri.push(':');
+            }
+            // \\server\share or \\?\UNC\server\share → file://server/share/...
+            Some(Prefix::UNC(server, share)) | Some(Prefix::VerbatimUNC(server, share)) => {
+                let server = server.to_str()?;
+                let share = share.to_str()?;
+                uri.push_str(server);
+                uri.push('/');
+                percent_encode_segment(&mut uri, share);
+            }
+            // \\?\<something> (non-disk, non-UNC) or \\.\device — not representable
+            Some(Prefix::Verbatim(_)) | Some(Prefix::DeviceNS(_)) | None => {
+                return None;
+            }
+        }
+
         let mut first = true;
         for component in path.components() {
-            use std::path::Component;
             match component {
-                Component::Prefix(prefix) => {
-                    use std::path::Prefix;
-                    match prefix.kind() {
-                        // \\?\C: (verbatim) → treat as plain C:
-                        Prefix::VerbatimDisk(drive) => {
-                            uri.push(drive as char);
-                            uri.push(':');
-                        }
-                        // Normal drive letter: C: → C:
-                        _ => {
-                            let s = prefix.as_os_str().to_str()?;
-                            uri.push_str(s);
-                        }
-                    }
-                }
+                // Already handled above
+                Component::Prefix(_) => {}
                 Component::RootDir => {
                     if !uri.ends_with('/') {
                         uri.push('/');
@@ -618,6 +632,96 @@ mod tests {
             uri.contains("%5Btemp%5D"),
             "brackets should be percent-encoded: {}",
             uri
+        );
+    }
+
+    // ── Windows prefix edge cases (drive letter casing, UNC, device) ──
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_disk_lowercase_drive_uppercased() {
+        // Rust's VerbatimDisk normalizes the drive byte to uppercase,
+        // so \\?\c: becomes VerbatimDisk(67) = 'C'. Verify we preserve this.
+        let path = PathBuf::from(r"\\?\c:\Users\file.txt");
+        let uri = path_to_file_uri(&path).expect("should produce URI");
+        assert_eq!(
+            uri, "file:///C:/Users/file.txt",
+            "lowercase drive letter should be uppercased in URI"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unc_path_produces_file_uri_with_server_authority() {
+        // \\server\share\file.txt → file://server/share/file.txt
+        // The server name becomes the URI authority (host), matching the url crate.
+        let path = PathBuf::from(r"\\server\share\dir\file.txt");
+        let uri = path_to_file_uri(&path).expect("UNC path should produce URI");
+        assert_eq!(uri, "file://server/share/dir/file.txt");
+        assert!(
+            !uri.contains('\\'),
+            "URI must not contain backslashes: {}",
+            uri
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unc_path_lsp_uri_roundtrip() {
+        let path = PathBuf::from(r"\\server\share\project\src\main.rs");
+        let uri = path_to_lsp_uri(&path).expect("UNC path should produce valid lsp URI");
+        assert_eq!(uri.as_str(), "file://server/share/project/src/main.rs");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_unc_path_produces_file_uri_with_server_authority() {
+        // \\?\UNC\server\share\file.txt → file://server/share/file.txt
+        // VerbatimUNC should be normalized to the same URI as plain UNC.
+        let path = PathBuf::from(r"\\?\UNC\server\share\dir\file.txt");
+        let uri = path_to_file_uri(&path).expect("VerbatimUNC path should produce URI");
+        assert_eq!(uri, "file://server/share/dir/file.txt");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_unc_matches_plain_unc() {
+        let unc = PathBuf::from(r"\\server\share\file.txt");
+        let verbatim_unc = PathBuf::from(r"\\?\UNC\server\share\file.txt");
+        let unc_uri = path_to_file_uri(&unc).expect("UNC should produce URI");
+        let verbatim_uri = path_to_file_uri(&verbatim_unc).expect("VerbatimUNC should produce URI");
+        assert_eq!(
+            unc_uri, verbatim_uri,
+            "UNC and VerbatimUNC must produce identical URIs"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_non_disk_returns_none() {
+        // \\?\BootPartition\... is a Verbatim prefix that is not a disk or UNC.
+        // The url crate rejects these; we should too.
+        let path = PathBuf::from(r"\\?\BootPartition\file.txt");
+        assert!(
+            path_to_file_uri(&path).is_none(),
+            "Verbatim (non-disk, non-UNC) paths cannot be represented as file URIs"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn device_namespace_returns_none() {
+        // \\.\COM1, \\.\PhysicalDrive0 etc. are device paths, not file paths.
+        // The url crate rejects these; we should too.
+        let path = PathBuf::from(r"\\.\COM1");
+        assert!(
+            path_to_file_uri(&path).is_none(),
+            "DeviceNS paths cannot be represented as file URIs"
+        );
+        let path2 = PathBuf::from(r"\\.\PhysicalDrive0");
+        assert!(
+            path_to_file_uri(&path2).is_none(),
+            "DeviceNS paths cannot be represented as file URIs"
         );
     }
 
