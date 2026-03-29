@@ -1311,50 +1311,126 @@ impl Editor {
 
         match action {
             lsp_types::CodeActionOrCommand::CodeAction(ca) => {
-                let title = ca.title.clone();
-                if let Some(edit) = ca.edit {
-                    match self.apply_workspace_edit(edit) {
-                        Ok(n) => {
-                            self.set_status_message(
-                                t!("lsp.code_action_applied", title = &title, count = n)
-                                    .to_string(),
-                            );
-                        }
-                        Err(e) => {
-                            self.set_status_message(format!("Code action failed: {e}"));
-                        }
+                // If the action has no edit and no command, it may need resolve first.
+                // Only resolve if the action has `data` and the server supports resolveProvider.
+                if ca.edit.is_none() && ca.command.is_none() && ca.data.is_some() {
+                    if self.server_supports_code_action_resolve() {
+                        tracing::info!(
+                            "Code action '{}' needs resolve, sending codeAction/resolve",
+                            ca.title
+                        );
+                        self.send_code_action_resolve(ca);
+                        return;
                     }
-                } else if let Some(cmd) = ca.command {
-                    tracing::warn!(
-                        "Code action '{}' requires command execution ({}), not yet supported",
-                        title,
-                        cmd.command
-                    );
-                    self.set_status_message(
-                        t!("lsp.code_action_applied", title = &title, count = 0_usize).to_string(),
-                    );
-                } else {
-                    self.set_status_message(
-                        t!("lsp.code_action_applied", title = &title, count = 0_usize).to_string(),
-                    );
                 }
+                self.execute_resolved_code_action(ca);
             }
             lsp_types::CodeActionOrCommand::Command(cmd) => {
-                tracing::warn!(
-                    "Code action command '{}' ({}) execution not yet supported",
-                    cmd.title,
-                    cmd.command
-                );
-                self.set_status_message(
-                    t!(
-                        "lsp.code_action_applied",
-                        title = &cmd.title,
-                        count = 0_usize
-                    )
-                    .to_string(),
-                );
+                self.send_execute_command(cmd);
             }
         }
+    }
+
+    /// Execute a code action that has been fully resolved (has edit and/or command).
+    pub(crate) fn execute_resolved_code_action(&mut self, ca: lsp_types::CodeAction) {
+        let title = ca.title.clone();
+
+        // Apply workspace edit if present
+        if let Some(edit) = ca.edit {
+            match self.apply_workspace_edit(edit) {
+                Ok(n) => {
+                    self.set_status_message(
+                        t!("lsp.code_action_applied", title = &title, count = n).to_string(),
+                    );
+                }
+                Err(e) => {
+                    self.set_status_message(format!("Code action failed: {e}"));
+                    return;
+                }
+            }
+        }
+
+        // Execute command if present (may trigger workspace/applyEdit from server)
+        if let Some(cmd) = ca.command {
+            self.send_execute_command(cmd);
+        }
+    }
+
+    /// Send workspace/executeCommand to the LSP server
+    fn send_execute_command(&mut self, cmd: lsp_types::Command) {
+        tracing::info!(
+            "Executing LSP command: {} ({})",
+            cmd.title,
+            cmd.command
+        );
+        self.set_status_message(
+            t!("lsp.code_action_applied", title = &cmd.title, count = 0_usize).to_string(),
+        );
+
+        // Get the language for this buffer to find the right LSP handle
+        let language = match self
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+        {
+            Some(l) => l,
+            None => return,
+        };
+
+        if let Some(lsp) = &mut self.lsp {
+            for sh in lsp.get_handles_mut(&language) {
+                if let Err(e) = sh.handle.execute_command(
+                    cmd.command.clone(),
+                    cmd.arguments.clone(),
+                ) {
+                    tracing::warn!("Failed to send executeCommand to '{}': {}", sh.name, e);
+                }
+            }
+        }
+    }
+
+    /// Send codeAction/resolve to the LSP server
+    fn send_code_action_resolve(&mut self, action: lsp_types::CodeAction) {
+        let language = match self
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+        {
+            Some(l) => l,
+            None => return,
+        };
+
+        self.next_lsp_request_id += 1;
+        let request_id = self.next_lsp_request_id;
+
+        if let Some(lsp) = &mut self.lsp {
+            for sh in lsp.get_handles_mut(&language) {
+                if let Err(e) = sh.handle.code_action_resolve(request_id, action.clone()) {
+                    tracing::warn!("Failed to send codeAction/resolve to '{}': {}", sh.name, e);
+                }
+            }
+        }
+    }
+
+    /// Check if any LSP server for the current buffer supports codeAction/resolve
+    fn server_supports_code_action_resolve(&self) -> bool {
+        let language = match self
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+        {
+            Some(l) => l,
+            None => return false,
+        };
+
+        if let Some(lsp) = &self.lsp {
+            for sh in lsp.get_handles(&language) {
+                if sh.capabilities.code_action_resolve {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Handle find references response from LSP
@@ -1533,6 +1609,166 @@ impl Editor {
         Ok(changes)
     }
 
+    /// Apply a single TextDocumentEdit from a workspace edit.
+    fn apply_text_document_edit(
+        &mut self,
+        text_doc_edit: lsp_types::TextDocumentEdit,
+    ) -> AnyhowResult<usize> {
+        let uri = text_doc_edit.text_document.uri;
+
+        if let Ok(path) = uri_to_path(&uri) {
+            let buffer_id = match self.open_file(&path) {
+                Ok(id) => id,
+                Err(e) => {
+                    if let Some(confirmation) =
+                        e.downcast_ref::<crate::model::buffer::LargeFileEncodingConfirmation>()
+                    {
+                        self.start_large_file_encoding_confirmation(confirmation);
+                    } else {
+                        self.set_status_message(
+                            t!("file.error_opening", error = e.to_string()).to_string(),
+                        );
+                    }
+                    return Ok(0);
+                }
+            };
+
+            let edits: Vec<lsp_types::TextEdit> = text_doc_edit
+                .edits
+                .into_iter()
+                .map(|one_of| match one_of {
+                    lsp_types::OneOf::Left(text_edit) => text_edit,
+                    lsp_types::OneOf::Right(annotated) => annotated.text_edit,
+                })
+                .collect();
+
+            tracing::info!("Applying {} edits for {:?}:", edits.len(), path);
+            for (i, edit) in edits.iter().enumerate() {
+                tracing::info!(
+                    "  Edit {}: line {}:{}-{}:{} -> {:?}",
+                    i,
+                    edit.range.start.line,
+                    edit.range.start.character,
+                    edit.range.end.line,
+                    edit.range.end.character,
+                    edit.new_text
+                );
+            }
+
+            self.apply_lsp_text_edits(buffer_id, edits)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Apply a resource operation (CreateFile, RenameFile, DeleteFile) from a workspace edit.
+    fn apply_resource_operation(
+        &mut self,
+        op: lsp_types::ResourceOp,
+    ) -> AnyhowResult<()> {
+        match op {
+            lsp_types::ResourceOp::Create(create) => {
+                let path = std::path::PathBuf::from(create.uri.path().as_str());
+                let overwrite = create
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.overwrite)
+                    .unwrap_or(false);
+                let ignore_if_exists = create
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.ignore_if_exists)
+                    .unwrap_or(false);
+
+                if path.exists() {
+                    if ignore_if_exists {
+                        tracing::debug!("CreateFile: {:?} already exists, ignoring", path);
+                        return Ok(());
+                    }
+                    if !overwrite {
+                        tracing::warn!("CreateFile: {:?} already exists and overwrite=false", path);
+                        return Ok(());
+                    }
+                }
+
+                // Create parent directories if needed
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&path, "")?;
+                tracing::info!("CreateFile: created {:?}", path);
+
+                // Open the new file as a buffer
+                let _ = self.open_file(&path);
+            }
+            lsp_types::ResourceOp::Rename(rename) => {
+                let old_path = std::path::PathBuf::from(rename.old_uri.path().as_str());
+                let new_path = std::path::PathBuf::from(rename.new_uri.path().as_str());
+                let overwrite = rename
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.overwrite)
+                    .unwrap_or(false);
+                let ignore_if_exists = rename
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.ignore_if_exists)
+                    .unwrap_or(false);
+
+                if new_path.exists() {
+                    if ignore_if_exists {
+                        tracing::debug!("RenameFile: {:?} already exists, ignoring", new_path);
+                        return Ok(());
+                    }
+                    if !overwrite {
+                        tracing::warn!(
+                            "RenameFile: {:?} already exists and overwrite=false",
+                            new_path
+                        );
+                        return Ok(());
+                    }
+                }
+
+                // Create parent directories if needed
+                if let Some(parent) = new_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(&old_path, &new_path)?;
+                tracing::info!("RenameFile: {:?} -> {:?}", old_path, new_path);
+            }
+            lsp_types::ResourceOp::Delete(delete) => {
+                let path = std::path::PathBuf::from(delete.uri.path().as_str());
+                let recursive = delete
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.recursive)
+                    .unwrap_or(false);
+                let ignore_if_not_exists = delete
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.ignore_if_not_exists)
+                    .unwrap_or(false);
+
+                if !path.exists() {
+                    if ignore_if_not_exists {
+                        tracing::debug!("DeleteFile: {:?} does not exist, ignoring", path);
+                        return Ok(());
+                    }
+                    tracing::warn!("DeleteFile: {:?} does not exist", path);
+                    return Ok(());
+                }
+
+                if path.is_dir() && recursive {
+                    std::fs::remove_dir_all(&path)?;
+                } else if path.is_file() {
+                    std::fs::remove_file(&path)?;
+                }
+                tracing::info!("DeleteFile: deleted {:?}", path);
+            }
+        }
+        Ok(())
+    }
+
     /// Apply an LSP WorkspaceEdit (used by rename, code actions, etc.).
     ///
     /// Returns the total number of text changes applied.
@@ -1576,68 +1812,32 @@ impl Editor {
             }
         }
 
-        // Handle document_changes (TextDocumentEdit[])
+        // Handle document_changes (TextDocumentEdit[] or DocumentChangeOperation[])
         if let Some(document_changes) = workspace_edit.document_changes {
             use lsp_types::DocumentChanges;
 
-            let text_edits = match document_changes {
-                DocumentChanges::Edits(edits) => edits,
-                DocumentChanges::Operations(ops) => ops
-                    .into_iter()
-                    .filter_map(|op| {
-                        if let lsp_types::DocumentChangeOperation::Edit(edit) = op {
-                            Some(edit)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect(),
-            };
-
-            for text_doc_edit in text_edits {
-                let uri = text_doc_edit.text_document.uri;
-
-                if let Ok(path) = uri_to_path(&uri) {
-                    let buffer_id = match self.open_file(&path) {
-                        Ok(id) => id,
-                        Err(e) => {
-                            if let Some(confirmation) = e.downcast_ref::<
-                                crate::model::buffer::LargeFileEncodingConfirmation,
-                            >() {
-                                self.start_large_file_encoding_confirmation(confirmation);
-                            } else {
-                                self.set_status_message(
-                                    t!("file.error_opening", error = e.to_string())
-                                        .to_string(),
-                                );
-                            }
-                            return Ok(0);
-                        }
-                    };
-
-                    let edits: Vec<lsp_types::TextEdit> = text_doc_edit
-                        .edits
-                        .into_iter()
-                        .map(|one_of| match one_of {
-                            lsp_types::OneOf::Left(text_edit) => text_edit,
-                            lsp_types::OneOf::Right(annotated) => annotated.text_edit,
-                        })
-                        .collect();
-
-                    tracing::info!("Applying {} edits for {:?}:", edits.len(), path);
-                    for (i, edit) in edits.iter().enumerate() {
-                        tracing::info!(
-                            "  Edit {}: line {}:{}-{}:{} -> {:?}",
-                            i,
-                            edit.range.start.line,
-                            edit.range.start.character,
-                            edit.range.end.line,
-                            edit.range.end.character,
-                            edit.new_text
-                        );
+            match document_changes {
+                DocumentChanges::Edits(edits) => {
+                    for text_doc_edit in edits {
+                        total_changes +=
+                            self.apply_text_document_edit(text_doc_edit)?;
                     }
-
-                    total_changes += self.apply_lsp_text_edits(buffer_id, edits)?;
+                }
+                DocumentChanges::Operations(ops) => {
+                    // Process operations in order — resource ops (create/rename/delete)
+                    // must be applied before text edits on the created/renamed files.
+                    for op in ops {
+                        match op {
+                            lsp_types::DocumentChangeOperation::Edit(text_doc_edit) => {
+                                total_changes +=
+                                    self.apply_text_document_edit(text_doc_edit)?;
+                            }
+                            lsp_types::DocumentChangeOperation::Op(resource_op) => {
+                                self.apply_resource_operation(resource_op)?;
+                                total_changes += 1;
+                            }
+                        }
+                    }
                 }
             }
         }

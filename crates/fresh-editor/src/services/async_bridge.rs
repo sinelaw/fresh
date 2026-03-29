@@ -200,6 +200,19 @@ pub enum AsyncMessage {
         message: String,
     },
 
+    /// LSP workspace/applyEdit (server -> client request)
+    /// Server asks client to apply a workspace edit (during executeCommand, etc.)
+    LspApplyEdit {
+        edit: lsp_types::WorkspaceEdit,
+        label: Option<String>,
+    },
+
+    /// LSP codeAction/resolve response
+    LspCodeActionResolved {
+        request_id: u64,
+        action: Result<lsp_types::CodeAction, String>,
+    },
+
     /// LSP server request (server -> client)
     /// Used for custom/extension methods that plugins can handle
     LspServerRequest {

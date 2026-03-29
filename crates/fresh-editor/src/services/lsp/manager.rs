@@ -134,6 +134,7 @@ pub struct ServerCapabilitySummary {
     pub semantic_tokens_legend: Option<SemanticTokensLegend>,
     pub document_highlight: bool,
     pub code_action: bool,
+    pub code_action_resolve: bool,
     pub document_symbols: bool,
     pub workspace_symbols: bool,
     pub diagnostics: bool,

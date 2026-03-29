@@ -453,6 +453,15 @@ fn extract_capability_summary(caps: &ServerCapabilities) -> ServerCapabilitySumm
             lsp_types::CodeActionProviderCapability::Simple(v) => *v,
             lsp_types::CodeActionProviderCapability::Options(_) => true,
         }),
+        code_action_resolve: caps
+            .code_action_provider
+            .as_ref()
+            .is_some_and(|p| match p {
+                lsp_types::CodeActionProviderCapability::Options(opts) => {
+                    opts.resolve_provider.unwrap_or(false)
+                }
+                _ => false,
+            }),
         document_symbols: bool_or_options(&caps.document_symbol_provider, |p| match p {
             lsp_types::OneOf::Left(v) => *v,
             lsp_types::OneOf::Right(_) => true,
@@ -602,6 +611,18 @@ enum LspCommand {
         request_id: u64,
         uri: Uri,
         range: lsp_types::Range,
+    },
+
+    /// Execute a command on the server (workspace/executeCommand)
+    ExecuteCommand {
+        command: String,
+        arguments: Option<Vec<Value>>,
+    },
+
+    /// Resolve a code action to get full edit/command details (codeAction/resolve)
+    CodeActionResolve {
+        request_id: u64,
+        action: lsp_types::CodeAction,
     },
 
     /// Cancel a pending request
@@ -1665,6 +1686,73 @@ impl LspState {
                 let _ = self.async_tx.send(AsyncMessage::LspCodeActions {
                     request_id,
                     actions: Vec::new(),
+                });
+                Err(e)
+            }
+        }
+    }
+
+    /// Handle workspace/executeCommand request
+    #[allow(clippy::type_complexity)]
+    async fn handle_execute_command(
+        &mut self,
+        command: String,
+        arguments: Option<Vec<Value>>,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        let params = lsp_types::ExecuteCommandParams {
+            command: command.clone(),
+            arguments: arguments.unwrap_or_default(),
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+        };
+
+        match self
+            .send_request_sequential::<_, Value>(
+                "workspace/executeCommand",
+                Some(params),
+                pending,
+            )
+            .await
+        {
+            Ok(_) => {
+                tracing::info!("ExecuteCommand '{}' completed", command);
+                Ok(())
+            }
+            Err(e) => {
+                tracing::debug!("ExecuteCommand '{}' failed: {}", command, e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Handle codeAction/resolve request
+    #[allow(clippy::type_complexity)]
+    async fn handle_code_action_resolve(
+        &mut self,
+        request_id: u64,
+        action: lsp_types::CodeAction,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        match self
+            .send_request_sequential::<_, Value>("codeAction/resolve", Some(action), pending)
+            .await
+        {
+            Ok(result) => {
+                let resolved =
+                    serde_json::from_value::<lsp_types::CodeAction>(result).map_err(|e| {
+                        format!("Failed to parse codeAction/resolve response: {}", e)
+                    });
+                let _ = self.async_tx.send(AsyncMessage::LspCodeActionResolved {
+                    request_id,
+                    action: resolved,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::debug!("codeAction/resolve failed: {}", e);
+                let _ = self.async_tx.send(AsyncMessage::LspCodeActionResolved {
+                    request_id,
+                    action: Err(e.clone()),
                 });
                 Err(e)
             }
@@ -2967,6 +3055,40 @@ impl LspTask {
                         });
                     }
                 }
+                LspCommand::ExecuteCommand {
+                    command,
+                    arguments,
+                } => {
+                    if state.initialized {
+                        tracing::info!("Processing ExecuteCommand: {}", command);
+                        let _ = await_draining!(
+                            state.handle_execute_command(command, arguments, &pending),
+                            command_rx,
+                            draining_buffer
+                        );
+                    } else {
+                        tracing::trace!("LSP not initialized, cannot execute command");
+                    }
+                }
+                LspCommand::CodeActionResolve {
+                    request_id,
+                    action,
+                } => {
+                    if state.initialized {
+                        tracing::info!("Processing CodeActionResolve (request_id={})", request_id);
+                        let _ = await_draining!(
+                            state.handle_code_action_resolve(request_id, action, &pending),
+                            command_rx,
+                            draining_buffer
+                        );
+                    } else {
+                        tracing::trace!("LSP not initialized, cannot resolve code action");
+                        let _ = state.async_tx.send(AsyncMessage::LspCodeActionResolved {
+                            request_id,
+                            action: Err("LSP not initialized".to_string()),
+                        });
+                    }
+                }
                 LspCommand::CancelRequest { request_id } => {
                     tracing::info!("Processing CancelRequest for editor_id={}", request_id);
                     let _ = state.handle_cancel_request(request_id).await;
@@ -3208,6 +3330,39 @@ async fn handle_message_dispatch(
                         jsonrpc: "2.0".to_string(),
                         id: request.id,
                         result: Some(Value::Null),
+                        error: None,
+                    }
+                }
+                "workspace/applyEdit" => {
+                    // Server asks client to apply a workspace edit (e.g. during executeCommand)
+                    tracing::info!("LSP ({}) received workspace/applyEdit request", language);
+                    let applied = if let Some(params) = &request.params {
+                        match serde_json::from_value::<lsp_types::ApplyWorkspaceEditParams>(
+                            params.clone(),
+                        ) {
+                            Ok(apply_params) => {
+                                let label = apply_params.label.clone();
+                                let _ = async_tx.send(AsyncMessage::LspApplyEdit {
+                                    edit: apply_params.edit,
+                                    label,
+                                });
+                                true
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to parse workspace/applyEdit params: {}",
+                                    e
+                                );
+                                false
+                            }
+                        }
+                    } else {
+                        false
+                    };
+                    JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id,
+                        result: Some(serde_json::json!({ "applied": applied })),
                         error: None,
                     }
                 }
@@ -3899,6 +4054,34 @@ impl LspHandle {
                 diagnostics,
             })
             .map_err(|_| "Failed to send code_actions command".to_string())
+    }
+
+    /// Execute a command on the server (workspace/executeCommand)
+    ///
+    /// The response is usually null — the real effect comes via workspace/applyEdit
+    /// requests sent by the server during command execution.
+    pub fn execute_command(
+        &self,
+        command: String,
+        arguments: Option<Vec<Value>>,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::ExecuteCommand { command, arguments })
+            .map_err(|_| "Failed to send execute_command command".to_string())
+    }
+
+    /// Resolve a code action to get full edit/command details (codeAction/resolve)
+    ///
+    /// Only call this when the action has no `edit` and no `command` but has `data`,
+    /// and the server supports resolveProvider.
+    pub fn code_action_resolve(
+        &self,
+        request_id: u64,
+        action: lsp_types::CodeAction,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::CodeActionResolve { request_id, action })
+            .map_err(|_| "Failed to send code_action_resolve command".to_string())
     }
 
     /// Request document diagnostics (pull model)
