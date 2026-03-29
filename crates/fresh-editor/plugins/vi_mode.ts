@@ -1049,9 +1049,12 @@ function vi_vis_word_back() : void {
 registerHandler("vi_vis_word_back", vi_vis_word_back);
 
 function vi_vis_word_end() : void {
-  // Extend selection to end of word — use select_word_right for reliability
-  // (vi_select_word_end races with anchor setup on slower CI runners)
-  executeWithCount("select_word_right");
+  // Extend selection to end of word
+  const count = consumeCount();
+  for (let i = 0; i < count; i++) {
+    editor.executeAction("select_word_right");
+    editor.executeAction("select_left");
+  }
 }
 registerHandler("vi_vis_word_end", vi_vis_word_end);
 
