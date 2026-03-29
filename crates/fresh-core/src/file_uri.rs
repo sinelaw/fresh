@@ -38,9 +38,19 @@ pub fn path_to_file_uri(path: &Path) -> Option<String> {
             use std::path::Component;
             match component {
                 Component::Prefix(prefix) => {
-                    // Drive letter: C: → C:
-                    let s = prefix.as_os_str().to_str()?;
-                    uri.push_str(s);
+                    use std::path::Prefix;
+                    match prefix.kind() {
+                        // \\?\C: (verbatim) → treat as plain C:
+                        Prefix::VerbatimDisk(drive) => {
+                            uri.push(drive as char);
+                            uri.push(':');
+                        }
+                        // Normal drive letter: C: → C:
+                        _ => {
+                            let s = prefix.as_os_str().to_str()?;
+                            uri.push_str(s);
+                        }
+                    }
                 }
                 Component::RootDir => {
                     if !uri.ends_with('/') {
@@ -552,6 +562,63 @@ mod tests {
             let back = file_uri_to_path(&uri).unwrap();
             assert_eq!(back, PathBuf::from(r"C:\tmp\..\file.txt"));
         }
+    }
+
+    // ── Windows verbatim (\\?\) path handling ─────────────────
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_disk_path_produces_valid_uri() {
+        // fs::canonicalize() on Windows returns \\?\C:\... paths.
+        // These must produce the same URI as plain C:\... paths.
+        let verbatim = PathBuf::from(r"\\?\C:\Users\vboxuser\fresh\index.html");
+        let plain = PathBuf::from(r"C:\Users\vboxuser\fresh\index.html");
+
+        let verbatim_uri = path_to_file_uri(&verbatim).expect("verbatim path should produce URI");
+        let plain_uri = path_to_file_uri(&plain).expect("plain path should produce URI");
+
+        assert_eq!(
+            verbatim_uri, plain_uri,
+            "verbatim and plain paths must produce identical URIs"
+        );
+        assert_eq!(verbatim_uri, "file:///C:/Users/vboxuser/fresh/index.html");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_disk_path_lsp_uri_roundtrip() {
+        let verbatim = PathBuf::from(r"\\?\C:\Users\vboxuser\fresh\CHANGELOG.md");
+        let uri = path_to_lsp_uri(&verbatim).expect("verbatim path should produce valid lsp URI");
+
+        // The URI should parse successfully (the old bug produced unparseable URIs)
+        assert_eq!(uri.as_str(), "file:///C:/Users/vboxuser/fresh/CHANGELOG.md");
+
+        // Round-trip back to a path (will be the non-verbatim form)
+        let back = lsp_uri_to_path(&uri).unwrap();
+        assert_eq!(back, PathBuf::from(r"C:\Users\vboxuser\fresh\CHANGELOG.md"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_disk_path_with_special_chars() {
+        let verbatim = PathBuf::from(r"\\?\D:\My Projects [temp]\src\main.go");
+        let uri = path_to_file_uri(&verbatim).expect("verbatim path should produce URI");
+
+        assert!(
+            uri.starts_with("file:///D:/"),
+            "URI should start with file:///D:/, got: {}",
+            uri
+        );
+        assert!(
+            !uri.contains(r"\\?\"),
+            "URI must not contain verbatim prefix, got: {}",
+            uri
+        );
+        assert!(
+            uri.contains("%5Btemp%5D"),
+            "brackets should be percent-encoded: {}",
+            uri
+        );
     }
 
     // ── Property tests ──────────────────────────────────────────
