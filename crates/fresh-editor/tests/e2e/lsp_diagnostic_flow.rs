@@ -335,7 +335,13 @@ fn test_rust_analyzer_diagnostics_cleared_after_fix() -> anyhow::Result<()> {
     harness.type_text("fn main() {\n    let x: i32 = 42;\n    println!(\"{}\", x);\n}\n")?;
     harness.render()?;
 
-    // Wait for the server to receive didChange and send cleared diagnostics
+    // Wait for the server to actually receive the didChange before expecting its response
+    harness.wait_until(|_| {
+        let log = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log.contains("ACTION: didChange")
+    })?;
+
+    // Wait for the server to send cleared diagnostics
     harness.wait_until(|_| {
         let log = std::fs::read_to_string(&log_file).unwrap_or_default();
         log.contains("SENT: publishDiagnostics with 0 diagnostics")
@@ -448,7 +454,6 @@ while true; do
             DID_OPEN_URI=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
             VERSION=1
             echo "ACTION: didOpen uri=$DID_OPEN_URI" >> "$LOG_FILE"
-            sleep 0.1
             send_error_diagnostics
             echo "SENT: publishDiagnostics with errors (initial)" >> "$LOG_FILE"
             ;;
@@ -467,7 +472,6 @@ while true; do
             # On save, cargo check reruns and sends fresh diagnostics
             send_message '{"jsonrpc":"2.0","id":4000,"method":"workspace/diagnostic/refresh","params":{}}'
             echo "SENT: workspace/diagnostic/refresh (post-save)" >> "$LOG_FILE"
-            sleep 0.1
             # Save #1: error still present → re-send error diagnostics
             # Save #2: error was fixed → send cleared diagnostics
             if [ $SAVE_COUNT -le 1 ]; then
@@ -597,11 +601,7 @@ fn test_edit_save_edit_save_diagnostic_flow() -> anyhow::Result<()> {
     })?;
 
     // Diagnostics should persist (no cargo check has rerun, old diagnostics still active)
-    harness.process_async_and_render()?;
-    assert!(
-        harness.screen_to_string().contains("E:1"),
-        "Expected diagnostics to persist after editing (before save)"
-    );
+    harness.wait_until(|h| h.screen_to_string().contains("E:1"))?;
     eprintln!("[TEST] Step 2: After edit, diagnostics still visible (E:1)");
 
     // === Step 3: Save (cargo check reruns, error still present) ===
