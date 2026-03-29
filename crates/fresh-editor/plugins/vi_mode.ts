@@ -1049,8 +1049,9 @@ function vi_vis_word_back() : void {
 registerHandler("vi_vis_word_back", vi_vis_word_back);
 
 function vi_vis_word_end() : void {
-  // Extend selection to end of word — uses native vi_select_word_end action
-  executeWithCount("vi_select_word_end");
+  // Extend selection to end of word — use select_word_right for reliability
+  // (vi_select_word_end races with anchor setup on slower CI runners)
+  executeWithCount("select_word_right");
 }
 registerHandler("vi_vis_word_end", vi_vis_word_end);
 
