@@ -45,17 +45,6 @@ impl Op {
         }
     }
 
-    fn is_write(&self) -> bool {
-        matches!(
-            self,
-            Self::TypeChar(_)
-                | Self::Backspace
-                | Self::Delete
-                | Self::Enter
-                | Self::MoveLineUp
-                | Self::MoveLineDown
-        )
-    }
 }
 
 fn op_strategy() -> impl Strategy<Value = Op> {

@@ -179,32 +179,6 @@ macro_rules! test_syntax_detected {
 test_syntax_detected!(test_detect_gitignore, "hello.gitignore");
 test_highlighting_works!(test_highlight_diff, "hello.diff", 2);
 
-// ============================================================
-// Tests for files that currently have NO highlighting
-// These serve as regression markers - when support is added,
-// upgrade them to test_highlighting_works!
-// ============================================================
-
-macro_rules! test_no_highlighting_yet {
-    ($test_name:ident, $filename:expr) => {
-        #[test]
-        fn $test_name() {
-            let (has_hl, color_count) = check_highlighting($filename);
-            // Document current state: no highlighting.
-            // When support is added, this test should be changed to
-            // test_highlighting_works! and assert has_hl + colors.
-            if has_hl && color_count >= 2 {
-                // Support was added! This is good - update test to test_highlighting_works!
-                eprintln!(
-                    "NOTE: {} now has highlighting ({} colors) - upgrade this test!",
-                    $filename, color_count
-                );
-            }
-            // For now we just ensure the file opens without crashing
-        }
-    };
-}
-
 // --- New embedded grammars (added for languages not in syntect defaults) ---
 test_highlighting_works!(test_highlight_kotlin, "hello.kt", 2);
 test_highlighting_works!(test_highlight_swift, "hello.swift", 2);
