@@ -1313,15 +1313,17 @@ impl Editor {
             lsp_types::CodeActionOrCommand::CodeAction(ca) => {
                 // If the action has no edit and no command, it may need resolve first.
                 // Only resolve if the action has `data` and the server supports resolveProvider.
-                if ca.edit.is_none() && ca.command.is_none() && ca.data.is_some() {
-                    if self.server_supports_code_action_resolve() {
-                        tracing::info!(
-                            "Code action '{}' needs resolve, sending codeAction/resolve",
-                            ca.title
-                        );
-                        self.send_code_action_resolve(ca);
-                        return;
-                    }
+                if ca.edit.is_none()
+                    && ca.command.is_none()
+                    && ca.data.is_some()
+                    && self.server_supports_code_action_resolve()
+                {
+                    tracing::info!(
+                        "Code action '{}' needs resolve, sending codeAction/resolve",
+                        ca.title
+                    );
+                    self.send_code_action_resolve(ca);
+                    return;
                 }
                 self.execute_resolved_code_action(ca);
             }
@@ -1729,7 +1731,9 @@ impl Editor {
                 tracing::info!("CreateFile: created {:?}", path);
 
                 // Open the new file as a buffer
-                let _ = self.open_file(&path);
+                if let Err(e) = self.open_file(&path) {
+                    tracing::warn!("CreateFile: failed to open created file {:?}: {}", path, e);
+                }
             }
             lsp_types::ResourceOp::Rename(rename) => {
                 let old_path = std::path::PathBuf::from(rename.old_uri.path().as_str());

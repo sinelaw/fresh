@@ -619,7 +619,7 @@ enum LspCommand {
     /// Resolve a code action to get full edit/command details (codeAction/resolve)
     CodeActionResolve {
         request_id: u64,
-        action: lsp_types::CodeAction,
+        action: Box<lsp_types::CodeAction>,
     },
 
     /// Cancel a pending request
@@ -3063,7 +3063,7 @@ impl LspTask {
                     if state.initialized {
                         tracing::info!("Processing CodeActionResolve (request_id={})", request_id);
                         let _ = await_draining!(
-                            state.handle_code_action_resolve(request_id, action, &pending),
+                            state.handle_code_action_resolve(request_id, *action, &pending),
                             command_rx,
                             draining_buffer
                         );
@@ -4088,7 +4088,10 @@ impl LspHandle {
         action: lsp_types::CodeAction,
     ) -> Result<(), String> {
         self.command_tx
-            .try_send(LspCommand::CodeActionResolve { request_id, action })
+            .try_send(LspCommand::CodeActionResolve {
+                request_id,
+                action: Box::new(action),
+            })
             .map_err(|_| "Failed to send code_action_resolve command".to_string())
     }
 
