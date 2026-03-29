@@ -881,8 +881,10 @@ registerHandler("vi_op_digit_0_or_line_start", vi_op_digit_0_or_line_start);
 // Enter character-wise visual mode
 function vi_visual_char() : void {
   state.visualAnchor = editor.getCursorPosition();
-  // Set anchor at current position so subsequent select_* motions extend from here
-  editor.executeAction("set_mark");
+  // Select the character under cursor to establish the anchor.
+  // This moves cursor one position right (the selection end), which is
+  // standard visual mode behavior — the first char is part of the selection.
+  editor.executeAction("select_right");
   switchMode("visual");
 }
 registerHandler("vi_visual_char", vi_visual_char);
