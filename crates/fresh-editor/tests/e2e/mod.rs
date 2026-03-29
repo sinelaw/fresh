@@ -53,6 +53,7 @@ pub mod lsp_code_action_modal;
 pub mod lsp_code_action_resolve_and_commands;
 pub mod lsp_completion_french_locale;
 pub mod lsp_completion_popup_behavior;
+pub mod lsp_completion_resolve_and_formatting;
 pub mod lsp_config;
 pub mod lsp_diagnostic_flow;
 pub mod lsp_env;
