@@ -1694,6 +1694,104 @@ done
         dir.join("fake_lsp_server_no_semantic_tokens.sh")
     }
 
+    /// Spawn a fake LSP server that supports code actions.
+    ///
+    /// This variant advertises `codeActionProvider` capability and responds to
+    /// `textDocument/codeAction` requests with sample code actions.
+    pub fn spawn_with_code_actions(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let script = r#"#!/bin/bash
+
+# Function to read a message
+read_message() {
+    # Read headers
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        # Empty line marks end of headers
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+
+    # Read content
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+# Function to send a message
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+
+# Main loop
+while true; do
+    # Read incoming message
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    # Extract method from JSON
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+case "$method" in
+    "initialize")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"textDocumentSync":1,"codeActionProvider":true}}}'
+        ;;
+    "textDocument/codeAction")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"title":"Extract function","kind":"refactor.extract","edit":{"changes":{}}},{"title":"Inline variable","kind":"refactor.inline","edit":{"changes":{}}},{"title":"Add missing import","kind":"quickfix","edit":{"changes":{}}}]}'
+        ;;
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didClose")
+        # Notifications — no response needed
+        ;;
+    "textDocument/diagnostic")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[],"resultId":null}}'
+        ;;
+    "textDocument/inlayHint")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+esac
+done
+"#;
+
+        let script_path = Self::code_actions_script_path(dir);
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the code actions fake LSP server script
+    pub fn code_actions_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_code_actions.sh")
+    }
+
     /// Stop the server
     pub fn stop(&mut self) {
         let _ = self.stop_tx.send(());
