@@ -1436,6 +1436,57 @@ impl Editor {
         false
     }
 
+    /// Check if any LSP server for the current buffer supports completionItem/resolve
+    pub(crate) fn server_supports_completion_resolve(&self) -> bool {
+        let language = match self
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+        {
+            Some(l) => l,
+            None => return false,
+        };
+
+        if let Some(lsp) = &self.lsp {
+            for sh in lsp.get_handles(&language) {
+                if sh.capabilities.completion_resolve {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Send completionItem/resolve to the LSP server
+    pub(crate) fn send_completion_resolve(&mut self, item: lsp_types::CompletionItem) {
+        let language = match self
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+        {
+            Some(l) => l,
+            None => return,
+        };
+
+        self.next_lsp_request_id += 1;
+        let request_id = self.next_lsp_request_id;
+
+        if let Some(lsp) = &mut self.lsp {
+            for sh in lsp.get_handles_mut(&language) {
+                if sh.capabilities.completion_resolve {
+                    if let Err(e) = sh.handle.completion_resolve(request_id, item.clone()) {
+                        tracing::warn!(
+                            "Failed to send completionItem/resolve to '{}': {}",
+                            sh.name,
+                            e
+                        );
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
     /// Handle a resolved completion item — apply additional_text_edits (e.g. auto-imports).
     pub(crate) fn handle_completion_resolved(&mut self, item: lsp_types::CompletionItem) {
         if let Some(additional_edits) = item.additional_text_edits {
@@ -2354,6 +2405,100 @@ impl Editor {
 
     /// Start rename mode - select the symbol at cursor and allow inline editing
     pub(crate) fn start_rename(&mut self) -> AnyhowResult<()> {
+        use crate::primitives::word_navigation::{find_word_end, find_word_start};
+
+        // If server supports prepareRename, validate first
+        if self.server_supports_prepare_rename() {
+            self.send_prepare_rename();
+            return Ok(());
+        }
+
+        self.show_rename_prompt()
+    }
+
+    /// Handle prepareRename response — if valid, show rename prompt; if error, show message.
+    pub(crate) fn handle_prepare_rename_response(
+        &mut self,
+        result: Result<serde_json::Value, String>,
+    ) {
+        match result {
+            Ok(value) if !value.is_null() => {
+                // prepareRename succeeded — show the rename prompt
+                if let Err(e) = self.show_rename_prompt() {
+                    self.set_status_message(format!("Rename failed: {e}"));
+                }
+            }
+            Ok(_) => {
+                self.set_status_message("Cannot rename at this position".to_string());
+            }
+            Err(e) => {
+                self.set_status_message(format!("Cannot rename: {e}"));
+            }
+        }
+    }
+
+    /// Check if any LSP server for the current buffer supports prepareRename
+    fn server_supports_prepare_rename(&self) -> bool {
+        let language = match self
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+        {
+            Some(l) => l,
+            None => return false,
+        };
+
+        if let Some(lsp) = &self.lsp {
+            for sh in lsp.get_handles(&language) {
+                if sh.capabilities.rename {
+                    // prepareRename is advertised via prepare_support in client caps
+                    // and supported if server has rename capability
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Send textDocument/prepareRename to the LSP server
+    fn send_prepare_rename(&mut self) {
+        let cursor_pos = self.active_cursors().primary().position;
+        let (line, character) = self
+            .active_state()
+            .buffer
+            .position_to_lsp_position(cursor_pos);
+
+        let buffer_id = self.active_buffer();
+        let metadata = match self.buffer_metadata.get(&buffer_id) {
+            Some(m) if m.lsp_enabled => m,
+            _ => return,
+        };
+        let uri = match metadata.file_uri() {
+            Some(u) => u.clone(),
+            None => return,
+        };
+        let language = match self.buffers.get(&buffer_id).map(|s| s.language.clone()) {
+            Some(l) => l,
+            None => return,
+        };
+
+        self.next_lsp_request_id += 1;
+        let request_id = self.next_lsp_request_id;
+
+        if let Some(lsp) = &mut self.lsp {
+            if let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::Rename) {
+                if let Err(e) =
+                    sh.handle
+                        .prepare_rename(request_id, uri, line as u32, character as u32)
+                {
+                    tracing::warn!("Failed to send prepareRename: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Show the rename prompt (called directly or after prepareRename succeeds).
+    fn show_rename_prompt(&mut self) -> AnyhowResult<()> {
         use crate::primitives::word_navigation::{find_word_end, find_word_start};
 
         // Get the current buffer and cursor position

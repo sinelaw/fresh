@@ -641,6 +641,26 @@ enum LspCommand {
         insert_spaces: bool,
     },
 
+    /// Format a range in a document (textDocument/rangeFormatting)
+    DocumentRangeFormatting {
+        request_id: u64,
+        uri: Uri,
+        start_line: u32,
+        start_char: u32,
+        end_line: u32,
+        end_char: u32,
+        tab_size: u32,
+        insert_spaces: bool,
+    },
+
+    /// Prepare rename — validate rename at position (textDocument/prepareRename)
+    PrepareRename {
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+    },
+
     /// Cancel a pending request
     CancelRequest {
         /// Editor's request ID to cancel
@@ -1847,6 +1867,110 @@ impl LspState {
     }
 
     /// Handle document diagnostic request (pull diagnostics)
+    /// Handle textDocument/rangeFormatting request
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    async fn handle_document_range_formatting(
+        &mut self,
+        request_id: u64,
+        uri: Uri,
+        start_line: u32,
+        start_char: u32,
+        end_line: u32,
+        end_char: u32,
+        tab_size: u32,
+        insert_spaces: bool,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{
+            DocumentRangeFormattingParams, FormattingOptions, Position, Range,
+            TextDocumentIdentifier, WorkDoneProgressParams,
+        };
+
+        let params = DocumentRangeFormattingParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            range: Range {
+                start: Position::new(start_line, start_char),
+                end: Position::new(end_line, end_char),
+            },
+            options: FormattingOptions {
+                tab_size,
+                insert_spaces,
+                ..Default::default()
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+
+        match self
+            .send_request_sequential::<_, Value>(
+                "textDocument/rangeFormatting",
+                Some(params),
+                pending,
+            )
+            .await
+        {
+            Ok(result) => {
+                let edits = if result.is_null() {
+                    Vec::new()
+                } else {
+                    serde_json::from_value::<Vec<lsp_types::TextEdit>>(result).unwrap_or_default()
+                };
+                let _ = self.async_tx.send(AsyncMessage::LspFormatting {
+                    request_id,
+                    uri: uri.as_str().to_string(),
+                    edits,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::debug!("textDocument/rangeFormatting failed: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Handle textDocument/prepareRename request
+    #[allow(clippy::type_complexity)]
+    async fn handle_prepare_rename(
+        &mut self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{Position, TextDocumentIdentifier, TextDocumentPositionParams};
+
+        let params = TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position::new(line, character),
+        };
+
+        match self
+            .send_request_sequential::<_, Value>(
+                "textDocument/prepareRename",
+                Some(params),
+                pending,
+            )
+            .await
+        {
+            Ok(result) => {
+                let _ = self.async_tx.send(AsyncMessage::LspPrepareRename {
+                    request_id,
+                    result: Ok(result),
+                });
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.async_tx.send(AsyncMessage::LspPrepareRename {
+                    request_id,
+                    result: Err(e.clone()),
+                });
+                Err(e)
+            }
+        }
+    }
+
     #[allow(clippy::type_complexity)]
     async fn handle_document_diagnostic(
         &mut self,
@@ -3201,6 +3325,49 @@ impl LspTask {
                         );
                     }
                 }
+                LspCommand::DocumentRangeFormatting {
+                    request_id,
+                    uri,
+                    start_line,
+                    start_char,
+                    end_line,
+                    end_char,
+                    tab_size,
+                    insert_spaces,
+                } => {
+                    if state.initialized {
+                        let _ = await_draining!(
+                            state.handle_document_range_formatting(
+                                request_id,
+                                uri,
+                                start_line,
+                                start_char,
+                                end_line,
+                                end_char,
+                                tab_size,
+                                insert_spaces,
+                                &pending,
+                            ),
+                            command_rx,
+                            draining_buffer
+                        );
+                    }
+                }
+                LspCommand::PrepareRename {
+                    request_id,
+                    uri,
+                    line,
+                    character,
+                } => {
+                    if state.initialized {
+                        let _ = await_draining!(
+                            state
+                                .handle_prepare_rename(request_id, uri, line, character, &pending,),
+                            command_rx,
+                            draining_buffer
+                        );
+                    }
+                }
                 LspCommand::CancelRequest { request_id } => {
                     tracing::info!("Processing CancelRequest for editor_id={}", request_id);
                     let _ = state.handle_cancel_request(request_id).await;
@@ -4251,6 +4418,51 @@ impl LspHandle {
                 insert_spaces,
             })
             .map_err(|_| "Failed to send document_formatting command".to_string())
+    }
+
+    /// Format a range in a document (textDocument/rangeFormatting)
+    #[allow(clippy::too_many_arguments)]
+    pub fn document_range_formatting(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        start_line: u32,
+        start_char: u32,
+        end_line: u32,
+        end_char: u32,
+        tab_size: u32,
+        insert_spaces: bool,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::DocumentRangeFormatting {
+                request_id,
+                uri,
+                start_line,
+                start_char,
+                end_line,
+                end_char,
+                tab_size,
+                insert_spaces,
+            })
+            .map_err(|_| "Failed to send document_range_formatting command".to_string())
+    }
+
+    /// Validate rename at position (textDocument/prepareRename)
+    pub fn prepare_rename(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::PrepareRename {
+                request_id,
+                uri,
+                line,
+                character,
+            })
+            .map_err(|_| "Failed to send prepare_rename command".to_string())
     }
 
     /// Request document diagnostics (pull model)

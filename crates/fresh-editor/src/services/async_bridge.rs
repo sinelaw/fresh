@@ -116,6 +116,12 @@ pub enum AsyncMessage {
         edits: Vec<lsp_types::TextEdit>,
     },
 
+    /// LSP textDocument/prepareRename response
+    LspPrepareRename {
+        request_id: u64,
+        result: Result<serde_json::Value, String>,
+    },
+
     /// LSP pulled diagnostics response (textDocument/diagnostic)
     LspPulledDiagnostics {
         request_id: u64,

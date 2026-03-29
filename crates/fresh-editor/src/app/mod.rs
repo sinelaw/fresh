@@ -4720,6 +4720,12 @@ impl Editor {
                         }
                     }
                 }
+                AsyncMessage::LspPrepareRename {
+                    request_id: _,
+                    result,
+                } => {
+                    self.handle_prepare_rename_response(result);
+                }
                 AsyncMessage::LspPulledDiagnostics {
                     request_id: _,
                     uri,

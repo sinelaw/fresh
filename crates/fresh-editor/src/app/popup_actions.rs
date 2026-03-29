@@ -178,16 +178,19 @@ impl Editor {
     }
 
     /// Apply additional_text_edits from the accepted completion item (e.g. auto-imports).
-    /// Finds the matching CompletionItem by label from the stored completion_items.
+    /// If the item already has additional_text_edits, apply them directly.
+    /// If not and the server supports completionItem/resolve, send a resolve request
+    /// so the server can fill them in (the response is handled asynchronously).
     fn apply_completion_additional_edits(&mut self, label: &str) {
         // Find the matching CompletionItem from stored items
-        let additional_edits = self
+        let item = self
             .completion_items
             .as_ref()
-            .and_then(|items| items.iter().find(|item| item.label == label))
-            .and_then(|item| item.additional_text_edits.clone());
+            .and_then(|items| items.iter().find(|item| item.label == label).cloned());
 
-        if let Some(edits) = additional_edits {
+        let Some(item) = item else { return };
+
+        if let Some(edits) = &item.additional_text_edits {
             if !edits.is_empty() {
                 tracing::info!(
                     "Applying {} additional text edits from completion '{}'",
@@ -195,10 +198,20 @@ impl Editor {
                     label
                 );
                 let buffer_id = self.active_buffer();
-                if let Err(e) = self.apply_lsp_text_edits(buffer_id, edits) {
+                if let Err(e) = self.apply_lsp_text_edits(buffer_id, edits.clone()) {
                     tracing::error!("Failed to apply completion additional_text_edits: {}", e);
                 }
+                return;
             }
+        }
+
+        // No additional_text_edits present — try resolve if server supports it
+        if self.server_supports_completion_resolve() {
+            tracing::info!(
+                "Completion '{}' has no additional_text_edits, sending completionItem/resolve",
+                label
+            );
+            self.send_completion_resolve(item);
         }
     }
 
