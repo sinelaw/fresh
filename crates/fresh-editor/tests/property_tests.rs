@@ -59,6 +59,46 @@ fn edit_op_strategy() -> impl Strategy<Value = EditOp> {
     ]
 }
 
+/// Regression test for the specific case that exposed the line_wrap + Home + Backspace bug.
+/// With line_wrap enabled (default), Home on a wrapped line goes to the visual line start
+/// instead of position 0, causing Backspace to delete a character the shadow model doesn't expect.
+#[test]
+fn regression_home_backspace_with_line_wrap() {
+    let mut config = fresh::config::Config::default();
+    config.editor.auto_indent = false;
+    config.editor.auto_close = false;
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.enable_shadow_validation();
+
+    let ops = vec![
+        EditOp::TypeString("aaaAaa a".into()),
+        EditOp::TypeString("0aa ".into()),
+        EditOp::TypeString("aa0aaa".into()),
+        EditOp::TypeString(" aa00 A".into()),
+        EditOp::TypeString("aAA  aA AA".into()),
+        EditOp::TypeString("a  0Aa0 ".into()),
+        EditOp::TypeString(" AA AA".into()),
+        EditOp::TypeString("AaAAA   ".into()),
+        EditOp::TypeString(" a 0A  aA".into()),
+        EditOp::TypeString("AaAaAa".into()),
+        EditOp::Home,
+        EditOp::Backspace,
+    ];
+
+    for op in &ops {
+        op.apply(&mut harness).unwrap();
+    }
+
+    let buffer_content = harness.get_buffer_content().unwrap();
+    let shadow_content = harness.get_shadow_string();
+
+    assert_eq!(
+        &buffer_content, shadow_content,
+        "Piece tree diverged from shadow string"
+    );
+}
+
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 100,
@@ -73,6 +113,9 @@ proptest! {
         let mut config = fresh::config::Config::default();
         config.editor.auto_indent = false;
         config.editor.auto_close = false;
+        // Disable line_wrap so that Home/End use physical line boundaries,
+        // matching the shadow model which doesn't account for visual wrapping.
+        config.editor.line_wrap = false;
         let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
         harness.enable_shadow_validation();
 
@@ -123,6 +166,9 @@ proptest! {
         let mut config = fresh::config::Config::default();
         config.editor.auto_indent = false;
         config.editor.auto_close = false;
+        // Disable line_wrap so that Home/End use physical line boundaries,
+        // matching the shadow model which doesn't account for visual wrapping.
+        config.editor.line_wrap = false;
         let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
         harness.enable_shadow_validation();
 
