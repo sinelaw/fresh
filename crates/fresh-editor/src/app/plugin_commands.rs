@@ -948,6 +948,11 @@ impl Editor {
         let buffer_len = state.buffer.len();
         let clamped_position = final_position.min(buffer_len);
 
+        // Update the cached line number so the status bar shows the correct
+        // position. Without this, the status bar reads a stale value from
+        // state.primary_cursor_line_number which was set before the jump.
+        state.primary_cursor_line_number = crate::model::buffer::LineNumber::Absolute(target_line);
+
         // Update cursors (now in SplitViewState)
         let cursors = self.active_cursors_mut();
         cursors.primary_mut().position = clamped_position;
@@ -969,7 +974,7 @@ impl Editor {
         line: Option<usize>,
         column: Option<usize>,
     ) -> AnyhowResult<()> {
-        // Open the file
+        // Open the file (may switch to an already-open buffer)
         if let Err(e) = self.open_file(&path) {
             tracing::error!("Failed to open file from plugin: {}", e);
             return Ok(());

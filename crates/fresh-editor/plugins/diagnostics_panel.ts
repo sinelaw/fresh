@@ -126,6 +126,10 @@ const finder = new Finder<DiagnosticItem>(editor, {
   groupBy: "file",
   syncWithEditor: true,
   navigateOnCursorMove: true,
+  onClose: () => {
+    isOpen = false;
+    sourceBufferId = null;
+  },
 });
 
 // Get title based on current filter state
@@ -243,18 +247,6 @@ registerHandler("on_diagnostics_buffer_activated", on_diagnostics_buffer_activat
 // Register event handlers
 editor.on("diagnostics_updated", "on_diagnostics_updated");
 editor.on("buffer_activated", "on_diagnostics_buffer_activated");
-
-// Mode Definition (for custom keybindings beyond Enter/Escape)
-editor.defineMode(
-  "diagnostics-extra",
-  [
-    ["a", "diagnostics_toggle_all"],
-    ["r", "diagnostics_refresh"],
-    ["Return", `_finder_diagnostics_panel_select`],
-    ["Escape", `_finder_diagnostics_panel_close`],
-  ],
-  true
-);
 
 // Command Registration
 editor.registerCommand(

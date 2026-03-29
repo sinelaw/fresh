@@ -142,10 +142,7 @@ fn test_diagnostics_panel_reopen_after_escape() {
     harness.render().unwrap();
 
     let screen_after_close = harness.screen_to_string();
-    eprintln!(
-        "[TEST] Screen after Escape close:\n{}",
-        screen_after_close
-    );
+    eprintln!("[TEST] Screen after Escape close:\n{}", screen_after_close);
 
     // Verify the panel actually closed visually
     assert!(
@@ -197,9 +194,7 @@ fn test_diagnostics_panel_jump_to_correct_line() {
 
     // Move cursor far away from the diagnostic lines (line 0-1) to line 20
     for _ in 0..20 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();
 
@@ -215,9 +210,7 @@ fn test_diagnostics_panel_jump_to_correct_line() {
     // Navigate to the first diagnostic item
     // Panel layout: line 1=title, line 2=blank, line 3=file header, line 4=first [E] item
     for _ in 0..10 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
         let screen = harness.screen_to_string();
         if screen.contains("Item 1/") {
@@ -237,18 +230,22 @@ fn test_diagnostics_panel_jump_to_correct_line() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
-    harness.render().unwrap();
+
+    // Wait for the jump command to complete
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Jumped to")
+        })
+        .unwrap();
+
+    // Give extra render cycles for cursor position to settle
+    for _ in 0..5 {
+        harness.render().unwrap();
+    }
 
     let after_jump = harness.screen_to_string();
     eprintln!("[TEST] After Enter jump:\n{}", after_jump);
-
-    // The "Jumped to" message should appear
-    assert!(
-        after_jump.contains("Jumped to"),
-        "Expected 'Jumped to' status message.\nScreen:\n{}",
-        after_jump
-    );
 
     // The status bar should show Ln 1 (1-indexed display for LSP line 0).
     // BUG: The status bar shows "Jumped to test.rs:1" but the cursor stays at Ln 21.

@@ -115,6 +115,9 @@ export interface FinderConfig<T> {
 
   /** Panel-specific: navigate source split when cursor moves (preview without focus change) */
   navigateOnCursorMove?: boolean;
+
+  /** Called when the panel or prompt is closed (e.g. via Escape) */
+  onClose?: () => void;
 }
 
 /**
@@ -1254,18 +1257,17 @@ export class Finder<T> {
     if (this.config.onSelect) {
       this.config.onSelect(item, entry);
     } else if (entry.location) {
-      // Default: open file at location
-      if (this.panelState.sourceSplitId !== null) {
-        this.editor.focusSplit(this.panelState.sourceSplitId);
-      }
-      this.editor.openFile(
-        entry.location.file,
-        entry.location.line,
-        entry.location.column
-      );
-      this.editor.setStatus(
-        `Jumped to ${entry.location.file}:${entry.location.line}`
-      );
+      const loc = entry.location;
+
+      // Close the panel first. This is necessary because
+      // navigateOnCursorMove's focusSplit(panelSplitId) can interfere with
+      // the jump — it queues a FocusSplit that runs after OpenFileInSplit
+      // and restores the panel as the active split.
+      this.closePanel();
+
+      // Now navigate with the panel gone — only one split remains
+      this.editor.openFile(loc.file, loc.line, loc.column);
+      this.editor.setStatus(`Jumped to ${loc.file}:${loc.line}`);
     }
   }
 
@@ -1306,6 +1308,11 @@ export class Finder<T> {
     }
 
     this.editor.setStatus("Closed");
+
+    // Notify the caller that the panel was closed
+    if (this.config.onClose) {
+      this.config.onClose();
+    }
   }
 
   private revealItem(index: number): void {
