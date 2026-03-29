@@ -521,6 +521,10 @@ pub struct Editor {
     /// Pending LSP code actions request ID (if any)
     pending_code_actions_request: Option<u64>,
 
+    /// Stored code actions from the most recent LSP response, used when the
+    /// user selects an action from the code-action popup.
+    pending_code_actions: Option<Vec<lsp_types::CodeActionOrCommand>>,
+
     /// Pending LSP inlay hints request ID (if any)
     pending_inlay_hints_request: Option<u64>,
 
@@ -1468,6 +1472,7 @@ impl Editor {
             pending_references_symbol: String::new(),
             pending_signature_help_request: None,
             pending_code_actions_request: None,
+            pending_code_actions: None,
             pending_inlay_hints_request: None,
             pending_folding_range_requests: HashMap::new(),
             folding_ranges_in_flight: HashMap::new(),

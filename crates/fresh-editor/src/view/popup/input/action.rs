@@ -30,6 +30,15 @@ pub fn handle_action_input(
             InputResult::Consumed
         }
 
+        // Number keys 1-9 select the corresponding item directly
+        KeyCode::Char(c @ '1'..='9') if event.modifiers.is_empty() => {
+            let index = (c as usize) - ('1' as usize);
+            if popup.select_index(index) {
+                ctx.defer(DeferredAction::ConfirmPopup);
+            }
+            InputResult::Consumed
+        }
+
         // Arrow navigation
         KeyCode::Up if event.modifiers.is_empty() => {
             popup.select_prev();

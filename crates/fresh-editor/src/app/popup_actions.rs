@@ -47,6 +47,24 @@ impl Editor {
             return PopupConfirmResult::EarlyReturn;
         }
 
+        // Check if this is a code action popup
+        if self.pending_code_actions.is_some() {
+            let selected_index = self
+                .active_state()
+                .popups
+                .top()
+                .and_then(|p| p.selected_item())
+                .and_then(|item| item.data.as_ref())
+                .and_then(|data| data.parse::<usize>().ok());
+
+            self.hide_popup();
+            if let Some(index) = selected_index {
+                self.execute_code_action(index);
+            }
+            self.pending_code_actions = None;
+            return PopupConfirmResult::EarlyReturn;
+        }
+
         // Check if this is an LSP confirmation popup
         if self.pending_lsp_confirmation.is_some() {
             let action = self
@@ -178,6 +196,12 @@ impl Editor {
                 },
             );
             tracing::info!("handle_popup_cancel: action_popup_result hook fired");
+            return;
+        }
+
+        if self.pending_code_actions.is_some() {
+            self.pending_code_actions = None;
+            self.hide_popup();
             return;
         }
 

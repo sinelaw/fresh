@@ -355,6 +355,24 @@ impl Popup {
         }
     }
 
+    /// Select a specific item by index. Returns true if the index was valid.
+    pub fn select_index(&mut self, index: usize) -> bool {
+        let visible = self.visible_height();
+        if let PopupContent::List { items, selected } = &mut self.content {
+            if index < items.len() {
+                *selected = index;
+                // Adjust scroll to keep selection visible
+                if *selected >= self.scroll_offset + visible {
+                    self.scroll_offset = (*selected + 1).saturating_sub(visible);
+                } else if *selected < self.scroll_offset {
+                    self.scroll_offset = *selected;
+                }
+                return true;
+            }
+        }
+        false
+    }
+
     /// Scroll down by one page
     pub fn page_down(&mut self) {
         let visible = self.visible_height();

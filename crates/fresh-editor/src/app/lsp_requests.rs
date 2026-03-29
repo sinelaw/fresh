@@ -1248,27 +1248,35 @@ impl Editor {
             return;
         }
 
-        // Build the display content
-        let mut lines: Vec<String> = Vec::new();
-        lines.push(format!("Code Actions ({}):", actions.len()));
-        lines.push(String::new());
-
-        for (i, action) in actions.iter().enumerate() {
-            let title = match action {
-                lsp_types::CodeActionOrCommand::Command(cmd) => &cmd.title,
-                lsp_types::CodeActionOrCommand::CodeAction(ca) => &ca.title,
-            };
-            lines.push(format!("  {}. {}", i + 1, title));
-        }
-
-        lines.push(String::new());
-        lines.push(t!("lsp.code_action_hint").to_string());
-
-        // Create a popup with the code actions
-        use crate::view::popup::{Popup, PopupPosition};
+        // Build list items from code actions
+        use crate::view::popup::{Popup, PopupListItem, PopupPosition};
         use ratatui::style::Style;
 
-        let mut popup = Popup::text(lines, &self.theme);
+        let items: Vec<PopupListItem> = actions
+            .iter()
+            .enumerate()
+            .map(|(i, action)| {
+                let title = match action {
+                    lsp_types::CodeActionOrCommand::Command(cmd) => &cmd.title,
+                    lsp_types::CodeActionOrCommand::CodeAction(ca) => &ca.title,
+                };
+                let kind = match action {
+                    lsp_types::CodeActionOrCommand::CodeAction(ca) => {
+                        ca.kind.as_ref().map(|k| k.as_str().to_string())
+                    }
+                    _ => None,
+                };
+                PopupListItem {
+                    text: format!("{}. {}", i + 1, title),
+                    detail: kind,
+                    icon: None,
+                    data: Some(i.to_string()),
+                }
+            })
+            .collect();
+
+        let mut popup = Popup::list(items, &self.theme);
+        popup.kind = crate::view::popup::PopupKind::Action;
         popup.title = Some(t!("lsp.popup_code_actions").to_string());
         popup.position = PopupPosition::BelowCursor;
         popup.width = 60;
@@ -1276,17 +1284,77 @@ impl Editor {
         popup.border_style = Style::default().fg(self.theme.popup_border_fg);
         popup.background_style = Style::default().bg(self.theme.popup_bg);
 
+        // Store the actions so they can be executed when the user selects one
+        self.pending_code_actions = Some(actions);
+
         // Show the popup
         if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
             state.popups.show(popup);
-            tracing::info!("Showing code actions popup with {} actions", actions.len());
+            tracing::info!(
+                "Showing code actions popup with {} actions",
+                self.pending_code_actions.as_ref().map_or(0, |a| a.len())
+            );
         }
+    }
 
-        // Note: Executing code actions would require storing the actions and handling
-        // key presses to select and apply them. This is left for future enhancement.
-        self.set_status_message(
-            t!("lsp.code_actions_not_implemented", count = actions.len()).to_string(),
-        );
+    /// Execute a code action by index from the stored pending_code_actions.
+    pub(crate) fn execute_code_action(&mut self, index: usize) {
+        let action = match &self.pending_code_actions {
+            Some(actions) => actions.get(index).cloned(),
+            None => None,
+        };
+
+        let Some(action) = action else {
+            tracing::warn!("Code action index {} out of range", index);
+            return;
+        };
+
+        match action {
+            lsp_types::CodeActionOrCommand::CodeAction(ca) => {
+                let title = ca.title.clone();
+                if let Some(edit) = ca.edit {
+                    match self.apply_workspace_edit(edit) {
+                        Ok(n) => {
+                            self.set_status_message(
+                                t!("lsp.code_action_applied", title = &title, count = n)
+                                    .to_string(),
+                            );
+                        }
+                        Err(e) => {
+                            self.set_status_message(format!("Code action failed: {e}"));
+                        }
+                    }
+                } else if let Some(cmd) = ca.command {
+                    tracing::warn!(
+                        "Code action '{}' requires command execution ({}), not yet supported",
+                        title,
+                        cmd.command
+                    );
+                    self.set_status_message(
+                        t!("lsp.code_action_applied", title = &title, count = 0_usize).to_string(),
+                    );
+                } else {
+                    self.set_status_message(
+                        t!("lsp.code_action_applied", title = &title, count = 0_usize).to_string(),
+                    );
+                }
+            }
+            lsp_types::CodeActionOrCommand::Command(cmd) => {
+                tracing::warn!(
+                    "Code action command '{}' ({}) execution not yet supported",
+                    cmd.title,
+                    cmd.command
+                );
+                self.set_status_message(
+                    t!(
+                        "lsp.code_action_applied",
+                        title = &cmd.title,
+                        count = 0_usize
+                    )
+                    .to_string(),
+                );
+            }
+        }
     }
 
     /// Handle find references response from LSP
@@ -1465,6 +1533,118 @@ impl Editor {
         Ok(changes)
     }
 
+    /// Apply an LSP WorkspaceEdit (used by rename, code actions, etc.).
+    ///
+    /// Returns the total number of text changes applied.
+    pub(crate) fn apply_workspace_edit(
+        &mut self,
+        workspace_edit: lsp_types::WorkspaceEdit,
+    ) -> AnyhowResult<usize> {
+        tracing::debug!(
+            "Applying WorkspaceEdit: changes={:?}, document_changes={:?}",
+            workspace_edit.changes.as_ref().map(|c| c.len()),
+            workspace_edit.document_changes.as_ref().map(|dc| match dc {
+                lsp_types::DocumentChanges::Edits(e) => format!("{} edits", e.len()),
+                lsp_types::DocumentChanges::Operations(o) => format!("{} operations", o.len()),
+            })
+        );
+
+        let mut total_changes = 0;
+
+        // Handle changes (map of URI -> Vec<TextEdit>)
+        if let Some(changes) = workspace_edit.changes {
+            for (uri, edits) in changes {
+                if let Ok(path) = uri_to_path(&uri) {
+                    let buffer_id = match self.open_file(&path) {
+                        Ok(id) => id,
+                        Err(e) => {
+                            if let Some(confirmation) = e.downcast_ref::<
+                                crate::model::buffer::LargeFileEncodingConfirmation,
+                            >() {
+                                self.start_large_file_encoding_confirmation(confirmation);
+                            } else {
+                                self.set_status_message(
+                                    t!("file.error_opening", error = e.to_string())
+                                        .to_string(),
+                                );
+                            }
+                            return Ok(0);
+                        }
+                    };
+                    total_changes += self.apply_lsp_text_edits(buffer_id, edits)?;
+                }
+            }
+        }
+
+        // Handle document_changes (TextDocumentEdit[])
+        if let Some(document_changes) = workspace_edit.document_changes {
+            use lsp_types::DocumentChanges;
+
+            let text_edits = match document_changes {
+                DocumentChanges::Edits(edits) => edits,
+                DocumentChanges::Operations(ops) => ops
+                    .into_iter()
+                    .filter_map(|op| {
+                        if let lsp_types::DocumentChangeOperation::Edit(edit) = op {
+                            Some(edit)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+            };
+
+            for text_doc_edit in text_edits {
+                let uri = text_doc_edit.text_document.uri;
+
+                if let Ok(path) = uri_to_path(&uri) {
+                    let buffer_id = match self.open_file(&path) {
+                        Ok(id) => id,
+                        Err(e) => {
+                            if let Some(confirmation) = e.downcast_ref::<
+                                crate::model::buffer::LargeFileEncodingConfirmation,
+                            >() {
+                                self.start_large_file_encoding_confirmation(confirmation);
+                            } else {
+                                self.set_status_message(
+                                    t!("file.error_opening", error = e.to_string())
+                                        .to_string(),
+                                );
+                            }
+                            return Ok(0);
+                        }
+                    };
+
+                    let edits: Vec<lsp_types::TextEdit> = text_doc_edit
+                        .edits
+                        .into_iter()
+                        .map(|one_of| match one_of {
+                            lsp_types::OneOf::Left(text_edit) => text_edit,
+                            lsp_types::OneOf::Right(annotated) => annotated.text_edit,
+                        })
+                        .collect();
+
+                    tracing::info!("Applying {} edits for {:?}:", edits.len(), path);
+                    for (i, edit) in edits.iter().enumerate() {
+                        tracing::info!(
+                            "  Edit {}: line {}:{}-{}:{} -> {:?}",
+                            i,
+                            edit.range.start.line,
+                            edit.range.start.character,
+                            edit.range.end.line,
+                            edit.range.end.character,
+                            edit.new_text
+                        );
+                    }
+
+                    total_changes += self.apply_lsp_text_edits(buffer_id, edits)?;
+                }
+            }
+        }
+
+        Ok(total_changes)
+    }
+
     /// Handle rename response from LSP
     pub fn handle_rename_response(
         &mut self,
@@ -1475,128 +1655,11 @@ impl Editor {
 
         match result {
             Ok(workspace_edit) => {
-                // Log the full workspace edit for debugging
-                tracing::debug!(
-                    "Received WorkspaceEdit: changes={:?}, document_changes={:?}",
-                    workspace_edit.changes.as_ref().map(|c| c.len()),
-                    workspace_edit.document_changes.as_ref().map(|dc| match dc {
-                        lsp_types::DocumentChanges::Edits(e) => format!("{} edits", e.len()),
-                        lsp_types::DocumentChanges::Operations(o) =>
-                            format!("{} operations", o.len()),
-                    })
-                );
-
-                // Apply the workspace edit
-                let mut total_changes = 0;
-
-                // Handle changes (map of URI -> Vec<TextEdit>)
-                if let Some(changes) = workspace_edit.changes {
-                    for (uri, edits) in changes {
-                        if let Ok(path) = uri_to_path(&uri) {
-                            let buffer_id = match self.open_file(&path) {
-                                Ok(id) => id,
-                                Err(e) => {
-                                    // Check if this is a large file encoding confirmation error
-                                    if let Some(confirmation) = e.downcast_ref::<
-                                        crate::model::buffer::LargeFileEncodingConfirmation,
-                                    >() {
-                                        self.start_large_file_encoding_confirmation(confirmation);
-                                    } else {
-                                        self.set_status_message(
-                                            t!("file.error_opening", error = e.to_string())
-                                                .to_string(),
-                                        );
-                                    }
-                                    return Ok(());
-                                }
-                            };
-                            total_changes += self.apply_lsp_text_edits(buffer_id, edits)?;
-                        }
-                    }
-                }
-
-                // Handle document_changes (TextDocumentEdit[])
-                // This is what rust-analyzer sends instead of changes
-                if let Some(document_changes) = workspace_edit.document_changes {
-                    use lsp_types::DocumentChanges;
-
-                    let text_edits = match document_changes {
-                        DocumentChanges::Edits(edits) => edits,
-                        DocumentChanges::Operations(ops) => {
-                            // Extract TextDocumentEdit from operations
-                            ops.into_iter()
-                                .filter_map(|op| {
-                                    if let lsp_types::DocumentChangeOperation::Edit(edit) = op {
-                                        Some(edit)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect()
-                        }
-                    };
-
-                    for text_doc_edit in text_edits {
-                        let uri = text_doc_edit.text_document.uri;
-
-                        if let Ok(path) = uri_to_path(&uri) {
-                            let buffer_id = match self.open_file(&path) {
-                                Ok(id) => id,
-                                Err(e) => {
-                                    // Check if this is a large file encoding confirmation error
-                                    if let Some(confirmation) = e.downcast_ref::<
-                                        crate::model::buffer::LargeFileEncodingConfirmation,
-                                    >() {
-                                        self.start_large_file_encoding_confirmation(confirmation);
-                                    } else {
-                                        self.set_status_message(
-                                            t!("file.error_opening", error = e.to_string())
-                                                .to_string(),
-                                        );
-                                    }
-                                    return Ok(());
-                                }
-                            };
-
-                            // Extract TextEdit from OneOf<TextEdit, AnnotatedTextEdit>
-                            let edits: Vec<lsp_types::TextEdit> = text_doc_edit
-                                .edits
-                                .into_iter()
-                                .map(|one_of| match one_of {
-                                    lsp_types::OneOf::Left(text_edit) => text_edit,
-                                    lsp_types::OneOf::Right(annotated) => annotated.text_edit,
-                                })
-                                .collect();
-
-                            // Log the edits for debugging
-                            tracing::info!(
-                                "Applying {} edits from rust-analyzer for {:?}:",
-                                edits.len(),
-                                path
-                            );
-                            for (i, edit) in edits.iter().enumerate() {
-                                tracing::info!(
-                                    "  Edit {}: line {}:{}-{}:{} -> {:?}",
-                                    i,
-                                    edit.range.start.line,
-                                    edit.range.start.character,
-                                    edit.range.end.line,
-                                    edit.range.end.character,
-                                    edit.new_text
-                                );
-                            }
-
-                            total_changes += self.apply_lsp_text_edits(buffer_id, edits)?;
-                        }
-                    }
-                }
-
+                let total_changes = self.apply_workspace_edit(workspace_edit)?;
                 self.status_message = Some(t!("lsp.renamed", count = total_changes).to_string());
             }
             Err(error) => {
                 // Per LSP spec: ContentModified errors (-32801) should NOT be shown to user
-                // These are expected when document changes during LSP operations
-                // Reference: https://github.com/neovim/neovim/issues/16900
                 if error.contains("content modified") || error.contains("-32801") {
                     tracing::debug!(
                         "LSP rename: ContentModified error (expected, ignoring): {}",
@@ -1604,7 +1667,6 @@ impl Editor {
                     );
                     self.status_message = Some(t!("lsp.rename_cancelled").to_string());
                 } else {
-                    // Show other errors to user
                     self.status_message = Some(t!("lsp.rename_failed", error = &error).to_string());
                 }
             }
