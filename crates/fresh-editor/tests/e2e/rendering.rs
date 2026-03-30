@@ -596,3 +596,176 @@ fn test_ansi_rgb_color_rendering() {
         );
     }
 }
+
+/// Test that current line highlighting renders the correct background color
+/// across the entire width of the content area (not just where characters exist).
+#[test]
+fn test_current_line_highlight_spans_full_width() {
+    use fresh::config::Config;
+    use ratatui::style::Color;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("highlight_test.txt");
+    std::fs::write(&file_path, "abc\ndef\nghi\n").unwrap();
+
+    // Default config has highlight_current_line = true and dark theme
+    let config = Config {
+        theme: "dark".into(),
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let (content_row, _) = harness.content_area_rows();
+    let current_line_bg = Color::Rgb(40, 40, 40); // dark theme current_line_bg
+
+    // Cursor starts on line 0 (content_row).
+    // Check a cell in the content area on the cursor line — both within text
+    // and well past the end of the 3-char content.
+    let gutter_width: u16 = 8; // indicator(1) + line_numbers(4) + separator(3)
+
+    // Character within content on cursor line
+    let style_in_text = harness
+        .get_cell_style(gutter_width, content_row as u16)
+        .expect("cell should exist");
+    assert_eq!(
+        style_in_text.bg,
+        Some(current_line_bg),
+        "Character on cursor line should have current_line_bg"
+    );
+
+    // Cell past end of text on cursor line — should still have current_line_bg
+    let style_past_text = harness
+        .get_cell_style(gutter_width + 20, content_row as u16)
+        .expect("cell should exist");
+    assert_eq!(
+        style_past_text.bg,
+        Some(current_line_bg),
+        "Cell past end of text on cursor line should have current_line_bg (full width)"
+    );
+
+    // Non-cursor line (line 1) should NOT have current_line_bg
+    let style_other_line = harness
+        .get_cell_style(gutter_width, content_row as u16 + 1)
+        .expect("cell should exist");
+    assert_ne!(
+        style_other_line.bg,
+        Some(current_line_bg),
+        "Non-cursor line should NOT have current_line_bg"
+    );
+
+    // Gutter on cursor line should also have current_line_bg
+    // Check the line number area (after the indicator column)
+    let style_gutter = harness
+        .get_cell_style(1, content_row as u16)
+        .expect("gutter cell should exist");
+    assert_eq!(
+        style_gutter.bg,
+        Some(current_line_bg),
+        "Gutter on cursor line should have current_line_bg"
+    );
+}
+
+/// Test that disabling highlight_current_line removes the background color.
+#[test]
+fn test_current_line_highlight_disabled() {
+    use fresh::config::Config;
+    use ratatui::style::Color;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("highlight_off_test.txt");
+    std::fs::write(&file_path, "abc\ndef\nghi\n").unwrap();
+
+    let mut config = Config {
+        theme: "dark".into(),
+        ..Default::default()
+    };
+    config.editor.highlight_current_line = false;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let (content_row, _) = harness.content_area_rows();
+    let current_line_bg = Color::Rgb(40, 40, 40);
+    let gutter_width: u16 = 8;
+
+    // Cursor line content cell should NOT have current_line_bg
+    let style = harness
+        .get_cell_style(gutter_width, content_row as u16)
+        .expect("cell should exist");
+    assert_ne!(
+        style.bg,
+        Some(current_line_bg),
+        "Cursor line should NOT have current_line_bg when feature is disabled"
+    );
+
+    // Past-text cell should also not have it
+    let style_past = harness
+        .get_cell_style(gutter_width + 20, content_row as u16)
+        .expect("cell should exist");
+    assert_ne!(
+        style_past.bg,
+        Some(current_line_bg),
+        "Past-text cell should NOT have current_line_bg when feature is disabled"
+    );
+}
+
+/// Test that current line highlight moves when cursor moves to a different line.
+#[test]
+fn test_current_line_highlight_follows_cursor_movement() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+    use ratatui::style::Color;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("highlight_move_test.txt");
+    std::fs::write(&file_path, "abc\ndef\nghi\n").unwrap();
+
+    let config = Config {
+        theme: "dark".into(),
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let (content_row, _) = harness.content_area_rows();
+    let current_line_bg = Color::Rgb(40, 40, 40);
+    let gutter_width: u16 = 8;
+
+    // Initially cursor is on line 0
+    let style_line0 = harness
+        .get_cell_style(gutter_width + 20, content_row as u16)
+        .unwrap();
+    assert_eq!(
+        style_line0.bg,
+        Some(current_line_bg),
+        "Line 0 should be highlighted initially"
+    );
+
+    // Move cursor down to line 1
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Line 0 should no longer be highlighted
+    let style_line0_after = harness
+        .get_cell_style(gutter_width + 20, content_row as u16)
+        .unwrap();
+    assert_ne!(
+        style_line0_after.bg,
+        Some(current_line_bg),
+        "Line 0 should NOT be highlighted after cursor moves away"
+    );
+
+    // Line 1 should now be highlighted (including past end of text)
+    let style_line1 = harness
+        .get_cell_style(gutter_width + 20, content_row as u16 + 1)
+        .unwrap();
+    assert_eq!(
+        style_line1.bg,
+        Some(current_line_bg),
+        "Line 1 should be highlighted after cursor moves there"
+    );
+}

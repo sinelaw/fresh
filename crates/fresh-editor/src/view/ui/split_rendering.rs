@@ -1263,6 +1263,7 @@ impl SplitRenderer {
                     software_cursor_only,
                     &view_prefs.rulers,
                     view_prefs.show_line_numbers,
+                    view_prefs.highlight_current_line,
                     diagnostics_inline_text,
                     show_tilde,
                     cell_theme_map,
@@ -5334,6 +5335,21 @@ impl SplitRenderer {
                 }
             }
 
+            // Fill remaining width with current_line_bg for cursor line highlighting.
+            // Add the span directly (not via push_span_with_map) to avoid extending
+            // line_view_map, which would break mouse click byte mapping.
+            if is_on_cursor_line && highlight_current_line && is_active {
+                let content_width = render_area.width.saturating_sub(gutter_width as u16) as usize;
+                let remaining_cols = content_width.saturating_sub(visible_char_count);
+                if remaining_cols > 0 {
+                    span_acc.flush(&mut line_spans, &mut line_view_map);
+                    line_spans.push(Span::styled(
+                        " ".repeat(remaining_cols),
+                        Style::default().bg(theme.current_line_bg),
+                    ));
+                }
+            }
+
             // For virtual rows (no source bytes), inherit from previous row
             let prev_line_end_byte = view_line_mappings
                 .last()
@@ -5533,6 +5549,22 @@ impl SplitRenderer {
                         implicit_line_spans.push(Span::styled(
                             state.margins.left_config.separator.to_string(),
                             sep_style,
+                        ));
+                    }
+                }
+
+                // Fill remaining width with current_line_bg for cursor line
+                if let Some(bg) = implicit_cursor_bg {
+                    let gutter_w = if state.margins.left_config.enabled {
+                        state.margins.left_total_width()
+                    } else {
+                        0
+                    };
+                    let content_width = render_area.width.saturating_sub(gutter_w as u16) as usize;
+                    if content_width > 0 {
+                        implicit_line_spans.push(Span::styled(
+                            " ".repeat(content_width),
+                            Style::default().bg(bg),
                         ));
                     }
                 }
@@ -6106,6 +6138,7 @@ impl SplitRenderer {
         software_cursor_only: bool,
         rulers: &[usize],
         show_line_numbers: bool,
+        highlight_current_line: bool,
         diagnostics_inline_text: bool,
         show_tilde: bool,
         cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
@@ -6130,7 +6163,7 @@ impl SplitRenderer {
             session_mode,
             software_cursor_only,
             show_line_numbers,
-            true, // highlight_current_line
+            highlight_current_line,
             diagnostics_inline_text,
             show_tilde,
             Some((cell_theme_map, screen_width)),
