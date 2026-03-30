@@ -518,12 +518,16 @@ pub struct Editor {
     /// Pending LSP signature help request ID (if any)
     pending_signature_help_request: Option<u64>,
 
-    /// Pending LSP code actions request ID (if any)
-    pending_code_actions_request: Option<u64>,
+    /// Pending LSP code actions request IDs (supports merging from multiple servers)
+    pending_code_actions_requests: HashSet<u64>,
+
+    /// Maps pending code action request IDs to server names for attribution
+    pending_code_actions_server_names: HashMap<u64, String>,
 
     /// Stored code actions from the most recent LSP response, used when the
     /// user selects an action from the code-action popup.
-    pending_code_actions: Option<Vec<lsp_types::CodeActionOrCommand>>,
+    /// Each entry is (server_name, action).
+    pending_code_actions: Option<Vec<(String, lsp_types::CodeActionOrCommand)>>,
 
     /// Pending LSP inlay hints request ID (if any)
     pending_inlay_hints_request: Option<u64>,
@@ -1472,7 +1476,8 @@ impl Editor {
             pending_references_request: None,
             pending_references_symbol: String::new(),
             pending_signature_help_request: None,
-            pending_code_actions_request: None,
+            pending_code_actions_requests: HashSet::new(),
+            pending_code_actions_server_names: HashMap::new(),
             pending_code_actions: None,
             pending_inlay_hints_request: None,
             pending_folding_range_requests: HashMap::new(),
@@ -1897,6 +1902,29 @@ impl Editor {
             .as_ref()
             .map(|lsp| lsp.running_servers())
             .unwrap_or_default()
+    }
+
+    /// Return the number of pending completion requests.
+    pub fn pending_completion_requests_count(&self) -> usize {
+        self.pending_completion_requests.len()
+    }
+
+    /// Return the number of stored completion items.
+    pub fn completion_items_count(&self) -> usize {
+        self.completion_items.as_ref().map_or(0, |v| v.len())
+    }
+
+    /// Return the number of initialized LSP servers for a given language.
+    pub fn initialized_lsp_server_count(&self, language: &str) -> usize {
+        self.lsp
+            .as_ref()
+            .map(|lsp| {
+                lsp.get_handles(language)
+                    .iter()
+                    .filter(|sh| sh.capabilities.initialized)
+                    .count()
+            })
+            .unwrap_or(0)
     }
 
     /// Shutdown an LSP server by language (marks it as disabled until manual restart)

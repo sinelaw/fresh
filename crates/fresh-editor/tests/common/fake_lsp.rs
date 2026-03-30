@@ -1806,6 +1806,296 @@ done
         dir.join("fake_lsp_server_code_actions.sh")
     }
 
+    /// Spawn a second fake LSP server that returns different code actions.
+    /// Used to test that code actions from multiple servers are merged into
+    /// a single popup.
+    pub fn spawn_with_code_actions_b(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let script = r#"#!/bin/bash
+
+# Function to read a message
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=$(echo -en "$message" | wc -c)
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then break; fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+case "$method" in
+    "initialize")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"textDocumentSync":1,"codeActionProvider":true}}}'
+        ;;
+    "textDocument/codeAction")
+        uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"title":"Format imports","kind":"source.organizeImports","edit":{"changes":{}}},{"title":"Convert to arrow function","kind":"refactor.rewrite","edit":{"changes":{}}}]}'
+        ;;
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didClose")
+        ;;
+    "textDocument/diagnostic")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[],"resultId":null}}'
+        ;;
+    "textDocument/inlayHint")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "textDocument/foldingRange")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "textDocument/documentSymbol")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+    *)
+        if [ -n "$msg_id" ]; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"error":{"code":-32601,"message":"Method not found"}}'
+        fi
+        ;;
+esac
+done
+"#;
+
+        let script_path = Self::code_actions_b_script_path(dir);
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the second code actions fake LSP server script
+    pub fn code_actions_b_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_code_actions_b.sh")
+    }
+
+    /// Spawn a fake LSP server that returns completion items.
+    /// Unlike the default `spawn()`, this does NOT declare semanticTokensProvider.
+    pub fn spawn_with_completions_a(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let script = r#"#!/bin/bash
+
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then break; fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+case "$method" in
+    "initialize")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":["."]},"textDocumentSync":1}}}'
+        ;;
+    "textDocument/completion")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[{"label":"test_function","kind":3,"insertText":"test_function"},{"label":"test_variable","kind":6,"insertText":"test_variable"},{"label":"test_struct","kind":22,"insertText":"test_struct"}]}}'
+        ;;
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didClose")
+        ;;
+    "textDocument/diagnostic")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[],"resultId":null}}'
+        ;;
+    "textDocument/inlayHint")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "textDocument/foldingRange")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "textDocument/documentSymbol")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+    *)
+        if [ -n "$msg_id" ]; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"error":{"code":-32601,"message":"Method not found"}}'
+        fi
+        ;;
+esac
+done
+"#;
+
+        let script_path = Self::completions_a_script_path(dir);
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the completions A fake LSP server script
+    pub fn completions_a_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_completions_a.sh")
+    }
+
+    /// Spawn a second fake LSP server that returns different completion items.
+    /// Used to test that completions from multiple servers are merged into
+    /// a single popup without stacking.
+    pub fn spawn_with_completions_b(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let script = r#"#!/bin/bash
+
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then break; fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+case "$method" in
+    "initialize")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"textDocumentSync":1}}}'
+        ;;
+    "textDocument/completion")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[{"label":"test_helper","kind":3,"detail":"fn test_helper()","insertText":"test_helper"},{"label":"test_mock","kind":6,"detail":"let test_mock","insertText":"test_mock"}]}}'
+        ;;
+    "textDocument/didOpen")
+        uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+        send_message '{"jsonrpc":"2.0","method":"textDocument/clangd.fileStatus","params":{"uri":"'$uri'","status":"ready"}}'
+        ;;
+    "textDocument/didChange"|"textDocument/didClose"|"textDocument/didSave")
+        ;;
+    "textDocument/diagnostic")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[],"resultId":null}}'
+        ;;
+    "textDocument/inlayHint")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "textDocument/foldingRange")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "textDocument/documentSymbol")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+    *)
+        if [ -n "$msg_id" ]; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"error":{"code":-32601,"message":"Method not found"}}'
+        fi
+        ;;
+esac
+done
+"#;
+
+        let script_path = Self::completions_b_script_path(dir);
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the second completions fake LSP server script
+    pub fn completions_b_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_completions_b.sh")
+    }
+
     /// Stop the server
     pub fn stop(&mut self) {
         let _ = self.stop_tx.send(());

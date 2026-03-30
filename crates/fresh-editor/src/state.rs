@@ -630,7 +630,7 @@ impl EditorState {
 
             Event::ShowPopup { popup } => {
                 let popup_obj = convert_popup_data_to_popup(popup);
-                self.popups.show(popup_obj);
+                self.popups.show_or_replace(popup_obj);
             }
 
             Event::HidePopup => {
@@ -987,7 +987,7 @@ fn convert_event_face_to_overlay_face(event_face: &EventOverlayFace) -> OverlayF
 }
 
 /// Convert popup data to the actual popup object
-fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
+pub(crate) fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
     let content = match &data.content {
         crate::model::event::PopupContentData::Text(lines) => PopupContent::Text(lines.clone()),
         crate::model::event::PopupContentData::List { items, selected } => PopupContent::List {

@@ -1172,6 +1172,17 @@ impl PopupManager {
         self.popups.push(popup);
     }
 
+    /// Show a popup, replacing any existing popup of the same kind.
+    /// If a popup with the same `PopupKind` already exists in the stack,
+    /// it is replaced in-place. Otherwise the new popup is pushed on top.
+    pub fn show_or_replace(&mut self, popup: Popup) {
+        if let Some(pos) = self.popups.iter().position(|p| p.kind == popup.kind) {
+            self.popups[pos] = popup;
+        } else {
+            self.popups.push(popup);
+        }
+    }
+
     /// Hide the topmost popup
     pub fn hide(&mut self) -> Option<Popup> {
         self.popups.pop()

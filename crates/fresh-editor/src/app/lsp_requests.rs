@@ -104,12 +104,10 @@ impl Editor {
                 .collect()
         };
 
-        if filtered_items.is_empty() {
+        if filtered_items.is_empty() && self.completion_items.is_none() {
             tracing::debug!("No completion items match prefix '{}'", prefix);
             return Ok(());
         }
-
-        let popup_data = crate::app::popup_actions::build_completion_popup(&filtered_items, 0);
 
         // Store/extend original items for type-to-filter (merge from multiple servers)
         match &mut self.completion_items {
@@ -122,15 +120,37 @@ impl Editor {
             }
         }
 
+        // Rebuild popup from ALL merged items (not just the new batch)
+        let all_items = self.completion_items.as_ref().unwrap();
+        let all_filtered: Vec<&lsp_types::CompletionItem> = if prefix.is_empty() {
+            all_items.iter().collect()
+        } else {
+            all_items
+                .iter()
+                .filter(|item| {
+                    item.label.to_lowercase().starts_with(&prefix)
+                        || item
+                            .filter_text
+                            .as_ref()
+                            .map(|ft| ft.to_lowercase().starts_with(&prefix))
+                            .unwrap_or(false)
+                })
+                .collect()
+        };
+
+        if all_filtered.is_empty() {
+            tracing::debug!("No completion items match prefix '{}'", prefix);
+            return Ok(());
+        }
+
+        let popup_data = crate::app::popup_actions::build_completion_popup(&all_filtered, 0);
+
         {
             let buffer_id = self.active_buffer();
-            let split_id = self.split_manager.active_split();
             let state = self.buffers.get_mut(&buffer_id).unwrap();
-            let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
-            state.apply(
-                cursors,
-                &crate::model::event::Event::ShowPopup { popup: popup_data },
-            );
+            // Convert PopupData to Popup and use show_or_replace to avoid stacking
+            let popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
+            state.popups.show_or_replace(popup_obj);
         }
 
         tracing::info!(
@@ -385,6 +405,58 @@ impl Editor {
         lsp.handles_for_feature_mut(&language, feature)
             .into_iter()
             .map(|sh| f(&sh.handle, &uri, &language))
+            .collect()
+    }
+
+    /// Like `with_all_lsp_for_buffer_feature`, but also passes the server name
+    /// to the closure for attribution purposes.
+    pub(crate) fn with_all_lsp_for_buffer_feature_named<F, R>(
+        &mut self,
+        buffer_id: BufferId,
+        feature: LspFeature,
+        f: F,
+    ) -> Vec<R>
+    where
+        F: Fn(&LspHandle, &lsp_types::Uri, &str, &str) -> R,
+    {
+        use crate::services::lsp::manager::LspSpawnResult;
+
+        let (uri, language, file_path) = match (|| {
+            let metadata = self.buffer_metadata.get(&buffer_id)?;
+            if !metadata.lsp_enabled {
+                return None;
+            }
+            let uri = metadata.file_uri()?.clone();
+            let file_path = metadata.file_path().cloned();
+            let language = self.buffers.get(&buffer_id)?.language.clone();
+            Some((uri, language, file_path))
+        })() {
+            Some(v) => v,
+            None => return Vec::new(),
+        };
+
+        let lsp = match self.lsp.as_mut() {
+            Some(l) => l,
+            None => return Vec::new(),
+        };
+        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
+            return Vec::new();
+        }
+
+        if self
+            .ensure_did_open_all(buffer_id, &uri, &language)
+            .is_none()
+        {
+            return Vec::new();
+        }
+
+        let lsp = match self.lsp.as_mut() {
+            Some(l) => l,
+            None => return Vec::new(),
+        };
+        lsp.handles_for_feature_mut(&language, feature)
+            .into_iter()
+            .map(|sh| f(&sh.handle, &uri, &language, &sh.name))
             .collect()
     }
 
@@ -1163,7 +1235,8 @@ impl Editor {
         }
     }
 
-    /// Request LSP code actions at current cursor position
+    /// Request LSP code actions at current cursor position.
+    /// Sends code action requests to all eligible servers for merged results.
     pub(crate) fn request_code_actions(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
         let cursor_pos = self.active_cursors().primary().position;
@@ -1186,76 +1259,136 @@ impl Editor {
         // TODO: Implement diagnostic retrieval when needed
         let diagnostics: Vec<lsp_types::Diagnostic> = Vec::new();
         let buffer_id = self.active_buffer();
-        let request_id = self.next_lsp_request_id;
 
-        // Use helper to ensure didOpen is sent before the request
-        let sent = self
-            .with_lsp_for_buffer(
-                buffer_id,
-                LspFeature::CodeAction,
-                |handle, uri, _language| {
-                    let result = handle.code_actions(
-                        request_id,
-                        uri.clone(),
+        // Pre-allocate request IDs for all eligible servers
+        let base_request_id = self.next_lsp_request_id;
+        let counter = std::sync::atomic::AtomicU64::new(0);
+
+        let results = self.with_all_lsp_for_buffer_feature_named(
+            buffer_id,
+            LspFeature::CodeAction,
+            |handle, uri, _language, server_name| {
+                let idx = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let request_id = base_request_id + idx;
+                let result = handle.code_actions(
+                    request_id,
+                    uri.clone(),
+                    start_line,
+                    start_char,
+                    end_line,
+                    end_char,
+                    diagnostics.clone(),
+                );
+                if result.is_ok() {
+                    tracing::info!(
+                        "Requested code actions at {}:{}:{}-{}:{} (byte_pos={}, request_id={}, server={})",
+                        uri.as_str(),
                         start_line,
                         start_char,
                         end_line,
                         end_char,
-                        diagnostics,
+                        cursor_pos,
+                        request_id,
+                        server_name
                     );
-                    if result.is_ok() {
-                        tracing::info!(
-                            "Requested code actions at {}:{}:{}-{}:{} (byte_pos={})",
-                            uri.as_str(),
-                            start_line,
-                            start_char,
-                            end_line,
-                            end_char,
-                            cursor_pos
-                        );
-                    }
-                    result.is_ok()
-                },
-            )
-            .unwrap_or(false);
+                }
+                (request_id, result.is_ok(), server_name.to_string())
+            },
+        );
 
-        if sent {
-            self.next_lsp_request_id += 1;
-            self.pending_code_actions_request = Some(request_id);
+        let mut sent_ids = Vec::new();
+        for (request_id, ok, server_name) in &results {
+            if *ok {
+                sent_ids.push(*request_id);
+                self.pending_code_actions_server_names
+                    .insert(*request_id, server_name.clone());
+            }
+        }
+        // Advance the ID counter past all allocated IDs
+        self.next_lsp_request_id = base_request_id + results.len() as u64;
+
+        if !sent_ids.is_empty() {
+            // Clear any previously accumulated actions for a fresh merge
+            self.pending_code_actions = None;
+            self.pending_code_actions_requests.extend(sent_ids);
             self.lsp_status = "LSP: code actions...".to_string();
         }
 
         Ok(())
     }
 
-    /// Handle code actions response from LSP
+    /// Handle code actions response from LSP.
+    /// Supports merging from multiple servers: each response extends the action
+    /// list, and the popup is shown/updated with each arriving response.
     pub(crate) fn handle_code_actions_response(
         &mut self,
         request_id: u64,
         actions: Vec<lsp_types::CodeActionOrCommand>,
     ) {
-        // Check if this response is for the current pending request
-        if self.pending_code_actions_request != Some(request_id) {
+        // Check if this response is for one of the pending requests
+        if !self.pending_code_actions_requests.remove(&request_id) {
             tracing::debug!("Ignoring stale code actions response: {}", request_id);
             return;
         }
 
-        self.pending_code_actions_request = None;
-        self.update_lsp_status_from_server_statuses();
+        // Update status when all code action responses have arrived
+        if self.pending_code_actions_requests.is_empty() {
+            self.update_lsp_status_from_server_statuses();
+        }
+
+        // Look up the server name for this request
+        let server_name = self
+            .pending_code_actions_server_names
+            .remove(&request_id)
+            .unwrap_or_default();
 
         if actions.is_empty() {
-            self.set_status_message(t!("lsp.no_code_actions").to_string());
+            // Only show "no code actions" if all responses are in and we have nothing
+            if self.pending_code_actions_requests.is_empty()
+                && self
+                    .pending_code_actions
+                    .as_ref()
+                    .map_or(true, |a| a.is_empty())
+            {
+                self.set_status_message(t!("lsp.no_code_actions").to_string());
+            }
             return;
         }
 
-        // Build list items from code actions
+        // Tag each action with its server name and store/extend for merging
+        let tagged_actions: Vec<(String, lsp_types::CodeActionOrCommand)> = actions
+            .into_iter()
+            .map(|a| (server_name.clone(), a))
+            .collect();
+
+        match &mut self.pending_code_actions {
+            Some(existing) => {
+                existing.extend(tagged_actions);
+                tracing::debug!("Extended code actions, now {} total", existing.len());
+            }
+            None => {
+                self.pending_code_actions = Some(tagged_actions);
+            }
+        }
+
+        // Build list items from all accumulated code actions
         use crate::view::popup::{Popup, PopupListItem, PopupPosition};
         use ratatui::style::Style;
 
-        let items: Vec<PopupListItem> = actions
+        // Check if actions come from multiple servers
+        let all_actions = self.pending_code_actions.as_ref().unwrap();
+        let multiple_servers = {
+            let mut names = std::collections::HashSet::new();
+            for (name, _) in all_actions {
+                names.insert(name.as_str());
+            }
+            names.len() > 1
+        };
+
+        let items: Vec<PopupListItem> = all_actions
             .iter()
             .enumerate()
-            .map(|(i, action)| {
+            .map(|(i, (srv_name, action))| {
                 let title = match action {
                     lsp_types::CodeActionOrCommand::Command(cmd) => &cmd.title,
                     lsp_types::CodeActionOrCommand::CodeAction(ca) => &ca.title,
@@ -1266,9 +1399,18 @@ impl Editor {
                     }
                     _ => None,
                 };
+                // Show server name in detail when multiple servers contribute
+                let detail = if multiple_servers && !srv_name.is_empty() {
+                    match kind {
+                        Some(k) => Some(format!("[{}] {}", srv_name, k)),
+                        None => Some(format!("[{}]", srv_name)),
+                    }
+                } else {
+                    kind
+                };
                 PopupListItem {
                     text: format!("{}. {}", i + 1, title),
-                    detail: kind,
+                    detail,
                     icon: None,
                     data: Some(i.to_string()),
                 }
@@ -1284,15 +1426,12 @@ impl Editor {
         popup.border_style = Style::default().fg(self.theme.popup_border_fg);
         popup.background_style = Style::default().bg(self.theme.popup_bg);
 
-        // Store the actions so they can be executed when the user selects one
-        self.pending_code_actions = Some(actions);
-
-        // Show the popup
+        // Show the popup, replacing any existing action popup to avoid stacking
         if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
-            state.popups.show(popup);
+            state.popups.show_or_replace(popup);
             tracing::info!(
                 "Showing code actions popup with {} actions",
-                self.pending_code_actions.as_ref().map_or(0, |a| a.len())
+                all_actions.len()
             );
         }
     }
@@ -1300,7 +1439,7 @@ impl Editor {
     /// Execute a code action by index from the stored pending_code_actions.
     pub(crate) fn execute_code_action(&mut self, index: usize) {
         let action = match &self.pending_code_actions {
-            Some(actions) => actions.get(index).cloned(),
+            Some(actions) => actions.get(index).map(|(_, a)| a.clone()),
             None => None,
         };
 
