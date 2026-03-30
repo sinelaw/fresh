@@ -4814,8 +4814,7 @@ impl SplitRenderer {
                             + gutter_width as u16
                             + col_offset.saturating_sub(left_col) as u16;
                         let screen_row = render_area.y + lines.len() as u16;
-                        let idx =
-                            screen_row as usize * screen_width as usize + screen_col as usize;
+                        let idx = screen_row as usize * screen_width as usize + screen_col as usize;
                         if let Some(cell) = cell_theme_map.get_mut(idx) {
                             *cell = crate::app::types::CellThemeInfo {
                                 fg_key: fg_theme_key,

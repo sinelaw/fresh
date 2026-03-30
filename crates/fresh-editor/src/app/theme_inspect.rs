@@ -89,12 +89,8 @@ impl Editor {
         let theme = &self.theme;
 
         // Resolve actual colors from theme keys
-        let fg_color = cell
-            .fg_key
-            .and_then(|k| theme.resolve_theme_key(k));
-        let bg_color = cell
-            .bg_key
-            .and_then(|k| theme.resolve_theme_key(k));
+        let fg_color = cell.fg_key.and_then(|k| theme.resolve_theme_key(k));
+        let bg_color = cell.bg_key.and_then(|k| theme.resolve_theme_key(k));
 
         // Build region string, incorporating syntax category if present
         let region = if let Some(cat) = cell.syntax_category {
