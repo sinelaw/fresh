@@ -2718,6 +2718,30 @@ impl LspTask {
                     }
                 }
             }
+            // Drain all pending requests so the command loop doesn't block
+            // forever waiting for responses that will never arrive.
+            {
+                let mut pending_guard = pending.lock().unwrap();
+                let count = pending_guard.len();
+                if count > 0 {
+                    tracing::info!(
+                        "LSP stdout reader: draining {} pending requests for {}",
+                        count,
+                        language
+                    );
+                    for (id, tx) in pending_guard.drain() {
+                        tracing::debug!(
+                            "LSP stdout reader: failing pending request id={} for {}",
+                            id,
+                            language
+                        );
+                        let _ = tx.send(Err(
+                            "LSP server connection closed while awaiting response".to_string(),
+                        ));
+                    }
+                }
+            }
+
             tracing::info!("LSP stdout reader task exiting for {}", language);
         });
     }
