@@ -143,14 +143,16 @@ impl Editor {
                     suggestions.push(Suggestion {
                         text: format!("{}/{}", lang, name),
                         description,
-                        value: Some(lang.clone()),
+                        // Value carries "language/server_name" so the handler
+                        // knows exactly which server to stop.
+                        value: Some(format!("{}/{}", lang, name)),
                         disabled: false,
                         keybinding: None,
                         source: None,
                     });
                 }
             } else {
-                // Single server: show language only
+                // Single server: show language only (value = just language)
                 let description = self
                     .lsp
                     .as_ref()
