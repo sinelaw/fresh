@@ -67,12 +67,12 @@ fn test_theme_loading_from_config_high_contrast() {
     let theme = harness.editor().theme();
     assert_eq!(theme.name, "high-contrast");
 
-    // Verify some high-contrast theme colors (from Theme::high_contrast() Rust fallback)
-    assert_eq!(theme.editor_bg, Color::Black);
-    assert_eq!(theme.editor_fg, Color::White);
-    assert_eq!(theme.cursor, Color::White);
-    assert_eq!(theme.tab_active_fg, Color::Black);
-    assert_eq!(theme.tab_active_bg, Color::Yellow);
+    // Verify some high-contrast theme colors (explicit RGB values)
+    assert_eq!(theme.editor_bg, Color::Rgb(0, 0, 0));
+    assert_eq!(theme.editor_fg, Color::Rgb(255, 255, 255));
+    assert_eq!(theme.cursor, Color::Rgb(255, 255, 255));
+    assert_eq!(theme.tab_active_fg, Color::Rgb(0, 0, 0));
+    assert_eq!(theme.tab_active_bg, Color::Rgb(255, 255, 0));
 }
 
 #[test]
@@ -367,7 +367,7 @@ fn test_issue_1001_theme_persists_after_restart_with_name_mismatch() {
     let default_bg = default_style.and_then(|s| s.bg);
     assert_eq!(
         default_bg,
-        Some(Color::Black),
+        Some(Color::Rgb(0, 0, 0)),
         "Editor should start with high-contrast theme (black background)"
     );
 
