@@ -418,6 +418,43 @@ impl Editor {
         }
     }
 
+    /// Send didClose to a specific named server for all buffers of a language.
+    ///
+    /// Used when stopping a single server out of multiple for the same language,
+    /// where we don't want to fully disable LSP for the buffers.
+    pub(crate) fn send_did_close_to_server(&mut self, language: &str, server_name: &str) {
+        let uris: Vec<_> = self
+            .buffers
+            .iter()
+            .filter(|(_, s)| s.language == language)
+            .filter_map(|(id, _)| {
+                self.buffer_metadata
+                    .get(id)
+                    .and_then(|m| m.file_uri())
+                    .cloned()
+            })
+            .collect();
+
+        if let Some(lsp) = self.lsp.as_mut() {
+            for sh in lsp.get_handles_mut(language) {
+                if sh.name == server_name {
+                    for uri in &uris {
+                        tracing::info!(
+                            "Sending didClose for {} to '{}' (language: {})",
+                            uri.as_str(),
+                            sh.name,
+                            language
+                        );
+                        if let Err(e) = sh.handle.did_close(uri.clone()) {
+                            tracing::warn!("Failed to send didClose to '{}': {}", sh.name, e);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     /// Disable LSP for a specific buffer and clear all LSP-related data
     pub(crate) fn disable_lsp_for_buffer(&mut self, buffer_id: crate::model::event::BufferId) {
         // Send didClose to the LSP server so it removes the document from its

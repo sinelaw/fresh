@@ -666,8 +666,10 @@ impl LspManager {
         let mut spawned_handles = Vec::new();
 
         for config in &configs {
-            // Skip disabled configs (unless user explicitly allowed)
-            if !config.enabled && !self.allowed_languages.contains(language) {
+            // Always skip configs with enabled=false — this is the user's
+            // explicit choice and should not be overridden by manual restart.
+            // The allowed_languages set only overrides auto_start=false.
+            if !config.enabled {
                 continue;
             }
 
@@ -959,6 +961,47 @@ impl LspManager {
                     .any(|sh| sh.handle.state().can_send_requests())
             })
             .unwrap_or(false)
+    }
+
+    /// Shutdown a single server by name for a specific language.
+    ///
+    /// Returns true if the server was found and shut down.
+    /// If this was the last server for the language, marks the language as disabled.
+    #[allow(clippy::let_underscore_must_use)]
+    pub fn shutdown_server_by_name(&mut self, language: &str, server_name: &str) -> bool {
+        let Some(handles) = self.handles.get_mut(language) else {
+            tracing::warn!("No running LSP servers found for {}", language);
+            return false;
+        };
+
+        let pos = handles.iter().position(|sh| sh.name == server_name);
+        let Some(idx) = pos else {
+            tracing::warn!(
+                "No running LSP server named '{}' found for {}",
+                server_name,
+                language
+            );
+            return false;
+        };
+
+        let sh = handles.remove(idx);
+        tracing::info!(
+            "Shutting down LSP server '{}' for {} (disabled until manual restart)",
+            sh.name,
+            language
+        );
+        let _ = sh.handle.shutdown();
+
+        if handles.is_empty() {
+            // Last server for this language — clean up like shutdown_server
+            self.handles.remove(language);
+            self.disabled_languages.insert(language.to_string());
+            self.pending_restarts.remove(language);
+            self.restart_cooldown.remove(language);
+            self.allowed_languages.remove(language);
+        }
+
+        true
     }
 
     /// Shutdown all servers for a specific language.

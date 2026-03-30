@@ -1130,52 +1130,110 @@ impl Editor {
     }
 
     /// Handle StopLspServer prompt confirmation.
+    ///
+    /// Input format: `"language"` (stops all servers) or `"language/server_name"`
+    /// (stops a specific server).
     fn handle_stop_lsp_server(&mut self, input: &str) {
-        let language = input.trim();
-        if language.is_empty() {
+        let input = input.trim();
+        if input.is_empty() {
             return;
         }
 
-        if let Some(lsp) = &mut self.lsp {
-            if lsp.shutdown_server(language) {
-                if let Some(lsp_configs) = self.config.lsp.get_mut(language) {
-                    for c in lsp_configs.as_mut_slice() {
+        // Parse "language/server_name" or just "language"
+        let (language, server_name) = if let Some((lang, name)) = input.split_once('/') {
+            (lang, Some(name))
+        } else {
+            (input, None)
+        };
+
+        let has_server = self
+            .lsp
+            .as_ref()
+            .is_some_and(|lsp| !lsp.get_handles(language).is_empty());
+
+        if !has_server {
+            self.set_status_message(
+                t!("lsp.server_not_found", language = language).to_string(),
+            );
+            return;
+        }
+
+        // Check how many servers remain for this language after the stop.
+        // If we're stopping a specific server and others remain, we should
+        // only send didClose to that server, not disable LSP for the buffers.
+        let stopping_all = server_name.is_none()
+            || self
+                .lsp
+                .as_ref()
+                .map(|lsp| lsp.get_handles(language).len() <= 1)
+                .unwrap_or(true);
+
+        if stopping_all {
+            // Send didClose for all buffers of this language BEFORE shutting
+            // down the server, so the notifications reach the still-running
+            // server and its handles are still present.
+            let buffer_ids: Vec<_> = self
+                .buffers
+                .iter()
+                .filter(|(_, s)| s.language == language)
+                .map(|(id, _)| *id)
+                .collect();
+            for buffer_id in buffer_ids {
+                self.disable_lsp_for_buffer(buffer_id);
+            }
+        } else if let Some(name) = server_name {
+            // Send didClose only to the specific server being stopped
+            self.send_did_close_to_server(language, name);
+        }
+
+        // Now shut down the server (removes handles).
+        let stopped = if let Some(lsp) = &mut self.lsp {
+            if let Some(name) = server_name {
+                lsp.shutdown_server_by_name(language, name)
+            } else {
+                lsp.shutdown_server(language)
+            }
+        } else {
+            false
+        };
+
+        if !stopped {
+            self.set_status_message(
+                t!("lsp.server_not_found", language = language).to_string(),
+            );
+            return;
+        }
+
+        // Update config: disable auto_start for the stopped server(s)
+        if let Some(lsp_configs) = self.config.lsp.get_mut(language) {
+            for c in lsp_configs.as_mut_slice() {
+                if let Some(name) = server_name {
+                    // Only disable auto_start for the specific server
+                    if c.display_name() == name {
                         c.auto_start = false;
                     }
-                    if let Err(e) = self.save_config() {
-                        tracing::warn!(
-                            "Failed to save config after disabling LSP auto-start: {}",
-                            e
-                        );
-                    } else {
-                        let config_path = self.dir_context.config_path();
-                        self.emit_event(
-                            "config_changed",
-                            serde_json::json!({
-                                "path": config_path.to_string_lossy(),
-                            }),
-                        );
-                    }
+                } else {
+                    c.auto_start = false;
                 }
-
-                // Clear diagnostics and overlays for all buffers of this language
-                let buffer_ids: Vec<_> = self
-                    .buffers
-                    .iter()
-                    .filter(|(_, s)| s.language == language)
-                    .map(|(id, _)| *id)
-                    .collect();
-                for buffer_id in buffer_ids {
-                    self.disable_lsp_for_buffer(buffer_id);
-                }
-
-                self.set_status_message(t!("lsp.server_stopped", language = language).to_string());
+            }
+            if let Err(e) = self.save_config() {
+                tracing::warn!(
+                    "Failed to save config after disabling LSP auto-start: {}",
+                    e
+                );
             } else {
-                self.set_status_message(
-                    t!("lsp.server_not_found", language = language).to_string(),
+                let config_path = self.dir_context.config_path();
+                self.emit_event(
+                    "config_changed",
+                    serde_json::json!({
+                        "path": config_path.to_string_lossy(),
+                    }),
                 );
             }
         }
+
+        let display = server_name.unwrap_or(language);
+        self.set_status_message(t!("lsp.server_stopped", language = display).to_string());
     }
 
     /// Handle Quick Open prompt confirmation based on prefix routing
