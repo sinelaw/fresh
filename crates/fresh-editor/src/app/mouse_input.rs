@@ -563,6 +563,17 @@ impl Editor {
     fn update_lsp_hover_state(&mut self, col: u16, row: u16) {
         tracing::trace!(col, row, "update_lsp_hover_state: raw mouse position");
 
+        // Suppress LSP hover when a popup is already visible (e.g. theme info popup,
+        // tab context menu) to avoid hover tooltips overlapping other popups.
+        if self.theme_info_popup.is_some() || self.tab_context_menu.is_some() {
+            if self.mouse_state.lsp_hover_state.is_some() {
+                self.mouse_state.lsp_hover_state = None;
+                self.mouse_state.lsp_hover_request_sent = false;
+                self.dismiss_transient_popups();
+            }
+            return;
+        }
+
         // Check if mouse is over a transient popup - if so, keep hover active
         if self.is_mouse_over_transient_popup(col, row) {
             return;

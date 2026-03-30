@@ -15,6 +15,11 @@ impl Editor {
     /// Show the theme info popup at the given screen position (Ctrl+Right-Click).
     pub(super) fn show_theme_info_popup(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         if let Some(info) = self.resolve_theme_key_at(col, row) {
+            // Dismiss any existing LSP hover popup to avoid overlapping popups
+            self.mouse_state.lsp_hover_state = None;
+            self.mouse_state.lsp_hover_request_sent = false;
+            self.dismiss_transient_popups();
+
             // Position the popup near the click, offset down-right by 1
             let popup_x = col.saturating_add(1);
             let popup_y = row.saturating_add(1);
