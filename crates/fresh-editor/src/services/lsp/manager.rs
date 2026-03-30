@@ -540,6 +540,13 @@ impl LspManager {
             .unwrap_or(&[])
     }
 
+    /// Check if a server with the given name exists (across all languages).
+    pub fn has_server_named(&self, server_name: &str) -> bool {
+        self.handles
+            .values()
+            .any(|handles| handles.iter().any(|sh| sh.name == server_name))
+    }
+
     /// Get all mutable handles for a language.
     pub fn get_handles_mut(&mut self, language: &str) -> &mut [ServerHandle] {
         self.handles

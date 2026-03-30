@@ -124,6 +124,20 @@ impl Editor {
         diagnostics: Vec<Diagnostic>,
         server_name: String,
     ) {
+        // Discard diagnostics from servers that have been shut down.  The async
+        // bridge may still contain queued messages from a server that was stopped
+        // between the time it sent the notification and when we drain the channel.
+        if let Some(lsp) = &self.lsp {
+            if !lsp.has_server_named(&server_name) {
+                tracing::debug!(
+                    "Dropping diagnostics from stopped server '{}' for {}",
+                    server_name,
+                    uri
+                );
+                return;
+            }
+        }
+
         tracing::debug!(
             "Processing {} push diagnostics from '{}' for {}",
             diagnostics.len(),
