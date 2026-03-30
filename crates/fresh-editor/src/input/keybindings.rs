@@ -443,6 +443,7 @@ pub enum Action {
     /// Quick Open - unified prompt with prefix-based provider routing
     QuickOpen,
     ToggleLineWrap,
+    ToggleCurrentLineHighlight,
     ToggleReadOnly,
     TogglePageView,
     SetPageWidth,
@@ -872,6 +873,7 @@ impl Action {
             "command_palette" => CommandPalette,
             "quick_open" => QuickOpen,
             "toggle_line_wrap" => ToggleLineWrap,
+            "toggle_current_line_highlight" => ToggleCurrentLineHighlight,
             "toggle_read_only" => ToggleReadOnly,
             "toggle_page_view" => TogglePageView,
             "set_page_width" => SetPageWidth,
@@ -2063,6 +2065,7 @@ impl KeybindingResolver {
             Action::QuickOpen => t!("action.quick_open"),
             Action::InspectThemeAtCursor => t!("action.inspect_theme_at_cursor"),
             Action::ToggleLineWrap => t!("action.toggle_line_wrap"),
+            Action::ToggleCurrentLineHighlight => t!("action.toggle_current_line_highlight"),
             Action::ToggleReadOnly => t!("action.toggle_read_only"),
             Action::TogglePageView => t!("action.toggle_page_view"),
             Action::SetPageWidth => t!("action.set_page_width"),

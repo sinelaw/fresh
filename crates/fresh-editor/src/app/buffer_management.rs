@@ -380,6 +380,7 @@ impl Editor {
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
+                self.config.editor.highlight_current_line,
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
@@ -491,6 +492,7 @@ impl Editor {
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
+                self.config.editor.highlight_current_line,
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
@@ -596,6 +598,7 @@ impl Editor {
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
+                self.config.editor.highlight_current_line,
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
@@ -737,6 +740,7 @@ impl Editor {
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
+                self.config.editor.highlight_current_line,
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
@@ -1072,6 +1076,7 @@ impl Editor {
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
             view_state.apply_config_defaults(
                 self.config.editor.line_numbers,
+                self.config.editor.highlight_current_line,
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
@@ -1178,6 +1183,7 @@ impl Editor {
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
+                self.config.editor.highlight_current_line,
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
@@ -1357,6 +1363,7 @@ impl Editor {
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
                 self.config.editor.line_numbers,
+                self.config.editor.highlight_current_line,
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
@@ -1368,6 +1375,7 @@ impl Editor {
                 SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buffer_id);
             view_state.apply_config_defaults(
                 self.config.editor.line_numbers,
+                self.config.editor.highlight_current_line,
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,

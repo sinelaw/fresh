@@ -548,6 +548,28 @@ impl Editor {
                 };
                 self.set_status_message(t!("view.line_wrap_state", state = state).to_string());
             }
+            Action::ToggleCurrentLineHighlight => {
+                self.config.editor.highlight_current_line =
+                    !self.config.editor.highlight_current_line;
+
+                // Update all splits
+                let leaf_ids: Vec<_> = self.split_view_states.keys().copied().collect();
+                for leaf_id in leaf_ids {
+                    if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
+                        view_state.highlight_current_line =
+                            self.config.editor.highlight_current_line;
+                    }
+                }
+
+                let state = if self.config.editor.highlight_current_line {
+                    t!("view.state_enabled").to_string()
+                } else {
+                    t!("view.state_disabled").to_string()
+                };
+                self.set_status_message(
+                    t!("view.current_line_highlight_state", state = state).to_string(),
+                );
+            }
             Action::ToggleReadOnly => {
                 let buffer_id = self.active_buffer();
                 let is_now_read_only = self

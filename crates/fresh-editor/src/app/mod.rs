@@ -1212,6 +1212,7 @@ impl Editor {
         let mut initial_view_state = SplitViewState::with_buffer(width, height, buffer_id);
         initial_view_state.apply_config_defaults(
             config.editor.line_numbers,
+            config.editor.highlight_current_line,
             config.editor.line_wrap,
             config.editor.wrap_indent,
             config.editor.wrap_column,
@@ -6286,6 +6287,7 @@ impl Editor {
                         );
                         view_state.apply_config_defaults(
                             self.config.editor.line_numbers,
+                            self.config.editor.highlight_current_line,
                             line_wrap
                                 .unwrap_or_else(|| self.resolve_line_wrap_for_buffer(buffer_id)),
                             self.config.editor.wrap_indent,
@@ -6809,6 +6811,7 @@ impl Editor {
                                     );
                                     view_state.apply_config_defaults(
                                         self.config.editor.line_numbers,
+                                        self.config.editor.highlight_current_line,
                                         false,
                                         false,
                                         None,

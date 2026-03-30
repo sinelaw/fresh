@@ -560,6 +560,11 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub relative_line_numbers: bool,
 
+    /// Highlight the line containing the cursor
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub highlight_current_line: bool,
+
     /// Wrap long lines to fit the window width (default for new views)
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
@@ -1129,6 +1134,7 @@ impl Default for EditorConfig {
             relative_line_numbers: false,
             scroll_offset: default_scroll_offset(),
             syntax_highlighting: true,
+            highlight_current_line: true,
             line_wrap: true,
             wrap_indent: true,
             wrap_column: None,

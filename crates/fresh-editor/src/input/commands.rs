@@ -803,6 +803,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_current_line_highlight",
+        desc_key: "cmd.toggle_current_line_highlight_desc",
+        action: || Action::ToggleCurrentLineHighlight,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.toggle_page_view",
         desc_key: "cmd.toggle_page_view_desc",
         action: || Action::TogglePageView,

@@ -2869,6 +2869,7 @@ pub fn action_to_events(
         | Action::QuickOpen
         | Action::ShowHelp
         | Action::ToggleLineWrap
+        | Action::ToggleCurrentLineHighlight
         | Action::ToggleReadOnly
         | Action::TogglePageView
         | Action::SetPageWidth

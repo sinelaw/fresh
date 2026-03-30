@@ -396,6 +396,8 @@ struct ViewPreferences {
     rulers: Vec<usize>,
     /// Per-split line number visibility (from BufferViewState)
     show_line_numbers: bool,
+    /// Per-split current line highlight visibility (from BufferViewState)
+    highlight_current_line: bool,
 }
 
 struct LineRenderInput<'a> {
@@ -428,6 +430,8 @@ struct LineRenderInput<'a> {
     byte_offset_mode: bool,
     /// Whether to show tilde (~) markers on lines past end-of-file
     show_tilde: bool,
+    /// Whether to highlight the line containing the cursor
+    highlight_current_line: bool,
     /// Per-cell theme key map for the theme inspector (screen_width used for indexing)
     cell_theme_map: &'a mut Vec<crate::app::types::CellThemeInfo>,
     /// Screen width for cell_theme_map indexing
@@ -456,6 +460,10 @@ struct CharStyleContext<'a> {
     /// or in session mode. Avoids double-inversion in terminal multiplexers
     /// like zellij where the hardware block cursor inverts the cell too.
     skip_primary_cursor_reverse: bool,
+    /// Whether this character is on the cursor line and current line highlighting is enabled
+    is_cursor_line_highlighted: bool,
+    /// Background color for the current line
+    current_line_bg: Color,
 }
 
 /// Output from compute_char_style
@@ -495,6 +503,10 @@ struct LeftMarginContext<'a> {
     show_line_numbers: bool,
     /// Whether the gutter shows byte offsets instead of line numbers
     byte_offset_mode: bool,
+    /// Whether to highlight the current line in the gutter
+    highlight_current_line: bool,
+    /// Whether this split is the active (focused) one
+    is_active: bool,
 }
 
 /// Compute the inline diagnostic style from overlay priority (severity).
@@ -519,71 +531,73 @@ fn render_left_margin(
     }
 
     let lookup_key = ctx.line_start_byte;
+    // Pre-compute indicator bg for cursor line highlighting
+    let indicator_is_cursor_line = lookup_key.is_some_and(|k| k == ctx.cursor_line_start_byte);
+    let indicator_bg = if indicator_is_cursor_line && ctx.highlight_current_line && ctx.is_active {
+        Some(ctx.theme.current_line_bg)
+    } else {
+        None
+    };
 
     // For continuation lines, don't show any indicators
     if ctx.is_continuation {
-        push_span_with_map(
-            line_spans,
-            line_view_map,
-            " ".to_string(),
-            Style::default(),
-            None,
-        );
+        let mut style = Style::default();
+        if let Some(bg) = indicator_bg {
+            style = style.bg(bg);
+        }
+        push_span_with_map(line_spans, line_view_map, " ".to_string(), style, None);
     } else if lookup_key.is_some_and(|k| ctx.diagnostic_lines.contains(&k)) {
         // Diagnostic indicators have highest priority
-        push_span_with_map(
-            line_spans,
-            line_view_map,
-            "●".to_string(),
-            Style::default().fg(ratatui::style::Color::Red),
-            None,
-        );
+        let mut style = Style::default().fg(ratatui::style::Color::Red);
+        if let Some(bg) = indicator_bg {
+            style = style.bg(bg);
+        }
+        push_span_with_map(line_spans, line_view_map, "●".to_string(), style, None);
     } else if lookup_key.is_some_and(|k| {
         ctx.fold_indicators.contains_key(&k) && !ctx.line_indicators.contains_key(&k)
     }) {
         // Show fold indicator when no other indicator is present
         let fold = ctx.fold_indicators.get(&lookup_key.unwrap()).unwrap();
         let symbol = if fold.collapsed { "▸" } else { "▾" };
-        push_span_with_map(
-            line_spans,
-            line_view_map,
-            symbol.to_string(),
-            Style::default().fg(ctx.theme.line_number_fg),
-            None,
-        );
+        let mut style = Style::default().fg(ctx.theme.line_number_fg);
+        if let Some(bg) = indicator_bg {
+            style = style.bg(bg);
+        }
+        push_span_with_map(line_spans, line_view_map, symbol.to_string(), style, None);
     } else if let Some(indicator) = lookup_key.and_then(|k| ctx.line_indicators.get(&k)) {
         // Show line indicator (git gutter, breakpoints, etc.)
+        let mut style = Style::default().fg(indicator.color);
+        if let Some(bg) = indicator_bg {
+            style = style.bg(bg);
+        }
         push_span_with_map(
             line_spans,
             line_view_map,
             indicator.symbol.clone(),
-            Style::default().fg(indicator.color),
+            style,
             None,
         );
     } else {
         // Show space (no indicator)
-        push_span_with_map(
-            line_spans,
-            line_view_map,
-            " ".to_string(),
-            Style::default(),
-            None,
-        );
+        let mut style = Style::default();
+        if let Some(bg) = indicator_bg {
+            style = style.bg(bg);
+        }
+        push_span_with_map(line_spans, line_view_map, " ".to_string(), style, None);
     }
 
     let is_cursor_line = lookup_key.is_some_and(|k| k == ctx.cursor_line_start_byte);
+    let use_cursor_line_bg = is_cursor_line && ctx.highlight_current_line && ctx.is_active;
 
     // Render line number (right-aligned) or blank for continuations
     if ctx.is_continuation {
         // For wrapped continuation lines, render blank space
         let blank = " ".repeat(ctx.state.margins.left_config.width);
-        push_span_with_map(
-            line_spans,
-            line_view_map,
-            blank,
-            Style::default().fg(ctx.theme.line_number_fg),
-            None,
-        );
+        let mut style = Style::default().fg(ctx.theme.line_number_fg);
+        if use_cursor_line_bg {
+            style = style.bg(ctx.theme.current_line_bg);
+        }
+        push_span_with_map(line_spans, line_view_map, blank, style, None);
     } else if ctx.byte_offset_mode && ctx.show_line_numbers {
         // Byte offset mode: show the absolute byte offset at the start of each line
         let rendered_text = format!(
@@ -591,11 +605,14 @@ fn render_left_margin(
             ctx.gutter_num,
             width = ctx.state.margins.left_config.width
         );
-        let margin_style = if is_cursor_line {
+        let mut margin_style = if is_cursor_line {
             Style::default().fg(ctx.theme.editor_fg)
         } else {
             Style::default().fg(ctx.theme.line_number_fg)
         };
+        if use_cursor_line_bg {
+            margin_style = margin_style.bg(ctx.theme.current_line_bg);
+        }
         push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     } else if ctx.relative_line_numbers {
         // Relative line numbers: show distance from cursor, or absolute for cursor line
@@ -612,11 +629,14 @@ fn render_left_margin(
             width = ctx.state.margins.left_config.width
         );
         // Use brighter color for the cursor line
-        let margin_style = if is_cursor_line {
+        let mut margin_style = if is_cursor_line {
             Style::default().fg(ctx.theme.editor_fg)
         } else {
             Style::default().fg(ctx.theme.line_number_fg)
         };
+        if use_cursor_line_bg {
+            margin_style = margin_style.bg(ctx.theme.current_line_bg);
+        }
         push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     } else {
         let margin_content = ctx.state.margins.render_line(
@@ -628,15 +648,21 @@ fn render_left_margin(
         let (rendered_text, style_opt) = margin_content.render(ctx.state.margins.left_config.width);
 
         // Use custom style if provided, otherwise use default theme color
-        let margin_style =
+        let mut margin_style =
             style_opt.unwrap_or_else(|| Style::default().fg(ctx.theme.line_number_fg));
+        if use_cursor_line_bg {
+            margin_style = margin_style.bg(ctx.theme.current_line_bg);
+        }
 
         push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     }
 
     // Render separator
     if ctx.state.margins.left_config.show_separator {
-        let separator_style = Style::default().fg(ctx.theme.line_number_fg);
+        let mut separator_style = Style::default().fg(ctx.theme.line_number_fg);
+        if use_cursor_line_bg {
+            separator_style = separator_style.bg(ctx.theme.current_line_bg);
+        }
         push_span_with_map(
             line_spans,
             line_view_map,
@@ -844,6 +870,11 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                 // ThemedStyle carries its own theme keys — no need for overlay.theme_key
             }
         }
+    }
+
+    // Apply current line background highlight (before selection, so selection overrides it)
+    if ctx.is_cursor_line_highlighted && !ctx.is_selected && style.bg.is_none() {
+        style = style.bg(ctx.current_line_bg);
     }
 
     // Apply selection highlighting
@@ -1467,6 +1498,7 @@ impl SplitRenderer {
                 session_mode,
                 software_cursor_only,
                 view_prefs.show_line_numbers,
+                view_prefs.highlight_current_line,
                 diagnostics_inline_text,
                 show_tilde,
                 None, // No cell theme map for layout-only computation
@@ -2256,6 +2288,7 @@ impl SplitRenderer {
                     view_transform: view_state.view_transform.clone(),
                     rulers: view_state.rulers.clone(),
                     show_line_numbers: view_state.show_line_numbers,
+                    highlight_current_line: view_state.highlight_current_line,
                 };
             }
         }
@@ -2268,6 +2301,7 @@ impl SplitRenderer {
             view_transform: None,
             rulers: Vec::new(),
             show_line_numbers: true,
+            highlight_current_line: true,
         }
     }
 
@@ -4417,6 +4451,7 @@ impl SplitRenderer {
             show_line_numbers,
             byte_offset_mode,
             show_tilde,
+            highlight_current_line,
             cell_theme_map,
             screen_width,
         } = input;
@@ -4480,6 +4515,7 @@ impl SplitRenderer {
         let mut last_line_end: Option<LastLineEnd> = None;
         let mut last_gutter_num: Option<usize> = None;
         let mut trailing_empty_line_rendered = false;
+        let mut is_on_cursor_line = false;
 
         let is_empty_buffer = state.buffer.is_empty();
 
@@ -4568,6 +4604,12 @@ impl SplitRenderer {
                 None
             };
 
+            // Track whether this line is the cursor line (for current line highlighting).
+            // Non-continuation lines check their start byte; continuation lines inherit.
+            if !is_continuation {
+                is_on_cursor_line = line_start_byte.is_some_and(|b| b == cursor_line_start_byte);
+            }
+
             // Gutter display number — line number for small files, byte offset for large files
             let gutter_num = if let Some(byte) = line_start_byte {
                 let n = if byte_offset_mode {
@@ -4618,6 +4660,8 @@ impl SplitRenderer {
                     relative_line_numbers,
                     show_line_numbers,
                     byte_offset_mode,
+                    highlight_current_line,
+                    is_active,
                 },
                 &mut line_spans,
                 &mut line_view_map,
@@ -4806,6 +4850,10 @@ impl SplitRenderer {
                         primary_cursor_position,
                         is_active,
                         skip_primary_cursor_reverse: session_mode,
+                        is_cursor_line_highlighted: is_on_cursor_line
+                            && highlight_current_line
+                            && is_active,
+                        current_line_bg: theme.current_line_bg,
                     });
 
                     // Record cell theme info for the theme inspector popup
@@ -5427,15 +5475,28 @@ impl SplitRenderer {
                     last_gutter_num.map_or(0, |n| n + 1)
                 };
 
+                let implicit_is_cursor_line = implicit_line_byte == cursor_line_start_byte;
+                let implicit_cursor_bg =
+                    if implicit_is_cursor_line && highlight_current_line && is_active {
+                        Some(theme.current_line_bg)
+                    } else {
+                        None
+                    };
+
                 if state.margins.left_config.enabled {
                     // Indicator column: check for diagnostic markers on this implicit line
                     if decorations.diagnostic_lines.contains(&implicit_line_byte) {
-                        implicit_line_spans.push(Span::styled(
-                            "●",
-                            Style::default().fg(ratatui::style::Color::Red),
-                        ));
+                        let mut style = Style::default().fg(ratatui::style::Color::Red);
+                        if let Some(bg) = implicit_cursor_bg {
+                            style = style.bg(bg);
+                        }
+                        implicit_line_spans.push(Span::styled("●", style));
                     } else {
-                        implicit_line_spans.push(Span::styled(" ", Style::default()));
+                        let mut style = Style::default();
+                        if let Some(bg) = implicit_cursor_bg {
+                            style = style.bg(bg);
+                        }
+                        implicit_line_spans.push(Span::styled(" ", style));
                     }
 
                     // Line number (or byte offset in byte_offset_mode)
@@ -5457,14 +5518,21 @@ impl SplitRenderer {
                         );
                         margin_content.render(state.margins.left_config.width).0
                     };
-                    let margin_style = Style::default().fg(theme.line_number_fg);
+                    let mut margin_style = Style::default().fg(theme.line_number_fg);
+                    if let Some(bg) = implicit_cursor_bg {
+                        margin_style = margin_style.bg(bg);
+                    }
                     implicit_line_spans.push(Span::styled(rendered_text, margin_style));
 
                     // Separator
                     if state.margins.left_config.show_separator {
+                        let mut sep_style = Style::default().fg(theme.line_number_fg);
+                        if let Some(bg) = implicit_cursor_bg {
+                            sep_style = sep_style.bg(bg);
+                        }
                         implicit_line_spans.push(Span::styled(
                             state.margins.left_config.separator.to_string(),
-                            Style::default().fg(theme.line_number_fg),
+                            sep_style,
                         ));
                     }
                 }
@@ -5609,6 +5677,7 @@ impl SplitRenderer {
         session_mode: bool,
         software_cursor_only: bool,
         show_line_numbers: bool,
+        highlight_current_line: bool,
         diagnostics_inline_text: bool,
         show_tilde: bool,
         cell_theme_map: Option<(&mut Vec<crate::app::types::CellThemeInfo>, u16)>,
@@ -5840,6 +5909,7 @@ impl SplitRenderer {
             show_line_numbers,
             byte_offset_mode,
             show_tilde,
+            highlight_current_line,
             cell_theme_map: map_ref,
             screen_width: sw,
         });
@@ -6060,6 +6130,7 @@ impl SplitRenderer {
             session_mode,
             software_cursor_only,
             show_line_numbers,
+            true, // highlight_current_line
             diagnostics_inline_text,
             show_tilde,
             Some((cell_theme_map, screen_width)),
@@ -6463,6 +6534,7 @@ mod tests {
             show_line_numbers: true, // Tests show line numbers
             byte_offset_mode: false, // Tests use exact line numbers
             show_tilde: true,
+            highlight_current_line: true,
             cell_theme_map: &mut dummy_theme_map,
             screen_width: 0,
         });
@@ -7932,5 +8004,153 @@ mod tests {
         // Specifically, cell 14 must be ']'
         let cell14 = strip_osc8(backend[(14, 0)].symbol());
         assert_eq!(cell14, "]", "Cell 14 must be ']' after unconcealed render");
+    }
+
+    // --- Current line highlight tests ---
+
+    fn render_with_highlight_option(
+        content: &str,
+        cursor_pos: usize,
+        highlight_current_line: bool,
+    ) -> LineRenderOutput {
+        let mut state = EditorState::new(20, 6, 1024, test_fs());
+        state.buffer = Buffer::from_str(content, 1024, test_fs());
+        let mut cursors = crate::model::cursor::Cursors::new();
+        cursors.primary_mut().position = cursor_pos.min(state.buffer.len());
+        let viewport = Viewport::new(20, 4);
+        state.margins.left_config.enabled = false;
+
+        let render_area = Rect::new(0, 0, 20, 4);
+        let visible_count = viewport.visible_line_count();
+        let gutter_width = state.margins.left_total_width();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        let empty_folds = FoldManager::new();
+
+        let view_data = SplitRenderer::build_view_data(
+            &mut state,
+            &viewport,
+            None,
+            content.len().max(1),
+            visible_count,
+            false,
+            render_area.width as usize,
+            gutter_width,
+            &ViewMode::Source,
+            &empty_folds,
+            &theme,
+        );
+        let view_anchor = SplitRenderer::calculate_view_anchor(&view_data.lines, 0);
+
+        let estimated_lines = (state.buffer.len() / state.buffer.estimated_line_length()).max(1);
+        state.margins.update_width_for_buffer(estimated_lines, true);
+        let gutter_width = state.margins.left_total_width();
+
+        let selection = SplitRenderer::selection_context(&state, &cursors);
+        let _ = state
+            .buffer
+            .populate_line_cache(viewport.top_byte, visible_count);
+        let viewport_start = viewport.top_byte;
+        let viewport_end = SplitRenderer::calculate_viewport_end(
+            &mut state,
+            viewport_start,
+            content.len().max(1),
+            visible_count,
+        );
+        let decorations = SplitRenderer::decoration_context(
+            &mut state,
+            viewport_start,
+            viewport_end,
+            selection.primary_cursor_position,
+            &empty_folds,
+            &theme,
+            100_000,
+            &ViewMode::Source,
+            false,
+        );
+
+        SplitRenderer::render_view_lines(LineRenderInput {
+            state: &state,
+            theme: &theme,
+            view_lines: &view_data.lines,
+            view_anchor,
+            render_area,
+            gutter_width,
+            selection: &selection,
+            decorations: &decorations,
+            visible_line_count: visible_count,
+            lsp_waiting: false,
+            is_active: true,
+            line_wrap: viewport.line_wrap_enabled,
+            estimated_lines,
+            left_column: viewport.left_column,
+            relative_line_numbers: false,
+            session_mode: false,
+            software_cursor_only: false,
+            show_line_numbers: false,
+            byte_offset_mode: false,
+            show_tilde: true,
+            highlight_current_line,
+            cell_theme_map: &mut Vec::new(),
+            screen_width: 0,
+        })
+    }
+
+    /// Check whether any span on a given line has `current_line_bg` as its background.
+    fn line_has_current_line_bg(output: &LineRenderOutput, line_idx: usize) -> bool {
+        let current_line_bg = ratatui::style::Color::Rgb(40, 40, 40);
+        if let Some(line) = output.lines.get(line_idx) {
+            line.spans
+                .iter()
+                .any(|span| span.style.bg == Some(current_line_bg))
+        } else {
+            false
+        }
+    }
+
+    #[test]
+    fn current_line_highlight_enabled_highlights_cursor_line() {
+        let output = render_with_highlight_option("abc\ndef\nghi\n", 0, true);
+        // Cursor is on line 0 — it should have current_line_bg
+        assert!(
+            line_has_current_line_bg(&output, 0),
+            "Cursor line (line 0) should have current_line_bg when highlighting is enabled"
+        );
+        // Line 1 should NOT have current_line_bg
+        assert!(
+            !line_has_current_line_bg(&output, 1),
+            "Non-cursor line (line 1) should NOT have current_line_bg"
+        );
+    }
+
+    #[test]
+    fn current_line_highlight_disabled_no_highlight() {
+        let output = render_with_highlight_option("abc\ndef\nghi\n", 0, false);
+        // No line should have current_line_bg when disabled
+        assert!(
+            !line_has_current_line_bg(&output, 0),
+            "Cursor line should NOT have current_line_bg when highlighting is disabled"
+        );
+        assert!(
+            !line_has_current_line_bg(&output, 1),
+            "Non-cursor line should NOT have current_line_bg when highlighting is disabled"
+        );
+    }
+
+    #[test]
+    fn current_line_highlight_follows_cursor_position() {
+        // Cursor on line 1 (byte 4 = start of "def")
+        let output = render_with_highlight_option("abc\ndef\nghi\n", 4, true);
+        assert!(
+            !line_has_current_line_bg(&output, 0),
+            "Line 0 should NOT have current_line_bg when cursor is on line 1"
+        );
+        assert!(
+            line_has_current_line_bg(&output, 1),
+            "Line 1 should have current_line_bg when cursor is there"
+        );
+        assert!(
+            !line_has_current_line_bg(&output, 2),
+            "Line 2 should NOT have current_line_bg when cursor is on line 1"
+        );
     }
 }

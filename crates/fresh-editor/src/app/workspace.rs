@@ -1340,6 +1340,7 @@ impl Editor {
                         );
                         view_state.apply_config_defaults(
                             self.config.editor.line_numbers,
+                            self.config.editor.highlight_current_line,
                             self.resolve_line_wrap_for_buffer(second_buffer_id),
                             self.config.editor.wrap_indent,
                             self.resolve_wrap_column_for_buffer(second_buffer_id),

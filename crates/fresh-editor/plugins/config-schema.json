@@ -32,6 +32,7 @@
       "default": {
         "line_numbers": true,
         "relative_line_numbers": false,
+        "highlight_current_line": true,
         "line_wrap": true,
         "wrap_indent": true,
         "wrap_column": null,
@@ -249,6 +250,12 @@
           "description": "Show line numbers relative to cursor position",
           "type": "boolean",
           "default": false,
+          "x-section": "Display"
+        },
+        "highlight_current_line": {
+          "description": "Highlight the line containing the cursor",
+          "type": "boolean",
+          "default": true,
           "x-section": "Display"
         },
         "line_wrap": {
