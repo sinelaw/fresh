@@ -9,8 +9,8 @@
     "current_line_bg": [20, 20, 20],
     "line_number_fg": [140, 140, 140],
     "line_number_bg": "Black",
-    "diff_add_bg": [0, 80, 0],
-    "diff_remove_bg": [100, 0, 0],
+    "diff_add_bg": [0, 35, 0],
+    "diff_remove_bg": [50, 0, 0],
     "diff_modify_bg": [25, 22, 0],
     "whitespace_indicator_fg": [80, 80, 80]
   },
@@ -62,7 +62,7 @@
     "scrollbar_track_hover_fg": "Yellow",
     "scrollbar_thumb_hover_fg": "Cyan",
     "compose_margin_bg": [10, 10, 10],
-    "semantic_highlight_bg": [0, 60, 100],
+    "semantic_highlight_bg": [0, 25, 55],
     "terminal_bg": "Default",
     "terminal_fg": "Default",
     "status_warning_indicator_bg": "Yellow",
@@ -82,13 +82,13 @@
   },
   "diagnostic": {
     "error_fg": "Red",
-    "error_bg": [100, 0, 0],
+    "error_bg": [50, 0, 0],
     "warning_fg": "Yellow",
-    "warning_bg": [100, 100, 0],
+    "warning_bg": [35, 30, 0],
     "info_fg": "Cyan",
-    "info_bg": [0, 50, 100],
+    "info_bg": [0, 25, 55],
     "hint_fg": "White",
-    "hint_bg": [50, 50, 50]
+    "hint_bg": [30, 30, 30]
   },
   "syntax": {
     "keyword": "Cyan",

@@ -7,7 +7,7 @@
     "inactive_cursor": [180, 180, 180],
     "selection_bg": [173, 214, 255],
     "current_line_bg": [245, 245, 245],
-    "line_number_fg": [140, 140, 140],
+    "line_number_fg": [115, 115, 115],
     "line_number_bg": [255, 255, 255],
     "diff_add_bg": [200, 255, 200],
     "diff_remove_bg": [255, 200, 200],
@@ -83,11 +83,11 @@
   "diagnostic": {
     "error_fg": "Red",
     "error_bg": [255, 220, 220],
-    "warning_fg": [128, 128, 0],
+    "warning_fg": [110, 85, 0],
     "warning_bg": [255, 255, 200],
     "info_fg": "Blue",
     "info_bg": [220, 240, 255],
-    "hint_fg": "DarkGray",
+    "hint_fg": [100, 100, 100],
     "hint_bg": [240, 240, 240]
   },
   "syntax": {
