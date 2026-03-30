@@ -666,10 +666,9 @@ impl LspManager {
         let mut spawned_handles = Vec::new();
 
         for config in &configs {
-            // Always skip configs with enabled=false — this is the user's
-            // explicit choice and should not be overridden by manual restart.
-            // The allowed_languages set only overrides auto_start=false.
-            if !config.enabled {
+            // Skip disabled configs unless the user explicitly started this language
+            // via the command palette (allowed_languages).
+            if !config.enabled && !self.allowed_languages.contains(language) {
                 continue;
             }
 

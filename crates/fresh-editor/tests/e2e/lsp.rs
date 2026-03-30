@@ -8604,8 +8604,10 @@ done
 }
 
 /// Test that "restart lsp" command shows a prompt with correct suggestions
+/// when multiple servers are configured.
 ///
-/// When the user invokes "restart lsp", a prompt should appear listing:
+/// With a single server, restart happens immediately (no prompt).
+/// With multiple servers, a prompt should appear listing:
 /// 1. An "all enabled" option for the current language
 /// 2. Individual server entries for each configured server
 #[test]
@@ -8617,25 +8619,44 @@ fn test_restart_lsp_prompt_shows_suggestions() -> anyhow::Result<()> {
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {}\n")?;
 
+    let script = FakeLspServer::script_path(temp_dir.path())
+        .to_string_lossy()
+        .to_string();
+
+    // Configure two servers so the prompt appears
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
-            command: FakeLspServer::script_path(temp_dir.path())
-                .to_string_lossy()
-                .to_string(),
-            args: vec![],
-            enabled: true,
-            auto_start: true,
-            process_limits: fresh::services::process_limits::ProcessLimits::default(),
-            initialization_options: None,
-            env: Default::default(),
-            language_id_overrides: Default::default(),
-            root_markers: Default::default(),
-            name: Some("test-server".to_string()),
-            only_features: None,
-            except_features: None,
-        }]),
+        fresh::types::LspLanguageConfig::Multi(vec![
+            fresh::services::lsp::LspServerConfig {
+                command: script.clone(),
+                args: vec![],
+                enabled: true,
+                auto_start: true,
+                process_limits: fresh::services::process_limits::ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                root_markers: Default::default(),
+                name: Some("server-a".to_string()),
+                only_features: None,
+                except_features: None,
+            },
+            fresh::services::lsp::LspServerConfig {
+                command: script,
+                args: vec![],
+                enabled: true,
+                auto_start: true,
+                process_limits: fresh::services::process_limits::ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                root_markers: Default::default(),
+                name: Some("server-b".to_string()),
+                only_features: None,
+                except_features: None,
+            },
+        ]),
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -8661,10 +8682,10 @@ fn test_restart_lsp_prompt_shows_suggestions() -> anyhow::Result<()> {
     harness.editor_mut().handle_lsp_restart();
     harness.render()?;
 
-    // A prompt should now be visible
+    // A prompt should now be visible (multiple servers configured)
     assert!(
         harness.editor().is_prompting(),
-        "Restart LSP should show a prompt"
+        "Restart LSP should show a prompt when multiple servers are configured"
     );
 
     // Check the screen contains the expected suggestions
@@ -8675,8 +8696,13 @@ fn test_restart_lsp_prompt_shows_suggestions() -> anyhow::Result<()> {
         screen
     );
     assert!(
-        screen.contains("rust/test-server"),
-        "Prompt should show 'rust/test-server' option. Screen:\n{}",
+        screen.contains("rust/server-a"),
+        "Prompt should show 'rust/server-a' option. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("rust/server-b"),
+        "Prompt should show 'rust/server-b' option. Screen:\n{}",
         screen
     );
 
@@ -8751,17 +8777,8 @@ fn test_restart_lsp_prompt_restarts_stopped_server() -> anyhow::Result<()> {
         })
         .expect("LSP server should stop");
 
-    // Now trigger restart LSP — this opens a prompt
+    // Now trigger restart LSP — with a single server, this restarts immediately
     harness.editor_mut().handle_lsp_restart();
-    harness.render()?;
-
-    assert!(
-        harness.editor().is_prompting(),
-        "Restart LSP should show a prompt"
-    );
-
-    // Confirm the default selection (all enabled) by pressing Enter
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Wait for LSP to come back

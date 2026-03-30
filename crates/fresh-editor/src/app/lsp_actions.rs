@@ -12,15 +12,19 @@ use rust_i18n::t;
 impl Editor {
     /// Handle the LspRestart action.
     ///
-    /// Shows a prompt to select which LSP server(s) to restart, with the
-    /// default option restarting all enabled servers for the current language.
+    /// For a single-server config, restarts immediately (no prompt).
+    /// For multiple servers, shows a prompt to select which server(s) to restart.
     pub fn handle_lsp_restart(&mut self) {
-        // Get the language from the active buffer
+        // Get the language and file path from the active buffer
         let buffer_id = self.active_buffer();
         let Some(state) = self.buffers.get(&buffer_id) else {
             return;
         };
         let language = state.language.clone();
+        let file_path = self
+            .buffer_metadata
+            .get(&buffer_id)
+            .and_then(|meta| meta.file_path().cloned());
 
         // Get configured servers for this language
         let configs: Vec<_> = self
@@ -35,7 +39,23 @@ impl Editor {
             return;
         }
 
-        // Build suggestions
+        // Single server: restart immediately without a prompt (backward compat)
+        if configs.len() == 1 {
+            let Some(lsp) = self.lsp.as_mut() else {
+                self.set_status_message(t!("lsp.no_manager").to_string());
+                return;
+            };
+
+            let (success, message) = lsp.manual_restart(&language, file_path.as_deref());
+            self.status_message = Some(message);
+
+            if success {
+                self.reopen_buffers_for_language(&language);
+            }
+            return;
+        }
+
+        // Multiple servers: show a prompt
         let mut suggestions: Vec<Suggestion> = Vec::new();
 
         // Default option: restart all enabled servers
@@ -84,13 +104,7 @@ impl Editor {
 
         // Configure initial selection
         if let Some(prompt) = self.prompt.as_mut() {
-            if suggestions.len() == 1 {
-                prompt.input = suggestions[0].text.clone();
-                prompt.cursor_pos = prompt.input.len();
-                prompt.selected_suggestion = Some(0);
-            } else if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(0);
-            }
+            prompt.selected_suggestion = Some(0);
         }
     }
 
