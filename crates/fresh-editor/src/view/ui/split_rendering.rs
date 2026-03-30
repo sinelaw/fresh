@@ -428,6 +428,10 @@ struct LineRenderInput<'a> {
     byte_offset_mode: bool,
     /// Whether to show tilde (~) markers on lines past end-of-file
     show_tilde: bool,
+    /// Per-cell theme key map for the theme inspector (screen_width used for indexing)
+    cell_theme_map: &'a mut Vec<crate::app::types::CellThemeInfo>,
+    /// Screen width for cell_theme_map indexing
+    screen_width: u16,
 }
 
 /// Context for computing the style of a single character
@@ -440,6 +444,8 @@ struct CharStyleContext<'a> {
     theme: &'a crate::view::theme::Theme,
     /// Pre-resolved syntax highlight color for this byte position (from cursor-based lookup)
     highlight_color: Option<Color>,
+    /// Theme key for the syntax highlight category (e.g. "syntax.keyword")
+    highlight_theme_key: Option<&'static str>,
     /// Pre-resolved semantic token color for this byte position (from cursor-based lookup)
     semantic_token_color: Option<Color>,
     viewport_overlays: &'a [(crate::view::overlay::Overlay, Range<usize>)],
@@ -456,6 +462,12 @@ struct CharStyleContext<'a> {
 struct CharStyleOutput {
     style: Style,
     is_secondary_cursor: bool,
+    /// Theme key for the foreground color used on this cell
+    fg_theme_key: Option<&'static str>,
+    /// Theme key for the background color used on this cell
+    bg_theme_key: Option<&'static str>,
+    /// Region label for this cell
+    region: &'static str,
 }
 
 /// Context for rendering the left margin (line numbers, indicators, separator)
@@ -657,11 +669,38 @@ fn span_color_at(
     None
 }
 
+/// Like `span_color_at` but also returns the theme key for the highlight category.
+fn span_info_at(
+    spans: &[crate::primitives::highlighter::HighlightSpan],
+    cursor: &mut usize,
+    byte_pos: usize,
+) -> (Option<Color>, Option<&'static str>, Option<&'static str>) {
+    while *cursor < spans.len() {
+        let span = &spans[*cursor];
+        if span.range.end <= byte_pos {
+            *cursor += 1;
+        } else if span.range.start > byte_pos {
+            return (None, None, None);
+        } else {
+            let theme_key = span.category.as_ref().map(|c| c.theme_key());
+            let display_name = span.category.as_ref().map(|c| c.display_name());
+            return (Some(span.color), theme_key, display_name);
+        }
+    }
+    (None, None, None)
+}
+
 /// Compute the style for a character by layering: token -> ANSI -> syntax -> semantic -> overlays -> selection -> cursor
+/// Also tracks which theme keys produced the final fg/bg colors.
 fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     use crate::view::overlay::OverlayFace;
 
     let highlight_color = ctx.highlight_color;
+
+    // Track theme key provenance alongside style
+    let mut fg_theme_key: Option<&'static str> = None;
+    let mut bg_theme_key: Option<&'static str> = Some("editor.bg");
+    let mut region: &'static str = "Editor Content";
 
     // Find overlays for this byte position
     let overlays: Vec<&crate::view::overlay::Overlay> = if let Some(bp) = ctx.byte_pos {
@@ -682,6 +721,7 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
             s = s.fg(ratatui::style::Color::Rgb(r, g, b));
         } else {
             s = s.fg(ctx.theme.editor_fg);
+            fg_theme_key = Some("editor.fg");
         }
         if let Some((r, g, b)) = ts.bg {
             s = s.bg(ratatui::style::Color::Rgb(r, g, b));
@@ -692,6 +732,7 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         if ts.italic {
             s = s.add_modifier(Modifier::ITALIC);
         }
+        region = "Plugin Token";
         s
     } else if ctx.ansi_style.fg.is_some()
         || ctx.ansi_style.bg.is_some()
@@ -703,17 +744,22 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
             s = s.fg(fg);
         } else {
             s = s.fg(ctx.theme.editor_fg);
+            fg_theme_key = Some("editor.fg");
         }
         if let Some(bg) = ctx.ansi_style.bg {
             s = s.bg(bg);
+            bg_theme_key = None; // ANSI bg, not from theme
         }
         s = s.add_modifier(ctx.ansi_style.add_modifier);
+        region = "ANSI Escape";
         s
     } else if let Some(color) = highlight_color {
         // Apply syntax highlighting
+        fg_theme_key = ctx.highlight_theme_key;
         Style::default().fg(color)
     } else {
         // Default color from theme
+        fg_theme_key = Some("editor.fg");
         Style::default().fg(ctx.theme.editor_fg)
     };
 
@@ -724,6 +770,7 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
             && (ctx.ansi_style.bg.is_some() || !ctx.ansi_style.add_modifier.is_empty())
         {
             style = style.fg(color);
+            fg_theme_key = ctx.highlight_theme_key;
         }
     }
 
@@ -734,10 +781,12 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     if ctx.token_style.is_none() {
         if let Some(color) = ctx.semantic_token_color {
             style = style.fg(color);
+            // Semantic tokens don't have a single static key; leave fg_theme_key as-is
+            // (the syntax highlight key is a reasonable approximation)
         }
     }
 
-    // Apply overlay styles
+    // Apply overlay styles — last overlay wins for each attribute
     for overlay in &overlays {
         match &overlay.face {
             OverlayFace::Underline {
@@ -745,17 +794,35 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                 style: _underline_style,
             } => {
                 style = style.add_modifier(Modifier::UNDERLINED).fg(*color);
+                if let Some(key) = overlay.theme_key {
+                    fg_theme_key = Some(key);
+                }
             }
             OverlayFace::Background { color } => {
                 style = style.bg(*color);
+                if let Some(key) = overlay.theme_key {
+                    bg_theme_key = Some(key);
+                }
             }
             OverlayFace::Foreground { color } => {
                 style = style.fg(*color);
+                if let Some(key) = overlay.theme_key {
+                    fg_theme_key = Some(key);
+                }
             }
             OverlayFace::Style {
                 style: overlay_style,
             } => {
                 style = style.patch(*overlay_style);
+                // Style overlays may set both fg and bg; use overlay's theme_key for bg
+                if let Some(key) = overlay.theme_key {
+                    if overlay_style.bg.is_some() {
+                        bg_theme_key = Some(key);
+                    }
+                    if overlay_style.fg.is_some() {
+                        fg_theme_key = Some(key);
+                    }
+                }
             }
             OverlayFace::ThemedStyle {
                 fallback_style,
@@ -774,6 +841,7 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                     }
                 }
                 style = style.patch(themed_style);
+                // ThemedStyle carries its own theme keys — no need for overlay.theme_key
             }
         }
     }
@@ -783,6 +851,9 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         style = Style::default()
             .fg(ctx.theme.editor_fg)
             .bg(ctx.theme.selection_bg);
+        fg_theme_key = Some("editor.fg");
+        bg_theme_key = Some("editor.selection_bg");
+        region = "Selection";
     }
 
     // Apply cursor styling - make all cursors visible with reversed colors
@@ -793,28 +864,27 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     if ctx.is_active {
         if ctx.is_cursor {
             if ctx.skip_primary_cursor_reverse {
-                // Hardware cursor provides the primary cursor visual.
-                // Skip REVERSED on primary to avoid double-inversion in
-                // terminal multiplexers (e.g. zellij) where the hardware
-                // cursor also inverts the cell.
-                // Secondary cursors still need REVERSED as their only indicator.
                 if is_secondary_cursor {
                     style = style.add_modifier(Modifier::REVERSED);
                 }
             } else {
-                // Software-cursor-only mode: apply REVERSED to all cursor
-                // positions (primary and secondary) since there is no
-                // hardware cursor to provide a visual indicator.
                 style = style.add_modifier(Modifier::REVERSED);
             }
+            region = "Cursor";
         }
     } else if ctx.is_cursor {
         style = style.fg(ctx.theme.editor_fg).bg(ctx.theme.inactive_cursor);
+        fg_theme_key = Some("editor.fg");
+        bg_theme_key = Some("editor.inactive_cursor");
+        region = "Inactive Cursor";
     }
 
     CharStyleOutput {
         style,
         is_secondary_cursor,
+        fg_theme_key,
+        bg_theme_key,
+        region,
     }
 }
 
@@ -877,6 +947,8 @@ impl SplitRenderer {
         show_horizontal_scrollbar: bool,
         diagnostics_inline_text: bool,
         show_tilde: bool,
+        cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
+        screen_width: u16,
     ) -> (
         Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
         HashMap<LeafId, crate::view::ui::tabs::TabLayout>, // tab layouts per split
@@ -1162,6 +1234,8 @@ impl SplitRenderer {
                     view_prefs.show_line_numbers,
                     diagnostics_inline_text,
                     show_tilde,
+                    cell_theme_map,
+                    screen_width,
                 );
 
                 drop(_render_buf_span);
@@ -1395,6 +1469,7 @@ impl SplitRenderer {
                 view_prefs.show_line_numbers,
                 diagnostics_inline_text,
                 show_tilde,
+                None, // No cell theme map for layout-only computation
             );
 
             view_line_mappings.insert(split_id, layout_output.view_line_mappings);
@@ -4342,7 +4417,38 @@ impl SplitRenderer {
             show_line_numbers,
             byte_offset_mode,
             show_tilde,
+            cell_theme_map,
+            screen_width,
         } = input;
+
+        // Fill the entire content area with default editor bg/gutter theme info
+        if screen_width > 0 {
+            let gutter_info = crate::app::types::CellThemeInfo {
+                fg_key: Some("editor.line_number_fg"),
+                bg_key: Some("editor.line_number_bg"),
+                region: "Line Numbers",
+                syntax_category: None,
+            };
+            let content_info = crate::app::types::CellThemeInfo {
+                fg_key: Some("editor.fg"),
+                bg_key: Some("editor.bg"),
+                region: "Editor Content",
+                syntax_category: None,
+            };
+            let sw = screen_width as usize;
+            for row in render_area.y..render_area.y + render_area.height {
+                for col in render_area.x..render_area.x + render_area.width {
+                    let idx = row as usize * sw + col as usize;
+                    if let Some(cell) = cell_theme_map.get_mut(idx) {
+                        *cell = if col < render_area.x + gutter_width as u16 {
+                            gutter_info.clone()
+                        } else {
+                            content_info.clone()
+                        };
+                    }
+                }
+            }
+        }
 
         let selection_ranges = &selection.ranges;
         let block_selections = &selection.block_rects;
@@ -4670,17 +4776,22 @@ impl SplitRenderer {
                         .and_then(|s| s.as_ref());
 
                     // Resolve highlight/semantic colors via cursor-based O(1) lookup
-                    let (highlight_color, semantic_token_color) = match byte_pos {
-                        Some(bp) => (
-                            span_color_at(highlight_spans, &mut hl_cursor, bp),
-                            span_color_at(semantic_token_spans, &mut sem_cursor, bp),
-                        ),
-                        None => (None, None),
+                    let (highlight_color, highlight_theme_key, highlight_display_name) =
+                        match byte_pos {
+                            Some(bp) => span_info_at(highlight_spans, &mut hl_cursor, bp),
+                            None => (None, None, None),
+                        };
+                    let semantic_token_color = match byte_pos {
+                        Some(bp) => span_color_at(semantic_token_spans, &mut sem_cursor, bp),
+                        None => None,
                     };
 
                     let CharStyleOutput {
                         mut style,
                         is_secondary_cursor,
+                        fg_theme_key,
+                        bg_theme_key,
+                        region: cell_region,
                     } = compute_char_style(&CharStyleContext {
                         byte_pos,
                         token_style,
@@ -4689,12 +4800,31 @@ impl SplitRenderer {
                         is_selected,
                         theme,
                         highlight_color,
+                        highlight_theme_key,
                         semantic_token_color,
                         viewport_overlays,
                         primary_cursor_position,
                         is_active,
                         skip_primary_cursor_reverse: session_mode,
                     });
+
+                    // Record cell theme info for the theme inspector popup
+                    if screen_width > 0 {
+                        let screen_col = render_area.x
+                            + gutter_width as u16
+                            + col_offset.saturating_sub(left_col) as u16;
+                        let screen_row = render_area.y + lines.len() as u16;
+                        let idx =
+                            screen_row as usize * screen_width as usize + screen_col as usize;
+                        if let Some(cell) = cell_theme_map.get_mut(idx) {
+                            *cell = crate::app::types::CellThemeInfo {
+                                fg_key: fg_theme_key,
+                                bg_key: bg_theme_key,
+                                region: cell_region,
+                                syntax_category: highlight_display_name,
+                            };
+                        }
+                    }
 
                     // Determine display character (tabs already expanded in ViewLineIterator)
                     // Show tab indicator (→) or space indicator (·) based on granular
@@ -5482,6 +5612,7 @@ impl SplitRenderer {
         show_line_numbers: bool,
         diagnostics_inline_text: bool,
         show_tilde: bool,
+        cell_theme_map: Option<(&mut Vec<crate::app::types::CellThemeInfo>, u16)>,
     ) -> BufferLayoutOutput {
         let _span = tracing::trace_span!("compute_buffer_layout").entered();
 
@@ -5682,6 +5813,13 @@ impl SplitRenderer {
                 (&view_data.lines[..], view_anchor)
             };
 
+        // Use provided cell theme map or a temporary dummy
+        let mut dummy_map = Vec::new();
+        let (map_ref, sw) = match cell_theme_map {
+            Some((map, w)) => (map, w),
+            None => (&mut dummy_map, 0u16),
+        };
+
         let render_output = Self::render_view_lines(LineRenderInput {
             state,
             theme,
@@ -5703,6 +5841,8 @@ impl SplitRenderer {
             show_line_numbers,
             byte_offset_mode,
             show_tilde,
+            cell_theme_map: map_ref,
+            screen_width: sw,
         });
 
         let view_line_mappings = render_output.view_line_mappings.clone();
@@ -5899,6 +6039,8 @@ impl SplitRenderer {
         show_line_numbers: bool,
         diagnostics_inline_text: bool,
         show_tilde: bool,
+        cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
+        screen_width: u16,
     ) -> Vec<ViewLineMapping> {
         let layout_output = Self::compute_buffer_layout(
             state,
@@ -5921,6 +6063,7 @@ impl SplitRenderer {
             show_line_numbers,
             diagnostics_inline_text,
             show_tilde,
+            Some((cell_theme_map, screen_width)),
         );
 
         let view_line_mappings = layout_output.view_line_mappings.clone();
@@ -6299,6 +6442,7 @@ mod tests {
             false,             // inline diagnostics off for test
         );
 
+        let mut dummy_theme_map = Vec::new();
         let output = SplitRenderer::render_view_lines(LineRenderInput {
             state: &state,
             theme: &theme,
@@ -6320,6 +6464,8 @@ mod tests {
             show_line_numbers: true, // Tests show line numbers
             byte_offset_mode: false, // Tests use exact line numbers
             show_tilde: true,
+            cell_theme_map: &mut dummy_theme_map,
+            screen_width: 0,
         });
 
         (

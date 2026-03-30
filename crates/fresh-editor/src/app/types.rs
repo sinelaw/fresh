@@ -583,6 +583,21 @@ impl TabContextMenu {
     }
 }
 
+/// Lightweight per-cell theme key provenance recorded during rendering.
+/// Stored in `CachedLayout::cell_theme_map` so the theme inspector popup
+/// can look up the exact keys used for any screen position.
+#[derive(Debug, Clone, Default)]
+pub struct CellThemeInfo {
+    /// Foreground theme key (e.g. "syntax.keyword", "editor.fg")
+    pub fg_key: Option<&'static str>,
+    /// Background theme key (e.g. "editor.bg", "diagnostic.warning_bg")
+    pub bg_key: Option<&'static str>,
+    /// Short region label (e.g. "Line Numbers", "Editor Content")
+    pub region: &'static str,
+    /// Dynamic region suffix (e.g. syntax category display name appended to "Syntax: ")
+    pub syntax_category: Option<&'static str>,
+}
+
 /// Information about which theme key(s) style a specific screen position.
 /// Used by the Ctrl+Right-Click theme inspector popup.
 #[derive(Debug, Clone)]
@@ -867,9 +882,25 @@ pub(crate) struct CachedLayout {
     /// Last frame dimensions — used by recompute_layout for macro replay
     pub last_frame_width: u16,
     pub last_frame_height: u16,
+    /// Per-cell theme key provenance recorded during rendering.
+    /// Flat vec indexed as `row * width + col` where `width = last_frame_width`.
+    pub cell_theme_map: Vec<CellThemeInfo>,
 }
 
 impl CachedLayout {
+    /// Reset the cell theme map for a new frame
+    pub fn reset_cell_theme_map(&mut self) {
+        let total = self.last_frame_width as usize * self.last_frame_height as usize;
+        self.cell_theme_map.clear();
+        self.cell_theme_map.resize(total, CellThemeInfo::default());
+    }
+
+    /// Look up the theme info for a screen position
+    pub fn cell_theme_at(&self, col: u16, row: u16) -> Option<&CellThemeInfo> {
+        let idx = row as usize * self.last_frame_width as usize + col as usize;
+        self.cell_theme_map.get(idx)
+    }
+
     /// Find which visual row contains the given byte position for a split
     pub fn find_visual_row(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
         let mappings = self.view_line_mappings.get(&split_id)?;

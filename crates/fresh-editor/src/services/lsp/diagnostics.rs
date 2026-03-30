@@ -140,7 +140,7 @@ pub fn diagnostic_to_overlay(
     diagnostic: &Diagnostic,
     buffer: &Buffer,
     theme: &crate::view::theme::Theme,
-) -> Option<(Range<usize>, OverlayFace, i32)> {
+) -> Option<(Range<usize>, OverlayFace, i32, &'static str)> {
     // Convert LSP positions (line/character) to byte offsets
     // LSP uses 0-indexed lines and characters (UTF-16 code units)
     let start_line = diagnostic.range.start.line as usize;
@@ -168,35 +168,39 @@ pub fn diagnostic_to_overlay(
     );
 
     // Determine overlay face based on diagnostic severity using theme colors
-    let (face, priority) = match diagnostic.severity {
+    let (face, priority, theme_key) = match diagnostic.severity {
         Some(DiagnosticSeverity::ERROR) => (
             OverlayFace::Background {
                 color: theme.diagnostic_error_bg,
             },
             100, // Highest priority
+            "diagnostic.error_bg",
         ),
         Some(DiagnosticSeverity::WARNING) => (
             OverlayFace::Background {
                 color: theme.diagnostic_warning_bg,
             },
             50, // Medium priority
+            "diagnostic.warning_bg",
         ),
         Some(DiagnosticSeverity::INFORMATION) => (
             OverlayFace::Background {
                 color: theme.diagnostic_info_bg,
             },
             30, // Lower priority
+            "diagnostic.info_bg",
         ),
         Some(DiagnosticSeverity::HINT) | None => (
             OverlayFace::Background {
                 color: theme.diagnostic_hint_bg,
             },
             10, // Lowest priority
+            "diagnostic.hint_bg",
         ),
         _ => return None, // Unknown severity
     };
 
-    Some((start_byte..end_byte, face, priority))
+    Some((start_byte..end_byte, face, priority, theme_key))
 }
 
 /// Apply LSP diagnostics to editor state as overlays
@@ -217,14 +221,15 @@ pub fn apply_diagnostics_to_state(
     // Add overlays for all current diagnostics
     let mut added_count = 0;
     for diagnostic in diagnostics {
-        if let Some((range, face, priority)) =
+        if let Some((range, face, priority, theme_key)) =
             diagnostic_to_overlay(diagnostic, &state.buffer, theme)
         {
             let message = diagnostic.message.clone();
 
             let overlay = Overlay::with_namespace(&mut state.marker_list, range, face, ns.clone())
                 .with_priority_value(priority)
-                .with_message(message);
+                .with_message(message)
+                .with_theme_key(theme_key);
 
             state.overlays.add(overlay);
             added_count += 1;
@@ -295,9 +300,10 @@ mod tests {
         let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
         assert!(result.is_some());
 
-        let (range, face, priority) = result.unwrap();
+        let (range, face, priority, theme_key) = result.unwrap();
         assert_eq!(range, 0..5);
         assert_eq!(priority, 100); // Error has highest priority
+        assert_eq!(theme_key, "diagnostic.error_bg");
 
         match face {
             OverlayFace::Background { color } => {
@@ -336,9 +342,10 @@ mod tests {
         let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
         assert!(result.is_some());
 
-        let (range, face, priority) = result.unwrap();
+        let (range, face, priority, theme_key) = result.unwrap();
         assert_eq!(range, 6..11);
         assert_eq!(priority, 50); // Warning has medium priority
+        assert_eq!(theme_key, "diagnostic.warning_bg");
 
         match face {
             OverlayFace::Background { color } => {
@@ -377,7 +384,7 @@ mod tests {
         let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
         assert!(result.is_some());
 
-        let (range, _, _) = result.unwrap();
+        let (range, _, _, _) = result.unwrap();
         // "line1\n" is 6 bytes, "li" is 2 bytes
         // start: line 0, char 3 = byte 3 ("e1")
         // end: line 1, char 2 = byte 8 ("ne")

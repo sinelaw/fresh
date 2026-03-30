@@ -155,6 +155,11 @@ pub struct Overlay {
     /// Optional URL for OSC 8 terminal hyperlinks.
     /// When set, the rendered text in this overlay becomes a clickable hyperlink.
     pub url: Option<String>,
+
+    /// Theme key that produced this overlay's primary color (e.g. "diagnostic.warning_bg").
+    /// Recorded at creation time so the theme inspector can show the exact key
+    /// without reverse-mapping colors.
+    pub theme_key: Option<&'static str>,
 }
 
 impl Overlay {
@@ -180,6 +185,7 @@ impl Overlay {
             message: None,
             extend_to_line_end: false,
             url: None,
+            theme_key: None,
         }
     }
 
@@ -228,6 +234,12 @@ impl Overlay {
     /// Set whether to extend the overlay to the end of the visual line
     pub fn with_extend_to_line_end(mut self, extend: bool) -> Self {
         self.extend_to_line_end = extend;
+        self
+    }
+
+    /// Set the theme key that produced this overlay's color
+    pub fn with_theme_key(mut self, key: &'static str) -> Self {
+        self.theme_key = Some(key);
         self
     }
 
@@ -576,26 +588,30 @@ impl Overlay {
 
     /// Create a selection highlight overlay
     pub fn selection(marker_list: &mut MarkerList, range: Range<usize>) -> Self {
-        Self::with_priority(
+        let mut overlay = Self::with_priority(
             marker_list,
             range,
             OverlayFace::Background {
                 color: Color::Rgb(38, 79, 120), // VSCode-like selection color
             },
             -10, // Very low priority so it's under other overlays
-        )
+        );
+        overlay.theme_key = Some("editor.selection_bg");
+        overlay
     }
 
     /// Create a search result highlight overlay
     pub fn search_match(marker_list: &mut MarkerList, range: Range<usize>) -> Self {
-        Self::with_priority(
+        let mut overlay = Self::with_priority(
             marker_list,
             range,
             OverlayFace::Background {
                 color: Color::Rgb(72, 72, 0), // Yellow-ish highlight
             },
             -5, // Low priority
-        )
+        );
+        overlay.theme_key = Some("search.match_bg");
+        overlay
     }
 }
 

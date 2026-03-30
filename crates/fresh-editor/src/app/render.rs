@@ -17,6 +17,9 @@ impl Editor {
         self.cached_layout.last_frame_width = size.width;
         self.cached_layout.last_frame_height = size.height;
 
+        // Reset per-cell theme key map for this frame
+        self.cached_layout.reset_cell_theme_map();
+
         // For scroll sync groups, we need to update the active split's viewport position BEFORE
         // calling sync_scroll_groups, so that the sync reads the correct position.
         // Otherwise, cursor movements like 'G' (go to end) won't sync properly because
@@ -459,6 +462,8 @@ impl Editor {
             self.config.editor.show_horizontal_scrollbar,
             self.config.editor.diagnostics_inline_text,
             self.config.editor.show_tilde,
+            &mut self.cached_layout.cell_theme_map,
+            size.width,
         );
 
         drop(_content_span);
@@ -975,6 +980,9 @@ impl Editor {
         if let Some(ref menu) = self.tab_context_menu {
             self.render_tab_context_menu(frame, menu);
         }
+
+        // Record non-editor region theme keys for the theme inspector
+        self.record_non_editor_theme_regions();
 
         // Render theme info popup (Ctrl+Right-Click)
         self.render_theme_info_popup(frame);

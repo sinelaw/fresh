@@ -160,7 +160,8 @@ impl ReferenceHighlightOverlay {
         for span in spans {
             let face = OverlayFace::Background { color: span.color };
             let overlay = Overlay::with_namespace(marker_list, span.range, face, ns.clone())
-                .with_priority_value(5); // Lower priority than diagnostics
+                .with_priority_value(5) // Lower priority than diagnostics
+                .with_theme_key("ui.semantic_highlight_bg");
 
             overlays.add(overlay);
         }

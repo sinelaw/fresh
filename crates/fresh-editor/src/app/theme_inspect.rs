@@ -83,266 +83,144 @@ impl Editor {
     }
 
     /// Resolve which theme key(s) style the character at screen position (col, row).
+    /// Looks up the per-cell theme key map populated during rendering.
     fn resolve_theme_key_at(&self, col: u16, row: u16) -> Option<ThemeKeyInfo> {
+        let cell = self.cached_layout.cell_theme_at(col, row)?;
         let theme = &self.theme;
 
-        // 1. Check status bar area
-        if let Some((bar_row, bar_x, bar_width)) = self.cached_layout.status_bar_area {
-            if row == bar_row && col >= bar_x && col < bar_x + bar_width {
-                return Some(ThemeKeyInfo {
-                    fg_key: Some("ui.status_bar_fg".into()),
-                    bg_key: Some("ui.status_bar_bg".into()),
-                    region: "Status Bar".into(),
-                    fg_color: Some(theme.status_bar_fg),
-                    bg_color: Some(theme.status_bar_bg),
-                    syntax_category: None,
-                });
-            }
-        }
+        // Resolve actual colors from theme keys
+        let fg_color = cell
+            .fg_key
+            .and_then(|k| theme.resolve_theme_key(k));
+        let bg_color = cell
+            .bg_key
+            .and_then(|k| theme.resolve_theme_key(k));
 
-        // 2. Check menu bar
-        if let Some(ref menu_layout) = self.cached_layout.menu_layout {
-            if point_in_rect(col, row, menu_layout.bar_area) {
-                return Some(ThemeKeyInfo {
-                    fg_key: Some("ui.menu_fg".into()),
-                    bg_key: Some("ui.menu_bg".into()),
-                    region: "Menu Bar".into(),
-                    fg_color: Some(theme.menu_fg),
-                    bg_color: Some(theme.menu_bg),
-                    syntax_category: None,
-                });
-            }
-        }
+        // Build region string, incorporating syntax category if present
+        let region = if let Some(cat) = cell.syntax_category {
+            format!("Syntax: {}", cat)
+        } else {
+            cell.region.to_string()
+        };
 
-        // 3. Check tab bars
-        for tab_layout in self.cached_layout.tab_layouts.values() {
-            use crate::view::ui::tabs::TabHit;
-            if let Some(hit) = tab_layout.hit_test(col, row) {
-                let is_active = match &hit {
-                    TabHit::TabName(buf_id) | TabHit::CloseButton(buf_id) => {
-                        *buf_id == self.active_buffer()
-                    }
-                    _ => false,
-                };
-                let (fg_key, bg_key, fg_color, bg_color) = if is_active {
-                    (
-                        "ui.tab_active_fg",
-                        "ui.tab_active_bg",
-                        theme.tab_active_fg,
-                        theme.tab_active_bg,
-                    )
-                } else {
-                    (
-                        "ui.tab_inactive_fg",
-                        "ui.tab_inactive_bg",
-                        theme.tab_inactive_fg,
-                        theme.tab_inactive_bg,
-                    )
-                };
-                return Some(ThemeKeyInfo {
-                    fg_key: Some(fg_key.into()),
-                    bg_key: Some(bg_key.into()),
-                    region: if is_active {
-                        "Active Tab".into()
-                    } else {
-                        "Inactive Tab".into()
-                    },
-                    fg_color: Some(fg_color),
-                    bg_color: Some(bg_color),
-                    syntax_category: None,
-                });
-            }
-        }
-
-        // 4. Check split separators
-        for &(_, _, sep_x, sep_y, sep_len) in &self.cached_layout.separator_areas {
-            if col == sep_x && row >= sep_y && row < sep_y + sep_len {
-                return Some(ThemeKeyInfo {
-                    fg_key: Some("ui.split_separator_fg".into()),
-                    bg_key: None,
-                    region: "Split Separator".into(),
-                    fg_color: Some(theme.split_separator_fg),
-                    bg_color: None,
-                    syntax_category: None,
-                });
-            }
-        }
-
-        // 5. Check file explorer area
-        if let Some(fe_area) = self.cached_layout.file_explorer_area {
-            if point_in_rect(col, row, fe_area) {
-                return Some(ThemeKeyInfo {
-                    fg_key: Some("editor.fg".into()),
-                    bg_key: Some("editor.bg".into()),
-                    region: "File Explorer".into(),
-                    fg_color: Some(theme.editor_fg),
-                    bg_color: Some(theme.editor_bg),
-                    syntax_category: None,
-                });
-            }
-        }
-
-        // 6. Check editor content areas (main case)
-        for (split_id, buffer_id, content_rect, ..) in &self.cached_layout.split_areas {
-            if !point_in_rect(col, row, *content_rect) {
-                continue;
-            }
-
-            // Determine gutter width from buffer state
-            let gutter_width = self
-                .buffers
-                .get(buffer_id)
-                .map(|s| s.margins.left_total_width() as u16)
-                .unwrap_or(0);
-
-            let compose_width = self
-                .split_view_states
-                .get(split_id)
-                .and_then(|vs| vs.compose_width);
-
-            let adjusted_rect = Self::adjust_content_rect_for_compose(*content_rect, compose_width);
-            let content_col = col.saturating_sub(adjusted_rect.x);
-
-            // Line number gutter
-            if content_col < gutter_width {
-                return Some(ThemeKeyInfo {
-                    fg_key: Some("editor.line_number_fg".into()),
-                    bg_key: Some("editor.line_number_bg".into()),
-                    region: "Line Numbers".into(),
-                    fg_color: Some(theme.line_number_fg),
-                    bg_color: Some(theme.line_number_bg),
-                    syntax_category: None,
-                });
-            }
-
-            // Content area: resolve byte position
-            let cached_mappings = self.cached_layout.view_line_mappings.get(split_id).cloned();
-            let fallback = self
-                .split_view_states
-                .get(split_id)
-                .map(|vs| vs.viewport.top_byte)
-                .unwrap_or(0);
-
-            if let Some(byte_pos) = Self::screen_to_buffer_position(
-                col,
-                row,
-                *content_rect,
-                gutter_width,
-                &cached_mappings,
-                fallback,
-                false,
-                compose_width,
-            ) {
-                // Check for overlay background at this position (e.g. diagnostic highlights)
-                let (overlay_bg_key, overlay_bg_color) = self
-                    .buffers
-                    .get(buffer_id)
-                    .and_then(|state| {
-                        // Get the highest-priority background overlay at this position
-                        let overlays = state.overlays.at_position(byte_pos, &state.marker_list);
-                        overlays
-                            .iter()
-                            .rev() // highest priority last in sorted order
-                            .find_map(|o| match &o.face {
-                                crate::view::overlay::OverlayFace::Background { color } => {
-                                    let key = Self::diagnostic_bg_theme_key(*color, theme);
-                                    Some((key, *color))
-                                }
-                                _ => None,
-                            })
-                    })
-                    .unzip();
-
-                let bg_key = overlay_bg_key
-                    .flatten()
-                    .unwrap_or_else(|| "editor.bg".into());
-                let bg_color = overlay_bg_color.unwrap_or(theme.editor_bg);
-
-                // Look up highlight category at this byte position
-                if let Some(state) = self.buffers.get(buffer_id) {
-                    let category = state.highlighter.category_at_position(byte_pos);
-                    if let Some(cat) = category {
-                        let key = cat.theme_key();
-                        let color = crate::primitives::highlighter::highlight_color(cat, theme);
-                        return Some(ThemeKeyInfo {
-                            fg_key: Some(key.into()),
-                            bg_key: Some(bg_key),
-                            region: format!("Syntax: {}", cat.display_name()),
-                            fg_color: Some(color),
-                            bg_color: Some(bg_color),
-                            syntax_category: Some(cat.display_name().into()),
-                        });
-                    }
-                }
-
-                // No highlight span → plain editor text
-                return Some(ThemeKeyInfo {
-                    fg_key: Some("editor.fg".into()),
-                    bg_key: Some(bg_key),
-                    region: "Editor Content".into(),
-                    fg_color: Some(theme.editor_fg),
-                    bg_color: Some(bg_color),
-                    syntax_category: None,
-                });
-            }
-
-            // Past end of line / empty area
-            return Some(ThemeKeyInfo {
-                fg_key: None,
-                bg_key: Some("editor.bg".into()),
-                region: "Editor Background".into(),
-                fg_color: None,
-                bg_color: Some(theme.editor_bg),
-                syntax_category: None,
-            });
-        }
-
-        // 7. Check scrollbar areas
-        for (_, _, _, scrollbar_rect, thumb_start, thumb_end) in &self.cached_layout.split_areas {
-            if point_in_rect(col, row, *scrollbar_rect) {
-                let rel_row = (row - scrollbar_rect.y) as usize;
-                let is_thumb = rel_row >= *thumb_start && rel_row < *thumb_end;
-                return Some(ThemeKeyInfo {
-                    fg_key: Some(if is_thumb {
-                        "ui.scrollbar_thumb_fg".into()
-                    } else {
-                        "ui.scrollbar_track_fg".into()
-                    }),
-                    bg_key: None,
-                    region: if is_thumb {
-                        "Scrollbar Thumb".into()
-                    } else {
-                        "Scrollbar Track".into()
-                    },
-                    fg_color: Some(if is_thumb {
-                        theme.scrollbar_thumb_fg
-                    } else {
-                        theme.scrollbar_track_fg
-                    }),
-                    bg_color: None,
-                    syntax_category: None,
-                });
-            }
-        }
-
-        None
+        Some(ThemeKeyInfo {
+            fg_key: cell.fg_key.map(String::from),
+            bg_key: cell.bg_key.map(String::from),
+            region,
+            fg_color,
+            bg_color,
+            syntax_category: cell.syntax_category.map(String::from),
+        })
     }
 
-    /// Map an overlay background color back to the corresponding diagnostic theme key.
-    fn diagnostic_bg_theme_key(
-        color: Color,
-        theme: &crate::view::theme::Theme,
-    ) -> Option<String> {
-        if color == theme.diagnostic_error_bg {
-            Some("diagnostic.error_bg".into())
-        } else if color == theme.diagnostic_warning_bg {
-            Some("diagnostic.warning_bg".into())
-        } else if color == theme.diagnostic_info_bg {
-            Some("diagnostic.info_bg".into())
-        } else if color == theme.diagnostic_hint_bg {
-            Some("diagnostic.hint_bg".into())
-        } else {
-            None
+    /// Record theme key info for non-editor UI regions (status bar, tabs, menu, file explorer, scrollbar).
+    /// Called after all rendering is complete, using cached layout areas.
+    pub(super) fn record_non_editor_theme_regions(&mut self) {
+        use super::types::CellThemeInfo;
+
+        let sw = self.cached_layout.last_frame_width as usize;
+
+        // Status bar
+        if let Some((row, x, width)) = self.cached_layout.status_bar_area {
+            let info = CellThemeInfo {
+                fg_key: Some("ui.status_bar_fg"),
+                bg_key: Some("ui.status_bar_bg"),
+                region: "Status Bar",
+                syntax_category: None,
+            };
+            for col in x..x + width {
+                let idx = row as usize * sw + col as usize;
+                if let Some(cell) = self.cached_layout.cell_theme_map.get_mut(idx) {
+                    *cell = info.clone();
+                }
+            }
+        }
+
+        // Menu bar
+        if let Some(bar_area) = self.cached_layout.menu_layout.as_ref().map(|m| m.bar_area) {
+            let info = CellThemeInfo {
+                fg_key: Some("ui.menu_fg"),
+                bg_key: Some("ui.menu_bg"),
+                region: "Menu Bar",
+                syntax_category: None,
+            };
+            for row in bar_area.y..bar_area.y + bar_area.height {
+                for col in bar_area.x..bar_area.x + bar_area.width {
+                    let idx = row as usize * sw + col as usize;
+                    if let Some(cell) = self.cached_layout.cell_theme_map.get_mut(idx) {
+                        *cell = info.clone();
+                    }
+                }
+            }
+        }
+
+        // File explorer
+        if let Some(area) = self.cached_layout.file_explorer_area {
+            let info = CellThemeInfo {
+                fg_key: Some("editor.fg"),
+                bg_key: Some("editor.bg"),
+                region: "File Explorer",
+                syntax_category: None,
+            };
+            for row in area.y..area.y + area.height {
+                for col in area.x..area.x + area.width {
+                    let idx = row as usize * sw + col as usize;
+                    if let Some(cell) = self.cached_layout.cell_theme_map.get_mut(idx) {
+                        *cell = info.clone();
+                    }
+                }
+            }
+        }
+
+        // Scrollbars
+        let split_areas = self.cached_layout.split_areas.clone();
+        for (_, _, _, scrollbar_rect, thumb_start, thumb_end) in &split_areas {
+            for row in scrollbar_rect.y..scrollbar_rect.y + scrollbar_rect.height {
+                let rel_row = (row - scrollbar_rect.y) as usize;
+                let is_thumb = rel_row >= *thumb_start && rel_row < *thumb_end;
+                let info = CellThemeInfo {
+                    fg_key: Some(if is_thumb {
+                        "ui.scrollbar_thumb_fg"
+                    } else {
+                        "ui.scrollbar_track_fg"
+                    }),
+                    bg_key: Some("editor.bg"),
+                    region: if is_thumb {
+                        "Scrollbar Thumb"
+                    } else {
+                        "Scrollbar Track"
+                    },
+                    syntax_category: None,
+                };
+                for col in scrollbar_rect.x..scrollbar_rect.x + scrollbar_rect.width {
+                    let idx = row as usize * sw + col as usize;
+                    if let Some(cell) = self.cached_layout.cell_theme_map.get_mut(idx) {
+                        *cell = info.clone();
+                    }
+                }
+            }
+        }
+
+        // Tab bars — record from tab layouts
+        let tab_layouts = self.cached_layout.tab_layouts.clone();
+        for (_, tab_layout) in &tab_layouts {
+            {
+                let area = tab_layout.bar_area;
+                let info = CellThemeInfo {
+                    fg_key: Some("ui.tab_inactive_fg"),
+                    bg_key: Some("ui.tab_separator_bg"),
+                    region: "Tab Bar",
+                    syntax_category: None,
+                };
+                for row in area.y..area.y + area.height {
+                    for col in area.x..area.x + area.width {
+                        let idx = row as usize * sw + col as usize;
+                        if let Some(cell) = self.cached_layout.cell_theme_map.get_mut(idx) {
+                            *cell = info.clone();
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -483,10 +361,6 @@ fn compute_popup_rect(
         position.1
     };
     Rect::new(x, y, width.min(screen_w), height.min(screen_h))
-}
-
-fn point_in_rect(col: u16, row: u16, rect: Rect) -> bool {
-    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
 }
 
 fn format_color_rgb(color: Color) -> String {

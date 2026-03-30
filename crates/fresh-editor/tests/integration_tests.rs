@@ -672,11 +672,12 @@ fn test_lsp_diagnostic_to_overlay() {
     let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
     assert!(result.is_some());
 
-    let (range, face, priority) = result.unwrap();
+    let (range, face, priority, theme_key) = result.unwrap();
 
     // Check range: "let x = 5;\n" - position 4 is 'x'
     assert_eq!(range.start, 4);
     assert_eq!(range.end, 5);
+    assert_eq!(theme_key, "diagnostic.error_bg");
 
     // Check priority (error should be highest)
     assert_eq!(priority, 100);
