@@ -116,6 +116,59 @@ fn test_inline_diagnostic_truncation() {
     harness.assert_screen_contains("this is a very lon…");
 }
 
+/// When the cursor is on a line with an inline diagnostic, the current-line
+/// highlight should extend across the full width of the line — including the
+/// padding gap and the diagnostic text itself — not stop at the end of the
+/// source code.
+#[test]
+fn test_current_line_highlight_extends_through_inline_diagnostic() {
+    let mut config = fresh::config::Config::default();
+    config.editor.diagnostics_inline_text = true;
+    config.editor.highlight_current_line = true;
+    config.editor.line_numbers = false;
+
+    let mut harness = EditorTestHarness::with_config(80, 10, config).unwrap();
+    harness.new_buffer().unwrap();
+    // Type short text so there's plenty of room for the diagnostic
+    harness.type_text("let x = bad;").unwrap();
+    harness.render().unwrap();
+
+    // Add error diagnostic
+    harness
+        .apply_event(diagnostic_overlay(8..11, 100, "type error"))
+        .unwrap();
+    harness.render().unwrap();
+
+    // Cursor is on line 0 (the only line), so current_line_bg should apply.
+    // Default theme is high-contrast, where current_line_bg = (20, 20, 20).
+    let current_line_bg = Color::Rgb(20, 20, 20);
+
+    // Find the content row that contains "let x = bad;"
+    let (code_x, content_row) = harness
+        .find_text_on_screen("let x")
+        .expect("should find code text on screen");
+
+    // Check a cell in the padding area between code end and diagnostic text.
+    // Code "let x = bad;" is 13 chars wide, so col code_x+20 is in the padding.
+    let pad_style = harness.get_cell_style(code_x + 20, content_row).unwrap();
+    assert_eq!(
+        pad_style.bg,
+        Some(current_line_bg),
+        "Padding between code and inline diagnostic should have current_line_bg on cursor line"
+    );
+
+    // Also check that the diagnostic text itself has the current_line_bg.
+    let (diag_x, diag_row) = harness
+        .find_text_on_screen("type error")
+        .expect("should find diagnostic text on screen");
+    let diag_style = harness.get_cell_style(diag_x, diag_row).unwrap();
+    assert_eq!(
+        diag_style.bg,
+        Some(current_line_bg),
+        "Inline diagnostic text should have current_line_bg on cursor line"
+    );
+}
+
 /// Reproduces the bug where a multi-line diagnostic highlight overlay disappears
 /// entirely when part of the highlighted region is scrolled out of the viewport.
 /// The overlay should still be visible on the lines that remain in view.

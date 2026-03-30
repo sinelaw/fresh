@@ -5248,22 +5248,36 @@ impl SplitRenderer {
 
                         // Right-align: fill gap between code and diagnostic text
                         let padding = available.saturating_sub(display_width);
+                        let cursor_line_active =
+                            is_on_cursor_line && highlight_current_line && is_active;
                         if padding > 0 {
+                            let pad_style = if cursor_line_active {
+                                Style::default().bg(theme.current_line_bg)
+                            } else {
+                                Style::default()
+                            };
                             push_span_with_map(
                                 &mut line_spans,
                                 &mut line_view_map,
                                 " ".repeat(padding),
-                                Style::default(),
+                                pad_style,
                                 None,
                             );
                             visible_char_count += padding;
                         }
 
+                        // Apply current line background to diagnostic text when on cursor line
+                        let effective_diag_style = if cursor_line_active && diag_style.bg.is_none()
+                        {
+                            diag_style.bg(theme.current_line_bg)
+                        } else {
+                            *diag_style
+                        };
                         push_span_with_map(
                             &mut line_spans,
                             &mut line_view_map,
                             display,
-                            *diag_style,
+                            effective_diag_style,
                             None,
                         );
                         visible_char_count += display_width;
