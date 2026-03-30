@@ -233,6 +233,31 @@ impl Editor {
                 false,
                 compose_width,
             ) {
+                // Check for overlay background at this position (e.g. diagnostic highlights)
+                let (overlay_bg_key, overlay_bg_color) = self
+                    .buffers
+                    .get(buffer_id)
+                    .and_then(|state| {
+                        // Get the highest-priority background overlay at this position
+                        let overlays = state.overlays.at_position(byte_pos, &state.marker_list);
+                        overlays
+                            .iter()
+                            .rev() // highest priority last in sorted order
+                            .find_map(|o| match &o.face {
+                                crate::view::overlay::OverlayFace::Background { color } => {
+                                    let key = Self::diagnostic_bg_theme_key(*color, theme);
+                                    Some((key, *color))
+                                }
+                                _ => None,
+                            })
+                    })
+                    .unzip();
+
+                let bg_key = overlay_bg_key
+                    .flatten()
+                    .unwrap_or_else(|| "editor.bg".into());
+                let bg_color = overlay_bg_color.unwrap_or(theme.editor_bg);
+
                 // Look up highlight category at this byte position
                 if let Some(state) = self.buffers.get(buffer_id) {
                     let category = state.highlighter.category_at_position(byte_pos);
@@ -241,10 +266,10 @@ impl Editor {
                         let color = crate::primitives::highlighter::highlight_color(cat, theme);
                         return Some(ThemeKeyInfo {
                             fg_key: Some(key.into()),
-                            bg_key: Some("editor.bg".into()),
+                            bg_key: Some(bg_key),
                             region: format!("Syntax: {}", cat.display_name()),
                             fg_color: Some(color),
-                            bg_color: Some(theme.editor_bg),
+                            bg_color: Some(bg_color),
                             syntax_category: Some(cat.display_name().into()),
                         });
                     }
@@ -253,10 +278,10 @@ impl Editor {
                 // No highlight span → plain editor text
                 return Some(ThemeKeyInfo {
                     fg_key: Some("editor.fg".into()),
-                    bg_key: Some("editor.bg".into()),
+                    bg_key: Some(bg_key),
                     region: "Editor Content".into(),
                     fg_color: Some(theme.editor_fg),
-                    bg_color: Some(theme.editor_bg),
+                    bg_color: Some(bg_color),
                     syntax_category: None,
                 });
             }
@@ -301,6 +326,24 @@ impl Editor {
         }
 
         None
+    }
+
+    /// Map an overlay background color back to the corresponding diagnostic theme key.
+    fn diagnostic_bg_theme_key(
+        color: Color,
+        theme: &crate::view::theme::Theme,
+    ) -> Option<String> {
+        if color == theme.diagnostic_error_bg {
+            Some("diagnostic.error_bg".into())
+        } else if color == theme.diagnostic_warning_bg {
+            Some("diagnostic.warning_bg".into())
+        } else if color == theme.diagnostic_info_bg {
+            Some("diagnostic.info_bg".into())
+        } else if color == theme.diagnostic_hint_bg {
+            Some("diagnostic.hint_bg".into())
+        } else {
+            None
+        }
     }
 
     /// Render the theme info popup.
