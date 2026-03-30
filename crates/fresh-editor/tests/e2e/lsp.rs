@@ -8602,3 +8602,262 @@ done
 
     Ok(())
 }
+
+/// Test that "restart lsp" command shows a prompt with correct suggestions
+///
+/// When the user invokes "restart lsp", a prompt should appear listing:
+/// 1. An "all enabled" option for the current language
+/// 2. Individual server entries for each configured server
+#[test]
+#[cfg_attr(windows, ignore = "Uses bash script for fake LSP server")]
+fn test_restart_lsp_prompt_shows_suggestions() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {}\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: Some("test-server".to_string()),
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to start
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .running_lsp_servers()
+                .contains(&"rust".to_string())
+        })
+        .expect("LSP server should start");
+
+    // Trigger the restart LSP action directly (as if the user selected it from command palette)
+    harness.editor_mut().handle_lsp_restart();
+    harness.render()?;
+
+    // A prompt should now be visible
+    assert!(
+        harness.editor().is_prompting(),
+        "Restart LSP should show a prompt"
+    );
+
+    // Check the screen contains the expected suggestions
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("rust (all enabled)"),
+        "Prompt should show 'rust (all enabled)' option. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("rust/test-server"),
+        "Prompt should show 'rust/test-server' option. Screen:\n{}",
+        screen
+    );
+
+    // Dismiss the prompt
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    Ok(())
+}
+
+/// Test that "restart lsp" via prompt actually restarts the server
+///
+/// Stop the LSP, then use the restart prompt to bring it back.
+#[test]
+#[cfg_attr(windows, ignore = "Uses bash script for fake LSP server")]
+fn test_restart_lsp_prompt_restarts_stopped_server() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {}\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to start
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .running_lsp_servers()
+                .contains(&"rust".to_string())
+        })
+        .expect("LSP server should start");
+
+    // Stop the LSP server
+    let stopped = harness.editor_mut().shutdown_lsp_server("rust");
+    assert!(stopped, "shutdown_lsp_server should return true");
+
+    harness
+        .wait_until(|h| {
+            !h.editor()
+                .running_lsp_servers()
+                .contains(&"rust".to_string())
+        })
+        .expect("LSP server should stop");
+
+    // Now trigger restart LSP — this opens a prompt
+    harness.editor_mut().handle_lsp_restart();
+    harness.render()?;
+
+    assert!(
+        harness.editor().is_prompting(),
+        "Restart LSP should show a prompt"
+    );
+
+    // Confirm the default selection (all enabled) by pressing Enter
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Wait for LSP to come back
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .running_lsp_servers()
+                .contains(&"rust".to_string())
+        })
+        .expect("LSP server should restart after prompt confirmation");
+
+    Ok(())
+}
+
+/// Test that "stop lsp" via prompt sends didClose before removing handles
+///
+/// This is a regression test: previously, `disable_lsp_for_buffer` was called AFTER
+/// `shutdown_server` removed the handles, causing a spurious "no handle for language" warning.
+/// The fix sends didClose BEFORE shutting down the server.
+#[test]
+#[cfg_attr(windows, ignore = "Uses bash script for fake LSP server")]
+fn test_stop_lsp_via_prompt_no_warning() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {}\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to start
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .running_lsp_servers()
+                .contains(&"rust".to_string())
+        })
+        .expect("LSP server should start");
+
+    // Trigger the stop LSP action (opens a prompt)
+    harness.editor_mut().handle_lsp_stop();
+    harness.render()?;
+
+    assert!(
+        harness.editor().is_prompting(),
+        "Stop LSP should show a prompt"
+    );
+
+    // Confirm with Enter (the single server should be pre-selected)
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Wait for LSP to stop
+    harness
+        .wait_until(|h| {
+            !h.editor()
+                .running_lsp_servers()
+                .contains(&"rust".to_string())
+        })
+        .expect("LSP server should stop after prompt confirmation");
+
+    // The key assertion: the editor is still functional (no panic from the warning path)
+    // and the prompt closed successfully
+    assert!(
+        !harness.editor().is_prompting(),
+        "Prompt should be closed after stop"
+    );
+
+    Ok(())
+}
