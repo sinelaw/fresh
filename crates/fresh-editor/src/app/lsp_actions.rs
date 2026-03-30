@@ -12,47 +12,86 @@ use rust_i18n::t;
 impl Editor {
     /// Handle the LspRestart action.
     ///
-    /// Restarts the LSP server for the current buffer's language and re-sends
-    /// didOpen notifications for all buffers of that language.
+    /// Shows a prompt to select which LSP server(s) to restart, with the
+    /// default option restarting all enabled servers for the current language.
     pub fn handle_lsp_restart(&mut self) {
-        // Get the language and file path from the active buffer
+        // Get the language from the active buffer
         let buffer_id = self.active_buffer();
         let Some(state) = self.buffers.get(&buffer_id) else {
             return;
         };
         let language = state.language.clone();
-        let file_path = self
-            .buffer_metadata
-            .get(&buffer_id)
-            .and_then(|meta| meta.file_path().cloned());
 
-        // Check if LSP is configured for this language before attempting restart
-        let lsp_configured = self
+        // Get configured servers for this language
+        let configs: Vec<_> = self
             .lsp
             .as_ref()
-            .and_then(|lsp| lsp.get_config(&language))
-            .is_some();
+            .and_then(|lsp| lsp.get_configs(&language))
+            .map(|c| c.to_vec())
+            .unwrap_or_default();
 
-        if !lsp_configured {
+        if configs.is_empty() {
             self.set_status_message(t!("lsp.no_server_configured").to_string());
             return;
         }
 
-        // Attempt restart
-        let Some(lsp) = self.lsp.as_mut() else {
-            self.set_status_message(t!("lsp.no_manager").to_string());
-            return;
+        // Build suggestions
+        let mut suggestions: Vec<Suggestion> = Vec::new();
+
+        // Default option: restart all enabled servers
+        let enabled_names: Vec<_> = configs
+            .iter()
+            .filter(|c| c.enabled && !c.command.is_empty())
+            .map(|c| c.display_name())
+            .collect();
+        let all_description = if enabled_names.is_empty() {
+            Some("No enabled servers".to_string())
+        } else {
+            Some(enabled_names.join(", "))
         };
+        suggestions.push(Suggestion {
+            text: format!("{} (all enabled)", language),
+            description: all_description,
+            value: Some(language.clone()),
+            disabled: enabled_names.is_empty(),
+            keybinding: None,
+            source: None,
+        });
 
-        let (success, message) = lsp.manual_restart(&language, file_path.as_deref());
-        self.status_message = Some(message);
-
-        if !success {
-            return;
+        // Individual server options
+        for config in &configs {
+            if config.command.is_empty() {
+                continue;
+            }
+            let name = config.display_name();
+            let status = if config.enabled { "" } else { " [disabled]" };
+            suggestions.push(Suggestion {
+                text: format!("{}/{}{}", language, name, status),
+                description: Some(format!("Command: {}", config.command)),
+                value: Some(format!("{}/{}", language, name)),
+                disabled: false,
+                keybinding: None,
+                source: None,
+            });
         }
 
-        // Re-send didOpen for all buffers of this language
-        self.reopen_buffers_for_language(&language);
+        // Start prompt with suggestions
+        self.prompt = Some(Prompt::with_suggestions(
+            "Restart LSP server: ".to_string(),
+            PromptType::RestartLspServer,
+            suggestions.clone(),
+        ));
+
+        // Configure initial selection
+        if let Some(prompt) = self.prompt.as_mut() {
+            if suggestions.len() == 1 {
+                prompt.input = suggestions[0].text.clone();
+                prompt.cursor_pos = prompt.input.len();
+                prompt.selected_suggestion = Some(0);
+            } else if !prompt.suggestions.is_empty() {
+                prompt.selected_suggestion = Some(0);
+            }
+        }
     }
 
     /// Re-send didOpen notifications for all buffers of a given language.

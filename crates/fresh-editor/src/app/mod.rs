@@ -4197,6 +4197,7 @@ impl Editor {
                     | PromptType::SwitchProject
                     | PromptType::SaveFileAs
                     | PromptType::StopLspServer
+                    | PromptType::RestartLspServer
                     | PromptType::SelectTheme { .. }
                     | PromptType::SelectLocale
                     | PromptType::SwitchToTab
@@ -4238,8 +4239,11 @@ impl Editor {
                 prompt.input.clone()
             };
 
-            // For StopLspServer, validate that the input matches a running server
-            if matches!(prompt.prompt_type, PromptType::StopLspServer) {
+            // For StopLspServer/RestartLspServer, validate that the input matches a suggestion
+            if matches!(
+                prompt.prompt_type,
+                PromptType::StopLspServer | PromptType::RestartLspServer
+            ) {
                 let is_valid = prompt
                     .suggestions
                     .iter()
@@ -4492,6 +4496,7 @@ impl Editor {
             PromptType::SwitchToTab
             | PromptType::SelectTheme { .. }
             | PromptType::StopLspServer
+            | PromptType::RestartLspServer
             | PromptType::SetLanguage
             | PromptType::SetEncoding
             | PromptType::SetLineEnding => {

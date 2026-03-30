@@ -83,6 +83,8 @@ pub enum PromptType {
     SetLanguage,
     /// Stop a running LSP server (select from list)
     StopLspServer,
+    /// Restart LSP server(s) (select from list)
+    RestartLspServer,
     /// Select a theme (select from list)
     /// Stores the original theme name for restoration on cancel
     SelectTheme { original_theme: String },

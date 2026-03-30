@@ -923,6 +923,114 @@ impl LspManager {
         }
     }
 
+    /// Restart a single server by name for a specific language.
+    ///
+    /// Shuts down just that server and re-spawns it from config.
+    /// Returns (success, message) tuple.
+    #[allow(clippy::let_underscore_must_use)]
+    pub fn manual_restart_server(
+        &mut self,
+        language: &str,
+        server_name: &str,
+        file_path: Option<&Path>,
+    ) -> (bool, String) {
+        self.clear_cooldown(language);
+        self.disabled_languages.remove(language);
+        self.allowed_languages.insert(language.to_string());
+
+        // Find and shut down just the named server
+        if let Some(handles) = self.handles.get_mut(language) {
+            if let Some(idx) = handles.iter().position(|sh| sh.name == server_name) {
+                let sh = handles.remove(idx);
+                let _ = sh.handle.shutdown();
+            }
+        }
+
+        // Find the matching config and spawn just that server
+        let config = self
+            .config
+            .get(language)
+            .and_then(|configs| configs.iter().find(|c| c.display_name() == server_name))
+            .cloned();
+
+        let Some(config) = config else {
+            let message = format!(
+                "No config found for server '{}' ({})",
+                server_name, language
+            );
+            tracing::error!("{}", message);
+            return (false, message);
+        };
+
+        if config.command.is_empty() {
+            let message = format!(
+                "LSP command is empty for {} server '{}'",
+                language, server_name
+            );
+            tracing::error!("{}", message);
+            return (false, message);
+        }
+
+        let runtime = match self.runtime.as_ref() {
+            Some(r) => r.clone(),
+            None => return (false, "No tokio runtime available".to_string()),
+        };
+        let async_bridge = match self.async_bridge.as_ref() {
+            Some(b) => b.clone(),
+            None => return (false, "No async bridge available".to_string()),
+        };
+
+        match LspHandle::spawn(
+            &runtime,
+            &config.command,
+            &config.args,
+            config.env.clone(),
+            language.to_string(),
+            server_name.to_string(),
+            &async_bridge,
+            config.process_limits.clone(),
+            config.language_id_overrides.clone(),
+        ) {
+            Ok(handle) => {
+                let effective_root = self.resolve_root_uri(language, file_path);
+                if let Err(e) =
+                    handle.initialize(effective_root, config.initialization_options.clone())
+                {
+                    let message = format!(
+                        "Failed to initialize LSP server '{}' for {}: {}",
+                        server_name, language, e
+                    );
+                    tracing::error!("{}", message);
+                    return (false, message);
+                }
+
+                let sh = ServerHandle {
+                    name: server_name.to_string(),
+                    handle,
+                    feature_filter: config.feature_filter(),
+                    capabilities: ServerCapabilitySummary::default(),
+                };
+
+                self.handles
+                    .entry(language.to_string())
+                    .or_default()
+                    .push(sh);
+
+                let message = format!("LSP server '{}' for {} started", server_name, language);
+                tracing::info!("{}", message);
+                (true, message)
+            }
+            Err(e) => {
+                let message = format!(
+                    "Failed to start LSP server '{}' for {}: {}",
+                    server_name, language, e
+                );
+                tracing::error!("{}", message);
+                (false, message)
+            }
+        }
+    }
+
     /// Get the number of recent restart attempts for a language
     pub fn restart_attempt_count(&self, language: &str) -> usize {
         let now = Instant::now();

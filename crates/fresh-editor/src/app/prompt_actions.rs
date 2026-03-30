@@ -466,6 +466,9 @@ impl Editor {
             PromptType::StopLspServer => {
                 self.handle_stop_lsp_server(&input);
             }
+            PromptType::RestartLspServer => {
+                self.handle_restart_lsp_server(&input);
+            }
             PromptType::SelectTheme { .. } => {
                 self.apply_theme(input.trim());
             }
@@ -1152,9 +1155,7 @@ impl Editor {
             .is_some_and(|lsp| !lsp.get_handles(language).is_empty());
 
         if !has_server {
-            self.set_status_message(
-                t!("lsp.server_not_found", language = language).to_string(),
-            );
+            self.set_status_message(t!("lsp.server_not_found", language = language).to_string());
             return;
         }
 
@@ -1198,9 +1199,7 @@ impl Editor {
         };
 
         if !stopped {
-            self.set_status_message(
-                t!("lsp.server_not_found", language = language).to_string(),
-            );
+            self.set_status_message(t!("lsp.server_not_found", language = language).to_string());
             return;
         }
 
@@ -1234,6 +1233,53 @@ impl Editor {
 
         let display = server_name.unwrap_or(language);
         self.set_status_message(t!("lsp.server_stopped", language = display).to_string());
+    }
+
+    /// Handle RestartLspServer prompt confirmation.
+    ///
+    /// Input format: `"language"` (restarts all enabled servers) or
+    /// `"language/server_name"` (restarts a specific server).
+    fn handle_restart_lsp_server(&mut self, input: &str) {
+        let input = input.trim();
+        if input.is_empty() {
+            return;
+        }
+
+        // Parse "language/server_name" or just "language"
+        let (language, server_name) = if let Some((lang, name)) = input.split_once('/') {
+            (lang, Some(name))
+        } else {
+            (input, None)
+        };
+
+        // Get file_path from active buffer for workspace root detection
+        let buffer_id = self.active_buffer();
+        let file_path = self
+            .buffer_metadata
+            .get(&buffer_id)
+            .and_then(|meta| meta.file_path().cloned());
+
+        let (success, message) = if let Some(name) = server_name {
+            // Restart a specific server
+            if let Some(lsp) = self.lsp.as_mut() {
+                lsp.manual_restart_server(language, name, file_path.as_deref())
+            } else {
+                (false, t!("lsp.no_manager").to_string())
+            }
+        } else {
+            // Restart all enabled servers for the language
+            if let Some(lsp) = self.lsp.as_mut() {
+                lsp.manual_restart(language, file_path.as_deref())
+            } else {
+                (false, t!("lsp.no_manager").to_string())
+            }
+        };
+
+        self.status_message = Some(message);
+
+        if success {
+            self.reopen_buffers_for_language(language);
+        }
     }
 
     /// Handle Quick Open prompt confirmation based on prefix routing
