@@ -2963,3 +2963,74 @@ fn test_file_explorer_click_markdown_enter_does_not_modify_buffer() {
         content
     );
 }
+
+/// Test that git status markers clear after an external commit followed by focus gained.
+/// Regression test for https://github.com/sinelaw/fresh/issues/1431
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_file_explorer_git_markers_clear_after_commit_on_focus() {
+    use std::process::Command;
+
+    let repo = GitTestRepo::new();
+    repo.setup_git_explorer_plugin();
+    repo.create_file("file1.txt", "hello");
+    repo.create_file("file2.txt", "world");
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Create working-copy modifications so "M" markers appear
+    fs::write(repo.path.join("file1.txt"), "modified").unwrap();
+    fs::write(repo.path.join("file2.txt"), "also modified").unwrap();
+
+    let mut harness = EditorTestHarness::with_working_dir(120, 40, repo.path.clone()).unwrap();
+
+    harness.editor_mut().toggle_file_explorer();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+
+    // Wait for "M" markers to appear on modified files
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen
+                .lines()
+                .any(|line| line.contains("file1.txt") && line.contains("M"))
+        })
+        .unwrap();
+
+    // Commit all changes externally (simulating a user running git in another terminal)
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(&repo.path)
+        .output()
+        .expect("git add failed");
+    Command::new("git")
+        .args(["commit", "-m", "commit changes"])
+        .current_dir(&repo.path)
+        .output()
+        .expect("git commit failed");
+
+    // Simulate terminal focus regained (triggers git status refresh)
+    harness.editor_mut().focus_gained();
+    let _ = harness.editor_mut().process_async_messages();
+
+    // Wait for "M" markers to disappear now that working tree is clean
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            !screen
+                .lines()
+                .any(|line| line.contains("file1.txt") && line.contains("M"))
+        })
+        .unwrap();
+
+    // Also verify file2 has no marker
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen
+            .lines()
+            .any(|line| line.contains("file2.txt") && line.contains("M")),
+        "file2.txt should not have an M marker after commit + focus gained"
+    );
+}
