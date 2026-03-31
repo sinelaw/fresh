@@ -407,8 +407,7 @@ fn process_manifest(
                 exts.iter()
                     .map(|ext| {
                         let ext_clean = ext.trim_start_matches('.').to_string();
-                        user_extensions
-                            .insert(ext_clean.clone(), grammar.scope_name.clone());
+                        user_extensions.insert(ext_clean.clone(), grammar.scope_name.clone());
                         tracing::debug!(
                             "Mapped extension .{} to {}",
                             ext_clean,

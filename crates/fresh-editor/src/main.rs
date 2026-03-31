@@ -374,12 +374,9 @@ impl From<Cli> for Args {
                     None,
                 ),
                 // Grammar commands (handled via list_grammars flag above)
-                ["grammar", "list"]
-                | ["grammars", "list"]
-                | ["grammar", "ls"]
-                | ["grammars"] => {
-                    (false, None, false, None, false, false, None, cli.files, None)
-                }
+                ["grammar", "list"] | ["grammars", "list"] | ["grammar", "ls"] | ["grammars"] => (
+                    false, None, false, None, false, false, None, cli.files, None,
+                ),
                 // Unknown command
                 _ => {
                     eprintln!("Unknown command: {}", cli.cmd.join(" "));
