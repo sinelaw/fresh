@@ -523,3 +523,61 @@ fn test_config_reload_updates_language_detection() {
         );
     }
 }
+
+/// Test that a custom language config with an extension that syntect maps to a
+/// different built-in language does NOT get misdetected as that built-in language.
+///
+/// Reproduces: user configures "fish" language with extension "fish" and grammar
+/// "fish", but Fresh falls through to syntect built-in detection which maps
+/// `.fish` → "Bourne Again Shell (bash)".
+#[test]
+fn test_custom_language_extension_not_misdetected_as_builtin() {
+    let temp_dir = TempDir::new().unwrap();
+    let working_dir = temp_dir.path().to_path_buf();
+
+    // Create a .fish file
+    let test_file = working_dir.join("config.fish");
+    fs::write(&test_file, "# Fish shell config\nset -x PATH $HOME/bin $PATH\n").unwrap();
+
+    // Set up config with fish language (grammar "fish" doesn't exist in syntect)
+    let mut config = Config::default();
+    let mut languages = HashMap::new();
+    languages.insert(
+        "fish".to_string(),
+        LanguageConfig {
+            extensions: vec!["fish".to_string()],
+            grammar: "fish".to_string(),
+            comment_prefix: Some("#".to_string()),
+            auto_indent: true,
+            ..Default::default()
+        },
+    );
+    config.languages = languages;
+
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .without_empty_plugins_dir()
+            .with_config(config),
+    )
+    .unwrap();
+
+    harness.open_file(&test_file).unwrap();
+
+    // Language ID should be "fish" (from config), NOT "bash"
+    let state = harness.editor().active_state();
+    assert_eq!(
+        &state.language, "fish",
+        "config.fish should be detected as 'fish' language, not bash"
+    );
+
+    // Display name should NOT be bash/shell - it should reflect the config language
+    assert!(
+        !state.display_name.to_lowercase().contains("bash")
+            && !state.display_name.to_lowercase().contains("bourne"),
+        "Display name should not be bash/shell, got: '{}'",
+        state.display_name
+    );
+
+}
