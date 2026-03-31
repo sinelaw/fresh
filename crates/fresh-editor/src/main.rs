@@ -36,6 +36,7 @@ use std::{
     "Commands (use --cmd):\n",
     "  config show               Print effective configuration\n",
     "  config paths              Show directories used by Fresh\n",
+    "  grammar list              List all available grammars (with source info)\n",
     "  init                      Initialize a new plugin/theme/language\n",
     "\n",
     "Session commands:\n",
@@ -94,7 +95,7 @@ use std::{
 ))]
 struct Cli {
     /// Run a command instead of opening files
-    /// Commands: session (list|attach|new|kill|open-file), config (show|paths), init
+    /// Commands: session (list|attach|new|kill|open-file), config (show|paths), grammar (list), init
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
@@ -184,6 +185,7 @@ struct Args {
     no_upgrade_check: bool,
     dump_config: bool,
     show_paths: bool,
+    list_grammars: bool,
     locale: Option<String>,
     check_plugin: Option<PathBuf>,
     init: Option<Option<String>>,
@@ -202,6 +204,17 @@ struct Args {
 
 impl From<Cli> for Args {
     fn from(cli: Cli) -> Self {
+        // Check for grammar list command before the main tuple parsing
+        let list_grammars = if !cli.cmd.is_empty() {
+            let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
+            matches!(
+                cmd_args.as_slice(),
+                ["grammar", "list"] | ["grammars", "list"] | ["grammar", "ls"] | ["grammars"]
+            )
+        } else {
+            false
+        };
+
         // Parse --cmd arguments to determine command
         let (
             list_sessions,
@@ -360,10 +373,17 @@ impl From<Cli> for Args {
                     cli.files,
                     None,
                 ),
+                // Grammar commands (handled via list_grammars flag above)
+                ["grammar", "list"]
+                | ["grammars", "list"]
+                | ["grammar", "ls"]
+                | ["grammars"] => {
+                    (false, None, false, None, false, false, None, cli.files, None)
+                }
                 // Unknown command
                 _ => {
                     eprintln!("Unknown command: {}", cli.cmd.join(" "));
-                    eprintln!("Available commands: session (list|attach|new|kill|info|open-file), config (show|paths), init");
+                    eprintln!("Available commands: session (list|attach|new|kill|info|open-file), config (show|paths), grammar (list), init");
                     std::process::exit(1);
                 }
             }
@@ -406,6 +426,7 @@ impl From<Cli> for Args {
             no_upgrade_check: cli.no_upgrade_check,
             dump_config,
             show_paths,
+            list_grammars,
             locale: cli.locale,
             check_plugin: cli.check_plugin,
             init,
@@ -2095,6 +2116,59 @@ MIT
 // === Session persistence commands ===
 
 /// List active sessions
+fn list_grammars_command() -> AnyhowResult<()> {
+    let dir_context = fresh::config_io::DirectoryContext::from_system()?;
+    let config_dir = dir_context.config_dir.clone();
+    let registry = fresh::primitives::grammar::GrammarRegistry::for_editor(config_dir);
+    let grammars = registry.available_grammar_info();
+
+    if grammars.is_empty() {
+        println!("No grammars available.");
+        return Ok(());
+    }
+
+    // Find the longest name for alignment
+    let max_name_len = grammars.iter().map(|g| g.name.len()).max().unwrap_or(0);
+
+    println!(
+        "{:<width$}  {:<12}  {}",
+        "GRAMMAR",
+        "SOURCE",
+        "EXTENSIONS",
+        width = max_name_len
+    );
+    println!(
+        "{:<width$}  {:<12}  {}",
+        "-------",
+        "------",
+        "----------",
+        width = max_name_len
+    );
+    for grammar in &grammars {
+        let extensions = if grammar.file_extensions.is_empty() {
+            String::new()
+        } else {
+            grammar
+                .file_extensions
+                .iter()
+                .map(|e| format!(".{}", e))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        println!(
+            "{:<width$}  {:<12}  {}",
+            grammar.name,
+            grammar.source.to_string(),
+            extensions,
+            width = max_name_len
+        );
+    }
+
+    println!("\n{} grammars available.", grammars.len());
+    println!("Use these names in config: languages -> <language> -> grammar");
+    Ok(())
+}
+
 fn list_sessions_command() -> AnyhowResult<()> {
     let socket_dir = SocketPaths::socket_directory()?;
 
@@ -2686,6 +2760,11 @@ fn real_main() -> AnyhowResult<()> {
                 anyhow::bail!("Failed to serialize config: {}", e);
             }
         }
+    }
+
+    // Handle grammar list early (no terminal setup needed)
+    if args.list_grammars {
+        return list_grammars_command();
     }
 
     // Handle --check-plugin early (no terminal setup needed)

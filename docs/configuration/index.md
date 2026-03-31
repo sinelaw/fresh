@@ -184,6 +184,12 @@ To add syntax highlighting and LSP support for a new language:
 }
 ```
 
+The `grammar` field accepts a grammar name (case-insensitive). To see all available grammars in your environment — including built-in grammars, user-installed grammars, language packs, bundles, and plugin-registered grammars — run:
+
+```
+fresh --cmd grammar list
+```
+
 ### Customize LSP Settings
 
 Configure initialization options for a language server:

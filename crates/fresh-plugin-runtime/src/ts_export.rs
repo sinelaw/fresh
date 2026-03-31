@@ -19,11 +19,11 @@ use fresh_core::api::{
     BufferSavedDiff, CompositeHunk, CompositeLayoutConfig, CompositePaneStyle,
     CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
-    CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrepMatch, JsDiagnostic,
-    JsPosition, JsRange, JsTextPropertyEntry, LanguagePackConfig, LayoutHints, LspServerPackConfig,
-    OverlayColorSpec, OverlayOptions, ProcessLimitsPackConfig, ReplaceResult, SpawnResult,
-    TerminalResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
-    ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
+    CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
+    GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, LanguagePackConfig,
+    LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions, ProcessLimitsPackConfig,
+    ReplaceResult, SpawnResult, TerminalResult, TextPropertiesAtCursor, TsHighlightSpan,
+    ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
@@ -103,6 +103,9 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "JsRange" => Some(JsRange::decl(&cfg)),
         "JsPosition" => Some(JsPosition::decl(&cfg)),
 
+        // Grammar info types
+        "GrammarInfoSnapshot" => Some(GrammarInfoSnapshot::decl(&cfg)),
+
         // Language pack types
         "LanguagePackConfig" => Some(LanguagePackConfig::decl(&cfg)),
         "LspServerPackConfig" => Some(LspServerPackConfig::decl(&cfg)),
@@ -151,6 +154,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "OverlayOptions",                 // Used by TextPropertyEntry.style and InlineOverlay
     "OverlayColorSpec",               // Used by OverlayOptions.fg/bg
     "InlineOverlay",                  // Used by TextPropertyEntry.inlineOverlays
+    "GrammarInfoSnapshot",            // Used by listGrammars
 ];
 
 /// Collect TypeScript type declarations based on referenced types from proc macro

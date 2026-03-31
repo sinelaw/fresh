@@ -5260,6 +5260,21 @@ impl Editor {
             use fresh_core::api::{BufferInfo, CursorInfo, ViewportInfo};
             let mut snapshot = snapshot_handle.write().unwrap();
 
+            // Update grammar info (only rebuild if count changed, cheap check)
+            let grammar_count = self.grammar_registry.available_syntaxes().len();
+            if snapshot.available_grammars.len() != grammar_count {
+                snapshot.available_grammars = self
+                    .grammar_registry
+                    .available_grammar_info()
+                    .into_iter()
+                    .map(|g| fresh_core::api::GrammarInfoSnapshot {
+                        name: g.name,
+                        source: g.source.to_string(),
+                        file_extensions: g.file_extensions,
+                    })
+                    .collect();
+            }
+
             // Update active buffer ID
             snapshot.active_buffer_id = self.active_buffer();
 

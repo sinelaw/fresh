@@ -89,8 +89,8 @@
 use anyhow::{anyhow, Result};
 use fresh_core::api::{
     ActionSpec, BufferInfo, CompositeHunk, CreateCompositeBufferOptions, EditorStateSnapshot,
-    JsCallbackId, LanguagePackConfig, LspServerPackConfig, OverlayOptions, PluginCommand,
-    PluginResponse,
+    GrammarInfoSnapshot, JsCallbackId, LanguagePackConfig, LspServerPackConfig, OverlayOptions,
+    PluginCommand, PluginResponse,
 };
 use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
@@ -718,6 +718,18 @@ impl JsEditorApi {
             Vec::new()
         };
         rquickjs_serde::to_value(ctx, &buffers)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    /// List all available grammars with source info - returns array of GrammarInfo objects
+    #[plugin_api(ts_return = "GrammarInfoSnapshot[]")]
+    pub fn list_grammars<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        let grammars: Vec<GrammarInfoSnapshot> = if let Ok(s) = self.state_snapshot.read() {
+            s.available_grammars.clone()
+        } else {
+            Vec::new()
+        };
+        rquickjs_serde::to_value(ctx, &grammars)
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 

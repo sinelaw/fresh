@@ -3,7 +3,7 @@
 //! This module contains the `GrammarRegistry` struct and all syntax lookup methods
 //! that don't require filesystem access. This enables WASM compatibility and easier testing.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,6 +26,50 @@ pub struct GrammarSpec {
     pub path: PathBuf,
     /// File extensions to associate with this grammar (e.g., ["ex", "exs"])
     pub extensions: Vec<String>,
+}
+
+/// Where a grammar was loaded from.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type")]
+pub enum GrammarSource {
+    /// Built-in to Fresh (pre-compiled syntect defaults + embedded grammars)
+    #[serde(rename = "built-in")]
+    BuiltIn,
+    /// Installed from a user grammar directory (~/.config/fresh/grammars/)
+    #[serde(rename = "user")]
+    User { path: PathBuf },
+    /// From a language pack (~/.config/fresh/languages/packages/)
+    #[serde(rename = "language-pack")]
+    LanguagePack { name: String, path: PathBuf },
+    /// From a bundle package (~/.config/fresh/bundles/packages/)
+    #[serde(rename = "bundle")]
+    Bundle { name: String, path: PathBuf },
+    /// Registered by a plugin at runtime
+    #[serde(rename = "plugin")]
+    Plugin { plugin: String, path: PathBuf },
+}
+
+impl std::fmt::Display for GrammarSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GrammarSource::BuiltIn => write!(f, "built-in"),
+            GrammarSource::User { path } => write!(f, "user ({})", path.display()),
+            GrammarSource::LanguagePack { name, .. } => write!(f, "language-pack ({})", name),
+            GrammarSource::Bundle { name, .. } => write!(f, "bundle ({})", name),
+            GrammarSource::Plugin { plugin, .. } => write!(f, "plugin ({})", plugin),
+        }
+    }
+}
+
+/// Information about an available grammar, including its provenance.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GrammarInfo {
+    /// The grammar name as used in config files (case-insensitive matching)
+    pub name: String,
+    /// Where this grammar was loaded from
+    pub source: GrammarSource,
+    /// File extensions associated with this grammar
+    pub file_extensions: Vec<String>,
 }
 
 /// Embedded TOML grammar (syntect doesn't include one)
@@ -138,6 +182,8 @@ pub struct GrammarRegistry {
     filename_scopes: HashMap<String, String>,
     /// Paths to dynamically loaded grammar files (for reloading when adding more)
     loaded_grammar_paths: Vec<GrammarSpec>,
+    /// Provenance info for each grammar (keyed by grammar name)
+    grammar_sources: HashMap<String, GrammarInfo>,
 }
 
 impl GrammarRegistry {
@@ -150,7 +196,13 @@ impl GrammarRegistry {
         user_extensions: HashMap<String, String>,
         filename_scopes: HashMap<String, String>,
     ) -> Self {
-        Self::new_with_loaded_paths(syntax_set, user_extensions, filename_scopes, Vec::new())
+        Self::new_with_loaded_paths(
+            syntax_set,
+            user_extensions,
+            filename_scopes,
+            Vec::new(),
+            HashMap::new(),
+        )
     }
 
     /// Create a GrammarRegistry with pre-loaded grammar path tracking.
@@ -162,12 +214,14 @@ impl GrammarRegistry {
         user_extensions: HashMap<String, String>,
         filename_scopes: HashMap<String, String>,
         loaded_grammar_paths: Vec<GrammarSpec>,
+        grammar_sources: HashMap<String, GrammarInfo>,
     ) -> Self {
         Self {
             syntax_set: Arc::new(syntax_set),
             user_extensions,
             filename_scopes,
             loaded_grammar_paths,
+            grammar_sources,
         }
     }
 
@@ -180,6 +234,7 @@ impl GrammarRegistry {
             user_extensions: HashMap::new(),
             filename_scopes: HashMap::new(),
             loaded_grammar_paths: Vec::new(),
+            grammar_sources: HashMap::new(),
         })
     }
 
@@ -202,6 +257,7 @@ impl GrammarRegistry {
             "defaults_only: loaded ({} syntaxes)",
             syntax_set.syntaxes().len()
         );
+        let grammar_sources = Self::build_grammar_sources_from_syntax_set(&syntax_set);
         let filename_scopes = Self::build_filename_scopes();
         let extra_extensions = Self::build_extra_extensions();
         Arc::new(Self {
@@ -209,6 +265,7 @@ impl GrammarRegistry {
             user_extensions: extra_extensions,
             filename_scopes,
             loaded_grammar_paths: Vec::new(),
+            grammar_sources,
         })
     }
 
@@ -770,6 +827,60 @@ impl GrammarRegistry {
             .collect()
     }
 
+    /// List all available grammars with provenance information.
+    ///
+    /// Returns a sorted list of `GrammarInfo` entries. Each entry includes
+    /// the grammar name, where it was loaded from, and associated file extensions.
+    pub fn available_grammar_info(&self) -> Vec<GrammarInfo> {
+        let mut result: Vec<GrammarInfo> = self
+            .syntax_set
+            .syntaxes()
+            .iter()
+            .filter(|s| s.name != "Plain Text")
+            .map(|s| {
+                let name = s.name.clone();
+                let source = self
+                    .grammar_sources
+                    .get(&name)
+                    .map(|info| info.source.clone())
+                    .unwrap_or(GrammarSource::BuiltIn);
+                let file_extensions = s.file_extensions.clone();
+                GrammarInfo {
+                    name,
+                    source,
+                    file_extensions,
+                }
+            })
+            .collect();
+        result.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        result
+    }
+
+    /// Get a mutable reference to the grammar sources map.
+    pub fn grammar_sources_mut(&mut self) -> &mut HashMap<String, GrammarInfo> {
+        &mut self.grammar_sources
+    }
+
+    /// Build grammar source info from a pre-compiled syntax set.
+    ///
+    /// All grammars in the packdump (syntect defaults + embedded) are tagged as built-in.
+    pub fn build_grammar_sources_from_syntax_set(
+        syntax_set: &SyntaxSet,
+    ) -> HashMap<String, GrammarInfo> {
+        let mut sources = HashMap::new();
+        for syntax in syntax_set.syntaxes() {
+            sources.insert(
+                syntax.name.clone(),
+                GrammarInfo {
+                    name: syntax.name.clone(),
+                    source: GrammarSource::BuiltIn,
+                    file_extensions: syntax.file_extensions.clone(),
+                },
+            );
+        }
+        sources
+    }
+
     /// Debug helper: get user extensions as a string for logging
     pub fn user_extensions_debug(&self) -> String {
         format!("{:?}", self.user_extensions.keys().collect::<Vec<_>>())
@@ -839,6 +950,9 @@ impl GrammarRegistry {
         // Track loaded grammar paths (existing + new)
         let mut loaded_grammar_paths = base.loaded_grammar_paths.clone();
 
+        // Preserve existing grammar sources
+        let mut grammar_sources = base.grammar_sources.clone();
+
         // Add each new grammar
         for spec in additional {
             tracing::info!(
@@ -850,9 +964,10 @@ impl GrammarRegistry {
             match Self::load_grammar_file(&spec.path) {
                 Ok(syntax) => {
                     let scope = syntax.scope.to_string();
+                    let syntax_name = syntax.name.clone();
                     tracing::info!(
                         "[SYNTAX DEBUG] grammar loaded successfully: name='{}', scope='{}'",
-                        syntax.name,
+                        syntax_name,
                         scope
                     );
                     builder.add(syntax);
@@ -866,6 +981,18 @@ impl GrammarRegistry {
                     for ext in &spec.extensions {
                         user_extensions.insert(ext.clone(), scope.clone());
                     }
+                    // Track provenance
+                    grammar_sources.insert(
+                        syntax_name.clone(),
+                        GrammarInfo {
+                            name: syntax_name,
+                            source: GrammarSource::Plugin {
+                                plugin: spec.language.clone(),
+                                path: spec.path.clone(),
+                            },
+                            file_extensions: spec.extensions.clone(),
+                        },
+                    );
                     // Track this grammar path for future reloads
                     loaded_grammar_paths.push(spec.clone());
                 }
@@ -885,6 +1012,7 @@ impl GrammarRegistry {
             user_extensions,
             filename_scopes: base.filename_scopes.clone(),
             loaded_grammar_paths,
+            grammar_sources,
         })
     }
 

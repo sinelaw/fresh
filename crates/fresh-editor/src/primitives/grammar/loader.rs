@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use syntect::parsing::{SyntaxSet, SyntaxSetBuilder};
 
-use super::types::{GrammarRegistry, GrammarSpec, PackageManifest};
+use super::types::{GrammarInfo, GrammarRegistry, GrammarSource, GrammarSpec, PackageManifest};
 
 /// Trait for loading grammar files from various sources.
 ///
@@ -150,6 +150,7 @@ impl GrammarRegistry {
         let needs_builder =
             has_user_grammars || has_language_packs || has_bundle_packs || !additional.is_empty();
         let mut loaded_grammar_paths = Vec::new();
+        let mut grammar_sources: HashMap<String, GrammarInfo>;
 
         let syntax_set = if !needs_builder {
             // Fast path: no user additions or plugin grammars, use packdump directly
@@ -165,6 +166,8 @@ impl GrammarRegistry {
                 "[grammar-build] Loaded {} syntaxes from packdump",
                 ss.syntaxes().len()
             );
+            // All packdump syntaxes are built-in
+            grammar_sources = Self::build_grammar_sources_from_syntax_set(&ss);
             ss
         } else {
             // Slow path: need to add grammars, must go through builder
@@ -174,6 +177,8 @@ impl GrammarRegistry {
                 "/default_syntaxes.packdump"
             )))
             .expect("Failed to load pre-compiled syntax packdump");
+            // Tag all base syntaxes as built-in before converting to builder
+            grammar_sources = Self::build_grammar_sources_from_syntax_set(&base);
             tracing::info!("[grammar-build] Converting to builder...");
             let mut builder = base.into_builder();
 
@@ -183,7 +188,13 @@ impl GrammarRegistry {
                     "[grammar-build] Loading user grammars from {:?}...",
                     grammars_dir
                 );
-                load_user_grammars(loader, &grammars_dir, &mut builder, &mut user_extensions);
+                load_user_grammars(
+                    loader,
+                    &grammars_dir,
+                    &mut builder,
+                    &mut user_extensions,
+                    &mut grammar_sources,
+                );
             }
 
             if has_language_packs {
@@ -197,6 +208,7 @@ impl GrammarRegistry {
                     &packages_dir,
                     &mut builder,
                     &mut user_extensions,
+                    &mut grammar_sources,
                 );
             }
 
@@ -212,6 +224,7 @@ impl GrammarRegistry {
                     &mut builder,
                     &mut user_extensions,
                     &mut loaded_grammar_paths,
+                    &mut grammar_sources,
                 );
             }
 
@@ -225,6 +238,7 @@ impl GrammarRegistry {
                     match Self::load_grammar_file(&spec.path) {
                         Ok(syntax) => {
                             let scope = syntax.scope.to_string();
+                            let syntax_name = syntax.name.clone();
                             tracing::info!(
                                 "[grammar-build] Loaded plugin grammar '{}' from {:?}",
                                 spec.language,
@@ -234,6 +248,17 @@ impl GrammarRegistry {
                             for ext in &spec.extensions {
                                 user_extensions.insert(ext.clone(), scope.clone());
                             }
+                            grammar_sources.insert(
+                                syntax_name.clone(),
+                                GrammarInfo {
+                                    name: syntax_name,
+                                    source: GrammarSource::Plugin {
+                                        plugin: spec.language.clone(),
+                                        path: spec.path.clone(),
+                                    },
+                                    file_extensions: spec.extensions.clone(),
+                                },
+                            );
                             loaded_grammar_paths.push(spec.clone());
                         }
                         Err(e) => {
@@ -270,6 +295,7 @@ impl GrammarRegistry {
             user_extensions,
             filename_scopes,
             loaded_grammar_paths,
+            grammar_sources,
         )
     }
 
@@ -285,6 +311,7 @@ fn load_user_grammars(
     dir: &Path,
     builder: &mut SyntaxSetBuilder,
     user_extensions: &mut HashMap<String, String>,
+    grammar_sources: &mut HashMap<String, GrammarInfo>,
 ) {
     // Iterate through subdirectories looking for package.json or direct grammar files
     let entries = match loader.read_dir(dir) {
@@ -304,14 +331,21 @@ fn load_user_grammars(
         let manifest_path = path.join("package.json");
         if loader.exists(&manifest_path) {
             if let Ok(manifest) = parse_package_json(loader, &manifest_path) {
-                process_manifest(loader, &path, manifest, builder, user_extensions);
+                process_manifest(
+                    loader,
+                    &path,
+                    manifest,
+                    builder,
+                    user_extensions,
+                    grammar_sources,
+                );
             }
             continue;
         }
 
         // Check for direct grammar files
         let mut found_any = false;
-        load_direct_grammar(loader, &path, builder, &mut found_any);
+        load_direct_grammar(loader, &path, builder, &mut found_any, grammar_sources);
     }
 }
 
@@ -331,6 +365,7 @@ fn process_manifest(
     manifest: PackageManifest,
     builder: &mut SyntaxSetBuilder,
     user_extensions: &mut HashMap<String, String>,
+    grammar_sources: &mut HashMap<String, GrammarInfo>,
 ) {
     let contributes = match manifest.contributes {
         Some(c) => c,
@@ -365,14 +400,36 @@ fn process_manifest(
             grammar_path
         );
 
-        // Map extensions to scope name
-        if let Some(extensions) = lang_extensions.get(&grammar.language) {
-            for ext in extensions {
-                let ext_clean = ext.trim_start_matches('.');
-                user_extensions.insert(ext_clean.to_string(), grammar.scope_name.clone());
-                tracing::debug!("Mapped extension .{} to {}", ext_clean, grammar.scope_name);
-            }
-        }
+        // Map extensions to scope name and track provenance
+        let extensions: Vec<String> = lang_extensions
+            .get(&grammar.language)
+            .map(|exts| {
+                exts.iter()
+                    .map(|ext| {
+                        let ext_clean = ext.trim_start_matches('.').to_string();
+                        user_extensions
+                            .insert(ext_clean.clone(), grammar.scope_name.clone());
+                        tracing::debug!(
+                            "Mapped extension .{} to {}",
+                            ext_clean,
+                            grammar.scope_name
+                        );
+                        ext_clean
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        grammar_sources.insert(
+            grammar.language.clone(),
+            GrammarInfo {
+                name: grammar.language.clone(),
+                source: GrammarSource::User {
+                    path: grammar_path.clone(),
+                },
+                file_extensions: extensions,
+            },
+        );
     }
 }
 
@@ -382,6 +439,7 @@ fn load_direct_grammar(
     dir: &Path,
     builder: &mut SyntaxSetBuilder,
     found_any: &mut bool,
+    grammar_sources: &mut HashMap<String, GrammarInfo>,
 ) {
     // Look for .sublime-syntax or .tmLanguage files
     let entries = match loader.read_dir(dir) {
@@ -393,11 +451,25 @@ fn load_direct_grammar(
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
         if file_name.ends_with(".tmLanguage") || file_name.ends_with(".sublime-syntax") {
+            let count_before = builder.syntaxes().len();
             if let Err(e) = builder.add_from_folder(dir, false) {
                 tracing::warn!("Failed to load grammar from {:?}: {}", dir, e);
             } else {
                 tracing::info!("Loaded grammar from {:?}", dir);
                 *found_any = true;
+                // Track any new syntaxes that were added
+                for syntax in builder.syntaxes()[count_before..].iter() {
+                    grammar_sources.insert(
+                        syntax.name.clone(),
+                        GrammarInfo {
+                            name: syntax.name.clone(),
+                            source: GrammarSource::User {
+                                path: dir.to_path_buf(),
+                            },
+                            file_extensions: syntax.file_extensions.clone(),
+                        },
+                    );
+                }
             }
             break;
         }
@@ -444,6 +516,7 @@ fn load_language_pack_grammars(
     packages_dir: &Path,
     builder: &mut SyntaxSetBuilder,
     user_extensions: &mut HashMap<String, String>,
+    grammar_sources: &mut HashMap<String, GrammarInfo>,
 ) {
     let entries = match loader.read_dir(packages_dir) {
         Ok(entries) => entries,
@@ -517,6 +590,7 @@ fn load_language_pack_grammars(
         ) {
             Ok(syntax) => {
                 let scope = syntax.scope.to_string();
+                let syntax_name = syntax.name.clone();
                 tracing::info!(
                     "Loaded language pack grammar '{}' from {:?} (scope: {}, extensions: {:?})",
                     manifest.name,
@@ -527,10 +601,24 @@ fn load_language_pack_grammars(
                 builder.add(syntax);
 
                 // Map extensions to scope
+                let mut clean_extensions = Vec::new();
                 for ext in &grammar_config.extensions {
                     let ext_clean = ext.trim_start_matches('.');
                     user_extensions.insert(ext_clean.to_string(), scope.clone());
+                    clean_extensions.push(ext_clean.to_string());
                 }
+
+                grammar_sources.insert(
+                    syntax_name.clone(),
+                    GrammarInfo {
+                        name: syntax_name,
+                        source: GrammarSource::LanguagePack {
+                            name: manifest.name.clone(),
+                            path: grammar_path.clone(),
+                        },
+                        file_extensions: clean_extensions,
+                    },
+                );
             }
             Err(e) => {
                 tracing::warn!(
@@ -554,6 +642,7 @@ fn load_bundle_grammars(
     builder: &mut SyntaxSetBuilder,
     user_extensions: &mut HashMap<String, String>,
     loaded_grammar_paths: &mut Vec<GrammarSpec>,
+    grammar_sources: &mut HashMap<String, GrammarInfo>,
 ) {
     let entries = match loader.read_dir(bundles_dir) {
         Ok(entries) => entries,
@@ -632,6 +721,7 @@ fn load_bundle_grammars(
             ) {
                 Ok(syntax) => {
                     let scope = syntax.scope.to_string();
+                    let syntax_name = syntax.name.clone();
                     tracing::info!(
                         "Loaded bundle grammar '{}' from {:?} (scope: {}, extensions: {:?})",
                         lang.id,
@@ -645,6 +735,18 @@ fn load_bundle_grammars(
                         let ext_clean = ext.trim_start_matches('.');
                         user_extensions.insert(ext_clean.to_string(), scope.clone());
                     }
+
+                    grammar_sources.insert(
+                        syntax_name.clone(),
+                        GrammarInfo {
+                            name: syntax_name,
+                            source: GrammarSource::Bundle {
+                                name: manifest.name.clone(),
+                                path: grammar_path.clone(),
+                            },
+                            file_extensions: grammar_config.extensions.clone(),
+                        },
+                    );
 
                     loaded_grammar_paths.push(GrammarSpec {
                         language: lang.id.clone(),

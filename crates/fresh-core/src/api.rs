@@ -739,6 +739,9 @@ pub struct EditorStateSnapshot {
     /// Fields not present here are using default values
     #[ts(type = "any")]
     pub user_config: serde_json::Value,
+    /// Available grammars with provenance info, updated when grammar registry changes
+    #[ts(type = "GrammarInfo[]")]
+    pub available_grammars: Vec<GrammarInfoSnapshot>,
     /// Global editor mode for modal editing (e.g., "vi-normal", "vi-insert")
     /// When set, this mode's keybindings take precedence over normal key handling
     pub editor_mode: Option<String>,
@@ -790,6 +793,7 @@ impl EditorStateSnapshot {
             folding_ranges: HashMap::new(),
             config: serde_json::Value::Null,
             user_config: serde_json::Value::Null,
+            available_grammars: Vec::new(),
             editor_mode: None,
             plugin_view_states: HashMap::new(),
             plugin_view_states_split: 0,
@@ -803,6 +807,18 @@ impl Default for EditorStateSnapshot {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Grammar info exposed to plugins, mirroring the editor's grammar provenance tracking.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GrammarInfoSnapshot {
+    /// The grammar name as used in config files (case-insensitive matching)
+    pub name: String,
+    /// Where this grammar was loaded from (e.g. "built-in", "plugin (myplugin)")
+    pub source: String,
+    /// File extensions associated with this grammar
+    pub file_extensions: Vec<String>,
 }
 
 /// Position for inserting menu items or menus

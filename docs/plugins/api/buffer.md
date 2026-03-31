@@ -264,6 +264,22 @@ List all open buffers
 listBuffers(): BufferInfo[]
 ```
 
+### `listGrammars`
+
+List all available grammars with source information. Returns grammars from all sources: built-in, user-installed, language packs, bundles, and plugin-registered.
+
+```typescript
+listGrammars(): GrammarInfoSnapshot[]
+```
+
+**Returns:** Array of objects with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Grammar name (use this in config `grammar` field) |
+| `source` | `string` | Where the grammar is from (e.g. "built-in", "plugin (myplugin)") |
+| `file_extensions` | `string[]` | File extensions associated with this grammar |
+
 ### `getPrimaryCursor`
 
 Get primary cursor with selection info
