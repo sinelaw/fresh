@@ -781,9 +781,19 @@ pub struct EditorConfig {
     pub rainbow_brackets: bool,
 
     // ===== Completion =====
+    /// Automatically show the completion popup while typing.
+    /// When false (default), the popup only appears when explicitly invoked
+    /// (e.g. via Ctrl+Space). When true, it appears automatically after a
+    /// short delay while typing.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Completion"))]
+    pub completion_popup_auto_show: bool,
+
     /// Enable quick suggestions (VS Code-like behavior).
     /// When enabled, completion suggestions appear automatically while typing,
     /// not just on trigger characters (like `.` or `::`).
+    /// Only takes effect when completion_popup_auto_show is true.
     /// Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Completion"))]
@@ -1126,6 +1136,7 @@ impl Default for EditorConfig {
             keyboard_report_event_types: false,
             keyboard_report_alternate_keys: true,
             keyboard_report_all_keys_as_escape_codes: false,
+            completion_popup_auto_show: false,
             quick_suggestions: true,
             quick_suggestions_delay_ms: default_quick_suggestions_delay(),
             suggest_on_trigger_characters: true,

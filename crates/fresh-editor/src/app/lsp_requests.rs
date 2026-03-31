@@ -602,13 +602,18 @@ impl Editor {
     /// Check if the inserted character should trigger completion
     /// and if so, request completion automatically (possibly after a delay).
     ///
-    /// Triggers completion in two cases:
+    /// Only triggers when `completion_popup_auto_show` is enabled. Then:
     /// 1. Trigger characters (like `.`, `::`, etc.): immediate if suggest_on_trigger_characters is enabled
     /// 2. Word characters: delayed by quick_suggestions_delay_ms if quick_suggestions is enabled
     ///
     /// This provides VS Code-like behavior where suggestions appear while typing,
     /// with debouncing to avoid spamming the LSP server.
     pub(crate) fn maybe_trigger_completion(&mut self, c: char) {
+        // Auto-show must be enabled for any automatic triggering
+        if !self.config.editor.completion_popup_auto_show {
+            return;
+        }
+
         // Get the active buffer's language
         let language = self.active_state().language.clone();
 

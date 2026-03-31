@@ -180,6 +180,7 @@ pub struct PartialEditorConfig {
     pub keyboard_report_event_types: Option<bool>,
     pub keyboard_report_alternate_keys: Option<bool>,
     pub keyboard_report_all_keys_as_escape_codes: Option<bool>,
+    pub completion_popup_auto_show: Option<bool>,
     pub quick_suggestions: Option<bool>,
     pub quick_suggestions_delay_ms: Option<u64>,
     pub suggest_on_trigger_characters: Option<bool>,
@@ -270,6 +271,8 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.keyboard_report_alternate_keys);
         self.keyboard_report_all_keys_as_escape_codes
             .merge_from(&other.keyboard_report_all_keys_as_escape_codes);
+        self.completion_popup_auto_show
+            .merge_from(&other.completion_popup_auto_show);
         self.quick_suggestions.merge_from(&other.quick_suggestions);
         self.quick_suggestions_delay_ms
             .merge_from(&other.quick_suggestions_delay_ms);
@@ -515,6 +518,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             keyboard_report_all_keys_as_escape_codes: Some(
                 cfg.keyboard_report_all_keys_as_escape_codes,
             ),
+            completion_popup_auto_show: Some(cfg.completion_popup_auto_show),
             quick_suggestions: Some(cfg.quick_suggestions),
             quick_suggestions_delay_ms: Some(cfg.quick_suggestions_delay_ms),
             suggest_on_trigger_characters: Some(cfg.suggest_on_trigger_characters),
@@ -636,6 +640,9 @@ impl PartialEditorConfig {
             keyboard_report_all_keys_as_escape_codes: self
                 .keyboard_report_all_keys_as_escape_codes
                 .unwrap_or(defaults.keyboard_report_all_keys_as_escape_codes),
+            completion_popup_auto_show: self
+                .completion_popup_auto_show
+                .unwrap_or(defaults.completion_popup_auto_show),
             quick_suggestions: self.quick_suggestions.unwrap_or(defaults.quick_suggestions),
             quick_suggestions_delay_ms: self
                 .quick_suggestions_delay_ms
