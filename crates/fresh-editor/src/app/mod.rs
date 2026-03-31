@@ -740,8 +740,10 @@ pub struct Editor {
     /// Last time we polled for git index changes
     last_git_status_poll: std::time::Instant,
 
-    /// Last known mtime of .git/index (for detecting commits, staging, etc.)
-    git_index_mtime: Option<std::time::SystemTime>,
+    /// Resolved path to .git/index and its last known mtime.
+    /// The path is resolved once (walking up from working_dir, handling gitdir files)
+    /// and cached for subsequent polls.
+    git_index_state: Option<(std::path::PathBuf, std::time::SystemTime)>,
 
     /// Last known modification times for open files (for auto-revert)
     /// Maps file path to last known modification time
@@ -1567,7 +1569,7 @@ impl Editor {
             last_auto_revert_poll: time_source.now(),
             last_file_tree_poll: time_source.now(),
             last_git_status_poll: time_source.now(),
-            git_index_mtime: None,
+            git_index_state: None,
             file_mod_times: HashMap::new(),
             dir_mod_times: HashMap::new(),
             file_rapid_change_counts: HashMap::new(),

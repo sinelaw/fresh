@@ -507,20 +507,29 @@ impl Editor {
         }
         self.last_git_status_poll = self.time_source.now();
 
-        // Find .git/index relative to the editor's working directory
-        let git_index = self.working_dir.join(".git/index");
+        // On first poll, resolve the git index path (walks up from working_dir,
+        // handles .git files in worktrees/submodules). Cache it for later polls.
+        let git_index = if let Some((ref path, _)) = self.git_index_state {
+            path.clone()
+        } else {
+            let Some(path) = Self::find_git_index(&self.working_dir) else {
+                return false;
+            };
+            path
+        };
+
         let current_mtime = match std::fs::metadata(&git_index) {
             Ok(meta) => match meta.modified() {
                 Ok(mtime) => mtime,
                 Err(_) => return false,
             },
-            Err(_) => return false, // Not a git repo or .git/index missing
+            Err(_) => return false,
         };
 
-        match self.git_index_mtime {
-            Some(stored) if stored == current_mtime => false,
+        match self.git_index_state {
+            Some((_, stored_mtime)) if stored_mtime == current_mtime => false,
             Some(_) => {
-                self.git_index_mtime = Some(current_mtime);
+                self.git_index_state = Some((git_index, current_mtime));
                 // Git index changed — fire hook so plugins refresh decorations
                 self.plugin_manager.run_hook(
                     "focus_gained",
@@ -529,11 +538,31 @@ impl Editor {
                 true
             }
             None => {
-                // First time — just record the mtime
-                self.git_index_mtime = Some(current_mtime);
+                // First time — just record the path and mtime
+                self.git_index_state = Some((git_index, current_mtime));
                 false
             }
         }
+    }
+
+    /// Find the path to `.git/index` using `git rev-parse --git-dir`.
+    /// Works in regular repos, worktrees, submodules, and subdirectories.
+    fn find_git_index(working_dir: &Path) -> Option<std::path::PathBuf> {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "--git-dir"])
+            .current_dir(working_dir)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let git_dir = std::str::from_utf8(&output.stdout).ok()?.trim();
+        let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
+            std::path::PathBuf::from(git_dir)
+        } else {
+            working_dir.join(git_dir)
+        };
+        Some(git_dir_path.join("index"))
     }
 
     /// Notify LSP server about a newly opened file
