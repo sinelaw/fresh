@@ -955,18 +955,6 @@ impl Editor {
         }
     }
 
-    /// Resolve a syntect syntax name to the canonical config language ID.
-    ///
-    /// Resolve a syntect syntax display name to its canonical config language ID.
-    /// Delegates to the free function in `detected_language`.
-    pub(crate) fn resolve_language_id(&self, syntax_name: &str) -> Option<String> {
-        crate::primitives::detected_language::resolve_language_id(
-            syntax_name,
-            &self.grammar_registry,
-            &self.config.languages,
-        )
-    }
-
     /// Handle SetLanguage prompt confirmation.
     fn handle_set_language(&mut self, input: &str) {
         use crate::primitives::detected_language::DetectedLanguage;

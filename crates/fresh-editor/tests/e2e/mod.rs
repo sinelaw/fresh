@@ -11,6 +11,7 @@ pub mod buffer_settings_commands;
 pub mod capslock_shortcuts;
 pub mod case_conversion;
 pub mod command_palette;
+pub mod config_language_selector;
 pub mod crash_repro;
 pub mod crlf_rendering;
 pub mod csharp_language_coherence;

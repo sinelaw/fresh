@@ -3012,7 +3012,23 @@ impl Editor {
 
     /// Start the language selection prompt
     fn start_set_language_prompt(&mut self) {
+        use crate::input::commands::CommandSource;
+
         let current_language = self.active_state().language.clone();
+
+        // Build a reverse map from syntect display name -> (config key, source label)
+        // so we can show extra columns in the language selector popup.
+        let mut syntax_to_config: std::collections::HashMap<String, (String, &str)> =
+            std::collections::HashMap::new();
+        for (lang_id, lang_config) in &self.config.languages {
+            if let Some(syntax) =
+                self.grammar_registry.find_syntax_for_lang_config(lang_config)
+            {
+                syntax_to_config
+                    .entry(syntax.name.clone())
+                    .or_insert((lang_id.clone(), "config"));
+            }
+        }
 
         // Build suggestions from all available syntect syntaxes + Plain Text option
         let mut suggestions: Vec<crate::input::commands::Suggestion> = vec![
@@ -3026,69 +3042,93 @@ impl Editor {
                 },
                 value: Some("Plain Text".to_string()),
                 disabled: false,
-                keybinding: None,
-                source: None,
+                keybinding: Some("text".to_string()),
+                source: Some(CommandSource::Builtin),
             },
         ];
 
-        // Collect all language names: syntect syntaxes + user-configured languages
-        let mut syntax_names: Vec<String> = self
-            .grammar_registry
-            .available_syntaxes()
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect();
+        // Entries: (display_name, config_key, source, value_for_selection)
+        // display_name = syntect syntax name or config lang_id
+        // config_key = the key from config.json languages section (if any)
+        // source = "config" or "builtin"
+        struct LangEntry {
+            display_name: String,
+            config_key: String,
+            source: &'static str,
+        }
 
-        // Collect the set of syntax names already present (for dedup)
-        let syntax_name_set: std::collections::HashSet<String> = syntax_names
-            .iter()
-            .map(|s| s.to_lowercase())
-            .collect();
+        let mut entries: Vec<LangEntry> = Vec::new();
+
+        // Add all available syntaxes from the grammar registry
+        for syntax_name in self.grammar_registry.available_syntaxes() {
+            if syntax_name == "Plain Text" {
+                continue;
+            }
+            let (config_key, source) = syntax_to_config
+                .get(syntax_name)
+                .map(|(k, s)| (k.clone(), *s))
+                .unwrap_or_else(|| (syntax_name.to_lowercase(), "builtin"));
+            entries.push(LangEntry {
+                display_name: syntax_name.to_string(),
+                config_key,
+                source,
+            });
+        }
 
         // Add user-configured languages that don't have a matching syntect grammar
-        // (e.g. "fish" with grammar "fish" that isn't in syntect). These should
-        // still appear in the language selector so the user can pick them.
+        let entry_names_lower: std::collections::HashSet<String> = entries
+            .iter()
+            .map(|e| e.display_name.to_lowercase())
+            .collect();
         for (lang_id, lang_config) in &self.config.languages {
             let has_grammar = !lang_config.grammar.is_empty()
                 && self
                     .grammar_registry
                     .find_syntax_by_name(&lang_config.grammar)
                     .is_some();
-            if !has_grammar && !syntax_name_set.contains(&lang_id.to_lowercase()) {
-                syntax_names.push(lang_id.clone());
+            if !has_grammar && !entry_names_lower.contains(&lang_id.to_lowercase()) {
+                entries.push(LangEntry {
+                    display_name: lang_id.clone(),
+                    config_key: lang_id.clone(),
+                    source: "config",
+                });
             }
         }
 
         // Sort alphabetically for easier navigation
-        syntax_names.sort_unstable_by_key(|a| a.to_lowercase());
+        entries.sort_unstable_by(|a, b| {
+            a.display_name
+                .to_lowercase()
+                .cmp(&b.display_name.to_lowercase())
+        });
 
         let mut current_index_found = None;
-        for syntax_name in &syntax_names {
-            // Skip "Plain Text" as we already added it at the top
-            if syntax_name == "Plain Text" {
-                continue;
-            }
-            // Resolve the syntect display name to the canonical config language
-            // ID so we can compare against state.language (which is always a
-            // config key, e.g. "rust" not "Rust").
-            let is_current = self
-                .resolve_language_id(syntax_name)
-                .is_some_and(|id| id == current_language)
-                || *syntax_name == current_language;
+        for entry in &entries {
+            let is_current = entry.config_key == current_language
+                || entry.display_name == current_language;
             if is_current {
                 current_index_found = Some(suggestions.len());
             }
+
+            let description = if is_current {
+                format!("{} (current)", entry.config_key)
+            } else {
+                entry.config_key.clone()
+            };
+
+            let source = if entry.source == "config" {
+                Some(CommandSource::Plugin("config".to_string()))
+            } else {
+                Some(CommandSource::Builtin)
+            };
+
             suggestions.push(crate::input::commands::Suggestion {
-                text: syntax_name.to_string(),
-                description: if is_current {
-                    Some("current".to_string())
-                } else {
-                    None
-                },
-                value: Some(syntax_name.to_string()),
+                text: entry.display_name.clone(),
+                description: Some(description),
+                value: Some(entry.display_name.clone()),
                 disabled: false,
                 keybinding: None,
-                source: None,
+                source,
             });
         }
 
