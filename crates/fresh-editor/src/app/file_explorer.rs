@@ -270,72 +270,20 @@ impl Editor {
         };
         self.set_status_message(status_msg);
 
-        if let (Some(runtime), Some(explorer)) = (&self.tokio_runtime, &mut self.file_explorer) {
-            let tree = explorer.tree_mut();
-            let result = runtime.block_on(tree.toggle_node(selected_id));
-
-            let final_name = explorer
-                .tree()
-                .get_node(selected_id)
-                .map(|n| n.entry.name.clone());
-            let final_expanded = explorer
-                .tree()
-                .get_node(selected_id)
-                .map(|n| n.is_expanded())
-                .unwrap_or(false);
-
-            // Track if we need to rebuild decoration cache (for symlink directories)
-            let mut needs_decoration_rebuild = false;
-
-            match result {
-                Ok(()) => {
-                    if final_expanded {
-                        let node_info = explorer
-                            .tree()
-                            .get_node(selected_id)
-                            .map(|n| (n.entry.path.clone(), n.entry.is_symlink()));
-
-                        if let Some((dir_path, is_symlink)) = node_info {
-                            if let Err(e) = explorer.load_gitignore_for_dir(&dir_path) {
-                                tracing::warn!(
-                                    "Failed to load .gitignore from {:?}: {}",
-                                    dir_path,
-                                    e
-                                );
-                            }
-
-                            // If a symlink directory was just expanded, we need to rebuild
-                            // the decoration cache so decorations under the canonical target
-                            // also appear under the symlink path
-                            if is_symlink {
-                                tracing::debug!(
-                                    "Symlink directory expanded, will rebuild decoration cache: {:?}",
-                                    dir_path
-                                );
-                                needs_decoration_rebuild = true;
-                            }
-                        }
-                    }
-
-                    if let Some(name) = final_name {
-                        let msg = if final_expanded {
-                            t!("explorer.expanded", name = &name).to_string()
-                        } else {
-                            t!("explorer.collapsed", name = &name).to_string()
-                        };
-                        self.set_status_message(msg);
-                    }
-                }
-                Err(e) => {
-                    self.set_status_message(
-                        t!("explorer.error", error = e.to_string()).to_string(),
-                    );
-                }
-            }
-
-            // Rebuild decoration cache outside the explorer borrow
-            if needs_decoration_rebuild {
-                self.rebuild_file_explorer_decoration_cache();
+        // Take the file explorer and spawn the toggle in a background task
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+            if let Some(mut view) = self.file_explorer.take() {
+                let sender = bridge.sender();
+                runtime.spawn(async move {
+                    let result = view.tree_mut().toggle_node(selected_id).await;
+                    let result = result.map_err(|e| e.to_string());
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(AsyncMessage::FileExplorerToggleComplete {
+                        view,
+                        node_id: selected_id,
+                        result,
+                    });
+                });
             }
         }
     }
@@ -401,128 +349,117 @@ impl Editor {
             self.set_status_message(t!("explorer.refreshing", name = name).to_string());
         }
 
-        if let (Some(runtime), Some(explorer)) = (&self.tokio_runtime, &mut self.file_explorer) {
-            let tree = explorer.tree_mut();
-            let result = runtime.block_on(tree.refresh_node(selected_id));
-            match result {
-                Ok(()) => {
-                    if let Some(name) = node_name {
-                        self.set_status_message(t!("explorer.refreshed", name = &name).to_string());
-                    } else {
-                        self.set_status_message(t!("explorer.refreshed_default").to_string());
-                    }
-                }
-                Err(e) => {
-                    self.set_status_message(
-                        t!("explorer.error_refreshing", error = e.to_string()).to_string(),
-                    );
-                }
-            }
-        }
+        // Take the file explorer and spawn refresh in a background task
+        self.spawn_file_explorer_refresh(selected_id);
     }
 
     pub fn file_explorer_new_file(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
-            if let Some(selected_id) = explorer.get_selected() {
-                let node = explorer.tree().get_node(selected_id);
-                if let Some(node) = node {
-                    let parent_path = get_parent_dir_path(node);
-                    let filename = format!("untitled_{}.txt", timestamp_suffix());
-                    let file_path = parent_path.join(&filename);
+        let (selected_id, parent_path, node_is_dir) = {
+            let Some(explorer) = &self.file_explorer else {
+                return;
+            };
+            let Some(selected_id) = explorer.get_selected() else {
+                return;
+            };
+            let Some(node) = explorer.tree().get_node(selected_id) else {
+                return;
+            };
+            (selected_id, get_parent_dir_path(node), node.is_dir())
+        };
 
-                    if let Some(runtime) = &self.tokio_runtime {
-                        let path_clone = file_path.clone();
-                        let result = self.filesystem.create_file(&path_clone).map(|_| ());
+        let filename = format!("untitled_{}.txt", timestamp_suffix());
+        let file_path = parent_path.join(&filename);
 
-                        match result {
-                            Ok(_) => {
-                                let parent_id =
-                                    get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
-                                let tree = explorer.tree_mut();
-                                if let Err(e) = runtime.block_on(tree.refresh_node(parent_id)) {
-                                    tracing::warn!("Failed to refresh file tree: {}", e);
-                                }
-                                self.set_status_message(
-                                    t!("explorer.created_file", name = &filename).to_string(),
-                                );
+        // Create file synchronously (protected by channel timeout for remote)
+        let path_clone = file_path.clone();
+        let result = self.filesystem.create_file(&path_clone).map(|_| ());
 
-                                // Open the file in the buffer
-                                if let Err(e) = self.open_file(&path_clone) {
-                                    tracing::warn!("Failed to open new file: {}", e);
-                                }
+        match result {
+            Ok(_) => {
+                self.set_status_message(t!("explorer.created_file", name = &filename).to_string());
 
-                                // Enter rename mode for the new file with empty prompt
-                                // so user can type the desired filename from scratch
-                                let prompt = crate::view::prompt::Prompt::new(
-                                    t!("explorer.rename_prompt").to_string(),
-                                    crate::view::prompt::PromptType::FileExplorerRename {
-                                        original_path: path_clone,
-                                        original_name: filename.clone(),
-                                        is_new_file: true,
-                                    },
-                                );
-                                self.prompt = Some(prompt);
-                            }
-                            Err(e) => {
-                                self.set_status_message(
-                                    t!("explorer.error_creating_file", error = e.to_string())
-                                        .to_string(),
-                                );
-                            }
-                        }
-                    }
+                // Open the file in the buffer
+                if let Err(e) = self.open_file(&path_clone) {
+                    tracing::warn!("Failed to open new file: {}", e);
                 }
+
+                // Enter rename mode for the new file with empty prompt
+                let prompt = crate::view::prompt::Prompt::new(
+                    t!("explorer.rename_prompt").to_string(),
+                    crate::view::prompt::PromptType::FileExplorerRename {
+                        original_path: path_clone,
+                        original_name: filename.clone(),
+                        is_new_file: true,
+                    },
+                );
+                self.prompt = Some(prompt);
+
+                // Spawn async refresh for the parent directory
+                let parent_id = {
+                    let explorer = self.file_explorer.as_ref().unwrap();
+                    get_parent_node_id(explorer.tree(), selected_id, node_is_dir)
+                };
+                self.spawn_file_explorer_refresh(parent_id);
+            }
+            Err(e) => {
+                self.set_status_message(
+                    t!("explorer.error_creating_file", error = e.to_string()).to_string(),
+                );
             }
         }
     }
 
     pub fn file_explorer_new_directory(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
-            if let Some(selected_id) = explorer.get_selected() {
-                let node = explorer.tree().get_node(selected_id);
-                if let Some(node) = node {
-                    let parent_path = get_parent_dir_path(node);
-                    let dirname = format!("New Folder {}", timestamp_suffix());
-                    let dir_path = parent_path.join(&dirname);
+        let (selected_id, parent_path, node_is_dir) = {
+            let Some(explorer) = &self.file_explorer else {
+                return;
+            };
+            let Some(selected_id) = explorer.get_selected() else {
+                return;
+            };
+            let Some(node) = explorer.tree().get_node(selected_id) else {
+                return;
+            };
+            (selected_id, get_parent_dir_path(node), node.is_dir())
+        };
 
-                    if let Some(runtime) = &self.tokio_runtime {
-                        let path_clone = dir_path.clone();
-                        let dirname_clone = dirname.clone();
-                        let result = self.filesystem.create_dir(&path_clone);
+        let dirname = format!("New Folder {}", timestamp_suffix());
+        let dir_path = parent_path.join(&dirname);
 
-                        match result {
-                            Ok(_) => {
-                                let parent_id =
-                                    get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
-                                let tree = explorer.tree_mut();
-                                if let Err(e) = runtime.block_on(tree.refresh_node(parent_id)) {
-                                    tracing::warn!("Failed to refresh file tree: {}", e);
-                                }
-                                self.set_status_message(
-                                    t!("explorer.created_dir", name = &dirname_clone).to_string(),
-                                );
+        // Create directory synchronously (protected by channel timeout for remote)
+        let path_clone = dir_path.clone();
+        let dirname_clone = dirname.clone();
+        let result = self.filesystem.create_dir(&path_clone);
 
-                                // Enter rename mode for the new folder
-                                let prompt = crate::view::prompt::Prompt::with_initial_text(
-                                    t!("explorer.rename_prompt").to_string(),
-                                    crate::view::prompt::PromptType::FileExplorerRename {
-                                        original_path: path_clone,
-                                        original_name: dirname_clone,
-                                        is_new_file: true,
-                                    },
-                                    dirname,
-                                );
-                                self.prompt = Some(prompt);
-                            }
-                            Err(e) => {
-                                self.set_status_message(
-                                    t!("explorer.error_creating_dir", error = e.to_string())
-                                        .to_string(),
-                                );
-                            }
-                        }
-                    }
-                }
+        match result {
+            Ok(_) => {
+                self.set_status_message(
+                    t!("explorer.created_dir", name = &dirname_clone).to_string(),
+                );
+
+                // Enter rename mode for the new folder
+                let prompt = crate::view::prompt::Prompt::with_initial_text(
+                    t!("explorer.rename_prompt").to_string(),
+                    crate::view::prompt::PromptType::FileExplorerRename {
+                        original_path: path_clone,
+                        original_name: dirname_clone,
+                        is_new_file: true,
+                    },
+                    dirname,
+                );
+                self.prompt = Some(prompt);
+
+                // Spawn async refresh for the parent directory
+                let parent_id = {
+                    let explorer = self.file_explorer.as_ref().unwrap();
+                    get_parent_node_id(explorer.tree(), selected_id, node_is_dir)
+                };
+                self.spawn_file_explorer_refresh(parent_id);
+            }
+            Err(e) => {
+                self.set_status_message(
+                    t!("explorer.error_creating_dir", error = e.to_string()).to_string(),
+                );
             }
         }
     }
@@ -571,46 +508,31 @@ impl Editor {
 
         match delete_result {
             Ok(_) => {
-                // Refresh the parent directory in the file explorer
-                if let Some(explorer) = &mut self.file_explorer {
-                    if let Some(runtime) = &self.tokio_runtime {
-                        // Find the node for the deleted path and get its parent
-                        if let Some(node) = explorer.tree().get_node_by_path(&path) {
-                            let node_id = node.id;
-                            let parent_id = get_parent_node_id(explorer.tree(), node_id, false);
+                // Find the parent node to refresh and remember the deleted index
+                let (parent_id, deleted_index) = if let Some(explorer) = &self.file_explorer {
+                    let parent = explorer
+                        .tree()
+                        .get_node_by_path(&path)
+                        .map(|node| get_parent_node_id(explorer.tree(), node.id, false));
+                    (parent, explorer.get_selected_index())
+                } else {
+                    (None, None)
+                };
 
-                            // Remember the index of the deleted node in the visible list
-                            let deleted_index = explorer.get_selected_index();
-
-                            if let Err(e) =
-                                runtime.block_on(explorer.tree_mut().refresh_node(parent_id))
-                            {
-                                tracing::warn!("Failed to refresh file tree after delete: {}", e);
-                            }
-
-                            // After refresh, select the next best node:
-                            // Try to stay at the same index, or select the last visible item
-                            let count = explorer.visible_count();
-                            if count > 0 {
-                                let new_index = if let Some(idx) = deleted_index {
-                                    idx.min(count.saturating_sub(1))
-                                } else {
-                                    0
-                                };
-                                if let Some(node_id) = explorer.get_node_at_index(new_index) {
-                                    explorer.set_selected(Some(node_id));
-                                }
-                            } else {
-                                // No visible nodes, select parent
-                                explorer.set_selected(Some(parent_id));
-                            }
-                        }
-                    }
-                }
                 self.set_status_message(t!("explorer.moved_to_trash", name = &name).to_string());
 
                 // Ensure focus remains on file explorer
                 self.key_context = KeyContext::FileExplorer;
+
+                // Spawn async refresh for the parent directory
+                if let Some(parent_id) = parent_id {
+                    self.spawn_file_explorer_refresh_with_context(
+                        parent_id,
+                        crate::services::async_bridge::FileExplorerRefreshContext::AfterDelete {
+                            deleted_index,
+                        },
+                    );
+                }
             }
             Err(e) => {
                 self.set_status_message(
@@ -694,23 +616,20 @@ impl Editor {
             .map(|p| p.join(&new_name))
             .unwrap_or_else(|| original_path.clone());
 
-        if let Some(runtime) = &self.tokio_runtime {
+        {
+            // Rename synchronously (protected by channel timeout for remote)
             let result = self.filesystem.rename(&original_path, &new_path);
 
             match result {
                 Ok(_) => {
-                    // Refresh the parent directory and select the renamed item
-                    if let Some(explorer) = &mut self.file_explorer {
-                        if let Some(selected_id) = explorer.get_selected() {
-                            let parent_id = get_parent_node_id(explorer.tree(), selected_id, false);
-                            let tree = explorer.tree_mut();
-                            if let Err(e) = runtime.block_on(tree.refresh_node(parent_id)) {
-                                tracing::warn!("Failed to refresh file tree after rename: {}", e);
-                            }
-                        }
-                        // Navigate to the renamed file to restore selection
-                        explorer.navigate_to_path(&new_path);
-                    }
+                    // Find the parent node to refresh
+                    let parent_id = if let Some(explorer) = &self.file_explorer {
+                        explorer.get_selected().map(|selected_id| {
+                            get_parent_node_id(explorer.tree(), selected_id, false)
+                        })
+                    } else {
+                        None
+                    };
 
                     // Update buffer metadata if this file is open in a buffer
                     let buffer_to_update = self
@@ -753,6 +672,16 @@ impl Editor {
                     self.set_status_message(
                         t!("explorer.renamed", old = &original_name, new = &new_name).to_string(),
                     );
+
+                    // Spawn async refresh for the parent directory
+                    if let Some(parent_id) = parent_id {
+                        self.spawn_file_explorer_refresh_with_context(
+                            parent_id,
+                            crate::services::async_bridge::FileExplorerRefreshContext::AfterRename {
+                                new_path,
+                            },
+                        );
+                    }
                 }
                 Err(e) => {
                     self.set_status_message(
@@ -862,6 +791,43 @@ impl Editor {
     pub fn handle_clear_file_explorer_decorations(&mut self, namespace: &str) {
         self.file_explorer_decorations.remove(namespace);
         self.rebuild_file_explorer_decoration_cache();
+    }
+
+    /// Spawn an async refresh for a node in the file explorer.
+    ///
+    /// Takes ownership of the file explorer, spawns the refresh in a background
+    /// task, and sends it back via `AsyncMessage::FileExplorerAsyncRefreshComplete`.
+    /// The file explorer will be `None` until the refresh completes.
+    fn spawn_file_explorer_refresh(&mut self, node_id: crate::view::file_tree::NodeId) {
+        self.spawn_file_explorer_refresh_with_context(
+            node_id,
+            crate::services::async_bridge::FileExplorerRefreshContext::Generic,
+        );
+    }
+
+    fn spawn_file_explorer_refresh_with_context(
+        &mut self,
+        node_id: crate::view::file_tree::NodeId,
+        context: crate::services::async_bridge::FileExplorerRefreshContext,
+    ) {
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+            if let Some(mut view) = self.file_explorer.take() {
+                let sender = bridge.sender();
+                runtime.spawn(async move {
+                    let result = view
+                        .tree_mut()
+                        .refresh_node(node_id)
+                        .await
+                        .map_err(|e| e.to_string());
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(AsyncMessage::FileExplorerAsyncRefreshComplete {
+                        view,
+                        result,
+                        context,
+                    });
+                });
+            }
+        }
     }
 
     pub(super) fn rebuild_file_explorer_decoration_cache(&mut self) {

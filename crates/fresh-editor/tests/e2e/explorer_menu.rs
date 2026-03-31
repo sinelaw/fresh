@@ -1012,6 +1012,11 @@ fn test_focus_returns_after_rename() {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
+    // Wait for the async refresh to complete — the renamed file should appear
+    harness
+        .wait_until(|h| h.screen_to_string().contains("aaa_renamed.txt"))
+        .unwrap();
+
     // CRITICAL: Verify file explorer still has focus after rename
     assert!(
         harness.editor().file_explorer_is_focused(),

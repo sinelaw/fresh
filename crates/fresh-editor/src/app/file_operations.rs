@@ -360,10 +360,12 @@ impl Editor {
     /// Poll for file changes (called from main loop)
     ///
     /// Checks modification times of open files to detect external changes.
-    /// Returns true if any file was changed (requires re-render).
+    /// This is non-blocking: it spawns a background task to check mtimes and sends
+    /// results back via `AsyncMessage::FileChangePollResult`. Returns false (the main
+    /// loop re-renders when the async message arrives).
     pub fn poll_file_changes(&mut self) -> bool {
-        // Skip if auto-revert is disabled
-        if !self.auto_revert_enabled {
+        // Skip if auto-revert is disabled or a poll is already in progress
+        if !self.auto_revert_enabled || self.file_change_poll_in_progress {
             return false;
         }
 
@@ -381,50 +383,106 @@ impl Editor {
         }
         self.last_auto_revert_poll = self.time_source.now();
 
-        // Collect paths of open files that need checking
-        let files_to_check: Vec<PathBuf> = self
+        // Collect paths of open files + their stored mtimes
+        let files_to_check: Vec<(PathBuf, Option<std::time::SystemTime>)> = self
             .buffers
             .values()
-            .filter_map(|state| state.buffer.file_path().map(PathBuf::from))
+            .filter_map(|state| {
+                state.buffer.file_path().map(|p| {
+                    let path = PathBuf::from(p);
+                    let stored = self.file_mod_times.get(&path).copied();
+                    (path, stored)
+                })
+            })
             .collect();
 
-        let mut any_changed = false;
-
-        for path in files_to_check {
-            // Get current mtime
-            let current_mtime = match self.filesystem.metadata(&path) {
-                Ok(meta) => match meta.modified {
-                    Some(mtime) => mtime,
-                    None => continue,
-                },
-                Err(_) => continue, // File might have been deleted
-            };
-
-            // Check if mtime has changed
-            if let Some(&stored_mtime) = self.file_mod_times.get(&path) {
-                if current_mtime != stored_mtime {
-                    // Handle the file change (this includes debouncing)
-                    // Note: file_mod_times is updated by handle_file_changed after successful revert,
-                    // not here, to avoid the race where the revert check sees the already-updated mtime
-                    let path_str = path.display().to_string();
-                    if self.handle_async_file_changed(path_str) {
-                        any_changed = true;
-                    }
-                }
-            } else {
-                // First time seeing this file, record its mtime
-                self.file_mod_times.insert(path, current_mtime);
-            }
+        if files_to_check.is_empty() {
+            return false;
         }
 
-        any_changed
+        // Spawn async task to check mtimes
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+            let sender = bridge.sender();
+            let fs = std::sync::Arc::clone(&self.fs_manager);
+
+            self.file_change_poll_in_progress = true;
+
+            runtime.spawn(async move {
+                use crate::services::async_bridge::AsyncMessage;
+
+                let mut results = Vec::new();
+
+                let check_all = async {
+                    for (path, stored_mtime) in files_to_check {
+                        match fs.get_single_metadata(&path).await {
+                            Ok(meta) => {
+                                if let Some(current_mtime) = meta.modified {
+                                    match stored_mtime {
+                                        Some(stored) if current_mtime != stored => {
+                                            // mtime changed
+                                            results.push((path, current_mtime, true));
+                                        }
+                                        None => {
+                                            // First time seeing this file
+                                            results.push((path, current_mtime, false));
+                                        }
+                                        _ => {} // unchanged
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!("Failed to get metadata for {:?}: {}", path, e);
+                            }
+                        }
+                    }
+                };
+
+                match tokio::time::timeout(std::time::Duration::from_secs(5), check_all).await {
+                    Ok(()) => {}
+                    Err(_) => {
+                        tracing::debug!("File change poll timed out after 5s");
+                    }
+                }
+
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = sender.send(AsyncMessage::FileChangePollResult(results));
+            });
+        }
+
+        false
+    }
+
+    /// Handle the result of an async file change poll
+    pub fn handle_file_change_poll_result(
+        &mut self,
+        results: Vec<(PathBuf, std::time::SystemTime, bool)>,
+    ) {
+        self.file_change_poll_in_progress = false;
+
+        for (path, mtime, previously_tracked) in results {
+            if previously_tracked {
+                // mtime changed — trigger revert check (includes debouncing)
+                let path_str = path.display().to_string();
+                self.handle_async_file_changed(path_str);
+            } else {
+                // First time seeing this file — just record the mtime
+                self.file_mod_times.insert(path, mtime);
+            }
+        }
     }
 
     /// Poll for file tree changes (called from main loop)
     ///
     /// Checks modification times of expanded directories to detect new/deleted files.
-    /// Returns true if any directory was refreshed (requires re-render).
+    /// This is non-blocking: it spawns a background task to check mtimes and sends
+    /// results back via `AsyncMessage::FileTreePollResult`. Returns false (the main
+    /// loop re-renders when the async message arrives).
     pub fn poll_file_tree_changes(&mut self) -> bool {
+        // Skip if a poll is already in progress
+        if self.file_tree_poll_in_progress {
+            return false;
+        }
+
         // Check poll interval
         let poll_interval =
             std::time::Duration::from_millis(self.config.editor.file_tree_poll_interval_ms);
@@ -438,58 +496,74 @@ impl Editor {
             return false;
         };
 
-        // Collect expanded directories (node_id, path)
+        // Phase 1 (main thread, non-blocking): collect expanded dirs + stored mtimes
         use crate::view::file_tree::NodeId;
-        let expanded_dirs: Vec<(NodeId, PathBuf)> = explorer
+        let expanded_dirs: Vec<(NodeId, PathBuf, Option<std::time::SystemTime>)> = explorer
             .tree()
             .all_nodes()
             .filter(|node| node.is_dir() && node.is_expanded())
-            .map(|node| (node.id, node.entry.path.clone()))
+            .map(|node| {
+                let stored = self.dir_mod_times.get(&node.entry.path).copied();
+                (node.id, node.entry.path.clone(), stored)
+            })
             .collect();
 
-        // Check mtimes and collect directories that need refresh
-        let mut dirs_to_refresh: Vec<NodeId> = Vec::new();
-
-        for (node_id, path) in expanded_dirs {
-            // Get current mtime
-            let current_mtime = match self.filesystem.metadata(&path) {
-                Ok(meta) => match meta.modified {
-                    Some(mtime) => mtime,
-                    None => continue,
-                },
-                Err(_) => continue, // Directory might have been deleted
-            };
-
-            // Check if mtime has changed
-            if let Some(&stored_mtime) = self.dir_mod_times.get(&path) {
-                if current_mtime != stored_mtime {
-                    // Update stored mtime
-                    self.dir_mod_times.insert(path.clone(), current_mtime);
-                    dirs_to_refresh.push(node_id);
-                    tracing::debug!("Directory changed: {:?}", path);
-                }
-            } else {
-                // First time seeing this directory, record its mtime
-                self.dir_mod_times.insert(path, current_mtime);
-            }
-        }
-
-        // Refresh changed directories
-        if dirs_to_refresh.is_empty() {
+        if expanded_dirs.is_empty() {
             return false;
         }
 
-        // Refresh each changed directory
-        if let (Some(runtime), Some(explorer)) = (&self.tokio_runtime, &mut self.file_explorer) {
-            for node_id in dirs_to_refresh {
-                let tree = explorer.tree_mut();
-                if let Err(e) = runtime.block_on(tree.refresh_node(node_id)) {
-                    tracing::warn!("Failed to refresh directory: {}", e);
+        // Phase 2: spawn a tokio task to check mtimes asynchronously
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+            let sender = bridge.sender();
+            let fs = std::sync::Arc::clone(&self.fs_manager);
+
+            self.file_tree_poll_in_progress = true;
+
+            runtime.spawn(async move {
+                use crate::services::async_bridge::AsyncMessage;
+
+                let mut changed_dirs = Vec::new();
+
+                // Wrap entire batch in a 5s timeout so we don't wait 30s x N dirs
+                let check_all = async {
+                    for (node_id, path, stored_mtime) in expanded_dirs {
+                        match fs.get_single_metadata(&path).await {
+                            Ok(meta) => {
+                                if let Some(current_mtime) = meta.modified {
+                                    match stored_mtime {
+                                        Some(stored) if current_mtime != stored => {
+                                            changed_dirs.push((node_id, path, current_mtime));
+                                        }
+                                        None => {
+                                            // First time — record it via the result
+                                            // (no refresh needed, just record mtime)
+                                            changed_dirs.push((node_id, path, current_mtime));
+                                        }
+                                        _ => {} // unchanged
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!("Failed to get metadata for {:?}: {}", path, e);
+                            }
+                        }
+                    }
+                };
+
+                match tokio::time::timeout(std::time::Duration::from_secs(5), check_all).await {
+                    Ok(()) => {}
+                    Err(_) => {
+                        tracing::debug!("File tree poll timed out after 5s");
+                    }
                 }
-            }
+
+                // Send results back to main thread
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = sender.send(AsyncMessage::FileTreePollResult(changed_dirs));
+            });
         }
 
-        true
+        false
     }
 
     /// Notify LSP server about a newly opened file

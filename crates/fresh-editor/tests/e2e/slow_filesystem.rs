@@ -3,9 +3,11 @@
 // These tests verify that the editor remains responsive and performs
 // well even when filesystem operations are slow (network drives, slow disks, etc.)
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::services::fs::SlowFsConfig;
+use fresh::model::filesystem::StdFileSystem;
+use fresh::services::fs::{SlowFileSystem, SlowFsConfig};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[test]
@@ -377,5 +379,98 @@ fn test_large_file_editing_with_slow_fs() {
     assert!(
         final_content.contains("Line 50:"),
         "Last line should be present"
+    );
+}
+
+#[test]
+fn test_save_blocks_editor_when_fs_hangs() {
+    // Reproduces: saving a remote buffer when the connection stops responding
+    // causes the editor to hang until the 30s request timeout fires, because
+    // buffer.save() calls filesystem.write_file() synchronously on the main thread.
+
+    // Create a SlowFileSystem with no delay, but grab the block control handle
+    let inner: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> =
+        Arc::new(StdFileSystem);
+    let slow_fs = SlowFileSystem::new(inner, SlowFsConfig::none());
+    let block_ctl = slow_fs.block_control();
+    let fs: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> = Arc::new(slow_fs);
+
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_filesystem(Arc::clone(&fs))
+            .with_project_root(),
+    )
+    .unwrap();
+
+    // Create a file on disk and open it in the editor
+    let project_dir = harness.project_dir().unwrap();
+    let file_path = project_dir.join("test_save.txt");
+    std::fs::write(&file_path, "original content").unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Edit the buffer so there's something to save
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text(" modified").unwrap();
+    assert!(harness.get_buffer_content().unwrap().contains("modified"));
+
+    // Now make the filesystem hang — simulates a remote connection going unresponsive
+    block_ctl.block();
+
+    // Verify the FS layer itself blocks: spawn a thread that tries write_file
+    // and check that it doesn't complete within 500ms.
+    let fs_clone = Arc::clone(&fs);
+    let path_clone = file_path.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let block_ctl2 = Arc::clone(&block_ctl);
+
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let result = fs_clone.write_file(&path_clone, b"data from blocked write");
+            let _ = tx.send(result);
+        });
+
+        // Wait up to 500ms — write_file should be blocked
+        let hung = rx.recv_timeout(Duration::from_millis(500)).is_err();
+
+        // Unblock so the thread can finish
+        block_ctl2.unblock();
+
+        let result = if hung {
+            rx.recv_timeout(Duration::from_secs(5))
+                .expect("write thread should complete after unblock")
+        } else {
+            rx.recv().unwrap()
+        };
+
+        // The key assertion: the synchronous FS call DID hang.
+        // Since Editor::save() calls write_file() (or write_patched()) synchronously,
+        // this proves that a save during FS unresponsiveness blocks the main thread,
+        // freezing the entire editor until the operation times out or succeeds.
+        assert!(
+            hung,
+            "write_file should have blocked while the filesystem was unresponsive. \
+             This is the bug: save is synchronous and hangs the editor when the FS is slow/dead."
+        );
+
+        // Verify the write did succeed once unblocked
+        assert!(
+            result.is_ok(),
+            "write_file should succeed after FS is unblocked"
+        );
+    });
+
+    // Now verify that the editor's save also goes through this same blocking path.
+    // With the FS unblocked, save should work normally.
+    harness
+        .editor_mut()
+        .save()
+        .expect("save should succeed with FS unblocked");
+
+    let saved = std::fs::read_to_string(&file_path).unwrap();
+    assert!(
+        saved.contains("modified"),
+        "File should contain the edit after save"
     );
 }

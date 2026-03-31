@@ -695,8 +695,11 @@ fn test_file_explorer_focus_after_delete() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.sleep(std::time::Duration::from_millis(100));
-    harness.render().unwrap();
+
+    // Wait for async refresh to complete — file2.txt should still be visible
+    harness
+        .wait_until(|h| h.screen_to_string().contains("file2.txt"))
+        .unwrap();
 
     let screen_after = harness.screen_to_string();
     println!("Screen after deletion:\n{}", screen_after);
@@ -719,16 +722,6 @@ fn test_file_explorer_focus_after_delete() {
     assert!(
         screen_after.contains("File Explorer"),
         "File Explorer should still be visible after deletion"
-    );
-
-    // Verify the deleted file is gone from the file explorer tree
-    // (but it may appear in status messages like "Moved to trash: file1.txt")
-    // Check that file2.txt is visible but file1.txt tree entry is gone
-    // Note: file1.txt might still appear in status message, so check tree area specifically
-    assert!(
-        screen_after.contains("file2.txt"),
-        "File explorer should still show file2.txt after deletion. Screen:\n{}",
-        screen_after
     );
 
     // Verify arrow keys work in file explorer (not captured by editor)
@@ -2176,8 +2169,14 @@ fn test_file_explorer_rename_existing_file_keeps_focus() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.sleep(std::time::Duration::from_millis(100));
-    harness.render().unwrap();
+
+    // Wait for async refresh to complete — renamed file should appear in explorer
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("renamed.txt") && s.contains("File Explorer")
+        })
+        .unwrap();
 
     let screen_after_rename = harness.screen_to_string();
     println!("Screen after rename:\n{}", screen_after_rename);
@@ -2200,14 +2199,7 @@ fn test_file_explorer_rename_existing_file_keeps_focus() {
         key_context_after
     );
 
-    // Verify 3: File explorer should still be visible
-    assert!(
-        screen_after_rename.contains("File Explorer"),
-        "File explorer should still be visible. Screen:\n{}",
-        screen_after_rename
-    );
-
-    // Verify 4: File on disk was renamed
+    // Verify 3: File on disk was renamed
     assert!(
         project_root.join("renamed.txt").exists(),
         "File should be renamed on disk"

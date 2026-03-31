@@ -1150,6 +1150,156 @@ impl Editor {
         self.set_status_message(t!("explorer.refreshed_default").to_string());
     }
 
+    /// Handle file explorer toggle completed — restore the view and do post-processing
+    pub(super) fn handle_file_explorer_toggle_complete(
+        &mut self,
+        mut view: FileTreeView,
+        node_id: NodeId,
+        result: Result<(), String>,
+    ) {
+        let final_name = view.tree().get_node(node_id).map(|n| n.entry.name.clone());
+        let final_expanded = view
+            .tree()
+            .get_node(node_id)
+            .map(|n| n.is_expanded())
+            .unwrap_or(false);
+
+        let mut needs_decoration_rebuild = false;
+
+        match result {
+            Ok(()) => {
+                if final_expanded {
+                    let node_info = view
+                        .tree()
+                        .get_node(node_id)
+                        .map(|n| (n.entry.path.clone(), n.entry.is_symlink()));
+
+                    if let Some((dir_path, is_symlink)) = node_info {
+                        if let Err(e) = view.load_gitignore_for_dir(&dir_path) {
+                            tracing::warn!("Failed to load .gitignore from {:?}: {}", dir_path, e);
+                        }
+
+                        if is_symlink {
+                            tracing::debug!(
+                                "Symlink directory expanded, will rebuild decoration cache: {:?}",
+                                dir_path
+                            );
+                            needs_decoration_rebuild = true;
+                        }
+                    }
+                }
+
+                if let Some(name) = final_name {
+                    let msg = if final_expanded {
+                        t!("explorer.expanded", name = &name).to_string()
+                    } else {
+                        t!("explorer.collapsed", name = &name).to_string()
+                    };
+                    self.set_status_message(msg);
+                }
+            }
+            Err(e) => {
+                self.set_status_message(t!("explorer.error", error = e.to_string()).to_string());
+            }
+        }
+
+        self.file_explorer = Some(view);
+
+        if needs_decoration_rebuild {
+            self.rebuild_file_explorer_decoration_cache();
+        }
+    }
+
+    /// Handle async refresh completed — restore the view and perform post-refresh actions
+    pub(super) fn handle_file_explorer_async_refresh_complete(
+        &mut self,
+        mut view: FileTreeView,
+        result: Result<(), String>,
+        context: crate::services::async_bridge::FileExplorerRefreshContext,
+    ) {
+        use crate::services::async_bridge::FileExplorerRefreshContext;
+
+        // Perform context-specific post-refresh actions
+        match &context {
+            FileExplorerRefreshContext::AfterDelete { deleted_index } => {
+                if result.is_ok() {
+                    // Re-select the next best node after deletion
+                    let count = view.visible_count();
+                    if count > 0 {
+                        let new_index = if let Some(idx) = deleted_index {
+                            (*idx).min(count.saturating_sub(1))
+                        } else {
+                            0
+                        };
+                        if let Some(node_id) = view.get_node_at_index(new_index) {
+                            view.set_selected(Some(node_id));
+                        }
+                    }
+                }
+            }
+            FileExplorerRefreshContext::AfterRename { new_path } => {
+                if result.is_ok() {
+                    view.navigate_to_path(new_path);
+                }
+            }
+            FileExplorerRefreshContext::Generic => {}
+        }
+
+        self.file_explorer = Some(view);
+        match result {
+            Ok(()) => {
+                self.set_status_message(t!("explorer.refreshed_default").to_string());
+            }
+            Err(e) => {
+                self.set_status_message(t!("explorer.error_refreshing", error = e).to_string());
+            }
+        }
+    }
+
+    /// Handle file tree poll result — update dir_mod_times and spawn async refreshes
+    /// for directories whose mtime changed.
+    pub(super) fn handle_file_tree_poll_result(
+        &mut self,
+        changed_dirs: Vec<(NodeId, std::path::PathBuf, std::time::SystemTime)>,
+    ) {
+        self.file_tree_poll_in_progress = false;
+
+        // Separate first-time dirs (just record mtime) from actually changed dirs (need refresh)
+        let mut dirs_to_refresh = Vec::new();
+        for (node_id, path, new_mtime) in changed_dirs {
+            let previously_known = self.dir_mod_times.contains_key(&path);
+            self.dir_mod_times.insert(path.clone(), new_mtime);
+            if previously_known {
+                tracing::debug!("Directory changed: {:?}", path);
+                dirs_to_refresh.push(node_id);
+            }
+        }
+
+        if dirs_to_refresh.is_empty() {
+            return;
+        }
+
+        // Take the file explorer, refresh in a spawned task, send it back
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+            if let Some(mut view) = self.file_explorer.take() {
+                let sender = bridge.sender();
+                runtime.spawn(async move {
+                    for node_id in dirs_to_refresh {
+                        if let Err(e) = view.tree_mut().refresh_node(node_id).await {
+                            tracing::warn!("Failed to refresh directory: {}", e);
+                        }
+                    }
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(
+                        crate::services::async_bridge::AsyncMessage::FileExplorerExpandedToPath(
+                            view,
+                        ),
+                    );
+                });
+            }
+        }
+    }
+
     /// Handle file explorer expanded to path
     pub(super) fn handle_file_explorer_expanded_to_path(&mut self, mut view: FileTreeView) {
         tracing::trace!(

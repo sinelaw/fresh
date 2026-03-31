@@ -10,8 +10,8 @@ use crate::model::filesystem::{
 };
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 /// Configuration for slow filesystem simulation
@@ -135,6 +135,54 @@ pub struct SlowFileSystem {
     config: SlowFsConfig,
     /// Metrics tracking
     metrics: Arc<BackendMetrics>,
+    /// Shared blocking control — when the bool is true, all FS operations block
+    /// on the condvar until it becomes false.
+    block_control: Arc<BlockControl>,
+}
+
+/// Control handle for dynamically blocking/unblocking a [`SlowFileSystem`].
+///
+/// Cloned from `SlowFileSystem::block_control()`. Call [`block`] to make all
+/// subsequent FS operations hang, and [`unblock`] to release them.
+pub struct BlockControl {
+    blocked: Mutex<bool>,
+    cond: Condvar,
+    /// Fast path: skip the mutex when not blocked.
+    is_blocked: AtomicBool,
+}
+
+impl BlockControl {
+    fn new() -> Self {
+        Self {
+            blocked: Mutex::new(false),
+            cond: Condvar::new(),
+            is_blocked: AtomicBool::new(false),
+        }
+    }
+
+    /// Make all filesystem operations block until [`unblock`] is called.
+    pub fn block(&self) {
+        *self.blocked.lock().unwrap() = true;
+        self.is_blocked.store(true, Ordering::SeqCst);
+    }
+
+    /// Release all blocked filesystem operations and let future ones proceed.
+    pub fn unblock(&self) {
+        *self.blocked.lock().unwrap() = false;
+        self.is_blocked.store(false, Ordering::SeqCst);
+        self.cond.notify_all();
+    }
+
+    /// Wait if currently blocked. Returns immediately when not blocked.
+    fn wait_if_blocked(&self) {
+        if !self.is_blocked.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut guard = self.blocked.lock().unwrap();
+        while *guard {
+            guard = self.cond.wait(guard).unwrap();
+        }
+    }
 }
 
 impl SlowFileSystem {
@@ -144,6 +192,7 @@ impl SlowFileSystem {
             inner,
             config,
             metrics: Arc::new(BackendMetrics::new()),
+            block_control: Arc::new(BlockControl::new()),
         }
     }
 
@@ -157,13 +206,19 @@ impl SlowFileSystem {
         &self.metrics
     }
 
+    /// Get a cloneable handle to dynamically block/unblock all filesystem operations.
+    pub fn block_control(&self) -> Arc<BlockControl> {
+        Arc::clone(&self.block_control)
+    }
+
     /// Reset metrics to zero
     pub fn reset_metrics(&self) {
         self.metrics.reset();
     }
 
-    /// Add delay
+    /// Apply delay and block-if-hanging before forwarding to the inner filesystem.
     fn add_delay(&self, delay: Duration) {
+        self.block_control.wait_if_blocked();
         if !delay.is_zero() {
             std::thread::sleep(delay);
         }

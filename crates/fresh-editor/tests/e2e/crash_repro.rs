@@ -93,21 +93,13 @@ fn test_issue_562_delete_folder_crash_scroll_offset() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // This render should NOT panic even if scroll_offset was > display_nodes.len()
-    let render_result = harness.render();
-    assert!(
-        render_result.is_ok(),
-        "Rendering should not panic after collapsing a folder while scrolled down"
-    );
+    // Wait for the async toggle to complete and the folder to collapse
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("file_000"))
+        .unwrap();
 
     let screen_after_collapse = harness.screen_to_string();
     println!("Screen after collapse:\n{}", screen_after_collapse);
-
-    // Verify the folder is now collapsed (should not show file_000 anymore)
-    assert!(
-        !screen_after_collapse.contains("file_000"),
-        "Folder should be collapsed, file_000 should not be visible"
-    );
 
     // Verify big_folder is still visible (just collapsed)
     assert!(

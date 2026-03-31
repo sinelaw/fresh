@@ -7,9 +7,14 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
+
+/// Default timeout for channel requests (30 seconds).
+/// Protects against indefinite blocking when the remote becomes unreachable.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default capacity for the per-request streaming data channel.
 const DEFAULT_DATA_CHANNEL_CAPACITY: usize = 64;
@@ -221,6 +226,10 @@ impl AgentChannel {
     }
 
     /// Send a request and wait for the final result (ignoring streaming data)
+    ///
+    /// Times out after [`REQUEST_TIMEOUT`] (30s) if no response is received,
+    /// returning [`ChannelError::Timeout`]. This prevents the caller from
+    /// blocking forever when the remote becomes unreachable.
     pub async fn request(
         &self,
         method: &str,
@@ -228,14 +237,20 @@ impl AgentChannel {
     ) -> Result<serde_json::Value, ChannelError> {
         let (mut data_rx, result_rx) = self.request_streaming(method, params).await?;
 
-        // Drain streaming data
-        while data_rx.recv().await.is_some() {}
+        let wait_for_result = async {
+            // Drain streaming data
+            while data_rx.recv().await.is_some() {}
 
-        // Wait for final result
-        result_rx
+            // Wait for final result
+            result_rx
+                .await
+                .map_err(|_| ChannelError::ChannelClosed)?
+                .map_err(ChannelError::Remote)
+        };
+
+        tokio::time::timeout(REQUEST_TIMEOUT, wait_for_result)
             .await
-            .map_err(|_| ChannelError::ChannelClosed)?
-            .map_err(ChannelError::Remote)
+            .map_err(|_| ChannelError::Timeout)?
     }
 
     /// Send a request that may stream data
@@ -288,6 +303,8 @@ impl AgentChannel {
     }
 
     /// Send a request and collect all streaming data along with the final result
+    ///
+    /// Times out after [`REQUEST_TIMEOUT`] (30s) if no response is received.
     pub async fn request_with_data(
         &self,
         method: &str,
@@ -295,26 +312,32 @@ impl AgentChannel {
     ) -> Result<(Vec<serde_json::Value>, serde_json::Value), ChannelError> {
         let (mut data_rx, result_rx) = self.request_streaming(method, params).await?;
 
-        // Collect all streaming data
-        let mut data = Vec::new();
-        while let Some(chunk) = data_rx.recv().await {
-            data.push(chunk);
+        let wait_for_result = async {
+            // Collect all streaming data
+            let mut data = Vec::new();
+            while let Some(chunk) = data_rx.recv().await {
+                data.push(chunk);
 
-            // Test hook: simulate slow consumer for backpressure testing.
-            // Zero-cost in production (atomic load + branch-not-taken).
-            let delay_us = TEST_RECV_DELAY_US.load(Ordering::Relaxed);
-            if delay_us > 0 {
-                tokio::time::sleep(tokio::time::Duration::from_micros(delay_us)).await;
+                // Test hook: simulate slow consumer for backpressure testing.
+                // Zero-cost in production (atomic load + branch-not-taken).
+                let delay_us = TEST_RECV_DELAY_US.load(Ordering::Relaxed);
+                if delay_us > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_micros(delay_us)).await;
+                }
             }
-        }
 
-        // Wait for final result
-        let result = result_rx
+            // Wait for final result
+            let result = result_rx
+                .await
+                .map_err(|_| ChannelError::ChannelClosed)?
+                .map_err(ChannelError::Remote)?;
+
+            Ok((data, result))
+        };
+
+        tokio::time::timeout(REQUEST_TIMEOUT, wait_for_result)
             .await
-            .map_err(|_| ChannelError::ChannelClosed)?
-            .map_err(ChannelError::Remote)?;
-
-        Ok((data, result))
+            .map_err(|_| ChannelError::Timeout)?
     }
 
     /// Send a request with streaming data, synchronously (blocking)

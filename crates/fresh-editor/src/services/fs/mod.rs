@@ -12,4 +12,4 @@ pub use crate::model::filesystem::{
     FileWriter, NoopFileSystem, StdFileSystem,
 };
 pub use manager::FsManager;
-pub use slow::{BackendMetrics, SlowFileSystem, SlowFsConfig};
+pub use slow::{BackendMetrics, BlockControl, SlowFileSystem, SlowFsConfig};

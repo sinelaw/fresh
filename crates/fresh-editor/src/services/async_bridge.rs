@@ -27,6 +27,20 @@ pub enum LspSemanticTokensResponse {
     Range(Result<Option<SemanticTokensRangeResult>, String>),
 }
 
+/// Context for what triggered a file explorer refresh, so the handler
+/// can perform the right post-refresh action (e.g. re-select after delete).
+#[derive(Debug)]
+pub enum FileExplorerRefreshContext {
+    /// Generic refresh (manual refresh, poll, new file/dir creation)
+    Generic,
+    /// Refresh after a file/directory was deleted.
+    /// `deleted_index` is the visible index of the deleted node before deletion.
+    AfterDelete { deleted_index: Option<usize> },
+    /// Refresh after a file/directory was renamed.
+    /// `new_path` is the path to navigate to after refresh.
+    AfterRename { new_path: std::path::PathBuf },
+}
+
 /// Messages sent from async tasks to the synchronous main loop
 #[derive(Debug)]
 pub enum AsyncMessage {
@@ -178,6 +192,31 @@ pub enum AsyncMessage {
 
     /// File explorer node refresh completed
     FileExplorerRefreshNode(NodeId),
+
+    /// File tree poll completed — contains directories whose mtime changed
+    /// Each tuple is (node_id, path, new_mtime)
+    FileTreePollResult(Vec<(NodeId, std::path::PathBuf, std::time::SystemTime)>),
+
+    /// File change poll completed — contains open files whose mtime changed or was first seen
+    /// Each tuple is (path, new_mtime, previously_tracked). When `previously_tracked` is true,
+    /// the file's mtime differs from the stored value (needs revert check); when false, the
+    /// file is being seen for the first time (just record the mtime).
+    FileChangePollResult(Vec<(std::path::PathBuf, std::time::SystemTime, bool)>),
+
+    /// File explorer toggle completed — contains the updated view and toggle result
+    FileExplorerToggleComplete {
+        view: FileTreeView,
+        node_id: NodeId,
+        result: Result<(), String>,
+    },
+
+    /// File explorer async refresh completed — contains the updated view
+    FileExplorerAsyncRefreshComplete {
+        view: FileTreeView,
+        result: Result<(), String>,
+        /// Context about what triggered this refresh, for post-refresh actions
+        context: FileExplorerRefreshContext,
+    },
 
     /// File explorer expand to path completed
     /// Contains the updated FileTreeView with the path expanded and selected
