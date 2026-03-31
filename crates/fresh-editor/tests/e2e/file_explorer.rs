@@ -3000,9 +3000,9 @@ fn test_file_explorer_git_markers_clear_after_external_commit() {
         })
         .unwrap();
 
-    // Ensure initial .git/index mtime is recorded by polling once
+    // Ensure initial .git/index mtime is recorded by the file tree poller
     harness.advance_time(std::time::Duration::from_secs(5));
-    harness.editor_mut().poll_git_status(); // records initial mtime
+    harness.editor_mut().poll_file_tree_changes();
 
     // Wait for filesystem mtime granularity (1 second) so the commit
     // produces a different .git/index mtime than what was already recorded.
@@ -3020,15 +3020,12 @@ fn test_file_explorer_git_markers_clear_after_external_commit() {
         .output()
         .expect("git commit failed");
 
-    // Advance time past poll interval and trigger detection
+    // Advance time past poll interval — poll_file_tree_changes now also
+    // checks .git/index mtime and fires the plugin hook on change.
     harness.advance_time(std::time::Duration::from_secs(5));
-    let changed = harness.editor_mut().poll_git_status();
-    assert!(
-        changed,
-        "poll_git_status should detect .git/index mtime change after commit"
-    );
 
-    // Now wait for the plugin to process the hook and clear decorations
+    // wait_until drives the editor tick loop; the integrated git index
+    // check inside poll_file_tree_changes detects the mtime change.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();

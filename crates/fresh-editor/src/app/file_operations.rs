@@ -474,8 +474,12 @@ impl Editor {
             }
         }
 
+        // Check .git/index mtime to detect commits, staging, checkouts, etc.
+        // Uses the same dir_mod_times map and poll interval as directory polling.
+        let git_index_changed = self.check_git_index_mtime();
+
         // Refresh changed directories
-        if dirs_to_refresh.is_empty() {
+        if dirs_to_refresh.is_empty() && !git_index_changed {
             return false;
         }
 
@@ -492,62 +496,55 @@ impl Editor {
         true
     }
 
-    /// Poll for git index changes (called from main loop)
-    ///
-    /// Checks the modification time of `.git/index` to detect commits, staging,
-    /// checkouts, and other git operations. When a change is detected, fires the
-    /// `focus_gained` plugin hook so git decorations refresh.
-    /// Returns true if the git index changed (requires re-render).
-    pub fn poll_git_status(&mut self) -> bool {
-        // Use the same interval as file tree polling
-        let poll_interval =
-            std::time::Duration::from_millis(self.config.editor.file_tree_poll_interval_ms);
-        if self.time_source.elapsed_since(self.last_git_status_poll) < poll_interval {
-            return false;
+    /// Check `.git/index` mtime to detect commits, staging, checkouts, etc.
+    /// Resolves the git dir once via `git rev-parse`, then tracks the index file's
+    /// mtime in `dir_mod_times` (the same map used for directory polling).
+    /// Returns true if the index mtime changed.
+    fn check_git_index_mtime(&mut self) -> bool {
+        // Resolve the git index path once and add it to dir_mod_times.
+        if !self.git_index_resolved {
+            self.git_index_resolved = true;
+            if let Some(path) = Self::resolve_git_index(&self.working_dir) {
+                if let Ok(mtime) = std::fs::metadata(&path).and_then(|m| m.modified()) {
+                    self.dir_mod_times.insert(path, mtime);
+                }
+            }
+            return false; // First poll — just record, don't trigger
         }
-        self.last_git_status_poll = self.time_source.now();
 
-        // On first poll, resolve the git index path (walks up from working_dir,
-        // handles .git files in worktrees/submodules). Cache it for later polls.
-        let git_index = if let Some((ref path, _)) = self.git_index_state {
-            path.clone()
-        } else {
-            let Some(path) = Self::find_git_index(&self.working_dir) else {
-                return false;
-            };
-            path
+        // Find the git index entry in dir_mod_times and check for mtime change.
+        // There is at most one such entry.
+        let git_index_path = self
+            .dir_mod_times
+            .keys()
+            .find(|p| p.ends_with(".git/index") || p.ends_with(".git\\index"))
+            .cloned();
+
+        let Some(path) = git_index_path else {
+            return false; // Not a git repo
         };
 
-        let current_mtime = match std::fs::metadata(&git_index) {
-            Ok(meta) => match meta.modified() {
-                Ok(mtime) => mtime,
-                Err(_) => return false,
-            },
+        let current_mtime = match std::fs::metadata(&path).and_then(|m| m.modified()) {
+            Ok(mtime) => mtime,
             Err(_) => return false,
         };
 
-        match self.git_index_state {
-            Some((_, stored_mtime)) if stored_mtime == current_mtime => false,
-            Some(_) => {
-                self.git_index_state = Some((git_index, current_mtime));
-                // Git index changed — fire hook so plugins refresh decorations
-                self.plugin_manager.run_hook(
-                    "focus_gained",
-                    crate::services::plugins::hooks::HookArgs::FocusGained,
-                );
-                true
-            }
-            None => {
-                // First time — just record the path and mtime
-                self.git_index_state = Some((git_index, current_mtime));
-                false
-            }
+        let stored_mtime = self.dir_mod_times[&path];
+        if current_mtime != stored_mtime {
+            self.dir_mod_times.insert(path, current_mtime);
+            self.plugin_manager.run_hook(
+                "focus_gained",
+                crate::services::plugins::hooks::HookArgs::FocusGained,
+            );
+            return true;
         }
+
+        false
     }
 
-    /// Find the path to `.git/index` using `git rev-parse --git-dir`.
+    /// Resolve the path to `.git/index` via `git rev-parse --git-dir`.
     /// Works in regular repos, worktrees, submodules, and subdirectories.
-    fn find_git_index(working_dir: &Path) -> Option<std::path::PathBuf> {
+    fn resolve_git_index(working_dir: &Path) -> Option<PathBuf> {
         let output = std::process::Command::new("git")
             .args(["rev-parse", "--git-dir"])
             .current_dir(working_dir)
@@ -558,7 +555,7 @@ impl Editor {
         }
         let git_dir = std::str::from_utf8(&output.stdout).ok()?.trim();
         let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
-            std::path::PathBuf::from(git_dir)
+            PathBuf::from(git_dir)
         } else {
             working_dir.join(git_dir)
         };

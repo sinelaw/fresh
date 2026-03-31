@@ -737,13 +737,8 @@ pub struct Editor {
     /// Last time we polled for directory changes (for file tree refresh)
     last_file_tree_poll: std::time::Instant,
 
-    /// Last time we polled for git index changes
-    last_git_status_poll: std::time::Instant,
-
-    /// Resolved path to .git/index and its last known mtime.
-    /// The path is resolved once (walking up from working_dir, handling gitdir files)
-    /// and cached for subsequent polls.
-    git_index_state: Option<(std::path::PathBuf, std::time::SystemTime)>,
+    /// Whether we've resolved and seeded the .git/index path in dir_mod_times
+    git_index_resolved: bool,
 
     /// Last known modification times for open files (for auto-revert)
     /// Maps file path to last known modification time
@@ -1568,8 +1563,7 @@ impl Editor {
             auto_revert_enabled: true,
             last_auto_revert_poll: time_source.now(),
             last_file_tree_poll: time_source.now(),
-            last_git_status_poll: time_source.now(),
-            git_index_state: None,
+            git_index_resolved: false,
             file_mod_times: HashMap::new(),
             dir_mod_times: HashMap::new(),
             file_rapid_change_counts: HashMap::new(),
@@ -5183,18 +5177,9 @@ impl Editor {
             let _s = tracing::info_span!("poll_file_tree_changes").entered();
             self.poll_file_tree_changes()
         };
-        let git_changes = {
-            let _s = tracing::info_span!("poll_git_status").entered();
-            self.poll_git_status()
-        };
 
         // Trigger render if any async messages, plugin commands were processed, or plugin requested render
-        needs_render
-            || processed_any_commands
-            || plugin_render
-            || file_changes
-            || tree_changes
-            || git_changes
+        needs_render || processed_any_commands || plugin_render || file_changes || tree_changes
     }
 
     /// Update LSP status bar string from active progress operations
