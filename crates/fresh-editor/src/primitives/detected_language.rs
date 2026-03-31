@@ -154,6 +154,18 @@ impl DetectedLanguage {
         }
     }
 
+    /// Create a DetectedLanguage for a user-configured language that has no
+    /// matching syntect grammar. No syntax highlighting, but the language ID
+    /// is set correctly for config/LSP purposes.
+    pub fn from_config_language(lang_id: &str) -> Self {
+        Self {
+            name: lang_id.to_string(),
+            display_name: lang_id.to_string(),
+            highlighter: HighlightEngine::None,
+            ts_language: None,
+        }
+    }
+
     /// Plain text — no highlighting.
     pub fn plain_text() -> Self {
         Self {

@@ -1013,6 +1013,27 @@ impl Editor {
                     language,
                 },
             );
+        } else if self.config.languages.contains_key(trimmed) {
+            // Handle user-configured languages without a matching syntect grammar
+            // (e.g. "fish" with grammar "fish" that isn't available in syntect).
+            // These languages won't have syntax highlighting but should still be
+            // selectable so the correct language ID is set for config/LSP purposes.
+            let detected = DetectedLanguage::from_config_language(trimmed);
+            let language = detected.name.clone();
+            let buffer_id = self.active_buffer();
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                state.apply_language(detected);
+                self.set_status_message(format!("Language set to {}", trimmed));
+            }
+            #[cfg(feature = "plugins")]
+            self.update_plugin_state_snapshot();
+            self.plugin_manager.run_hook(
+                "language_changed",
+                crate::services::plugins::hooks::HookArgs::LanguageChanged {
+                    buffer_id,
+                    language,
+                },
+            );
         } else {
             self.set_status_message(format!("Unknown language: {}", input));
         }

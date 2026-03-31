@@ -3031,13 +3031,39 @@ impl Editor {
             },
         ];
 
-        // Add all available syntaxes from the grammar registry (100+ languages)
-        let mut syntax_names: Vec<&str> = self.grammar_registry.available_syntaxes();
+        // Collect all language names: syntect syntaxes + user-configured languages
+        let mut syntax_names: Vec<String> = self
+            .grammar_registry
+            .available_syntaxes()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        // Collect the set of syntax names already present (for dedup)
+        let syntax_name_set: std::collections::HashSet<String> = syntax_names
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+
+        // Add user-configured languages that don't have a matching syntect grammar
+        // (e.g. "fish" with grammar "fish" that isn't in syntect). These should
+        // still appear in the language selector so the user can pick them.
+        for (lang_id, lang_config) in &self.config.languages {
+            let has_grammar = !lang_config.grammar.is_empty()
+                && self
+                    .grammar_registry
+                    .find_syntax_by_name(&lang_config.grammar)
+                    .is_some();
+            if !has_grammar && !syntax_name_set.contains(&lang_id.to_lowercase()) {
+                syntax_names.push(lang_id.clone());
+            }
+        }
+
         // Sort alphabetically for easier navigation
         syntax_names.sort_unstable_by_key(|a| a.to_lowercase());
 
         let mut current_index_found = None;
-        for syntax_name in syntax_names {
+        for syntax_name in &syntax_names {
             // Skip "Plain Text" as we already added it at the top
             if syntax_name == "Plain Text" {
                 continue;
@@ -3047,7 +3073,8 @@ impl Editor {
             // config key, e.g. "rust" not "Rust").
             let is_current = self
                 .resolve_language_id(syntax_name)
-                .is_some_and(|id| id == current_language);
+                .is_some_and(|id| id == current_language)
+                || *syntax_name == current_language;
             if is_current {
                 current_index_found = Some(suggestions.len());
             }
