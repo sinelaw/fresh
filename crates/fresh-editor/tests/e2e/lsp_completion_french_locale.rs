@@ -169,30 +169,30 @@ fn test_french_locale_completion_typing_not_stuck_after_refilter() -> anyhow::Re
     Ok(())
 }
 
-/// Pressing Enter to confirm a completion should work with French locale.
+/// Pressing Tab to confirm a completion should work with French locale.
 ///
 /// BUG: handle_popup_confirm() checks `title == "Completion"` (hardcoded English)
 /// instead of using t!("lsp.popup_completion"). With French locale, the title is
 /// "Complétion" so the check fails and the completion is never inserted.
 #[test]
-fn test_french_locale_completion_enter_confirms() -> anyhow::Result<()> {
+fn test_french_locale_completion_tab_confirms_fr() -> anyhow::Result<()> {
     let mut harness = setup_french_completion_popup("test")?;
 
-    // Press Enter to confirm the first completion item ("test_function")
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    // Appuyer sur Tab pour confirmer le premier élément de complétion ("test_function")
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
-    // Popup should be closed
+    // La popup devrait être fermée
     assert!(
         !harness.editor().active_state().popups.is_visible(),
-        "Popup should be closed after Enter"
+        "Popup should be closed after Tab"
     );
 
-    // The completion text should have been inserted (replacing the prefix)
+    // Le texte de complétion devrait avoir été inséré (remplaçant le préfixe)
     let buffer = harness.get_buffer_content().unwrap();
     assert_eq!(
         buffer, "test_function",
-        "Enter should insert the selected completion text"
+        "Tab should insert the selected completion text"
     );
 
     Ok(())

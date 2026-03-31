@@ -271,10 +271,8 @@ fn test_popup_buffer_word_accept() {
     send_ctrl_space(&mut harness);
     assert!(harness.editor().active_state().popups.is_visible());
 
-    // Accept the first item with Enter.
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    // Accept the first item with Tab.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Popup should close.

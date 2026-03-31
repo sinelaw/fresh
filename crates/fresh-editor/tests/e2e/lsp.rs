@@ -126,8 +126,8 @@ fn test_lsp_completion_replaces_word() -> anyhow::Result<()> {
 
     harness.render()?;
 
-    // Confirm selection with Enter
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    // Confirm selection with Tab
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Buffer should now contain the full word, not "test_ftest_function"
@@ -240,7 +240,7 @@ fn test_lsp_completion_popup() -> anyhow::Result<()> {
     harness.render()?;
 
     // Select second item and confirm
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Verify the completion was inserted
@@ -403,7 +403,7 @@ fn test_lsp_completion_navigation() -> anyhow::Result<()> {
     harness.render()?;
 
     // Confirm selection (should insert item3)
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Verify item3 was inserted
@@ -519,7 +519,7 @@ fn test_lsp_completion_after_dot() -> anyhow::Result<()> {
     harness.render()?;
 
     // Confirm selection (should insert "len" after the dot)
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Verify "args." is preserved and "len" is appended
@@ -575,7 +575,7 @@ fn test_lsp_completion_after_dot_with_partial() -> anyhow::Result<()> {
     harness.render()?;
 
     // Confirm selection (should replace "le" with "length")
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Verify "args." is preserved and "le" is replaced with "length"
@@ -670,7 +670,7 @@ fn test_lsp_completion_filtering() -> anyhow::Result<()> {
     }
 
     // Confirm first selection (test_function)
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Verify completion replaced "test_" with "test_function"
@@ -4490,7 +4490,7 @@ fn test_popup_home_key_selects_first_item() -> anyhow::Result<()> {
     harness.render()?;
 
     // Confirm selection
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Verify item_0 was inserted (first item)
@@ -4543,7 +4543,7 @@ fn test_popup_end_key_selects_last_item() -> anyhow::Result<()> {
     harness.render()?;
 
     // Confirm selection
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Verify item_19 was inserted (last item)
@@ -5595,7 +5595,7 @@ fn test_completion_snippet_cursor_position() -> anyhow::Result<()> {
     harness.render()?;
 
     // Confirm selection
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Verify the snippet was expanded correctly
@@ -5649,7 +5649,7 @@ fn test_completion_snippet_with_default() -> anyhow::Result<()> {
     harness.render()?;
 
     // Confirm selection
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Verify the snippet was expanded with default text
@@ -5706,7 +5706,7 @@ fn test_completion_plain_text_no_snippet() -> anyhow::Result<()> {
     harness.render()?;
 
     // Confirm selection
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Verify plain text was inserted

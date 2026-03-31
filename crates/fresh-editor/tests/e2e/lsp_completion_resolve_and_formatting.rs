@@ -180,16 +180,17 @@ fn test_completion_accept_applies_additional_text_edits() -> anyhow::Result<()> 
     harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
     harness.render()?;
 
-    // Trigger completion (type a character to trigger, or use the trigger char '.')
-    // Actually, let's just type 'r' to extend "p" to "pr" which should trigger completion
+    // Type 'r' to extend "p" to "pr", then explicitly trigger completion
     harness.type_text("r")?;
+    harness.render()?;
+    harness.send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)?;
     harness.render()?;
 
     // Wait for completion popup to appear with "println"
     harness.wait_for_screen_contains("println")?;
 
-    // Accept the first completion item (println) with Enter
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    // Accept the first completion item (println) with Tab
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Wait for the additional_text_edit to be applied — "use std::io;" at top
