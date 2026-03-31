@@ -3021,8 +3021,9 @@ impl Editor {
         let mut syntax_to_config: std::collections::HashMap<String, (String, &str)> =
             std::collections::HashMap::new();
         for (lang_id, lang_config) in &self.config.languages {
-            if let Some(syntax) =
-                self.grammar_registry.find_syntax_for_lang_config(lang_config)
+            if let Some(syntax) = self
+                .grammar_registry
+                .find_syntax_for_lang_config(lang_config)
             {
                 syntax_to_config
                     .entry(syntax.name.clone())
@@ -3104,8 +3105,8 @@ impl Editor {
 
         let mut current_index_found = None;
         for entry in &entries {
-            let is_current = entry.config_key == current_language
-                || entry.display_name == current_language;
+            let is_current =
+                entry.config_key == current_language || entry.display_name == current_language;
             if is_current {
                 current_index_found = Some(suggestions.len());
             }

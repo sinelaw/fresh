@@ -107,9 +107,7 @@ fn test_config_language_visible_in_set_language_popup() {
     );
 
     // Dismiss prompt
-    harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 }
 
@@ -186,9 +184,7 @@ fn test_config_language_selector_does_not_select_bash_for_fish() {
     );
 
     // Dismiss prompt
-    harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 }
 
@@ -260,8 +256,6 @@ fn test_select_config_language_from_popup_updates_status_bar() {
     );
 
     // Dismiss prompt
-    harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 }
