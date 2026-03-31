@@ -492,6 +492,50 @@ impl Editor {
         true
     }
 
+    /// Poll for git index changes (called from main loop)
+    ///
+    /// Checks the modification time of `.git/index` to detect commits, staging,
+    /// checkouts, and other git operations. When a change is detected, fires the
+    /// `focus_gained` plugin hook so git decorations refresh.
+    /// Returns true if the git index changed (requires re-render).
+    pub fn poll_git_status(&mut self) -> bool {
+        // Use the same interval as file tree polling
+        let poll_interval =
+            std::time::Duration::from_millis(self.config.editor.file_tree_poll_interval_ms);
+        if self.time_source.elapsed_since(self.last_git_status_poll) < poll_interval {
+            return false;
+        }
+        self.last_git_status_poll = self.time_source.now();
+
+        // Find .git/index relative to the editor's working directory
+        let git_index = self.working_dir.join(".git/index");
+        let current_mtime = match std::fs::metadata(&git_index) {
+            Ok(meta) => match meta.modified() {
+                Ok(mtime) => mtime,
+                Err(_) => return false,
+            },
+            Err(_) => return false, // Not a git repo or .git/index missing
+        };
+
+        match self.git_index_mtime {
+            Some(stored) if stored == current_mtime => false,
+            Some(_) => {
+                self.git_index_mtime = Some(current_mtime);
+                // Git index changed — fire hook so plugins refresh decorations
+                self.plugin_manager.run_hook(
+                    "focus_gained",
+                    crate::services::plugins::hooks::HookArgs::FocusGained,
+                );
+                true
+            }
+            None => {
+                // First time — just record the mtime
+                self.git_index_mtime = Some(current_mtime);
+                false
+            }
+        }
+    }
+
     /// Notify LSP server about a newly opened file
     /// Handles language detection, spawning LSP clients, and sending didOpen notifications
     pub(crate) fn notify_lsp_file_opened(
