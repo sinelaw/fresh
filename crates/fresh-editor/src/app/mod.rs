@@ -3567,6 +3567,14 @@ impl Editor {
             .count()
     }
 
+    /// Handle terminal focus gained event
+    pub fn focus_gained(&mut self) {
+        self.plugin_manager.run_hook(
+            "focus_gained",
+            crate::services::plugins::hooks::HookArgs::FocusGained,
+        );
+    }
+
     /// Resize all buffers to match new terminal size
     pub fn resize(&mut self, width: u16, height: u16) {
         // Update terminal dimensions for future buffer creation

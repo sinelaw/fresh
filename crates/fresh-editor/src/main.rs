@@ -3178,6 +3178,10 @@ where
                 editor.paste_text(text);
                 needs_render = true;
             }
+            CrosstermEvent::FocusGained => {
+                editor.focus_gained();
+                needs_render = true;
+            }
             _ => {}
         }
     }

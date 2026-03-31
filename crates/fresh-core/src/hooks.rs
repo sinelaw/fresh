@@ -290,6 +290,9 @@ pub enum HookArgs {
 
     /// Terminal was resized
     Resize { width: u16, height: u16 },
+
+    /// Terminal focus was gained (e.g. user switched back to the editor)
+    FocusGained,
 }
 
 /// Information about a single line for the LinesChanged hook
@@ -756,6 +759,9 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
                 "width": width,
                 "height": height,
             })
+        }
+        HookArgs::FocusGained => {
+            serde_json::json!({})
         }
     };
 
