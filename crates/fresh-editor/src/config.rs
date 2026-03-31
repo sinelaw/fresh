@@ -300,34 +300,6 @@ impl JsonSchema for LineEndingOption {
     }
 }
 
-/// Controls whether Enter accepts a completion suggestion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AcceptSuggestionOnEnter {
-    /// Enter always accepts the completion
-    #[default]
-    On,
-    /// Enter inserts a newline (use Tab to accept)
-    Off,
-    /// Enter accepts only if the completion differs from typed text
-    Smart,
-}
-
-impl JsonSchema for AcceptSuggestionOnEnter {
-    fn schema_name() -> Cow<'static, str> {
-        Cow::Borrowed("AcceptSuggestionOnEnter")
-    }
-
-    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({
-            "description": "Controls whether Enter accepts a completion suggestion",
-            "type": "string",
-            "enum": ["on", "off", "smart"],
-            "default": "on"
-        })
-    }
-}
-
 impl PartialEq<KeybindingMapName> for str {
     fn eq(&self, other: &KeybindingMapName) -> bool {
         self == other.0
@@ -833,16 +805,6 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Completion"))]
     pub suggest_on_trigger_characters: bool,
 
-    /// Controls whether pressing Enter accepts the selected completion.
-    ///   - "on": Enter always accepts the completion
-    ///   - "off": Enter inserts a newline (use Tab to accept)
-    ///   - "smart": Enter accepts only if the completion text differs from typed text
-    ///
-    /// Default: "on"
-    #[serde(default = "default_accept_suggestion_on_enter")]
-    #[schemars(extend("x-section" = "Completion"))]
-    pub accept_suggestion_on_enter: AcceptSuggestionOnEnter,
-
     // ===== LSP =====
     /// Whether to enable LSP inlay hints (type hints, parameter hints, etc.)
     #[serde(default = "default_true")]
@@ -1070,10 +1032,6 @@ fn default_quick_suggestions_delay() -> u64 {
     150 // 150ms — fast enough to feel responsive, slow enough to not interrupt typing
 }
 
-fn default_accept_suggestion_on_enter() -> AcceptSuggestionOnEnter {
-    AcceptSuggestionOnEnter::On
-}
-
 fn default_scroll_offset() -> usize {
     3
 }
@@ -1171,7 +1129,6 @@ impl Default for EditorConfig {
             quick_suggestions: true,
             quick_suggestions_delay_ms: default_quick_suggestions_delay(),
             suggest_on_trigger_characters: true,
-            accept_suggestion_on_enter: default_accept_suggestion_on_enter(),
             show_menu_bar: true,
             menu_bar_mnemonics: true,
             show_tab_bar: true,

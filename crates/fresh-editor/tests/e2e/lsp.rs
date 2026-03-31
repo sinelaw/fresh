@@ -5400,18 +5400,14 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Test accept_suggestion_on_enter: "off" makes Enter insert newline instead of accepting
+/// Test that Enter in completion popup dismisses popup and inserts newline
 #[test]
-fn test_completion_accept_on_enter_off() -> anyhow::Result<()> {
-    use fresh::config::AcceptSuggestionOnEnter;
+fn test_completion_enter_dismisses_and_inserts_newline() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
-    // Configure accept_suggestion_on_enter to "off"
-    let mut config = fresh::config::Config::default();
-    config.editor.accept_suggestion_on_enter = AcceptSuggestionOnEnter::Off;
-    let mut harness = EditorTestHarness::with_config(80, 24, config)?;
+    let mut harness = EditorTestHarness::new(80, 24)?;
 
     // Type initial text
     harness.type_text("test")?;
@@ -5465,7 +5461,7 @@ fn test_completion_accept_on_enter_off() -> anyhow::Result<()> {
     // Verify popup is closed
     assert!(
         !harness.editor().active_state().popups.is_visible(),
-        "Popup should be closed after Enter with accept_on_enter=off"
+        "Popup should be closed after Enter"
     );
 
     // Verify buffer contains original text + newline, NOT the completion
@@ -5484,18 +5480,14 @@ fn test_completion_accept_on_enter_off() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Test accept_suggestion_on_enter: "on" (default) makes Enter accept completion
+/// Test that Tab in completion popup accepts the selected completion
 #[test]
-fn test_completion_accept_on_enter_on() -> anyhow::Result<()> {
-    use fresh::config::AcceptSuggestionOnEnter;
+fn test_completion_tab_accepts() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
-    // Ensure accept_suggestion_on_enter is "on" (default)
-    let mut config = fresh::config::Config::default();
-    config.editor.accept_suggestion_on_enter = AcceptSuggestionOnEnter::On;
-    let mut harness = EditorTestHarness::with_config(80, 24, config)?;
+    let mut harness = EditorTestHarness::new(80, 24)?;
 
     // Type initial text
     harness.type_text("test")?;
@@ -5542,14 +5534,14 @@ fn test_completion_accept_on_enter_on() -> anyhow::Result<()> {
         "Popup should be visible"
     );
 
-    // Press Enter - should accept completion
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    // Press Tab - should accept completion
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Verify popup is closed
     assert!(
         !harness.editor().active_state().popups.is_visible(),
-        "Popup should be closed after Enter"
+        "Popup should be closed after Tab"
     );
 
     // Verify buffer contains the completion

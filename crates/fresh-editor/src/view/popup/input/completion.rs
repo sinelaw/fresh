@@ -2,7 +2,9 @@
 //!
 //! Completion popups support:
 //! - Type-to-filter: typing characters filters the completion list
-//! - Tab/Enter: accept the selected completion
+//! - Tab: accept the selected completion
+//! - Enter: dismiss the popup and insert newline
+//! - Ctrl+Space: toggle (dismiss) the popup
 //! - Backspace: remove last filter character
 //! - Arrow keys: navigate the list
 
@@ -27,13 +29,19 @@ pub fn handle_completion_input(
     // (we need to re-get it since try_handle_shared consumed the borrow)
 
     match event.code {
-        // Enter - behavior depends on accept_suggestion_on_enter config
-        KeyCode::Enter => {
-            ctx.defer(DeferredAction::CompletionEnterKey);
+        // Ctrl+Space toggles the popup off (consumed so it won't re-open)
+        KeyCode::Char(' ') if event.modifiers == KeyModifiers::CONTROL => {
+            ctx.defer(DeferredAction::ClosePopup);
             InputResult::Consumed
         }
 
-        // Tab always accepts the completion
+        // Enter dismisses popup and inserts newline (passthrough)
+        KeyCode::Enter => {
+            ctx.defer(DeferredAction::ClosePopup);
+            InputResult::Ignored
+        }
+
+        // Tab accepts the completion
         KeyCode::Tab if event.modifiers.is_empty() => {
             ctx.defer(DeferredAction::ConfirmPopup);
             InputResult::Consumed
@@ -82,13 +90,19 @@ pub fn handle_completion_input_with_popup(
     }
 
     match event.code {
-        // Enter - behavior depends on accept_suggestion_on_enter config
-        KeyCode::Enter => {
-            ctx.defer(DeferredAction::CompletionEnterKey);
+        // Ctrl+Space toggles the popup off (consumed so it won't re-open)
+        KeyCode::Char(' ') if event.modifiers == KeyModifiers::CONTROL => {
+            ctx.defer(DeferredAction::ClosePopup);
             InputResult::Consumed
         }
 
-        // Tab always accepts the completion
+        // Enter dismisses popup and inserts newline (passthrough)
+        KeyCode::Enter => {
+            ctx.defer(DeferredAction::ClosePopup);
+            InputResult::Ignored
+        }
+
+        // Tab accepts the completion
         KeyCode::Tab if event.modifiers.is_empty() => {
             ctx.defer(DeferredAction::ConfirmPopup);
             InputResult::Consumed

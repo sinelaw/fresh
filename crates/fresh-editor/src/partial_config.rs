@@ -4,10 +4,9 @@
 //! enabling a 4-level overlay architecture (System → User → Project → Session).
 
 use crate::config::{
-    AcceptSuggestionOnEnter, ClipboardConfig, CursorStyle, FileBrowserConfig, FileExplorerConfig,
-    FormatterConfig, HighlighterPreference, Keybinding, KeybindingMapName, KeymapConfig,
-    LanguageConfig, LineEndingOption, OnSaveAction, PluginConfig, TerminalConfig, ThemeName,
-    WarningsConfig,
+    ClipboardConfig, CursorStyle, FileBrowserConfig, FileExplorerConfig, FormatterConfig,
+    HighlighterPreference, Keybinding, KeybindingMapName, KeymapConfig, LanguageConfig,
+    LineEndingOption, OnSaveAction, PluginConfig, TerminalConfig, ThemeName, WarningsConfig,
 };
 use crate::types::LspLanguageConfig;
 use serde::{Deserialize, Serialize};
@@ -184,7 +183,6 @@ pub struct PartialEditorConfig {
     pub quick_suggestions: Option<bool>,
     pub quick_suggestions_delay_ms: Option<u64>,
     pub suggest_on_trigger_characters: Option<bool>,
-    pub accept_suggestion_on_enter: Option<AcceptSuggestionOnEnter>,
     pub show_menu_bar: Option<bool>,
     pub menu_bar_mnemonics: Option<bool>,
     pub show_tab_bar: Option<bool>,
@@ -277,8 +275,6 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.quick_suggestions_delay_ms);
         self.suggest_on_trigger_characters
             .merge_from(&other.suggest_on_trigger_characters);
-        self.accept_suggestion_on_enter
-            .merge_from(&other.accept_suggestion_on_enter);
         self.show_menu_bar.merge_from(&other.show_menu_bar);
         self.menu_bar_mnemonics
             .merge_from(&other.menu_bar_mnemonics);
@@ -522,7 +518,6 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             quick_suggestions: Some(cfg.quick_suggestions),
             quick_suggestions_delay_ms: Some(cfg.quick_suggestions_delay_ms),
             suggest_on_trigger_characters: Some(cfg.suggest_on_trigger_characters),
-            accept_suggestion_on_enter: Some(cfg.accept_suggestion_on_enter),
             show_menu_bar: Some(cfg.show_menu_bar),
             menu_bar_mnemonics: Some(cfg.menu_bar_mnemonics),
             show_tab_bar: Some(cfg.show_tab_bar),
@@ -648,9 +643,6 @@ impl PartialEditorConfig {
             suggest_on_trigger_characters: self
                 .suggest_on_trigger_characters
                 .unwrap_or(defaults.suggest_on_trigger_characters),
-            accept_suggestion_on_enter: self
-                .accept_suggestion_on_enter
-                .unwrap_or(defaults.accept_suggestion_on_enter),
             show_menu_bar: self.show_menu_bar.unwrap_or(defaults.show_menu_bar),
             menu_bar_mnemonics: self
                 .menu_bar_mnemonics
