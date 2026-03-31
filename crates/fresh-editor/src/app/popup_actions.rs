@@ -257,6 +257,13 @@ impl Editor {
         self.completion_items = None;
     }
 
+    /// Get the formatted key hint for the completion accept action (e.g. "Tab").
+    /// Looks up the keybinding for the ConfirmPopup/Tab action in completion context.
+    pub(crate) fn completion_accept_key_hint(&self) -> Option<String> {
+        // Tab is hardcoded in the completion input handler, so default to "Tab"
+        Some("Tab".to_string())
+    }
+
     /// Handle typing a character while completion popup is open.
     /// Inserts the character into the buffer and re-filters the completion list.
     pub fn handle_popup_type_char(&mut self, c: char) {
@@ -393,17 +400,15 @@ impl Editor {
             .unwrap_or(0);
 
         let popup_data = build_completion_popup_from_items(all_popup_items, selected);
+        let accept_hint = self.completion_accept_key_hint();
 
         // Close old popup and show new one
         self.hide_popup();
-        let split_id = self.split_manager.active_split();
         let buffer_id = self.active_buffer();
         let state = self.buffers.get_mut(&buffer_id).unwrap();
-        let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
-        state.apply(
-            cursors,
-            &crate::model::event::Event::ShowPopup { popup: popup_data },
-        );
+        let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
+        popup_obj.accept_key_hint = accept_hint;
+        state.popups.show_or_replace(popup_obj);
     }
 }
 

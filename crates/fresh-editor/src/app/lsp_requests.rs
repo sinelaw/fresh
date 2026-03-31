@@ -160,12 +160,14 @@ impl Editor {
 
         let popup_data =
             crate::app::popup_actions::build_completion_popup_from_items(all_popup_items, 0);
+        let accept_hint = self.completion_accept_key_hint();
 
         {
             let buffer_id = self.active_buffer();
             let state = self.buffers.get_mut(&buffer_id).unwrap();
             // Convert PopupData to Popup and use show_or_replace to avoid stacking
-            let popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
+            let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
+            popup_obj.accept_key_hint = accept_hint;
             state.popups.show_or_replace(popup_obj);
         }
 
@@ -592,10 +594,12 @@ impl Editor {
         }
 
         let popup_data = crate::app::popup_actions::build_completion_popup_from_items(items, 0);
+        let accept_hint = self.completion_accept_key_hint();
 
         let buffer_id = self.active_buffer();
         let state = self.buffers.get_mut(&buffer_id).unwrap();
-        let popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
+        let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
+        popup_obj.accept_key_hint = accept_hint;
         state.popups.show_or_replace(popup_obj);
     }
 

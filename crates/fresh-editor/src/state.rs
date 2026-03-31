@@ -1039,6 +1039,7 @@ pub(crate) fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
         background_style: Style::default().bg(Color::Rgb(30, 30, 30)),
         scroll_offset: 0,
         text_selection: None,
+        accept_key_hint: None,
     }
 }
 
