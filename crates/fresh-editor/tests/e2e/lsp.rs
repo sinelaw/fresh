@@ -5910,8 +5910,10 @@ fn test_completion_triggered_on_trigger_character() -> anyhow::Result<()> {
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    foo\n}\n")?;
 
-    // Configure editor with quick_suggestions disabled to isolate trigger char behavior
+    // Configure editor with auto_show enabled but quick_suggestions disabled
+    // to isolate trigger char behavior
     let mut config = fresh::config::Config::default();
+    config.editor.completion_popup_auto_show = true;
     config.editor.quick_suggestions = false; // Only trigger chars should work
     config.lsp.insert(
         "rust".to_string(),
@@ -5996,8 +5998,9 @@ fn test_completion_triggered_on_word_char_with_quick_suggestions() -> anyhow::Re
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    \n}\n")?;
 
-    // Configure editor with quick_suggestions ENABLED
+    // Configure editor with auto_show and quick_suggestions ENABLED
     let mut config = fresh::config::Config::default();
+    config.editor.completion_popup_auto_show = true;
     config.editor.quick_suggestions = true;
     config.lsp.insert(
         "rust".to_string(),
@@ -6234,6 +6237,290 @@ fn test_completion_not_triggered_on_non_word_char() -> anyhow::Result<()> {
         "Expected NO completion request when typing space character. \
          But completion was triggered. Log: {}",
         log_content
+    );
+
+    Ok(())
+}
+
+/// Test that Ctrl+Space toggles the completion popup off when it's already open
+#[test]
+fn test_completion_ctrl_space_toggles_popup_off() -> anyhow::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type some text
+    harness.type_text("test")?;
+    harness.render()?;
+
+    // Show completion popup
+    harness.apply_event(Event::ShowPopup {
+        popup: PopupData {
+            kind: PopupKindHint::Completion,
+            title: None,
+            description: None,
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![PopupListItemData {
+                    text: "test_function".to_string(),
+                    detail: None,
+                    icon: Some("λ".to_string()),
+                    data: Some("test_function".to_string()),
+                }],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    })?;
+    harness.render()?;
+
+    // Verify popup is visible
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Popup should be visible after showing"
+    );
+
+    // Press Ctrl+Space - should dismiss the popup (toggle off)
+    harness.send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    // Verify popup is closed
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "Popup should be closed after Ctrl+Space toggle"
+    );
+
+    // Verify buffer still has original text (no completion accepted)
+    let buffer = harness.get_buffer_content().unwrap();
+    assert!(
+        !buffer.contains("test_function"),
+        "Buffer should NOT contain completion text after Ctrl+Space dismiss, got: {:?}",
+        buffer
+    );
+
+    Ok(())
+}
+
+/// Test that completion popup does NOT auto-show when completion_popup_auto_show is false (default)
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
+fn test_completion_no_auto_show_by_default() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn_with_logging(temp_dir.path())?;
+
+    let log_file = temp_dir.path().join("no_auto_show_test_log.txt");
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    \n}\n")?;
+
+    // Default config: completion_popup_auto_show = false
+    let mut config = fresh::config::Config::default();
+    assert!(
+        !config.editor.completion_popup_auto_show,
+        "completion_popup_auto_show should default to false"
+    );
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::logging_script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![log_file.to_string_lossy().to_string()],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to initialize
+    harness.wait_until(|_| {
+        let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log_content.contains("textDocument/didOpen")
+    })?;
+
+    std::fs::write(&log_file, "")?;
+
+    // Move to the empty line
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Type word characters — should NOT trigger completion since auto_show is false
+    harness.type_text("print")?;
+    harness.render()?;
+
+    // Also try a trigger character
+    harness.send_key(KeyCode::Char('.'), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Give time for any async trigger
+    for _ in 0..10 {
+        harness.process_async_and_render()?;
+        harness.sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Verify NO completion was triggered
+    let log_content = std::fs::read_to_string(&log_file)?;
+    assert!(
+        !log_content.contains("textDocument/completion"),
+        "Expected NO completion request when completion_popup_auto_show=false. \
+         But completion was triggered. Log: {}",
+        log_content
+    );
+
+    Ok(())
+}
+
+/// Test that completion popup auto-shows when completion_popup_auto_show is true
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
+fn test_completion_auto_show_when_enabled() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn_with_logging(temp_dir.path())?;
+
+    let log_file = temp_dir.path().join("auto_show_enabled_test_log.txt");
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    \n}\n")?;
+
+    // Enable auto-show + quick suggestions
+    let mut config = fresh::config::Config::default();
+    config.editor.completion_popup_auto_show = true;
+    config.editor.quick_suggestions = true;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::logging_script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![log_file.to_string_lossy().to_string()],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to initialize
+    harness.wait_until(|_| {
+        let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log_content.contains("textDocument/didOpen")
+    })?;
+
+    std::fs::write(&log_file, "")?;
+
+    // Move to the empty line
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Type a word character
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Wait for completion request (should be triggered)
+    harness.wait_until(|_| {
+        let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log_content.contains("textDocument/completion")
+    })?;
+
+    let log_content = std::fs::read_to_string(&log_file)?;
+    assert!(
+        log_content.contains("textDocument/completion"),
+        "Expected completion to be triggered when completion_popup_auto_show=true. Log: {}",
+        log_content
+    );
+
+    Ok(())
+}
+
+/// Test that the accept key hint "(Tab)" is shown in the completion popup rendering
+#[test]
+fn test_completion_popup_shows_accept_key_hint() -> anyhow::Result<()> {
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type some text
+    harness.type_text("tes")?;
+    harness.render()?;
+
+    // Trigger completion via Ctrl+Space to get the accept hint set
+    // First set up buffer words so the popup has items
+    // We need to type a word that will have completions, then trigger
+    harness.send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    // The buffer-word completion may or may not find items for "tes".
+    // Let's use a more reliable approach: type a full word, then type a prefix.
+    // Clear and start over with known buffer content.
+    // Create a new harness with pre-existing text for buffer word completions.
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type a word, then newline, then a prefix of that word
+    harness.type_text("test_function")?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.type_text("test")?;
+    harness.render()?;
+
+    // Trigger completion via Ctrl+Space
+    harness.send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    // Check that the popup is visible and contains the hint
+    let popup_visible = harness.editor().active_state().popups.is_visible();
+    assert!(popup_visible, "Completion popup should be visible");
+
+    // The popup should have accept_key_hint set
+    let has_hint = harness
+        .editor()
+        .active_state()
+        .popups
+        .top()
+        .and_then(|p| p.accept_key_hint.as_ref())
+        .is_some();
+    assert!(has_hint, "Completion popup should have accept_key_hint set");
+
+    // Now check the rendered output for "(Tab)" text
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("(Tab)"),
+        "Rendered screen should contain '(Tab)' hint. Screen:\n{}",
+        screen
     );
 
     Ok(())
