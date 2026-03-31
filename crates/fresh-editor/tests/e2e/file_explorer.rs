@@ -2964,11 +2964,12 @@ fn test_file_explorer_click_markdown_enter_does_not_modify_buffer() {
     );
 }
 
-/// Test that git status markers clear after an external commit followed by focus gained.
+/// Test that git status markers clear after an external commit.
+/// The editor polls `.git/index` mtime and refreshes decorations automatically.
 /// Regression test for https://github.com/sinelaw/fresh/issues/1431
 #[test]
 #[cfg_attr(windows, ignore)]
-fn test_file_explorer_git_markers_clear_after_commit_on_focus() {
+fn test_file_explorer_git_markers_clear_after_external_commit() {
     use std::process::Command;
 
     let repo = GitTestRepo::new();
@@ -2999,6 +3000,14 @@ fn test_file_explorer_git_markers_clear_after_commit_on_focus() {
         })
         .unwrap();
 
+    // Ensure initial .git/index mtime is recorded by polling once
+    harness.advance_time(std::time::Duration::from_secs(5));
+    harness.editor_mut().poll_git_status(); // records initial mtime
+
+    // Wait for filesystem mtime granularity (1 second) so the commit
+    // produces a different .git/index mtime than what was already recorded.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
     // Commit all changes externally (simulating a user running git in another terminal)
     Command::new("git")
         .args(["add", "."])
@@ -3011,11 +3020,15 @@ fn test_file_explorer_git_markers_clear_after_commit_on_focus() {
         .output()
         .expect("git commit failed");
 
-    // Simulate terminal focus regained (triggers git status refresh)
-    harness.editor_mut().focus_gained();
-    let _ = harness.editor_mut().process_async_messages();
+    // Advance time past poll interval and trigger detection
+    harness.advance_time(std::time::Duration::from_secs(5));
+    let changed = harness.editor_mut().poll_git_status();
+    assert!(
+        changed,
+        "poll_git_status should detect .git/index mtime change after commit"
+    );
 
-    // Wait for "M" markers to disappear now that working tree is clean
+    // Now wait for the plugin to process the hook and clear decorations
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
@@ -3031,6 +3044,6 @@ fn test_file_explorer_git_markers_clear_after_commit_on_focus() {
         !screen
             .lines()
             .any(|line| line.contains("file2.txt") && line.contains("M")),
-        "file2.txt should not have an M marker after commit + focus gained"
+        "file2.txt should not have an M marker after external commit"
     );
 }
