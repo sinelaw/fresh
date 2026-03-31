@@ -2901,7 +2901,7 @@ impl Config {
             LanguageConfig {
                 extensions: vec!["cs".to_string()],
                 filenames: vec![],
-                grammar: "c_sharp".to_string(),
+                grammar: "C#".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
                 auto_close: None,
@@ -2970,7 +2970,7 @@ impl Config {
                     "makefile".to_string(),
                     "GNUmakefile".to_string(),
                 ],
-                grammar: "make".to_string(),
+                grammar: "Makefile".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: false,
                 auto_close: None,

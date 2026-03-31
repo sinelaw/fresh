@@ -530,6 +530,9 @@ fn test_config_reload_updates_language_detection() {
 /// Reproduces: user configures "fish" language with extension "fish" and grammar
 /// "fish", but Fresh falls through to syntect built-in detection which maps
 /// `.fish` → "Bourne Again Shell (bash)".
+///
+/// Must use `with_full_grammar_registry()` because the default test registry
+/// doesn't include syntect's packdump where `.fish` maps to bash.
 #[test]
 fn test_custom_language_extension_not_misdetected_as_builtin() {
     let temp_dir = TempDir::new().unwrap();
@@ -537,12 +540,17 @@ fn test_custom_language_extension_not_misdetected_as_builtin() {
 
     // Create a .fish file
     let test_file = working_dir.join("config.fish");
-    fs::write(&test_file, "# Fish shell config\nset -x PATH $HOME/bin $PATH\n").unwrap();
+    fs::write(
+        &test_file,
+        "# Fish shell config\nset -x PATH $HOME/bin $PATH\n",
+    )
+    .unwrap();
 
-    // Set up config with fish language (grammar "fish" doesn't exist in syntect)
+    // Set up config: use all defaults (including bash) + add fish language.
+    // Grammar "fish" doesn't exist in syntect, so the bug causes the built-in
+    // syntect fallback to map .fish → "Bourne Again Shell (bash)".
     let mut config = Config::default();
-    let mut languages = HashMap::new();
-    languages.insert(
+    config.languages.insert(
         "fish".to_string(),
         LanguageConfig {
             extensions: vec!["fish".to_string()],
@@ -552,13 +560,13 @@ fn test_custom_language_extension_not_misdetected_as_builtin() {
             ..Default::default()
         },
     );
-    config.languages = languages;
 
     let mut harness = EditorTestHarness::create(
         100,
         30,
         HarnessOptions::new()
             .without_empty_plugins_dir()
+            .with_full_grammar_registry()
             .with_config(config),
     )
     .unwrap();
@@ -579,5 +587,4 @@ fn test_custom_language_extension_not_misdetected_as_builtin() {
         "Display name should not be bash/shell, got: '{}'",
         state.display_name
     );
-
 }

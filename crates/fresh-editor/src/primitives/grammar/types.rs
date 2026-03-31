@@ -584,6 +584,12 @@ impl GrammarRegistry {
             languages.keys().collect::<Vec<_>>()
         );
 
+        // Track whether any user config rule matched, even if the grammar
+        // couldn't be resolved to a syntect syntax.  When a config match exists
+        // we must NOT fall through to built-in detection, which may map the
+        // extension to a completely different language (e.g. `.fish` → bash).
+        let mut config_matched = false;
+
         // Try filename match from languages config first (exact then glob)
         if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
             // First pass: exact matches only (highest priority)
@@ -601,6 +607,7 @@ impl GrammarRegistry {
                     if let Some(syntax) = self.find_syntax_for_lang_config(lang_config) {
                         return Some(syntax);
                     }
+                    config_matched = true;
                 }
             }
 
@@ -627,6 +634,7 @@ impl GrammarRegistry {
                     if let Some(syntax) = self.find_syntax_for_lang_config(lang_config) {
                         return Some(syntax);
                     }
+                    config_matched = true;
                 }
             }
         }
@@ -641,7 +649,10 @@ impl GrammarRegistry {
                         lang_name,
                         lang_config.grammar
                     );
-                    // Found a match - try to find syntax by grammar name
+                    // Only try grammar name lookup here (not the extension
+                    // fallback in find_syntax_for_lang_config).  The extension
+                    // fallback would use syntect's built-in mapping which may
+                    // return a wrong language (e.g. .fish → bash).
                     if let Some(syntax) = self.find_syntax_by_name(&lang_config.grammar) {
                         tracing::info!(
                             "[SYNTAX DEBUG] found syntax by grammar name: {}",
@@ -654,11 +665,21 @@ impl GrammarRegistry {
                             lang_config.grammar
                         );
                     }
+                    config_matched = true;
                 }
             }
         }
 
-        // Fall back to built-in detection
+        // Fall back to built-in detection only if no user config rule matched.
+        // When a config rule matched but the grammar couldn't be resolved (e.g.
+        // the user configured a language whose grammar isn't in syntect), we
+        // return None to avoid misdetecting the file as a different language.
+        if config_matched {
+            tracing::info!(
+                "[SYNTAX DEBUG] config matched but grammar not resolved; skipping built-in fallback"
+            );
+            return None;
+        }
         tracing::info!("[SYNTAX DEBUG] falling back to find_syntax_for_file");
         let result = self.find_syntax_for_file(path);
         tracing::info!(
