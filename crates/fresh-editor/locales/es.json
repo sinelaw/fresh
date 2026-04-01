@@ -1289,5 +1289,8 @@
   "whitespace.newline_added": "Nueva línea final añadida",
   "whitespace.no_trailing": "No hay espacios en blanco finales que eliminar",
   "whitespace.trimmed": "Espacios en blanco finales eliminados",
-  "settings.field.editor.auto_close": "Cierre automático"
+  "settings.field.editor.auto_close": "Cierre automático",
+  "action.settings_inherit": "Heredar valor (quitar anulación)",
+  "settings.btn_inherit": "Heredar",
+  "settings.inherited_badge": "(Heredado)"
 }

@@ -1382,6 +1382,13 @@
       "when": "settings"
     },
     {
+      "key": "Delete",
+      "modifiers": [],
+      "action": "settings_inherit",
+      "args": {},
+      "when": "settings"
+    },
+    {
       "comment": "File Explorer context",
       "key": "Up",
       "modifiers": [],

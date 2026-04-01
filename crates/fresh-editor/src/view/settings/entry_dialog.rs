@@ -80,6 +80,8 @@ impl EntryDialogState {
             layer_source: crate::config_io::ConfigLayer::System,
             read_only: !is_new, // Key is editable only for new entries
             is_auto_managed: false,
+            nullable: false,
+            is_null: false,
             section: None,
             is_section_start: false,
             layout_width: 0,
@@ -1273,6 +1275,7 @@ mod tests {
                         read_only: false,
                         section: None,
                         order: None,
+                        nullable: false,
                     },
                     SettingSchema {
                         path: "/command".to_string(),
@@ -1283,6 +1286,7 @@ mod tests {
                         read_only: false,
                         section: None,
                         order: None,
+                        nullable: false,
                     },
                 ],
             },
@@ -1290,6 +1294,7 @@ mod tests {
             read_only: false,
             section: None,
             order: None,
+            nullable: false,
         }
     }
 

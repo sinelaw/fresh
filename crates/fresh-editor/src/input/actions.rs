@@ -3038,6 +3038,7 @@ pub fn action_to_events(
         | Action::SettingsHelp
         | Action::SettingsIncrement
         | Action::SettingsDecrement
+        | Action::SettingsInherit
         | Action::SetTabSize
         | Action::SetLineEnding
         | Action::SetEncoding

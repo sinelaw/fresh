@@ -59,6 +59,8 @@ pub struct ItemLayout {
     pub area: Rect,
     /// Control-specific layout info
     pub control: ControlLayoutInfo,
+    /// Area of the [Inherit] button (only for nullable, explicitly-set items)
+    pub inherit_button: Option<Rect>,
 }
 
 impl SettingsLayout {
@@ -87,12 +89,20 @@ impl SettingsLayout {
     }
 
     /// Add a setting item to the layout
-    pub fn add_item(&mut self, index: usize, path: String, area: Rect, control: ControlLayoutInfo) {
+    pub fn add_item(
+        &mut self,
+        index: usize,
+        path: String,
+        area: Rect,
+        control: ControlLayoutInfo,
+        inherit_button: Option<Rect>,
+    ) {
         self.items.push(ItemLayout {
             index,
             path,
             area,
             control,
+            inherit_button,
         });
     }
 
@@ -170,6 +180,13 @@ impl SettingsLayout {
         // Check setting items
         for item in &self.items {
             if point_in_rect(item.area, x, y) {
+                // Check inherit button first (highest priority within item)
+                if let Some(ref inherit_area) = item.inherit_button {
+                    if point_in_rect(*inherit_area, x, y) {
+                        return Some(SettingsHit::ControlInherit(item.index));
+                    }
+                }
+
                 // Check specific control areas
                 match &item.control {
                     ControlLayoutInfo::Toggle(toggle_area) => {
@@ -309,6 +326,8 @@ pub enum SettingsHit {
     ControlMapRow(usize, usize),
     /// Click on map add-new row (item_idx)
     ControlMapAddNew(usize),
+    /// Click on inherit button (item_idx) - unset a nullable value
+    ControlInherit(usize),
     /// Click on layer button
     LayerButton,
     /// Click on edit config file button
@@ -387,6 +406,7 @@ mod tests {
             "/test".to_string(),
             Rect::new(35, 10, 50, 2),
             ControlLayoutInfo::Toggle(Rect::new(37, 11, 15, 1)),
+            None,
         );
 
         // Click on toggle control

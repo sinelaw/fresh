@@ -1289,5 +1289,8 @@
   "whitespace.newline_added": "เพิ่มบรรทัดใหม่ท้ายไฟล์แล้ว",
   "whitespace.no_trailing": "ไม่มีช่องว่างท้ายบรรทัดให้ลบ",
   "whitespace.trimmed": "ตัดช่องว่างท้ายบรรทัดแล้ว",
-  "settings.field.editor.auto_close": "ปิดอัตโนมัติ"
+  "settings.field.editor.auto_close": "ปิดอัตโนมัติ",
+  "action.settings_inherit": "สืบทอดค่า (ยกเลิกการแทนที่)",
+  "settings.btn_inherit": "สืบทอด",
+  "settings.inherited_badge": "(สืบทอด)"
 }

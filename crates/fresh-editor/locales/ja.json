@@ -1289,5 +1289,8 @@
   "whitespace.newline_added": "最終改行を追加しました",
   "whitespace.no_trailing": "削除する末尾の空白がありません",
   "whitespace.trimmed": "末尾の空白を削除しました",
-  "settings.field.editor.auto_close": "自動閉じ"
+  "settings.field.editor.auto_close": "自動閉じ",
+  "action.settings_inherit": "値を継承（上書きを解除）",
+  "settings.btn_inherit": "継承",
+  "settings.inherited_badge": "（継承済み）"
 }

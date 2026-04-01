@@ -76,6 +76,9 @@ pub struct SettingSchema {
     /// Sort order override (from x-order). Lower values sort first.
     /// When set, overrides alphabetical sorting.
     pub order: Option<i32>,
+    /// Whether this setting accepts null (i.e., can be "unset" to inherit).
+    /// Derived from JSON Schema `"type": ["<type>", "null"]`.
+    pub nullable: bool,
 }
 
 /// Type of a setting, determines which control to render
@@ -222,6 +225,14 @@ impl SchemaType {
         match self {
             Self::Single(s) => Some(s.as_str()),
             Self::Multiple(v) => v.first().map(|s| s.as_str()),
+        }
+    }
+
+    /// Check if this type includes "null" (i.e., the field is nullable/optional)
+    fn contains_null(&self) -> bool {
+        match self {
+            Self::Single(s) => s == "null",
+            Self::Multiple(v) => v.iter().any(|s| s == "null"),
         }
     }
 }
@@ -380,6 +391,13 @@ fn parse_setting(
     // Get order from schema or resolved ref
     let order = schema.order.or(resolved.order);
 
+    // Detect nullability from type array containing "null"
+    let nullable = resolved
+        .schema_type
+        .as_ref()
+        .map(|t| t.contains_null())
+        .unwrap_or(false);
+
     SettingSchema {
         path: path.to_string(),
         name: i18n_name(path, name),
@@ -389,6 +407,7 @@ fn parse_setting(
         read_only,
         section,
         order,
+        nullable,
     }
 }
 

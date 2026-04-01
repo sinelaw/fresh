@@ -239,6 +239,10 @@ pub struct SettingItem {
     pub read_only: bool,
     /// Whether this is an auto-managed map (no_add) that should never show as modified
     pub is_auto_managed: bool,
+    /// Whether this setting accepts null (can be "unset" to inherit)
+    pub nullable: bool,
+    /// Whether this setting's current value is null (inherited/unset)
+    pub is_null: bool,
     /// Section/group within the category (from x-section)
     pub section: Option<String>,
     /// Whether this item is the first in its section (for rendering section headers)
@@ -656,6 +660,12 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
     // Get current value from config
     let current_value = ctx.config_value.pointer(&schema.path);
 
+    // Detect if the current value is null (inherited/unset) for nullable fields
+    let is_null = schema.nullable
+        && current_value
+            .map(|v| v.is_null())
+            .unwrap_or(schema.default.as_ref().map(|d| d.is_null()).unwrap_or(true));
+
     // Check if this is an auto-managed map (no_add)
     let is_auto_managed = matches!(&schema.setting_type, SettingType::Map { no_add: true, .. });
 
@@ -873,6 +883,8 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
         layer_source,
         read_only: schema.read_only,
         is_auto_managed,
+        nullable: schema.nullable,
+        is_null,
         section: schema.section.clone(),
         is_section_start: false, // Set later in build_page after sorting
         layout_width: 0,
@@ -1077,6 +1089,11 @@ pub fn build_item_from_value(
     // Check if this is an auto-managed map (no_add)
     let is_auto_managed = matches!(&schema.setting_type, SettingType::Map { no_add: true, .. });
 
+    let is_null = schema.nullable
+        && current_value
+            .map(|v| v.is_null())
+            .unwrap_or(schema.default.as_ref().map(|d| d.is_null()).unwrap_or(true));
+
     SettingItem {
         path: schema.path.clone(),
         name: schema.name.clone(),
@@ -1088,6 +1105,8 @@ pub fn build_item_from_value(
         layer_source: ConfigLayer::System,
         read_only: schema.read_only,
         is_auto_managed,
+        nullable: schema.nullable,
+        is_null,
         section: schema.section.clone(),
         is_section_start: false, // Not used in dialogs
         layout_width: 0,
@@ -1206,6 +1225,7 @@ mod tests {
             read_only: false,
             section: None,
             order: None,
+            nullable: false,
         };
 
         let config = sample_config();
@@ -1236,6 +1256,7 @@ mod tests {
             read_only: false,
             section: None,
             order: None,
+            nullable: false,
         };
 
         let config = sample_config();
@@ -1264,6 +1285,7 @@ mod tests {
             read_only: false,
             section: None,
             order: None,
+            nullable: false,
         };
 
         let config = sample_config();
@@ -1293,6 +1315,7 @@ mod tests {
             read_only: false,
             section: None,
             order: None,
+            nullable: false,
         };
 
         let config = sample_config();

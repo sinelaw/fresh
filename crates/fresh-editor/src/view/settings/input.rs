@@ -725,6 +725,11 @@ impl SettingsState {
                 self.toggle_help();
                 InputResult::Consumed
             }
+            KeyCode::Delete => {
+                // Delete key: set nullable setting to null (inherit)
+                self.set_current_to_null();
+                InputResult::Consumed
+            }
             KeyCode::Esc => {
                 self.request_close(ctx);
                 InputResult::Consumed
@@ -768,7 +773,19 @@ impl SettingsState {
             KeyCode::Enter => {
                 match self.footer_button_index {
                     0 => self.cycle_target_layer(), // Layer button
-                    1 => self.request_reset(),
+                    1 => {
+                        // Reset/Inherit button — for nullable items, set to null (inherit);
+                        // otherwise show reset-all dialog
+                        let is_nullable_set = self
+                            .current_item()
+                            .map(|item| item.nullable && !item.is_null)
+                            .unwrap_or(false);
+                        if is_nullable_set {
+                            self.set_current_to_null();
+                        } else {
+                            self.request_reset();
+                        }
+                    }
                     2 => ctx.defer(DeferredAction::CloseSettings { save: true }),
                     3 => self.request_close(ctx),
                     4 => ctx.defer(DeferredAction::OpenConfigFile {

@@ -1289,5 +1289,8 @@
   "whitespace.newline_added": "Đã thêm dòng mới cuối tệp",
   "whitespace.no_trailing": "Không có khoảng trắng cuối dòng để xóa",
   "whitespace.trimmed": "Đã xóa khoảng trắng cuối dòng",
-  "settings.field.editor.auto_close": "Tự động đóng"
+  "settings.field.editor.auto_close": "Tự động đóng",
+  "action.settings_inherit": "Kế thừa giá trị (bỏ ghi đè)",
+  "settings.btn_inherit": "Kế thừa",
+  "settings.inherited_badge": "(Kế thừa)"
 }

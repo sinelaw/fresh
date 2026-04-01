@@ -1289,5 +1289,8 @@
   "whitespace.newline_added": "Nuova riga finale aggiunta",
   "whitespace.no_trailing": "Nessuno spazio bianco finale da rimuovere",
   "whitespace.trimmed": "Spazi bianchi finali rimossi",
-  "settings.field.editor.auto_close": "Chiusura automatica"
+  "settings.field.editor.auto_close": "Chiusura automatica",
+  "action.settings_inherit": "Eredita valore (rimuovi sovrascrittura)",
+  "settings.btn_inherit": "Eredita",
+  "settings.inherited_badge": "(Ereditato)"
 }

@@ -679,7 +679,8 @@ fn render_settings_panel(
             item_info.index,
             page.items[item_info.index].path.clone(),
             item_info.area,
-            item_info.layout,
+            item_info.layout.control,
+            item_info.layout.inherit_button,
         );
     }
 
@@ -748,7 +749,7 @@ fn render_setting_item_pure(
     ctx: &RenderContext,
     theme: &Theme,
     label_width: Option<u16>,
-) -> ControlLayoutInfo {
+) -> SettingItemLayoutInfo {
     use super::items::SECTION_HEADER_HEIGHT;
 
     // Handle section header if this item starts a new section
@@ -802,7 +803,7 @@ fn render_setting_item_pure(
 
     // If no space left for item content, return empty layout
     if item_area.height == 0 {
-        return ControlLayoutInfo::default();
+        return SettingItemLayoutInfo::default();
     }
 
     // Use adjusted area and skip_top for the rest of rendering
@@ -821,6 +822,7 @@ fn render_setting_item_pure(
         Some(SettingsHit::ControlText(i)) => i == idx,
         Some(SettingsHit::ControlTextListRow(i, _)) => i == idx,
         Some(SettingsHit::ControlMapRow(i, _)) => i == idx,
+        Some(SettingsHit::ControlInherit(i)) => i == idx,
         _ => false,
     };
 
@@ -890,8 +892,8 @@ fn render_setting_item_pure(
         visible_control_height.min(area.height),
     );
 
-    // Render the control
-    let layout = render_control(
+    // Render the control (dimmed if nullable and currently null/inherited)
+    let control_layout = render_control(
         frame,
         control_area,
         &item.control,
@@ -899,8 +901,54 @@ fn render_setting_item_pure(
         skip_top,
         theme,
         label_width.map(|w| w.saturating_sub(focus_indicator_width)),
-        item.read_only,
+        item.read_only || item.is_null, // Treat null values as read-only (dimmed display)
     );
+
+    // Render nullable UI elements: (Inherited) badge or [Inherit] button
+    let mut inherit_button_area: Option<Rect> = None;
+    if item.nullable && skip_top == 0 {
+        if item.is_null {
+            // Show "(Inherited)" badge after the control on the first row
+            let badge_text = t!("settings.inherited_badge").to_string();
+            let badge_style = Style::default()
+                .fg(theme.line_number_fg)
+                .add_modifier(Modifier::ITALIC);
+            // Place badge at end of control row
+            let badge_len = badge_text.len() as u16 + 1; // +1 for spacing
+            let badge_x = control_area
+                .x
+                .saturating_add(control_area.width)
+                .saturating_sub(badge_len);
+            if badge_x > control_area.x {
+                frame.render_widget(
+                    Paragraph::new(badge_text).style(badge_style),
+                    Rect::new(badge_x, control_area.y, badge_len, 1),
+                );
+            }
+        } else {
+            // Show [Inherit] button after the control on the first row
+            let btn_text = format!("[{}]", t!("settings.btn_inherit"));
+            let btn_len = btn_text.len() as u16 + 1; // +1 for spacing
+            let btn_x = control_area
+                .x
+                .saturating_add(control_area.width)
+                .saturating_sub(btn_len);
+            if btn_x > control_area.x {
+                let btn_area = Rect::new(btn_x, control_area.y, btn_len, 1);
+                let is_hovered =
+                    matches!(ctx.hover_hit, Some(SettingsHit::ControlInherit(i)) if i == idx);
+                let btn_style = if is_hovered {
+                    Style::default()
+                        .fg(theme.menu_hover_fg)
+                        .bg(theme.menu_hover_bg)
+                } else {
+                    Style::default().fg(theme.line_number_fg)
+                };
+                frame.render_widget(Paragraph::new(btn_text).style(btn_style), btn_area);
+                inherit_button_area = Some(btn_area);
+            }
+        }
+    }
 
     // Render description below the control (if visible and exists)
     // Description is also offset by focus_indicator_width to align with control
@@ -956,7 +1004,10 @@ fn render_setting_item_pure(
         }
     }
 
-    layout
+    SettingItemLayoutInfo {
+        control: control_layout,
+        inherit_button: inherit_button_area,
+    }
 }
 
 /// Render the appropriate control for a setting
@@ -1816,6 +1867,13 @@ fn render_keybinding_list_partial(
     }
 }
 
+/// Combined layout info for a setting item (control + inherit button)
+#[derive(Debug, Clone, Default)]
+pub struct SettingItemLayoutInfo {
+    pub control: ControlLayoutInfo,
+    pub inherit_button: Option<Rect>,
+}
+
 /// Layout info for a control (for hit testing)
 #[derive(Debug, Clone, Default)]
 pub enum ControlLayoutInfo {
@@ -1940,9 +1998,18 @@ fn render_footer(
     let edit_focused = footer_focused && state.footer_button_index == 4;
 
     // Get translated button labels
+    // Use "Inherit" label instead of "Reset" when current item is nullable and explicitly set
+    let current_is_nullable_set = state
+        .current_item()
+        .map(|item| item.nullable && !item.is_null)
+        .unwrap_or(false);
     let save_label = t!("settings.btn_save").to_string();
     let cancel_label = t!("settings.btn_cancel").to_string();
-    let reset_label = t!("settings.btn_reset").to_string();
+    let reset_label = if current_is_nullable_set {
+        t!("settings.btn_inherit").to_string()
+    } else {
+        t!("settings.btn_reset").to_string()
+    };
     let edit_label = t!("settings.btn_edit").to_string();
 
     // Build button text with brackets (layer button uses layer name)
@@ -2204,9 +2271,18 @@ fn render_footer_vertical(
     let edit_focused = footer_focused && state.footer_button_index == 4;
 
     // Get translated button labels
+    // Use "Inherit" label instead of "Reset" when current item is nullable and explicitly set
+    let current_is_nullable_set = state
+        .current_item()
+        .map(|item| item.nullable && !item.is_null)
+        .unwrap_or(false);
     let save_label = t!("settings.btn_save").to_string();
     let cancel_label = t!("settings.btn_cancel").to_string();
-    let reset_label = t!("settings.btn_reset").to_string();
+    let reset_label = if current_is_nullable_set {
+        t!("settings.btn_inherit").to_string()
+    } else {
+        t!("settings.btn_reset").to_string()
+    };
     let edit_label = t!("settings.btn_edit").to_string();
 
     // Build button text

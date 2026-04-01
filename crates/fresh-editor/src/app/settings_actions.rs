@@ -374,9 +374,18 @@ impl Editor {
                     }
                 }
                 1 => {
-                    // Reset button
+                    // Reset/Inherit button — for nullable items, set to null (inherit);
+                    // for non-nullable items, reset to default
                     if let Some(ref mut state) = self.settings_state {
-                        state.reset_current_to_default();
+                        let is_nullable_set = state
+                            .current_item()
+                            .map(|item| item.nullable && !item.is_null)
+                            .unwrap_or(false);
+                        if is_nullable_set {
+                            state.set_current_to_null();
+                        } else {
+                            state.reset_current_to_default();
+                        }
                     }
                 }
                 2 => {

@@ -631,6 +631,7 @@ pub enum Action {
     SettingsHelp,        // Show settings help overlay
     SettingsIncrement,   // Increment number value or next dropdown option
     SettingsDecrement,   // Decrement number value or previous dropdown option
+    SettingsInherit,     // Set nullable setting to null (inherit value)
 
     // Terminal operations
     OpenTerminal,          // Open a new terminal in the current split
@@ -1051,6 +1052,7 @@ impl Action {
             "settings_help" => SettingsHelp,
             "settings_increment" => SettingsIncrement,
             "settings_decrement" => SettingsDecrement,
+            "settings_inherit" => SettingsInherit,
         }
         alias {
             "toggle_compose_mode" => TogglePageView,
@@ -2222,6 +2224,7 @@ impl KeybindingResolver {
             Action::SettingsHelp => t!("action.settings_help"),
             Action::SettingsIncrement => t!("action.settings_increment"),
             Action::SettingsDecrement => t!("action.settings_decrement"),
+            Action::SettingsInherit => t!("action.settings_inherit"),
             Action::ShellCommand => t!("action.shell_command"),
             Action::ShellCommandReplace => t!("action.shell_command_replace"),
             Action::ToUpperCase => t!("action.to_uppercase"),

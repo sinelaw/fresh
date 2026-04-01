@@ -1289,5 +1289,8 @@
   "whitespace.newline_added": "Добавлен завершающий перевод строки",
   "whitespace.no_trailing": "Нет конечных пробелов для удаления",
   "whitespace.trimmed": "Конечные пробелы удалены",
-  "settings.field.editor.auto_close": "Автозакрытие"
+  "settings.field.editor.auto_close": "Автозакрытие",
+  "action.settings_inherit": "Наследовать значение (сбросить переопределение)",
+  "settings.btn_inherit": "Наследовать",
+  "settings.inherited_badge": "(Унаследовано)"
 }

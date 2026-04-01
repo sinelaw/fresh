@@ -1289,5 +1289,8 @@
   "whitespace.newline_added": "Додано завершальний перенос рядка",
   "whitespace.no_trailing": "Немає кінцевих пробілів для видалення",
   "whitespace.trimmed": "Кінцеві пробіли видалено",
-  "settings.field.editor.auto_close": "Автозакриття"
+  "settings.field.editor.auto_close": "Автозакриття",
+  "action.settings_inherit": "Успадкувати значення (скасувати перевизначення)",
+  "settings.btn_inherit": "Успадкувати",
+  "settings.inherited_badge": "(Успадковано)"
 }

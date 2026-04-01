@@ -1289,5 +1289,8 @@
   "whitespace.newline_added": "Abschließender Zeilenumbruch hinzugefügt",
   "whitespace.no_trailing": "Keine Leerzeichen am Zeilenende vorhanden",
   "whitespace.trimmed": "Leerzeichen am Zeilenende entfernt",
-  "settings.field.editor.auto_close": "Automatisches Schließen"
+  "settings.field.editor.auto_close": "Automatisches Schließen",
+  "action.settings_inherit": "Wert erben (Überschreibung aufheben)",
+  "settings.btn_inherit": "Erben",
+  "settings.inherited_badge": "(Geerbt)"
 }

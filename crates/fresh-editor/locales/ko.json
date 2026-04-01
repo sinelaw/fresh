@@ -1289,5 +1289,8 @@
   "whitespace.newline_added": "마지막 줄바꿈이 추가되었습니다",
   "whitespace.no_trailing": "제거할 후행 공백이 없습니다",
   "whitespace.trimmed": "후행 공백이 제거되었습니다",
-  "settings.field.editor.auto_close": "자동 닫기"
+  "settings.field.editor.auto_close": "자동 닫기",
+  "action.settings_inherit": "값 상속 (재정의 해제)",
+  "settings.btn_inherit": "상속",
+  "settings.inherited_badge": "(상속됨)"
 }

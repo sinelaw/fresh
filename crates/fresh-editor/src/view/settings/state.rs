@@ -665,6 +665,35 @@ impl SettingsState {
         }
     }
 
+    /// Set the current nullable setting to null (inherit value).
+    ///
+    /// This explicitly sets the value to null in the current layer,
+    /// indicating that the setting should be inherited rather than overridden.
+    /// Only applies to nullable settings that are not currently null.
+    pub fn set_current_to_null(&mut self) {
+        let target_layer = self.target_layer;
+        let change_info = self.current_item().and_then(|item| {
+            if !item.nullable || item.is_null || item.read_only {
+                return None;
+            }
+            Some(item.path.clone())
+        });
+
+        if let Some(path) = change_info {
+            // Set value to null (not a deletion — this is an explicit null value)
+            self.pending_changes
+                .insert(path.clone(), serde_json::Value::Null);
+            self.pending_deletions.remove(&path);
+
+            // Update the item's visual state
+            if let Some(item) = self.current_item_mut() {
+                item.is_null = true;
+                item.modified = true;
+                item.layer_source = target_layer;
+            }
+        }
+    }
+
     /// Handle a value change from user interaction
     pub fn on_value_changed(&mut self) {
         // Capture target_layer before any borrows
@@ -685,6 +714,7 @@ impl SettingsState {
             if let Some(item) = self.current_item_mut() {
                 item.modified = true; // New semantic: value is now defined in target layer
                 item.layer_source = target_layer; // Value now comes from target layer
+                item.is_null = false; // Explicit value clears the inherited state
             }
             self.set_pending_change(&path, value);
         }

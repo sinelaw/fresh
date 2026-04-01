@@ -1289,5 +1289,8 @@
   "whitespace.newline_added": "Přidán koncový nový řádek",
   "whitespace.no_trailing": "Žádné koncové mezery k odstranění",
   "whitespace.trimmed": "Koncové mezery odstraněny",
-  "settings.field.editor.auto_close": "Automatické uzavírání"
+  "settings.field.editor.auto_close": "Automatické uzavírání",
+  "action.settings_inherit": "Zdědit hodnotu (zrušit přepsání)",
+  "settings.btn_inherit": "Zdědit",
+  "settings.inherited_badge": "(Zděděno)"
 }

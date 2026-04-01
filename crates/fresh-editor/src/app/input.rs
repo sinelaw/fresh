@@ -1293,6 +1293,11 @@ impl Editor {
                     state.reset_current_to_default();
                 }
             }
+            Action::SettingsInherit => {
+                if let Some(ref mut state) = self.settings_state {
+                    state.set_current_to_null();
+                }
+            }
             Action::SettingsToggleFocus => {
                 if let Some(ref mut state) = self.settings_state {
                     state.toggle_focus();

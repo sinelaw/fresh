@@ -1289,5 +1289,8 @@
   "whitespace.newline_added": "Saut de ligne final ajouté",
   "whitespace.no_trailing": "Aucun espace de fin à supprimer",
   "whitespace.trimmed": "Espaces de fin supprimés",
-  "settings.field.editor.auto_close": "Fermeture automatique"
+  "settings.field.editor.auto_close": "Fermeture automatique",
+  "action.settings_inherit": "Hériter la valeur (supprimer le remplacement)",
+  "settings.btn_inherit": "Hériter",
+  "settings.inherited_badge": "(Hérité)"
 }
