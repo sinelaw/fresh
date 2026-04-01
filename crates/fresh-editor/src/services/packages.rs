@@ -144,6 +144,11 @@ pub struct GrammarManifestConfig {
     /// Regex pattern for shebang/first-line detection
     #[serde(rename = "firstLine", default)]
     pub first_line: Option<String>,
+
+    /// Optional short name alias for this grammar (e.g., "hare").
+    /// Must be unique across all grammars; collisions are rejected with a warning.
+    #[serde(rename = "shortName", default)]
+    pub short_name: Option<String>,
 }
 
 /// Language configuration within a package manifest (camelCase to match JSON schema).

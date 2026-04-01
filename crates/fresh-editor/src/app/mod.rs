@@ -5300,6 +5300,7 @@ impl Editor {
                         name: g.name,
                         source: g.source.to_string(),
                         file_extensions: g.file_extensions,
+                        short_name: g.short_name,
                     })
                     .collect();
             }

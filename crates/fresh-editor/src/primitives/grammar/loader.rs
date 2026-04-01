@@ -257,6 +257,7 @@ impl GrammarRegistry {
                                         path: spec.path.clone(),
                                     },
                                     file_extensions: spec.extensions.clone(),
+                                    short_name: None,
                                 },
                             );
                             loaded_grammar_paths.push(spec.clone());
@@ -290,13 +291,30 @@ impl GrammarRegistry {
             filename_scopes.len()
         );
 
-        Self::new_with_loaded_paths(
+        let mut registry = Self::new_with_loaded_paths(
             syntax_set,
             user_extensions,
             filename_scopes,
             loaded_grammar_paths,
             grammar_sources,
-        )
+        );
+
+        // Register short-name aliases: built-in first, then manifest-declared
+        registry.populate_built_in_aliases();
+        let manifest_aliases: Vec<(String, String)> = registry
+            .grammar_sources()
+            .values()
+            .filter_map(|info| {
+                info.short_name
+                    .as_ref()
+                    .map(|short| (short.clone(), info.name.clone()))
+            })
+            .collect();
+        for (short, full) in &manifest_aliases {
+            registry.register_alias(short, full);
+        }
+
+        registry
     }
 
     /// Get the grammars directory path for the given config directory.
@@ -427,6 +445,7 @@ fn process_manifest(
                     path: grammar_path.clone(),
                 },
                 file_extensions: extensions,
+                short_name: None,
             },
         );
     }
@@ -466,6 +485,7 @@ fn load_direct_grammar(
                                 path: dir.to_path_buf(),
                             },
                             file_extensions: syntax.file_extensions.clone(),
+                            short_name: None,
                         },
                     );
                 }
@@ -494,6 +514,9 @@ struct FreshGrammarConfig {
     file: String,
     #[serde(default)]
     extensions: Vec<String>,
+    /// Optional short name alias for this grammar (e.g., "hare")
+    #[serde(default)]
+    short_name: Option<String>,
 }
 
 /// Load grammars from Fresh language packages (installed via pkg manager).
@@ -616,6 +639,7 @@ fn load_language_pack_grammars(
                             path: grammar_path.clone(),
                         },
                         file_extensions: clean_extensions,
+                        short_name: grammar_config.short_name.clone(),
                     },
                 );
             }
@@ -744,6 +768,7 @@ fn load_bundle_grammars(
                                 path: grammar_path.clone(),
                             },
                             file_extensions: grammar_config.extensions.clone(),
+                            short_name: None,
                         },
                     );
 

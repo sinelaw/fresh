@@ -2124,22 +2124,32 @@ fn list_grammars_command() -> AnyhowResult<()> {
         return Ok(());
     }
 
-    // Find the longest name for alignment
+    // Find the longest name and short name for alignment
     let max_name_len = grammars.iter().map(|g| g.name.len()).max().unwrap_or(0);
+    let max_short_len = grammars
+        .iter()
+        .map(|g| g.short_name.as_ref().map_or(0, |s| s.len()))
+        .max()
+        .unwrap_or(0)
+        .max("SHORT NAME".len());
 
     println!(
-        "{:<width$}  {:<12}  {}",
+        "{:<nw$}  {:<sw$}  {:<12}  {}",
         "GRAMMAR",
+        "SHORT NAME",
         "SOURCE",
         "EXTENSIONS",
-        width = max_name_len
+        nw = max_name_len,
+        sw = max_short_len
     );
     println!(
-        "{:<width$}  {:<12}  {}",
+        "{:<nw$}  {:<sw$}  {:<12}  {}",
         "-------",
+        "----------",
         "------",
         "----------",
-        width = max_name_len
+        nw = max_name_len,
+        sw = max_short_len
     );
     for grammar in &grammars {
         let extensions = if grammar.file_extensions.is_empty() {
@@ -2152,17 +2162,23 @@ fn list_grammars_command() -> AnyhowResult<()> {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
+        let short = grammar
+            .short_name
+            .as_deref()
+            .unwrap_or("");
         println!(
-            "{:<width$}  {:<12}  {}",
+            "{:<nw$}  {:<sw$}  {:<12}  {}",
             grammar.name,
+            short,
             grammar.source.to_string(),
             extensions,
-            width = max_name_len
+            nw = max_name_len,
+            sw = max_short_len
         );
     }
 
     println!("\n{} grammars available.", grammars.len());
-    println!("Use these names in config: languages -> <language> -> grammar");
+    println!("Use the grammar name or short name in config: languages -> <language> -> grammar");
     Ok(())
 }
 

@@ -819,6 +819,8 @@ pub struct GrammarInfoSnapshot {
     pub source: String,
     /// File extensions associated with this grammar
     pub file_extensions: Vec<String>,
+    /// Optional short name alias (e.g., "bash" for "Bourne Again Shell (bash)")
+    pub short_name: Option<String>,
 }
 
 /// Position for inserting menu items or menus

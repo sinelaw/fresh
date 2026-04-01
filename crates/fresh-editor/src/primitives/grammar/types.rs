@@ -70,6 +70,9 @@ pub struct GrammarInfo {
     pub source: GrammarSource,
     /// File extensions associated with this grammar
     pub file_extensions: Vec<String>,
+    /// Optional short name alias (e.g., "bash" for "Bourne Again Shell (bash)")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_name: Option<String>,
 }
 
 /// Embedded TOML grammar (syntect doesn't include one)
@@ -184,6 +187,10 @@ pub struct GrammarRegistry {
     loaded_grammar_paths: Vec<GrammarSpec>,
     /// Provenance info for each grammar (keyed by grammar name)
     grammar_sources: HashMap<String, GrammarInfo>,
+    /// Short name aliases: lowercase short_name -> full syntect grammar name.
+    /// Provides a deterministic, one-to-one mapping so users can write
+    /// `grammar = "bash"` instead of `grammar = "Bourne Again Shell (bash)"`.
+    aliases: HashMap<String, String>,
 }
 
 impl GrammarRegistry {
@@ -222,6 +229,7 @@ impl GrammarRegistry {
             filename_scopes,
             loaded_grammar_paths,
             grammar_sources,
+            aliases: HashMap::new(),
         }
     }
 
@@ -235,6 +243,7 @@ impl GrammarRegistry {
             filename_scopes: HashMap::new(),
             loaded_grammar_paths: Vec::new(),
             grammar_sources: HashMap::new(),
+            aliases: HashMap::new(),
         })
     }
 
@@ -260,13 +269,16 @@ impl GrammarRegistry {
         let grammar_sources = Self::build_grammar_sources_from_syntax_set(&syntax_set);
         let filename_scopes = Self::build_filename_scopes();
         let extra_extensions = Self::build_extra_extensions();
-        Arc::new(Self {
+        let mut registry = Self {
             syntax_set: Arc::new(syntax_set),
             user_extensions: extra_extensions,
             filename_scopes,
             loaded_grammar_paths: Vec::new(),
             grammar_sources,
-        })
+            aliases: HashMap::new(),
+        };
+        registry.populate_built_in_aliases();
+        Arc::new(registry)
     }
 
     /// Build extra extension -> scope mappings for extensions not covered by syntect defaults.
@@ -791,21 +803,190 @@ impl GrammarRegistry {
         self.syntax_set.find_syntax_by_scope(scope)
     }
 
-    /// Find syntax by name (case-insensitive)
+    /// Find syntax by name, with alias resolution.
     ///
-    /// This allows config files to use lowercase grammar names like "go" while
-    /// matching syntect's actual names like "Go".
+    /// Lookup order:
+    /// 1. Exact match against syntect grammar names
+    /// 2. Case-insensitive match against syntect grammar names
+    /// 3. Alias lookup (short_name -> full grammar name, then exact syntect match)
+    ///
+    /// This allows config files to use `"go"` (case-insensitive match of `"Go"`),
+    /// or `"bash"` (alias for `"Bourne Again Shell (bash)"`).
     pub fn find_syntax_by_name(&self, name: &str) -> Option<&SyntaxReference> {
-        // Try exact match first
+        // 1. Exact match
         if let Some(syntax) = self.syntax_set.find_syntax_by_name(name) {
             return Some(syntax);
         }
-        // Fall back to case-insensitive match
+        // 2. Case-insensitive match
         let name_lower = name.to_lowercase();
-        self.syntax_set
+        if let Some(syntax) = self
+            .syntax_set
             .syntaxes()
             .iter()
             .find(|s| s.name.to_lowercase() == name_lower)
+        {
+            return Some(syntax);
+        }
+        // 3. Alias lookup
+        if let Some(full_name) = self.aliases.get(&name_lower) {
+            return self.syntax_set.find_syntax_by_name(full_name);
+        }
+        None
+    }
+
+    // === Alias management ===
+
+    /// Hardcoded short-name aliases for built-in and embedded grammars.
+    ///
+    /// Each entry maps a short name (lowercase) to the exact syntect grammar name.
+    /// Only grammars whose full name differs significantly from a natural short
+    /// form need an entry here. Grammars already short (e.g., "Rust", "Go") are
+    /// reachable via case-insensitive matching and don't need aliases.
+    fn built_in_aliases() -> Vec<(&'static str, &'static str)> {
+        vec![
+            // Syntect built-in grammars with verbose names
+            ("bash", "Bourne Again Shell (bash)"),
+            ("shell", "Bourne Again Shell (bash)"),
+            ("sh", "Bourne Again Shell (bash)"),
+            ("c++", "C++"),
+            ("cpp", "C++"),
+            ("csharp", "C#"),
+            ("objc", "Objective-C"),
+            ("objcpp", "Objective-C++"),
+            ("regex", "Regular Expressions (Python)"),
+            ("regexp", "Regular Expressions (Python)"),
+            // Embedded grammars with multi-word or non-obvious names
+            ("proto", "Protocol Buffers"),
+            ("protobuf", "Protocol Buffers"),
+            ("gomod", "Go Module"),
+            ("git-rebase", "Git Rebase Todo"),
+            ("git-commit", "Git Commit Message"),
+            ("git-config", "Git Config"),
+            ("git-attributes", "Git Attributes"),
+            ("gitignore", "Gitignore"),
+            ("fsharp", "FSharp"),
+            ("f#", "FSharp"),
+            ("terraform", "HCL"),
+            ("tf", "HCL"),
+            ("ts", "TypeScript"),
+            ("js", "JavaScript"),
+            ("py", "Python"),
+            ("rb", "Ruby"),
+            ("rs", "Rust"),
+            ("md", "Markdown"),
+            ("yml", "YAML"),
+            ("dockerfile", "Dockerfile"),
+        ]
+    }
+
+    /// Populate aliases from the built-in table.
+    ///
+    /// Validates that:
+    /// - Each alias target (full name) exists in the syntax set
+    /// - No alias collides (case-insensitive) with an existing grammar full name
+    /// - No duplicate aliases exist
+    pub fn populate_built_in_aliases(&mut self) {
+        for (short, full) in Self::built_in_aliases() {
+            self.register_alias_inner(short, full, true);
+        }
+    }
+
+    /// Register a short-name alias for a grammar.
+    ///
+    /// Returns `true` if the alias was registered, `false` if rejected due to
+    /// collision or missing target. For built-in aliases, collisions panic
+    /// (they indicate a bug). For dynamic aliases, collisions log a warning.
+    pub fn register_alias(&mut self, short_name: &str, full_name: &str) -> bool {
+        self.register_alias_inner(short_name, full_name, false)
+    }
+
+    fn register_alias_inner(
+        &mut self,
+        short_name: &str,
+        full_name: &str,
+        is_built_in: bool,
+    ) -> bool {
+        let short_lower = short_name.to_lowercase();
+
+        // Validate: target grammar must exist in the syntax set
+        let target_exists = self
+            .syntax_set
+            .syntaxes()
+            .iter()
+            .any(|s| s.name.eq_ignore_ascii_case(full_name));
+        if !target_exists {
+            if is_built_in {
+                // Built-in alias targets should always exist; warn but don't panic
+                // (grammar might have been removed from syntect upstream)
+                tracing::warn!(
+                    "[grammar-alias] Built-in alias '{}' -> '{}': target grammar not found, skipping",
+                    short_name, full_name
+                );
+            } else {
+                tracing::warn!(
+                    "[grammar-alias] Alias '{}' -> '{}': target grammar not found, skipping",
+                    short_name, full_name
+                );
+            }
+            return false;
+        }
+
+        // Validate: short name must not collide (case-insensitive) with any grammar full name
+        let collides_with_full_name = self
+            .syntax_set
+            .syntaxes()
+            .iter()
+            .any(|s| s.name.eq_ignore_ascii_case(&short_lower));
+        if collides_with_full_name {
+            // This is actually fine — the short name matches a full name directly,
+            // so find_syntax_by_name's case-insensitive search will find it.
+            // No alias needed.
+            tracing::debug!(
+                "[grammar-alias] Alias '{}' matches an existing grammar name, skipping (not needed)",
+                short_name
+            );
+            return false;
+        }
+
+        // Validate: no duplicate alias (case-insensitive)
+        if let Some(existing_target) = self.aliases.get(&short_lower) {
+            if existing_target.eq_ignore_ascii_case(full_name) {
+                // Same mapping, no-op
+                return true;
+            }
+            let msg = format!(
+                "Alias '{}' already maps to '{}', cannot remap to '{}'",
+                short_name, existing_target, full_name
+            );
+            if is_built_in {
+                panic!("[grammar-alias] Built-in alias collision: {}", msg);
+            } else {
+                tracing::warn!("[grammar-alias] {}", msg);
+                return false;
+            }
+        }
+
+        // Resolve the exact syntect name (preserving original case)
+        let exact_name = self
+            .syntax_set
+            .syntaxes()
+            .iter()
+            .find(|s| s.name.eq_ignore_ascii_case(full_name))
+            .map(|s| s.name.clone())
+            .unwrap();
+
+        self.aliases.insert(short_lower, exact_name);
+        true
+    }
+
+    /// Get the aliases map (short_name -> full grammar name)
+    pub fn aliases(&self) -> &HashMap<String, String> {
+        &self.aliases
+    }
+
+    /// Look up the full grammar name for a short alias.
+    pub fn resolve_alias(&self, short_name: &str) -> Option<&str> {
+        self.aliases.get(&short_name.to_lowercase()).map(|s| s.as_str())
     }
 
     /// Get the underlying syntax set
@@ -832,6 +1013,15 @@ impl GrammarRegistry {
     /// Returns a sorted list of `GrammarInfo` entries. Each entry includes
     /// the grammar name, where it was loaded from, and associated file extensions.
     pub fn available_grammar_info(&self) -> Vec<GrammarInfo> {
+        // Build reverse map: full_name -> list of short aliases
+        let mut reverse_aliases: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (short, full) in &self.aliases {
+            reverse_aliases
+                .entry(full.as_str())
+                .or_default()
+                .push(short.as_str());
+        }
+
         let mut result: Vec<GrammarInfo> = self
             .syntax_set
             .syntaxes()
@@ -845,15 +1035,25 @@ impl GrammarRegistry {
                     .map(|info| info.source.clone())
                     .unwrap_or(GrammarSource::BuiltIn);
                 let file_extensions = s.file_extensions.clone();
+                // Pick the first (shortest) alias as the canonical short name
+                let short_name = reverse_aliases.get(name.as_str()).and_then(|aliases| {
+                    aliases.iter().min_by_key(|a| a.len()).map(|a| a.to_string())
+                });
                 GrammarInfo {
                     name,
                     source,
                     file_extensions,
+                    short_name,
                 }
             })
             .collect();
         result.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         result
+    }
+
+    /// Get the grammar sources map.
+    pub fn grammar_sources(&self) -> &HashMap<String, GrammarInfo> {
+        &self.grammar_sources
     }
 
     /// Get a mutable reference to the grammar sources map.
@@ -875,6 +1075,7 @@ impl GrammarRegistry {
                     name: syntax.name.clone(),
                     source: GrammarSource::BuiltIn,
                     file_extensions: syntax.file_extensions.clone(),
+                    short_name: None,
                 },
             );
         }
@@ -991,6 +1192,7 @@ impl GrammarRegistry {
                                 path: spec.path.clone(),
                             },
                             file_extensions: spec.extensions.clone(),
+                            short_name: None,
                         },
                     );
                     // Track this grammar path for future reloads
@@ -1013,6 +1215,7 @@ impl GrammarRegistry {
             filename_scopes: base.filename_scopes.clone(),
             loaded_grammar_paths,
             grammar_sources,
+            aliases: base.aliases.clone(),
         })
     }
 
@@ -1053,7 +1256,9 @@ impl Default for GrammarRegistry {
         let filename_scopes = Self::build_filename_scopes();
         let extra_extensions = Self::build_extra_extensions();
 
-        Self::new(syntax_set, extra_extensions, filename_scopes)
+        let mut registry = Self::new(syntax_set, extra_extensions, filename_scopes);
+        registry.populate_built_in_aliases();
+        registry
     }
 }
 
@@ -1361,5 +1566,133 @@ mod tests {
             "exact match should win over glob, got: {}",
             syntax.name
         );
+    }
+
+    #[test]
+    fn test_built_in_aliases_resolve() {
+        let registry = GrammarRegistry::default();
+
+        // "bash" should resolve to "Bourne Again Shell (bash)" via alias
+        let syntax = registry.find_syntax_by_name("bash");
+        assert!(syntax.is_some(), "alias 'bash' should resolve");
+        assert_eq!(syntax.unwrap().name, "Bourne Again Shell (bash)");
+
+        // "cpp" should resolve to "C++"
+        let syntax = registry.find_syntax_by_name("cpp");
+        assert!(syntax.is_some(), "alias 'cpp' should resolve");
+        assert_eq!(syntax.unwrap().name, "C++");
+
+        // "csharp" should resolve to "C#"
+        let syntax = registry.find_syntax_by_name("csharp");
+        assert!(syntax.is_some(), "alias 'csharp' should resolve");
+        assert_eq!(syntax.unwrap().name, "C#");
+
+        // "sh" should also resolve to bash
+        let syntax = registry.find_syntax_by_name("sh");
+        assert!(syntax.is_some(), "alias 'sh' should resolve");
+        assert_eq!(syntax.unwrap().name, "Bourne Again Shell (bash)");
+
+        // "proto" should resolve to "Protocol Buffers"
+        let syntax = registry.find_syntax_by_name("proto");
+        assert!(syntax.is_some(), "alias 'proto' should resolve");
+        assert_eq!(syntax.unwrap().name, "Protocol Buffers");
+    }
+
+    #[test]
+    fn test_alias_case_insensitive_input() {
+        let registry = GrammarRegistry::default();
+
+        // Aliases should be case-insensitive on input
+        let syntax = registry.find_syntax_by_name("BASH");
+        assert!(syntax.is_some(), "alias 'BASH' should resolve case-insensitively");
+        assert_eq!(syntax.unwrap().name, "Bourne Again Shell (bash)");
+
+        let syntax = registry.find_syntax_by_name("Cpp");
+        assert!(syntax.is_some(), "alias 'Cpp' should resolve case-insensitively");
+        assert_eq!(syntax.unwrap().name, "C++");
+    }
+
+    #[test]
+    fn test_full_name_still_works() {
+        let registry = GrammarRegistry::default();
+
+        // Full names should still work (exact match)
+        let syntax = registry.find_syntax_by_name("Bourne Again Shell (bash)");
+        assert!(syntax.is_some(), "full name should still resolve");
+        assert_eq!(syntax.unwrap().name, "Bourne Again Shell (bash)");
+
+        // Case-insensitive full name should still work
+        let syntax = registry.find_syntax_by_name("bourne again shell (bash)");
+        assert!(syntax.is_some(), "case-insensitive full name should resolve");
+        assert_eq!(syntax.unwrap().name, "Bourne Again Shell (bash)");
+    }
+
+    #[test]
+    fn test_alias_does_not_shadow_full_names() {
+        let registry = GrammarRegistry::default();
+
+        // "Rust" should resolve directly via case-insensitive match, not via alias
+        let syntax = registry.find_syntax_by_name("rust");
+        assert!(syntax.is_some());
+        assert_eq!(syntax.unwrap().name, "Rust");
+
+        // "Go" should resolve directly
+        let syntax = registry.find_syntax_by_name("go");
+        assert!(syntax.is_some());
+        assert_eq!(syntax.unwrap().name, "Go");
+    }
+
+    #[test]
+    fn test_register_alias_rejects_collision() {
+        let mut registry = GrammarRegistry::default();
+
+        // Trying to register an alias that maps to two different targets should fail
+        assert!(registry.register_alias("myalias", "Rust"));
+        assert!(!registry.register_alias("myalias", "Go"));
+
+        // Same mapping is fine (idempotent)
+        assert!(registry.register_alias("myalias", "Rust"));
+    }
+
+    #[test]
+    fn test_register_alias_rejects_nonexistent_target() {
+        let mut registry = GrammarRegistry::default();
+        assert!(!registry.register_alias("nope", "Nonexistent Grammar"));
+    }
+
+    #[test]
+    fn test_register_alias_skips_existing_grammar_name() {
+        let mut registry = GrammarRegistry::default();
+
+        // "rust" case-insensitively matches the grammar "Rust", so no alias needed
+        assert!(!registry.register_alias("rust", "Rust"));
+        // Should still be resolvable via case-insensitive match
+        assert!(registry.find_syntax_by_name("rust").is_some());
+    }
+
+    #[test]
+    fn test_available_grammar_info_includes_short_names() {
+        let registry = GrammarRegistry::default();
+        let infos = registry.available_grammar_info();
+
+        let bash_info = infos.iter().find(|g| g.name == "Bourne Again Shell (bash)");
+        assert!(bash_info.is_some(), "bash grammar should be in the list");
+        let bash_info = bash_info.unwrap();
+        assert!(
+            bash_info.short_name.is_some(),
+            "bash grammar should have a short_name"
+        );
+        // The shortest alias for bash is "sh"
+        assert_eq!(bash_info.short_name.as_deref(), Some("sh"));
+    }
+
+    #[test]
+    fn test_resolve_alias() {
+        let registry = GrammarRegistry::default();
+        assert_eq!(
+            registry.resolve_alias("bash"),
+            Some("Bourne Again Shell (bash)")
+        );
+        assert_eq!(registry.resolve_alias("nonexistent"), None);
     }
 }
