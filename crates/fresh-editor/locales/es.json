@@ -301,6 +301,7 @@
   "buffer.no_tabs_to_close": "No hay pestañas para cerrar",
   "buffer.opened": "Abierto %{name}",
   "buffer.opened_binary": "Abierto %{name} [archivo binario, solo lectura]",
+  "buffer.create_directory_confirm": "El directorio '%{name}' no existe. (c)rear, (C)ancelar? ",
   "buffer.overwrite_confirm": "'%{name}' existe. (s)obrescribir, (C)ancelar? ",
   "buffer.revert_cancelled": "Reversión cancelada",
   "buffer.save_cancelled": "Guardado cancelado",

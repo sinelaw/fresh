@@ -301,6 +301,7 @@
   "buffer.no_tabs_to_close": "Žádné karty k zavření",
   "buffer.opened": "Otevřeno %{name}",
   "buffer.opened_binary": "Otevřeno %{name} [binární soubor, pouze pro čtení]",
+  "buffer.create_directory_confirm": "Adresář '%{name}' neexistuje. (v)ytvořit, (Z)rušit? ",
   "buffer.overwrite_confirm": "'%{name}' existuje. (p)řepsat, (Z)rušit? ",
   "buffer.revert_cancelled": "Obnovení zrušeno",
   "buffer.save_cancelled": "Uložení zrušeno",

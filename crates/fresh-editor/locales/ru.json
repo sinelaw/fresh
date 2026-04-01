@@ -301,6 +301,7 @@
   "buffer.no_tabs_to_close": "Нет вкладок для закрытия",
   "buffer.opened": "Открыт %{name}",
   "buffer.opened_binary": "Открыт %{name} [бинарный файл, только чтение]",
+  "buffer.create_directory_confirm": "Каталог '%{name}' не существует. (с)оздать, (О)тмена? ",
   "buffer.overwrite_confirm": "'%{name}' существует. (п)ерезаписать, (О)тмена? ",
   "buffer.revert_cancelled": "Откат отменён",
   "buffer.save_cancelled": "Сохранение отменено",

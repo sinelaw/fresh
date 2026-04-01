@@ -301,6 +301,7 @@
   "buffer.no_tabs_to_close": "Nessuna scheda da chiudere",
   "buffer.opened": "Aperto %{name}",
   "buffer.opened_binary": "Aperto %{name} [file binario, sola lettura]",
+  "buffer.create_directory_confirm": "La directory '%{name}' non esiste. (c)rea, (A)nnulla? ",
   "buffer.overwrite_confirm": "'%{name}' esiste già. (o)vrascrivi, (A)nnulla? ",
   "buffer.revert_cancelled": "Ripristino annullato",
   "buffer.save_cancelled": "Salvataggio annullato",

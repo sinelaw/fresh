@@ -10,16 +10,15 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
-use tempfile::TempDir;
 
 /// Test that saving to a non-existent directory prompts the user and creates it on confirm.
 #[test]
 fn test_issue_1434_save_file_in_nonexistent_directory_confirm() {
-    let temp_dir = TempDir::new().unwrap();
-    // Path where parent directory does NOT exist
-    let nonexistent_path = temp_dir.path().join("i-dont-exist").join("readme.md");
+    let mut harness = EditorTestHarness::with_temp_project(120, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
 
-    let mut harness = EditorTestHarness::new(120, 24).unwrap();
+    // Path where parent directory does NOT exist, relative to project
+    let nonexistent_path = project_dir.join("newdir").join("readme.md");
 
     // Create a new unnamed buffer
     harness.new_buffer().unwrap();
@@ -36,10 +35,8 @@ fn test_issue_1434_save_file_in_nonexistent_directory_confirm() {
     harness.render().unwrap();
     harness.assert_screen_contains("Save as:");
 
-    // Type the path with non-existent parent directory and press Enter
-    harness
-        .type_text(&nonexistent_path.to_string_lossy())
-        .unwrap();
+    // Type a relative path with non-existent parent directory and press Enter
+    harness.type_text("newdir/readme.md").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -69,10 +66,9 @@ fn test_issue_1434_save_file_in_nonexistent_directory_confirm() {
 /// Test that saving to a non-existent directory can be cancelled.
 #[test]
 fn test_issue_1434_save_file_in_nonexistent_directory_cancel() {
-    let temp_dir = TempDir::new().unwrap();
-    let nonexistent_path = temp_dir.path().join("i-dont-exist").join("readme.md");
-
-    let mut harness = EditorTestHarness::new(120, 24).unwrap();
+    let mut harness = EditorTestHarness::with_temp_project(120, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    let nonexistent_path = project_dir.join("newdir").join("readme.md");
 
     // Create a new unnamed buffer
     harness.new_buffer().unwrap();
@@ -86,9 +82,7 @@ fn test_issue_1434_save_file_in_nonexistent_directory_cancel() {
     harness.render().unwrap();
 
     // Type non-existent path and confirm
-    harness
-        .type_text(&nonexistent_path.to_string_lossy())
-        .unwrap();
+    harness.type_text("newdir/readme.md").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();

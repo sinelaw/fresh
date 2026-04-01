@@ -301,6 +301,7 @@
   "buffer.no_tabs_to_close": "Nenhuma aba para fechar",
   "buffer.opened": "Aberto %{name}",
   "buffer.opened_binary": "Aberto %{name} [arquivo binário, somente leitura]",
+  "buffer.create_directory_confirm": "O diretório '%{name}' não existe. (c)riar, (C)ancelar? ",
   "buffer.overwrite_confirm": "'%{name}' existe. (s)obrescrever, (C)ancelar? ",
   "buffer.revert_cancelled": "Reversão cancelada",
   "buffer.save_cancelled": "Salvamento cancelado",

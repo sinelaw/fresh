@@ -301,6 +301,7 @@
   "buffer.no_tabs_to_close": "Keine Tabs zum Schließen",
   "buffer.opened": "%{name} geöffnet",
   "buffer.opened_binary": "%{name} geöffnet [Binärdatei, schreibgeschützt]",
+  "buffer.create_directory_confirm": "Verzeichnis '%{name}' existiert nicht. (e)rstellen, (A)bbrechen? ",
   "buffer.overwrite_confirm": "'%{name}' existiert. (ü)berschreiben, (A)bbrechen? ",
   "buffer.revert_cancelled": "Zurücksetzen abgebrochen",
   "buffer.save_cancelled": "Speichern abgebrochen",
