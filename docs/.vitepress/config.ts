@@ -151,6 +151,7 @@ export default defineConfig({
     search: {
       provider: "local",
       options: {
+        detailedView: true,
         _render(src, env, md) {
           if (env.relativePath?.startsWith("internal/")) {
             return "";
