@@ -2888,8 +2888,10 @@ fn test_map_add_new_button_clickable_with_mouse() {
         .unwrap();
     harness.render().unwrap();
 
-    // The "[+] Add new" button should be visible
-    harness.assert_screen_contains("[+] Add new");
+    // Wait for the "[+] Add new" button to be visible after search navigation
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[+] Add new"))
+        .unwrap();
 
     // Find the position of "[+] Add new" on screen and click it
     let screen = harness.screen_to_string();
