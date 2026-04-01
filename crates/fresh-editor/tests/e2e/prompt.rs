@@ -581,10 +581,9 @@ fn test_save_as_nested_path() {
     // Wait for the Save As prompt to appear
     harness.wait_for_screen_contains("Save as:").unwrap();
 
-    // Type nested path (parent dir doesn't exist yet)
+    // Type nested relative path (parent dir doesn't exist yet)
     let nested_path = project_dir.join("subdir").join("nested.txt");
-    let nested_path_str = nested_path.to_str().unwrap();
-    harness.type_text(nested_path_str).unwrap();
+    harness.type_text("subdir/nested.txt").unwrap();
 
     // Confirm
     harness
