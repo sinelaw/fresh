@@ -155,11 +155,10 @@ export default defineConfig({
       provider: "local",
       options: {
         _render(src, env, md) {
-          const html = md.render(src, env);
           if (env.relativePath?.startsWith("internal/")) {
             return "";
           }
-          return html;
+          return md.render(src, env);
         },
       },
     },
