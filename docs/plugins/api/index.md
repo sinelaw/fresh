@@ -22,6 +22,10 @@ Metadata attached to text ranges in virtual buffers. Each entry has text content
 
 Visual decorations applied to buffer text without modifying content. Overlays can change text color and add underlines. Use overlay IDs to manage them; prefix IDs enable batch removal (e.g., "lint:" prefix for all linter highlights).
 
+### Plugin Directory
+
+Plugins can call `getPluginDir()` to locate their own package directory, useful for finding bundled scripts or local dependencies.
+
 ### Modes
 
 Keybinding contexts that determine how keypresses are interpreted. Each buffer has a mode (e.g., "normal", "insert", "special"). Custom modes can inherit from parents and define buffer-local keybindings. Virtual buffers typically use custom modes.

@@ -32,6 +32,10 @@ FRESH_COLOR_MODE=16 fresh
 FRESH_COLOR_MODE=truecolor fresh
 ```
 
+### 256-Color Contrast
+
+When running in a 256-color terminal, Fresh automatically adjusts foreground colors to maintain readable contrast against their background.
+
 ### Common Issues
 
 | Symptom | Likely Cause | Solution |

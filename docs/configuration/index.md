@@ -58,6 +58,7 @@ Nested objects are **deep-merged** field by field. Each field follows the same "
 The `languages` map uses **deep merging with field-level override**:
 - Entries from all layers are combined (you can add new languages at any layer)
 - For the same language key, individual fields are merged (not replaced entirely)
+- Editor settings like `line_wrap`, `wrap_column`, `page_view`, and `page_width` can be set per-language
 
 **Example:** Extending built-in Rust settings in your project:
 ```json
@@ -246,6 +247,8 @@ All settings can be changed via the Settings UI (command palette → "Open Setti
 | Status bar | Show/hide the status bar | on |
 | Whitespace indicators | Show space/tab characters (leading, inner, trailing) | off |
 | Diagnostics inline text | Show diagnostics at end of line | off |
+| Show tilde | Show `~` markers after end of file | on |
+| Menu bar mnemonics | Enable Alt+key shortcuts for menu bar | on |
 
 ### Editing
 

@@ -4,7 +4,9 @@ Fresh has native support for the Language Server Protocol (LSP), providing featu
 
 *   **Real-time diagnostics:** See errors and warnings in your code as you type.
 *   **Code completion:** Get intelligent code completion suggestions.
+*   **Code actions:** Quick fixes and refactorings (`Alt+.`).
 *   **Go-to-definition:** Quickly jump to the definition of a symbol.
+*   **Formatting:** "Format Buffer" from the command palette uses the configured external formatter, falling back to LSP formatting when none is set.
 
 ## Diagnostics Panel
 
@@ -19,6 +21,14 @@ Signature help popups render markdown with proper formatting, hanging indent, an
 ## Code Folding
 
 When the LSP server provides `foldingRange`, fold indicators appear in the gutter. See [Editing — Code Folding](./editing.md#code-folding).
+
+## Multi-Server Support
+
+You can configure multiple LSP servers for the same language (e.g., pylsp + pyright for Python). Configure this in the Settings UI (command palette → "Open Settings" → LSP section).
+
+## Workspace Root Detection
+
+By default, Fresh uses the working directory as the LSP workspace root. You can configure `root_markers` on an LSP server entry (e.g., `Cargo.toml`, `package.json`) so the editor walks upward from the file's directory to find the project root. Configure this in the Settings UI under the LSP section.
 
 ## Built-in LSP Support
 
@@ -125,7 +135,7 @@ For example, to add C# support:
 }
 ```
 
-The language name (e.g., `"csharp"`) must match in both sections. Fresh includes built-in language definitions for Rust, JavaScript, TypeScript, and Python.
+The language name (e.g., `"csharp"`) must match in both sections. The `grammar` field must be a valid grammar name — run `fresh --cmd grammar list` to see all available grammars. Fresh includes built-in language definitions for many languages, visible in the Settings UI (command palette → "Open Settings" → Languages section).
 
 ### Environment Variables
 

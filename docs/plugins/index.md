@@ -12,6 +12,7 @@ Bundled plugins:
 *   **TODO Highlighter:** Highlights `TODO`, `FIXME`, and other keywords in your comments.
 *   **Git Grep:** Interactively search through your Git repository.
 *   **Git Find File:** Quickly find and open files in your Git repository.
+*   **Diff Chunk Navigation:** Navigate between diff chunks in the current buffer.
 
 ## Load Plugin from Buffer
 

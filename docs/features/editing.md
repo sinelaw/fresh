@@ -212,3 +212,7 @@ Run shell commands on your buffer or selection:
 | `Alt+→` | Navigate forward in history |
 
 See [Navigation](./navigation.md) for more details.
+
+## Vim Mode
+
+A Vim emulation plugin is available, providing modal editing with normal, insert, and visual modes. To enable it, open the command palette (`Ctrl+P`) and search for "vi mode".
