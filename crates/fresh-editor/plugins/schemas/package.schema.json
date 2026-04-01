@@ -270,6 +270,14 @@
             "null"
           ],
           "default": null
+        },
+        "shortName": {
+          "description": "Optional short name alias for this grammar (e.g., \"hare\").\nMust be unique across all grammars; collisions are rejected with a warning.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
       "required": [

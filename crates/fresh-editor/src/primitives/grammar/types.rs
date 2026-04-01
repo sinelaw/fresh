@@ -925,7 +925,8 @@ impl GrammarRegistry {
             } else {
                 tracing::warn!(
                     "[grammar-alias] Alias '{}' -> '{}': target grammar not found, skipping",
-                    short_name, full_name
+                    short_name,
+                    full_name
                 );
             }
             return false;
@@ -986,7 +987,9 @@ impl GrammarRegistry {
 
     /// Look up the full grammar name for a short alias.
     pub fn resolve_alias(&self, short_name: &str) -> Option<&str> {
-        self.aliases.get(&short_name.to_lowercase()).map(|s| s.as_str())
+        self.aliases
+            .get(&short_name.to_lowercase())
+            .map(|s| s.as_str())
     }
 
     /// Get the underlying syntax set
@@ -1037,7 +1040,10 @@ impl GrammarRegistry {
                 let file_extensions = s.file_extensions.clone();
                 // Pick the first (shortest) alias as the canonical short name
                 let short_name = reverse_aliases.get(name.as_str()).and_then(|aliases| {
-                    aliases.iter().min_by_key(|a| a.len()).map(|a| a.to_string())
+                    aliases
+                        .iter()
+                        .min_by_key(|a| a.len())
+                        .map(|a| a.to_string())
                 });
                 GrammarInfo {
                     name,
@@ -1604,11 +1610,17 @@ mod tests {
 
         // Aliases should be case-insensitive on input
         let syntax = registry.find_syntax_by_name("BASH");
-        assert!(syntax.is_some(), "alias 'BASH' should resolve case-insensitively");
+        assert!(
+            syntax.is_some(),
+            "alias 'BASH' should resolve case-insensitively"
+        );
         assert_eq!(syntax.unwrap().name, "Bourne Again Shell (bash)");
 
         let syntax = registry.find_syntax_by_name("Cpp");
-        assert!(syntax.is_some(), "alias 'Cpp' should resolve case-insensitively");
+        assert!(
+            syntax.is_some(),
+            "alias 'Cpp' should resolve case-insensitively"
+        );
         assert_eq!(syntax.unwrap().name, "C++");
     }
 
@@ -1623,7 +1635,10 @@ mod tests {
 
         // Case-insensitive full name should still work
         let syntax = registry.find_syntax_by_name("bourne again shell (bash)");
-        assert!(syntax.is_some(), "case-insensitive full name should resolve");
+        assert!(
+            syntax.is_some(),
+            "case-insensitive full name should resolve"
+        );
         assert_eq!(syntax.unwrap().name, "Bourne Again Shell (bash)");
     }
 

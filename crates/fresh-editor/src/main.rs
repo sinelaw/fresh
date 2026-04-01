@@ -2162,10 +2162,7 @@ fn list_grammars_command() -> AnyhowResult<()> {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let short = grammar
-            .short_name
-            .as_deref()
-            .unwrap_or("");
+        let short = grammar.short_name.as_deref().unwrap_or("");
         println!(
             "{:<nw$}  {:<sw$}  {:<12}  {}",
             grammar.name,

@@ -524,6 +524,113 @@ fn test_config_reload_updates_language_detection() {
     }
 }
 
+/// Test that grammar short name aliases work when used in language config.
+///
+/// Verifies: user writes `grammar: "bash"` (a short alias) and the file
+/// correctly resolves to the "Bourne Again Shell (bash)" grammar via the
+/// alias system, rather than failing to find the grammar.
+#[test]
+fn test_grammar_short_name_alias_resolves_in_config() {
+    let temp_dir = TempDir::new().unwrap();
+    let working_dir = temp_dir.path().to_path_buf();
+
+    // Create a file with a custom extension
+    let test_file = working_dir.join("build.mysh");
+    fs::write(&test_file, "#!/bin/bash\necho hello\n").unwrap();
+
+    // Set up config: map .mysh to bash using the short alias "bash"
+    // (syntect's full name is "Bourne Again Shell (bash)")
+    let mut config = Config::default();
+    config.languages.insert(
+        "myshell".to_string(),
+        LanguageConfig {
+            extensions: vec!["mysh".to_string()],
+            grammar: "bash".to_string(), // short alias, NOT the full syntect name
+            comment_prefix: Some("#".to_string()),
+            auto_indent: true,
+            ..Default::default()
+        },
+    );
+
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry()
+            .with_config(config),
+    )
+    .unwrap();
+
+    harness.open_file(&test_file).unwrap();
+
+    // Language ID should be "myshell" (the config key)
+    let state = harness.editor().active_state();
+    assert_eq!(
+        &state.language, "myshell",
+        "build.mysh should be detected as 'myshell' language"
+    );
+
+    // Display name should reflect the resolved grammar (bash/shell)
+    let display_lower = state.display_name.to_lowercase();
+    assert!(
+        display_lower.contains("bash")
+            || display_lower.contains("shell")
+            || display_lower.contains("bourne"),
+        "Display name should reflect bash grammar, got: '{}'",
+        state.display_name
+    );
+}
+
+/// Test that the "cpp" short alias resolves to "C++" grammar in config.
+#[test]
+fn test_grammar_short_name_cpp_alias() {
+    let temp_dir = TempDir::new().unwrap();
+    let working_dir = temp_dir.path().to_path_buf();
+
+    // Use a custom extension not claimed by any default language config
+    let test_file = working_dir.join("code.mycxx");
+    fs::write(&test_file, "#include <iostream>\nint main() {}\n").unwrap();
+
+    let mut config = Config::default();
+    config.languages.insert(
+        "mycpp".to_string(),
+        LanguageConfig {
+            extensions: vec!["mycxx".to_string()],
+            grammar: "cpp".to_string(), // short alias for "C++"
+            comment_prefix: Some("//".to_string()),
+            auto_indent: true,
+            ..Default::default()
+        },
+    );
+
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry()
+            .with_config(config),
+    )
+    .unwrap();
+
+    harness.open_file(&test_file).unwrap();
+
+    let state = harness.editor().active_state();
+    assert_eq!(
+        &state.language, "mycpp",
+        "code.mycxx should be detected as 'mycpp' language"
+    );
+
+    // The grammar should have resolved to C++
+    let display_lower = state.display_name.to_lowercase();
+    assert!(
+        display_lower.contains("c++") || display_lower.contains("cpp"),
+        "Display name should reflect C++ grammar, got: '{}'",
+        state.display_name
+    );
+}
+
 /// Test that a custom language config with an extension that syntect maps to a
 /// different built-in language does NOT get misdetected as that built-in language.
 ///

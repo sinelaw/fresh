@@ -525,6 +525,24 @@ type InlineOverlay = {
 	*/
 	properties?: Record<string, any>;
 };
+type GrammarInfoSnapshot = {
+	/**
+	* The grammar name as used in config files (case-insensitive matching)
+	*/
+	name: string;
+	/**
+	* Where this grammar was loaded from (e.g. "built-in", "plugin (myplugin)")
+	*/
+	source: string;
+	/**
+	* File extensions associated with this grammar
+	*/
+	file_extensions: Array<string>;
+	/**
+	* Optional short name alias (e.g., "bash" for "Bourne Again Shell (bash)")
+	*/
+	short_name: string | null;
+};
 type BackgroundProcessResult = {
 	/**
 	* Unique process ID for later reference
@@ -812,6 +830,10 @@ interface EditorAPI {
 	* List all open buffers - returns array of BufferInfo objects
 	*/
 	listBuffers(): BufferInfo[];
+	/**
+	* List all available grammars with source info - returns array of GrammarInfo objects
+	*/
+	listGrammars(): GrammarInfoSnapshot[];
 	debug(msg: string): void;
 	info(msg: string): void;
 	warn(msg: string): void;
