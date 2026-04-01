@@ -40,6 +40,25 @@ impl Editor {
                         PromptType::ConfirmSudoSave { info },
                     );
                     Ok(())
+                } else if let Some(path) = path {
+                    // Check if failure is due to non-existent parent directory
+                    let is_not_found = e
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::NotFound);
+                    if is_not_found {
+                        if let Some(parent) = path.parent() {
+                            if !self.filesystem.exists(parent) {
+                                let dir_name = parent.display().to_string();
+                                self.start_prompt(
+                                    t!("buffer.create_directory_confirm", name = &dir_name)
+                                        .to_string(),
+                                    PromptType::ConfirmCreateDirectory { path },
+                                );
+                                return Ok(());
+                            }
+                        }
+                    }
+                    Err(e)
                 } else {
                     Err(e)
                 }

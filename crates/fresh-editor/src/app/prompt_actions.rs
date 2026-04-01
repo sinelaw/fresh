@@ -398,6 +398,22 @@ impl Editor {
                     self.set_status_message(t!("buffer.save_cancelled").to_string());
                 }
             }
+            PromptType::ConfirmCreateDirectory { path } => {
+                let input_lower = input.trim().to_lowercase();
+                if input_lower == "c" || input_lower == "create" {
+                    if let Some(parent) = path.parent() {
+                        if let Err(e) = self.filesystem.create_dir_all(parent) {
+                            self.set_status_message(
+                                t!("file.error_saving", error = e.to_string()).to_string(),
+                            );
+                            return PromptResult::Done;
+                        }
+                    }
+                    self.perform_save_file_as(path);
+                } else {
+                    self.set_status_message(t!("buffer.save_cancelled").to_string());
+                }
+            }
             PromptType::ConfirmCloseBuffer { buffer_id } => {
                 if self.handle_confirm_close_buffer(&input, buffer_id) {
                     return PromptResult::EarlyReturn;
@@ -541,6 +557,11 @@ impl Editor {
             normalize_path(&self.working_dir.join(&expanded_path))
         };
 
+        self.save_file_as_with_checks(full_path);
+    }
+
+    /// Check for overwrite/missing directory before saving, prompting if needed.
+    pub(crate) fn save_file_as_with_checks(&mut self, full_path: std::path::PathBuf) {
         // Check if we're saving to a different file that already exists
         let current_file_path = self
             .active_state()
@@ -560,6 +581,18 @@ impl Editor {
                 PromptType::ConfirmOverwriteFile { path: full_path },
             );
             return;
+        }
+
+        // Check if parent directory exists
+        if let Some(parent) = full_path.parent() {
+            if !parent.as_os_str().is_empty() && !self.filesystem.exists(parent) {
+                let dir_name = parent.display().to_string();
+                self.start_prompt(
+                    t!("buffer.create_directory_confirm", name = &dir_name).to_string(),
+                    PromptType::ConfirmCreateDirectory { path: full_path },
+                );
+                return;
+            }
         }
 
         // Proceed with save

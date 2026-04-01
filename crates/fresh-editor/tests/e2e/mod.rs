@@ -96,6 +96,7 @@ pub mod recovery;
 pub mod remote_fs_test;
 pub mod rendering;
 pub mod save_as_language_detection;
+pub mod save_nonexistent_directory;
 pub mod scroll_clearing;
 pub mod scrolling;
 pub mod search;

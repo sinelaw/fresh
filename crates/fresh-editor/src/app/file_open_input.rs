@@ -460,35 +460,11 @@ impl Editor {
 
     /// Save the current buffer to a file (for SaveFileAs mode)
     fn file_open_save_file(&mut self, path: std::path::PathBuf) {
-        use crate::view::prompt::PromptType as PT;
-
         // Close the file browser
         self.file_open_state = None;
         self.prompt = None;
 
-        // Check if file exists and is different from current file
-        let current_file_path = self
-            .active_state()
-            .buffer
-            .file_path()
-            .map(|p| p.to_path_buf());
-        let is_different_file = current_file_path.as_ref() != Some(&path);
-
-        if is_different_file && path.is_file() {
-            // File exists and is different from current - ask for confirmation
-            let filename = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.display().to_string());
-            self.start_prompt(
-                t!("buffer.overwrite_confirm", name = &filename).to_string(),
-                PT::ConfirmOverwriteFile { path },
-            );
-            return;
-        }
-
-        // Proceed with save
-        self.perform_save_file_as(path);
+        self.save_file_as_with_checks(path);
     }
 
     /// Check if the input looks like a filename that should be created
