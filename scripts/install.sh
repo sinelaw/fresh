@@ -169,19 +169,16 @@ install_fedora() {
 
 do_install_appimage() {
     log_info "Attempting AppImage install..."
-    if ! check_cmd curl; then log_error "curl is required."; fi
+    if ! check_cmd curl; then log_error "curl is required."; return 1; fi
 
     ARCH=$(uname -m)
-    # Map architecture to AppImage naming
     case "$ARCH" in
         x86_64)  APPIMAGE_ARCH="x86_64" ;;
-        aarch64) APPIMAGE_ARCH="aarch64" ;;
-        arm64)   APPIMAGE_ARCH="aarch64" ;;
+        aarch64|arm64) APPIMAGE_ARCH="aarch64" ;;
         *)       log_warn "AppImage not available for architecture: $ARCH"; return 1 ;;
     esac
 
     URL=$(get_release_url "\.AppImage$" "$APPIMAGE_ARCH")
-
     if [ -z "$URL" ]; then
         log_warn "No AppImage found for $APPIMAGE_ARCH."
         return 1
@@ -191,28 +188,46 @@ do_install_appimage() {
     BIN_DIR="${HOME}/.local/bin"
     SYMLINK_PATH="${BIN_DIR}/fresh"
 
-    # Download to temp file
-    TEMP_APPIMAGE=$(mktemp)
-    log_info "Downloading AppImage from $URL..."
-    curl -sL "$URL" -o "$TEMP_APPIMAGE"
+    # Create workspace with fallback if /tmp is restricted
+    BASE_TEMP=$(mktemp -d 2>/dev/null || echo "$HOME/.cache/fresh-work-$(date +%s)")
+    mkdir -p "$BASE_TEMP"
+    
+    # Ensure cleanup on exit or interruption
+    trap 'rm -rf "$BASE_TEMP"' EXIT
+
+    TEMP_APPIMAGE="$BASE_TEMP/fresh.AppImage"
+    TEMP_EXTRACT="$BASE_TEMP/extract"
+    mkdir -p "$TEMP_EXTRACT"
+
+    log_info "Downloading AppImage..."
+    if ! curl -sL "$URL" -o "$TEMP_APPIMAGE"; then
+        log_error "Download failed."
+        return 1
+    fi
     chmod +x "$TEMP_APPIMAGE"
 
-    # Extract AppImage (faster startup than running via FUSE)
     log_info "Extracting AppImage..."
-    TEMP_EXTRACT=$(mktemp -d)
-    (cd "$TEMP_EXTRACT" && "$TEMP_APPIMAGE" --appimage-extract > /dev/null 2>&1)
-    rm -f "$TEMP_APPIMAGE"
+    if ! (cd "$TEMP_EXTRACT" && "$TEMP_APPIMAGE" --appimage-extract > /dev/null 2>&1); then
+        log_error "Extraction failed (Check disk space or binary compatibility)."
+        return 1
+    fi
 
-    # Remove old installation and move new one in place
-    rm -rf "$INSTALL_DIR"
+    # Verify extraction success before modifying host system
+    if [ ! -d "$TEMP_EXTRACT/squashfs-root" ]; then
+        log_error "Extraction completed but source files are missing."
+        return 1
+    fi
+
+    log_info "Finalizing installation..."
     mkdir -p "$INSTALL_DIR" "$BIN_DIR"
-    mv "$TEMP_EXTRACT/squashfs-root"/* "$INSTALL_DIR/"
-    rm -rf "$TEMP_EXTRACT"
+    
+    # Atomic update of the installation directory
+    rm -rf "$INSTALL_DIR"
+    mv "$TEMP_EXTRACT/squashfs-root" "$INSTALL_DIR" || { log_error "Failed to move files to $INSTALL_DIR"; return 1; }
 
-    # Create symlink to the binary
     ln -sf "$INSTALL_DIR/usr/bin/fresh" "$SYMLINK_PATH"
 
-    # Check if ~/.local/bin is in PATH
+    # Verify PATH
     case ":$PATH:" in
         *":${BIN_DIR}:"*) ;;
         *)
