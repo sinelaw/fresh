@@ -113,7 +113,7 @@ install_arch() {
 get_release_url() {
     # $1 = pattern (e.g., .deb or .rpm)
     # $2 = arch
-    url=$(curl -s "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" | grep "browser_download_url.*$2.*$1" | cut -d '"' -f 4 | head -n 1)
+    url=$(curl -s "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" | grep "browser_download_url.*$2.*${1%$}" | cut -d '"' -f 4 | head -n 1)
     echo "$url"
 }
 
