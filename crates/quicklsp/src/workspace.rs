@@ -80,7 +80,12 @@ impl Workspace {
             .map(|l| tokenizer::scan(&source, l))
             .unwrap_or_default();
 
-        let symbols = Symbol::from_tokens(&tokens);
+        let mut symbols = Symbol::from_tokens(&tokens);
+
+        // Enrich symbols with doc comments and signatures from the source text
+        if let Some(l) = lang {
+            Symbol::enrich_from_source(&mut symbols, &source, l);
+        }
 
         // Remove old definitions for this file before inserting new ones
         self.remove_definitions_for_file(&path);
@@ -207,6 +212,76 @@ impl Workspace {
     pub fn completions(&self, prefix: &str) -> Vec<SymbolLocation> {
         // Fuzzy resolve includes exact prefix matches via deletion neighborhoods
         self.search_symbols(prefix)
+    }
+
+    /// Get hover information for a symbol: signature + doc comment.
+    /// Returns (signature, doc_comment) if found.
+    pub fn hover_info(&self, name: &str) -> Option<(Option<String>, Option<String>)> {
+        let defs = self.find_definitions(name);
+        let loc = defs.first()?;
+        Some((
+            loc.symbol.signature.clone(),
+            loc.symbol.doc_comment.clone(),
+        ))
+    }
+
+    /// Find the function symbol being called at a given position.
+    ///
+    /// Scans backwards from the cursor position to find the function name
+    /// before the opening parenthesis, then returns the symbol's signature
+    /// and the active parameter index.
+    pub fn signature_help_at(
+        &self,
+        source: &str,
+        line: usize,
+        col: usize,
+    ) -> Option<(SymbolLocation, usize)> {
+        let lines: Vec<&str> = source.lines().collect();
+        let current_line = lines.get(line)?;
+        let chars: Vec<char> = current_line.chars().collect();
+
+        // Count commas and find the function name by scanning backwards
+        let mut comma_count = 0usize;
+        let mut paren_depth = 0i32;
+        let mut scan_col = col.min(chars.len());
+
+        // First scan backwards on the current line to find matching '('
+        while scan_col > 0 {
+            scan_col -= 1;
+            match chars[scan_col] {
+                ')' => paren_depth += 1,
+                '(' => {
+                    if paren_depth == 0 {
+                        // Found the opening paren — now find the function name
+                        let mut name_end = scan_col;
+                        while name_end > 0 && chars[name_end - 1] == ' ' {
+                            name_end -= 1;
+                        }
+                        let mut name_start = name_end;
+                        while name_start > 0
+                            && (chars[name_start - 1] == '_'
+                                || chars[name_start - 1].is_alphanumeric())
+                        {
+                            name_start -= 1;
+                        }
+                        if name_start < name_end {
+                            let func_name: String =
+                                chars[name_start..name_end].iter().collect();
+                            let defs = self.find_definitions(&func_name);
+                            if let Some(loc) = defs.into_iter().next() {
+                                return Some((loc, comma_count));
+                            }
+                        }
+                        return None;
+                    }
+                    paren_depth -= 1;
+                }
+                ',' if paren_depth == 0 => comma_count += 1,
+                _ => {}
+            }
+        }
+
+        None
     }
 
     /// Number of indexed files.

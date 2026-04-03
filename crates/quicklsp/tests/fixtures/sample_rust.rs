@@ -1,37 +1,50 @@
 // QuickLSP evaluation fixture: a realistic multi-construct Rust file.
 // This file is indexed by the LSP evaluation test to exercise all features.
 
+/// Maximum number of retry attempts for server operations.
 const MAX_RETRIES: u32 = 3;
+
+/// Default request timeout in milliseconds.
 const DEFAULT_TIMEOUT: u64 = 5000;
 
+/// Configuration for the server instance.
+///
+/// Holds connection parameters including host, port, and pool size.
 struct Config {
     host: String,
     port: u16,
     max_connections: usize,
 }
 
+/// Represents the lifecycle status of a handler.
 enum Status {
     Active,
     Inactive,
     Error(String),
 }
 
+/// Trait for request handlers.
+///
+/// Implementors must provide a handle method and a name identifier.
 trait Handler {
     fn handle(&self, request: &Request) -> Response;
     fn name(&self) -> &str;
 }
 
+/// An incoming HTTP request.
 struct Request {
     method: String,
     path: String,
     body: Option<String>,
 }
 
+/// An HTTP response with status code and body.
 struct Response {
     status: u16,
     body: String,
 }
 
+/// Create a new default configuration.
 fn create_config() -> Config {
     Config {
         host: "localhost".to_string(),
@@ -40,6 +53,9 @@ fn create_config() -> Config {
     }
 }
 
+/// Process an incoming request with the given configuration.
+///
+/// Routes the request and generates an appropriate response.
 fn process_request(config: &Config, request: &Request) -> Response {
     let status = if request.method == "GET" {
         Status::Active
@@ -58,6 +74,7 @@ fn process_request(config: &Config, request: &Request) -> Response {
     }
 }
 
+/// The main HTTP server that dispatches requests to handlers.
 struct Server {
     config: Config,
     handlers: Vec<Box<dyn Handler>>,
@@ -97,6 +114,7 @@ mod utils {
 type StatusCode = u16;
 type HandlerResult = Result<Response, String>;
 
+/// Validate an incoming request, returning an error if the path is empty.
 fn validate_request(request: &Request) -> HandlerResult {
     if request.path.is_empty() {
         return Err("Empty path".to_string());

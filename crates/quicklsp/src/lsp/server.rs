@@ -10,7 +10,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::parsing::symbols::SymbolKind as QuickSymbolKind;
+use crate::parsing::symbols::{self, SymbolKind as QuickSymbolKind};
 use crate::workspace::{SymbolLocation, Workspace};
 
 pub struct QuickLspServer {
@@ -105,6 +105,12 @@ impl LanguageServer for QuickLspServer {
                 references_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    retrigger_characters: Some(vec![",".to_string()]),
+                    ..Default::default()
+                }),
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
                     ..Default::default()
@@ -282,6 +288,102 @@ impl LanguageServer for QuickLspServer {
         }
     }
 
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let source = match self.workspace.file_source_from_uri(uri) {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let symbol = match Self::word_at_position(&source, pos) {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        let (sig, doc) = match self.workspace.hover_info(&symbol) {
+            Some(info) => info,
+            None => return Ok(None),
+        };
+
+        // Build markdown hover content: signature as code block + doc as text
+        let mut parts = Vec::new();
+        if let Some(ref s) = sig {
+            parts.push(format!("```\n{s}\n```"));
+        }
+        if let Some(ref d) = doc {
+            parts.push(d.clone());
+        }
+
+        if parts.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: parts.join("\n\n"),
+            }),
+            range: None,
+        }))
+    }
+
+    async fn signature_help(
+        &self,
+        params: SignatureHelpParams,
+    ) -> Result<Option<SignatureHelp>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let source = match self.workspace.file_source_from_uri(uri) {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        let (loc, active_param) = match self.workspace.signature_help_at(
+            &source,
+            pos.line as usize,
+            pos.character as usize,
+        ) {
+            Some(result) => result,
+            None => return Ok(None),
+        };
+
+        let sig_text = match &loc.symbol.signature {
+            Some(s) => s.clone(),
+            None => return Ok(None),
+        };
+
+        let params_list = symbols::extract_parameters(&sig_text);
+        let lsp_params: Vec<ParameterInformation> = params_list
+            .iter()
+            .map(|p| ParameterInformation {
+                label: ParameterLabel::Simple(p.clone()),
+                documentation: None,
+            })
+            .collect();
+
+        let sig_info = SignatureInformation {
+            label: sig_text,
+            documentation: loc.symbol.doc_comment.as_ref().map(|d| {
+                Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: d.clone(),
+                })
+            }),
+            parameters: if lsp_params.is_empty() {
+                None
+            } else {
+                Some(lsp_params)
+            },
+            active_parameter: Some(active_param as u32),
+        };
+
+        Ok(Some(SignatureHelp {
+            signatures: vec![sig_info],
+            active_signature: Some(0),
+            active_parameter: Some(active_param as u32),
+        }))
+    }
+
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
@@ -302,10 +404,21 @@ impl LanguageServer for QuickLspServer {
             .into_iter()
             .filter(|loc| seen.insert(loc.symbol.name.clone()))
             .take(20)
-            .map(|loc| CompletionItem {
-                label: loc.symbol.name,
-                kind: Some(CompletionItemKind::TEXT),
-                ..Default::default()
+            .map(|loc| {
+                let detail = loc.symbol.signature.clone();
+                let documentation = loc.symbol.doc_comment.as_ref().map(|d| {
+                    Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: d.clone(),
+                    })
+                });
+                CompletionItem {
+                    label: loc.symbol.name,
+                    kind: Some(CompletionItemKind::TEXT),
+                    detail,
+                    documentation,
+                    ..Default::default()
+                }
             })
             .collect();
         if items.is_empty() {

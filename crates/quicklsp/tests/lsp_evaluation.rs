@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use quicklsp::workspace::Workspace;
+use quicklsp::parsing::symbols;
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -373,10 +374,153 @@ fn evaluate_file_update() {
 }
 
 #[test]
+fn evaluate_hover() {
+    let ws = setup_workspace();
+
+    print_separator("9. HOVER — doc comments and signatures on symbol hover");
+
+    let queries = &[
+        // Rust symbols with doc comments
+        "Config",
+        "process_request",
+        "validate_request",
+        "Server",
+        "Handler",
+        "MAX_RETRIES",
+        "create_config",
+        "Status",
+        // Python symbols
+        "process_request",
+        "validate_input",
+        // TypeScript symbols
+        "processRequest",
+        "createConfig",
+        // Unicode
+        "données_utilisateur",
+        // No docs expected
+        "outer",
+        "inner",
+        // Nonexistent
+        "does_not_exist",
+    ];
+
+    for name in queries {
+        let info = ws.hover_info(name);
+        println!("\n  hover('{}'):", name);
+        match info {
+            Some((sig, doc)) => {
+                if let Some(s) = &sig {
+                    println!("    signature: {}", s);
+                }
+                if let Some(d) = &doc {
+                    for line in d.lines() {
+                        println!("    doc: {}", line);
+                    }
+                }
+                if sig.is_none() && doc.is_none() {
+                    println!("    (definition found, no docs or signature)");
+                }
+            }
+            None => println!("    (not found)"),
+        }
+    }
+}
+
+#[test]
+fn evaluate_signature_help() {
+    let ws = setup_workspace();
+
+    print_separator("10. SIGNATURE HELP — parameter hints inside function calls");
+
+    // Simulate cursor positions inside function calls
+    // Using the Rust fixture source
+    let dir = fixtures_dir();
+    let rust_path = dir.join("sample_rust.rs");
+    let rust_source = ws.file_source(&rust_path).unwrap();
+
+    // Find lines with function calls to test signature help
+    println!("\n  Testing signature help on Rust fixture:");
+    for (line_num, line_text) in rust_source.lines().enumerate() {
+        if line_text.contains("process_request(") && !line_text.trim().starts_with("fn ")
+            && !line_text.trim().starts_with("///")
+        {
+            // Simulate cursor just after the opening paren
+            let col = line_text.find("process_request(").unwrap() + "process_request(".len();
+            if let Some((loc, active_param)) =
+                ws.signature_help_at(&rust_source, line_num, col)
+            {
+                println!("    line {}: {}", line_num + 1, line_text.trim());
+                println!("    signature: {:?}", loc.symbol.signature);
+                println!("    active_param: {}", active_param);
+                if let Some(ref sig) = loc.symbol.signature {
+                    let params = symbols::extract_parameters(sig);
+                    println!("    parameters: {:?}", params);
+                }
+            }
+        }
+    }
+
+    // Test parameter extraction separately
+    println!("\n  Parameter extraction tests:");
+    let test_sigs = &[
+        "fn process_request(config: &Config, request: &Request) -> Response",
+        "def process_request(config, request)",
+        "function processRequest(config: Config, request: Request): Response",
+        "fn create_config() -> Config",
+        "fn validate_request(request: &Request) -> HandlerResult",
+    ];
+    for sig in test_sigs {
+        let params = symbols::extract_parameters(sig);
+        println!("    {} -> {:?}", sig, params);
+    }
+}
+
+#[test]
+fn evaluate_doc_extraction_detail() {
+    let ws = setup_workspace();
+    let dir = fixtures_dir();
+
+    print_separator("11. DOC EXTRACTION DETAIL — per-file symbol docs and signatures");
+
+    for lang in &["sample_rust.rs", "sample_python.py", "sample_typescript.ts"] {
+        let path = dir.join(lang);
+        let symbols = ws.file_symbols(&path);
+        println!("\n  File: {}", lang);
+        println!(
+            "  {:<25} {:<10} {:<50} {}",
+            "Name", "Kind", "Signature", "Doc (first line)"
+        );
+        println!(
+            "  {:-<25} {:-<10} {:-<50} {:-<30}",
+            "", "", "", ""
+        );
+        for s in &symbols {
+            let sig = s
+                .signature
+                .as_deref()
+                .unwrap_or("(none)")
+                .chars()
+                .take(48)
+                .collect::<String>();
+            let doc_first = s
+                .doc_comment
+                .as_ref()
+                .and_then(|d| d.lines().next())
+                .unwrap_or("(none)");
+            let doc_preview: String = doc_first.chars().take(28).collect();
+            println!(
+                "  {:<25} {:<10?} {:<50} {}",
+                s.name, s.kind, sig, doc_preview
+            );
+        }
+    }
+}
+
+#[test]
 fn evaluate_summary_stats() {
     let ws = setup_workspace();
 
-    print_separator("9. SUMMARY STATISTICS");
+    print_separator("12. SUMMARY STATISTICS");
 
     println!("  Files indexed:      {}", ws.file_count());
     println!("  Total definitions:  {}", ws.definition_count());

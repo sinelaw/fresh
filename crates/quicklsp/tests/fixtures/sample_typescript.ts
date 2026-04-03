@@ -3,6 +3,7 @@
 const MAX_RETRIES = 3;
 const DEFAULT_TIMEOUT = 5000;
 
+/** Configuration for the server instance. */
 interface Config {
     host: string;
     port: number;
@@ -38,6 +39,7 @@ class Response {
     }
 }
 
+/** Create a new default server configuration. */
 function createConfig(): Config {
     return {
         host: "localhost",
@@ -46,6 +48,10 @@ function createConfig(): Config {
     };
 }
 
+/**
+ * Process an incoming request with the given configuration.
+ * Routes the request and returns an appropriate response.
+ */
 function processRequest(config: Config, request: Request): Response {
     const body = `Handled ${request.method} ${request.path} on ${config.host}:${config.port}`;
     return new Response(200, body);
