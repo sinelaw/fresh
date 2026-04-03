@@ -728,4 +728,125 @@ mod tests {
             }
         }
     }
+
+    // ── Scan + didOpen ordering integration tests ──────────────────────
+
+    /// Helper: create a temp directory with two Rust source files.
+    fn make_scan_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.rs");
+        let b = dir.path().join("b.rs");
+        std::fs::write(&a, "/// Doc for alpha.\nfn alpha() {}").unwrap();
+        std::fs::write(&b, "/// Doc for beta.\nfn beta() { alpha(); }").unwrap();
+        (dir, a, b)
+    }
+
+    #[test]
+    fn scan_then_did_open_replaces_with_editor_version() {
+        let (dir, a, _b) = make_scan_fixture();
+        let ws = Workspace::new();
+
+        // Phase 1: scan indexes both files from disk
+        ws.scan_directory(dir.path());
+        assert_eq!(ws.find_definitions("alpha").len(), 1);
+        assert_eq!(ws.find_definitions("beta").len(), 1);
+
+        // Phase 2: editor opens a.rs with different content (renamed function)
+        ws.index_file(a, "fn alpha_v2() {}".to_string());
+
+        // Editor version wins: alpha is gone, alpha_v2 is present
+        assert_eq!(ws.find_definitions("alpha").len(), 0);
+        assert_eq!(ws.find_definitions("alpha_v2").len(), 1);
+        // b.rs still has beta from the scan
+        assert_eq!(ws.find_definitions("beta").len(), 1);
+    }
+
+    #[test]
+    fn did_open_then_scan_preserves_editor_version() {
+        let (dir, a, _b) = make_scan_fixture();
+        let ws = Workspace::new();
+
+        // Phase 1: editor opens a.rs with modified content
+        ws.index_file(a, "fn alpha_edited() {}".to_string());
+        assert_eq!(ws.find_definitions("alpha_edited").len(), 1);
+
+        // Phase 2: scan runs — should SKIP a.rs (already in index)
+        let stats = ws.scan_directory(dir.path());
+        assert_eq!(stats.skipped, 1); // a.rs skipped
+        assert_eq!(stats.indexed, 1); // b.rs indexed
+
+        // Editor version preserved
+        assert_eq!(ws.find_definitions("alpha_edited").len(), 1);
+        assert_eq!(ws.find_definitions("alpha").len(), 0);
+        // b.rs picked up from scan
+        assert_eq!(ws.find_definitions("beta").len(), 1);
+    }
+
+    #[test]
+    fn scan_then_did_change_replaces_scanned_version() {
+        let (dir, a, _b) = make_scan_fixture();
+        let ws = Workspace::new();
+
+        // Phase 1: scan indexes from disk
+        ws.scan_directory(dir.path());
+        assert_eq!(ws.find_definitions("alpha").len(), 1);
+        let info = ws.hover_info("alpha");
+        assert!(info.is_some());
+
+        // Phase 2: editor sends didChange (update_file) with new content
+        ws.update_file(a, "fn alpha_changed() {}".to_string());
+
+        // Changed version wins
+        assert_eq!(ws.find_definitions("alpha").len(), 0);
+        assert_eq!(ws.find_definitions("alpha_changed").len(), 1);
+    }
+
+    #[test]
+    fn scan_only_enables_cross_file_resolution() {
+        let (dir, _a, _b) = make_scan_fixture();
+        let ws = Workspace::new();
+
+        // No files opened via didOpen — scan is the only source
+        ws.scan_directory(dir.path());
+
+        // Both files indexed from scan
+        assert_eq!(ws.find_definitions("alpha").len(), 1);
+        assert_eq!(ws.find_definitions("beta").len(), 1);
+
+        // Hover works on scanned symbols
+        let (sig, doc) = ws.hover_info("alpha").unwrap();
+        assert!(sig.unwrap().contains("alpha"));
+        assert!(doc.unwrap().contains("Doc for alpha"));
+
+        // Cross-file: beta references alpha
+        let refs = ws.find_references("alpha");
+        assert!(refs.len() >= 2, "alpha should appear in both files");
+    }
+
+    #[test]
+    fn scan_skips_excluded_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let target = dir.path().join("target");
+        let node_modules = dir.path().join("node_modules");
+        let git = dir.path().join(".git");
+
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(&node_modules).unwrap();
+        std::fs::create_dir_all(&git).unwrap();
+
+        std::fs::write(src.join("lib.rs"), "fn real() {}").unwrap();
+        std::fs::write(target.join("gen.rs"), "fn generated() {}").unwrap();
+        std::fs::write(node_modules.join("dep.js"), "function dep() {}").unwrap();
+        std::fs::write(git.join("hook.rs"), "fn hook() {}").unwrap();
+
+        let ws = Workspace::new();
+        ws.scan_directory(dir.path());
+
+        assert_eq!(ws.find_definitions("real").len(), 1);
+        assert_eq!(ws.find_definitions("generated").len(), 0);
+        assert_eq!(ws.find_definitions("dep").len(), 0);
+        assert_eq!(ws.find_definitions("hook").len(), 0);
+    }
 }
