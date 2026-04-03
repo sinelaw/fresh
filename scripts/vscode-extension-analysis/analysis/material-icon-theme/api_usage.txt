@@ -1,0 +1,39 @@
+═══ material-icon-theme ═══
+Files analyzed: 105
+
+Activation Events:
+  onStartupFinished
+
+Contributes:
+  commands: 11 entries
+  configuration: 1 entries
+  iconThemes: 1 entries
+
+Namespaces (by usage count):
+     10x  vscode.window
+      2x  vscode.workspace
+      1x  vscode.env
+      1x  vscode.extensions
+      1x  vscode.commands
+
+API Methods (by usage count):
+      1x  vscode.env.language
+      1x  vscode.workspace.onDidChangeConfiguration
+      1x  vscode.window.createOutputChannel
+      1x  vscode.extensions.getExtension
+      1x  vscode.workspace.getConfiguration
+      1x  vscode.commands.registerCommand
+
+Types/Classes (by usage count):
+
+Event Subscriptions:
+
+Destructured Imports:
+     10x  window
+      6x  QuickPickItem
+      2x  workspace
+      1x  ExtensionContext
+      1x  env
+      1x  OutputChannel
+      1x  extensions
+      1x  commands

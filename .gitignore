@@ -65,3 +65,6 @@ bun.lockb
 dist
 .amp/
 .worktrees/
+
+# VS Code extension analysis (cloned repos are large)
+scripts/vscode-extension-analysis/extensions/

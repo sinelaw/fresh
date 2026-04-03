@@ -1,0 +1,62 @@
+# auto-rename-tag - Full API & Side Effects Report (AST)
+Files analyzed: 23
+
+## vscode API
+     39x  vscode.window
+     36x  vscode.window.activeTextEditor
+     12x  vscode.window.activeTextEditor.document
+     10x  vscode.workspace
+      8x  vscode.commands.executeCommand
+      8x  vscode.commands
+      6x  vscode.window.activeTextEditor.document.version
+      3x  vscode.Range
+      3x  vscode.window.activeTextEditor.document.uri
+      3x  vscode.workspace.getConfiguration
+      2x  vscode.window.activeTextEditor.document.positionAt
+      2x  vscode.window.activeTextEditor.document.uri.fsPath
+      2x  vscode.workspace.onDidChangeTextDocument
+      2x  vscode.workspace.workspaceFolders
+      2x  vscode.Uri.file
+      2x  vscode.Uri
+      2x  vscode.Selection
+      1x  vscode.window.createOutputChannel
+      1x  vscode.window.activeTextEditor.edit
+      1x  vscode.CancellationTokenSource
+      1x  vscode.workspace.onDidChangeConfiguration
+      1x  vscode.window.onDidChangeActiveTextEditor
+      1x  vscode.extensions.getExtension
+      1x  vscode.extensions
+      1x  vscode.window.showTextDocument
+      1x  vscode.workspace.fs.delete
+      1x  vscode.workspace.fs
+      1x  vscode.SnippetString
+      1x  vscode.workspace.openTextDocument
+
+## vscode Types (type-only)
+
+## Node.js Builtins
+     30x  path.join
+      3x  fs.readFileSync
+      2x  assert.equal
+      1x  assert.ok
+      1x  fs.writeFileSync
+      1x  fs.readdirSync
+
+## Process/Environment
+      2x  process.on
+      2x  process.hrtime
+      1x  process.exit
+      1x  process.env.extensionPath
+      1x  process.env
+
+## Shell Execution
+
+## Network/HTTP
+
+## Global Side Effects
+      5x  globalThis.setTimeout
+
+## Activation Events
+  (none / uses *)
+
+## Contributes

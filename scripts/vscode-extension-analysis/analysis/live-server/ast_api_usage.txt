@@ -1,0 +1,61 @@
+# live-server - Full API & Side Effects Report (AST)
+Files analyzed: 11
+
+## vscode API
+      3x  vscode.window.showInformationMessage
+      3x  vscode.commands.registerCommand
+      2x  vscode.workspace.workspaceFolders
+      2x  vscode.window.activeTextEditor
+      1x  vscode.workspace.getConfiguration
+      1x  vscode.window.createStatusBarItem
+      1x  vscode.StatusBarAlignment.Right
+      1x  vscode.extensions.getExtension
+      1x  vscode.workspace.workspaceFolders.length
+      1x  vscode.window.activeTextEditor.document.fileName
+      1x  vscode.window.activeTextEditor.document
+      1x  vscode.window.showErrorMessage
+      1x  vscode.window.showWarningMessage
+      1x  vscode.workspace.findFiles
+      1x  vscode.workspace.saveAll
+      1x  vscode.window.showQuickPick
+
+## vscode Types (type-only)
+      4x  vscode.Event
+      1x  vscode.Disposable
+      1x  vscode.StatusBarItem
+      1x  vscode.Memento
+      1x  vscode.ExtensionContext
+
+## Node.js Builtins
+      4x  fs.readFileSync
+      4x  path.join
+      4x  url.parse
+      4x  path.extname
+      3x  path.resolve
+      2x  path.sep
+      1x  fs.statSync
+      1x  http.createServer
+      1x  os.networkInterfaces
+      1x  path.basename
+      1x  path.isAbsolute
+      1x  fs.existsSync
+
+## Process/Environment
+      3x  process.cwd
+      1x  process.platform
+
+## Shell Execution
+
+## Network/HTTP
+
+## Global Side Effects
+      4x  globalThis.setTimeout
+
+## Activation Events
+  onStartupFinished
+
+## Contributes
+  commands: 3 entries
+  configuration: 1 entries
+  keybindings: 2 entries
+  menus: 1 entries

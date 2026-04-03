@@ -1,0 +1,59 @@
+# code-runner - Full API & Side Effects Report (AST)
+Files analyzed: 5
+
+## vscode API
+     12x  vscode.window
+      9x  vscode.workspace
+      8x  vscode.commands
+      4x  vscode.workspace.getConfiguration
+      4x  vscode.window.showInformationMessage
+      4x  vscode.window.activeTextEditor
+      4x  vscode.commands.executeCommand
+      4x  vscode.commands.registerCommand
+      2x  vscode.workspace.workspaceFolders
+      2x  vscode.env.shell
+      2x  vscode.env
+      1x  vscode.window.createOutputChannel
+      1x  vscode.workspace.openTextDocument
+      1x  vscode.window.showQuickPick
+      1x  vscode.workspace.getWorkspaceFolder
+      1x  vscode.workspace.saveAll
+      1x  vscode.window.createTerminal
+      1x  vscode.window.onDidCloseTerminal
+      1x  vscode.extensions.getExtension
+      1x  vscode.extensions
+
+## vscode Types (type-only)
+      1x  vscode.Disposable
+
+## Node.js Builtins
+      2x  path.extname
+      2x  path.dirname
+      2x  os.platform
+      1x  os.tmpdir
+      1x  path.join
+      1x  fs.writeFileSync
+      1x  path.basename
+      1x  fs.unlinkSync
+
+## Process/Environment
+
+## Shell Execution
+
+## Network/HTTP
+
+## Global Side Effects
+
+## Activation Events
+  onCommand:code-runner.run
+  onCommand:code-runner.runCustomCommand
+  onCommand:code-runner.runByLanguage
+  onStartupFinished
+
+## Contributes
+  commands: 4 entries
+  configuration: 1 entries
+  grammars: 1 entries
+  keybindings: 4 entries
+  languages: 1 entries
+  menus: 1 entries

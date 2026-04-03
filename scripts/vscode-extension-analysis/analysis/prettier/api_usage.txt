@@ -1,0 +1,74 @@
+═══ prettier ═══
+Files analyzed: 115
+
+Activation Events:
+  onStartupFinished
+
+Contributes:
+  commands: 2 entries
+  configuration: 1 entries
+  jsonValidation: 3 entries
+  languages: 5 entries
+
+Namespaces (by usage count):
+      6x  vscode.workspace
+      5x  vscode.window
+      2x  vscode.commands
+      2x  vscode.languages
+
+API Methods (by usage count):
+      6x  vscode.workspace.createFileSystemWatcher
+      4x  vscode.workspace.getWorkspaceFolder
+      3x  vscode.commands.executeCommand
+      3x  vscode.workspace.js
+      3x  vscode.workspace.isTrusted
+      3x  vscode.commands.registerCommand
+      2x  vscode.workspace.getConfiguration
+      2x  vscode.languages.forEach
+      2x  vscode.window.activeTextEditor
+      2x  vscode.workspace.onDidChangeConfiguration
+      1x  vscode.window.createOutputChannel
+      1x  vscode.languages.match
+      1x  vscode.languages.registerDocumentRangeFormattingEditProvider
+      1x  vscode.languages.registerDocumentFormattingEditProvider
+      1x  vscode.languages.registerCodeActionsProvider
+      1x  vscode.window.onDidChangeActiveTextEditor
+      1x  vscode.languages.createLanguageStatusItem
+      1x  vscode.window.createStatusBarItem
+      1x  vscode.workspace.fs
+      1x  vscode.window.showOpenDialog
+      1x  vscode.commands.js
+      1x  vscode.workspace.workspaceFolders
+
+Types/Classes (by usage count):
+
+Event Subscriptions:
+
+Destructured Imports:
+      7x  TextDocument
+      6x  workspace
+      5x  window
+      5x  Uri
+      3x  Range
+      3x  TextEdit
+      2x  commands
+      2x  CancellationToken
+      2x  Disposable
+      2x  languages
+      1x  CodeAction
+      1x  CodeActionContext
+      1x  CodeActionKind
+      1x  CodeActionProvider
+      1x  WorkspaceEdit
+      1x  DocumentFormattingEditProvider
+      1x  DocumentRangeFormattingEditProvider
+      1x  FormattingOptions
+      1x  DocumentFilter
+      1x  TextEditor
+      1x  DocumentSelector
+      1x  LanguageStatusItem
+      1x  LanguageStatusSeverity
+      1x  StatusBarAlignment
+      1x  StatusBarItem
+      1x  ThemeColor
+      1x  ExtensionContext

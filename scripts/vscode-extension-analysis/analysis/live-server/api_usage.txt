@@ -1,0 +1,46 @@
+═══ live-server ═══
+Files analyzed: 11
+
+Activation Events:
+  onStartupFinished
+
+Contributes:
+  commands: 3 entries
+  configuration: 1 entries
+  keybindings: 2 entries
+  menus: 1 entries
+
+Namespaces (by usage count):
+      5x  vscode.window
+      4x  vscode.workspace
+      2x  vscode.commands
+      1x  vscode.extensions
+
+API Methods (by usage count):
+      3x  vscode.window.showInformationMessage
+      2x  vscode.window.activeTextEditor
+      2x  vscode.workspace.workspaceFolders
+      1x  vscode.workspace.getConfiguration
+      1x  vscode.extensions.getExtension
+      1x  vscode.window.showErrorMessage
+      1x  vscode.window.showWarningMessage
+      1x  vscode.workspace.findFiles
+      1x  vscode.workspace.saveAll
+      1x  vscode.window.showQuickPick
+
+Types/Classes (by usage count):
+      2x  vscode.Disposable
+
+Event Subscriptions:
+
+Destructured Imports:
+      5x  window
+      4x  workspace
+      2x  Event
+      2x  commands
+      1x  StatusBarItem
+      1x  StatusBarAlignment
+      1x  Memento
+      1x  extensions
+      1x  EventEmitter
+      1x  ExtensionContext

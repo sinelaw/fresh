@@ -1,0 +1,470 @@
+╔═══════════════════════════════════════════════════════════════╗
+║    MINIMAL VS CODE API SURFACE FOR TOP EXTENSION SUPPORT     ║
+╚═══════════════════════════════════════════════════════════════╝
+
+Based on analysis of 12 top VS Code extensions
+Generated: 2026-04-03T09:16:56.386Z
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  NAMESPACE USAGE (sorted by # of extensions)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  vscode.workspace            ███████████░ 11/12  [auto-rename-tag, code-runner, cpptools, eslint, gitlens, live-server, material-icon-theme, path-intellisense, prettier, python, rest-client]
+  vscode.window               ██████████░░ 10/12  [auto-rename-tag, code-runner, cpptools, eslint, gitlens, live-server, material-icon-theme, prettier, python, rest-client]
+  vscode.commands             ██████████░░ 10/12  [auto-rename-tag, code-runner, cpptools, eslint, gitlens, live-server, material-icon-theme, prettier, python, rest-client]
+  vscode.extensions           ████████░░░░ 8/12  [auto-rename-tag, code-runner, cpptools, gitlens, live-server, material-icon-theme, python, rest-client]
+  vscode.env                  ███████░░░░░ 7/12  [code-runner, cpptools, eslint, gitlens, material-icon-theme, python, rest-client]
+  vscode.languages            ███████░░░░░ 7/12  [cpptools, eslint, gitlens, path-intellisense, prettier, python, rest-client]
+  vscode.lm                   ███░░░░░░░░░ 3/12  [cpptools, gitlens, python]
+  vscode.debug                ██░░░░░░░░░░ 2/12  [cpptools, python]
+  vscode.tasks                ██░░░░░░░░░░ 2/12  [cpptools, eslint]
+  vscode.chat                 █░░░░░░░░░░░ 1/12  [gitlens]
+  vscode.authentication       █░░░░░░░░░░░ 1/12  [gitlens]
+  vscode.l10n                 █░░░░░░░░░░░ 1/12  [python]
+  vscode.notebooks            █░░░░░░░░░░░ 1/12  [python]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  TIER 1: ESSENTIAL METHODS (used by 6+ of 12 extensions)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  vscode.workspace.getConfiguration             11 exts: auto-rename-tag, code-runner, cpptools, eslint, gitlens, live-server, material-icon-theme, path-intellisense, prettier, python, rest-client
+  vscode.workspace.workspaceFolders             9 exts: auto-rename-tag, code-runner, cpptools, eslint, gitlens, live-server, path-intellisense, prettier, python
+  vscode.window.createOutputChannel             8 exts: auto-rename-tag, code-runner, cpptools, gitlens, material-icon-theme, prettier, python, rest-client
+  vscode.window.activeTextEditor                8 exts: auto-rename-tag, code-runner, cpptools, gitlens, live-server, prettier, python, rest-client
+  vscode.workspace.onDidChangeConfiguration     8 exts: auto-rename-tag, cpptools, eslint, gitlens, material-icon-theme, prettier, python, rest-client
+  vscode.extensions.getExtension                8 exts: auto-rename-tag, code-runner, cpptools, gitlens, live-server, material-icon-theme, python, rest-client
+  vscode.commands.executeCommand                8 exts: auto-rename-tag, code-runner, cpptools, eslint, gitlens, prettier, python, rest-client
+  vscode.commands.registerCommand               8 exts: code-runner, cpptools, eslint, gitlens, material-icon-theme, prettier, python, rest-client
+  vscode.window.showQuickPick                   7 exts: code-runner, cpptools, eslint, gitlens, live-server, python, rest-client
+  vscode.workspace.getWorkspaceFolder           7 exts: code-runner, cpptools, gitlens, path-intellisense, prettier, python, rest-client
+  vscode.window.onDidChangeActiveTextEditor     6 exts: auto-rename-tag, cpptools, gitlens, prettier, python, rest-client
+  vscode.workspace.fs                           6 exts: auto-rename-tag, cpptools, gitlens, path-intellisense, prettier, python
+  vscode.workspace.openTextDocument             6 exts: auto-rename-tag, code-runner, cpptools, gitlens, python, rest-client
+  vscode.window.showInformationMessage          6 exts: code-runner, cpptools, gitlens, live-server, python, rest-client
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  TIER 2: COMMON METHODS (used by 2+ extensions)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  vscode.workspace.onDidChangeTextDocument      5 exts: auto-rename-tag, cpptools, gitlens, python, rest-client
+  vscode.window.showTextDocument                5 exts: auto-rename-tag, cpptools, gitlens, python, rest-client
+  vscode.window.showErrorMessage                5 exts: cpptools, gitlens, live-server, python, rest-client
+  vscode.window.showWarningMessage              5 exts: cpptools, gitlens, live-server, python, rest-client
+  vscode.window.showOpenDialog                  5 exts: cpptools, gitlens, prettier, python, rest-client
+  vscode.workspace.createFileSystemWatcher      5 exts: cpptools, gitlens, path-intellisense, prettier, python
+  vscode.window.createStatusBarItem             5 exts: cpptools, gitlens, prettier, python, rest-client
+  vscode.window.createTerminal                  4 exts: code-runner, cpptools, gitlens, python
+  vscode.window.createQuickPick                 4 exts: cpptools, gitlens, python, rest-client
+  vscode.env.openExternal                       4 exts: cpptools, gitlens, python, rest-client
+  vscode.languages.registerCompletionItemProvider 4 exts: cpptools, path-intellisense, python, rest-client
+  vscode.window.showInputBox                    4 exts: cpptools, gitlens, python, rest-client
+  vscode.languages.registerHoverProvider        4 exts: cpptools, gitlens, python, rest-client
+  vscode.env.clipboard                          4 exts: cpptools, gitlens, python, rest-client
+  vscode.workspace.onDidChangeWorkspaceFolders  4 exts: cpptools, eslint, gitlens, python
+  vscode.workspace.onDidOpenTextDocument        4 exts: cpptools, gitlens, python, rest-client
+  vscode.workspace.onDidCloseTextDocument       4 exts: cpptools, gitlens, python, rest-client
+  vscode.workspace.textDocuments                4 exts: cpptools, gitlens, python, rest-client
+  vscode.env.shell                              3 exts: code-runner, gitlens, python
+  vscode.window.onDidCloseTerminal              3 exts: code-runner, cpptools, python
+  vscode.window.withProgress                    3 exts: cpptools, gitlens, python
+  vscode.commands.registerTextEditorCommand     3 exts: cpptools, gitlens, python
+  vscode.env.remoteName                         3 exts: cpptools, gitlens, python
+  vscode.window.visibleTextEditors              3 exts: cpptools, gitlens, python
+  vscode.languages.createDiagnosticCollection   3 exts: cpptools, python, rest-client
+  vscode.languages.registerCodeActionsProvider  3 exts: cpptools, prettier, python
+  vscode.window.createTextEditorDecorationType  3 exts: cpptools, gitlens, python
+  vscode.workspace.applyEdit                    3 exts: cpptools, gitlens, python
+  vscode.workspace.onDidSaveTextDocument        3 exts: cpptools, gitlens, python
+  vscode.env.machineId                          3 exts: cpptools, gitlens, python
+  vscode.env.uiKind                             3 exts: cpptools, gitlens, python
+  vscode.window.onDidChangeTextEditorSelection  3 exts: cpptools, gitlens, python
+  vscode.window.onDidChangeVisibleTextEditors   3 exts: cpptools, gitlens, python
+  vscode.languages.setLanguageConfiguration     3 exts: cpptools, python, rest-client
+  vscode.window.createTreeView                  3 exts: cpptools, gitlens, python
+  vscode.window.createWebviewPanel              3 exts: cpptools, gitlens, rest-client
+  vscode.window.onDidChangeWindowState          3 exts: cpptools, gitlens, python
+  vscode.languages.createLanguageStatusItem     3 exts: cpptools, prettier, python
+  vscode.window.createInputBox                  3 exts: cpptools, gitlens, python
+  vscode.env.appName                            3 exts: cpptools, gitlens, python
+  vscode.window.showSaveDialog                  3 exts: gitlens, python, rest-client
+  vscode.workspace.isTrusted                    3 exts: gitlens, prettier, python
+  vscode.env.language                           3 exts: gitlens, material-icon-theme, python
+  vscode.workspace.findFiles                    3 exts: live-server, path-intellisense, python
+  vscode.workspace.saveAll                      2 exts: code-runner, live-server
+  vscode.debug.startDebugging                   2 exts: cpptools, python
+  vscode.debug.registerDebugConfigurationProvider 2 exts: cpptools, python
+  vscode.debug.registerDebugAdapterDescriptorFactory 2 exts: cpptools, python
+  vscode.languages.registerReferenceProvider    2 exts: cpptools, rest-client
+  vscode.languages.registerDocumentSymbolProvider 2 exts: cpptools, rest-client
+  vscode.languages.registerDocumentFormattingEditProvider 2 exts: cpptools, prettier
+  vscode.languages.registerDocumentRangeFormattingEditProvider 2 exts: cpptools, prettier
+  vscode.debug.activeDebugSession               2 exts: cpptools, python
+  vscode.languages.setTextDocumentLanguage      2 exts: cpptools, rest-client
+  vscode.extensions.all                         2 exts: cpptools, python
+  vscode.window.onDidChangeTextEditorVisibleRanges 2 exts: cpptools, gitlens
+  vscode.lm.registerTool                        2 exts: cpptools, python
+  vscode.window.onDidWriteTerminalData          2 exts: cpptools, python
+  vscode.workspace.registerTextDocumentContentProvider 2 exts: cpptools, gitlens
+  vscode.tasks.registerTaskProvider             2 exts: cpptools, eslint
+  vscode.window.onDidChangeTextEditorViewColumn 2 exts: gitlens, python
+  vscode.window.tabGroups                       2 exts: gitlens, python
+  vscode.languages.registerCodeLensProvider     2 exts: gitlens, rest-client
+  vscode.commands.js                            2 exts: gitlens, prettier
+  vscode.env.uriScheme                          2 exts: gitlens, python
+  vscode.env.sessionId                          2 exts: gitlens, python
+  vscode.workspace.onDidGrantWorkspaceTrust     2 exts: gitlens, python
+  vscode.extensions.onDidChange                 2 exts: gitlens, python
+  vscode.env.asExternalUri                      2 exts: gitlens, rest-client
+  vscode.workspace.workspaceFile                2 exts: gitlens, python
+  vscode.env.appRoot                            2 exts: gitlens, python
+  vscode.window.registerTerminalLinkProvider    2 exts: gitlens, python
+  vscode.languages.match                        2 exts: prettier, rest-client
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  TIER 3: EXTENSION-SPECIFIC METHODS (used by 1 extension)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  vscode.window.registerTreeDataProvider        cpptools
+  vscode.languages.registerInlayHintsProvider   cpptools
+  vscode.languages.registerRenameProvider       cpptools
+  vscode.languages.registerWorkspaceSymbolProvider cpptools
+  vscode.languages.registerCallHierarchyProvider cpptools
+  vscode.languages.registerOnTypeFormattingEditProvider cpptools
+  vscode.languages.registerFoldingRangeProvider cpptools
+  vscode.languages.registerDocumentSemanticTokensProvider cpptools
+  vscode.tasks.json                             cpptools
+  vscode.tasks.find                             cpptools
+  vscode.tasks.forEach                          cpptools
+  vscode.tasks.push                             cpptools
+  vscode.tasks.executeTask                      cpptools
+  vscode.tasks.onDidEndTask                     cpptools
+  vscode.tasks.onDidStartTask                   cpptools
+  vscode.languages.getDiagnostics               cpptools
+  vscode.env.DEBUG                              eslint
+  vscode.env.NODE                               eslint
+  vscode.workspace.changed                      eslint
+  vscode.window.onDidChangeActiveColorTheme     gitlens
+  vscode.window.activeColorTheme                gitlens
+  vscode.commands.map                           gitlens
+  vscode.window.state                           gitlens
+  vscode.workspace.decode                       gitlens
+  vscode.lm.registerMcpServerDefinitionProvider gitlens
+  vscode.window.focused                         gitlens
+  vscode.workspace.registerFileSystemProvider   gitlens
+  vscode.extensions.installExtension            gitlens
+  vscode.lm.onDidChangeChatModels               gitlens
+  vscode.lm.selectChatModels                    gitlens
+  vscode.chat.js                                gitlens
+  vscode.env.appHost                            gitlens
+  vscode.authentication.getSession              gitlens
+  vscode.authentication.onDidChangeSessions     gitlens
+  vscode.workspace.id                           gitlens
+  vscode.workspace.organization                 gitlens
+  vscode.workspace.provider                     gitlens
+  vscode.workspace.name                         gitlens
+  vscode.workspace.repo                         gitlens
+  vscode.workspace.azure                        gitlens
+  vscode.workspace.localId                      gitlens
+  vscode.workspace.repositories                 gitlens
+  vscode.workspace.current                      gitlens
+  vscode.workspace.updateWorkspaceFolders       gitlens
+  vscode.workspace.getRepositoryDescriptors     gitlens
+  vscode.workspace.getRepositoriesByName        gitlens
+  vscode.workspace.addRepositories              gitlens
+  vscode.workspace.removeRepositories           gitlens
+  vscode.workspace.setLocalPath                 gitlens
+  vscode.workspace.localPath                    gitlens
+  vscode.env.onDidChangeTelemetryEnabled        gitlens
+  vscode.env.isTelemetryEnabled                 gitlens
+  vscode.window.registerUriHandler              gitlens
+  vscode.window.registerFileDecorationProvider  gitlens
+  vscode.window.registerCustomEditorProvider    gitlens
+  vscode.window.bootstrap                       gitlens
+  vscode.window.registerWebviewViewProvider     gitlens
+  vscode.window.registerWebviewPanelSerializer  gitlens
+  vscode.workspace.js                           prettier
+  vscode.languages.forEach                      prettier
+  vscode.window.setStatusBarMessage             python
+  vscode.l10n.t                                 python
+  vscode.lm.invokeTool                          python
+  vscode.workspace.notebookDocuments            python
+  vscode.env.onDidChangeShell                   python
+  vscode.window.showWorkspaceFolderPick         python
+  vscode.window.onDidExecuteTerminalCommand     python
+  vscode.commands.getCommands                   python
+  vscode.debug.activeDebugConsole               python
+  vscode.debug.breakpoints                      python
+  vscode.debug.onDidChangeActiveDebugSession    python
+  vscode.debug.onDidStartDebugSession           python
+  vscode.debug.onDidReceiveDebugSessionCustomEvent python
+  vscode.debug.onDidTerminateDebugSession       python
+  vscode.debug.onDidChangeBreakpoints           python
+  vscode.debug.registerDebugAdapterTrackerFactory python
+  vscode.debug.addBreakpoints                   python
+  vscode.debug.removeBreakpoints                python
+  vscode.window.onDidChangeTextEditorOptions    python
+  vscode.extensions.node                        python
+  vscode.window.onDidOpenTerminal               python
+  vscode.window.onDidChangeTerminalShellIntegration python
+  vscode.window.onDidEndTerminalShellExecution  python
+  vscode.window.onDidChangeTerminalState        python
+  vscode.workspace.asRelativePath               python
+  vscode.workspace.save                         python
+  vscode.languages.onDidChangeDiagnostics       python
+  vscode.window.showNotebookDocument            python
+  vscode.window.onDidStartTerminalShellExecution python
+  vscode.workspace.onDidCloseNotebookDocument   python
+  vscode.workspace.openNotebookDocument         python
+  vscode.window.activeTerminal                  python
+  vscode.notebooks.createNotebookController     python
+  vscode.languages.registerDocumentLinkProvider rest-client
+  vscode.languages.registerDefinitionProvider   rest-client
+  vscode.window.scroll                          rest-client
+  vscode.window.scrollTo                        rest-client
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  TYPE/CLASS USAGE (sorted by # of extensions)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  vscode.ExtensionContext                  6 exts: auto-rename-tag, code-runner, cpptools, path-intellisense, python, rest-client
+  vscode.Uri                               6 exts: auto-rename-tag, code-runner, cpptools, gitlens, path-intellisense, python
+  vscode.Disposable                        6 exts: code-runner, cpptools, eslint, live-server, path-intellisense, python
+  vscode.TextDocument                      5 exts: auto-rename-tag, code-runner, cpptools, path-intellisense, python
+  vscode.WorkspaceConfiguration            4 exts: code-runner, cpptools, path-intellisense, python
+  vscode.WorkspaceFolder                   4 exts: cpptools, eslint, path-intellisense, python
+  vscode.Range                             3 exts: auto-rename-tag, cpptools, path-intellisense
+  vscode.Extension                         3 exts: auto-rename-tag, cpptools, python
+  vscode.FileType                          3 exts: gitlens, path-intellisense, python
+  vscode.CancellationTokenSource           2 exts: auto-rename-tag, cpptools
+  vscode.TextEditor                        2 exts: auto-rename-tag, cpptools
+  vscode.Selection                         2 exts: auto-rename-tag, cpptools
+  vscode.OutputChannel                     2 exts: code-runner, cpptools
+  vscode.Terminal                          2 exts: code-runner, cpptools
+  vscode.QuickPickItem                     2 exts: cpptools, rest-client
+  vscode.CancellationToken                 2 exts: cpptools, python
+  vscode.CompletionItem                    2 exts: cpptools, path-intellisense
+  vscode.CompletionItemKind                2 exts: cpptools, path-intellisense
+  vscode.Position                          2 exts: cpptools, path-intellisense
+  vscode.ConfigurationChangeEvent          2 exts: cpptools, python
+  vscode.CancellationError                 2 exts: cpptools, gitlens
+  vscode.CodeActionKind                    2 exts: cpptools, python
+  vscode.WorkspaceEdit                     2 exts: cpptools, python
+  vscode.EventEmitter                      2 exts: cpptools, python
+  vscode.Event                             2 exts: cpptools, python
+  vscode.TextDocumentChangeEvent           2 exts: cpptools, python
+  vscode.FileSystemWatcher                 2 exts: cpptools, python
+  vscode.WorkspaceFoldersChangeEvent       2 exts: cpptools, python
+  vscode.UIKind                            2 exts: cpptools, python
+  vscode.FileStat                          2 exts: path-intellisense, python
+  vscode.SnippetString                     1 exts: auto-rename-tag
+  vscode.QuickInputButton                  1 exts: cpptools
+  vscode.QuickPick                         1 exts: cpptools
+  vscode.QuickPickOptions                  1 exts: cpptools
+  vscode.DebugConfigurationProvider        1 exts: cpptools
+  vscode.ProgressLocation                  1 exts: cpptools
+  vscode.MessageItem                       1 exts: cpptools
+  vscode.DebugConfiguration                1 exts: cpptools
+  vscode.CompletionItemProvider            1 exts: cpptools
+  vscode.CompletionContext                 1 exts: cpptools
+  vscode.CompletionList                    1 exts: cpptools
+  vscode.DebugAdapterDescriptorFactory     1 exts: cpptools
+  vscode.DebugSession                      1 exts: cpptools
+  vscode.DebugAdapterExecutable            1 exts: cpptools
+  vscode.ProviderResult                    1 exts: cpptools
+  vscode.DebugAdapterDescriptor            1 exts: cpptools
+  vscode.DebugConfigurationProviderTriggerKind 1 exts: cpptools
+  vscode.TextEditorEdit                    1 exts: cpptools
+  vscode.DocumentSelector                  1 exts: cpptools
+  vscode.HoverProvider                     1 exts: cpptools
+  vscode.LanguageModelChat                 1 exts: cpptools
+  vscode.Hover                             1 exts: cpptools
+  vscode.MarkdownString                    1 exts: cpptools
+  vscode.SymbolKind                        1 exts: cpptools
+  vscode.CallHierarchyProvider             1 exts: cpptools
+  vscode.CallHierarchyItem                 1 exts: cpptools
+  vscode.CallHierarchyIncomingCall         1 exts: cpptools
+  vscode.CallHierarchyOutgoingCall         1 exts: cpptools
+  vscode.CodeActionProvider                1 exts: cpptools
+  vscode.CodeActionContext                 1 exts: cpptools
+  vscode.Command                           1 exts: cpptools
+  vscode.CodeAction                        1 exts: cpptools
+  vscode.DocumentFormattingEditProvider    1 exts: cpptools
+  vscode.FormattingOptions                 1 exts: cpptools
+  vscode.TextEdit                          1 exts: cpptools
+  vscode.TextLine                          1 exts: cpptools
+  vscode.DocumentRangeFormattingEditProvider 1 exts: cpptools
+  vscode.DocumentSymbolProvider            1 exts: cpptools
+  vscode.DocumentSymbol                    1 exts: cpptools
+  vscode.SymbolInformation                 1 exts: cpptools
+  vscode.ReferenceProvider                 1 exts: cpptools
+  vscode.ReferenceContext                  1 exts: cpptools
+  vscode.Location                          1 exts: cpptools
+  vscode.FoldingRange                      1 exts: cpptools
+  vscode.FoldingRangeProvider              1 exts: cpptools
+  vscode.FoldingContext                    1 exts: cpptools
+  vscode.FoldingRangeKind                  1 exts: cpptools
+  vscode.InlayHint                         1 exts: cpptools
+  vscode.InlayHintsProvider                1 exts: cpptools
+  vscode.InlayHintKind                     1 exts: cpptools
+  vscode.OnTypeFormattingEditProvider      1 exts: cpptools
+  vscode.RenameProvider                    1 exts: cpptools
+  vscode.WorkspaceEditEntryMetadata        1 exts: cpptools
+  vscode.SemanticTokens                    1 exts: cpptools
+  vscode.SemanticTokensBuilder             1 exts: cpptools
+  vscode.DocumentSemanticTokensProvider    1 exts: cpptools
+  vscode.WorkspaceSymbolProvider           1 exts: cpptools
+  vscode.DiagnosticCollection              1 exts: cpptools
+  vscode.SemanticTokensLegend              1 exts: cpptools
+  vscode.Diagnostic                        1 exts: cpptools
+  vscode.DiagnosticRelatedInformation      1 exts: cpptools
+  vscode.TextEditorDecorationType          1 exts: cpptools
+  vscode.DiagnosticSeverity                1 exts: cpptools
+  vscode.TextDocumentSaveReason            1 exts: cpptools
+  vscode.ViewColumn                        1 exts: cpptools
+  vscode.QuickPickItemKind                 1 exts: cpptools
+  vscode.DecorationRangeBehavior           1 exts: cpptools
+  vscode.EndOfLine                         1 exts: cpptools
+  vscode.EnvironmentVariableMutator        1 exts: cpptools
+  vscode.TaskScope                         1 exts: cpptools
+  vscode.TextEditorVisibleRangesChangeEvent 1 exts: cpptools
+  vscode.TextEditorSelectionChangeEvent    1 exts: cpptools
+  vscode.LanguageModelChatMessage          1 exts: cpptools
+  vscode.LanguageModelChatResponse         1 exts: cpptools
+  vscode.LanguageModelError                1 exts: cpptools
+  vscode.OnEnterRule                       1 exts: cpptools
+  vscode.IndentAction                      1 exts: cpptools
+  vscode.LanguageConfiguration             1 exts: cpptools
+  vscode.LanguageModelTool                 1 exts: cpptools
+  vscode.LanguageModelToolInvocationOptions 1 exts: cpptools
+  vscode.LanguageModelToolResult           1 exts: cpptools
+  vscode.LanguageModelTextPart             1 exts: cpptools
+  vscode.Memento                           1 exts: cpptools
+  vscode.ProgressOptions                   1 exts: cpptools
+  vscode.Progress                          1 exts: cpptools
+  vscode.TreeDataProvider                  1 exts: cpptools
+  vscode.TreeItem                          1 exts: cpptools
+  vscode.TreeItemCollapsibleState          1 exts: cpptools
+  vscode.ThemeIcon                         1 exts: cpptools
+  vscode.ConfigurationTarget               1 exts: cpptools
+  vscode.WebviewPanel                      1 exts: cpptools
+  vscode.WebviewPanelOnDidChangeViewStateEvent 1 exts: cpptools
+  vscode.WindowState                       1 exts: cpptools
+  vscode.LanguageStatusItem                1 exts: cpptools
+  vscode.StatusBarItem                     1 exts: cpptools
+  vscode.StatusBarAlignment                1 exts: cpptools
+  vscode.ThemeColor                        1 exts: cpptools
+  vscode.TerminalOptions                   1 exts: cpptools
+  vscode.InputBox                          1 exts: cpptools
+  vscode.TerminalDataWriteEvent            1 exts: cpptools
+  vscode.TextDocumentContentProvider       1 exts: cpptools
+  vscode.TaskDefinition                    1 exts: eslint
+  vscode.Task                              1 exts: eslint
+  vscode.ShellExecutionOptions             1 exts: eslint
+  vscode.ShellExecution                    1 exts: eslint
+  vscode.RelativePattern                   1 exts: path-intellisense
+  vscode.LanguageStatusSeverity            1 exts: python
+  vscode.FileSystemError                   1 exts: python
+  vscode.ConfigurationScope                1 exts: python
+  vscode.GlobPattern                       1 exts: python
+  vscode.NotebookDocument                  1 exts: python
+  vscode.NotebookData                      1 exts: python
+  vscode.NotebookController                1 exts: python
+  vscode.NotebookCellOutput                1 exts: python
+  vscode.NotebookCellOutputItem            1 exts: python
+  vscode.OpenDialogOptions                 1 exts: rest-client
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  EVENT SUBSCRIPTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  vscode.workspace.onDidChangeConfiguration          4 exts: auto-rename-tag, cpptools, eslint, python
+  vscode.workspace.onDidChangeTextDocument           3 exts: auto-rename-tag, cpptools, python
+  vscode.workspace.onDidChangeWorkspaceFolders       3 exts: cpptools, eslint, python
+  vscode.window.onDidChangeActiveTextEditor          2 exts: auto-rename-tag, cpptools
+  vscode.window.onDidCloseTerminal                   2 exts: code-runner, cpptools
+  vscode.workspace.onDidOpenTextDocument             2 exts: cpptools, python
+  vscode.workspace.onDidCloseTextDocument            2 exts: cpptools, python
+  vscode.workspace.onDidSaveTextDocument             2 exts: cpptools, python
+  vscode.window.onDidChangeTextEditorVisibleRanges   1 exts: cpptools
+  vscode.window.onDidChangeTextEditorSelection       1 exts: cpptools
+  vscode.window.onDidChangeVisibleTextEditors        1 exts: cpptools
+  vscode.tasks.onDidStartTask                        1 exts: cpptools
+  vscode.tasks.onDidEndTask                          1 exts: cpptools
+  vscode.window.onDidChangeWindowState               1 exts: cpptools
+  vscode.window.onDidWriteTerminalData               1 exts: cpptools
+  vscode.extensions.onDidChange                      1 exts: python
+  vscode.env.onDidChangeShell                        1 exts: python
+  vscode.workspace.onDidCloseNotebookDocument        1 exts: python
+  vscode.workspace.onDidGrantWorkspaceTrust          1 exts: python
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CONTRIBUTES (package.json) ACROSS EXTENSIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  contributes.configuration             9 exts: code-runner, eslint, gitlens, live-server, material-icon-theme, path-intellisense, prettier, python, rest-client
+  contributes.commands                  8 exts: code-runner, eslint, gitlens, live-server, material-icon-theme, prettier, python, rest-client
+  contributes.keybindings               5 exts: code-runner, gitlens, live-server, python, rest-client
+  contributes.menus                     5 exts: code-runner, gitlens, live-server, python, rest-client
+  contributes.languages                 5 exts: code-runner, eslint, prettier, python, rest-client
+  contributes.grammars                  3 exts: code-runner, python, rest-client
+  contributes.jsonValidation            3 exts: eslint, prettier, python
+  contributes.configurationDefaults     2 exts: gitlens, rest-client
+  contributes.submenus                  2 exts: gitlens, python
+  contributes.viewsWelcome              2 exts: gitlens, python
+  contributes.walkthroughs              2 exts: gitlens, python
+  contributes.taskDefinitions           1 exts: eslint
+  contributes.mcpServerDefinitionProviders 1 exts: gitlens
+  contributes.colors                    1 exts: gitlens
+  contributes.icons                     1 exts: gitlens
+  contributes.customEditors             1 exts: gitlens
+  contributes.resourceLabelFormatters   1 exts: gitlens
+  contributes.viewsContainers           1 exts: gitlens
+  contributes.views                     1 exts: gitlens
+  contributes.iconThemes                1 exts: material-icon-theme
+  contributes.problemMatchers           1 exts: python
+  contributes.breakpoints               1 exts: python
+  contributes.debuggers                 1 exts: python
+  contributes.yamlValidation            1 exts: python
+  contributes.languageModelTools        1 exts: python
+  contributes.snippets                  1 exts: rest-client
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PER-EXTENSION API COMPLEXITY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  python                    106 methods,  28 types, 10 events, 15 contributes, 469 files
+  gitlens                   104 methods,   3 types,  0 events, 15 contributes, 1101 files
+  cpptools                   84 methods, 128 types, 15 events,  0 contributes, 161 files
+  rest-client                41 methods,   3 types,  0 events,  8 contributes, 79 files
+  prettier                   22 methods,   0 types,  0 events,  4 contributes, 115 files
+  code-runner                15 methods,   7 types,  1 events,  6 contributes, 5 files
+  auto-rename-tag            12 methods,   9 types,  3 events,  0 contributes, 22 files
+  eslint                     11 methods,   6 types,  2 events,  5 contributes, 54 files
+  live-server                10 methods,   1 types,  0 events,  4 contributes, 11 files
+  path-intellisense           7 methods,  13 types,  0 events,  1 contributes, 14 files
+  material-icon-theme         6 methods,   0 types,  0 events,  3 contributes, 105 files
+  docker                      0 methods,   0 types,  0 events,  0 contributes, 0 files
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  MINIMAL IMPLEMENTATION GUIDE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  To support the majority of top extensions, implement these
+  namespaces in priority order:
+
+  ★ vscode.workspace            11/12 exts, 45 unique methods
+  ★ vscode.window               10/12 exts, 53 unique methods
+  ★ vscode.commands             10/12 exts, 6 unique methods
+  ★ vscode.extensions           8/12 exts, 5 unique methods
+  ★ vscode.env                  7/12 exts, 18 unique methods
+  ★ vscode.languages            7/12 exts, 25 unique methods
+  · vscode.lm                   3/12 exts, 5 unique methods
+  · vscode.debug                2/12 exts, 14 unique methods
+  · vscode.tasks                2/12 exts, 8 unique methods
+  · vscode.chat                 1/12 exts, 1 unique methods
+  · vscode.authentication       1/12 exts, 2 unique methods
+  · vscode.l10n                 1/12 exts, 1 unique methods
+  · vscode.notebooks            1/12 exts, 1 unique methods
+
+  ★ = essential (needed by majority of extensions)
+  · = needed by some extensions

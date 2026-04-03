@@ -1,0 +1,21 @@
+# docker - Full API & Side Effects Report (AST)
+Files analyzed: 0
+
+## vscode API
+
+## vscode Types (type-only)
+
+## Node.js Builtins
+
+## Process/Environment
+
+## Shell Execution
+
+## Network/HTTP
+
+## Global Side Effects
+
+## Activation Events
+  (none / uses *)
+
+## Contributes
