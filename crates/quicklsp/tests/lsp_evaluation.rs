@@ -7,8 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
-use quicklsp::workspace::Workspace;
+use quicklsp::deps::DependencyIndex;
 use quicklsp::parsing::symbols;
+use quicklsp::workspace::Workspace;
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -517,10 +518,85 @@ fn evaluate_doc_extraction_detail() {
 }
 
 #[test]
+fn evaluate_dependency_indexing() {
+    use quicklsp::deps;
+
+    print_separator("12. DEPENDENCY INDEXING — manifest-driven, incremental");
+
+    let dep_index = DependencyIndex::new();
+
+    // Detect and resolve from repo root
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("should find repo root");
+
+    println!("  Repo root: {}", repo_root.display());
+
+    // Parse Cargo.lock to show the manifest parsing works
+    let cargo_deps = deps::cargo::parse_lock_file(repo_root);
+    println!("  Cargo.lock: {} transitive dependencies", cargo_deps.len());
+    for (name, version) in cargo_deps.iter().take(5) {
+        println!("    {} v{}", name, version);
+    }
+    if cargo_deps.len() > 5 {
+        println!("    ... and {} more", cargo_deps.len() - 5);
+    }
+
+    // Resolve and index only the first few packages for the test
+    let resolved = deps::cargo::resolve_package_dirs(repo_root, &cargo_deps);
+    println!("  Resolved {} packages on disk", resolved.len());
+
+    // Index just a few to verify the mechanism (don't block the test)
+    let to_index: Vec<_> = resolved.into_iter().take(5).collect();
+    println!("\n  Indexing {} packages for test...", to_index.len());
+    for pkg in &to_index {
+        println!(
+            "    {:?}: {}",
+            pkg.ecosystem,
+            pkg.path.file_name().unwrap_or_default().to_string_lossy()
+        );
+    }
+
+    // Feed them into the dep index
+    dep_index.enqueue_packages(to_index);
+    dep_index.index_pending();
+
+    println!(
+        "  Result: {} packages, {} files, {} definitions",
+        dep_index.package_count(),
+        dep_index.file_count(),
+        dep_index.definition_count()
+    );
+
+    // Try hover lookups on dep symbols
+    let dep_symbols = &["DashMap", "LanguageServer", "DeletionIndex", "Token"];
+    println!("\n  Dependency hover lookups:");
+    for name in dep_symbols {
+        let info = dep_index.hover_info(name);
+        match info {
+            Some((sig, doc)) => {
+                let sig_preview = sig
+                    .as_deref()
+                    .map(|s| s.chars().take(60).collect::<String>())
+                    .unwrap_or_else(|| "(no sig)".into());
+                let doc_preview = doc
+                    .as_ref()
+                    .and_then(|d| d.lines().next())
+                    .map(|s| s.chars().take(40).collect::<String>())
+                    .unwrap_or_else(|| "(no doc)".into());
+                println!("    {} -> sig: {} | doc: {}", name, sig_preview, doc_preview);
+            }
+            None => println!("    {} -> (not found in indexed subset)", name),
+        }
+    }
+}
+
+#[test]
 fn evaluate_summary_stats() {
     let ws = setup_workspace();
 
-    print_separator("12. SUMMARY STATISTICS");
+    print_separator("13. SUMMARY STATISTICS");
 
     println!("  Files indexed:      {}", ws.file_count());
     println!("  Total definitions:  {}", ws.definition_count());

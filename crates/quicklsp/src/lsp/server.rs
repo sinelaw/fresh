@@ -1,6 +1,7 @@
 //! QuickLSP server implementation.
 //!
-//! All LSP operations go through a single `Workspace` engine.
+//! All LSP operations go through a single `Workspace` engine, with
+//! a `DependencyIndex` as fallback for symbols from external packages.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,12 +11,14 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
+use crate::deps::DependencyIndex;
 use crate::parsing::symbols::{self, SymbolKind as QuickSymbolKind};
 use crate::workspace::{SymbolLocation, Workspace};
 
 pub struct QuickLspServer {
     client: Client,
     workspace: Arc<Workspace>,
+    dep_index: Arc<DependencyIndex>,
     workspace_root: Arc<RwLock<Option<PathBuf>>>,
 }
 
@@ -24,6 +27,7 @@ impl QuickLspServer {
         Self {
             client,
             workspace: Arc::new(Workspace::new()),
+            dep_index: Arc::new(DependencyIndex::new()),
             workspace_root: Arc::new(RwLock::new(None)),
         }
     }
@@ -93,6 +97,8 @@ impl LanguageServer for QuickLspServer {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         if let Some(root_uri) = params.root_uri {
             if let Ok(path) = root_uri.to_file_path() {
+                // Detect ecosystems and resolve dependency packages
+                self.dep_index.detect_and_resolve(&path);
                 *self.workspace_root.write().await = Some(path);
             }
         }
@@ -128,6 +134,18 @@ impl LanguageServer for QuickLspServer {
         self.client
             .log_message(MessageType::INFO, "QuickLSP initialized")
             .await;
+
+        // Kick off background dependency indexing.
+        // The DashMap-based Workspace supports concurrent reads, so LSP
+        // queries work immediately while indexing proceeds.
+        let dep_index = self.dep_index.clone();
+        tokio::spawn(async move {
+            tokio::task::spawn_blocking(move || {
+                dep_index.index_pending();
+            })
+            .await
+            .ok();
+        });
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -164,7 +182,10 @@ impl LanguageServer for QuickLspServer {
             Some(s) => s,
             None => return Ok(None),
         };
-        let defs = self.workspace.find_definitions(&symbol);
+        let mut defs = self.workspace.find_definitions(&symbol);
+        if defs.is_empty() {
+            defs = self.dep_index.find_definitions(&symbol);
+        }
         if let Some(loc) = defs.first().and_then(loc_to_lsp) {
             return Ok(Some(GotoDefinitionResponse::Scalar(loc)));
         }
@@ -302,7 +323,11 @@ impl LanguageServer for QuickLspServer {
 
         let (sig, doc) = match self.workspace.hover_info(&symbol) {
             Some(info) => info,
-            None => return Ok(None),
+            // Fallback to dependency index
+            None => match self.dep_index.hover_info(&symbol) {
+                Some(info) => info,
+                None => return Ok(None),
+            },
         };
 
         // Build markdown hover content: signature as code block + doc as text
@@ -338,13 +363,20 @@ impl LanguageServer for QuickLspServer {
             None => return Ok(None),
         };
 
-        let (loc, active_param) = match self.workspace.signature_help_at(
-            &source,
-            pos.line as usize,
-            pos.character as usize,
-        ) {
+        let (loc, active_param) = match self
+            .workspace
+            .signature_help_at(&source, pos.line as usize, pos.character as usize)
+        {
             Some(result) => result,
-            None => return Ok(None),
+            // Fallback to dependency index
+            None => match self.dep_index.signature_help_at(
+                &source,
+                pos.line as usize,
+                pos.character as usize,
+            ) {
+                Some(result) => result,
+                None => return Ok(None),
+            },
         };
 
         let sig_text = match &loc.symbol.signature {
@@ -395,7 +427,10 @@ impl LanguageServer for QuickLspServer {
             Some(s) if !s.is_empty() => s,
             _ => return Ok(None),
         };
-        let results = self.workspace.completions(&partial);
+        let mut results = self.workspace.completions(&partial);
+        // Merge dependency completions
+        let dep_results = self.dep_index.completions(&partial);
+        results.extend(dep_results);
         if results.is_empty() {
             return Ok(None);
         }
