@@ -4613,23 +4613,38 @@ impl Config {
     fn default_universal_lsp_config() -> HashMap<String, LspLanguageConfig> {
         let mut universal = HashMap::new();
 
-        // quicklsp: our built-in, tree-sitter-based LSP server.
-        // Disabled by default since it's experimental.
+        // quicklsp: our built-in universal LSP server.
+        // Provides fast cross-language hover, signature help, go-to-definition,
+        // completions, and workspace symbols with doc extraction and dependency
+        // source indexing. Designed as a lightweight complement to heavyweight
+        // language-specific servers.
         universal.insert(
             "quicklsp".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "quicklsp".to_string(),
                 args: vec![],
-                enabled: false,
-                auto_start: false,
+                enabled: true,
+                auto_start: true,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
                 language_id_overrides: Default::default(),
-                name: Some("QuickLSP (experimental)".to_string()),
-                only_features: None,
+                name: Some("QuickLSP".to_string()),
+                only_features: Some(vec![
+                    LspFeature::Hover,
+                    LspFeature::SignatureHelp,
+                    LspFeature::DocumentSymbols,
+                    LspFeature::WorkspaceSymbols,
+                ]),
                 except_features: None,
-                root_markers: vec![".git".to_string()],
+                root_markers: vec![
+                    "Cargo.toml".to_string(),
+                    "package.json".to_string(),
+                    "go.mod".to_string(),
+                    "pyproject.toml".to_string(),
+                    "requirements.txt".to_string(),
+                    ".git".to_string(),
+                ],
             }]),
         );
 
@@ -6229,7 +6244,7 @@ mod tests {
         let quicklsp = &config.universal_lsp["quicklsp"];
         let server = &quicklsp.as_slice()[0];
         assert_eq!(server.command, "quicklsp");
-        assert!(!server.enabled, "quicklsp should be disabled by default");
+        assert!(server.enabled, "quicklsp should be enabled by default");
         assert_eq!(server.name.as_deref(), Some("QuickLSP (experimental)"));
     }
 
