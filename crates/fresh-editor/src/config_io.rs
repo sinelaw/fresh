@@ -2222,4 +2222,103 @@ mod tests {
             saved_content
         );
     }
+
+    /// Test that universal_lsp config round-trips through save/load correctly.
+    /// This exercises the PartialConfig From/resolve_with_defaults paths.
+    #[test]
+    fn universal_lsp_round_trip_via_config_resolver() {
+        let (_temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+
+        // Write a config that enables quicklsp
+        std::fs::write(
+            &user_config_path,
+            r#"{
+                "universal_lsp": {
+                    "quicklsp": { "enabled": true, "auto_start": true }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let config = resolver.resolve().unwrap();
+
+        // quicklsp should be enabled (user override merged with defaults)
+        assert!(config.universal_lsp.contains_key("quicklsp"));
+        let server = &config.universal_lsp["quicklsp"].as_slice()[0];
+        assert!(server.enabled, "User override should enable quicklsp");
+        assert!(server.auto_start, "User override should enable auto_start");
+        assert_eq!(
+            server.command, "quicklsp",
+            "Command should come from defaults"
+        );
+    }
+
+    /// Test that universal_lsp supports adding custom servers alongside defaults.
+    #[test]
+    fn universal_lsp_custom_server_merges_with_defaults() {
+        let (_temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+
+        std::fs::write(
+            &user_config_path,
+            r#"{
+                "universal_lsp": {
+                    "my-universal-server": {
+                        "command": "my-server-bin",
+                        "enabled": true
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let config = resolver.resolve().unwrap();
+
+        // Custom server should be present
+        assert!(
+            config.universal_lsp.contains_key("my-universal-server"),
+            "Custom universal server should be loaded"
+        );
+        assert_eq!(
+            config.universal_lsp["my-universal-server"].as_slice()[0].command,
+            "my-server-bin"
+        );
+
+        // Default quicklsp should still be present (merged from defaults)
+        assert!(
+            config.universal_lsp.contains_key("quicklsp"),
+            "Default quicklsp should be preserved when adding custom servers"
+        );
+    }
+
+    /// Test that the PartialConfig conversion (Config -> PartialConfig -> Config)
+    /// preserves universal_lsp entries. This catches bugs where universal_lsp
+    /// is missing from the PartialConfig struct or its From/resolve impls.
+    #[test]
+    fn universal_lsp_partial_config_round_trip() {
+        use crate::partial_config::PartialConfig;
+
+        let mut config = Config::default();
+        // Enable quicklsp in the original config
+        if let Some(quicklsp) = config.universal_lsp.get_mut("quicklsp") {
+            quicklsp.as_mut_slice()[0].enabled = true;
+        }
+
+        // Convert to partial and back
+        let partial = PartialConfig::from(&config);
+        let resolved = partial.resolve();
+
+        // Verify universal_lsp survived the round trip
+        assert!(
+            resolved.universal_lsp.contains_key("quicklsp"),
+            "quicklsp should survive Config -> PartialConfig -> Config round trip"
+        );
+        assert!(
+            resolved.universal_lsp["quicklsp"].as_slice()[0].enabled,
+            "quicklsp enabled state should be preserved through round trip"
+        );
+    }
 }

@@ -6217,4 +6217,102 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    #[cfg(feature = "runtime")]
+    fn test_default_config_has_quicklsp_in_universal_lsp() {
+        let config = Config::default();
+        assert!(
+            config.universal_lsp.contains_key("quicklsp"),
+            "Default config should contain quicklsp in universal_lsp"
+        );
+        let quicklsp = &config.universal_lsp["quicklsp"];
+        let server = &quicklsp.as_slice()[0];
+        assert_eq!(server.command, "quicklsp");
+        assert!(!server.enabled, "quicklsp should be disabled by default");
+        assert_eq!(server.name.as_deref(), Some("QuickLSP (experimental)"));
+    }
+
+    #[test]
+    fn test_empty_config_preserves_universal_lsp_defaults() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        // Write an empty config
+        std::fs::write(&config_path, "{}").unwrap();
+
+        let loaded = Config::load_from_file(&config_path).unwrap();
+        let defaults = Config::default();
+
+        // Should have all default universal LSP servers
+        assert_eq!(
+            loaded.universal_lsp.len(),
+            defaults.universal_lsp.len(),
+            "Empty config should preserve all default universal_lsp entries"
+        );
+    }
+
+    #[test]
+    fn test_universal_lsp_config_merges_with_defaults() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        // Write a config that enables quicklsp
+        let config_json = r#"{
+            "universal_lsp": {
+                "quicklsp": {
+                    "enabled": true
+                }
+            }
+        }"#;
+        std::fs::write(&config_path, config_json).unwrap();
+
+        let loaded = Config::load_from_file(&config_path).unwrap();
+
+        // quicklsp should be enabled (user override)
+        assert!(loaded.universal_lsp.contains_key("quicklsp"));
+        let server = &loaded.universal_lsp["quicklsp"].as_slice()[0];
+        assert!(server.enabled, "User override should enable quicklsp");
+        // Command should be merged from defaults
+        assert_eq!(
+            server.command, "quicklsp",
+            "Default command should be merged when not specified by user"
+        );
+    }
+
+    #[test]
+    fn test_universal_lsp_custom_server_added() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        // Write a config that adds a custom universal server
+        let config_json = r#"{
+            "universal_lsp": {
+                "my-custom-server": {
+                    "command": "my-server",
+                    "enabled": true,
+                    "auto_start": true
+                }
+            }
+        }"#;
+        std::fs::write(&config_path, config_json).unwrap();
+
+        let loaded = Config::load_from_file(&config_path).unwrap();
+
+        // Custom server should be present
+        assert!(
+            loaded.universal_lsp.contains_key("my-custom-server"),
+            "Custom universal server should be loaded"
+        );
+        let server = &loaded.universal_lsp["my-custom-server"].as_slice()[0];
+        assert_eq!(server.command, "my-server");
+        assert!(server.enabled);
+        assert!(server.auto_start);
+
+        // Default quicklsp should also still be present
+        assert!(
+            loaded.universal_lsp.contains_key("quicklsp"),
+            "Default quicklsp should be merged from defaults"
+        );
+    }
 }

@@ -10,6 +10,7 @@
 use crate::config::Config;
 use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::input::keybindings::KeybindingResolver;
+use crate::types::LspServerConfig;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
@@ -140,6 +141,18 @@ impl Editor {
         if let Some(ref mut lsp) = self.lsp {
             for (language, lsp_configs) in &self.config.lsp {
                 lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());
+            }
+            // Append universal LSP servers to every configured language
+            let universal_servers: Vec<LspServerConfig> = self
+                .config
+                .universal_lsp
+                .values()
+                .flat_map(|lc| lc.as_slice().to_vec())
+                .collect();
+            if !universal_servers.is_empty() {
+                for language in lsp.configured_languages() {
+                    lsp.append_language_configs(language, universal_servers.clone());
+                }
             }
         }
 

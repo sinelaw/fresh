@@ -422,6 +422,16 @@ impl LspManager {
         self.config.insert(language, configs);
     }
 
+    /// Append additional server configs to an existing language entry.
+    pub fn append_language_configs(&mut self, language: String, configs: Vec<LspServerConfig>) {
+        self.config.entry(language).or_default().extend(configs);
+    }
+
+    /// Return the list of currently configured language keys.
+    pub fn configured_languages(&self) -> Vec<String> {
+        self.config.keys().cloned().collect()
+    }
+
     /// Set a new root URI for the workspace
     ///
     /// This should be called after shutting down all servers when switching projects.

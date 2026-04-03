@@ -1220,6 +1220,18 @@ impl Editor {
             lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());
         }
 
+        // Append universal LSP servers to every configured language
+        let universal_servers: Vec<LspServerConfig> = config
+            .universal_lsp
+            .values()
+            .flat_map(|lc| lc.as_slice().to_vec())
+            .collect();
+        if !universal_servers.is_empty() {
+            for language in lsp.configured_languages() {
+                lsp.append_language_configs(language, universal_servers.clone());
+            }
+        }
+
         // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
         // workspace root, override JS/TS LSP to use `deno lsp` (#1191)
         if working_dir.join("deno.json").exists() || working_dir.join("deno.jsonc").exists() {
