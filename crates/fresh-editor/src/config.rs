@@ -4618,13 +4618,16 @@ impl Config {
         // completions, and workspace symbols with doc extraction and dependency
         // source indexing. Designed as a lightweight complement to heavyweight
         // language-specific servers.
+        //
+        // Disabled by default — enable via config or command palette after
+        // installing: `cargo install --path crates/quicklsp`
         universal.insert(
             "quicklsp".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "quicklsp".to_string(),
                 args: vec![],
-                enabled: true,
-                auto_start: true,
+                enabled: false,
+                auto_start: false,
                 process_limits: ProcessLimits::default(),
                 initialization_options: None,
                 env: Default::default(),
@@ -6244,7 +6247,7 @@ mod tests {
         let quicklsp = &config.universal_lsp["quicklsp"];
         let server = &quicklsp.as_slice()[0];
         assert_eq!(server.command, "quicklsp");
-        assert!(server.enabled, "quicklsp should be enabled by default");
+        assert!(!server.enabled, "quicklsp should be disabled by default");
         assert_eq!(server.name.as_deref(), Some("QuickLSP"));
     }
 
