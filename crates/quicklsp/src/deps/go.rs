@@ -70,7 +70,7 @@ pub fn resolve_package_dirs(
 
 /// Check if the Go module cache exists.
 pub fn mod_cache_available() -> bool {
-    go_mod_cache().map_or(false, |c| c.is_dir())
+    go_mod_cache().is_some_and(|c| c.is_dir())
 }
 
 /// File extensions for Go.

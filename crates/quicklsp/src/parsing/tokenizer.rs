@@ -182,14 +182,14 @@ pub fn scan(source: &str, lang: LangFamily) -> Vec<Token> {
         }
 
         // Skip triple-quoted strings (Python)
-        if lang.triple_quote_strings() && i + 2 < len {
-            if (b == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"')
-                || (b == b'\'' && bytes[i + 1] == b'\'' && bytes[i + 2] == b'\'')
-            {
-                let quote = b;
-                i = skip_triple_quote(bytes, i + 3, quote, &mut line, &mut line_start);
-                continue;
-            }
+        if lang.triple_quote_strings()
+            && i + 2 < len
+            && ((b == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"')
+                || (b == b'\'' && bytes[i + 1] == b'\'' && bytes[i + 2] == b'\''))
+        {
+            let quote = b;
+            i = skip_triple_quote(bytes, i + 3, quote, &mut line, &mut line_start);
+            continue;
         }
 
         // Skip strings

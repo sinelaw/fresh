@@ -428,7 +428,7 @@ fn find_word_occurrences(word: &str, source: &str, file: &Path, out: &mut Vec<Re
         let abs_pos = search_from + byte_pos;
 
         // Count newlines between last position and this match
-        for &b in source[search_from..abs_pos].as_bytes() {
+        for &b in &source.as_bytes()[search_from..abs_pos] {
             if b == b'\n' {
                 line += 1;
             }
@@ -489,8 +489,8 @@ mod tests {
 
         let defs = ws.find_definitions("process_data");
         assert_eq!(defs.len(), 2);
-        assert!(defs.iter().any(|d| d.file == PathBuf::from("/src/main.rs")));
-        assert!(defs.iter().any(|d| d.file == PathBuf::from("/src/lib.rs")));
+        assert!(defs.iter().any(|d| d.file == Path::new("/src/main.rs")));
+        assert!(defs.iter().any(|d| d.file == Path::new("/src/lib.rs")));
 
         let defs = ws.find_definitions("main");
         assert_eq!(defs.len(), 1);

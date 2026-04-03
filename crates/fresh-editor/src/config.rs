@@ -1,4 +1,4 @@
-use crate::types::{context_keys, LspLanguageConfig, LspServerConfig, ProcessLimits};
+use crate::types::{context_keys, LspFeature, LspLanguageConfig, LspServerConfig, ProcessLimits};
 
 use rust_i18n::t;
 use schemars::JsonSchema;
@@ -6245,7 +6245,7 @@ mod tests {
         let server = &quicklsp.as_slice()[0];
         assert_eq!(server.command, "quicklsp");
         assert!(server.enabled, "quicklsp should be enabled by default");
-        assert_eq!(server.name.as_deref(), Some("QuickLSP (experimental)"));
+        assert_eq!(server.name.as_deref(), Some("QuickLSP"));
     }
 
     #[test]

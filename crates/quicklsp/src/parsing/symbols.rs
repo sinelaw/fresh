@@ -62,22 +62,23 @@ impl Symbol {
         let mut i = 0;
 
         while i < tokens.len() {
-            if tokens[i].kind == TokenKind::DefKeyword {
-                if i + 1 < tokens.len() && tokens[i + 1].kind == TokenKind::Ident {
-                    let keyword = &tokens[i];
-                    let ident = &tokens[i + 1];
-                    symbols.push(Symbol {
-                        name: ident.text.clone(),
-                        kind: SymbolKind::from_keyword(&keyword.text),
-                        line: ident.line,
-                        col: ident.col,
-                        def_keyword: keyword.text.clone(),
-                        doc_comment: None,
-                        signature: None,
-                    });
-                    i += 2;
-                    continue;
-                }
+            if tokens[i].kind == TokenKind::DefKeyword
+                && i + 1 < tokens.len()
+                && tokens[i + 1].kind == TokenKind::Ident
+            {
+                let keyword = &tokens[i];
+                let ident = &tokens[i + 1];
+                symbols.push(Symbol {
+                    name: ident.text.clone(),
+                    kind: SymbolKind::from_keyword(&keyword.text),
+                    line: ident.line,
+                    col: ident.col,
+                    def_keyword: keyword.text.clone(),
+                    doc_comment: None,
+                    signature: None,
+                });
+                i += 2;
+                continue;
             }
             i += 1;
         }

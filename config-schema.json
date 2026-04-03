@@ -1,0 +1,1422 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Config",
+  "description": "Main configuration structure",
+  "type": "object",
+  "properties": {
+    "version": {
+      "description": "Configuration version (for migration support)\nConfigs without this field are treated as version 0",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0,
+      "default": 0
+    },
+    "theme": {
+      "description": "Color theme name",
+      "$ref": "#/$defs/ThemeOptions",
+      "default": "high-contrast"
+    },
+    "locale": {
+      "description": "UI locale (language) for translations\nIf not set, auto-detected from environment (LC_ALL, LC_MESSAGES, LANG)",
+      "$ref": "#/$defs/LocaleOptions",
+      "default": null
+    },
+    "check_for_updates": {
+      "description": "Check for new versions on startup (default: true).\nWhen enabled, also sends basic anonymous telemetry (version, OS, terminal type).",
+      "type": "boolean",
+      "default": true
+    },
+    "editor": {
+      "description": "Editor behavior settings (indentation, line numbers, wrapping, etc.)",
+      "$ref": "#/$defs/EditorConfig",
+      "default": {
+        "line_numbers": true,
+        "relative_line_numbers": false,
+        "highlight_current_line": true,
+        "line_wrap": true,
+        "wrap_indent": true,
+        "wrap_column": null,
+        "page_width": 80,
+        "syntax_highlighting": true,
+        "show_menu_bar": true,
+        "menu_bar_mnemonics": true,
+        "show_tab_bar": true,
+        "show_status_bar": true,
+        "show_prompt_line": true,
+        "show_vertical_scrollbar": true,
+        "show_horizontal_scrollbar": false,
+        "show_tilde": true,
+        "use_terminal_bg": false,
+        "cursor_style": "default",
+        "rulers": [],
+        "whitespace_show": true,
+        "whitespace_spaces_leading": false,
+        "whitespace_spaces_inner": false,
+        "whitespace_spaces_trailing": false,
+        "whitespace_tabs_leading": true,
+        "whitespace_tabs_inner": true,
+        "whitespace_tabs_trailing": true,
+        "use_tabs": false,
+        "tab_size": 4,
+        "auto_indent": true,
+        "auto_close": true,
+        "auto_surround": true,
+        "scroll_offset": 3,
+        "default_line_ending": "lf",
+        "trim_trailing_whitespace_on_save": false,
+        "ensure_final_newline_on_save": false,
+        "highlight_matching_brackets": true,
+        "rainbow_brackets": true,
+        "completion_popup_auto_show": false,
+        "quick_suggestions": true,
+        "quick_suggestions_delay_ms": 150,
+        "suggest_on_trigger_characters": true,
+        "enable_inlay_hints": true,
+        "enable_semantic_tokens_full": false,
+        "diagnostics_inline_text": false,
+        "mouse_hover_enabled": true,
+        "mouse_hover_delay_ms": 500,
+        "double_click_time_ms": 500,
+        "auto_save_enabled": false,
+        "auto_save_interval_secs": 30,
+        "hot_exit": true,
+        "recovery_enabled": true,
+        "auto_recovery_save_interval_secs": 2,
+        "auto_revert_poll_interval_ms": 2000,
+        "keyboard_disambiguate_escape_codes": true,
+        "keyboard_report_event_types": false,
+        "keyboard_report_alternate_keys": true,
+        "keyboard_report_all_keys_as_escape_codes": false,
+        "highlight_timeout_ms": 5,
+        "snapshot_interval": 100,
+        "highlight_context_bytes": 10000,
+        "large_file_threshold_bytes": 1048576,
+        "estimated_line_length": 80,
+        "read_concurrency": 64,
+        "file_tree_poll_interval_ms": 3000
+      }
+    },
+    "file_explorer": {
+      "description": "File explorer panel settings",
+      "$ref": "#/$defs/FileExplorerConfig",
+      "default": {
+        "respect_gitignore": true,
+        "show_hidden": false,
+        "show_gitignored": false,
+        "custom_ignore_patterns": [],
+        "width": 0.30000001192092896
+      }
+    },
+    "file_browser": {
+      "description": "File browser settings (Open File dialog)",
+      "$ref": "#/$defs/FileBrowserConfig",
+      "default": {
+        "show_hidden": false
+      }
+    },
+    "clipboard": {
+      "description": "Clipboard settings (which clipboard methods to use)",
+      "$ref": "#/$defs/ClipboardConfig",
+      "default": {
+        "use_osc52": true,
+        "use_system_clipboard": true
+      }
+    },
+    "terminal": {
+      "description": "Terminal settings",
+      "$ref": "#/$defs/TerminalConfig",
+      "default": {
+        "jump_to_end_on_output": true
+      }
+    },
+    "keybindings": {
+      "description": "Custom keybindings (overrides for the active map)",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Keybinding"
+      },
+      "default": []
+    },
+    "keybinding_maps": {
+      "description": "Named keybinding maps (user can define custom maps here)\nEach map can optionally inherit from another map",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/KeymapConfig"
+      },
+      "default": {}
+    },
+    "active_keybinding_map": {
+      "description": "Active keybinding map name",
+      "$ref": "#/$defs/KeybindingMapOptions",
+      "default": "default"
+    },
+    "languages": {
+      "description": "Per-language configuration overrides (tab size, formatters, etc.)",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/LanguageConfig"
+      },
+      "default": {}
+    },
+    "fallback": {
+      "description": "Fallback configuration for files whose type cannot be detected.\nApplied when no extension, filename, glob, or built-in detection matches.\nUseful for setting a default grammar (e.g., \"bash\") and comment_prefix\nfor unrecognized .conf, .rc, .rules, etc. files.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LanguageConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "lsp": {
+      "description": "LSP server configurations by language.\nEach language maps to one or more server configs (multi-LSP support).\nAccepts both single-object and array forms for backwards compatibility.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/LspLanguageConfig"
+      },
+      "default": {}
+    },
+    "universal_lsp": {
+      "description": "Universal LSP servers that apply to all languages.\nThese servers run alongside language-specific LSP servers defined in `lsp`.\nKeyed by a unique server name (e.g. \"quicklsp\").",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/LspLanguageConfig"
+      },
+      "default": {}
+    },
+    "warnings": {
+      "description": "Warning notification settings",
+      "$ref": "#/$defs/WarningsConfig",
+      "default": {
+        "show_status_indicator": true
+      }
+    },
+    "plugins": {
+      "description": "Plugin configurations by plugin name\nPlugins are auto-discovered from the plugins directory.\nUse this to enable/disable specific plugins.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/PluginConfig"
+      },
+      "default": {},
+      "x-standalone-category": true,
+      "x-no-add": true
+    },
+    "packages": {
+      "description": "Package manager settings for plugin/theme installation",
+      "$ref": "#/$defs/PackagesConfig",
+      "default": {
+        "sources": [
+          "https://github.com/sinelaw/fresh-plugins-registry"
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "ThemeOptions": {
+      "description": "Available color themes",
+      "type": "string",
+      "enum": [
+        "dark",
+        "light",
+        "high-contrast",
+        "nostalgia"
+      ]
+    },
+    "LocaleOptions": {
+      "description": "UI locale (language). Use null for auto-detection from environment.",
+      "enum": [
+        null,
+        "cs",
+        "de",
+        "en",
+        "es",
+        "fr",
+        "it",
+        "ja",
+        "ko",
+        "pt-BR",
+        "ru",
+        "th",
+        "uk",
+        "vi",
+        "zh-CN"
+      ]
+    },
+    "EditorConfig": {
+      "description": "Editor behavior configuration",
+      "type": "object",
+      "properties": {
+        "line_numbers": {
+          "description": "Show line numbers in the gutter (default for new buffers)",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "relative_line_numbers": {
+          "description": "Show line numbers relative to cursor position",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Display"
+        },
+        "highlight_current_line": {
+          "description": "Highlight the line containing the cursor",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "line_wrap": {
+          "description": "Wrap long lines to fit the window width (default for new views)",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "wrap_indent": {
+          "description": "Indent wrapped continuation lines to match the leading whitespace of the original line",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "wrap_column": {
+          "description": "Column at which to wrap lines when line wrapping is enabled.\nIf not specified (`null`), lines wrap at the viewport edge (default behavior).\nExample: `80` wraps at column 80. The actual wrap column is clamped to the\nviewport width (lines can't wrap beyond the visible area).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null,
+          "x-section": "Display"
+        },
+        "page_width": {
+          "description": "Width of the page in page view mode (in columns).\nControls the content width when page view is active, with centering margins.\nDefaults to 80. Set to `null` to use the full viewport width.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": 80,
+          "x-section": "Display"
+        },
+        "syntax_highlighting": {
+          "description": "Enable syntax highlighting for code files",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "show_menu_bar": {
+          "description": "Whether the menu bar is visible by default.\nThe menu bar provides access to menus (File, Edit, View, etc.) at the top of the screen.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "menu_bar_mnemonics": {
+          "description": "Whether menu bar mnemonics (Alt+letter shortcuts) are enabled.\nWhen enabled, pressing Alt+F opens the File menu, Alt+E opens Edit, etc.\nDisabling this frees up Alt+letter keybindings for other actions.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "show_tab_bar": {
+          "description": "Whether the tab bar is visible by default.\nThe tab bar shows open files in each split pane.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "show_status_bar": {
+          "description": "Whether the status bar is visible by default.\nThe status bar shows file info, cursor position, and editor status at the bottom of the screen.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "show_prompt_line": {
+          "description": "Whether the prompt line is visible by default.\nThe prompt line is the bottom-most line used for command input, search, file open, etc.\nWhen hidden, the prompt line only appears when a prompt is active.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "show_vertical_scrollbar": {
+          "description": "Whether the vertical scrollbar is visible in each split pane.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "show_horizontal_scrollbar": {
+          "description": "Whether the horizontal scrollbar is visible in each split pane.\nThe horizontal scrollbar appears when line wrap is disabled and content extends beyond the viewport.\nCan be toggled at runtime via command palette or keybinding.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Display"
+        },
+        "show_tilde": {
+          "description": "Show tilde (~) markers on lines after the end of the file.\nThese vim-style markers indicate lines that are not part of the file content.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "use_terminal_bg": {
+          "description": "Use the terminal's default background color instead of the theme's editor background.\nWhen enabled, the editor background inherits from the terminal emulator,\nallowing transparency or custom terminal backgrounds to show through.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Display"
+        },
+        "cursor_style": {
+          "description": "Cursor style for the terminal cursor.\nOptions: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline\nDefault: blinking_block",
+          "$ref": "#/$defs/CursorStyle",
+          "default": "default",
+          "x-section": "Display"
+        },
+        "rulers": {
+          "description": "Vertical ruler lines at specific column positions.\nDraws subtle vertical lines to help with line length conventions.\nExample: [80, 120] draws rulers at columns 80 and 120.\nDefault: [] (no rulers)",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "default": [],
+          "x-section": "Display"
+        },
+        "whitespace_show": {
+          "description": "Master toggle for whitespace indicator visibility.\nWhen disabled, no whitespace indicators (·, →) are shown regardless\nof the per-position settings below.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Whitespace"
+        },
+        "whitespace_spaces_leading": {
+          "description": "Show space indicators (·) for leading whitespace (indentation).\nLeading whitespace is everything before the first non-space character on a line.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Whitespace"
+        },
+        "whitespace_spaces_inner": {
+          "description": "Show space indicators (·) for inner whitespace (between words/tokens).\nInner whitespace is spaces between the first and last non-space characters.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Whitespace"
+        },
+        "whitespace_spaces_trailing": {
+          "description": "Show space indicators (·) for trailing whitespace.\nTrailing whitespace is everything after the last non-space character on a line.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Whitespace"
+        },
+        "whitespace_tabs_leading": {
+          "description": "Show tab indicators (→) for leading tabs (indentation).\nCan be overridden per-language via `show_whitespace_tabs` in language config.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Whitespace"
+        },
+        "whitespace_tabs_inner": {
+          "description": "Show tab indicators (→) for inner tabs (between words/tokens).\nCan be overridden per-language via `show_whitespace_tabs` in language config.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Whitespace"
+        },
+        "whitespace_tabs_trailing": {
+          "description": "Show tab indicators (→) for trailing tabs.\nCan be overridden per-language via `show_whitespace_tabs` in language config.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Whitespace"
+        },
+        "use_tabs": {
+          "description": "Whether pressing Tab inserts a tab character instead of spaces.\nThis is the global default; individual languages can override it\nvia their own `use_tabs` setting.\nDefault: false (insert spaces)",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Editing"
+        },
+        "tab_size": {
+          "description": "Number of spaces per tab character",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 4,
+          "x-section": "Editing"
+        },
+        "auto_indent": {
+          "description": "Automatically indent new lines based on the previous line",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Editing"
+        },
+        "auto_close": {
+          "description": "Automatically close brackets, parentheses, and quotes when typing.\nWhen enabled, typing an opening delimiter like `(`, `[`, `{`, `\"`, `'`, or `` ` ``\nwill automatically insert the matching closing delimiter.\nAlso enables skip-over (moving past existing closing delimiters) and\npair deletion (deleting both delimiters when backspacing between them).\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Editing"
+        },
+        "auto_surround": {
+          "description": "Automatically surround selected text with matching pairs when typing\nan opening delimiter. When enabled and text is selected, typing `(`, `[`,\n`{`, `\"`, `'`, or `` ` `` wraps the selection instead of replacing it.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Editing"
+        },
+        "scroll_offset": {
+          "description": "Minimum lines to keep visible above/below cursor when scrolling",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 3,
+          "x-section": "Editing"
+        },
+        "default_line_ending": {
+          "description": "Default line ending format for new files.\nFiles loaded from disk will use their detected line ending format.\nOptions: \"lf\" (Unix/Linux/macOS), \"crlf\" (Windows), \"cr\" (Classic Mac)\nDefault: \"lf\"",
+          "$ref": "#/$defs/LineEndingOption",
+          "default": "lf",
+          "x-section": "Editing"
+        },
+        "trim_trailing_whitespace_on_save": {
+          "description": "Remove trailing whitespace from lines when saving.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Editing"
+        },
+        "ensure_final_newline_on_save": {
+          "description": "Ensure files end with a newline when saving.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Editing"
+        },
+        "highlight_matching_brackets": {
+          "description": "Highlight matching bracket pairs when cursor is on a bracket.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Bracket Matching"
+        },
+        "rainbow_brackets": {
+          "description": "Use rainbow colors for nested brackets based on nesting depth.\nRequires highlight_matching_brackets to be enabled.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Bracket Matching"
+        },
+        "completion_popup_auto_show": {
+          "description": "Automatically show the completion popup while typing.\nWhen false (default), the popup only appears when explicitly invoked\n(e.g. via Ctrl+Space). When true, it appears automatically after a\nshort delay while typing.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Completion"
+        },
+        "quick_suggestions": {
+          "description": "Enable quick suggestions (VS Code-like behavior).\nWhen enabled, completion suggestions appear automatically while typing,\nnot just on trigger characters (like `.` or `::`).\nOnly takes effect when completion_popup_auto_show is true.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Completion"
+        },
+        "quick_suggestions_delay_ms": {
+          "description": "Delay in milliseconds before showing completion suggestions.\nLower values (10-50ms) feel more responsive but may be distracting.\nHigher values (100-500ms) reduce noise while typing.\nTrigger characters (like `.`) bypass this delay.\nDefault: 150",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 150,
+          "x-section": "Completion"
+        },
+        "suggest_on_trigger_characters": {
+          "description": "Whether trigger characters (like `.`, `::`, `->`) immediately show completions.\nWhen true, typing a trigger character bypasses quick_suggestions_delay_ms.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Completion"
+        },
+        "enable_inlay_hints": {
+          "description": "Whether to enable LSP inlay hints (type hints, parameter hints, etc.)",
+          "type": "boolean",
+          "default": true,
+          "x-section": "LSP"
+        },
+        "enable_semantic_tokens_full": {
+          "description": "Whether to request full-document LSP semantic tokens.\nRange requests are still used when supported.\nDefault: false (range-only to avoid heavy full refreshes).",
+          "type": "boolean",
+          "default": false,
+          "x-section": "LSP"
+        },
+        "diagnostics_inline_text": {
+          "description": "Whether to show inline diagnostic text at the end of lines with errors/warnings.\nWhen enabled, the highest-severity diagnostic message is rendered after the\nsource code on each affected line.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Diagnostics"
+        },
+        "mouse_hover_enabled": {
+          "description": "Whether mouse hover triggers LSP hover requests.\nWhen enabled, hovering over code with the mouse will show documentation.\nOn Windows, this also controls the mouse tracking mode: when disabled,\nthe editor uses xterm mode 1002 (cell motion — click, drag, release only);\nwhen enabled, it uses mode 1003 (all motion — full mouse movement tracking).\nMode 1003 generates high event volume on Windows and may cause input\ncorruption on some systems. On macOS and Linux this setting only controls\nLSP hover; the mouse tracking mode is always full motion.\nDefault: true (macOS/Linux), false (Windows)",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Mouse"
+        },
+        "mouse_hover_delay_ms": {
+          "description": "Delay in milliseconds before a mouse hover triggers an LSP hover request.\nLower values show hover info faster but may cause more LSP server load.\nDefault: 500ms",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 500,
+          "x-section": "Mouse"
+        },
+        "double_click_time_ms": {
+          "description": "Time window in milliseconds for detecting double-clicks.\nTwo clicks within this time are treated as a double-click (word selection).\nDefault: 500ms",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 500,
+          "x-section": "Mouse"
+        },
+        "auto_save_enabled": {
+          "description": "Whether to enable persistent auto-save (save to original file on disk).\nWhen enabled, modified buffers are saved to their original file path\nat a configurable interval.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Recovery"
+        },
+        "auto_save_interval_secs": {
+          "description": "Interval in seconds for persistent auto-save.\nModified buffers are saved to their original file at this interval.\nOnly effective when auto_save_enabled is true.\nDefault: 30 seconds",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 30,
+          "x-section": "Recovery"
+        },
+        "hot_exit": {
+          "description": "Whether to preserve unsaved changes in all buffers (file-backed and\nunnamed) across editor sessions (VS Code \"hot exit\" behavior).\nWhen enabled, modified buffers are backed up on clean exit and their\nunsaved changes are restored on next startup.  Unnamed (scratch)\nbuffers are also persisted (Sublime Text / Notepad++ behavior).\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Recovery"
+        },
+        "recovery_enabled": {
+          "description": "Whether to enable file recovery (Emacs-style auto-save)\nWhen enabled, buffers are periodically saved to recovery files\nso they can be recovered if the editor crashes.",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Recovery"
+        },
+        "auto_recovery_save_interval_secs": {
+          "description": "Interval in seconds for auto-recovery-save.\nModified buffers are saved to recovery files at this interval.\nOnly effective when recovery_enabled is true.\nDefault: 2 seconds",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 2,
+          "x-section": "Recovery"
+        },
+        "auto_revert_poll_interval_ms": {
+          "description": "Poll interval in milliseconds for auto-reverting open buffers.\nWhen auto-revert is enabled, file modification times are checked at this interval.\nLower values detect external changes faster but use more CPU.\nDefault: 2000ms (2 seconds)",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 2000,
+          "x-section": "Recovery"
+        },
+        "keyboard_disambiguate_escape_codes": {
+          "description": "Enable keyboard enhancement: disambiguate escape codes using CSI-u sequences.\nThis allows unambiguous reading of Escape and modified keys.\nRequires terminal support (kitty keyboard protocol).\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Keyboard"
+        },
+        "keyboard_report_event_types": {
+          "description": "Enable keyboard enhancement: report key event types (repeat/release).\nAdds extra events when keys are autorepeated or released.\nRequires terminal support (kitty keyboard protocol).\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Keyboard"
+        },
+        "keyboard_report_alternate_keys": {
+          "description": "Enable keyboard enhancement: report alternate keycodes.\nSends alternate keycodes in addition to the base keycode.\nRequires terminal support (kitty keyboard protocol).\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Keyboard"
+        },
+        "keyboard_report_all_keys_as_escape_codes": {
+          "description": "Enable keyboard enhancement: report all keys as escape codes.\nRepresents all keyboard events as CSI-u sequences.\nRequired for repeat/release events on plain-text keys.\nRequires terminal support (kitty keyboard protocol).\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Keyboard"
+        },
+        "highlight_timeout_ms": {
+          "description": "Maximum time in milliseconds for syntax highlighting per frame",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 5,
+          "x-section": "Performance"
+        },
+        "snapshot_interval": {
+          "description": "Undo history snapshot interval (number of edits between snapshots)",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 100,
+          "x-section": "Performance"
+        },
+        "highlight_context_bytes": {
+          "description": "Number of bytes to look back/forward from the viewport for syntax highlighting context.\nLarger values improve accuracy for multi-line constructs (strings, comments, nested blocks)\nbut may slow down highlighting for very large files.\nDefault: 10KB (10000 bytes)",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 10000,
+          "x-section": "Performance"
+        },
+        "large_file_threshold_bytes": {
+          "description": "File size threshold in bytes for \"large file\" behavior\nFiles larger than this will:\n- Skip LSP features\n- Use constant-size scrollbar thumb (1 char)\n\nFiles smaller will count actual lines for accurate scrollbar rendering",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 1048576,
+          "x-section": "Performance"
+        },
+        "estimated_line_length": {
+          "description": "Estimated average line length in bytes (used for large file line estimation)\nThis is used by LineIterator to estimate line positions in large files\nwithout line metadata. Typical values: 80-120 bytes.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 80,
+          "x-section": "Performance"
+        },
+        "read_concurrency": {
+          "description": "Maximum number of concurrent filesystem read requests.\nUsed during line-feed scanning and other bulk I/O operations.\nHigher values improve throughput, especially for remote filesystems.\nDefault: 64",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 64,
+          "x-section": "Performance"
+        },
+        "file_tree_poll_interval_ms": {
+          "description": "Poll interval in milliseconds for refreshing expanded directories in the file explorer.\nDirectory modification times are checked at this interval to detect new/deleted files.\nLower values detect changes faster but use more CPU.\nDefault: 3000ms (3 seconds)",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 3000,
+          "x-section": "Performance"
+        }
+      }
+    },
+    "CursorStyle": {
+      "description": "Terminal cursor style",
+      "type": "string",
+      "enum": [
+        "default",
+        "blinking_block",
+        "steady_block",
+        "blinking_bar",
+        "steady_bar",
+        "blinking_underline",
+        "steady_underline"
+      ]
+    },
+    "LineEndingOption": {
+      "description": "Default line ending format for new files",
+      "type": "string",
+      "enum": [
+        "lf",
+        "crlf",
+        "cr"
+      ],
+      "default": "lf"
+    },
+    "FileExplorerConfig": {
+      "description": "File explorer configuration",
+      "type": "object",
+      "properties": {
+        "respect_gitignore": {
+          "description": "Whether to respect .gitignore files",
+          "type": "boolean",
+          "default": true
+        },
+        "show_hidden": {
+          "description": "Whether to show hidden files (starting with .) by default",
+          "type": "boolean",
+          "default": false
+        },
+        "show_gitignored": {
+          "description": "Whether to show gitignored files by default",
+          "type": "boolean",
+          "default": false
+        },
+        "custom_ignore_patterns": {
+          "description": "Custom patterns to ignore (in addition to .gitignore)",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "width": {
+          "description": "Width of file explorer as percentage (0.0 to 1.0)",
+          "type": "number",
+          "format": "float",
+          "default": 0.30000001192092896
+        }
+      }
+    },
+    "FileBrowserConfig": {
+      "description": "File browser configuration (for Open File dialog)",
+      "type": "object",
+      "properties": {
+        "show_hidden": {
+          "description": "Whether to show hidden files (starting with .) by default in Open File dialog",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "ClipboardConfig": {
+      "description": "Clipboard configuration\n\nControls which clipboard methods are used for copy/paste operations.\nBy default, all methods are enabled and the editor tries them in order:\n1. OSC 52 escape sequences (works in modern terminals like Kitty, Alacritty, Wezterm)\n2. System clipboard via X11/Wayland APIs (works in Gnome Console, XFCE Terminal, etc.)\n3. Internal clipboard (always available as fallback)\n\nIf you experience hangs or issues (e.g., when using PuTTY or certain SSH setups),\nyou can disable specific methods.",
+      "type": "object",
+      "properties": {
+        "use_osc52": {
+          "description": "Enable OSC 52 escape sequences for clipboard access (default: true)\nDisable this if your terminal doesn't support OSC 52 or if it causes hangs",
+          "type": "boolean",
+          "default": true
+        },
+        "use_system_clipboard": {
+          "description": "Enable system clipboard access via X11/Wayland APIs (default: true)\nDisable this if you don't have a display server or it causes issues",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "TerminalConfig": {
+      "description": "Terminal configuration",
+      "type": "object",
+      "properties": {
+        "jump_to_end_on_output": {
+          "description": "When viewing terminal scrollback and new output arrives,\nautomatically jump back to terminal mode (default: true)",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "Keybinding": {
+      "description": "Keybinding definition",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "Key name (e.g., \"a\", \"Enter\", \"F1\") - for single-key bindings",
+          "type": "string"
+        },
+        "modifiers": {
+          "description": "Modifiers (e.g., [\"ctrl\"], [\"ctrl\", \"shift\"]) - for single-key bindings",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "keys": {
+          "description": "Key sequence for chord bindings (e.g., [{\"key\": \"x\", \"modifiers\": [\"ctrl\"]}, {\"key\": \"s\", \"modifiers\": [\"ctrl\"]}])\nIf present, takes precedence over key + modifiers",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/KeyPress"
+          }
+        },
+        "action": {
+          "description": "Action to perform (e.g., \"insert_char\", \"move_left\")",
+          "type": "string"
+        },
+        "args": {
+          "description": "Optional arguments for the action",
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "when": {
+          "description": "Optional condition (e.g., \"mode == insert\")",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "x-display-field": "/action"
+    },
+    "KeyPress": {
+      "description": "A single key in a sequence",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "Key name (e.g., \"a\", \"Enter\", \"F1\")",
+          "type": "string"
+        },
+        "modifiers": {
+          "description": "Modifiers (e.g., [\"ctrl\"], [\"ctrl\", \"shift\"])",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "KeymapConfig": {
+      "description": "Keymap configuration (for built-in and user-defined keymaps)",
+      "type": "object",
+      "properties": {
+        "inherits": {
+          "description": "Optional parent keymap to inherit from",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bindings": {
+          "description": "Keybindings defined in this keymap",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Keybinding"
+          },
+          "default": []
+        }
+      },
+      "x-display-field": "/inherits"
+    },
+    "KeybindingMapOptions": {
+      "description": "Available keybinding maps",
+      "type": "string",
+      "enum": [
+        "default",
+        "emacs",
+        "vscode",
+        "macos",
+        "macos-gui"
+      ]
+    },
+    "LanguageConfig": {
+      "description": "Language-specific configuration",
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "description": "File extensions for this language (e.g., [\"rs\"] for Rust)",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "filenames": {
+          "description": "Exact filenames for this language (e.g., [\"Makefile\", \"GNUmakefile\"])",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "grammar": {
+          "description": "Tree-sitter grammar name",
+          "type": "string",
+          "default": ""
+        },
+        "comment_prefix": {
+          "description": "Comment prefix",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "auto_indent": {
+          "description": "Whether to auto-indent",
+          "type": "boolean",
+          "default": true
+        },
+        "auto_close": {
+          "description": "Whether to auto-close brackets, parentheses, and quotes for this language.\nIf not specified (`null`), falls back to the global `editor.auto_close` setting.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "auto_surround": {
+          "description": "Whether to auto-surround selected text with matching pairs for this language.\nIf not specified (`null`), falls back to the global `editor.auto_surround` setting.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "highlighter": {
+          "description": "Preferred highlighter backend (auto, tree-sitter, or textmate)",
+          "$ref": "#/$defs/HighlighterPreference",
+          "default": "auto"
+        },
+        "textmate_grammar": {
+          "description": "Path to custom TextMate grammar file (optional)\nIf specified, this grammar will be used when highlighter is \"textmate\"",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "show_whitespace_tabs": {
+          "description": "Whether to show whitespace tab indicators (→) for this language\nDefaults to true. Set to false for languages like Go that use tabs for indentation.",
+          "type": "boolean",
+          "default": true
+        },
+        "line_wrap": {
+          "description": "Whether to enable line wrapping for this language.\nIf not specified (`null`), falls back to the global `editor.line_wrap` setting.\nUseful for prose-heavy languages like Markdown where wrapping is desirable\neven if globally disabled.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "wrap_column": {
+          "description": "Column at which to wrap lines for this language.\nIf not specified (`null`), falls back to the global `editor.wrap_column` setting.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null
+        },
+        "page_view": {
+          "description": "Whether to automatically enable page view (compose mode) for this language.\nPage view provides a document-style layout with centered content,\nconcealed formatting markers, and intelligent word wrapping.\nIf not specified (`null`), page view is not auto-activated.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "page_width": {
+          "description": "Width of the page in page view mode (in columns).\nControls the content width when page view is active, with centering margins.\nIf not specified (`null`), falls back to the global `editor.page_width` setting.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null
+        },
+        "use_tabs": {
+          "description": "Whether pressing Tab should insert a tab character instead of spaces.\nIf not specified (`null`), falls back to the global `editor.use_tabs` setting.\nSet to true for languages like Go and Makefile that require tabs.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "tab_size": {
+          "description": "Tab size (number of spaces per tab) for this language.\nIf not specified, falls back to the global editor.tab_size setting.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null
+        },
+        "formatter": {
+          "description": "The formatter for this language (used by format_buffer command)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FormatterConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "format_on_save": {
+          "description": "Whether to automatically format on save (uses the formatter above)",
+          "type": "boolean",
+          "default": false
+        },
+        "on_save": {
+          "description": "Actions to run when a file of this language is saved (linters, etc.)\nActions are run in order; if any fails (non-zero exit), subsequent actions don't run\nNote: Use `formatter` + `format_on_save` for formatting, not on_save",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OnSaveAction"
+          },
+          "default": []
+        },
+        "word_characters": {
+          "description": "Extra characters (beyond alphanumeric and `_`) considered part of\nidentifiers for this language. Used by dabbrev and buffer-word\ncompletion to correctly tokenise language-specific naming conventions.\n\nExamples:\n- Lisp/Clojure/CSS: `\"-\"` (kebab-case identifiers)\n- PHP/Bash: `\"$\"` (variable sigils)\n- Ruby: `\"?!\"` (predicate/bang methods)\n- Rust (default): `\"\"` (standard alphanumeric + underscore)",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "x-display-field": "/grammar"
+    },
+    "HighlighterPreference": {
+      "description": "Preference for which syntax highlighting backend to use",
+      "oneOf": [
+        {
+          "description": "Use tree-sitter if available, fall back to TextMate",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "Force tree-sitter only (no highlighting if unavailable)",
+          "type": "string",
+          "const": "tree-sitter"
+        },
+        {
+          "description": "Force TextMate grammar (skip tree-sitter even if available)",
+          "type": "string",
+          "const": "textmate"
+        }
+      ]
+    },
+    "FormatterConfig": {
+      "description": "Formatter configuration for a language",
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "The formatter command to run (e.g., \"rustfmt\", \"prettier\")",
+          "type": "string"
+        },
+        "args": {
+          "description": "Arguments to pass to the formatter\nUse \"$FILE\" to include the file path",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "stdin": {
+          "description": "Whether to pass buffer content via stdin (default: true)\nMost formatters read from stdin and write to stdout",
+          "type": "boolean",
+          "default": true
+        },
+        "timeout_ms": {
+          "description": "Timeout in milliseconds (default: 10000)",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 10000
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "x-display-field": "/command"
+    },
+    "OnSaveAction": {
+      "description": "Action to run when a file is saved (for linters, etc.)",
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "The shell command to run\nThe file path is available as $FILE or as an argument",
+          "type": "string"
+        },
+        "args": {
+          "description": "Arguments to pass to the command\nUse \"$FILE\" to include the file path",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "working_dir": {
+          "description": "Working directory for the command (defaults to project root)",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "stdin": {
+          "description": "Whether to use the buffer content as stdin",
+          "type": "boolean",
+          "default": false
+        },
+        "timeout_ms": {
+          "description": "Timeout in milliseconds (default: 10000)",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 10000
+        },
+        "enabled": {
+          "description": "Whether this action is enabled (default: true)\nSet to false to disable an action without removing it from config",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "x-display-field": "/command"
+    },
+    "LspLanguageConfig": {
+      "description": "One or more LSP server configs for this language.\nAccepts both a single object and an array for backwards compatibility.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LspServerConfig"
+      }
+    },
+    "LspServerConfig": {
+      "description": "LSP server configuration",
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "Command to spawn the server.\nRequired when enabled=true, ignored when enabled=false.",
+          "type": "string",
+          "default": "",
+          "x-order": 1
+        },
+        "enabled": {
+          "description": "Whether the server is enabled",
+          "type": "boolean",
+          "default": true,
+          "x-order": 2
+        },
+        "name": {
+          "description": "Display name for this server (e.g., \"tsserver\", \"eslint\").\nDefaults to the command basename if not specified.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "x-order": 3
+        },
+        "args": {
+          "description": "Arguments to pass to the server",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "x-order": 4
+        },
+        "auto_start": {
+          "description": "Whether to auto-start this LSP server when opening matching files\nIf false (default), the server must be started manually via command palette",
+          "type": "boolean",
+          "default": false,
+          "x-order": 5
+        },
+        "root_markers": {
+          "description": "File/directory names to search for when detecting the workspace root.\nThe editor walks upward from the opened file's directory looking for\nany of these markers. The first directory containing a match becomes\nthe workspace root sent to the LSP server.\n\nIf empty, falls back to `[\".git\"]` as a universal marker.\nIf the walk reaches a filesystem boundary without a match, uses the\nfile's parent directory (never cwd or $HOME).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "x-order": 6
+        },
+        "env": {
+          "description": "Environment variables to set for the LSP server process.\nThese are added to (or override) the inherited parent environment.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "x-section": "Advanced",
+          "x-order": 10
+        },
+        "language_id_overrides": {
+          "description": "Override the LSP languageId sent in textDocument/didOpen based on file extension.\nMaps file extension (without dot) to LSP language ID string.\nFor example: `{\"tsx\": \"typescriptreact\", \"jsx\": \"javascriptreact\"}`",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "x-section": "Advanced",
+          "x-order": 11
+        },
+        "initialization_options": {
+          "description": "Custom initialization options to send to the server\nThese are passed in the `initializationOptions` field of the LSP Initialize request",
+          "default": null,
+          "x-section": "Advanced",
+          "x-order": 12
+        },
+        "only_features": {
+          "description": "Restrict this server to only handle the listed features.\nMutually exclusive with `except_features`. If neither is set, all features are handled.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/LspFeature"
+          },
+          "default": null,
+          "x-section": "Advanced",
+          "x-order": 13
+        },
+        "except_features": {
+          "description": "Exclude the listed features from this server.\nMutually exclusive with `only_features`. If neither is set, all features are handled.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/LspFeature"
+          },
+          "default": null,
+          "x-section": "Advanced",
+          "x-order": 14
+        },
+        "process_limits": {
+          "description": "Process resource limits (memory and CPU)",
+          "$ref": "#/$defs/ProcessLimits",
+          "default": {
+            "max_memory_percent": 50,
+            "max_cpu_percent": 90,
+            "enabled": true
+          },
+          "x-section": "Advanced",
+          "x-order": 15
+        }
+      },
+      "x-display-field": "/command"
+    },
+    "LspFeature": {
+      "description": "LSP features that can be routed to specific servers in a multi-server setup.\n\nFeatures are classified as either \"merged\" (results from all servers are combined)\nor \"exclusive\" (first eligible server wins). This classification is used by the\ndispatch layer, not by this enum itself.",
+      "oneOf": [
+        {
+          "description": "Diagnostics (merged: combined from all servers)",
+          "type": "string",
+          "const": "diagnostics"
+        },
+        {
+          "description": "Code completion (merged: combined from all servers)",
+          "type": "string",
+          "const": "completion"
+        },
+        {
+          "description": "Code actions / quick fixes (merged: combined from all servers)",
+          "type": "string",
+          "const": "code_action"
+        },
+        {
+          "description": "Document symbols (merged: combined from all servers)",
+          "type": "string",
+          "const": "document_symbols"
+        },
+        {
+          "description": "Workspace symbols (merged: combined from all servers)",
+          "type": "string",
+          "const": "workspace_symbols"
+        },
+        {
+          "description": "Hover information (exclusive: first eligible server wins)",
+          "type": "string",
+          "const": "hover"
+        },
+        {
+          "description": "Go to definition, declaration, type definition, implementation (exclusive)",
+          "type": "string",
+          "const": "definition"
+        },
+        {
+          "description": "Find references (exclusive)",
+          "type": "string",
+          "const": "references"
+        },
+        {
+          "description": "Document formatting and range formatting (exclusive)",
+          "type": "string",
+          "const": "format"
+        },
+        {
+          "description": "Rename and prepare rename (exclusive)",
+          "type": "string",
+          "const": "rename"
+        },
+        {
+          "description": "Signature help (exclusive)",
+          "type": "string",
+          "const": "signature_help"
+        },
+        {
+          "description": "Inlay hints (exclusive)",
+          "type": "string",
+          "const": "inlay_hints"
+        },
+        {
+          "description": "Folding ranges (exclusive)",
+          "type": "string",
+          "const": "folding_range"
+        },
+        {
+          "description": "Semantic tokens (exclusive)",
+          "type": "string",
+          "const": "semantic_tokens"
+        },
+        {
+          "description": "Document highlight (exclusive)",
+          "type": "string",
+          "const": "document_highlight"
+        }
+      ]
+    },
+    "ProcessLimits": {
+      "description": "Configuration for process resource limits",
+      "type": "object",
+      "properties": {
+        "max_memory_percent": {
+          "description": "Maximum memory usage as percentage of total system memory (None = no limit)\nDefault is 50% of total system memory",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "max_cpu_percent": {
+          "description": "Maximum CPU usage as percentage of total CPU (None = no limit)\nFor multi-core systems, 100% = 1 core, 200% = 2 cores, etc.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "enabled": {
+          "description": "Enable resource limiting (can be disabled per-platform)",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "WarningsConfig": {
+      "description": "Warning notification configuration",
+      "type": "object",
+      "properties": {
+        "show_status_indicator": {
+          "description": "Show warning/error indicators in the status bar (default: true)\nWhen enabled, displays a colored indicator for LSP errors and other warnings",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "PluginConfig": {
+      "description": "Configuration for a single plugin",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Whether this plugin is enabled (default: true)\nWhen disabled, the plugin will not be loaded or executed.",
+          "type": "boolean",
+          "default": true
+        },
+        "path": {
+          "description": "Path to the plugin file (populated automatically when scanning)\nThis is filled in by the plugin system and should not be set manually.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "readOnly": true
+        }
+      },
+      "x-display-field": "/enabled"
+    },
+    "PackagesConfig": {
+      "description": "Package manager configuration for plugins and themes",
+      "type": "object",
+      "properties": {
+        "sources": {
+          "description": "Registry sources (git repository URLs containing plugin/theme indices)\nDefault: [\"https://github.com/sinelaw/fresh-plugins-registry\"]",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "https://github.com/sinelaw/fresh-plugins-registry"
+          ]
+        }
+      }
+    }
+  }
+}

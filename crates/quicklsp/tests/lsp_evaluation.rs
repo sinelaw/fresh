@@ -56,8 +56,8 @@ fn evaluate_document_symbols() {
         println!("\n  File: {lang}");
         println!("  Symbols found: {}", symbols.len());
         println!(
-            "  {:<30} {:<12} {:<6} {:<6} {}",
-            "Name", "Kind", "Line", "Col", "Keyword"
+            "  {:<30} {:<12} {:<6} {:<6} Keyword",
+            "Name", "Kind", "Line", "Col"
         );
         println!(
             "  {:-<30} {:-<12} {:-<6} {:-<6} {:-<10}",
@@ -112,7 +112,7 @@ fn evaluate_go_to_definition() {
         "FooBarBaz",
     ];
 
-    println!("\n  {:<30} {:<6} {}", "Symbol", "Defs", "Locations");
+    println!("\n  {:<30} {:<6} Locations", "Symbol", "Defs");
     println!("  {:-<30} {:-<6} {:-<50}", "", "", "");
 
     for name in queries {
@@ -487,8 +487,8 @@ fn evaluate_doc_extraction_detail() {
         let symbols = ws.file_symbols(&path);
         println!("\n  File: {}", lang);
         println!(
-            "  {:<25} {:<10} {:<50} {}",
-            "Name", "Kind", "Signature", "Doc (first line)"
+            "  {:<25} {:<10} {:<50} Doc (first line)",
+            "Name", "Kind", "Signature"
         );
         println!("  {:-<25} {:-<10} {:-<50} {:-<30}", "", "", "", "");
         for s in &symbols {
