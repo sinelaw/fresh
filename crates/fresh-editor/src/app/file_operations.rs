@@ -48,7 +48,11 @@ impl Editor {
                     if is_not_found {
                         if let Some(parent) = path.parent() {
                             if !self.filesystem.exists(parent) {
-                                let dir_name = parent.display().to_string();
+                                let dir_name = parent
+                                    .strip_prefix(&self.working_dir)
+                                    .unwrap_or(parent)
+                                    .display()
+                                    .to_string();
                                 self.start_prompt(
                                     t!("buffer.create_directory_confirm", name = &dir_name)
                                         .to_string(),

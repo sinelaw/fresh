@@ -586,7 +586,11 @@ impl Editor {
         // Check if parent directory exists
         if let Some(parent) = full_path.parent() {
             if !parent.as_os_str().is_empty() && !self.filesystem.exists(parent) {
-                let dir_name = parent.display().to_string();
+                let dir_name = parent
+                    .strip_prefix(&self.working_dir)
+                    .unwrap_or(parent)
+                    .display()
+                    .to_string();
                 self.start_prompt(
                     t!("buffer.create_directory_confirm", name = &dir_name).to_string(),
                     PromptType::ConfirmCreateDirectory { path: full_path },

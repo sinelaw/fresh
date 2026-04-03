@@ -559,7 +559,7 @@ fn test_save_as_relative_path() {
 fn test_save_as_nested_path() {
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    let mut harness = EditorTestHarness::with_temp_project(200, 24).unwrap();
+    let mut harness = EditorTestHarness::with_temp_project(100, 24).unwrap();
     let project_dir = harness.project_dir().unwrap();
 
     // Start with new buffer
