@@ -112,6 +112,82 @@ impl Workspace {
         self.files.insert(path, FileEntry { source, symbols });
     }
 
+    /// Scan a directory tree and index all files with supported extensions.
+    ///
+    /// This is the workspace-level equivalent of dependency indexing: walk the
+    /// project root and index every source file so cross-file resolution works
+    /// from startup. Safe to call from a background thread — DashMap provides
+    /// concurrent read access while scanning is in progress.
+    ///
+    /// Files already in the index (e.g., from a prior `did_open`) are skipped
+    /// unless `force` is true.
+    pub fn scan_directory(&self, root: &Path) -> ScanStats {
+        let mut stats = ScanStats::default();
+        self.scan_dir_recursive(root, &mut stats, 0);
+        tracing::info!(
+            "Workspace scan complete: {} files indexed, {} skipped, {} errors",
+            stats.indexed,
+            stats.skipped,
+            stats.errors
+        );
+        stats
+    }
+
+    /// Maximum directory depth for workspace scanning.
+    const MAX_SCAN_DEPTH: usize = 20;
+
+    fn scan_dir_recursive(&self, dir: &Path, stats: &mut ScanStats, depth: usize) {
+        if depth > Self::MAX_SCAN_DEPTH {
+            return;
+        }
+
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+
+            if path.is_dir() {
+                // Skip directories that shouldn't be scanned
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if should_skip_dir(name) {
+                        continue;
+                    }
+                }
+                self.scan_dir_recursive(&path, stats, depth + 1);
+            } else if path.is_file() {
+                // Only index files with extensions the tokenizer supports
+                let has_lang = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .and_then(LangFamily::from_extension)
+                    .is_some();
+
+                if !has_lang {
+                    continue;
+                }
+
+                // Skip files already opened by the editor (they have fresher content)
+                if self.files.contains_key(&path) {
+                    stats.skipped += 1;
+                    continue;
+                }
+
+                match std::fs::read_to_string(&path) {
+                    Ok(source) => {
+                        self.index_file(path, source);
+                        stats.indexed += 1;
+                    }
+                    Err(_) => {
+                        stats.errors += 1;
+                    }
+                }
+            }
+        }
+    }
+
     /// Re-index a file after edits (same as index_file, just a clearer name).
     pub fn update_file(&self, path: PathBuf, source: String) {
         self.index_file(path, source);
@@ -304,6 +380,40 @@ impl Default for Workspace {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ── Workspace scanning ─────────────────────────────────────────────────
+
+/// Statistics from a workspace directory scan.
+#[derive(Debug, Default)]
+pub struct ScanStats {
+    pub indexed: usize,
+    pub skipped: usize,
+    pub errors: usize,
+}
+
+/// Directories to skip during workspace scanning.
+fn should_skip_dir(name: &str) -> bool {
+    matches!(
+        name,
+        "target"
+            | "node_modules"
+            | ".git"
+            | ".hg"
+            | ".svn"
+            | "__pycache__"
+            | ".venv"
+            | "venv"
+            | ".env"
+            | "env"
+            | "build"
+            | "dist"
+            | ".next"
+            | ".nuxt"
+            | "vendor"
+            | ".idea"
+            | ".vscode"
+    ) || name.starts_with('.')
 }
 
 // ── Word-boundary text search ───────────────────────────────────────────

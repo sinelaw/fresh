@@ -135,13 +135,20 @@ impl LanguageServer for QuickLspServer {
             .log_message(MessageType::INFO, "QuickLSP initialized")
             .await;
 
-        // Kick off background dependency indexing.
-        // The DashMap-based Workspace supports concurrent reads, so LSP
-        // queries work immediately while indexing proceeds.
+        // Kick off background indexing: workspace scan first, then dependencies.
+        // Both use the same DashMap-based Workspace, so LSP queries work
+        // immediately while scanning is in progress.
+        let workspace = self.workspace.clone();
         let dep_index = self.dep_index.clone();
+        let root = self.workspace_root.read().await.clone();
         tokio::spawn(async move {
             tokio::task::spawn_blocking(move || {
-                dep_index.index_pending();
+                if let Some(root) = root {
+                    // Phase 1: scan local workspace files
+                    workspace.scan_directory(&root);
+                    // Phase 2: index dependency packages
+                    dep_index.index_pending();
+                }
             })
             .await
             .ok();
