@@ -1220,11 +1220,12 @@ impl Editor {
             lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());
         }
 
-        // Append universal LSP servers to every configured language
+        // Append enabled universal LSP servers to every configured language
         let universal_servers: Vec<LspServerConfig> = config
             .universal_lsp
             .values()
             .flat_map(|lc| lc.as_slice().to_vec())
+            .filter(|c| c.enabled)
             .collect();
         if !universal_servers.is_empty() {
             for language in lsp.configured_languages() {
