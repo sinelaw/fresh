@@ -295,10 +295,7 @@ impl Workspace {
     pub fn hover_info(&self, name: &str) -> Option<(Option<String>, Option<String>)> {
         let defs = self.find_definitions(name);
         let loc = defs.first()?;
-        Some((
-            loc.symbol.signature.clone(),
-            loc.symbol.doc_comment.clone(),
-        ))
+        Some((loc.symbol.signature.clone(), loc.symbol.doc_comment.clone()))
     }
 
     /// Find the function symbol being called at a given position.
@@ -341,8 +338,7 @@ impl Workspace {
                             name_start -= 1;
                         }
                         if name_start < name_end {
-                            let func_name: String =
-                                chars[name_start..name_end].iter().collect();
+                            let func_name: String = chars[name_start..name_end].iter().collect();
                             let defs = self.find_definitions(&func_name);
                             if let Some(loc) = defs.into_iter().next() {
                                 return Some((loc, comma_count));

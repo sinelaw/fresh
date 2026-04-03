@@ -146,7 +146,13 @@ mod tests {
 
     #[test]
     fn encode_module_path_cases() {
-        assert_eq!(encode_module_path("github.com/Azure/go-sdk"), "github.com/!azure/go-sdk");
-        assert_eq!(encode_module_path("github.com/pkg/errors"), "github.com/pkg/errors");
+        assert_eq!(
+            encode_module_path("github.com/Azure/go-sdk"),
+            "github.com/!azure/go-sdk"
+        );
+        assert_eq!(
+            encode_module_path("github.com/pkg/errors"),
+            "github.com/pkg/errors"
+        );
     }
 }

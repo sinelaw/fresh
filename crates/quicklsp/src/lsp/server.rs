@@ -359,10 +359,7 @@ impl LanguageServer for QuickLspServer {
         }))
     }
 
-    async fn signature_help(
-        &self,
-        params: SignatureHelpParams,
-    ) -> Result<Option<SignatureHelp>> {
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
         let source = match self.workspace.file_source_from_uri(uri) {
@@ -370,10 +367,11 @@ impl LanguageServer for QuickLspServer {
             None => return Ok(None),
         };
 
-        let (loc, active_param) = match self
-            .workspace
-            .signature_help_at(&source, pos.line as usize, pos.character as usize)
-        {
+        let (loc, active_param) = match self.workspace.signature_help_at(
+            &source,
+            pos.line as usize,
+            pos.character as usize,
+        ) {
             Some(result) => result,
             // Fallback to dependency index
             None => match self.dep_index.signature_help_at(

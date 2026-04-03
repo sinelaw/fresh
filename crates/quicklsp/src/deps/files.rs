@@ -40,8 +40,15 @@ pub fn collect_source_files(
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if matches!(
                     name,
-                    "test" | "tests" | "testing" | "examples" | "benches" | "benchmarks"
-                        | "__pycache__" | ".git" | "node_modules"
+                    "test"
+                        | "tests"
+                        | "testing"
+                        | "examples"
+                        | "benches"
+                        | "benchmarks"
+                        | "__pycache__"
+                        | ".git"
+                        | "node_modules"
                 ) {
                     continue;
                 }

@@ -109,64 +109,64 @@ fn extract_doc_comment(lines: &[&str], def_line: usize, lang: LangFamily) -> Opt
 
     // Scan backwards for comment lines above the definition
     if def_line > 0 {
-    let mut i = def_line - 1;
+        let mut i = def_line - 1;
 
-    loop {
-        let trimmed = lines.get(i).map(|l| l.trim()).unwrap_or("");
+        loop {
+            let trimmed = lines.get(i).map(|l| l.trim()).unwrap_or("");
 
-        if trimmed.is_empty() {
-            // Empty line — stop unless we haven't collected anything yet
-            // (allow one blank line gap for languages that use it)
-            break;
-        }
+            if trimmed.is_empty() {
+                // Empty line — stop unless we haven't collected anything yet
+                // (allow one blank line gap for languages that use it)
+                break;
+            }
 
-        match lang {
-            LangFamily::Python | LangFamily::Ruby => {
-                if let Some(stripped) = trimmed.strip_prefix('#') {
-                    doc_lines.push(stripped.trim().to_string());
-                } else {
-                    break;
+            match lang {
+                LangFamily::Python | LangFamily::Ruby => {
+                    if let Some(stripped) = trimmed.strip_prefix('#') {
+                        doc_lines.push(stripped.trim().to_string());
+                    } else {
+                        break;
+                    }
+                }
+                _ => {
+                    // /// doc comment (Rust) or /** JSDoc/Javadoc */
+                    if let Some(stripped) = trimmed.strip_prefix("///") {
+                        doc_lines.push(stripped.trim().to_string());
+                    } else if let Some(stripped) = trimmed.strip_prefix("//!") {
+                        doc_lines.push(stripped.trim().to_string());
+                    } else if let Some(stripped) = trimmed.strip_prefix("//") {
+                        doc_lines.push(stripped.trim().to_string());
+                    } else if trimmed.starts_with('*') && !trimmed.starts_with("*/") {
+                        // Inside a /** ... */ block comment
+                        let stripped = trimmed.strip_prefix('*').unwrap_or(trimmed).trim();
+                        if !stripped.is_empty() {
+                            doc_lines.push(stripped.to_string());
+                        }
+                    } else if trimmed.starts_with("/**") {
+                        // Opening of a block doc comment
+                        let stripped = trimmed
+                            .strip_prefix("/**")
+                            .unwrap_or("")
+                            .trim()
+                            .trim_end_matches("*/")
+                            .trim();
+                        if !stripped.is_empty() {
+                            doc_lines.push(stripped.to_string());
+                        }
+                        break; // This is the top of the block comment
+                    } else if trimmed == "*/" {
+                        // End of block comment — keep scanning upward
+                    } else {
+                        break;
+                    }
                 }
             }
-            _ => {
-                // /// doc comment (Rust) or /** JSDoc/Javadoc */
-                if let Some(stripped) = trimmed.strip_prefix("///") {
-                    doc_lines.push(stripped.trim().to_string());
-                } else if let Some(stripped) = trimmed.strip_prefix("//!") {
-                    doc_lines.push(stripped.trim().to_string());
-                } else if let Some(stripped) = trimmed.strip_prefix("//") {
-                    doc_lines.push(stripped.trim().to_string());
-                } else if trimmed.starts_with('*') && !trimmed.starts_with("*/") {
-                    // Inside a /** ... */ block comment
-                    let stripped = trimmed.strip_prefix('*').unwrap_or(trimmed).trim();
-                    if !stripped.is_empty() {
-                        doc_lines.push(stripped.to_string());
-                    }
-                } else if trimmed.starts_with("/**") {
-                    // Opening of a block doc comment
-                    let stripped = trimmed
-                        .strip_prefix("/**")
-                        .unwrap_or("")
-                        .trim()
-                        .trim_end_matches("*/")
-                        .trim();
-                    if !stripped.is_empty() {
-                        doc_lines.push(stripped.to_string());
-                    }
-                    break; // This is the top of the block comment
-                } else if trimmed == "*/" {
-                    // End of block comment — keep scanning upward
-                } else {
-                    break;
-                }
-            }
-        }
 
-        if i == 0 {
-            break;
+            if i == 0 {
+                break;
+            }
+            i -= 1;
         }
-        i -= 1;
-    }
     } // end if def_line > 0
 
     // Also check for Python docstrings (triple-quoted string after def/class line)
@@ -249,7 +249,11 @@ fn extract_signature(
             .unwrap_or(trimmed)
             .trim()
             .to_string();
-        return if result.is_empty() { None } else { Some(result) };
+        return if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        };
     }
 
     // For definitions with parentheses (functions), collect up to closing paren + return type
@@ -272,7 +276,11 @@ fn extract_signature(
                 '{' if paren_depth == 0 => {
                     // End of signature at opening brace
                     let result = sig.trim().to_string();
-                    return if result.is_empty() { None } else { Some(result) };
+                    return if result.is_empty() {
+                        None
+                    } else {
+                        Some(result)
+                    };
                 }
                 '(' => {
                     found_open_paren = true;
@@ -296,7 +304,11 @@ fn extract_signature(
         // If we closed all parens on this line, we have the full signature
         if found_open_paren && paren_depth == 0 {
             let result = sig.trim().to_string();
-            return if result.is_empty() { None } else { Some(result) };
+            return if result.is_empty() {
+                None
+            } else {
+                Some(result)
+            };
         }
     }
 
@@ -403,19 +415,29 @@ mod tests {
         Symbol::enrich_from_source(&mut symbols, src, LangFamily::Rust);
 
         assert_eq!(symbols.len(), 1);
-        assert_eq!(symbols[0].doc_comment.as_deref(), Some("This is the doc.\nSecond line."));
-        assert_eq!(symbols[0].signature.as_deref(), Some("fn foo(x: i32) -> bool"));
+        assert_eq!(
+            symbols[0].doc_comment.as_deref(),
+            Some("This is the doc.\nSecond line.")
+        );
+        assert_eq!(
+            symbols[0].signature.as_deref(),
+            Some("fn foo(x: i32) -> bool")
+        );
     }
 
     #[test]
     fn enrich_python_docstring() {
-        let src = "def greet(name):\n    \"\"\"Say hello to someone.\"\"\"\n    print(f\"Hi {name}\")";
+        let src =
+            "def greet(name):\n    \"\"\"Say hello to someone.\"\"\"\n    print(f\"Hi {name}\")";
         let tokens = tokenizer::scan(src, LangFamily::Python);
         let mut symbols = Symbol::from_tokens(&tokens);
         Symbol::enrich_from_source(&mut symbols, src, LangFamily::Python);
 
         assert_eq!(symbols.len(), 1);
-        assert_eq!(symbols[0].doc_comment.as_deref(), Some("Say hello to someone."));
+        assert_eq!(
+            symbols[0].doc_comment.as_deref(),
+            Some("Say hello to someone.")
+        );
         assert_eq!(symbols[0].signature.as_deref(), Some("def greet(name)"));
     }
 
@@ -426,7 +448,10 @@ mod tests {
         let mut symbols = Symbol::from_tokens(&tokens);
         Symbol::enrich_from_source(&mut symbols, src, LangFamily::Python);
 
-        assert_eq!(symbols[0].doc_comment.as_deref(), Some("Validates user data."));
+        assert_eq!(
+            symbols[0].doc_comment.as_deref(),
+            Some("Validates user data.")
+        );
     }
 
     #[test]
@@ -436,8 +461,14 @@ mod tests {
         let mut symbols = Symbol::from_tokens(&tokens);
         Symbol::enrich_from_source(&mut symbols, src, LangFamily::JsTs);
 
-        assert_eq!(symbols[0].doc_comment.as_deref(), Some("Create a config object."));
-        assert_eq!(symbols[0].signature.as_deref(), Some("function createConfig(): Config"));
+        assert_eq!(
+            symbols[0].doc_comment.as_deref(),
+            Some("Create a config object.")
+        );
+        assert_eq!(
+            symbols[0].signature.as_deref(),
+            Some("function createConfig(): Config")
+        );
     }
 
     #[test]
@@ -447,7 +478,10 @@ mod tests {
         let mut symbols = Symbol::from_tokens(&tokens);
         Symbol::enrich_from_source(&mut symbols, src, LangFamily::Rust);
 
-        assert_eq!(symbols[0].signature.as_deref(), Some("const MAX_SIZE: usize = 1024"));
+        assert_eq!(
+            symbols[0].signature.as_deref(),
+            Some("const MAX_SIZE: usize = 1024")
+        );
     }
 
     #[test]

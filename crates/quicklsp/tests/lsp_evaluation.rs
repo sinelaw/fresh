@@ -442,14 +442,13 @@ fn evaluate_signature_help() {
     // Find lines with function calls to test signature help
     println!("\n  Testing signature help on Rust fixture:");
     for (line_num, line_text) in rust_source.lines().enumerate() {
-        if line_text.contains("process_request(") && !line_text.trim().starts_with("fn ")
+        if line_text.contains("process_request(")
+            && !line_text.trim().starts_with("fn ")
             && !line_text.trim().starts_with("///")
         {
             // Simulate cursor just after the opening paren
             let col = line_text.find("process_request(").unwrap() + "process_request(".len();
-            if let Some((loc, active_param)) =
-                ws.signature_help_at(&rust_source, line_num, col)
-            {
+            if let Some((loc, active_param)) = ws.signature_help_at(&rust_source, line_num, col) {
                 println!("    line {}: {}", line_num + 1, line_text.trim());
                 println!("    signature: {:?}", loc.symbol.signature);
                 println!("    active_param: {}", active_param);
@@ -491,10 +490,7 @@ fn evaluate_doc_extraction_detail() {
             "  {:<25} {:<10} {:<50} {}",
             "Name", "Kind", "Signature", "Doc (first line)"
         );
-        println!(
-            "  {:-<25} {:-<10} {:-<50} {:-<30}",
-            "", "", "", ""
-        );
+        println!("  {:-<25} {:-<10} {:-<50} {:-<30}", "", "", "", "");
         for s in &symbols {
             let sig = s
                 .signature
@@ -585,7 +581,10 @@ fn evaluate_dependency_indexing() {
                     .and_then(|d| d.lines().next())
                     .map(|s| s.chars().take(40).collect::<String>())
                     .unwrap_or_else(|| "(no doc)".into());
-                println!("    {} -> sig: {} | doc: {}", name, sig_preview, doc_preview);
+                println!(
+                    "    {} -> sig: {} | doc: {}",
+                    name, sig_preview, doc_preview
+                );
             }
             None => println!("    {} -> (not found in indexed subset)", name),
         }
