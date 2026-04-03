@@ -163,6 +163,10 @@ pub const SVELTE_GRAMMAR: &str = include_str!("../../grammars/svelte.sublime-syn
 pub const ASTRO_GRAMMAR: &str = include_str!("../../grammars/astro.sublime-syntax");
 /// Embedded Hyprlang grammar (Hyprland config)
 pub const HYPRLANG_GRAMMAR: &str = include_str!("../../grammars/hyprlang.sublime-syntax");
+/// Embedded AutoHotkey grammar
+/// From: https://github.com/SALZKARTOFFEEEL/ahk-sublime-syntax (MIT License)
+pub const AUTOHOTKEY_GRAMMAR: &str =
+    include_str!("../../grammars/autohotkey/AutoHotkey.sublime-syntax");
 
 /// Registry of all available TextMate grammars.
 ///
@@ -539,6 +543,7 @@ impl GrammarRegistry {
             (SVELTE_GRAMMAR, "Svelte"),
             (ASTRO_GRAMMAR, "Astro"),
             (HYPRLANG_GRAMMAR, "Hyprlang"),
+            (AUTOHOTKEY_GRAMMAR, "AutoHotkey"),
         ];
 
         for (grammar_str, name) in additional_grammars {

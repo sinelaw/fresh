@@ -327,6 +327,10 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/svelte.sublime-syntax", "Svelte"),
         ("src/grammars/astro.sublime-syntax", "Astro"),
         ("src/grammars/hyprlang.sublime-syntax", "Hyprlang"),
+        (
+            "src/grammars/autohotkey/AutoHotkey.sublime-syntax",
+            "AutoHotkey",
+        ),
     ];
 
     let mut loaded = 0;
