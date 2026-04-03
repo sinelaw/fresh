@@ -148,6 +148,7 @@ pub mod undo_redo;
 pub mod undo_redo_marker_roundtrip;
 pub mod unicode_cursor;
 pub mod unicode_prompt_bugs;
+pub mod universal_lsp;
 pub mod unnamed_buffer_persistence;
 pub mod update_notification;
 pub mod vertical_rulers;
