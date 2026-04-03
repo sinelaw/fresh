@@ -559,7 +559,7 @@ fn test_save_as_relative_path() {
 fn test_save_as_nested_path() {
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    let mut harness = EditorTestHarness::with_temp_project(100, 24).unwrap();
+    let mut harness = EditorTestHarness::with_temp_project(200, 24).unwrap();
     let project_dir = harness.project_dir().unwrap();
 
     // Start with new buffer
@@ -592,6 +592,8 @@ fn test_save_as_nested_path() {
     harness.render().unwrap();
 
     // Should prompt to create the missing directory
+    // (check for "does not exist" which appears in the prompt text;
+    // use a wide terminal to avoid truncation of long macOS temp paths)
     harness.assert_screen_contains("does not exist");
 
     // Confirm directory creation
