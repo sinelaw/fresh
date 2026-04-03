@@ -9,7 +9,6 @@ members = [
     "crates/fresh-plugin-runtime",
     "crates/fresh-plugin-api-macros",
     "crates/fresh-winterm",
-    "crates/quicklsp",
 ]
 default-members = [
     "crates/fresh-editor",
@@ -19,7 +18,6 @@ default-members = [
     "crates/fresh-plugin-runtime",
     "crates/fresh-plugin-api-macros",
     "crates/fresh-winterm",
-    "crates/quicklsp",
 ]
 
 [workspace.package]
