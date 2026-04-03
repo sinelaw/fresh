@@ -88,6 +88,7 @@ pub struct PartialConfig {
     pub languages: Option<HashMap<String, PartialLanguageConfig>>,
     pub fallback: Option<LanguageConfig>,
     pub lsp: Option<HashMap<String, LspLanguageConfig>>,
+    pub universal_lsp: Option<HashMap<String, LspLanguageConfig>>,
     pub warnings: Option<PartialWarningsConfig>,
     pub plugins: Option<HashMap<String, PartialPluginConfig>>,
     pub packages: Option<PartialPackagesConfig>,
@@ -117,6 +118,7 @@ impl Merge for PartialConfig {
         merge_hashmap_recursive(&mut self.languages, &other.languages);
         self.fallback.merge_from(&other.fallback);
         merge_hashmap(&mut self.lsp, &other.lsp);
+        merge_hashmap(&mut self.universal_lsp, &other.universal_lsp);
         merge_hashmap_recursive(&mut self.plugins, &other.plugins);
 
         self.active_keybinding_map
@@ -927,6 +929,20 @@ impl From<&crate::config::Config> for PartialConfig {
                     })
                     .collect(),
             ),
+            universal_lsp: Some(
+                cfg.universal_lsp
+                    .iter()
+                    .map(|(k, v)| {
+                        let lang_config = match v {
+                            LspLanguageConfig::Multi(vec) if vec.len() == 1 => {
+                                LspLanguageConfig::Single(Box::new(vec[0].clone()))
+                            }
+                            other => other.clone(),
+                        };
+                        (k.clone(), lang_config)
+                    })
+                    .collect(),
+            ),
             warnings: Some(PartialWarningsConfig::from(&cfg.warnings)),
             // Only include plugins that differ from defaults
             // Path is auto-discovered at runtime and should never be saved
@@ -1010,6 +1026,32 @@ impl PartialConfig {
             result
         };
 
+        // Resolve universal_lsp HashMap - same merge strategy as lsp
+        let universal_lsp = {
+            let mut result = defaults.universal_lsp.clone();
+            if let Some(partial_universal_lsp) = self.universal_lsp {
+                for (key, lang_config) in partial_universal_lsp {
+                    let user_configs = lang_config.into_vec();
+                    if let Some(default_configs) = result.get(&key) {
+                        let default_slice = default_configs.as_slice();
+                        if user_configs.len() == 1 && default_slice.len() == 1 {
+                            let merged = user_configs
+                                .into_iter()
+                                .next()
+                                .unwrap()
+                                .merge_with_defaults(&default_slice[0]);
+                            result.insert(key, LspLanguageConfig::Multi(vec![merged]));
+                        } else {
+                            result.insert(key, LspLanguageConfig::Multi(user_configs));
+                        }
+                    } else {
+                        result.insert(key, LspLanguageConfig::Multi(user_configs));
+                    }
+                }
+            }
+            result
+        };
+
         // Resolve keybinding_maps HashMap - merge with defaults
         let keybinding_maps = {
             let mut result = defaults.keybinding_maps.clone();
@@ -1070,6 +1112,7 @@ impl PartialConfig {
             languages,
             fallback: self.fallback.or_else(|| defaults.fallback.clone()),
             lsp,
+            universal_lsp,
             warnings: self
                 .warnings
                 .map(|e| e.resolve(&defaults.warnings))

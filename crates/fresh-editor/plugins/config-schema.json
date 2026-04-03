@@ -178,6 +178,14 @@
       },
       "default": {}
     },
+    "universal_lsp": {
+      "description": "Universal LSP servers that apply to all languages.\nThese servers run alongside language-specific LSP servers defined in `lsp`.\nKeyed by a unique server name (e.g. \"quicklsp\").",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/LspLanguageConfig"
+      },
+      "default": {}
+    },
     "warnings": {
       "description": "Warning notification settings",
       "$ref": "#/$defs/WarningsConfig",

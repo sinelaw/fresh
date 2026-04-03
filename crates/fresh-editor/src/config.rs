@@ -392,6 +392,12 @@ pub struct Config {
     #[serde(default)]
     pub lsp: HashMap<String, LspLanguageConfig>,
 
+    /// Universal LSP servers that apply to all languages.
+    /// These servers run alongside language-specific LSP servers defined in `lsp`.
+    /// Keyed by a unique server name (e.g. "quicklsp").
+    #[serde(default)]
+    pub universal_lsp: HashMap<String, LspLanguageConfig>,
+
     /// Warning notification settings
     #[serde(default)]
     pub warnings: WarningsConfig,
@@ -1825,6 +1831,7 @@ impl Default for Config {
             languages: Self::default_languages(),
             fallback: None,
             lsp: Self::default_lsp_config(),
+            universal_lsp: Self::default_universal_lsp_config(),
             warnings: WarningsConfig::default(),
             plugins: HashMap::new(), // Populated when scanning for plugins
             packages: PackagesConfig::default(),
@@ -4598,6 +4605,40 @@ impl Config {
     #[cfg(not(feature = "runtime"))]
     fn default_lsp_config() -> HashMap<String, LspLanguageConfig> {
         // LSP is not available in WASM builds
+        HashMap::new()
+    }
+
+    /// Create default universal LSP configurations (servers that apply to all languages)
+    #[cfg(feature = "runtime")]
+    fn default_universal_lsp_config() -> HashMap<String, LspLanguageConfig> {
+        let mut universal = HashMap::new();
+
+        // quicklsp: our built-in, tree-sitter-based LSP server.
+        // Disabled by default since it's experimental.
+        universal.insert(
+            "quicklsp".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "quicklsp".to_string(),
+                args: vec![],
+                enabled: false,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: Some("QuickLSP (experimental)".to_string()),
+                only_features: None,
+                except_features: None,
+                root_markers: vec![".git".to_string()],
+            }]),
+        );
+
+        universal
+    }
+
+    /// Create empty universal LSP configurations for WASM builds
+    #[cfg(not(feature = "runtime"))]
+    fn default_universal_lsp_config() -> HashMap<String, LspLanguageConfig> {
         HashMap::new()
     }
 
