@@ -1111,6 +1111,8 @@ struct RemoteSession {
     _connection: remote::SshConnection,
     /// Tokio runtime for async operations
     _runtime: tokio::runtime::Runtime,
+    /// Background reconnect task handle - dropping this aborts the task
+    _reconnect_handle: tokio::task::JoinHandle<()>,
 }
 
 /// Result of creating filesystem - includes optional remote session to keep alive
@@ -1158,6 +1160,7 @@ fn connect_remote(remote: &RemoteLocation) -> AnyhowResult<FilesystemResult> {
 
     let connection_string = connection.connection_string();
     let channel = connection.channel();
+    let reconnect_params = connection.params().clone();
 
     tracing::info!("Connected to remote host: {}", connection_string);
 
@@ -1165,7 +1168,11 @@ fn connect_remote(remote: &RemoteLocation) -> AnyhowResult<FilesystemResult> {
         channel.clone(),
         connection_string,
     ));
-    let process_spawner = std::sync::Arc::new(remote::RemoteProcessSpawner::new(channel));
+    let process_spawner = std::sync::Arc::new(remote::RemoteProcessSpawner::new(channel.clone()));
+
+    // Spawn background reconnect task on the runtime
+    let reconnect_handle =
+        rt.block_on(async { remote::spawn_reconnect_task(channel, reconnect_params) });
 
     Ok(FilesystemResult {
         filesystem,
@@ -1173,6 +1180,7 @@ fn connect_remote(remote: &RemoteLocation) -> AnyhowResult<FilesystemResult> {
         remote_session: Some(RemoteSession {
             _connection: connection,
             _runtime: rt,
+            _reconnect_handle: reconnect_handle,
         }),
     })
 }

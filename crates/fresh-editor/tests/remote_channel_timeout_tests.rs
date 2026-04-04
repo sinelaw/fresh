@@ -6,7 +6,10 @@
 //! - Fails fast when already disconnected
 //! - Reconnects when a new transport is provided via replace_transport()
 
-use fresh::services::remote::{spawn_local_agent_transport, AgentChannel, AgentResponse};
+use fresh::services::remote::{
+    spawn_local_agent_transport, spawn_reconnect_task_with, AgentChannel, AgentResponse,
+    ReconnectConfig, SshError,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -338,4 +341,68 @@ for line in sys.stdin:
     }
 
     Some((reader, stdin))
+}
+
+/// Test: spawn_reconnect_task_with automatically reconnects when the channel
+/// disconnects.
+///
+/// Flow:
+/// 1. Start with a one-shot agent (responds once, then goes silent)
+/// 2. First request succeeds
+/// 3. Second request times out → channel is disconnected
+/// 4. The reconnect task detects the disconnect, calls the factory
+/// 5. Factory spawns a healthy agent → channel reconnects
+/// 6. Third request succeeds
+#[test]
+fn test_auto_reconnect_task() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    // Start with a one-shot agent
+    let Some(channel) = rt.block_on(spawn_one_shot_agent()) else {
+        eprintln!("Skipping test: could not spawn one-shot agent");
+        return;
+    };
+
+    channel.set_request_timeout(TEST_TIMEOUT);
+
+    // Spawn the reconnect task with a factory that spawns healthy agents.
+    // We enter the runtime context so the task can be spawned.
+    let channel_clone = channel.clone();
+    let _guard = rt.enter();
+    let connect_fn = || async {
+        let (reader, writer) = spawn_local_agent_transport().await?;
+        let reader: Box<dyn tokio::io::AsyncBufRead + Unpin + Send> = Box::new(reader);
+        let writer: Box<dyn tokio::io::AsyncWrite + Unpin + Send> = Box::new(writer);
+        Ok((reader, writer))
+    };
+    let _handle = spawn_reconnect_task_with(
+        channel_clone,
+        connect_fn,
+        ReconnectConfig {
+            interval: Duration::from_millis(100), // Fast retry for tests
+        },
+        "test",
+    );
+
+    // First request works
+    let r1 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
+    assert!(r1.is_ok(), "First request should succeed: {:?}", r1);
+
+    // Second request times out (agent went silent)
+    let r2 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
+    assert!(r2.is_err(), "Second request should timeout");
+    assert!(!channel.is_connected(), "Should be disconnected");
+
+    // Wait for auto-reconnection (semantic wait)
+    while !channel.is_connected() {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // Third request works on the new connection
+    let r3 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
+    assert!(
+        r3.is_ok(),
+        "Request after auto-reconnect should succeed: {:?}",
+        r3
+    );
 }

@@ -223,6 +223,211 @@ impl Drop for SshConnection {
     }
 }
 
+/// Default interval between reconnection attempts.
+const DEFAULT_RECONNECT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Configuration for the reconnect task.
+pub struct ReconnectConfig {
+    /// How long to wait between reconnection attempts.
+    pub interval: std::time::Duration,
+}
+
+impl Default for ReconnectConfig {
+    fn default() -> Self {
+        Self {
+            interval: DEFAULT_RECONNECT_INTERVAL,
+        }
+    }
+}
+
+/// Spawn a background task that automatically reconnects when the channel
+/// disconnects.
+///
+/// The task monitors `channel.is_connected()` and, when false, attempts to
+/// establish a new SSH connection using the given `params`. On success, it
+/// calls `channel.replace_transport()` to hot-swap the underlying reader/writer.
+///
+/// The task runs until the channel is dropped (write_tx closed) or the
+/// returned `tokio::task::JoinHandle` is aborted.
+pub fn spawn_reconnect_task(
+    channel: std::sync::Arc<AgentChannel>,
+    params: ConnectionParams,
+) -> tokio::task::JoinHandle<()> {
+    let connect_fn = move || {
+        let params = params.clone();
+        async move {
+            let (reader, writer, _child) = establish_ssh_transport(&params).await?;
+            // Box the reader/writer so they have a uniform type
+            let reader: Box<dyn tokio::io::AsyncBufRead + Unpin + Send> = Box::new(reader);
+            let writer: Box<dyn tokio::io::AsyncWrite + Unpin + Send> = Box::new(writer);
+            Ok::<_, SshError>((reader, writer))
+        }
+    };
+
+    spawn_reconnect_task_with(
+        channel,
+        connect_fn,
+        ReconnectConfig::default(),
+        "SSH remote",
+    )
+}
+
+/// Spawn a reconnect task with a custom connection factory.
+///
+/// This is the generic version used by both production (via `spawn_reconnect_task`)
+/// and tests (with a fake connection factory). The `connect_fn` is called each
+/// time a reconnection attempt is made. It should return a `(reader, writer)` pair
+/// on success.
+pub fn spawn_reconnect_task_with<F, Fut>(
+    channel: std::sync::Arc<AgentChannel>,
+    connect_fn: F,
+    config: ReconnectConfig,
+    label: &'static str,
+) -> tokio::task::JoinHandle<()>
+where
+    F: Fn() -> Fut + Send + 'static,
+    Fut: std::future::Future<
+            Output = Result<
+                (
+                    Box<dyn tokio::io::AsyncBufRead + Unpin + Send>,
+                    Box<dyn tokio::io::AsyncWrite + Unpin + Send>,
+                ),
+                SshError,
+            >,
+        > + Send,
+{
+    tokio::spawn(async move {
+        loop {
+            // Wait until disconnected
+            while channel.is_connected() {
+                tokio::time::sleep(config.interval).await;
+            }
+
+            tracing::info!("{label}: connection lost, attempting reconnection...");
+
+            // Retry loop
+            loop {
+                tokio::time::sleep(config.interval).await;
+
+                // Check if channel was dropped (write_tx gone)
+                if !channel.is_connected() {
+                    // Still disconnected — try to reconnect
+                } else {
+                    // Something else reconnected us (e.g., manual replace_transport)
+                    break;
+                }
+
+                match (connect_fn)().await {
+                    Ok((reader, writer)) => {
+                        tracing::info!("{label}: reconnected successfully");
+                        channel.replace_transport(reader, writer).await;
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::debug!("{label}: reconnection attempt failed: {e}");
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Establish a new SSH connection and return the raw transport + child process.
+///
+/// This is the lower-level function used by both `SshConnection::connect` and
+/// the reconnect task. It spawns an SSH process, bootstraps the Python agent,
+/// and returns the reader/writer pair ready for use with `AgentChannel`.
+async fn establish_ssh_transport(
+    params: &ConnectionParams,
+) -> Result<
+    (
+        BufReader<tokio::process::ChildStdout>,
+        tokio::process::ChildStdin,
+        Child,
+    ),
+    SshError,
+> {
+    let mut cmd = Command::new("ssh");
+
+    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
+    // Disable password prompts for reconnection (non-interactive)
+    cmd.arg("-o").arg("BatchMode=yes");
+
+    if let Some(port) = params.port {
+        cmd.arg("-p").arg(port.to_string());
+    }
+
+    if let Some(ref identity) = params.identity_file {
+        cmd.arg("-i").arg(identity);
+    }
+
+    cmd.arg(format!("{}@{}", params.user, params.host));
+
+    let agent_len = AGENT_SOURCE.len();
+    let bootstrap = format!(
+        "python3 -u -c \"import sys;exec(sys.stdin.read({}))\"",
+        agent_len
+    );
+    cmd.arg(bootstrap);
+
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null()); // No terminal for reconnection
+
+    let mut child = cmd.spawn()?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| SshError::AgentStartFailed("failed to get stdin".to_string()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| SshError::AgentStartFailed("failed to get stdout".to_string()))?;
+
+    // Send the agent code
+    stdin.write_all(AGENT_SOURCE.as_bytes()).await?;
+    stdin.flush().await?;
+
+    let mut reader = BufReader::new(stdout);
+
+    // Wait for ready message
+    let mut ready_line = String::new();
+    match reader.read_line(&mut ready_line).await {
+        Ok(0) => {
+            return Err(SshError::AgentStartFailed(
+                "connection closed during reconnect".to_string(),
+            ));
+        }
+        Ok(_) => {}
+        Err(e) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),
+    }
+
+    let ready: AgentResponse = serde_json::from_str(&ready_line).map_err(|e| {
+        SshError::AgentStartFailed(format!(
+            "invalid ready message '{}': {}",
+            ready_line.trim(),
+            e
+        ))
+    })?;
+
+    if !ready.is_ready() {
+        return Err(SshError::AgentStartFailed(
+            "agent did not send ready message".to_string(),
+        ));
+    }
+
+    let version = ready.version.unwrap_or(0);
+    if version != crate::services::remote::protocol::PROTOCOL_VERSION {
+        return Err(SshError::VersionMismatch {
+            expected: crate::services::remote::protocol::PROTOCOL_VERSION,
+            got: version,
+        });
+    }
+
+    Ok((reader, stdin, child))
+}
+
 /// Spawn a local agent process for testing (no SSH)
 ///
 /// This is used by integration tests to test the full stack without SSH.
