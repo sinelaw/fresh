@@ -501,9 +501,9 @@ impl Editor {
         let mut any_refreshed = false;
         if let Some(ref rx) = self.pending_dir_poll_rx {
             match rx.try_recv() {
-                Ok(results) => {
+                Ok((dir_results, git_index_mtime)) => {
                     self.pending_dir_poll_rx = None;
-                    any_refreshed = self.process_dir_poll_results(results);
+                    any_refreshed = self.process_dir_poll_results(dir_results, git_index_mtime);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
                     return false;
@@ -522,12 +522,18 @@ impl Editor {
         }
         self.last_file_tree_poll = self.time_source.now();
 
-        // Check .git/index mtime synchronously on every tick — this reads a
-        // local file and is always fast, even with a remote filesystem.
-        let git_index_changed = self.check_git_index_mtime();
-        if git_index_changed {
-            self.refresh_all_expanded_dirs();
-            any_refreshed = true;
+        // Resolve the git index path once (first poll only). This uses the
+        // ProcessSpawner which may block briefly on the first call, but only
+        // happens once per session.
+        if !self.git_index_resolved {
+            self.git_index_resolved = true;
+            if let Some(path) = self.resolve_git_index() {
+                if let Ok(meta) = self.filesystem.metadata(&path) {
+                    if let Some(mtime) = meta.modified {
+                        self.dir_mod_times.insert(path, mtime);
+                    }
+                }
+            }
         }
 
         // Get file explorer reference
@@ -543,11 +549,18 @@ impl Editor {
             .map(|node| (node.id, node.entry.path.clone()))
             .collect();
 
-        if expanded_dirs.is_empty() {
+        // Find the git index path to include in the background metadata check
+        let git_index_path: Option<PathBuf> = self
+            .dir_mod_times
+            .keys()
+            .find(|p| p.ends_with(".git/index") || p.ends_with(".git\\index"))
+            .cloned();
+
+        if expanded_dirs.is_empty() && git_index_path.is_none() {
             return any_refreshed;
         }
 
-        // Spawn background metadata checks
+        // Spawn background metadata checks (directories + git index)
         let (tx, rx) = std::sync::mpsc::channel();
         let fs = self.filesystem.clone();
         std::thread::Builder::new()
@@ -560,8 +573,15 @@ impl Editor {
                         (node_id, path, mtime)
                     })
                     .collect();
+
+                // Also check git index mtime in the same background thread
+                let git_index_mtime = git_index_path.and_then(|path| {
+                    let mtime = fs.metadata(&path).ok().and_then(|m| m.modified);
+                    Some((path, mtime?))
+                });
+
                 // Receiver may have been dropped during shutdown — that's fine.
-                if tx.send(results).is_err() {}
+                if tx.send((results, git_index_mtime)).is_err() {}
             })
             .ok();
         self.pending_dir_poll_rx = Some(rx);
@@ -577,6 +597,7 @@ impl Editor {
             PathBuf,
             Option<std::time::SystemTime>,
         )>,
+        git_index_mtime: Option<(PathBuf, std::time::SystemTime)>,
     ) -> bool {
         let mut dirs_to_refresh = Vec::new();
 
@@ -596,7 +617,27 @@ impl Editor {
             }
         }
 
-        if dirs_to_refresh.is_empty() {
+        // Check if .git/index mtime changed (detected in background thread)
+        let git_index_changed = if let Some((path, current_mtime)) = git_index_mtime {
+            if let Some(&stored_mtime) = self.dir_mod_times.get(&path) {
+                if current_mtime != stored_mtime {
+                    self.dir_mod_times.insert(path, current_mtime);
+                    self.plugin_manager.run_hook(
+                        "focus_gained",
+                        crate::services::plugins::hooks::HookArgs::FocusGained,
+                    );
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if dirs_to_refresh.is_empty() && !git_index_changed {
             return false;
         }
 
@@ -637,68 +678,37 @@ impl Editor {
         }
     }
 
-    /// Check `.git/index` mtime to detect commits, staging, checkouts, etc.
-    /// Resolves the git dir once via `git rev-parse`, then tracks the index file's
-    /// mtime in `dir_mod_times` (the same map used for directory polling).
-    /// Returns true if the index mtime changed.
-    fn check_git_index_mtime(&mut self) -> bool {
-        // Resolve the git index path once and add it to dir_mod_times.
-        if !self.git_index_resolved {
-            self.git_index_resolved = true;
-            if let Some(path) = Self::resolve_git_index(&self.working_dir) {
-                if let Ok(mtime) = std::fs::metadata(&path).and_then(|m| m.modified()) {
-                    self.dir_mod_times.insert(path, mtime);
-                }
-            }
-            return false; // First poll — just record, don't trigger
-        }
-
-        // Find the git index entry in dir_mod_times and check for mtime change.
-        // There is at most one such entry.
-        let git_index_path = self
-            .dir_mod_times
-            .keys()
-            .find(|p| p.ends_with(".git/index") || p.ends_with(".git\\index"))
-            .cloned();
-
-        let Some(path) = git_index_path else {
-            return false; // Not a git repo
-        };
-
-        let current_mtime = match std::fs::metadata(&path).and_then(|m| m.modified()) {
-            Ok(mtime) => mtime,
-            Err(_) => return false,
-        };
-
-        let stored_mtime = self.dir_mod_times[&path];
-        if current_mtime != stored_mtime {
-            self.dir_mod_times.insert(path, current_mtime);
-            self.plugin_manager.run_hook(
-                "focus_gained",
-                crate::services::plugins::hooks::HookArgs::FocusGained,
-            );
-            return true;
-        }
-
-        false
-    }
-
     /// Resolve the path to `.git/index` via `git rev-parse --git-dir`.
-    /// Works in regular repos, worktrees, submodules, and subdirectories.
-    fn resolve_git_index(working_dir: &Path) -> Option<PathBuf> {
-        let output = std::process::Command::new("git")
-            .args(["rev-parse", "--git-dir"])
-            .current_dir(working_dir)
-            .output()
-            .ok()?;
-        if !output.status.success() {
+    /// Uses the `ProcessSpawner` so it works transparently on both local
+    /// and remote (SSH) filesystems.
+    fn resolve_git_index(&self) -> Option<PathBuf> {
+        let spawner = &self.process_spawner;
+        let cwd = self.working_dir.to_string_lossy().to_string();
+
+        // ProcessSpawner is async — run it on the tokio runtime if available,
+        // otherwise fall back to blocking (should only happen in tests without
+        // a runtime).
+        let result = if let Some(ref rt) = self.tokio_runtime {
+            rt.block_on(spawner.spawn(
+                "git".to_string(),
+                vec!["rev-parse".to_string(), "--git-dir".to_string()],
+                Some(cwd),
+            ))
+        } else {
+            // No runtime — can't run async spawner. This shouldn't happen
+            // in production but can in minimal test setups.
+            return None;
+        };
+
+        let output = result.ok()?;
+        if output.exit_code != 0 {
             return None;
         }
-        let git_dir = std::str::from_utf8(&output.stdout).ok()?.trim();
+        let git_dir = output.stdout.trim();
         let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
             PathBuf::from(git_dir)
         } else {
-            working_dir.join(git_dir)
+            self.working_dir.join(git_dir)
         };
         Some(git_dir_path.join("index"))
     }

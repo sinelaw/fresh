@@ -778,14 +778,17 @@ pub struct Editor {
         Option<std::sync::mpsc::Receiver<Vec<(PathBuf, Option<std::time::SystemTime>)>>>,
 
     /// Receiver for background directory change poll results.
+    /// The tuple contains: (dir metadata results, optional git index mtime).
+    #[allow(clippy::type_complexity)]
     pending_dir_poll_rx: Option<
-        std::sync::mpsc::Receiver<
+        std::sync::mpsc::Receiver<(
             Vec<(
                 crate::view::file_tree::NodeId,
                 PathBuf,
                 Option<std::time::SystemTime>,
             )>,
-        >,
+            Option<(PathBuf, std::time::SystemTime)>,
+        )>,
     >,
 
     /// Tracks rapid file change events for debouncing
