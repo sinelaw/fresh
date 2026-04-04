@@ -770,8 +770,8 @@ fn test_workspace_diagnostic_refresh_handled() -> anyhow::Result<()> {
 fn create_stale_diagnostics_server_script(dir: &std::path::Path) -> std::path::PathBuf {
     let script = r##"#!/bin/bash
 
-# Fake LSP server that sends delayed, stale diagnostics
-# Simulates a slow LSP server responding to intermediate typing states
+# Fake LSP server that sends stale diagnostics
+# On the 2nd didChange, sends diagnostics tagged with the 1st didChange's version
 LOG_FILE="${1:-/tmp/fake_stale_diag_log.txt}"
 > "$LOG_FILE"
 
@@ -828,18 +828,20 @@ while true; do
             VERSION=$((VERSION + 1))
             echo "ACTION: didChange count=$CHANGE_COUNT version=$VERSION" >> "$LOG_FILE"
 
-            # On the first didChange (simulating "import " with no module name),
-            # delay and then send diagnostics with THIS version (which will be stale
-            # by the time they arrive because the editor keeps typing)
+            # On the first didChange, record the version as stale.
             if [ $CHANGE_COUNT -eq 1 ]; then
                 STALE_VERSION=$VERSION
-                echo "QUEUED: stale diagnostics for version=$STALE_VERSION (will delay)" >> "$LOG_FILE"
-                # Send stale diagnostics after a delay (in background)
-                (
-                    sleep 0.5
-                    send_message '{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"'"$DID_OPEN_URI"'","diagnostics":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":7}},"severity":1,"code":"E999","source":"test","message":"STALE: Expected module name after import"}],"version":'"$STALE_VERSION"'}}'
-                    echo "SENT: stale publishDiagnostics version=$STALE_VERSION (delayed)" >> "$LOG_FILE"
-                ) &
+                echo "RECORDED: stale version=$STALE_VERSION" >> "$LOG_FILE"
+            fi
+
+            # On the second didChange, send diagnostics tagged with the stale
+            # version from the first change.  By now the document version is
+            # higher, so the editor should drop these as outdated.  Sending
+            # synchronously avoids the concurrent-stdout-write race that the
+            # previous background-subshell approach suffered from.
+            if [ $CHANGE_COUNT -eq 2 ]; then
+                send_message '{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"'"$DID_OPEN_URI"'","diagnostics":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":7}},"severity":1,"code":"E999","source":"test","message":"STALE: Expected module name after import"}],"version":'"$STALE_VERSION"'}}'
+                echo "SENT: stale publishDiagnostics version=$STALE_VERSION" >> "$LOG_FILE"
             fi
             ;;
         "textDocument/diagnostic")
@@ -886,15 +888,15 @@ echo "SERVER: exiting" >> "$LOG_FILE"
 
 /// Test that stale diagnostics are dropped during rapid typing.
 ///
-/// Scenario: User types "import os" in a Python file. The LSP server is slow and
-/// sends diagnostics for "import " (version 2, missing module name) after the user
-/// has already typed "import os" (version 3+). The editor should drop the stale
+/// Scenario: User types "import os" in a Python file. The LSP server sends
+/// diagnostics tagged with version 2 (from the first didChange) while the editor
+/// has already moved on to version 3+. The editor should drop the stale
 /// diagnostics because version 2 < current version 3+.
 ///
 /// The fake server:
-/// 1. On first didChange: delays 500ms, then sends error diagnostics with version 2
-/// 2. Meanwhile the editor sends more didChange events (version 3, 4, ...)
-/// 3. When the delayed diagnostics arrive, they should be dropped (version 2 < current)
+/// 1. On 1st didChange: records the version (2) as stale
+/// 2. On 2nd didChange: sends error diagnostics with stale version 2
+/// 3. By then the editor's document version is 3+, so diagnostics are dropped
 /// 4. The screen should NOT show "E:1" because the stale diagnostics were filtered
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
@@ -946,9 +948,8 @@ fn test_stale_diagnostics_dropped_during_rapid_typing() -> anyhow::Result<()> {
     })?;
 
     // Type rapidly: "import os" — each character triggers a didChange.
-    // The first didChange (after "i") triggers the server to queue stale
-    // diagnostics with version 2, delayed by 500ms.
-    // By the time those arrive, we'll have typed more characters (version 3+).
+    // On the 2nd didChange, the server sends diagnostics tagged with the
+    // 1st didChange's version, which is already stale.
     harness.type_text("import os")?;
     harness.render()?;
 
@@ -958,8 +959,7 @@ fn test_stale_diagnostics_dropped_during_rapid_typing() -> anyhow::Result<()> {
         log.contains("SENT: stale publishDiagnostics")
     })?;
 
-    // Give the editor a moment to process all async messages
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // Process the stale diagnostics message that was already sent
     harness.process_async_and_render()?;
 
     let screen = harness.screen_to_string();
