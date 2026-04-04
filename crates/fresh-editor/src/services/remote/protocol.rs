@@ -192,9 +192,7 @@ pub fn ls_params(path: &str) -> serde_json::Value {
     serde_json::json!({"path": path})
 }
 
-/// Build params for exec request
-///
-/// NOTE: Used by RemoteProcessSpawner, appears unused until spawner integration.
+/// Build params for an exec request sent to the remote agent.
 pub fn exec_params(cmd: &str, args: &[String], cwd: Option<&str>) -> serde_json::Value {
     let mut params = serde_json::json!({
         "cmd": cmd,

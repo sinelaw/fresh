@@ -237,16 +237,49 @@ impl QuickOpenProvider for GotoLineProvider {
 // File Provider (default, no prefix)
 // ============================================================================
 
+/// Directory names to skip during file walking (shared with plugin_commands.rs pattern).
+const IGNORED_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".hg",
+    ".svn",
+    ".DS_Store",
+];
+
+const MAX_FILES: usize = 50_000;
+
 /// Provider for finding files in the project
 ///
-/// This is the default provider (empty prefix) that provides file suggestions
-/// using git ls-files, fd, find, or directory traversal.
-#[derive(Clone)]
+/// Uses `git ls-files` via [`ProcessSpawner`] as the fast path (respects
+/// `.gitignore`, works on remote hosts), then falls back to recursive
+/// directory walking via the [`FileSystem`] trait (works on all platforms
+/// including Windows, and on remote filesystems).
 pub struct FileProvider {
     /// Cached file list (populated lazily)
     file_cache: std::sync::Arc<std::sync::RwLock<Option<Vec<FileEntry>>>>,
     /// Frecency data for ranking
     frecency: std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, FrecencyData>>>,
+    /// Filesystem abstraction (local or remote)
+    filesystem: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+    /// Process spawner for running git (local or remote)
+    process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
+    /// Tokio runtime handle for blocking on async ProcessSpawner calls
+    runtime_handle: Option<tokio::runtime::Handle>,
+}
+
+// Manual Clone: all fields are Arc/Option<Handle> which are Clone
+impl Clone for FileProvider {
+    fn clone(&self) -> Self {
+        Self {
+            file_cache: self.file_cache.clone(),
+            frecency: self.frecency.clone(),
+            filesystem: self.filesystem.clone(),
+            process_spawner: self.process_spawner.clone(),
+            runtime_handle: self.runtime_handle.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -262,10 +295,17 @@ struct FrecencyData {
 }
 
 impl FileProvider {
-    pub fn new() -> Self {
+    pub fn new(
+        filesystem: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+        process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
+        runtime_handle: Option<tokio::runtime::Handle>,
+    ) -> Self {
         Self {
             file_cache: std::sync::Arc::new(std::sync::RwLock::new(None)),
             frecency: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+            filesystem,
+            process_spawner,
+            runtime_handle,
         }
     }
 
@@ -323,11 +363,11 @@ impl FileProvider {
             }
         }
 
-        // Try different file discovery methods
+        // Fast path: git ls-files via ProcessSpawner (works locally and remotely)
+        // Fallback: recursive walk via FileSystem trait (works on all platforms)
         let files = self
             .try_git_files(cwd)
-            .or_else(|| self.try_fd_files(cwd))
-            .or_else(|| self.try_find_files(cwd))
+            .or_else(|| self.try_walk_dir(cwd))
             .unwrap_or_default();
 
         // Add frecency scores
@@ -347,18 +387,31 @@ impl FileProvider {
         files
     }
 
+    /// Try listing files via `git ls-files` using the ProcessSpawner.
+    ///
+    /// This is the fast path: it respects `.gitignore`, is fast on large repos,
+    /// and works on remote hosts via RemoteProcessSpawner.
     fn try_git_files(&self, cwd: &str) -> Option<Vec<String>> {
-        let output = std::process::Command::new("git")
-            .args(["ls-files", "--cached", "--others", "--exclude-standard"])
-            .current_dir(cwd)
-            .output()
+        let handle = self.runtime_handle.as_ref()?;
+        let result = handle
+            .block_on(self.process_spawner.spawn(
+                "git".to_string(),
+                vec![
+                    "ls-files".to_string(),
+                    "--cached".to_string(),
+                    "--others".to_string(),
+                    "--exclude-standard".to_string(),
+                ],
+                Some(cwd.to_string()),
+            ))
             .ok()?;
 
-        if !output.status.success() {
+        if result.exit_code != 0 {
             return None;
         }
 
-        let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        let files: Vec<String> = result
+            .stdout
             .lines()
             .filter(|line| !line.is_empty() && !line.starts_with(".git/"))
             .map(|s| s.to_string())
@@ -367,75 +420,56 @@ impl FileProvider {
         Some(files)
     }
 
-    fn try_fd_files(&self, cwd: &str) -> Option<Vec<String>> {
-        let output = std::process::Command::new("fd")
-            .args([
-                "--type",
-                "f",
-                "--hidden",
-                "--exclude",
-                ".git",
-                "--max-results",
-                "50000",
-            ])
-            .current_dir(cwd)
-            .output()
-            .ok()?;
+    /// Recursive directory walk via the FileSystem trait.
+    ///
+    /// This is the universal fallback that works on all platforms (including
+    /// Windows where git/fd/find may not be available) and on remote
+    /// filesystems via RemoteFileSystem.
+    fn try_walk_dir(&self, cwd: &str) -> Option<Vec<String>> {
+        use std::path::Path;
 
-        if !output.status.success() {
-            return None;
+        let base = Path::new(cwd);
+        let mut files = Vec::new();
+        let mut stack = vec![base.to_path_buf()];
+
+        while let Some(dir) = stack.pop() {
+            let entries = match self.filesystem.read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+
+            for entry in entries {
+                // Skip hidden files/dirs (dot-prefixed)
+                if entry.name.starts_with('.') {
+                    continue;
+                }
+
+                match entry.entry_type {
+                    crate::model::filesystem::EntryType::File => {
+                        if let Ok(rel) = entry.path.strip_prefix(base) {
+                            // Normalize to forward slashes for consistent display
+                            let rel_str = rel.to_string_lossy().replace('\\', "/");
+                            files.push(rel_str);
+                            if files.len() >= MAX_FILES {
+                                return Some(files);
+                            }
+                        }
+                    }
+                    crate::model::filesystem::EntryType::Directory => {
+                        if !IGNORED_DIRS.contains(&entry.name.as_str()) {
+                            stack.push(entry.path);
+                        }
+                    }
+                    _ => {} // skip symlinks etc.
+                }
+            }
         }
 
-        let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(|s| s.to_string())
-            .collect();
-
-        Some(files)
-    }
-
-    fn try_find_files(&self, cwd: &str) -> Option<Vec<String>> {
-        let output = std::process::Command::new("find")
-            .args([
-                ".",
-                "-type",
-                "f",
-                "-not",
-                "-path",
-                "*/.git/*",
-                "-not",
-                "-path",
-                "*/node_modules/*",
-                "-not",
-                "-path",
-                "*/target/*",
-                "-not",
-                "-path",
-                "*/__pycache__/*",
-            ])
-            .current_dir(cwd)
-            .output()
-            .ok()?;
-
-        if !output.status.success() {
-            return None;
+        if files.is_empty() {
+            None
+        } else {
+            Some(files)
         }
-
-        let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(|s| s.trim_start_matches("./").to_string())
-            .take(50000)
-            .collect();
-
-        Some(files)
-    }
-}
-
-impl Default for FileProvider {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

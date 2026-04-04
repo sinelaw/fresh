@@ -1271,7 +1271,13 @@ impl Editor {
 
         // Initialize Quick Open registry with all providers
         let mut quick_open_registry = QuickOpenRegistry::new();
-        quick_open_registry.register(Box::new(FileProvider::new()));
+        let process_spawner: Arc<dyn crate::services::remote::ProcessSpawner> =
+            Arc::new(crate::services::remote::LocalProcessSpawner);
+        quick_open_registry.register(Box::new(FileProvider::new(
+            Arc::clone(&filesystem),
+            Arc::clone(&process_spawner),
+            tokio_runtime.as_ref().map(|rt| rt.handle().clone()),
+        )));
         quick_open_registry.register(Box::new(CommandProvider::new(
             Arc::clone(&command_registry),
             Arc::clone(&keybindings),
@@ -1483,7 +1489,7 @@ impl Editor {
             fs_manager,
             filesystem,
             local_filesystem: Arc::new(crate::model::filesystem::StdFileSystem),
-            process_spawner: Arc::new(crate::services::remote::LocalProcessSpawner),
+            process_spawner,
             file_explorer_visible: false,
             file_explorer_sync_in_progress: false,
             file_explorer_width_percent: file_explorer_width,

@@ -1,20 +1,14 @@
-//! Remote process spawner
+//! Process spawner abstraction
 //!
-//! Executes processes on the remote host via the SSH agent.
-//!
-//! NOTE: This module is currently unused but provides infrastructure for
-//! plugin process execution on remote hosts. It will be integrated with
-//! the Editor's SpawnProcess handler to allow plugins like live_grep,
-//! git_grep, and fuzzy finder to work transparently on remote files.
+//! Provides a trait for spawning processes that works transparently on both
+//! local and remote hosts. Used by the Editor's SpawnProcess handler (for
+//! plugins like git_grep) and by FileProvider (for `git ls-files`).
 
 use crate::services::remote::channel::{AgentChannel, ChannelError};
 use crate::services::remote::protocol::{decode_base64, exec_params};
 use std::sync::Arc;
 
 /// Result of spawning a process
-///
-/// NOTE: Unused until process spawner is integrated with Editor.
-/// See PluginCommand::SpawnProcess in app/mod.rs.
 #[derive(Debug, Clone)]
 pub struct SpawnResult {
     pub stdout: String,
@@ -23,8 +17,6 @@ pub struct SpawnResult {
 }
 
 /// Error from spawning a process
-///
-/// NOTE: Unused until process spawner is integrated with Editor.
 #[derive(Debug, thiserror::Error)]
 pub enum SpawnError {
     #[error("Channel error: {0}")]
@@ -39,9 +31,8 @@ pub enum SpawnError {
 
 /// Trait for spawning processes (local or remote)
 ///
-/// NOTE: Unused until process spawner is integrated with Editor.
-/// This abstraction allows plugins to spawn processes transparently
-/// on either local or remote filesystems.
+/// This abstraction allows plugins and core features (like file discovery)
+/// to spawn processes transparently on either local or remote filesystems.
 #[async_trait::async_trait]
 pub trait ProcessSpawner: Send + Sync {
     /// Spawn a process and wait for completion
@@ -55,7 +46,6 @@ pub trait ProcessSpawner: Send + Sync {
 
 /// Local process spawner using tokio
 ///
-/// NOTE: Unused until process spawner is integrated with Editor.
 /// Used for local file editing (the default).
 pub struct LocalProcessSpawner;
 

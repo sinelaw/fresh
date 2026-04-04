@@ -44,9 +44,13 @@ When it is disabled (the default), no windowing or GPU crates are compiled.
 
 3. **LSP**: Ensure LSP interactions follow the correct lifecycle (e.g., `didOpen` must always precede other requests to avoid server-side errors). Use the appropriate existing helpers for this pattern.
 
-4. **Regenerate plugin types and schemas**: After modifying the plugin API or config types:
+4. **Use the `FileSystem` trait for all filesystem access**: Never use `std::fs` directly in editor code. The `FileSystem` trait (`model/filesystem.rs`) abstracts over local and remote (SSH) filesystems. Use it for reading files, listing directories, checking metadata, etc. This ensures features work transparently on remote hosts.
+
+5. **Use `ProcessSpawner` for spawning external commands**: Never use `std::process::Command` directly. The `ProcessSpawner` trait (`services/remote/spawner.rs`) routes process execution through either `LocalProcessSpawner` or `RemoteProcessSpawner`, so plugins and core features (like `git ls-files` in the file finder) work on remote hosts.
+
+6. **Regenerate plugin types and schemas**: After modifying the plugin API or config types:
    - **TypeScript definitions** (`plugins/lib/fresh.d.ts`): Auto-generated from Rust types with `#[derive(TS)]`. Run: `cargo test -p fresh-plugin-runtime write_fresh_dts_file -- --ignored`
    - **JSON schemas** (`plugins/config-schema.json`, `plugins/schemas/theme.schema.json`): Auto-generated from Rust types with `#[derive(JsonSchema)]`. Run: `./scripts/gen_schema.sh`
    - **Package schema** (`plugins/schemas/package.schema.json`): Auto-generated from Rust types with `#[derive(JsonSchema)]`. Run: `./scripts/gen_schema.sh`
 
-5. **Type check plugins**: Run `crates/fresh-editor/plugins/check-types.sh` (requires `tsc`)
+7. **Type check plugins**: Run `crates/fresh-editor/plugins/check-types.sh` (requires `tsc`)
