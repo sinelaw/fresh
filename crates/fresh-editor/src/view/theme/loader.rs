@@ -275,17 +275,18 @@ impl ThemeLoader {
                 };
                 self.scan_directory(&path, &new_pack, themes, theme_list);
             } else if path.extension().is_some_and(|ext| ext == "json") {
-                // Load theme file
-                let raw_name = path.file_stem().unwrap().to_string_lossy().to_string();
-                let name = normalize_theme_name(&raw_name);
-
-                // Skip if already loaded (embedded themes take priority)
-                if themes.contains_key(&name) {
-                    continue;
-                }
-
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     if let Ok(theme_file) = serde_json::from_str::<ThemeFile>(&content) {
+                        // Prefer the theme's own name field over the filename,
+                        // so that e.g. "dark.json" with name "adwaita-dark" doesn't
+                        // collide with a builtin "dark" theme.
+                        let name = normalize_theme_name(&theme_file.name);
+
+                        // Skip if already loaded (embedded themes take priority)
+                        if themes.contains_key(&name) {
+                            continue;
+                        }
+
                         let theme: Theme = theme_file.into();
                         themes.insert(name.clone(), theme);
                         theme_list.push(ThemeInfo::new(name, pack));
