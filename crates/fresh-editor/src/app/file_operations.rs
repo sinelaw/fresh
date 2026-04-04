@@ -522,6 +522,14 @@ impl Editor {
         }
         self.last_file_tree_poll = self.time_source.now();
 
+        // Check .git/index mtime synchronously on every tick — this reads a
+        // local file and is always fast, even with a remote filesystem.
+        let git_index_changed = self.check_git_index_mtime();
+        if git_index_changed {
+            self.refresh_all_expanded_dirs();
+            any_refreshed = true;
+        }
+
         // Get file explorer reference
         let Some(explorer) = &self.file_explorer else {
             return any_refreshed;
@@ -536,12 +544,7 @@ impl Editor {
             .collect();
 
         if expanded_dirs.is_empty() {
-            // Still check git index (uses local filesystem, so it's fast)
-            let git_index_changed = self.check_git_index_mtime();
-            if git_index_changed {
-                self.refresh_all_expanded_dirs();
-            }
-            return any_refreshed || git_index_changed;
+            return any_refreshed;
         }
 
         // Spawn background metadata checks
@@ -593,10 +596,7 @@ impl Editor {
             }
         }
 
-        // Check .git/index mtime to detect commits, staging, checkouts, etc.
-        let git_index_changed = self.check_git_index_mtime();
-
-        if dirs_to_refresh.is_empty() && !git_index_changed {
+        if dirs_to_refresh.is_empty() {
             return false;
         }
 
