@@ -1170,9 +1170,12 @@ fn connect_remote(remote: &RemoteLocation) -> AnyhowResult<FilesystemResult> {
     ));
     let process_spawner = std::sync::Arc::new(remote::RemoteProcessSpawner::new(channel.clone()));
 
-    // Spawn background reconnect task on the runtime
-    let reconnect_handle =
-        rt.block_on(async { remote::spawn_reconnect_task(channel, reconnect_params) });
+    // Spawn background reconnect task on the runtime.
+    // We need a runtime context for tokio::spawn inside spawn_reconnect_task.
+    let reconnect_handle = {
+        let _guard = rt.enter();
+        remote::spawn_reconnect_task(channel, reconnect_params)
+    };
 
     Ok(FilesystemResult {
         filesystem,
