@@ -206,19 +206,6 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
     None
 }
 
-/// Preference for which highlighting backend to use
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HighlighterPreference {
-    /// Use TextMate/syntect for highlighting (default)
-    /// Tree-sitter language is still detected for other features (indentation, semantic highlighting)
-    #[default]
-    Auto,
-    /// Force tree-sitter for highlighting (useful for testing/comparison)
-    TreeSitter,
-    /// Explicitly use TextMate grammar (same as Auto)
-    TextMate,
-}
-
 /// Unified highlighting engine supporting multiple backends
 #[derive(Default)]
 pub enum HighlightEngine {
@@ -1043,7 +1030,7 @@ impl HighlightEngine {
     /// Always uses syntect/TextMate for highlighting, but detects tree-sitter
     /// language for other features (indentation, semantic highlighting).
     pub fn for_file(path: &Path, registry: &GrammarRegistry) -> Self {
-        Self::for_file_with_preference(path, registry, HighlighterPreference::Auto)
+        Self::textmate_for_file(path, registry)
     }
 
     /// Create a highlighting engine for a file, using language configuration for detection.
@@ -1057,59 +1044,7 @@ impl HighlightEngine {
         registry: &GrammarRegistry,
         languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
     ) -> Self {
-        Self::for_file_with_languages_and_preference(
-            path,
-            registry,
-            languages,
-            HighlighterPreference::Auto,
-        )
-    }
-
-    /// Create a highlighting engine with explicit preference and language configuration.
-    pub fn for_file_with_languages_and_preference(
-        path: &Path,
-        registry: &GrammarRegistry,
-        languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
-        preference: HighlighterPreference,
-    ) -> Self {
-        match preference {
-            // Auto now defaults to TextMate for highlighting (syntect has broader coverage)
-            // but still detects tree-sitter language for indentation/semantic features
-            HighlighterPreference::Auto | HighlighterPreference::TextMate => {
-                Self::textmate_for_file_with_languages(path, registry, languages)
-            }
-            HighlighterPreference::TreeSitter => {
-                if let Some(lang) = Language::from_path(path) {
-                    if let Ok(highlighter) = Highlighter::new(lang) {
-                        return Self::TreeSitter(Box::new(highlighter));
-                    }
-                }
-                Self::None
-            }
-        }
-    }
-
-    /// Create a highlighting engine with explicit preference
-    pub fn for_file_with_preference(
-        path: &Path,
-        registry: &GrammarRegistry,
-        preference: HighlighterPreference,
-    ) -> Self {
-        match preference {
-            // Auto now defaults to TextMate for highlighting (syntect has broader coverage)
-            // but still detects tree-sitter language for indentation/semantic features
-            HighlighterPreference::Auto | HighlighterPreference::TextMate => {
-                Self::textmate_for_file(path, registry)
-            }
-            HighlighterPreference::TreeSitter => {
-                if let Some(lang) = Language::from_path(path) {
-                    if let Ok(highlighter) = Highlighter::new(lang) {
-                        return Self::TreeSitter(Box::new(highlighter));
-                    }
-                }
-                Self::None
-            }
-        }
+        Self::textmate_for_file_with_languages(path, registry, languages)
     }
 
     /// Create a TextMate engine for a file, falling back to tree-sitter if no TextMate grammar
@@ -1493,12 +1428,6 @@ mod tests {
     use crate::view::theme;
 
     #[test]
-    fn test_highlighter_preference_default() {
-        let pref = HighlighterPreference::default();
-        assert_eq!(pref, HighlighterPreference::Auto);
-    }
-
-    #[test]
     fn test_highlight_engine_default() {
         let engine = HighlightEngine::default();
         assert!(!engine.has_highlighting());
@@ -1535,17 +1464,10 @@ mod tests {
     }
 
     #[test]
-    fn test_tree_sitter_explicit_preference() {
-        let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
-
-        // Force tree-sitter for highlighting
-        let engine = HighlightEngine::for_file_with_preference(
-            Path::new("test.rs"),
-            &registry,
-            HighlighterPreference::TreeSitter,
-        );
-        assert_eq!(engine.backend_name(), "tree-sitter");
+    fn test_tree_sitter_direct() {
+        // Verify tree-sitter highlighter can be created directly for Rust
+        let highlighter = Highlighter::new(Language::Rust);
+        assert!(highlighter.is_ok());
     }
 
     #[test]

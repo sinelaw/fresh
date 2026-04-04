@@ -5,8 +5,8 @@
 
 use crate::config::{
     ClipboardConfig, CursorStyle, FileBrowserConfig, FileExplorerConfig, FormatterConfig,
-    HighlighterPreference, Keybinding, KeybindingMapName, KeymapConfig, LanguageConfig,
-    LineEndingOption, OnSaveAction, PluginConfig, TerminalConfig, ThemeName, WarningsConfig,
+    Keybinding, KeybindingMapName, KeymapConfig, LanguageConfig, LineEndingOption, OnSaveAction,
+    PluginConfig, TerminalConfig, ThemeName, WarningsConfig,
 };
 use crate::types::LspLanguageConfig;
 use serde::{Deserialize, Serialize};
@@ -429,7 +429,6 @@ pub struct PartialLanguageConfig {
     pub auto_indent: Option<bool>,
     pub auto_close: Option<bool>,
     pub auto_surround: Option<bool>,
-    pub highlighter: Option<HighlighterPreference>,
     pub textmate_grammar: Option<std::path::PathBuf>,
     pub show_whitespace_tabs: Option<bool>,
     pub line_wrap: Option<bool>,
@@ -453,7 +452,6 @@ impl Merge for PartialLanguageConfig {
         self.auto_indent.merge_from(&other.auto_indent);
         self.auto_close.merge_from(&other.auto_close);
         self.auto_surround.merge_from(&other.auto_surround);
-        self.highlighter.merge_from(&other.highlighter);
         self.textmate_grammar.merge_from(&other.textmate_grammar);
         self.show_whitespace_tabs
             .merge_from(&other.show_whitespace_tabs);
@@ -836,7 +834,6 @@ impl From<&LanguageConfig> for PartialLanguageConfig {
             auto_indent: Some(cfg.auto_indent),
             auto_close: cfg.auto_close,
             auto_surround: cfg.auto_surround,
-            highlighter: Some(cfg.highlighter),
             textmate_grammar: cfg.textmate_grammar.clone(),
             show_whitespace_tabs: Some(cfg.show_whitespace_tabs),
             line_wrap: cfg.line_wrap,
@@ -867,7 +864,6 @@ impl PartialLanguageConfig {
             auto_indent: self.auto_indent.unwrap_or(defaults.auto_indent),
             auto_close: self.auto_close.or(defaults.auto_close),
             auto_surround: self.auto_surround.or(defaults.auto_surround),
-            highlighter: self.highlighter.unwrap_or(defaults.highlighter),
             textmate_grammar: self
                 .textmate_grammar
                 .or_else(|| defaults.textmate_grammar.clone()),
@@ -1137,7 +1133,6 @@ impl Default for LanguageConfig {
             auto_indent: true,
             auto_close: None,
             auto_surround: None,
-            highlighter: HighlighterPreference::default(),
             textmate_grammar: None,
             show_whitespace_tabs: true,
             line_wrap: None,

@@ -897,7 +897,6 @@ mod tests {
                 auto_indent: true,
                 auto_close: None,
                 auto_surround: None,
-                highlighter: crate::config::HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
