@@ -1529,7 +1529,7 @@ impl Editor {
         }
 
         // Get all keybindings
-        let bindings = self.keybindings.get_all_bindings();
+        let bindings = self.keybindings.read().unwrap().get_all_bindings();
 
         // Format the keybindings as readable text
         let mut content = String::from("Keyboard Shortcuts\n");

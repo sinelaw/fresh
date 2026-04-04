@@ -72,6 +72,71 @@ pub struct BufferInfo {
     pub modified: bool,
 }
 
+/// Parse a `path:line:col` string into its components.
+///
+/// Supports formats like `file.rs:10`, `file.rs:10:5`, and Windows paths with drive prefixes.
+pub fn parse_path_line_col(input: &str) -> (String, Option<usize>, Option<usize>) {
+    use std::path::{Component, Path};
+
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return (String::new(), None, None);
+    }
+
+    // Check if the path has a Windows drive prefix using std::path
+    let has_prefix = Path::new(trimmed)
+        .components()
+        .next()
+        .map(|c| matches!(c, Component::Prefix(_)))
+        .unwrap_or(false);
+
+    // Calculate where to start looking for :line:col
+    let search_start = if has_prefix {
+        trimmed.find(':').map(|i| i + 1).unwrap_or(0)
+    } else {
+        0
+    };
+
+    let suffix = &trimmed[search_start..];
+    let parts: Vec<&str> = suffix.rsplitn(3, ':').collect();
+
+    match parts.as_slice() {
+        [maybe_col, maybe_line, rest] => {
+            if !rest.is_empty() {
+                if let (Ok(line), Ok(col)) =
+                    (maybe_line.parse::<usize>(), maybe_col.parse::<usize>())
+                {
+                    if line > 0 && col > 0 {
+                        let path_str = if has_prefix {
+                            format!("{}{}", &trimmed[..search_start], rest)
+                        } else {
+                            rest.to_string()
+                        };
+                        return (path_str, Some(line), Some(col));
+                    }
+                }
+            }
+        }
+        [maybe_line, rest] => {
+            if !rest.is_empty() {
+                if let Ok(line) = maybe_line.parse::<usize>() {
+                    if line > 0 {
+                        let path_str = if has_prefix {
+                            format!("{}{}", &trimmed[..search_start], rest)
+                        } else {
+                            rest.to_string()
+                        };
+                        return (path_str, Some(line), None);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    (trimmed.to_string(), None, None)
+}
+
 /// Trait for quick open providers
 ///
 /// Each provider handles a specific prefix and provides suggestions

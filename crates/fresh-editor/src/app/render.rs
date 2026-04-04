@@ -207,6 +207,7 @@ impl Editor {
                     &self.mouse_state.hover_target,
                     Some(HoverTarget::FileExplorerCloseButton)
                 );
+                let keybindings = self.keybindings.read().unwrap();
                 FileExplorerRenderer::render(
                     explorer,
                     frame,
@@ -214,7 +215,7 @@ impl Editor {
                     is_focused,
                     &files_with_unsaved_changes,
                     &self.file_explorer_decoration_cache,
-                    &self.keybindings,
+                    &*keybindings,
                     self.key_context.clone(),
                     &self.theme,
                     close_button_hovered,
@@ -571,7 +572,7 @@ impl Editor {
         let prompt = self.prompt.clone();
         let lsp_status = self.lsp_status.clone();
         let theme = self.theme.clone();
-        let keybindings_cloned = self.keybindings.clone(); // Clone the keybindings
+        let keybindings_cloned = self.keybindings.read().unwrap().clone(); // Clone the keybindings
         let chord_state_cloned = self.chord_state.clone(); // Clone the chord state
 
         // Get update availability info
@@ -962,12 +963,13 @@ impl Editor {
         }
 
         if self.menu_bar_visible {
+            let keybindings = self.keybindings.read().unwrap();
             self.cached_layout.menu_layout = Some(crate::view::ui::MenuRenderer::render(
                 frame,
                 menu_bar_area,
                 &self.menus,
                 &self.menu_state,
-                &self.keybindings,
+                &*keybindings,
                 &self.theme,
                 self.mouse_state.hover_target.as_ref(),
                 self.config.editor.menu_bar_mnemonics,
@@ -1102,13 +1104,14 @@ impl Editor {
                 width,
                 height: max_height,
             };
+            let keybindings = self.keybindings.read().unwrap();
             self.file_browser_layout = crate::view::ui::FileBrowserRenderer::render(
                 frame,
                 popup_area,
                 file_open_state,
                 &self.theme,
                 &self.mouse_state.hover_target,
-                Some(&self.keybindings),
+                Some(&*keybindings),
             );
             return;
         }

@@ -25,65 +25,7 @@ pub enum PromptResult {
 }
 
 pub(super) fn parse_path_line_col(input: &str) -> (String, Option<usize>, Option<usize>) {
-    use std::path::{Component, Path};
-
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return (String::new(), None, None);
-    }
-
-    // Check if the path has a Windows drive prefix using std::path
-    let has_prefix = Path::new(trimmed)
-        .components()
-        .next()
-        .map(|c| matches!(c, Component::Prefix(_)))
-        .unwrap_or(false);
-
-    // Calculate where to start looking for :line:col
-    let search_start = if has_prefix {
-        trimmed.find(':').map(|i| i + 1).unwrap_or(0)
-    } else {
-        0
-    };
-
-    let suffix = &trimmed[search_start..];
-    let parts: Vec<&str> = suffix.rsplitn(3, ':').collect();
-
-    match parts.as_slice() {
-        [maybe_col, maybe_line, rest] => {
-            if !rest.is_empty() {
-                if let (Ok(line), Ok(col)) =
-                    (maybe_line.parse::<usize>(), maybe_col.parse::<usize>())
-                {
-                    if line > 0 && col > 0 {
-                        let path_str = if has_prefix {
-                            format!("{}{}", &trimmed[..search_start], rest)
-                        } else {
-                            rest.to_string()
-                        };
-                        return (path_str, Some(line), Some(col));
-                    }
-                }
-            }
-        }
-        [maybe_line, rest] => {
-            if !rest.is_empty() {
-                if let Ok(line) = maybe_line.parse::<usize>() {
-                    if line > 0 {
-                        let path_str = if has_prefix {
-                            format!("{}{}", &trimmed[..search_start], rest)
-                        } else {
-                            rest.to_string()
-                        };
-                        return (path_str, Some(line), None);
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-
-    (trimmed.to_string(), None, None)
+    crate::input::quick_open::parse_path_line_col(input)
 }
 
 impl Editor {
@@ -1330,135 +1272,73 @@ impl Editor {
         }
     }
 
-    /// Handle Quick Open prompt confirmation based on prefix routing
+    /// Handle Quick Open prompt confirmation by dispatching through the provider registry
     fn handle_quick_open_confirm(
         &mut self,
         input: &str,
         selected_index: Option<usize>,
     ) -> PromptResult {
-        // Determine the mode based on prefix
-        if let Some(query) = input.strip_prefix('>') {
-            // Command mode - find and execute the selected command
-            return self.handle_quick_open_command(query, selected_index);
-        }
+        use crate::input::quick_open::QuickOpenResult;
 
-        if let Some(query) = input.strip_prefix('#') {
-            // Buffer mode - switch to selected buffer
-            return self.handle_quick_open_buffer(query, selected_index);
-        }
-
-        if let Some(line_str) = input.strip_prefix(':') {
-            // Go to line mode
-            if let Ok(line_num) = line_str.parse::<usize>() {
-                if line_num > 0 {
-                    self.goto_line_col(line_num, None);
-                    self.set_status_message(t!("goto.jumped", line = line_num).to_string());
-                } else {
-                    self.set_status_message(t!("goto.line_must_be_positive").to_string());
-                }
-            } else {
-                self.set_status_message(t!("error.invalid_line", input = line_str).to_string());
-            }
-            return PromptResult::Done;
-        }
-
-        // Default: file mode - open the selected file
-        self.handle_quick_open_file(input, selected_index)
-    }
-
-    /// Handle Quick Open command selection
-    fn handle_quick_open_command(
-        &mut self,
-        query: &str,
-        selected_index: Option<usize>,
-    ) -> PromptResult {
-        let suggestions = {
-            let registry = self.command_registry.read().unwrap();
-            let selection_active = self.has_active_selection();
-            let active_buffer_mode = self
-                .buffer_metadata
-                .get(&self.active_buffer())
-                .and_then(|m| m.virtual_mode());
-            let has_lsp_config = {
-                let language = self
-                    .buffers
-                    .get(&self.active_buffer())
-                    .map(|s| s.language.as_str());
-                language
-                    .and_then(|lang| self.lsp.as_ref().and_then(|lsp| lsp.get_config(lang)))
-                    .is_some()
-            };
-
-            registry.filter(
-                query,
-                self.key_context.clone(),
-                &self.keybindings,
-                selection_active,
-                &self.active_custom_contexts,
-                active_buffer_mode,
-                has_lsp_config,
-            )
+        // Dispatch through the registry to get a provider result
+        let context = self.build_quick_open_context();
+        let result = if let Some((provider, query)) =
+            self.quick_open_registry.get_provider_for_input(input)
+        {
+            provider.on_select(selected_index, query, &context)
+        } else {
+            QuickOpenResult::None
         };
 
-        if let Some(idx) = selected_index {
-            if let Some(suggestion) = suggestions.get(idx) {
-                if suggestion.disabled {
-                    self.set_status_message(t!("status.command_not_available").to_string());
-                    return PromptResult::Done;
-                }
-
-                // Find and execute the command
-                let commands = self.command_registry.read().unwrap().get_all();
-                if let Some(cmd) = commands
-                    .iter()
-                    .find(|c| c.get_localized_name() == suggestion.text)
-                {
-                    let action = cmd.action.clone();
-                    let cmd_name = cmd.get_localized_name();
-                    self.command_registry
-                        .write()
-                        .unwrap()
-                        .record_usage(&cmd_name);
-                    return PromptResult::ExecuteAction(action);
-                }
-            }
-        }
-
-        self.set_status_message(t!("status.no_selection").to_string());
-        PromptResult::Done
+        // Map QuickOpenResult to PromptResult + execute side effects
+        self.execute_quick_open_result(result)
     }
 
-    /// Handle Quick Open buffer selection
-    fn handle_quick_open_buffer(
+    /// Map a QuickOpenResult to a PromptResult, executing any necessary side effects
+    fn execute_quick_open_result(
         &mut self,
-        query: &str,
-        selected_index: Option<usize>,
+        result: crate::input::quick_open::QuickOpenResult,
     ) -> PromptResult {
-        // Regenerate buffer suggestions since prompt was already taken by confirm_prompt
-        let suggestions = self.get_buffer_suggestions(query);
+        use crate::input::quick_open::QuickOpenResult;
 
-        if let Some(idx) = selected_index {
-            if let Some(suggestion) = suggestions.get(idx) {
-                if let Some(value) = &suggestion.value {
-                    if let Ok(buffer_id) = value.parse::<usize>() {
-                        let buffer_id = crate::model::event::BufferId(buffer_id);
-                        if self.buffers.contains_key(&buffer_id) {
-                            self.set_active_buffer(buffer_id);
-                            if let Some(name) = self.active_state().buffer.file_path() {
-                                self.set_status_message(
-                                    t!("buffer.switched", name = name.display().to_string())
-                                        .to_string(),
-                                );
-                            }
-                            return PromptResult::Done;
-                        }
+        match result {
+            QuickOpenResult::ExecuteAction(action) => PromptResult::ExecuteAction(action),
+            QuickOpenResult::OpenFile { path, line, column } => {
+                let expanded_path = expand_tilde(&path);
+                let full_path = if expanded_path.is_absolute() {
+                    expanded_path
+                } else {
+                    self.working_dir.join(&expanded_path)
+                };
+                self.open_file_with_jump(full_path, line, column);
+                PromptResult::Done
+            }
+            QuickOpenResult::ShowBuffer(buffer_id) => {
+                let buffer_id = crate::model::event::BufferId(buffer_id);
+                if self.buffers.contains_key(&buffer_id) {
+                    self.set_active_buffer(buffer_id);
+                    if let Some(name) = self.active_state().buffer.file_path() {
+                        self.set_status_message(
+                            t!("buffer.switched", name = name.display().to_string()).to_string(),
+                        );
                     }
                 }
+                PromptResult::Done
+            }
+            QuickOpenResult::GotoLine(line) => {
+                self.goto_line_col(line, None);
+                self.set_status_message(t!("goto.jumped", line = line).to_string());
+                PromptResult::Done
+            }
+            QuickOpenResult::None => {
+                self.set_status_message(t!("status.no_selection").to_string());
+                PromptResult::Done
+            }
+            QuickOpenResult::Error(msg) => {
+                self.set_status_message(msg);
+                PromptResult::Done
             }
         }
-
-        self.set_status_message(t!("status.no_selection").to_string());
-        PromptResult::Done
     }
 
     fn open_file_with_jump(
@@ -1489,60 +1369,6 @@ impl Editor {
                 }
             }
         }
-    }
-
-    /// Handle Quick Open file selection
-    fn handle_quick_open_file(
-        &mut self,
-        input: &str,
-        selected_index: Option<usize>,
-    ) -> PromptResult {
-        let (path_from_input, line, column) = parse_path_line_col(input);
-        // Regenerate file suggestions using the parsed path (without :line:col suffix)
-        // so that fuzzy matching still works when the user types a jump suffix.
-        let suggestion_input = if path_from_input.is_empty() {
-            input
-        } else {
-            &path_from_input
-        };
-        let suggestions = self.get_file_suggestions(suggestion_input);
-
-        if let Some(idx) = selected_index {
-            if let Some(suggestion) = suggestions.get(idx) {
-                if let Some(path_str) = &suggestion.value {
-                    let path = std::path::PathBuf::from(path_str);
-                    let full_path = if path.is_absolute() {
-                        path
-                    } else {
-                        self.working_dir.join(&path)
-                    };
-
-                    // Record file access for frecency
-                    self.file_provider.record_access(path_str);
-
-                    self.open_file_with_jump(full_path, line, column);
-                    return PromptResult::Done;
-                }
-            }
-        }
-
-        if line.is_some() && !path_from_input.is_empty() {
-            let expanded_path = expand_tilde(&path_from_input);
-            let full_path = if expanded_path.is_absolute() {
-                expanded_path
-            } else {
-                self.working_dir.join(&expanded_path)
-            };
-
-            // Record file access for frecency
-            self.file_provider.record_access(&path_from_input);
-
-            self.open_file_with_jump(full_path, line, column);
-            return PromptResult::Done;
-        }
-
-        self.set_status_message(t!("status.no_selection").to_string());
-        PromptResult::Done
     }
 }
 

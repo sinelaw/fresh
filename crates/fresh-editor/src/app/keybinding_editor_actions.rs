@@ -14,9 +14,10 @@ impl Editor {
     pub fn open_keybinding_editor(&mut self) {
         let config_path = self.dir_context.config_path().display().to_string();
         let cmd_registry = self.command_registry.read().unwrap();
+        let keybindings = self.keybindings.read().unwrap();
         self.keybinding_editor = Some(KeybindingEditor::new(
             &self.config,
-            &self.keybindings,
+            &keybindings,
             &self.mode_registry,
             &cmd_registry,
             config_path,
@@ -78,7 +79,7 @@ impl Editor {
         }
 
         // Rebuild the keybinding resolver
-        self.keybindings = crate::input::keybindings::KeybindingResolver::new(&self.config);
+        *self.keybindings.write().unwrap() = crate::input::keybindings::KeybindingResolver::new(&self.config);
 
         // Save to config file via the pending changes mechanism
         let config_value = match serde_json::to_value(&self.config.keybindings) {

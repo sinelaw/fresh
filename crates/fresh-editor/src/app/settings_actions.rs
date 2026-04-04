@@ -135,7 +135,7 @@ impl Editor {
         self.apply_plugin_config_changes(&old_plugins);
 
         // Update keybindings
-        self.keybindings = KeybindingResolver::new(&self.config);
+        *self.keybindings.write().unwrap() = KeybindingResolver::new(&self.config);
 
         // Update LSP configs
         if let Some(ref mut lsp) = self.lsp {

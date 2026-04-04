@@ -35,9 +35,11 @@ impl Editor {
         // Handle terminal mode input
         if self.terminal_mode {
             let mut ctx = InputContext::new();
+            let keybindings = self.keybindings.read().unwrap();
             let mut handler =
-                TerminalModeInputHandler::new(self.keyboard_capture, &self.keybindings);
+                TerminalModeInputHandler::new(self.keyboard_capture, &keybindings);
             let result = handler.dispatch_input(event, &mut ctx);
+            drop(keybindings);
             self.process_deferred_actions(ctx);
             return Some(result);
         }
@@ -108,10 +110,15 @@ impl Editor {
                 .contains(crossterm::event::KeyModifiers::ALT)
             {
                 if let crossterm::event::KeyCode::Char(_) = event.code {
-                    if let Some(action) = self.keybindings.resolve_in_context_only(
-                        event,
-                        crate::input::keybindings::KeyContext::Prompt,
-                    ) {
+                    let prompt_action = self
+                        .keybindings
+                        .read()
+                        .unwrap()
+                        .resolve_in_context_only(
+                            event,
+                            crate::input::keybindings::KeyContext::Prompt,
+                        );
+                    if let Some(action) = prompt_action {
                         // For file browser actions, route to handle_file_open_action
                         if self.is_file_open_active() && self.handle_file_open_action(&action) {
                             return Some(InputResult::Consumed);

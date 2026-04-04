@@ -1491,7 +1491,7 @@ impl Editor {
             .with_plugin_name(plugin_name);
 
         // Clear any existing plugin defaults for this mode before re-registering
-        self.keybindings.clear_plugin_defaults_for_mode(&name);
+        self.keybindings.write().unwrap().clear_plugin_defaults_for_mode(&name);
 
         let mode_context = KeyContext::Mode(name.clone());
 
@@ -1505,7 +1505,7 @@ impl Editor {
                 if let Some((code, modifiers)) = parse_key_string(key_str) {
                     let action = Action::from_str(command, &std::collections::HashMap::new())
                         .unwrap_or_else(|| Action::PluginAction(command.clone()));
-                    self.keybindings.load_plugin_default(
+                    self.keybindings.write().unwrap().load_plugin_default(
                         mode_context.clone(),
                         code,
                         modifiers,
@@ -1533,7 +1533,7 @@ impl Editor {
                     tracing::debug!("Adding chord binding: {:?} -> {}", sequence, command);
                     let action = Action::from_str(command, &std::collections::HashMap::new())
                         .unwrap_or_else(|| Action::PluginAction(command.clone()));
-                    self.keybindings.load_plugin_chord_default(
+                    self.keybindings.write().unwrap().load_plugin_chord_default(
                         mode_context.clone(),
                         sequence,
                         action,
@@ -1554,8 +1554,9 @@ impl Editor {
                         .keybinding_labels
                         .retain(|k, _| !k.ends_with(&format!("\0{}", name)));
                     // Add current labels from plugin defaults in KeybindingResolver
+                    let keybindings_read = self.keybindings.read().unwrap();
                     if let Some(mode_bindings) =
-                        self.keybindings.get_plugin_defaults().get(&mode_context)
+                        keybindings_read.get_plugin_defaults().get(&mode_context)
                     {
                         for (key_code, modifiers) in mode_bindings.keys() {
                             let label =

@@ -166,7 +166,8 @@ use crate::input::commands::Suggestion;
 use crate::input::keybindings::{Action, KeyContext, KeybindingResolver};
 use crate::input::position_history::PositionHistory;
 use crate::input::quick_open::{
-    FileProvider, GotoLineProvider, QuickOpenContext, QuickOpenProvider, QuickOpenRegistry,
+    BufferInfo, BufferProvider, CommandProvider, FileProvider, GotoLineProvider, QuickOpenContext,
+    QuickOpenRegistry,
 };
 use crate::model::cursor::Cursors;
 use crate::model::event::{Event, EventLog, LeafId, SplitDirection, SplitId};
@@ -342,8 +343,8 @@ pub struct Editor {
     /// Blend amount for the ANSI background (0..1)
     background_fade: f32,
 
-    /// Keybinding resolver
-    keybindings: KeybindingResolver,
+    /// Keybinding resolver (shared with Quick Open CommandProvider)
+    keybindings: Arc<RwLock<KeybindingResolver>>,
 
     /// Shared clipboard (handles both internal and system clipboard)
     clipboard: crate::services::clipboard::Clipboard,
@@ -634,12 +635,7 @@ pub struct Editor {
     command_registry: Arc<RwLock<CommandRegistry>>,
 
     /// Quick Open registry for unified prompt providers
-    /// Note: Currently unused as provider logic is inlined, but kept for future plugin support
-    #[allow(dead_code)]
     quick_open_registry: QuickOpenRegistry,
-
-    /// File provider for Quick Open (stored separately for cache management)
-    file_provider: Arc<FileProvider>,
 
     /// Plugin manager (handles both enabled and disabled cases)
     plugin_manager: PluginManager,
@@ -1157,7 +1153,7 @@ impl Editor {
         // Set terminal cursor color to match theme
         theme.set_terminal_cursor_color();
 
-        let keybindings = KeybindingResolver::new(&config);
+        let keybindings = Arc::new(RwLock::new(KeybindingResolver::new(&config)));
 
         // Create an empty initial buffer
         let mut buffers = HashMap::new();
@@ -1273,14 +1269,15 @@ impl Editor {
         // Initialize command registry (always available, used by both plugins and core)
         let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
 
-        // Initialize file provider for Quick Open (stored separately for cache management)
-        let file_provider = Arc::new(FileProvider::new());
-
-        // Initialize Quick Open registry with providers
+        // Initialize Quick Open registry with all providers
         let mut quick_open_registry = QuickOpenRegistry::new();
+        quick_open_registry.register(Box::new(FileProvider::new()));
+        quick_open_registry.register(Box::new(CommandProvider::new(
+            Arc::clone(&command_registry),
+            Arc::clone(&keybindings),
+        )));
+        quick_open_registry.register(Box::new(BufferProvider::new()));
         quick_open_registry.register(Box::new(GotoLineProvider::new()));
-        // File provider is the default (empty prefix) - use the shared Arc instance
-        // We'll handle commands and buffers inline since they need App state
 
         // Build shared theme cache for plugin access
         let theme_cache = Arc::new(RwLock::new(theme_registry.to_json_map()));
@@ -1554,7 +1551,6 @@ impl Editor {
             cached_layout: CachedLayout::default(),
             command_registry,
             quick_open_registry,
-            file_provider,
             plugin_manager,
             plugin_dev_workspaces: HashMap::new(),
             seen_byte_ranges: HashMap::new(),
@@ -1789,13 +1785,15 @@ impl Editor {
 
     /// Get all keybindings as (key, action) pairs
     pub fn get_all_keybindings(&self) -> Vec<(String, String)> {
-        self.keybindings.get_all_bindings()
+        self.keybindings.read().unwrap().get_all_bindings()
     }
 
     /// Get the formatted keybinding for a specific action (for display in messages)
     /// Returns None if no keybinding is found for the action
     pub fn get_keybinding_for_action(&self, action_name: &str) -> Option<String> {
         self.keybindings
+            .read()
+            .unwrap()
             .find_keybinding_for_action(action_name, self.key_context.clone())
     }
 
@@ -3775,65 +3773,9 @@ impl Editor {
         self.update_quick_open_suggestions(">");
     }
 
-    /// Update Quick Open suggestions based on current input
-    fn update_quick_open_suggestions(&mut self, input: &str) {
-        let suggestions = if let Some(query) = input.strip_prefix('>') {
-            // Command mode
-            let active_buffer_mode = self
-                .buffer_metadata
-                .get(&self.active_buffer())
-                .and_then(|m| m.virtual_mode());
-            let has_lsp_config = {
-                let language = self
-                    .buffers
-                    .get(&self.active_buffer())
-                    .map(|s| s.language.as_str());
-                language
-                    .and_then(|lang| self.lsp.as_ref().and_then(|lsp| lsp.get_config(lang)))
-                    .is_some()
-            };
-            self.command_registry.read().unwrap().filter(
-                query,
-                self.key_context.clone(),
-                &self.keybindings,
-                self.has_active_selection(),
-                &self.active_custom_contexts,
-                active_buffer_mode,
-                has_lsp_config,
-            )
-        } else if let Some(query) = input.strip_prefix('#') {
-            // Buffer mode
-            self.get_buffer_suggestions(query)
-        } else if let Some(line_str) = input.strip_prefix(':') {
-            // Go to line mode
-            self.get_goto_line_suggestions(line_str)
-        } else {
-            // File mode (default) — strip :line:col suffix so fuzzy matching
-            // continues to work when the user appends a jump target.
-            let (path_part, _, _) = prompt_actions::parse_path_line_col(input);
-            let query = if path_part.is_empty() {
-                input
-            } else {
-                &path_part
-            };
-            self.get_file_suggestions(query)
-        };
-
-        if let Some(prompt) = &mut self.prompt {
-            prompt.suggestions = suggestions;
-            prompt.selected_suggestion = if prompt.suggestions.is_empty() {
-                None
-            } else {
-                Some(0)
-            };
-        }
-    }
-
-    /// Get buffer suggestions for Quick Open
-    fn get_buffer_suggestions(&self, query: &str) -> Vec<Suggestion> {
-        use crate::input::fuzzy::fuzzy_match;
-
-        let mut suggestions: Vec<(Suggestion, i32)> = self
+    /// Build a QuickOpenContext from current editor state
+    fn build_quick_open_context(&self) -> QuickOpenContext {
+        let open_buffers = self
             .buffers
             .iter()
             .filter_map(|(buffer_id, state)| {
@@ -3842,89 +3784,28 @@ impl Editor {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| format!("Buffer {}", buffer_id.0));
-
-                let match_result = if query.is_empty() {
-                    crate::input::fuzzy::FuzzyMatch {
-                        matched: true,
-                        score: 0,
-                        match_positions: vec![],
-                    }
-                } else {
-                    fuzzy_match(query, &name)
-                };
-
-                if match_result.matched {
-                    let modified = state.buffer.is_modified();
-                    let display_name = if modified {
-                        format!("{} [+]", name)
-                    } else {
-                        name
-                    };
-
-                    Some((
-                        Suggestion {
-                            text: display_name,
-                            description: Some(path.display().to_string()),
-                            value: Some(buffer_id.0.to_string()),
-                            disabled: false,
-                            keybinding: None,
-                            source: None,
-                        },
-                        match_result.score,
-                    ))
-                } else {
-                    None
-                }
+                Some(BufferInfo {
+                    id: buffer_id.0,
+                    path: path.display().to_string(),
+                    name,
+                    modified: state.buffer.is_modified(),
+                })
             })
             .collect();
 
-        suggestions.sort_by(|a, b| b.1.cmp(&a.1));
-        suggestions.into_iter().map(|(s, _)| s).collect()
-    }
+        let has_lsp_config = {
+            let language = self
+                .buffers
+                .get(&self.active_buffer())
+                .map(|s| s.language.as_str());
+            language
+                .and_then(|lang| self.lsp.as_ref().and_then(|lsp| lsp.get_config(lang)))
+                .is_some()
+        };
 
-    /// Get go-to-line suggestions for Quick Open
-    fn get_goto_line_suggestions(&self, line_str: &str) -> Vec<Suggestion> {
-        if line_str.is_empty() {
-            return vec![Suggestion {
-                text: t!("quick_open.goto_line_hint").to_string(),
-                description: Some(t!("quick_open.goto_line_desc").to_string()),
-                value: None,
-                disabled: true,
-                keybinding: None,
-                source: None,
-            }];
-        }
-
-        if let Ok(line_num) = line_str.parse::<usize>() {
-            if line_num > 0 {
-                return vec![Suggestion {
-                    text: t!("quick_open.goto_line", line = line_num.to_string()).to_string(),
-                    description: Some(t!("quick_open.press_enter").to_string()),
-                    value: Some(line_num.to_string()),
-                    disabled: false,
-                    keybinding: None,
-                    source: None,
-                }];
-            }
-        }
-
-        vec![Suggestion {
-            text: t!("quick_open.invalid_line").to_string(),
-            description: Some(line_str.to_string()),
-            value: None,
-            disabled: true,
-            keybinding: None,
-            source: None,
-        }]
-    }
-
-    /// Get file suggestions for Quick Open
-    fn get_file_suggestions(&self, query: &str) -> Vec<Suggestion> {
-        // Use the file provider's file loading mechanism
-        let cwd = self.working_dir.display().to_string();
-        let context = QuickOpenContext {
-            cwd: cwd.clone(),
-            open_buffers: vec![], // Not needed for file suggestions
+        QuickOpenContext {
+            cwd: self.working_dir.display().to_string(),
+            open_buffers,
             active_buffer_id: self.active_buffer().0,
             active_buffer_path: self
                 .active_state()
@@ -3939,10 +3820,29 @@ impl Editor {
                 .get(&self.active_buffer())
                 .and_then(|m| m.virtual_mode())
                 .map(|s| s.to_string()),
-            has_lsp_config: false, // Not needed for file suggestions
-        };
+            has_lsp_config,
+        }
+    }
 
-        self.file_provider.suggestions(query, &context)
+    /// Update Quick Open suggestions based on current input, dispatching through the registry
+    fn update_quick_open_suggestions(&mut self, input: &str) {
+        let context = self.build_quick_open_context();
+        let suggestions =
+            if let Some((provider, query)) = self.quick_open_registry.get_provider_for_input(input)
+            {
+                provider.suggestions(query, &context)
+            } else {
+                vec![]
+            };
+
+        if let Some(prompt) = &mut self.prompt {
+            prompt.suggestions = suggestions;
+            prompt.selected_suggestion = if prompt.suggestions.is_empty() {
+                None
+            } else {
+                Some(0)
+            };
+        }
     }
 
     /// Cancel search/replace prompts if one is active.
@@ -4509,10 +4409,11 @@ impl Editor {
                 };
                 if let Some(prompt) = &mut self.prompt {
                     // Use the underlying context (not Prompt context) for filtering
+                    let keybindings = self.keybindings.read().unwrap();
                     prompt.suggestions = self.command_registry.read().unwrap().filter(
                         &input,
                         self.key_context.clone(),
-                        &self.keybindings,
+                        &keybindings,
                         selection_active,
                         &self.active_custom_contexts,
                         active_buffer_mode,

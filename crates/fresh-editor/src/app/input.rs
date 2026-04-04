@@ -125,9 +125,16 @@ impl Editor {
                 let key_event = crossterm::event::KeyEvent::new(code, modifiers);
 
                 // Mode chord resolution (via KeybindingResolver)
-                let chord_result =
-                    self.keybindings
-                        .resolve_chord(&self.chord_state, &key_event, mode_ctx.clone());
+                let (chord_result, resolved_action) = {
+                    let keybindings = self.keybindings.read().unwrap();
+                    let chord_result = keybindings.resolve_chord(
+                        &self.chord_state,
+                        &key_event,
+                        mode_ctx.clone(),
+                    );
+                    let resolved = keybindings.resolve(&key_event, mode_ctx);
+                    (chord_result, resolved)
+                };
                 match chord_result {
                     crate::input::keybindings::ChordResolution::Complete(action) => {
                         tracing::debug!("Mode chord resolved to action: {:?}", action);
@@ -148,9 +155,8 @@ impl Editor {
                 }
 
                 // Mode single-key resolution (custom > keymap > plugin defaults)
-                let resolved = self.keybindings.resolve(&key_event, mode_ctx);
-                if resolved != Action::None {
-                    return self.handle_action(resolved);
+                if resolved_action != Action::None {
+                    return self.handle_action(resolved_action);
                 }
             }
 
@@ -196,9 +202,13 @@ impl Editor {
 
         // Check for chord sequence matches first
         let key_event = crossterm::event::KeyEvent::new(code, modifiers);
-        let chord_result =
-            self.keybindings
-                .resolve_chord(&self.chord_state, &key_event, context.clone());
+        let (chord_result, action) = {
+            let keybindings = self.keybindings.read().unwrap();
+            let chord_result =
+                keybindings.resolve_chord(&self.chord_state, &key_event, context.clone());
+            let action = keybindings.resolve(&key_event, context.clone());
+            (chord_result, action)
+        };
 
         match chord_result {
             crate::input::keybindings::ChordResolution::Complete(action) => {
@@ -222,9 +232,7 @@ impl Editor {
             }
         }
 
-        // Regular single-key resolution
-        let action = self.keybindings.resolve(&key_event, context.clone());
-
+        // Regular single-key resolution (already resolved above)
         tracing::trace!("Context: {:?} -> Action: {:?}", context, action);
 
         // Cancel pending LSP requests on user actions (except LSP actions themselves)
@@ -499,15 +507,18 @@ impl Editor {
                         .and_then(|lang| self.lsp.as_ref().and_then(|lsp| lsp.get_config(lang)))
                         .is_some()
                 };
-                let suggestions = self.command_registry.read().unwrap().filter(
-                    "",
-                    self.key_context.clone(),
-                    &self.keybindings,
-                    self.has_active_selection(),
-                    &self.active_custom_contexts,
-                    active_buffer_mode,
-                    has_lsp_config,
-                );
+                let suggestions = {
+                    let keybindings = self.keybindings.read().unwrap();
+                    self.command_registry.read().unwrap().filter(
+                        "",
+                        self.key_context.clone(),
+                        &keybindings,
+                        self.has_active_selection(),
+                        &self.active_custom_contexts,
+                        active_buffer_mode,
+                        has_lsp_config,
+                    )
+                };
                 self.start_prompt_with_suggestions(
                     t!("file.command_prompt").to_string(),
                     PromptType::Command,
@@ -923,7 +934,7 @@ impl Editor {
                     self.config.active_keybinding_map = map_name.clone().into();
 
                     // Reload the keybinding resolver with the new map
-                    self.keybindings =
+                    *self.keybindings.write().unwrap() =
                         crate::input::keybindings::KeybindingResolver::new(&self.config);
 
                     self.set_status_message(
@@ -3418,7 +3429,7 @@ impl Editor {
             self.config.active_keybinding_map = map_name.to_string().into();
 
             // Reload the keybinding resolver with the new map
-            self.keybindings = crate::input::keybindings::KeybindingResolver::new(&self.config);
+            *self.keybindings.write().unwrap() = crate::input::keybindings::KeybindingResolver::new(&self.config);
 
             // Persist to config file
             self.save_keybinding_map_to_config();

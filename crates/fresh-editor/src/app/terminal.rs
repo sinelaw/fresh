@@ -99,6 +99,8 @@ impl Editor {
                 // Get the terminal escape keybinding dynamically
                 let exit_key = self
                     .keybindings
+                    .read()
+                    .unwrap()
                     .find_keybinding_for_action(
                         "terminal_escape",
                         crate::input::keybindings::KeyContext::Terminal,

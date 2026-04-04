@@ -325,6 +325,7 @@ impl QuickOpenProvider for GotoLineProvider {
 ///
 /// This is the default provider (empty prefix) that provides file suggestions
 /// using git ls-files, fd, find, or directory traversal.
+#[derive(Clone)]
 pub struct FileProvider {
     /// Cached file list (populated lazily)
     file_cache: std::sync::Arc<std::sync::RwLock<Option<Vec<FileEntry>>>>,
@@ -536,6 +537,10 @@ impl QuickOpenProvider for FileProvider {
     }
 
     fn suggestions(&self, query: &str, context: &QuickOpenContext) -> Vec<Suggestion> {
+        // Strip :line:col suffix so fuzzy matching works when the user appends a jump target
+        let (path_part, _, _) = super::parse_path_line_col(query);
+        let search_query = if path_part.is_empty() { query } else { &path_part };
+
         let files = self.load_files(&context.cwd);
 
         if files.is_empty() {
@@ -551,7 +556,7 @@ impl QuickOpenProvider for FileProvider {
 
         let max_results = 100;
 
-        let mut scored_files: Vec<(FileEntry, i32)> = if query.is_empty() {
+        let mut scored_files: Vec<(FileEntry, i32)> = if search_query.is_empty() {
             // Sort by frecency when no query
             let mut files = files;
             files.sort_by(|a, b| {
@@ -569,7 +574,7 @@ impl QuickOpenProvider for FileProvider {
             files
                 .into_iter()
                 .filter_map(|file| {
-                    let match_result = fuzzy_match(query, &file.relative_path);
+                    let match_result = fuzzy_match(search_query, &file.relative_path);
                     if match_result.matched {
                         // Boost score by frecency (normalized)
                         let frecency_boost = (file.frecency_score / 100.0).min(20.0) as i32;
@@ -604,21 +609,32 @@ impl QuickOpenProvider for FileProvider {
         query: &str,
         context: &QuickOpenContext,
     ) -> QuickOpenResult {
-        let suggestions = self.suggestions(query, context);
+        let (path_part, line, column) = super::parse_path_line_col(query);
+        let search_query = if path_part.is_empty() { query } else { &path_part };
+
+        let suggestions = self.suggestions(search_query, context);
 
         if let Some(idx) = selected_index {
             if let Some(suggestion) = suggestions.get(idx) {
                 if let Some(path) = &suggestion.value {
-                    // Record access for frecency
                     self.record_access(path);
-
                     return QuickOpenResult::OpenFile {
                         path: path.clone(),
-                        line: None,
-                        column: None,
+                        line,
+                        column,
                     };
                 }
             }
+        }
+
+        // Fallback: direct path input with :line:col
+        if line.is_some() && !path_part.is_empty() {
+            self.record_access(&path_part);
+            return QuickOpenResult::OpenFile {
+                path: path_part,
+                line,
+                column,
+            };
         }
 
         QuickOpenResult::None
