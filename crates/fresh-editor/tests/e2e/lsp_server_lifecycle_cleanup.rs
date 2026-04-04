@@ -221,9 +221,7 @@ echo "SERVER: exiting" >> "$LOG_FILE"
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_stopping_server_clears_diagnostics() -> anyhow::Result<()> {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter("fresh=debug")
-        .try_init();
+    crate::common::tracing::init_tracing_from_env();
 
     let temp_dir = tempfile::tempdir()?;
     let script_path = create_error_server_script(temp_dir.path(), "fake_error_server.sh");
@@ -292,9 +290,7 @@ fn test_stopping_server_clears_diagnostics() -> anyhow::Result<()> {
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_two_servers_both_receive_didopen_and_publish_diagnostics() -> anyhow::Result<()> {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter("fresh=debug")
-        .try_init();
+    crate::common::tracing::init_tracing_from_env();
 
     let temp_dir = tempfile::tempdir()?;
     let error_script = create_error_server_script(temp_dir.path(), "fake_error_server_multi.sh");
@@ -351,15 +347,39 @@ fn test_two_servers_both_receive_didopen_and_publish_diagnostics() -> anyhow::Re
     )?;
 
     // Open the file → both servers start automatically
+    tracing::warn!("[test] opening test file");
     harness.open_file(&test_file)?;
     harness.render()?;
 
     // Wait for both servers to publish diagnostics:
     // error-server → E:1 (1 error), warning-server → W:1 (1 warning)
+    tracing::warn!("[test] waiting for E:1 && W:1");
+    let error_log_for_closure = error_log.clone();
+    let warning_log_for_closure = warning_log.clone();
+    let mut last_diag_dump = std::time::Instant::now();
     harness.wait_until(|h| {
         let screen = h.screen_to_string();
-        screen.contains("E:1") && screen.contains("W:1")
+        let has_error = screen.contains("E:1");
+        let has_warning = screen.contains("W:1");
+
+        // Periodically dump server logs to diagnose which server is stuck
+        let now = std::time::Instant::now();
+        if now.duration_since(last_diag_dump) >= std::time::Duration::from_secs(15) {
+            last_diag_dump = now;
+            let elog = std::fs::read_to_string(&error_log_for_closure).unwrap_or_default();
+            let wlog = std::fs::read_to_string(&warning_log_for_closure).unwrap_or_default();
+            tracing::warn!(
+                has_error,
+                has_warning,
+                "[test] still waiting — error-server log:\n{}\nwarning-server log:\n{}",
+                elog,
+                wlog
+            );
+        }
+
+        has_error && has_warning
     })?;
+    tracing::warn!("[test] both diagnostics visible, checking server logs");
 
     // Verify both servers received didOpen (they published diagnostics in
     // response to didOpen, so seeing E:1+W:1 already proves this, but let's
