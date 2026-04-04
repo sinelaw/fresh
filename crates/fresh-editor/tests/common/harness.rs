@@ -2023,12 +2023,26 @@ impl EditorTestHarness {
         F: FnMut(&Self) -> bool,
     {
         const WAIT_SLEEP: std::time::Duration = std::time::Duration::from_millis(50);
+        // Dump the screen periodically so CI logs show what the test sees while stuck
+        const SCREEN_DUMP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 
         tracing::info!("waiting...");
+        let start = std::time::Instant::now();
+        let mut last_dump = start;
         loop {
             self.tick_and_render()?;
             if condition(self) {
                 return Ok(());
+            }
+            let now = std::time::Instant::now();
+            if now.duration_since(last_dump) >= SCREEN_DUMP_INTERVAL {
+                let elapsed = now.duration_since(start);
+                tracing::warn!(
+                    "wait_until still pending after {:.1}s — screen:\n{}",
+                    elapsed.as_secs_f64(),
+                    self.screen_to_string()
+                );
+                last_dump = now;
             }
             // Sleep for real wall-clock time to allow async I/O operations to complete
             // These run on the tokio runtime and need actual time, not logical time
