@@ -22,23 +22,51 @@ pub fn normalize_theme_name(name: &str) -> String {
 ///
 /// This is a pure data structure - no I/O operations.
 /// Use `ThemeLoader` to create and populate a registry.
+///
+/// Themes are keyed by their unique `ThemeInfo::key` (typically a repository
+/// URL or `pack/name` path). Lookups fall back to matching by display name
+/// for backward compatibility with configs that store just e.g. `"dark"`.
 #[derive(Debug, Clone)]
 pub struct ThemeRegistry {
-    /// All loaded themes, keyed by name
+    /// All loaded themes, keyed by ThemeInfo.key
     themes: HashMap<String, Theme>,
     /// Theme metadata for listing
     theme_list: Vec<ThemeInfo>,
 }
 
 impl ThemeRegistry {
-    /// Get a theme by name.
-    pub fn get(&self, name: &str) -> Option<&Theme> {
-        self.themes.get(&normalize_theme_name(name))
+    /// Look up a theme by key or name.
+    ///
+    /// Tries exact key match first, then falls back to matching by normalized
+    /// display name (for backward compat with configs that just say `"dark"`).
+    pub fn get(&self, key_or_name: &str) -> Option<&Theme> {
+        // Exact key match
+        if let Some(theme) = self.themes.get(key_or_name) {
+            return Some(theme);
+        }
+        // Fallback: match by normalized display name
+        let normalized = normalize_theme_name(key_or_name);
+        self.theme_list
+            .iter()
+            .find(|info| normalize_theme_name(&info.name) == normalized)
+            .and_then(|info| self.themes.get(&info.key))
     }
 
-    /// Get a cloned theme by name.
-    pub fn get_cloned(&self, name: &str) -> Option<Theme> {
-        self.get(name).cloned()
+    /// Get a cloned theme by key or name.
+    pub fn get_cloned(&self, key_or_name: &str) -> Option<Theme> {
+        self.get(key_or_name).cloned()
+    }
+
+    /// Resolve a key-or-name to the canonical registry key.
+    pub fn resolve_key<'a>(&'a self, key_or_name: &'a str) -> Option<&'a str> {
+        if self.themes.contains_key(key_or_name) {
+            return Some(key_or_name);
+        }
+        let normalized = normalize_theme_name(key_or_name);
+        self.theme_list
+            .iter()
+            .find(|info| normalize_theme_name(&info.name) == normalized)
+            .map(|info| info.key.as_str())
     }
 
     /// List all available themes with metadata.
@@ -46,14 +74,14 @@ impl ThemeRegistry {
         &self.theme_list
     }
 
-    /// Get all theme names.
+    /// Get all theme display names.
     pub fn names(&self) -> Vec<String> {
         self.theme_list.iter().map(|t| t.name.clone()).collect()
     }
 
-    /// Check if a theme exists.
-    pub fn contains(&self, name: &str) -> bool {
-        self.themes.contains_key(&normalize_theme_name(name))
+    /// Check if a theme exists (by key or name).
+    pub fn contains(&self, key_or_name: &str) -> bool {
+        self.get(key_or_name).is_some()
     }
 
     /// Number of themes in the registry.
@@ -66,22 +94,28 @@ impl ThemeRegistry {
         self.themes.is_empty()
     }
 
-    /// Convert all themes to a JSON map (name → serde_json::Value).
+    /// Convert all themes to a JSON map (key → serde_json::Value).
     ///
-    /// Uses the existing `From<Theme> for ThemeFile` conversion to produce
-    /// JSON that matches what the theme files look like on disk.
+    /// Keyed by the unique registry key. Each value is the theme data with
+    /// added `_key` and `_pack` metadata fields so plugins can distinguish
+    /// themes and show display names.
     pub fn to_json_map(&self) -> HashMap<String, serde_json::Value> {
         use super::types::ThemeFile;
 
-        self.themes
-            .iter()
-            .filter_map(|(name, theme)| {
+        let mut map = HashMap::new();
+        for info in &self.theme_list {
+            if let Some(theme) = self.themes.get(&info.key) {
                 let theme_file: ThemeFile = theme.clone().into();
-                serde_json::to_value(theme_file)
-                    .ok()
-                    .map(|v| (name.clone(), v))
-            })
-            .collect()
+                if let Ok(mut v) = serde_json::to_value(theme_file) {
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.insert("_key".to_string(), serde_json::json!(info.key));
+                        obj.insert("_pack".to_string(), serde_json::json!(info.pack));
+                    }
+                    map.insert(info.key.clone(), v);
+                }
+            }
+        }
+        map
     }
 }
 
@@ -119,23 +153,23 @@ impl ThemeLoader {
         let mut themes = HashMap::new();
         let mut theme_list = Vec::new();
 
-        // Load all embedded themes
+        // Load all embedded themes (key = name for builtins)
         for builtin in BUILTIN_THEMES {
             if let Ok(theme_file) = serde_json::from_str::<ThemeFile>(builtin.json) {
                 let theme: Theme = theme_file.into();
                 let normalized = normalize_theme_name(builtin.name);
-                themes.insert(normalized.clone(), theme);
-                theme_list.push(ThemeInfo::new(normalized, builtin.pack));
+                let info = ThemeInfo::new(&normalized, builtin.pack);
+                themes.insert(info.key.clone(), theme);
+                theme_list.push(info);
             }
         }
 
         // Load user themes from ~/.config/fresh/themes/ (recursively)
         if let Some(ref user_dir) = self.user_themes_dir {
-            self.scan_directory(user_dir, "user", &mut themes, &mut theme_list);
+            self.scan_directory(user_dir, "user", None, &mut themes, &mut theme_list);
         }
 
         // Load theme packages from ~/.config/fresh/themes/packages/*/
-        // Each package directory may contain multiple theme JSON files
         if let Some(ref user_dir) = self.user_themes_dir {
             let packages_dir = user_dir.join("packages");
             if packages_dir.exists() {
@@ -144,9 +178,7 @@ impl ThemeLoader {
                         let path = entry.path();
                         if path.is_dir() {
                             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                                // Skip hidden directories (like .index)
                                 if !name.starts_with('.') {
-                                    // Check for package.json to get theme metadata
                                     let manifest_path = path.join("package.json");
                                     if manifest_path.exists() {
                                         self.load_package_themes(
@@ -156,11 +188,11 @@ impl ThemeLoader {
                                             &mut theme_list,
                                         );
                                     } else {
-                                        // Fallback: scan directory for JSON files
                                         let pack_name = format!("pkg/{}", name);
                                         self.scan_directory(
                                             &path,
                                             &pack_name,
+                                            None,
                                             &mut themes,
                                             &mut theme_list,
                                         );
@@ -186,6 +218,14 @@ impl ThemeLoader {
         ThemeRegistry { themes, theme_list }
     }
 
+    /// Read the `repository` field from a package.json manifest value.
+    fn read_repository(manifest: &serde_json::Value) -> Option<String> {
+        manifest
+            .get("repository")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
+
     /// Load themes from a package with package.json manifest.
     fn load_package_themes(
         &self,
@@ -200,11 +240,13 @@ impl ThemeLoader {
             Err(_) => return,
         };
 
-        // Parse manifest to find theme entries
         let manifest: serde_json::Value = match serde_json::from_str(&manifest_content) {
             Ok(v) => v,
             Err(_) => return,
         };
+
+        let repository = Self::read_repository(&manifest);
+        let pack_name = format!("pkg/{}", pkg_name);
 
         // Check for fresh.themes array in manifest
         if let Some(fresh) = manifest.get("fresh") {
@@ -221,12 +263,18 @@ impl ThemeLoader {
                                 {
                                     let theme: Theme = theme_file.into();
                                     let normalized_name = normalize_theme_name(name);
-                                    // Don't overwrite existing themes
-                                    if !themes.contains_key(&normalized_name) {
-                                        themes.insert(normalized_name.clone(), theme);
-                                        let pack_name = format!("pkg/{}", pkg_name);
-                                        theme_list
-                                            .push(ThemeInfo::new(normalized_name, &pack_name));
+                                    let info = if let Some(ref repo) = repository {
+                                        ThemeInfo::with_key(
+                                            &normalized_name,
+                                            &pack_name,
+                                            format!("{}#{}", repo, normalized_name),
+                                        )
+                                    } else {
+                                        ThemeInfo::new(&normalized_name, &pack_name)
+                                    };
+                                    if !themes.contains_key(&info.key) {
+                                        themes.insert(info.key.clone(), theme);
+                                        theme_list.push(info);
                                     }
                                 }
                             }
@@ -238,15 +286,24 @@ impl ThemeLoader {
         }
 
         // Fallback: if no fresh.themes, scan for JSON files
-        let pack_name = format!("pkg/{}", pkg_name);
-        self.scan_directory(pkg_dir, &pack_name, themes, theme_list);
+        self.scan_directory(
+            pkg_dir,
+            &pack_name,
+            repository.as_deref(),
+            themes,
+            theme_list,
+        );
     }
 
     /// Recursively scan a directory for theme files.
+    ///
+    /// If `repository` is provided (from a package.json), it is used to form
+    /// the registry key as `{repository}#{theme_name}`.
     fn scan_directory(
         &self,
         dir: &Path,
         pack: &str,
+        repository: Option<&str>,
         themes: &mut HashMap<String, Theme>,
         theme_list: &mut Vec<ThemeInfo>,
     ) {
@@ -267,29 +324,33 @@ impl ThemeLoader {
                     continue;
                 }
 
-                // Recurse into subdirectory with updated pack name
                 let new_pack = if pack == "user" {
                     format!("user/{}", subdir_name)
                 } else {
                     format!("{}/{}", pack, subdir_name)
                 };
-                self.scan_directory(&path, &new_pack, themes, theme_list);
+                self.scan_directory(&path, &new_pack, repository, themes, theme_list);
             } else if path.extension().is_some_and(|ext| ext == "json") {
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     if let Ok(theme_file) = serde_json::from_str::<ThemeFile>(&content) {
-                        // Prefer the theme's own name field over the filename,
-                        // so that e.g. "dark.json" with name "adwaita-dark" doesn't
-                        // collide with a builtin "dark" theme.
                         let name = normalize_theme_name(&theme_file.name);
+                        let info = if let Some(repo) = repository {
+                            ThemeInfo::with_key(&name, pack, format!("{}#{}", repo, name))
+                        } else if pack.starts_with("user") {
+                            // User-saved themes: use file:// URL as key
+                            ThemeInfo::with_key(&name, pack, format!("file://{}", path.display()))
+                        } else {
+                            ThemeInfo::new(&name, pack)
+                        };
 
-                        // Skip if already loaded (embedded themes take priority)
-                        if themes.contains_key(&name) {
+                        // Only skip exact key duplicates
+                        if themes.contains_key(&info.key) {
                             continue;
                         }
 
                         let theme: Theme = theme_file.into();
-                        themes.insert(name.clone(), theme);
-                        theme_list.push(ThemeInfo::new(name, pack));
+                        themes.insert(info.key.clone(), theme);
+                        theme_list.push(info);
                     }
                 }
             }
@@ -446,22 +507,24 @@ mod tests {
         );
 
         // Verify the theme is also available via generate_dynamic_items
-        // (the function used for Select Theme menu items)
+        // (the function used for Select Theme menu items).
+        // The "theme" arg should be the key (file:// URL for user themes).
         #[cfg(not(target_arch = "wasm32"))]
         {
             let menu_items = crate::config::generate_dynamic_items("copy_with_theme", &themes_dir);
-            let theme_names: Vec<_> = menu_items
+            let theme_keys: Vec<_> = menu_items
                 .iter()
                 .filter_map(|item| match item {
-                    crate::config::MenuItem::Action { args, .. } => {
-                        args.get("theme").map(|v| v.as_str().unwrap_or_default())
-                    }
+                    crate::config::MenuItem::Action { args, .. } => args
+                        .get("theme")
+                        .map(|v| v.as_str().unwrap_or_default().to_string()),
                     _ => None,
                 })
                 .collect();
             assert!(
-                theme_names.contains(&"my-custom-theme"),
-                "Custom theme should appear in dynamic menu items"
+                theme_keys.iter().any(|k| k.contains("my-custom-theme")),
+                "Custom theme key should appear in dynamic menu items, got: {:?}",
+                theme_keys
             );
         }
     }
@@ -655,5 +718,16 @@ mod tests {
         assert!(dark.get("editor").is_some(), "should have editor section");
         assert!(dark.get("ui").is_some(), "should have ui section");
         assert!(dark.get("syntax").is_some(), "should have syntax section");
+
+        // Should have metadata fields
+        assert_eq!(
+            dark.get("_key").and_then(|v| v.as_str()),
+            Some("dark"),
+            "theme JSON should have _key metadata"
+        );
+        assert!(
+            dark.get("_pack").is_some(),
+            "theme JSON should have _pack metadata"
+        );
     }
 }

@@ -3145,28 +3145,33 @@ impl Editor {
     /// Start the theme selection prompt with available themes
     fn start_select_theme_prompt(&mut self) {
         let available_themes = self.theme_registry.list();
-        let current_theme_name = &self.theme.name;
+        let current_theme_key = &self.config.theme.0;
 
-        // Find the index of the current theme
+        // Find the index of the current theme (match by key first, then name)
         let current_index = available_themes
             .iter()
-            .position(|info| info.name == *current_theme_name)
+            .position(|info| info.key == *current_theme_key)
+            .or_else(|| {
+                let normalized = crate::view::theme::normalize_theme_name(current_theme_key);
+                available_themes.iter().position(|info| {
+                    crate::view::theme::normalize_theme_name(&info.name) == normalized
+                })
+            })
             .unwrap_or(0);
 
         let suggestions: Vec<crate::input::commands::Suggestion> = available_themes
             .iter()
             .map(|info| {
-                let is_current = info.name == *current_theme_name;
-                let description = match (is_current, info.pack.is_empty()) {
-                    (true, true) => Some("(current)".to_string()),
-                    (true, false) => Some(format!("{} (current)", info.pack)),
-                    (false, true) => None,
-                    (false, false) => Some(info.pack.clone()),
+                let is_current = Some(info) == available_themes.get(current_index);
+                let description = if is_current {
+                    Some(format!("{} (current)", info.key))
+                } else {
+                    Some(info.key.clone())
                 };
                 crate::input::commands::Suggestion {
                     text: info.name.clone(),
                     description,
-                    value: Some(info.name.clone()),
+                    value: Some(info.key.clone()),
                     disabled: false,
                     keybinding: None,
                     source: None,
@@ -3177,7 +3182,7 @@ impl Editor {
         self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Select theme: ".to_string(),
             PromptType::SelectTheme {
-                original_theme: current_theme_name.clone(),
+                original_theme: current_theme_key.clone(),
             },
             suggestions,
         ));
@@ -3185,17 +3190,21 @@ impl Editor {
         if let Some(prompt) = self.prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
-                // Also set input to match selected theme
-                prompt.input = current_theme_name.to_string();
+                // Set input to match selected theme key
+                if let Some(suggestion) = prompt.suggestions.get(current_index) {
+                    prompt.input = suggestion.get_value().to_string();
+                } else {
+                    prompt.input = current_theme_key.to_string();
+                }
                 prompt.cursor_pos = prompt.input.len();
             }
         }
     }
 
-    /// Apply a theme by name and persist it to config
-    pub(super) fn apply_theme(&mut self, theme_name: &str) {
-        if !theme_name.is_empty() {
-            if let Some(theme) = self.theme_registry.get_cloned(theme_name) {
+    /// Apply a theme by key (or name for backward compat) and persist to config
+    pub(super) fn apply_theme(&mut self, key_or_name: &str) {
+        if !key_or_name.is_empty() {
+            if let Some(theme) = self.theme_registry.get_cloned(key_or_name) {
                 self.theme = theme;
 
                 // Set terminal cursor color to match theme
@@ -3205,11 +3214,15 @@ impl Editor {
                 // (diagnostic and semantic token overlays bake RGB at creation time).
                 self.reapply_all_overlays();
 
-                // Update the config in memory using the normalized registry key,
-                // not the JSON name field, so that the config value can be looked
-                // up in the registry on restart (fixes #1001).
-                let normalized = crate::view::theme::normalize_theme_name(theme_name);
-                self.config.theme = normalized.into();
+                // Resolve to the canonical registry key so that subsequent
+                // lookups (plugins, restart) use the exact key, not a name
+                // that might be ambiguous.
+                let resolved = self
+                    .theme_registry
+                    .resolve_key(key_or_name)
+                    .unwrap_or(key_or_name)
+                    .to_string();
+                self.config.theme = resolved.into();
 
                 // Persist to config file
                 self.save_theme_to_config();
@@ -3218,7 +3231,7 @@ impl Editor {
                     t!("view.theme_changed", theme = self.theme.name.clone()).to_string(),
                 );
             } else {
-                self.set_status_message(format!("Theme '{}' not found", theme_name));
+                self.set_status_message(format!("Theme '{}' not found", key_or_name));
             }
         }
     }
@@ -3266,14 +3279,16 @@ impl Editor {
         }
     }
 
-    /// Preview a theme by name (without persisting to config)
+    /// Preview a theme by key or name (without persisting to config)
     /// Used for live preview when navigating theme selection
-    pub(super) fn preview_theme(&mut self, theme_name: &str) {
-        if !theme_name.is_empty() && theme_name != self.theme.name {
-            if let Some(theme) = self.theme_registry.get_cloned(theme_name) {
-                self.theme = theme;
-                self.theme.set_terminal_cursor_color();
-                self.reapply_all_overlays();
+    pub(super) fn preview_theme(&mut self, key_or_name: &str) {
+        if !key_or_name.is_empty() {
+            if let Some(theme) = self.theme_registry.get_cloned(key_or_name) {
+                if theme.name != self.theme.name {
+                    self.theme = theme;
+                    self.theme.set_terminal_cursor_color();
+                    self.reapply_all_overlays();
+                }
             }
         }
     }

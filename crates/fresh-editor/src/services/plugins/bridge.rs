@@ -101,9 +101,22 @@ impl PluginServiceBridge for EditorServiceBridge {
         self.dir_context.config_dir.clone()
     }
 
-    fn get_theme_data(&self, name: &str) -> Option<serde_json::Value> {
+    fn get_theme_data(&self, key_or_name: &str) -> Option<serde_json::Value> {
         let cache = self.theme_cache.read().unwrap();
-        cache.get(name).cloned()
+        // Exact key match
+        if let Some(v) = cache.get(key_or_name) {
+            return Some(v.clone());
+        }
+        // Fallback: match by theme name inside the cached values
+        let normalized = key_or_name.to_lowercase().replace(['_', ' '], "-");
+        cache
+            .values()
+            .find(|v| {
+                v.get("name")
+                    .and_then(|n| n.as_str())
+                    .is_some_and(|n| n.to_lowercase().replace(['_', ' '], "-") == normalized)
+            })
+            .cloned()
     }
 
     fn save_theme_file(&self, name: &str, content: &str) -> Result<String, String> {

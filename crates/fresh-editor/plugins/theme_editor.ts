@@ -333,8 +333,10 @@ interface ThemeEditorState {
   themeData: Record<string, unknown>;
   /** Original theme data (for change detection) */
   originalThemeData: Record<string, unknown>;
-  /** Theme name */
+  /** Theme display name */
   themeName: string;
+  /** Theme registry key (for lookups) */
+  themeKey: string;
   /** Theme file path (null for new themes) */
   themePath: string | null;
   /** Expanded sections */
@@ -345,8 +347,10 @@ interface ThemeEditorState {
   selectedIndex: number;
   /** Whether there are unsaved changes */
   hasChanges: boolean;
-  /** Available built-in themes */
-  builtinThemes: string[];
+  /** All themes from registry: key → {name, pack} */
+  themeRegistry: Map<string, {name: string; pack: string}>;
+  /** Keys of builtin themes (empty pack) */
+  builtinKeys: Set<string>;
   /** Pending save name for overwrite confirmation */
   pendingSaveName: string | null;
   /** Whether current theme is a built-in (requires Save As) */
@@ -411,13 +415,15 @@ const state: ThemeEditorState = {
   sourceBufferId: null,
   themeData: {},
   originalThemeData: {},
-  themeName: "custom",
+  themeName: "",
+  themeKey: "",
   themePath: null,
   expandedSections: new Set(["editor", "syntax"]),
   visibleFields: [],
   selectedIndex: 0,
   hasChanges: false,
-  builtinThemes: [],
+  themeRegistry: new Map(),
+  builtinKeys: new Set(),
   pendingSaveName: null,
   isBuiltin: false,
   savedCursorPath: null,
@@ -669,33 +675,50 @@ function findThemesDir(): string {
 /**
  * Load list of available built-in themes
  */
-async function loadBuiltinThemes(): Promise<string[]> {
+/**
+ * Load all themes from the registry, returning a map of key → display name.
+ *
+ * The registry is keyed by unique keys (repo URLs, file:// paths, or bare
+ * names for builtins). Each value contains a `name` field (display name)
+ * and `_key`/`_pack` metadata.
+ */
+/**
+ * Load theme registry and populate state.themeRegistry + state.builtinKeys.
+ */
+async function loadThemeRegistry(): Promise<void> {
   try {
-    editor.debug("[theme_editor] loadBuiltinThemes: calling editor.getBuiltinThemes()");
+    editor.debug("[theme_editor] loadThemeRegistry: calling editor.getBuiltinThemes()");
     const rawThemes = editor.getBuiltinThemes();
-    editor.debug(`[theme_editor] loadBuiltinThemes: got rawThemes type=${typeof rawThemes}`);
-    // getBuiltinThemes returns a JSON string, need to parse it
-    const builtinThemes = typeof rawThemes === "string"
-      ? JSON.parse(rawThemes) as Record<string, string>
-      : rawThemes as Record<string, string>;
-    editor.debug(`[theme_editor] loadBuiltinThemes: parsed ${Object.keys(builtinThemes).length} themes`);
-    return Object.keys(builtinThemes);
+    const themes = typeof rawThemes === "string"
+      ? JSON.parse(rawThemes) as Record<string, Record<string, unknown>>
+      : rawThemes as Record<string, Record<string, unknown>>;
+    state.themeRegistry = new Map();
+    state.builtinKeys = new Set();
+    for (const [key, data] of Object.entries(themes)) {
+      const name = (data?.name as string) || key;
+      const pack = (data?._pack as string) || "";
+      state.themeRegistry.set(key, {name, pack});
+      // Builtin themes have an empty pack; user themes start with "user"
+      if (!pack || (!pack.startsWith("user") && !pack.startsWith("pkg"))) {
+        state.builtinKeys.add(key);
+      }
+    }
+    editor.debug(`[theme_editor] loadThemeRegistry: loaded ${state.themeRegistry.size} themes (${state.builtinKeys.size} builtin)`);
   } catch (e) {
-    editor.debug(`[theme_editor] Failed to load built-in themes list: ${e}`);
+    editor.debug(`[theme_editor] Failed to load theme registry: ${e}`);
     throw e;
   }
 }
 
 /**
- * Load theme data by name from the in-memory theme registry.
- * Works for all theme types (builtin, user, package) — no file I/O needed.
+ * Load theme data by key from the in-memory theme registry.
  */
-function loadThemeFile(name: string): Record<string, unknown> | null {
+function loadThemeFile(key: string): Record<string, unknown> | null {
   try {
-    const data = editor.getThemeData(name);
+    const data = editor.getThemeData(key);
     return data as Record<string, unknown> | null;
   } catch (e) {
-    editor.debug(`[theme_editor] Failed to load theme data for '${name}': ${e}`);
+    editor.debug(`[theme_editor] Failed to load theme data for '${key}': ${e}`);
     return null;
   }
 }
@@ -1559,28 +1582,17 @@ async function onThemeOpenPromptConfirmed(args: {
 }): Promise<boolean> {
   if (args.prompt_type !== "theme-open") return true;
 
-  const value = args.input.trim();
+  const key = args.input.trim();
+  const isBuiltin = state.builtinKeys.has(key);
+  const entry = state.themeRegistry.get(key);
+  const themeName = entry?.name || key;
 
-  // Parse the value to determine if it's user or builtin
-  let isBuiltin = false;
-  let themeName = value;
-
-  if (value.startsWith("user:")) {
-    themeName = value.slice(5);
-    isBuiltin = false;
-  } else if (value.startsWith("builtin:")) {
-    themeName = value.slice(8);
-    isBuiltin = true;
-  } else {
-    // Fallback: check if it's a builtin theme
-    isBuiltin = state.builtinThemes.includes(value);
-  }
-
-  const themeData = loadThemeFile(themeName);
+  const themeData = loadThemeFile(key);
   if (themeData) {
     state.themeData = deepClone(themeData);
     state.originalThemeData = deepClone(themeData);
     state.themeName = themeName;
+    state.themeKey = key;
     state.themePath = null;
     state.isBuiltin = isBuiltin;
     state.hasChanges = false;
@@ -1623,7 +1635,7 @@ async function onThemeSaveAsPromptConfirmed(args: {
     state.saveAsPreFilled = false;
 
     // Reject names that match a built-in theme
-    if (state.builtinThemes.includes(name)) {
+    if (state.builtinKeys.has(name)) {
       editor.startPromptWithInitial(editor.t("prompt.save_as_builtin_error"), "theme-save-as", name);
       editor.setPromptSuggestions([{
         text: state.themeName,
@@ -1693,30 +1705,19 @@ async function onThemeSelectInitialPromptConfirmed(args: {
   }
   editor.debug(`[theme_editor] prompt_type matched, processing selection...`);
 
-  const value = args.input.trim();
-
-  // Parse the value to determine if it's user or builtin
-  let isBuiltin = false;
-  let themeName = value;
-
-  if (value.startsWith("user:")) {
-    themeName = value.slice(5);
-    isBuiltin = false;
-  } else if (value.startsWith("builtin:")) {
-    themeName = value.slice(8);
-    isBuiltin = true;
-  } else {
-    // Fallback: check if it's a builtin theme
-    isBuiltin = state.builtinThemes.includes(value);
-  }
+  const key = args.input.trim();
+  const isBuiltin = state.builtinKeys.has(key);
+  const entry = state.themeRegistry.get(key);
+  const themeName = entry?.name || key;
 
   editor.debug(editor.t("status.loading"));
 
-  const themeData = loadThemeFile(themeName);
+  const themeData = loadThemeFile(key);
   if (themeData) {
     state.themeData = deepClone(themeData);
     state.originalThemeData = deepClone(themeData);
     state.themeName = themeName;
+    state.themeKey = key;
     state.themePath = null;
     state.isBuiltin = isBuiltin;
     state.hasChanges = false;
@@ -1758,6 +1759,11 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
   // (must match Rust's normalize_theme_name so config name matches filename)
   const themeName = (name || state.themeName).toLowerCase().replace(/[_ ]/g, "-");
 
+  if (!themeName) {
+    editor.setStatus(editor.t("status.save_failed", { error: "No theme name" }));
+    return false;
+  }
+
   try {
     // Build a complete theme object from all known fields.
     // This ensures we always write every field, even if state.themeData
@@ -1781,6 +1787,7 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
 
     state.themePath = savedPath;
     state.themeName = themeName;
+    state.themeKey = `file://${savedPath}`;
     state.isBuiltin = false; // After saving, it's now a user theme
     state.originalThemeData = deepClone(state.themeData);
     state.hasChanges = false;
@@ -2029,20 +2036,24 @@ async function onThemeInspectKey(data: {
   // Save context
   state.sourceSplitId = editor.getActiveSplitId();
   state.sourceBufferId = editor.getActiveBufferId();
-  state.builtinThemes = await loadBuiltinThemes();
+  await loadThemeRegistry();
 
-  // Auto-load the current theme (builtin or user)
-  const isBuiltin = state.builtinThemes.includes(data.theme_name);
-  const themeData = loadThemeFile(data.theme_name);
+  // Auto-load the current theme (data.theme_name is the config key)
+  const themeKey = data.theme_name;
+  const isBuiltin = state.builtinKeys.has(themeKey);
+  const entry = state.themeRegistry.get(themeKey);
+  const themeName = entry?.name || themeKey;
+  const themeData = loadThemeFile(themeKey);
   if (themeData) {
     state.themeData = deepClone(themeData);
     state.originalThemeData = deepClone(themeData);
-    state.themeName = data.theme_name;
+    state.themeName = themeName;
+    state.themeKey = themeKey;
     state.themePath = null;
     state.isBuiltin = isBuiltin;
     state.hasChanges = false;
   } else {
-    editor.setStatus(`Failed to load theme '${data.theme_name}'`);
+    editor.setStatus(`Failed to load theme '${themeName}'`);
     return;
   }
 
@@ -2444,46 +2455,35 @@ async function open_theme_editor() : Promise<void> {
 
   editor.debug("[theme_editor] loading builtin themes...");
   // Load available themes
-  state.builtinThemes = await loadBuiltinThemes();
-  editor.debug(`[theme_editor] loaded ${state.builtinThemes.length} builtin themes`);
+  await loadThemeRegistry();
+  editor.debug(`[theme_editor] loaded ${state.themeRegistry.size} themes (${state.builtinKeys.size} builtin)`);
 
-  // Get current theme name from config
+  // Get current theme key from config
   const config = editor.getConfig() as Record<string, unknown>;
-  const currentThemeName = (config?.theme as string) || "dark";
+  const currentThemeKey = (config?.theme as string) || "dark";
 
   // Prompt user to select which theme to edit
   editor.startPrompt(editor.t("prompt.select_theme_to_edit"), "theme-select-initial");
 
   const suggestions: PromptSuggestion[] = [];
 
-  // Add user themes first (from themes directory)
-  const userThemesDir = editor.getThemesDir();
-  try {
-    const entries = editor.readDir(userThemesDir);
-    for (const e of entries) {
-      if (e.is_file && e.name.endsWith(".json")) {
-        const name = e.name.replace(".json", "");
-        const isCurrent = name === currentThemeName;
-        suggestions.push({
-          text: name,
-          description: isCurrent ? editor.t("suggestion.user_theme_current") : editor.t("suggestion.user_theme"),
-          value: `user:${name}`,
-        });
-      }
+  // Build suggestions from theme registry (user themes first, then builtins)
+  const userSuggestions: PromptSuggestion[] = [];
+  const builtinSuggestions: PromptSuggestion[] = [];
+  for (const [key, {name}] of state.themeRegistry) {
+    const isCurrent = key === currentThemeKey || name === currentThemeKey;
+    const isBuiltin = state.builtinKeys.has(key);
+    const desc = isBuiltin
+      ? (isCurrent ? editor.t("suggestion.builtin_theme_current") : editor.t("suggestion.builtin_theme"))
+      : (isCurrent ? editor.t("suggestion.user_theme_current") : editor.t("suggestion.user_theme"));
+    const suggestion = { text: name, description: desc, value: key };
+    if (isBuiltin) {
+      builtinSuggestions.push(suggestion);
+    } else {
+      userSuggestions.push(suggestion);
     }
-  } catch {
-    // No user themes directory
   }
-
-  // Add built-in themes
-  for (const name of state.builtinThemes) {
-    const isCurrent = name === currentThemeName;
-    suggestions.push({
-      text: name,
-      description: isCurrent ? editor.t("suggestion.builtin_theme_current") : editor.t("suggestion.builtin_theme"),
-      value: `builtin:${name}`,
-    });
-  }
+  suggestions.push(...userSuggestions, ...builtinSuggestions);
 
   // Sort suggestions to put current theme first
   suggestions.sort((a, b) => {
@@ -2667,32 +2667,20 @@ function theme_editor_open() : void {
 
   const suggestions: PromptSuggestion[] = [];
 
-  // Add user themes first (from themes directory)
-  const userThemesDir = editor.getThemesDir();
-  try {
-    const entries = editor.readDir(userThemesDir);
-    for (const e of entries) {
-      if (e.is_file && e.name.endsWith(".json")) {
-        const name = e.name.replace(".json", "");
-        suggestions.push({
-          text: name,
-          description: editor.t("suggestion.user_theme"),
-          value: `user:${name}`,
-        });
-      }
+  // Build suggestions from theme registry (user themes first, then builtins)
+  const userSuggestions: PromptSuggestion[] = [];
+  const builtinSuggestions: PromptSuggestion[] = [];
+  for (const [key, {name}] of state.themeRegistry) {
+    const isBuiltin = state.builtinKeys.has(key);
+    const desc = isBuiltin ? editor.t("suggestion.builtin_theme") : editor.t("suggestion.user_theme");
+    const suggestion = { text: name, description: desc, value: key };
+    if (isBuiltin) {
+      builtinSuggestions.push(suggestion);
+    } else {
+      userSuggestions.push(suggestion);
     }
-  } catch {
-    // No user themes directory
   }
-
-  // Add built-in themes
-  for (const name of state.builtinThemes) {
-    suggestions.push({
-      text: name,
-      description: editor.t("suggestion.builtin_theme"),
-      value: `builtin:${name}`,
-    });
-  }
+  suggestions.push(...userSuggestions, ...builtinSuggestions);
 
   editor.setPromptSuggestions(suggestions);
 }
@@ -2799,8 +2787,7 @@ registerHandler("theme_editor_save_as", theme_editor_save_as);
  */
 async function theme_editor_reload() : Promise<void> {
   if (state.themePath) {
-    const themeName = state.themeName;
-    const themeData = loadThemeFile(themeName);
+    const themeData = loadThemeFile(state.themeKey);
     if (themeData) {
       state.themeData = deepClone(themeData);
       state.originalThemeData = deepClone(themeData);
@@ -2867,7 +2854,8 @@ async function onThemeDeletePromptConfirmed(args: {
         // Reset to default theme
         state.themeData = createDefaultTheme();
         state.originalThemeData = deepClone(state.themeData);
-        state.themeName = "custom";
+        state.themeName = "";
+        state.themeKey = "";
         state.themePath = null;
         state.hasChanges = false;
         updateDisplay();

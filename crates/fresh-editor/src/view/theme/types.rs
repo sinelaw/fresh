@@ -29,18 +29,44 @@ include!(concat!(env!("OUT_DIR"), "/builtin_themes.rs"));
 /// Information about an available theme.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThemeInfo {
-    /// Theme name (e.g., "dark", "nord")
+    /// Theme display name (e.g., "dark", "adwaita-dark")
     pub name: String,
     /// Pack name (subdirectory path, empty for root themes)
     pub pack: String,
+    /// Unique key used as the registry identifier.
+    ///
+    /// Derivation priority:
+    /// 1. Package themes: `{repository_url}#{theme_name}`
+    /// 2. User-saved themes (theme editor): `file://{absolute_path}`
+    /// 3. Loose user themes: `{pack}/{name}` or just `{name}` if pack is empty
+    /// 4. Builtins: just the name
+    pub key: String,
 }
 
 impl ThemeInfo {
-    /// Create a new ThemeInfo
+    /// Create a new ThemeInfo. The key defaults to `pack/name` (or just `name`
+    /// when pack is empty).
     pub fn new(name: impl Into<String>, pack: impl Into<String>) -> Self {
+        let name = name.into();
+        let pack = pack.into();
+        let key = if pack.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", pack, name)
+        };
+        Self { name, pack, key }
+    }
+
+    /// Create a ThemeInfo with an explicit key (e.g. a repository URL).
+    pub fn with_key(
+        name: impl Into<String>,
+        pack: impl Into<String>,
+        key: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             pack: pack.into(),
+            key: key.into(),
         }
     }
 

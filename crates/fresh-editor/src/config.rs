@@ -1763,7 +1763,7 @@ pub fn generate_dynamic_items(source: &str, themes_dir: &std::path::Path) -> Vec
                 .iter()
                 .map(|info| {
                     let mut args = HashMap::new();
-                    args.insert("theme".to_string(), serde_json::json!(info.name));
+                    args.insert("theme".to_string(), serde_json::json!(info.key));
                     MenuItem::Action {
                         label: info.name.clone(),
                         action: "copy_with_theme".to_string(),

@@ -417,9 +417,8 @@ fn test_issue_1001_theme_persists_after_restart_with_name_mismatch() {
         applied_bg
     );
 
-    // Verify the config file was persisted with the NORMALIZED name.
-    // This is the core assertion: the config must contain "catppuccin-mocha"
-    // (the registry key), NOT "Catppuccin Mocha" (the JSON name field).
+    // Verify the config file was persisted with the theme key.
+    // The key for user themes is a file:// URL pointing to the theme file.
     let config_path = temp_dir.path().join("config").join("config.json");
     let saved_config = fs::read_to_string(&config_path).unwrap();
     let saved_json: serde_json::Value = serde_json::from_str(&saved_config).unwrap();
@@ -428,11 +427,12 @@ fn test_issue_1001_theme_persists_after_restart_with_name_mismatch() {
         .get("theme")
         .and_then(|t| t.as_str())
         .unwrap_or("");
-    assert_eq!(
-        saved_theme, "catppuccin-mocha",
-        "BUG #1001: Config should contain normalized theme name 'catppuccin-mocha', \
-         not the JSON name field. Got: '{}'. Config content: {}",
-        saved_theme, saved_config
+    assert!(
+        saved_theme.contains("catppuccin-mocha"),
+        "Config should contain a key referencing 'catppuccin-mocha', \
+         not the raw JSON name field 'Catppuccin Mocha'. Got: '{}'. Config content: {}",
+        saved_theme,
+        saved_config
     );
 
     // Drop the first harness (simulates closing the editor)
