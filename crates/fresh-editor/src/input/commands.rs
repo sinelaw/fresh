@@ -79,6 +79,7 @@ pub struct Suggestion {
 }
 
 impl Suggestion {
+    /// Create an active (selectable) suggestion
     pub fn new(text: String) -> Self {
         Self {
             text,
@@ -90,63 +91,41 @@ impl Suggestion {
         }
     }
 
-    pub fn with_description(text: String, description: String) -> Self {
+    /// Create a disabled (greyed-out) suggestion used for hints or errors
+    pub fn disabled(text: String) -> Self {
         Self {
             text,
-            description: Some(description),
+            description: None,
             value: None,
-            disabled: false,
+            disabled: true,
             keybinding: None,
             source: None,
         }
     }
 
-    pub fn with_description_and_disabled(
-        text: String,
-        description: String,
-        disabled: bool,
-    ) -> Self {
-        Self {
-            text,
-            description: Some(description),
-            value: None,
-            disabled,
-            keybinding: None,
-            source: None,
-        }
+    pub fn with_description(mut self, description: String) -> Self {
+        self.description = Some(description);
+        self
     }
 
-    pub fn with_all(
-        text: String,
-        description: Option<String>,
-        disabled: bool,
-        keybinding: Option<String>,
-    ) -> Self {
-        Self {
-            text,
-            description,
-            value: None,
-            disabled,
-            keybinding,
-            source: None,
-        }
+    pub fn with_value(mut self, value: String) -> Self {
+        self.value = Some(value);
+        self
     }
 
-    pub fn with_source(
-        text: String,
-        description: Option<String>,
-        disabled: bool,
-        keybinding: Option<String>,
-        source: Option<CommandSource>,
-    ) -> Self {
-        Self {
-            text,
-            description,
-            value: None,
-            disabled,
-            keybinding,
-            source,
-        }
+    pub fn with_keybinding(mut self, keybinding: Option<String>) -> Self {
+        self.keybinding = keybinding;
+        self
+    }
+
+    pub fn with_source(mut self, source: Option<CommandSource>) -> Self {
+        self.source = source;
+        self
+    }
+
+    pub fn set_disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
     }
 
     pub fn get_value(&self) -> &str {
@@ -1348,12 +1327,10 @@ pub fn filter_commands(
             let available = is_available(&cmd);
             let keybinding = keybinding_resolver
                 .get_keybinding_for_action(&cmd.action, current_context_ref.clone());
-            Suggestion::with_all(
-                cmd.name.clone(),
-                Some(cmd.description),
-                !available,
-                keybinding,
-            )
+            Suggestion::new(cmd.name.clone())
+                .with_description(cmd.description)
+                .set_disabled(!available)
+                .with_keybinding(keybinding)
         })
         .collect();
 

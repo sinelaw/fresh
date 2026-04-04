@@ -3827,13 +3827,13 @@ impl Editor {
     /// Update Quick Open suggestions based on current input, dispatching through the registry
     fn update_quick_open_suggestions(&mut self, input: &str) {
         let context = self.build_quick_open_context();
-        let suggestions =
-            if let Some((provider, query)) = self.quick_open_registry.get_provider_for_input(input)
-            {
-                provider.suggestions(query, &context)
-            } else {
-                vec![]
-            };
+        let suggestions = if let Some((provider, query)) =
+            self.quick_open_registry.get_provider_for_input(input)
+        {
+            provider.suggestions(query, &context)
+        } else {
+            vec![]
+        };
 
         if let Some(prompt) = &mut self.prompt {
             prompt.suggestions = suggestions;

@@ -1491,7 +1491,10 @@ impl Editor {
             .with_plugin_name(plugin_name);
 
         // Clear any existing plugin defaults for this mode before re-registering
-        self.keybindings.write().unwrap().clear_plugin_defaults_for_mode(&name);
+        self.keybindings
+            .write()
+            .unwrap()
+            .clear_plugin_defaults_for_mode(&name);
 
         let mode_context = KeyContext::Mode(name.clone());
 

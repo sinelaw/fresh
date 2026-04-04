@@ -1280,17 +1280,18 @@ impl Editor {
     ) -> PromptResult {
         use crate::input::quick_open::QuickOpenResult;
 
-        // Dispatch through the registry to get a provider result
         let context = self.build_quick_open_context();
         let result = if let Some((provider, query)) =
             self.quick_open_registry.get_provider_for_input(input)
         {
-            provider.on_select(selected_index, query, &context)
+            // Resolve the selected suggestion once, so providers don't recompute
+            let suggestions = provider.suggestions(query, &context);
+            let selected = selected_index.and_then(|i| suggestions.get(i));
+            provider.on_select(selected, query, &context)
         } else {
             QuickOpenResult::None
         };
 
-        // Map QuickOpenResult to PromptResult + execute side effects
         self.execute_quick_open_result(result)
     }
 

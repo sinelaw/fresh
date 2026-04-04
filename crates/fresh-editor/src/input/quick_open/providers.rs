@@ -46,14 +46,6 @@ impl QuickOpenProvider for CommandProvider {
         ">"
     }
 
-    fn name(&self) -> &str {
-        "Commands"
-    }
-
-    fn hint(&self) -> &str {
-        ">  Commands"
-    }
-
     fn suggestions(&self, query: &str, context: &QuickOpenContext) -> Vec<Suggestion> {
         let registry = self.command_registry.read().unwrap();
         let keybindings = self.keybinding_resolver.read().unwrap();
@@ -71,47 +63,36 @@ impl QuickOpenProvider for CommandProvider {
 
     fn on_select(
         &self,
-        selected_index: Option<usize>,
-        query: &str,
-        context: &QuickOpenContext,
+        suggestion: Option<&Suggestion>,
+        _query: &str,
+        _context: &QuickOpenContext,
     ) -> QuickOpenResult {
-        let registry = self.command_registry.read().unwrap();
-        let keybindings = self.keybinding_resolver.read().unwrap();
-
-        let suggestions = registry.filter(
-            query,
-            context.key_context.clone(),
-            &keybindings,
-            context.has_selection,
-            &context.custom_contexts,
-            context.buffer_mode.as_deref(),
-            context.has_lsp_config,
-        );
-
-        if let Some(idx) = selected_index {
-            if let Some(suggestion) = suggestions.get(idx) {
-                if suggestion.disabled {
-                    return QuickOpenResult::Error(t!("status.command_not_available").to_string());
-                }
-
-                // Find the command by name
-                let commands = registry.get_all();
-                if let Some(cmd) = commands
-                    .iter()
-                    .find(|c| c.get_localized_name() == suggestion.text)
-                {
-                    // Record usage for frecency
-                    drop(keybindings);
-                    drop(registry);
-                    if let Ok(mut reg) = self.command_registry.write() {
-                        reg.record_usage(&cmd.name);
-                    }
-                    return QuickOpenResult::ExecuteAction(cmd.action.clone());
-                }
+        let suggestion = match suggestion {
+            Some(s) if !s.disabled => s,
+            Some(_) => {
+                return QuickOpenResult::Error(t!("status.command_not_available").to_string())
             }
-        }
+            None => return QuickOpenResult::None,
+        };
 
-        QuickOpenResult::None
+        let registry = self.command_registry.read().unwrap();
+        let cmd = registry
+            .get_all()
+            .into_iter()
+            .find(|c| c.get_localized_name() == suggestion.text);
+
+        let Some(cmd) = cmd else {
+            return QuickOpenResult::None;
+        };
+
+        let action = cmd.action.clone();
+        let name = cmd.name.clone();
+        drop(registry);
+
+        if let Ok(mut reg) = self.command_registry.write() {
+            reg.record_usage(&name);
+        }
+        QuickOpenResult::ExecuteAction(action)
     }
 }
 
@@ -139,30 +120,13 @@ impl QuickOpenProvider for BufferProvider {
         "#"
     }
 
-    fn name(&self) -> &str {
-        "Buffers"
-    }
-
-    fn hint(&self) -> &str {
-        "#  Buffers"
-    }
-
     fn suggestions(&self, query: &str, context: &QuickOpenContext) -> Vec<Suggestion> {
-        let mut suggestions: Vec<(Suggestion, i32, usize)> = context
+        let mut scored: Vec<(Suggestion, i32, usize)> = context
             .open_buffers
             .iter()
+            .filter(|buf| !buf.path.is_empty())
             .filter_map(|buf| {
-                if buf.path.is_empty() {
-                    return None; // Skip unnamed buffers
-                }
-
-                let display_name = if buf.modified {
-                    format!("{} [+]", buf.name)
-                } else {
-                    buf.name.clone()
-                };
-
-                let match_result = if query.is_empty() {
+                let m = if query.is_empty() {
                     crate::input::fuzzy::FuzzyMatch {
                         matched: true,
                         score: 0,
@@ -171,62 +135,39 @@ impl QuickOpenProvider for BufferProvider {
                 } else {
                     fuzzy_match(query, &buf.name)
                 };
-
-                if match_result.matched {
-                    Some((
-                        Suggestion {
-                            text: display_name,
-                            description: Some(buf.path.clone()),
-                            value: Some(buf.id.to_string()),
-                            disabled: false,
-                            keybinding: None,
-                            source: None,
-                        },
-                        match_result.score,
-                        buf.id,
-                    ))
-                } else {
-                    None
+                if !m.matched {
+                    return None;
                 }
+
+                let display_name = if buf.modified {
+                    format!("{} [+]", buf.name)
+                } else {
+                    buf.name.clone()
+                };
+
+                let suggestion = Suggestion::new(display_name)
+                    .with_description(buf.path.clone())
+                    .with_value(buf.id.to_string());
+                Some((suggestion, m.score, buf.id))
             })
             .collect();
 
         // Sort by score (higher is better), then by ID (lower = older = higher priority when tied)
-        suggestions.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.2.cmp(&b.2)));
-
-        suggestions.into_iter().map(|(s, _, _)| s).collect()
+        scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.2.cmp(&b.2)));
+        scored.into_iter().map(|(s, _, _)| s).collect()
     }
 
     fn on_select(
         &self,
-        selected_index: Option<usize>,
-        query: &str,
-        context: &QuickOpenContext,
+        suggestion: Option<&Suggestion>,
+        _query: &str,
+        _context: &QuickOpenContext,
     ) -> QuickOpenResult {
-        let suggestions = self.suggestions(query, context);
-
-        if let Some(idx) = selected_index {
-            if let Some(suggestion) = suggestions.get(idx) {
-                if let Some(value) = &suggestion.value {
-                    if let Ok(buffer_id) = value.parse::<usize>() {
-                        return QuickOpenResult::ShowBuffer(buffer_id);
-                    }
-                }
-            }
-        }
-
-        QuickOpenResult::None
-    }
-
-    fn preview(
-        &self,
-        selected_index: usize,
-        context: &QuickOpenContext,
-    ) -> Option<(String, Option<usize>)> {
-        let suggestions = self.suggestions("", context);
-        suggestions
-            .get(selected_index)
-            .and_then(|s| s.description.clone().map(|path| (path, None)))
+        suggestion
+            .and_then(|s| s.value.as_deref())
+            .and_then(|v| v.parse::<usize>().ok())
+            .map(QuickOpenResult::ShowBuffer)
+            .unwrap_or(QuickOpenResult::None)
     }
 }
 
@@ -254,66 +195,41 @@ impl QuickOpenProvider for GotoLineProvider {
         ":"
     }
 
-    fn name(&self) -> &str {
-        "Go to Line"
-    }
-
-    fn hint(&self) -> &str {
-        ":  Go to Line"
-    }
-
     fn suggestions(&self, query: &str, _context: &QuickOpenContext) -> Vec<Suggestion> {
         if query.is_empty() {
-            return vec![Suggestion {
-                text: t!("quick_open.goto_line_hint").to_string(),
-                description: Some(t!("quick_open.goto_line_desc").to_string()),
-                value: None,
-                disabled: true,
-                keybinding: None,
-                source: None,
-            }];
+            return vec![
+                Suggestion::disabled(t!("quick_open.goto_line_hint").to_string())
+                    .with_description(t!("quick_open.goto_line_desc").to_string()),
+            ];
         }
 
-        if let Ok(line_num) = query.parse::<usize>() {
-            if line_num > 0 {
-                return vec![Suggestion {
-                    text: t!("quick_open.goto_line", line = line_num.to_string()).to_string(),
-                    description: Some(t!("quick_open.press_enter").to_string()),
-                    value: Some(line_num.to_string()),
-                    disabled: false,
-                    keybinding: None,
-                    source: None,
-                }];
+        match query.parse::<usize>() {
+            Ok(n) if n > 0 => {
+                vec![
+                    Suggestion::new(t!("quick_open.goto_line", line = n.to_string()).to_string())
+                        .with_description(t!("quick_open.press_enter").to_string())
+                        .with_value(n.to_string()),
+                ]
             }
+            _ => vec![
+                Suggestion::disabled(t!("quick_open.invalid_line").to_string())
+                    .with_description(query.to_string()),
+            ],
         }
-
-        // Invalid input
-        vec![Suggestion {
-            text: t!("quick_open.invalid_line").to_string(),
-            description: Some(query.to_string()),
-            value: None,
-            disabled: true,
-            keybinding: None,
-            source: None,
-        }]
     }
 
     fn on_select(
         &self,
-        selected_index: Option<usize>,
-        query: &str,
+        suggestion: Option<&Suggestion>,
+        _query: &str,
         _context: &QuickOpenContext,
     ) -> QuickOpenResult {
-        // Try to parse from the suggestion value first, then from query
-        if selected_index.is_some() {
-            if let Ok(line_num) = query.parse::<usize>() {
-                if line_num > 0 {
-                    return QuickOpenResult::GotoLine(line_num);
-                }
-            }
-        }
-
-        QuickOpenResult::None
+        suggestion
+            .and_then(|s| s.value.as_deref())
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .map(QuickOpenResult::GotoLine)
+            .unwrap_or(QuickOpenResult::None)
     }
 }
 
@@ -528,36 +444,22 @@ impl QuickOpenProvider for FileProvider {
         ""
     }
 
-    fn name(&self) -> &str {
-        "Files"
-    }
-
-    fn hint(&self) -> &str {
-        "Files"
-    }
-
     fn suggestions(&self, query: &str, context: &QuickOpenContext) -> Vec<Suggestion> {
         // Strip :line:col suffix so fuzzy matching works when the user appends a jump target
         let (path_part, _, _) = super::parse_path_line_col(query);
-        let search_query = if path_part.is_empty() { query } else { &path_part };
+        let search_query = if path_part.is_empty() {
+            query
+        } else {
+            &path_part
+        };
 
         let files = self.load_files(&context.cwd);
-
         if files.is_empty() {
-            return vec![Suggestion {
-                text: t!("quick_open.no_files").to_string(),
-                description: None,
-                value: None,
-                disabled: true,
-                keybinding: None,
-                source: None,
-            }];
+            return vec![Suggestion::disabled(t!("quick_open.no_files").to_string())];
         }
 
         let max_results = 100;
-
-        let mut scored_files: Vec<(FileEntry, i32)> = if search_query.is_empty() {
-            // Sort by frecency when no query
+        let mut scored: Vec<(FileEntry, i32)> = if search_query.is_empty() {
             let mut files = files;
             files.sort_by(|a, b| {
                 b.frecency_score
@@ -570,61 +472,46 @@ impl QuickOpenProvider for FileProvider {
                 .map(|f| (f, 0))
                 .collect()
         } else {
-            // Filter and score by fuzzy match
             files
                 .into_iter()
                 .filter_map(|file| {
-                    let match_result = fuzzy_match(search_query, &file.relative_path);
-                    if match_result.matched {
-                        // Boost score by frecency (normalized)
-                        let frecency_boost = (file.frecency_score / 100.0).min(20.0) as i32;
-                        Some((file, match_result.score + frecency_boost))
-                    } else {
-                        None
+                    let m = fuzzy_match(search_query, &file.relative_path);
+                    if !m.matched {
+                        return None;
                     }
+                    let frecency_boost = (file.frecency_score / 100.0).min(20.0) as i32;
+                    Some((file, m.score + frecency_boost))
                 })
                 .collect()
         };
 
-        // Sort by score
-        scored_files.sort_by(|a, b| b.1.cmp(&a.1));
-        scored_files.truncate(max_results);
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.truncate(max_results);
 
-        scored_files
+        scored
             .into_iter()
-            .map(|(file, _)| Suggestion {
-                text: file.relative_path.clone(),
-                description: None,
-                value: Some(file.relative_path),
-                disabled: false,
-                keybinding: None,
-                source: None,
+            .map(|(file, _)| {
+                Suggestion::new(file.relative_path.clone()).with_value(file.relative_path)
             })
             .collect()
     }
 
     fn on_select(
         &self,
-        selected_index: Option<usize>,
+        suggestion: Option<&Suggestion>,
         query: &str,
-        context: &QuickOpenContext,
+        _context: &QuickOpenContext,
     ) -> QuickOpenResult {
         let (path_part, line, column) = super::parse_path_line_col(query);
-        let search_query = if path_part.is_empty() { query } else { &path_part };
 
-        let suggestions = self.suggestions(search_query, context);
-
-        if let Some(idx) = selected_index {
-            if let Some(suggestion) = suggestions.get(idx) {
-                if let Some(path) = &suggestion.value {
-                    self.record_access(path);
-                    return QuickOpenResult::OpenFile {
-                        path: path.clone(),
-                        line,
-                        column,
-                    };
-                }
-            }
+        // Use the selected suggestion's path if available
+        if let Some(path) = suggestion.and_then(|s| s.value.as_deref()) {
+            self.record_access(path);
+            return QuickOpenResult::OpenFile {
+                path: path.to_string(),
+                line,
+                column,
+            };
         }
 
         // Fallback: direct path input with :line:col
@@ -638,17 +525,6 @@ impl QuickOpenProvider for FileProvider {
         }
 
         QuickOpenResult::None
-    }
-
-    fn preview(
-        &self,
-        selected_index: usize,
-        context: &QuickOpenContext,
-    ) -> Option<(String, Option<usize>)> {
-        let suggestions = self.suggestions("", context);
-        suggestions
-            .get(selected_index)
-            .and_then(|s| s.value.clone().map(|path| (path, None)))
     }
 }
 
@@ -736,7 +612,8 @@ mod tests {
         let provider = GotoLineProvider::new();
         let context = make_test_context();
 
-        let result = provider.on_select(Some(0), "42", &context);
+        let suggestions = provider.suggestions("42", &context);
+        let result = provider.on_select(suggestions.first(), "42", &context);
         match result {
             QuickOpenResult::GotoLine(line) => assert_eq!(line, 42),
             _ => panic!("Expected GotoLine result"),

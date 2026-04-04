@@ -127,11 +127,8 @@ impl Editor {
                 // Mode chord resolution (via KeybindingResolver)
                 let (chord_result, resolved_action) = {
                     let keybindings = self.keybindings.read().unwrap();
-                    let chord_result = keybindings.resolve_chord(
-                        &self.chord_state,
-                        &key_event,
-                        mode_ctx.clone(),
-                    );
+                    let chord_result =
+                        keybindings.resolve_chord(&self.chord_state, &key_event, mode_ctx.clone());
                     let resolved = keybindings.resolve(&key_event, mode_ctx);
                     (chord_result, resolved)
                 };
@@ -3429,7 +3426,8 @@ impl Editor {
             self.config.active_keybinding_map = map_name.to_string().into();
 
             // Reload the keybinding resolver with the new map
-            *self.keybindings.write().unwrap() = crate::input::keybindings::KeybindingResolver::new(&self.config);
+            *self.keybindings.write().unwrap() =
+                crate::input::keybindings::KeybindingResolver::new(&self.config);
 
             // Persist to config file
             self.save_keybinding_map_to_config();

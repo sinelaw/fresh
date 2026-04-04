@@ -244,13 +244,11 @@ impl CommandRegistry {
                     .get_keybinding_for_action(&cmd.action, current_context_ref.clone());
                 let history_pos = self.history_position(&cmd.name);
 
-                let suggestion = Suggestion::with_source(
-                    localized_name,
-                    Some(localized_desc),
-                    !available,
-                    keybinding,
-                    Some(cmd.source.clone()),
-                );
+                let suggestion = Suggestion::new(localized_name)
+                    .with_description(localized_desc)
+                    .set_disabled(!available)
+                    .with_keybinding(keybinding)
+                    .with_source(Some(cmd.source.clone()));
                 (suggestion, history_pos, score)
             };
 

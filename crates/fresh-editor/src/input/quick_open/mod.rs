@@ -83,15 +83,12 @@ pub fn parse_path_line_col(input: &str) -> (String, Option<usize>, Option<usize>
         return (String::new(), None, None);
     }
 
-    // Check if the path has a Windows drive prefix using std::path
-    let has_prefix = Path::new(trimmed)
+    // Skip past Windows drive prefix (e.g., "C:") when looking for :line:col
+    let has_drive = Path::new(trimmed)
         .components()
         .next()
-        .map(|c| matches!(c, Component::Prefix(_)))
-        .unwrap_or(false);
-
-    // Calculate where to start looking for :line:col
-    let search_start = if has_prefix {
+        .is_some_and(|c| matches!(c, Component::Prefix(_)));
+    let search_start = if has_drive {
         trimmed.find(':').map(|i| i + 1).unwrap_or(0)
     } else {
         0
@@ -100,41 +97,32 @@ pub fn parse_path_line_col(input: &str) -> (String, Option<usize>, Option<usize>
     let suffix = &trimmed[search_start..];
     let parts: Vec<&str> = suffix.rsplitn(3, ':').collect();
 
-    match parts.as_slice() {
-        [maybe_col, maybe_line, rest] => {
-            if !rest.is_empty() {
-                if let (Ok(line), Ok(col)) =
-                    (maybe_line.parse::<usize>(), maybe_col.parse::<usize>())
-                {
-                    if line > 0 && col > 0 {
-                        let path_str = if has_prefix {
-                            format!("{}{}", &trimmed[..search_start], rest)
-                        } else {
-                            rest.to_string()
-                        };
-                        return (path_str, Some(line), Some(col));
-                    }
-                }
-            }
+    // Reconstruct the path portion, re-attaching the drive prefix if needed
+    let rebuild_path = |rest: &str| {
+        if has_drive {
+            format!("{}{}", &trimmed[..search_start], rest)
+        } else {
+            rest.to_string()
         }
-        [maybe_line, rest] => {
-            if !rest.is_empty() {
-                if let Ok(line) = maybe_line.parse::<usize>() {
-                    if line > 0 {
-                        let path_str = if has_prefix {
-                            format!("{}{}", &trimmed[..search_start], rest)
-                        } else {
-                            rest.to_string()
-                        };
-                        return (path_str, Some(line), None);
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
+    };
 
-    (trimmed.to_string(), None, None)
+    // Try path:line:col, then path:line
+    let parsed = match parts.as_slice() {
+        [col_s, line_s, rest] if !rest.is_empty() => col_s
+            .parse::<usize>()
+            .ok()
+            .filter(|&c| c > 0)
+            .zip(line_s.parse::<usize>().ok().filter(|&l| l > 0))
+            .map(|(col, line)| (rebuild_path(rest), Some(line), Some(col))),
+        [line_s, rest] if !rest.is_empty() => line_s
+            .parse::<usize>()
+            .ok()
+            .filter(|&l| l > 0)
+            .map(|line| (rebuild_path(rest), Some(line), None)),
+        _ => None,
+    };
+
+    parsed.unwrap_or_else(|| (trimmed.to_string(), None, None))
 }
 
 /// Trait for quick open providers
@@ -146,12 +134,6 @@ pub trait QuickOpenProvider: Send + Sync {
     /// Empty string means this is the default provider (no prefix)
     fn prefix(&self) -> &str;
 
-    /// Human-readable name for this provider
-    fn name(&self) -> &str;
-
-    /// Short hint shown in the status bar (e.g., ">  Commands")
-    fn hint(&self) -> &str;
-
     /// Generate suggestions for the given query
     ///
     /// The query has already had the prefix stripped.
@@ -159,39 +141,26 @@ pub trait QuickOpenProvider: Send + Sync {
 
     /// Handle selection of a suggestion
     ///
-    /// `selected_index` is the index into the suggestions array returned by `suggestions()`.
+    /// `suggestion` is the currently selected suggestion (already resolved by the caller).
     /// `query` is the original query (without prefix).
     fn on_select(
         &self,
-        selected_index: Option<usize>,
+        suggestion: Option<&Suggestion>,
         query: &str,
         context: &QuickOpenContext,
     ) -> QuickOpenResult;
-
-    /// Optional: provide a preview for the selected suggestion
-    /// Returns a file path and optional line number for preview
-    fn preview(
-        &self,
-        _selected_index: usize,
-        _context: &QuickOpenContext,
-    ) -> Option<(String, Option<usize>)> {
-        None
-    }
 }
 
 /// Registry for quick open providers
 pub struct QuickOpenRegistry {
     /// Providers indexed by their prefix
     providers: HashMap<String, Box<dyn QuickOpenProvider>>,
-    /// Ordered list of prefixes for hint display
-    prefix_order: Vec<String>,
 }
 
 impl QuickOpenRegistry {
     pub fn new() -> Self {
         Self {
             providers: HashMap::new(),
-            prefix_order: Vec::new(),
         }
     }
 
@@ -200,9 +169,6 @@ impl QuickOpenRegistry {
     /// If a provider with the same prefix exists, it will be replaced.
     pub fn register(&mut self, provider: Box<dyn QuickOpenProvider>) {
         let prefix = provider.prefix().to_string();
-        if !self.prefix_order.contains(&prefix) {
-            self.prefix_order.push(prefix.clone());
-        }
         self.providers.insert(prefix, provider);
     }
 
@@ -230,25 +196,6 @@ impl QuickOpenRegistry {
         // Fall back to default provider (empty prefix)
         self.providers.get("").map(|p| (p.as_ref(), input))
     }
-
-    /// Get the default provider (empty prefix)
-    pub fn get_default_provider(&self) -> Option<&dyn QuickOpenProvider> {
-        self.providers.get("").map(|p| p.as_ref())
-    }
-
-    /// Get hints string for status bar display
-    pub fn get_hints(&self) -> String {
-        self.prefix_order
-            .iter()
-            .filter_map(|prefix| self.providers.get(prefix).map(|p| p.hint()))
-            .collect::<Vec<_>>()
-            .join("   ")
-    }
-
-    /// Get all registered prefixes
-    pub fn prefixes(&self) -> Vec<&str> {
-        self.providers.keys().map(|s| s.as_str()).collect()
-    }
 }
 
 impl Default for QuickOpenRegistry {
@@ -270,21 +217,13 @@ mod tests {
             &self.prefix
         }
 
-        fn name(&self) -> &str {
-            "Test"
-        }
-
-        fn hint(&self) -> &str {
-            "Test hint"
-        }
-
         fn suggestions(&self, _query: &str, _context: &QuickOpenContext) -> Vec<Suggestion> {
             vec![]
         }
 
         fn on_select(
             &self,
-            _selected_index: Option<usize>,
+            _suggestion: Option<&Suggestion>,
             _query: &str,
             _context: &QuickOpenContext,
         ) -> QuickOpenResult {

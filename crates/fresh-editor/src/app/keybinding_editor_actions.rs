@@ -79,7 +79,8 @@ impl Editor {
         }
 
         // Rebuild the keybinding resolver
-        *self.keybindings.write().unwrap() = crate::input::keybindings::KeybindingResolver::new(&self.config);
+        *self.keybindings.write().unwrap() =
+            crate::input::keybindings::KeybindingResolver::new(&self.config);
 
         // Save to config file via the pending changes mechanism
         let config_value = match serde_json::to_value(&self.config.keybindings) {
