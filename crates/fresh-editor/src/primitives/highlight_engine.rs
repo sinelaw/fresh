@@ -1024,6 +1024,11 @@ impl TextMateEngine {
     }
 }
 
+/// Find the index of a syntax by name in a syntax set.
+fn syntax_index(syntax_set: &syntect::parsing::SyntaxSet, name: &str) -> Option<usize> {
+    syntax_set.syntaxes().iter().position(|s| s.name == name)
+}
+
 impl HighlightEngine {
     /// Create a highlighting engine for a file.
     ///
@@ -1050,11 +1055,7 @@ impl HighlightEngine {
         };
 
         if let Some(syntax) = syntax {
-            if let Some(index) = syntax_set
-                .syntaxes()
-                .iter()
-                .position(|s| s.name == syntax.name)
-            {
+            if let Some(index) = syntax_index(&syntax_set, &syntax.name) {
                 return Self::TextMate(Box::new(TextMateEngine::with_language(
                     syntax_set,
                     index,
@@ -1094,12 +1095,7 @@ impl HighlightEngine {
         let syntax_set = registry.syntax_set_arc();
 
         if let Some(syntax) = registry.find_syntax_by_name(name) {
-            // Find the index of this syntax in the set
-            if let Some(index) = syntax_set
-                .syntaxes()
-                .iter()
-                .position(|s| s.name == syntax.name)
-            {
+            if let Some(index) = syntax_index(&syntax_set, &syntax.name) {
                 return Self::TextMate(Box::new(TextMateEngine::with_language(
                     syntax_set,
                     index,
