@@ -881,11 +881,16 @@ fn test_comments_appear_before_fields() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Wait for the picker panel to show the field path (plugin may need extra render cycles)
+    // Wait for the picker panel to show the field path (plugin may need extra render cycles).
+    // On macOS the long temp-dir path can push "editor.fg"/"editor.bg" off the right panel
+    // header, so also match the selected-field indicator (▸) next to the short field name.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("editor.bg") || screen.contains("editor.fg")
+            screen.contains("editor.bg")
+                || screen.contains("editor.fg")
+                || screen.contains("\u{25B8} bg")
+                || screen.contains("\u{25B8} fg")
         })
         .unwrap();
 }
@@ -2498,11 +2503,16 @@ fn test_inspect_theme_at_cursor_opens_theme_editor() {
     harness.render().unwrap();
 
     // Wait for the theme editor to open and auto-navigate to the editor field
-    // (the resolved key will be editor.fg or editor.bg, so "Editor" section expands)
+    // (the resolved key will be editor.fg or editor.bg, so "Editor" section expands).
+    // On macOS the long temp-dir path can push "editor.fg"/"editor.bg" off the right
+    // panel header, so also match the selected-field indicator (▸) next to the field name.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("editor.fg") || screen.contains("editor.bg")
+            screen.contains("editor.fg")
+                || screen.contains("editor.bg")
+                || screen.contains("\u{25B8} fg")
+                || screen.contains("\u{25B8} bg")
         })
         .unwrap();
 
@@ -2555,7 +2565,10 @@ fn test_inspect_theme_at_cursor_multiple_rounds() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("editor.fg") || screen.contains("editor.bg")
+            screen.contains("editor.fg")
+                || screen.contains("editor.bg")
+                || screen.contains("\u{25B8} fg")
+                || screen.contains("\u{25B8} bg")
         })
         .unwrap();
 
@@ -2586,7 +2599,10 @@ fn test_inspect_theme_at_cursor_multiple_rounds() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("editor.fg") || screen.contains("editor.bg")
+            screen.contains("editor.fg")
+                || screen.contains("editor.bg")
+                || screen.contains("\u{25B8} fg")
+                || screen.contains("\u{25B8} bg")
         })
         .unwrap();
 
@@ -2615,7 +2631,10 @@ fn test_inspect_theme_at_cursor_multiple_rounds() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("editor.fg") || screen.contains("editor.bg")
+            screen.contains("editor.fg")
+                || screen.contains("editor.bg")
+                || screen.contains("\u{25B8} fg")
+                || screen.contains("\u{25B8} bg")
         })
         .unwrap();
 
@@ -3143,12 +3162,19 @@ fn test_inspect_after_saving_custom_theme() {
         .unwrap();
     harness.render().unwrap();
 
-    // Wait for theme editor to reopen and auto-navigate to editor fields
+    // Wait for theme editor to reopen and auto-navigate to editor fields.
+    // The full qualified name (editor.fg / editor.bg) appears in the right panel
+    // header, but on macOS the long temp-dir path in the left header can push it
+    // off-screen.  Fall back to checking for the selected-field indicator (▸)
+    // next to the short field name in the tree panel.
     tracing::warn!("[test] waiting for editor.fg/editor.bg fields");
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("editor.fg") || screen.contains("editor.bg")
+            screen.contains("editor.fg")
+                || screen.contains("editor.bg")
+                || screen.contains("\u{25B8} fg")
+                || screen.contains("\u{25B8} bg")
         })
         .unwrap();
 
