@@ -116,22 +116,6 @@ impl Editor {
                     self.perform_replace(&search, &input);
                 }
             }
-            PromptType::Command => {
-                let commands = self.command_registry.read().unwrap().get_all();
-                if let Some(cmd) = commands.iter().find(|c| c.get_localized_name() == input) {
-                    let action = cmd.action.clone();
-                    let cmd_name = cmd.get_localized_name();
-                    self.command_registry
-                        .write()
-                        .unwrap()
-                        .record_usage(&cmd_name);
-                    return PromptResult::ExecuteAction(action);
-                } else {
-                    self.set_status_message(
-                        t!("error.unknown_command", input = &input).to_string(),
-                    );
-                }
-            }
             PromptType::GotoLine => match input.trim().parse::<usize>() {
                 Ok(line_num) if line_num > 0 => {
                     self.goto_line_col(line_num, None);

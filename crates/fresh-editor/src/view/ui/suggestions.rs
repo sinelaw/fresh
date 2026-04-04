@@ -479,7 +479,7 @@ mod tests {
         // Create a prompt with this suggestion
         let mut prompt = Prompt::new(
             "Test: ".to_string(),
-            crate::view::prompt::PromptType::Command,
+            crate::view::prompt::PromptType::QuickOpen,
         );
         prompt.suggestions = vec![suggestion];
 
@@ -528,7 +528,7 @@ mod tests {
 
             let mut prompt = Prompt::new(
                 "Test: ".to_string(),
-                crate::view::prompt::PromptType::Command,
+                crate::view::prompt::PromptType::QuickOpen,
             );
             prompt.suggestions = vec![suggestion];
 

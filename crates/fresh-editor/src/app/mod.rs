@@ -3724,10 +3724,7 @@ impl Editor {
         // Check if we need to update suggestions after creating the prompt
         let needs_suggestions = matches!(
             prompt_type,
-            PromptType::OpenFile
-                | PromptType::SwitchProject
-                | PromptType::SaveFileAs
-                | PromptType::Command
+            PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
         );
 
         self.prompt = Some(Prompt::with_suggestions(message, prompt_type, suggestions));
@@ -4175,8 +4172,7 @@ impl Editor {
                 prompt.input.clone()
             } else if matches!(
                 prompt.prompt_type,
-                PromptType::Command
-                    | PromptType::OpenFile
+                PromptType::OpenFile
                     | PromptType::SwitchProject
                     | PromptType::SaveFileAs
                     | PromptType::StopLspServer
@@ -4192,15 +4188,8 @@ impl Editor {
                 // Use the selected suggestion if any
                 if let Some(selected_idx) = prompt.selected_suggestion {
                     if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
-                        // Don't confirm disabled commands, but still record usage for history
+                        // Don't confirm disabled suggestions
                         if suggestion.disabled {
-                            // Record usage even for disabled commands so they appear in history
-                            if matches!(prompt.prompt_type, PromptType::Command) {
-                                self.command_registry
-                                    .write()
-                                    .unwrap()
-                                    .record_usage(&suggestion.text);
-                            }
                             self.set_status_message(
                                 t!(
                                     "error.command_not_available",
@@ -4392,40 +4381,6 @@ impl Editor {
         };
 
         match prompt_type {
-            PromptType::Command => {
-                let selection_active = self.has_active_selection();
-                let active_buffer_mode = self
-                    .buffer_metadata
-                    .get(&self.active_buffer())
-                    .and_then(|m| m.virtual_mode());
-                let has_lsp_config = {
-                    let language = self
-                        .buffers
-                        .get(&self.active_buffer())
-                        .map(|s| s.language.as_str());
-                    language
-                        .and_then(|lang| self.lsp.as_ref().and_then(|lsp| lsp.get_config(lang)))
-                        .is_some()
-                };
-                if let Some(prompt) = &mut self.prompt {
-                    // Use the underlying context (not Prompt context) for filtering
-                    let keybindings = self.keybindings.read().unwrap();
-                    prompt.suggestions = self.command_registry.read().unwrap().filter(
-                        &input,
-                        self.key_context.clone(),
-                        &keybindings,
-                        selection_active,
-                        &self.active_custom_contexts,
-                        active_buffer_mode,
-                        has_lsp_config,
-                    );
-                    prompt.selected_suggestion = if prompt.suggestions.is_empty() {
-                        None
-                    } else {
-                        Some(0)
-                    };
-                }
-            }
             PromptType::QuickOpen => {
                 // Update Quick Open suggestions based on prefix
                 self.update_quick_open_suggestions(&input);

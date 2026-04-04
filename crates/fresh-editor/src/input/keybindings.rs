@@ -440,7 +440,7 @@ pub enum Action {
     ShowStatusLog,
     ShowLspStatus,
     ClearWarnings,
-    CommandPalette, // TODO: Consider dropping this now that we have QuickOpen
+    CommandPalette, // Alias for QuickOpen — kept for keymap/plugin compatibility
     /// Quick Open - unified prompt with prefix-based provider routing
     QuickOpen,
     ToggleLineWrap,

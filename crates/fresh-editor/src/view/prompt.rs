@@ -33,8 +33,6 @@ pub enum PromptType {
     QueryReplace { search: String },
     /// Query replace confirmation prompt (y/n/!/q for each match)
     QueryReplaceConfirm,
-    /// Execute a command by name (M-x)
-    Command,
     /// Quick Open - unified prompt with prefix-based provider routing
     /// Supports file finding (default), commands (>), buffers (#), goto line (:)
     QuickOpen,
@@ -539,7 +537,7 @@ impl Prompt {
     /// # Example
     /// ```
     /// # use fresh::prompt::{Prompt, PromptType};
-    /// let mut prompt = Prompt::new("Command: ".to_string(), PromptType::Command);
+    /// let mut prompt = Prompt::new("Command: ".to_string(), PromptType::QuickOpen);
     /// prompt.input = "save".to_string();
     /// prompt.cursor_pos = 4;
     /// prompt.insert_str(" file");
@@ -962,7 +960,7 @@ mod tests {
     // Tests for selection functionality
     #[test]
     fn test_selection_with_shift_arrows() {
-        let mut prompt = Prompt::new("Command: ".to_string(), PromptType::Command);
+        let mut prompt = Prompt::new("Command: ".to_string(), PromptType::QuickOpen);
         prompt.input = "hello world".to_string();
         prompt.cursor_pos = 5; // After "hello"
 
@@ -1003,7 +1001,7 @@ mod tests {
 
     #[test]
     fn test_selection_with_home_end() {
-        let mut prompt = Prompt::new("Prompt: ".to_string(), PromptType::Command);
+        let mut prompt = Prompt::new("Prompt: ".to_string(), PromptType::QuickOpen);
         prompt.input = "select this text".to_string();
         prompt.cursor_pos = 7; // After "select "
 

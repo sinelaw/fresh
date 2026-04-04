@@ -482,45 +482,15 @@ impl Editor {
                 self.clear_warnings();
             }
             Action::CommandPalette => {
-                // Toggle command palette: close if already open, otherwise open it
+                // CommandPalette now delegates to QuickOpen (which starts with ">" prefix
+                // for command mode). Toggle if already open.
                 if let Some(prompt) = &self.prompt {
-                    if prompt.prompt_type == PromptType::Command {
+                    if prompt.prompt_type == PromptType::QuickOpen {
                         self.cancel_prompt();
                         return Ok(());
                     }
                 }
-
-                // Use the current context for filtering commands
-                let active_buffer_mode = self
-                    .buffer_metadata
-                    .get(&self.active_buffer())
-                    .and_then(|m| m.virtual_mode());
-                let has_lsp_config = {
-                    let language = self
-                        .buffers
-                        .get(&self.active_buffer())
-                        .map(|s| s.language.as_str());
-                    language
-                        .and_then(|lang| self.lsp.as_ref().and_then(|lsp| lsp.get_config(lang)))
-                        .is_some()
-                };
-                let suggestions = {
-                    let keybindings = self.keybindings.read().unwrap();
-                    self.command_registry.read().unwrap().filter(
-                        "",
-                        self.key_context.clone(),
-                        &keybindings,
-                        self.has_active_selection(),
-                        &self.active_custom_contexts,
-                        active_buffer_mode,
-                        has_lsp_config,
-                    )
-                };
-                self.start_prompt_with_suggestions(
-                    t!("file.command_prompt").to_string(),
-                    PromptType::Command,
-                    suggestions,
-                );
+                self.start_quick_open();
             }
             Action::QuickOpen => {
                 // Toggle Quick Open: close if already open, otherwise open it
