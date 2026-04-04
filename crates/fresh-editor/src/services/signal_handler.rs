@@ -59,10 +59,13 @@ pub fn dump_js_state() {
 
 /// Initialize signal handlers for SIGTERM and SIGINT.
 /// On Linux, dumps thread backtraces before terminating.
-/// On other platforms, this is a no-op (default terminal behavior applies).
+/// On other Unix platforms (macOS), dumps JS state and current thread backtrace.
 pub fn install_signal_handlers() {
     #[cfg(target_os = "linux")]
     linux::install_signal_handlers_with_backtrace();
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    unix_fallback::install_signal_handlers_basic();
 }
 
 /// Linux-specific implementation with thread backtrace dumping
@@ -230,5 +233,51 @@ mod linux {
         fs::read_to_string(&path)
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|_| String::from("unknown"))
+    }
+}
+
+/// Fallback for non-Linux Unix platforms (macOS, BSDs).
+/// Installs SIGINT/SIGTERM handlers that dump JS state and current thread backtrace.
+#[cfg(all(unix, not(target_os = "linux")))]
+mod unix_fallback {
+    use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static SIGNAL_RECEIVED: AtomicBool = AtomicBool::new(false);
+
+    pub fn install_signal_handlers_basic() {
+        install_termination_signal_handlers();
+    }
+
+    fn install_termination_signal_handlers() {
+        extern "C" fn termination_handler(_: libc::c_int) {
+            if SIGNAL_RECEIVED.swap(true, Ordering::SeqCst) {
+                return;
+            }
+
+            tracing::error!("=== SIGNAL RECEIVED - Dumping debug info ===");
+
+            tracing::error!("--- JavaScript State ---");
+            super::dump_js_state();
+
+            tracing::error!("--- Current Thread Backtrace ---");
+            let bt = std::backtrace::Backtrace::force_capture();
+            tracing::error!("Backtrace:\n{}", bt);
+
+            tracing::error!("=== Debug dump complete, terminating process ===");
+            std::process::exit(130);
+        }
+
+        let handler = SigHandler::Handler(termination_handler);
+        let action = SigAction::new(handler, SaFlags::empty(), SigSet::empty());
+
+        unsafe {
+            if let Err(e) = sigaction(Signal::SIGINT, &action) {
+                tracing::error!("Failed to set SIGINT handler: {}", e);
+            }
+            if let Err(e) = sigaction(Signal::SIGTERM, &action) {
+                tracing::error!("Failed to set SIGTERM handler: {}", e);
+            }
+        }
     }
 }

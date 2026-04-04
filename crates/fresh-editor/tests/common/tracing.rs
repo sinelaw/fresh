@@ -7,8 +7,11 @@ use std::sync::Once;
 pub fn init_tracing_from_env() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        // Build filter from environment, but suppress noisy SWC library logs
-        let env_filter = tracing_subscriber::EnvFilter::from_default_env()
+        // Build filter from environment with a default of DEBUG level so that
+        // signal-handler dumps and debug output are visible even without RUST_LOG set.
+        let env_filter = tracing_subscriber::EnvFilter::builder()
+            .with_default_directive(tracing_subscriber::filter::LevelFilter::DEBUG.into())
+            .from_env_lossy()
             .add_directive("swc_ecma_transforms_base=warn".parse().unwrap())
             .add_directive("swc_common=warn".parse().unwrap());
 

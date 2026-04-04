@@ -2992,6 +2992,7 @@ fn test_issue_1180_save_theme_creates_themes_directory() {
 #[test]
 fn test_inspect_after_saving_custom_theme() {
     init_tracing_from_env();
+    fresh::services::signal_handler::install_signal_handlers();
 
     let context_temp = tempfile::TempDir::new().unwrap();
     let dir_context = DirectoryContext::for_testing(context_temp.path());
