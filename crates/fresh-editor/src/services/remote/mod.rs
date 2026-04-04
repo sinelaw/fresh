@@ -17,6 +17,9 @@ pub use channel::TEST_RECV_DELAY_US;
 /// Re-export for integration tests - spawns a local agent without SSH
 #[doc(hidden)]
 pub use connection::spawn_local_agent;
+/// Spawns a local agent and returns raw reader/writer for reconnection testing.
+#[doc(hidden)]
+pub use connection::spawn_local_agent_transport;
 /// Like `spawn_local_agent` but with a custom data channel capacity.
 #[doc(hidden)]
 pub use connection::spawn_local_agent_with_capacity;

@@ -1,13 +1,12 @@
-//! Tests for remote channel timeout and disconnect behavior
+//! Tests for remote channel timeout, disconnect, and reconnection behavior
 //!
-//! These tests verify that the AgentChannel does not hang forever when the
-//! remote server stops responding. They use misbehaving Python scripts as
-//! fake servers to reproduce the exact failure modes without needing SSH.
-//!
-//! Current status: These tests FAIL (hang forever) because AgentChannel
-//! has no request timeout. They will pass once timeouts are implemented.
+//! These tests verify that the AgentChannel:
+//! - Does not hang forever when the remote server stops responding
+//! - Transitions to disconnected state after timeout
+//! - Fails fast when already disconnected
+//! - Reconnects when a new transport is provided via replace_transport()
 
-use fresh::services::remote::{AgentChannel, AgentResponse};
+use fresh::services::remote::{spawn_local_agent_transport, AgentChannel, AgentResponse};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -212,4 +211,131 @@ fn test_requests_fail_fast_when_disconnected() {
         "Should fail fast (took {:?}), not wait for timeout",
         elapsed
     );
+}
+
+/// Test: After a connection drops and a new transport is provided via
+/// replace_transport(), the channel reconnects and requests work again.
+///
+/// Flow:
+/// 1. Start with a one-shot agent (responds once, then goes silent)
+/// 2. First request succeeds
+/// 3. Second request times out → channel is disconnected
+/// 4. Test spawns a healthy agent and calls replace_transport()
+/// 5. Channel reconnects — is_connected() returns true
+/// 6. Third request succeeds on the new connection
+#[test]
+fn test_reconnection_via_replace_transport() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    // Start with a one-shot agent
+    let Some(channel) = rt.block_on(spawn_one_shot_agent()) else {
+        eprintln!("Skipping test: could not spawn one-shot agent");
+        return;
+    };
+
+    channel.set_request_timeout(TEST_TIMEOUT);
+
+    // First request works
+    let r1 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
+    assert!(r1.is_ok(), "First request should succeed: {:?}", r1);
+
+    // Second request times out (agent is now silent)
+    let r2 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
+    assert!(r2.is_err(), "Second request should timeout");
+    assert!(!channel.is_connected(), "Should be disconnected");
+
+    // Spawn a healthy agent and reconnect
+    let (new_reader, new_writer) = rt
+        .block_on(spawn_local_agent_transport())
+        .expect("Failed to spawn replacement agent");
+
+    // replace_transport_blocking waits until the channel is connected
+    channel.replace_transport_blocking(new_reader, new_writer);
+
+    // Third request works on the new connection
+    let r3 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
+    assert!(
+        r3.is_ok(),
+        "Request after reconnection should succeed: {:?}",
+        r3
+    );
+}
+
+/// Test: Multiple reconnections work (disconnect → reconnect → disconnect → reconnect).
+#[test]
+fn test_multiple_reconnections() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    // Start with a one-shot agent
+    let Some(channel) = rt.block_on(spawn_one_shot_agent()) else {
+        eprintln!("Skipping test: could not spawn one-shot agent");
+        return;
+    };
+
+    channel.set_request_timeout(TEST_TIMEOUT);
+
+    for round in 1..=3 {
+        // Request works
+        let r = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
+        assert!(r.is_ok(), "Round {round}: request should succeed: {:?}", r);
+
+        // Times out (agent answered one request, now silent)
+        let r = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
+        assert!(r.is_err(), "Round {round}: should timeout");
+        assert!(
+            !channel.is_connected(),
+            "Round {round}: should be disconnected"
+        );
+
+        // Reconnect with a fresh one-shot agent
+        // (We use spawn_one_shot_agent's script directly to get raw transport)
+        let (new_reader, new_writer) = rt
+            .block_on(spawn_one_shot_transport())
+            .expect("Failed to spawn replacement agent");
+
+        channel.replace_transport_blocking(new_reader, new_writer);
+    }
+}
+
+/// Spawn a one-shot agent and return raw transport (responds once, then silent).
+async fn spawn_one_shot_transport() -> Option<(
+    BufReader<tokio::process::ChildStdout>,
+    tokio::process::ChildStdin,
+)> {
+    let script = r#"
+import sys, json
+sys.stdout.write(json.dumps({"id": 0, "ok": True, "v": 1}) + "\n")
+sys.stdout.flush()
+for line in sys.stdin:
+    req = json.loads(line)
+    req_id = req["id"]
+    sys.stdout.write(json.dumps({"id": req_id, "r": {"size": 0, "mtime": 0, "mode": 0, "uid": 0, "gid": 0, "dir": False, "file": True, "link": False}}) + "\n")
+    sys.stdout.flush()
+    break
+for line in sys.stdin:
+    pass
+"#;
+
+    let mut child = TokioCommand::new("python3")
+        .arg("-u")
+        .arg("-c")
+        .arg(script)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let stdin = child.stdin.take()?;
+    let stdout = child.stdout.take()?;
+    let mut reader = BufReader::new(stdout);
+
+    let mut ready_line = String::new();
+    reader.read_line(&mut ready_line).await.ok()?;
+    let ready: AgentResponse = serde_json::from_str(&ready_line).ok()?;
+    if !ready.is_ready() {
+        return None;
+    }
+
+    Some((reader, stdin))
 }

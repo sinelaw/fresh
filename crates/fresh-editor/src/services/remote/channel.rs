@@ -1,6 +1,9 @@
 //! Agent communication channel
 //!
 //! Handles request/response multiplexing over SSH stdin/stdout.
+//! Supports transport hot-swapping for automatic reconnection:
+//! the read/write tasks survive connection drops and resume when
+//! a new transport is provided via `replace_transport()`.
 
 use crate::services::remote::protocol::{AgentRequest, AgentResponse};
 use std::collections::HashMap;
@@ -8,7 +11,7 @@ use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
@@ -56,6 +59,11 @@ struct PendingRequest {
     result_tx: oneshot::Sender<Result<serde_json::Value, String>>,
 }
 
+/// Boxed async reader type used by the read task.
+type BoxedReader = Box<dyn AsyncBufRead + Unpin + Send>;
+/// Boxed async writer type used by the write task.
+type BoxedWriter = Box<dyn AsyncWrite + Unpin + Send>;
+
 /// Communication channel with the remote agent
 pub struct AgentChannel {
     /// Sender to the write task
@@ -72,6 +80,10 @@ pub struct AgentChannel {
     data_channel_capacity: usize,
     /// Timeout for individual requests (stored as milliseconds for atomic access)
     request_timeout_ms: AtomicU64,
+    /// Sender to deliver a new reader to the read task after reconnection
+    new_reader_tx: mpsc::Sender<BoxedReader>,
+    /// Sender to deliver a new writer to the write task after reconnection
+    new_writer_tx: mpsc::Sender<BoxedWriter>,
 }
 
 impl AgentChannel {
@@ -90,73 +102,56 @@ impl AgentChannel {
     /// Lower capacity makes channel overflow more likely if `try_send` is used,
     /// which is useful for stress-testing backpressure handling.
     pub fn with_capacity(
-        mut reader: tokio::io::BufReader<tokio::process::ChildStdout>,
-        mut writer: tokio::process::ChildStdin,
+        reader: tokio::io::BufReader<tokio::process::ChildStdout>,
+        writer: tokio::process::ChildStdin,
         data_channel_capacity: usize,
     ) -> Self {
+        Self::from_transport(reader, writer, data_channel_capacity)
+    }
+
+    /// Create a new channel from any async reader/writer pair.
+    ///
+    /// This is the generic constructor used by both production code (via
+    /// `new`/`with_capacity`) and tests (via arbitrary `AsyncBufRead`/`AsyncWrite`
+    /// implementations like `DuplexStream`).
+    ///
+    /// Must be called from within a Tokio runtime context.
+    pub fn from_transport<R, W>(reader: R, writer: W, data_channel_capacity: usize) -> Self
+    where
+        R: AsyncBufRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         let pending: Arc<Mutex<HashMap<u64, PendingRequest>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let connected = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        // Capture the runtime handle for later use in blocking operations
         let runtime_handle = tokio::runtime::Handle::current();
 
-        // Channel for outgoing requests
-        let (write_tx, mut write_rx) = mpsc::channel::<String>(64);
+        // Channel for outgoing requests (lives for the lifetime of the AgentChannel)
+        let (write_tx, write_rx) = mpsc::channel::<String>(64);
 
-        // Spawn write task
+        // Channels for delivering replacement transports on reconnection.
+        // Capacity 1: at most one pending reconnection at a time.
+        let (new_reader_tx, new_reader_rx) = mpsc::channel::<BoxedReader>(1);
+        let (new_writer_tx, new_writer_rx) = mpsc::channel::<BoxedWriter>(1);
+
+        // Spawn write task (lives for the lifetime of the AgentChannel)
         let connected_write = connected.clone();
-        tokio::spawn(async move {
-            while let Some(msg) = write_rx.recv().await {
-                if writer.write_all(msg.as_bytes()).await.is_err() {
-                    connected_write.store(false, Ordering::SeqCst);
-                    break;
-                }
-                if writer.flush().await.is_err() {
-                    connected_write.store(false, Ordering::SeqCst);
-                    break;
-                }
-            }
-        });
+        tokio::spawn(Self::write_task(
+            Box::new(writer),
+            write_rx,
+            new_writer_rx,
+            connected_write,
+        ));
 
-        // Spawn read task
+        // Spawn read task (lives for the lifetime of the AgentChannel)
         let pending_read = pending.clone();
         let connected_read = connected.clone();
-        tokio::spawn(async move {
-            let mut line = String::new();
-            loop {
-                line.clear();
-                match reader.read_line(&mut line).await {
-                    Ok(0) => {
-                        // EOF
-                        connected_read.store(false, Ordering::SeqCst);
-                        break;
-                    }
-                    Ok(_) => {
-                        if let Ok(resp) = serde_json::from_str::<AgentResponse>(&line) {
-                            Self::handle_response(&pending_read, resp).await;
-                        }
-                    }
-                    Err(_) => {
-                        connected_read.store(false, Ordering::SeqCst);
-                        break;
-                    }
-                }
-            }
-
-            // Clean up pending requests on disconnect.
-            let mut pending = pending_read.lock().unwrap();
-            for (id, req) in pending.drain() {
-                match req.result_tx.send(Err("connection closed".to_string())) {
-                    Ok(()) => {}
-                    Err(_) => {
-                        // Receiver was dropped before we could notify it.
-                        // This is unexpected — callers should hold their
-                        // receivers until the operation completes.
-                        warn!("request {id}: receiver dropped during disconnect cleanup");
-                    }
-                }
-            }
-        });
+        tokio::spawn(Self::read_task(
+            Box::new(reader),
+            new_reader_rx,
+            pending_read,
+            connected_read,
+        ));
 
         Self {
             write_tx,
@@ -166,6 +161,113 @@ impl AgentChannel {
             runtime_handle,
             data_channel_capacity,
             request_timeout_ms: AtomicU64::new(DEFAULT_REQUEST_TIMEOUT.as_millis() as u64),
+            new_reader_tx,
+            new_writer_tx,
+        }
+    }
+
+    /// Long-lived write task. Reads outgoing messages from `write_rx` and
+    /// writes them to the current transport. On transport error or when a new
+    /// transport arrives via `new_writer_rx`, switches to the new writer.
+    async fn write_task(
+        mut writer: BoxedWriter,
+        mut write_rx: mpsc::Receiver<String>,
+        mut new_writer_rx: mpsc::Receiver<BoxedWriter>,
+        connected: Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        loop {
+            tokio::select! {
+                // Normal path: send outgoing message
+                msg = write_rx.recv() => {
+                    let Some(msg) = msg else { break }; // AgentChannel dropped
+
+                    let write_ok = writer.write_all(msg.as_bytes()).await.is_ok()
+                        && writer.flush().await.is_ok();
+
+                    if !write_ok {
+                        connected.store(false, Ordering::SeqCst);
+                        // Wait for replacement (can't select here, just block)
+                        match new_writer_rx.recv().await {
+                            Some(new_writer) => { writer = new_writer; continue; }
+                            None => break,
+                        }
+                    }
+                }
+                // Reconnection: new transport arrived, switch immediately
+                new_writer = new_writer_rx.recv() => {
+                    match new_writer {
+                        Some(w) => { writer = w; }
+                        None => break, // AgentChannel dropped
+                    }
+                }
+            }
+        }
+    }
+
+    /// Long-lived read task. Reads responses from the current transport and
+    /// dispatches them to pending requests. On transport error or when a new
+    /// transport arrives, cleans up pending requests and switches readers.
+    async fn read_task(
+        mut reader: BoxedReader,
+        mut new_reader_rx: mpsc::Receiver<BoxedReader>,
+        pending: Arc<Mutex<HashMap<u64, PendingRequest>>>,
+        connected: Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+
+            tokio::select! {
+                read_result = reader.read_line(&mut line) => {
+                    match read_result {
+                        Ok(0) | Err(_) => {
+                            // EOF or error — transport is dead
+                            connected.store(false, Ordering::SeqCst);
+                            Self::drain_pending(&pending);
+
+                            // Wait for replacement reader
+                            match new_reader_rx.recv().await {
+                                Some(new_reader) => { reader = new_reader; continue; }
+                                None => break,
+                            }
+                        }
+                        Ok(_) => {
+                            if let Ok(resp) = serde_json::from_str::<AgentResponse>(&line) {
+                                Self::handle_response(&pending, resp).await;
+                            }
+                        }
+                    }
+                }
+                // Reconnection: new transport arrived, switch immediately.
+                // Drain pending requests from the old connection first —
+                // they were sent to the old agent and won't get responses
+                // on the new one. Then mark connected so new requests can
+                // be submitted.
+                new_reader = new_reader_rx.recv() => {
+                    match new_reader {
+                        Some(r) => {
+                            Self::drain_pending(&pending);
+                            reader = r;
+                            connected.store(true, Ordering::SeqCst);
+                        }
+                        None => break, // AgentChannel dropped
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fail all pending requests with "connection closed" so callers don't hang.
+    fn drain_pending(pending: &Arc<Mutex<HashMap<u64, PendingRequest>>>) {
+        let mut pending = pending.lock().unwrap();
+        for (id, req) in pending.drain() {
+            match req.result_tx.send(Err("connection closed".to_string())) {
+                Ok(()) => {}
+                Err(_) => {
+                    warn!("request {id}: receiver dropped during disconnect cleanup");
+                }
+            }
         }
     }
 
@@ -227,6 +329,51 @@ impl AgentChannel {
     /// Check if the channel is connected
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::SeqCst)
+    }
+
+    /// Replace the underlying transport with a new reader/writer pair.
+    ///
+    /// This is used for reconnection: after establishing a new SSH connection,
+    /// call this method to feed the new stdin/stdout to the existing read/write
+    /// tasks. The tasks will resume processing and `is_connected()` will return
+    /// `true` once the first successful read/write completes.
+    ///
+    /// The `connected` flag is set to `true` by the read task after it has
+    /// received the new reader and drained stale pending requests. This
+    /// ensures no race between draining and new request submission.
+    pub async fn replace_transport<R, W>(&self, reader: R, writer: W)
+    where
+        R: AsyncBufRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
+        // Send new transports to the tasks. Order matters: send writer first
+        // so the write task is ready before the read task marks connected
+        // (which allows new requests to flow).
+        let _ = self.new_writer_tx.send(Box::new(writer)).await;
+        let _ = self.new_reader_tx.send(Box::new(reader)).await;
+        // Note: connected is set to true by the read task after it drains
+        // stale pending requests and switches to the new reader.
+    }
+
+    /// Replace the underlying transport (blocking version for non-async contexts).
+    ///
+    /// Sends the new transport to the tasks and waits until the channel is
+    /// marked as connected (i.e., the read task has drained stale requests
+    /// and is ready to receive responses on the new reader).
+    pub fn replace_transport_blocking<R, W>(&self, reader: R, writer: W)
+    where
+        R: AsyncBufRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
+        self.runtime_handle
+            .block_on(self.replace_transport(reader, writer));
+
+        // Yield until the read task has processed the new reader.
+        // This is typically immediate since the channel send above wakes
+        // the read task's select!, which drains pending and sets connected.
+        while !self.is_connected() {
+            std::thread::yield_now();
+        }
     }
 
     /// Set the request timeout duration.
