@@ -451,7 +451,9 @@ impl Editor {
                         (path, mtime)
                     })
                     .collect();
-                let _ = tx.send(results);
+                // Receiver may have been dropped if auto-revert was disabled
+                // or the editor is shutting down — that's fine.
+                if tx.send(results).is_err() {}
             })
             .ok();
         self.pending_file_poll_rx = Some(rx);
@@ -555,7 +557,8 @@ impl Editor {
                         (node_id, path, mtime)
                     })
                     .collect();
-                let _ = tx.send(results);
+                // Receiver may have been dropped during shutdown — that's fine.
+                if tx.send(results).is_err() {}
             })
             .ok();
         self.pending_dir_poll_rx = Some(rx);

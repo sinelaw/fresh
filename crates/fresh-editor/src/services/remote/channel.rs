@@ -349,8 +349,14 @@ impl AgentChannel {
         // Send new transports to the tasks. Order matters: send writer first
         // so the write task is ready before the read task marks connected
         // (which allows new requests to flow).
-        let _ = self.new_writer_tx.send(Box::new(writer)).await;
-        let _ = self.new_reader_tx.send(Box::new(reader)).await;
+        // Send can only fail if the task exited (AgentChannel dropped).
+        if self.new_writer_tx.send(Box::new(writer)).await.is_err() {
+            warn!("replace_transport: write task is gone, cannot reconnect");
+            return;
+        }
+        if self.new_reader_tx.send(Box::new(reader)).await.is_err() {
+            warn!("replace_transport: read task is gone, cannot reconnect");
+        }
         // Note: connected is set to true by the read task after it drains
         // stale pending requests and switches to the new reader.
     }
