@@ -668,19 +668,24 @@ impl Editor {
 
         match lsp.try_spawn(&language, Some(path)) {
             LspSpawnResult::Spawned => {
-                if let Some(client) = lsp.get_handle_mut(&language) {
-                    // Send didOpen
-                    tracing::info!("Sending didOpen to LSP for: {}", uri.as_str());
-                    if let Err(e) = client.did_open(uri.clone(), text, language.clone()) {
-                        tracing::warn!("Failed to send didOpen to LSP: {}", e);
-                        return;
+                // Send didOpen to ALL server handles for this language,
+                // not just the first one.  With multiple servers configured
+                // (e.g. error-server + warning-server) each needs to know
+                // about the open document.
+                for sh in lsp.get_handles_mut(&language) {
+                    tracing::info!("Sending didOpen to LSP '{}' for: {}", sh.name, uri.as_str());
+                    if let Err(e) = sh
+                        .handle
+                        .did_open(uri.clone(), text.clone(), language.clone())
+                    {
+                        tracing::warn!("Failed to send didOpen to LSP '{}': {}", sh.name, e);
+                    } else {
+                        metadata.lsp_opened_with.insert(sh.handle.id());
                     }
-                    tracing::info!("Successfully sent didOpen to LSP");
+                }
 
-                    // Mark this buffer as opened with this server instance
-                    metadata.lsp_opened_with.insert(client.id());
-
-                    // Request pull diagnostics
+                // Request pull diagnostics from the first handle
+                if let Some(client) = lsp.get_handle_mut(&language) {
                     let request_id = self.next_lsp_request_id;
                     self.next_lsp_request_id += 1;
                     if let Err(e) =
@@ -720,10 +725,10 @@ impl Editor {
                             );
                         }
                     }
-
-                    // Schedule folding range refresh
-                    self.schedule_folding_ranges_refresh(buffer_id);
                 }
+
+                // Schedule folding range refresh
+                self.schedule_folding_ranges_refresh(buffer_id);
             }
             LspSpawnResult::NotAutoStart => {
                 tracing::debug!(
@@ -787,46 +792,45 @@ impl Editor {
             return;
         }
 
-        // Get handle ID (handle should exist now since try_spawn succeeded)
-        let handle_id = {
-            let Some(lsp) = self.lsp.as_mut() else {
-                return;
-            };
-            let Some(handle) = lsp.get_handle_mut(&language) else {
-                return;
-            };
-            handle.id()
-        };
+        // Send didOpen to any handles that haven't received it yet
+        {
+            let opened_with = self
+                .buffer_metadata
+                .get(&buffer_id)
+                .map(|m| m.lsp_opened_with.clone())
+                .unwrap_or_default();
 
-        // Check if didOpen needs to be sent first
-        let needs_open = {
-            let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
-                return;
-            };
-            !metadata.lsp_opened_with.contains(&handle_id)
-        };
-
-        if needs_open {
-            // Send didOpen first
             if let Some(lsp) = self.lsp.as_mut() {
-                if let Some(handle) = lsp.get_handle_mut(&language) {
-                    if let Err(e) =
-                        handle.did_open(lsp_uri.clone(), content.clone(), language.clone())
-                    {
-                        tracing::warn!("Failed to send didOpen before didChange: {}", e);
-                        return;
+                for sh in lsp.get_handles_mut(&language) {
+                    if opened_with.contains(&sh.handle.id()) {
+                        continue;
                     }
-                    tracing::debug!(
-                        "Sent didOpen for {} to LSP handle {} before file change notification",
-                        lsp_uri.as_str(),
-                        handle_id
-                    );
+                    if let Err(e) =
+                        sh.handle
+                            .did_open(lsp_uri.clone(), content.clone(), language.clone())
+                    {
+                        tracing::warn!(
+                            "Failed to send didOpen to LSP '{}' before didChange: {}",
+                            sh.name,
+                            e
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Sent didOpen for {} to LSP '{}' before file change notification",
+                            lsp_uri.as_str(),
+                            sh.name
+                        );
+                    }
                 }
             }
 
-            // Mark as opened
-            if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                metadata.lsp_opened_with.insert(handle_id);
+            // Mark all handles as opened
+            if let Some(lsp) = self.lsp.as_ref() {
+                if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                    for sh in lsp.get_handles(&language) {
+                        metadata.lsp_opened_with.insert(sh.handle.id());
+                    }
+                }
             }
         }
 
