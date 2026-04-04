@@ -54,7 +54,7 @@ impl DetectedLanguage {
         languages: &HashMap<String, LanguageConfig>,
         fallback: Option<&LanguageConfig>,
     ) -> Self {
-        let highlighter = HighlightEngine::for_file_with_languages(path, registry, languages);
+        let highlighter = HighlightEngine::for_file(path, registry, Some(languages));
         let ts_language = Language::from_path(path);
         // Prefer config-based language name (e.g., "csharp") so it matches
         // the LSP config key. Fall back to tree-sitter name (e.g., "c_sharp")
@@ -108,7 +108,7 @@ impl DetectedLanguage {
     /// Used by `from_file()` (the legacy constructor) and for virtual buffer names
     /// where user config doesn't apply.
     pub fn from_path_builtin(path: &Path, registry: &GrammarRegistry) -> Self {
-        let highlighter = HighlightEngine::for_file(path, registry);
+        let highlighter = HighlightEngine::for_file(path, registry, None);
         let ts_language = Language::from_path(path);
         let name = ts_language
             .as_ref()
