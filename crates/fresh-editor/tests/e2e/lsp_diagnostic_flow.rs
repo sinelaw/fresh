@@ -382,8 +382,7 @@ fn test_rust_analyzer_diagnostics_cleared_after_fix() -> anyhow::Result<()> {
 /// saves. Diagnostic state only changes on `didSave` events (matching how
 /// cargo check runs on save in real rust-analyzer):
 /// - After didOpen: sends initial error diagnostics (E0308)
-/// - After didChange: sends workspace/diagnostic/refresh only (no new push
-///   diagnostics — the errors come from cargo check, not live analysis)
+/// - After didChange: no diagnostics (cargo check only runs on save)
 /// - After didSave #1: re-sends error diagnostics (cargo check confirms error)
 /// - After didSave #2: sends cleared diagnostics (error was fixed before save)
 ///
@@ -460,10 +459,9 @@ while true; do
         "textDocument/didChange")
             VERSION=$((VERSION + 1))
             echo "ACTION: didChange version=$VERSION" >> "$LOG_FILE"
-            # Like real RA: didChange triggers a workspace/diagnostic/refresh
-            # but does NOT trigger new publishDiagnostics (cargo check only runs on save)
-            send_message '{"jsonrpc":"2.0","id":3000,"method":"workspace/diagnostic/refresh","params":{}}'
-            echo "SENT: workspace/diagnostic/refresh (post-change)" >> "$LOG_FILE"
+            # No publishDiagnostics on didChange — cargo check only runs on save.
+            # (Avoids generating a workspace/diagnostic/refresh round-trip for
+            # every character typed, which overwhelms the slow dd-based reader.)
             ;;
         "textDocument/didSave")
             SAVE_COUNT=$((SAVE_COUNT + 1))
