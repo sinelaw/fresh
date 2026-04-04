@@ -9,8 +9,12 @@
 
 use fresh::services::remote::{AgentChannel, AgentResponse};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
+
+/// Short timeout for tests so they complete quickly.
+const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Spawn a Python script that sends a ready message then never responds to requests.
 /// The script reads stdin (so it doesn't die from SIGPIPE) but never writes back.
@@ -108,6 +112,8 @@ fn test_request_to_silent_server_does_not_hang() {
         return;
     };
 
+    channel.set_request_timeout(TEST_TIMEOUT);
+
     // This should return an error (timeout), not hang forever.
     let result = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
 
@@ -131,9 +137,15 @@ fn test_second_request_hangs_after_server_goes_silent() {
         return;
     };
 
+    channel.set_request_timeout(TEST_TIMEOUT);
+
     // First request should succeed
     let result1 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
-    assert!(result1.is_ok(), "First request should succeed: {:?}", result1);
+    assert!(
+        result1.is_ok(),
+        "First request should succeed: {:?}",
+        result1
+    );
 
     // Second request: server is now silent. Should timeout, not hang.
     let result2 = channel.request_blocking("stat", serde_json::json!({"path": "/tmp"}));
@@ -156,9 +168,11 @@ fn test_connection_marked_disconnected_after_timeout() {
         return;
     };
 
+    channel.set_request_timeout(TEST_TIMEOUT);
+
     assert!(channel.is_connected(), "Should start connected");
 
-    // This request should timeout (once timeouts are implemented)
+    // This request should timeout
     let _ = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
 
     assert!(
@@ -181,6 +195,8 @@ fn test_requests_fail_fast_when_disconnected() {
         eprintln!("Skipping test: could not spawn silent agent");
         return;
     };
+
+    channel.set_request_timeout(TEST_TIMEOUT);
 
     // First: get into disconnected state via timeout
     let _ = channel.request_blocking("stat", serde_json::json!({"path": "/"}));

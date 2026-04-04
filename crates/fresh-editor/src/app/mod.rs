@@ -771,6 +771,23 @@ pub struct Editor {
     /// Maps directory path to last known modification time
     dir_mod_times: HashMap<PathBuf, std::time::SystemTime>,
 
+    /// Receiver for background file change poll results.
+    /// When Some, a background metadata poll is in progress. Results arrive as
+    /// `(path, Option<mtime>)` pairs — None means metadata() failed.
+    pending_file_poll_rx:
+        Option<std::sync::mpsc::Receiver<Vec<(PathBuf, Option<std::time::SystemTime>)>>>,
+
+    /// Receiver for background directory change poll results.
+    pending_dir_poll_rx: Option<
+        std::sync::mpsc::Receiver<
+            Vec<(
+                crate::view::file_tree::NodeId,
+                PathBuf,
+                Option<std::time::SystemTime>,
+            )>,
+        >,
+    >,
+
     /// Tracks rapid file change events for debouncing
     /// Maps file path to (last event time, event count)
     file_rapid_change_counts: HashMap<PathBuf, (std::time::Instant, u32)>,
@@ -1610,6 +1627,8 @@ impl Editor {
             git_index_resolved: false,
             file_mod_times: HashMap::new(),
             dir_mod_times: HashMap::new(),
+            pending_file_poll_rx: None,
+            pending_dir_poll_rx: None,
             file_rapid_change_counts: HashMap::new(),
             file_open_state: None,
             file_browser_layout: None,

@@ -185,7 +185,13 @@ impl Editor {
             editor_content_area = horizontal_chunks[1];
 
             // Get remote connection info before mutable borrow of file_explorer
-            let remote_connection = self.remote_connection_info().map(|s| s.to_string());
+            let remote_connection = self.remote_connection_info().map(|conn| {
+                if self.filesystem.is_remote_connected() {
+                    conn.to_string()
+                } else {
+                    format!("{} (Disconnected)", conn)
+                }
+            });
 
             // Render file explorer (only if we have it - during sync we just keep the area reserved)
             if let Some(ref mut explorer) = self.file_explorer {
@@ -605,7 +611,13 @@ impl Editor {
             };
 
             // Get remote connection info if editing remote files
-            let remote_connection = self.remote_connection_info().map(|s| s.to_string());
+            let remote_connection = self.remote_connection_info().map(|conn| {
+                if self.filesystem.is_remote_connected() {
+                    conn.to_string()
+                } else {
+                    format!("{} (Disconnected)", conn)
+                }
+            });
 
             // Get session name for display (only in session mode)
             let session_name = self.session_name().map(|s| s.to_string());

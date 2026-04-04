@@ -476,6 +476,10 @@ impl FileSystem for RemoteFileSystem {
         Some(&self.connection_string)
     }
 
+    fn is_remote_connected(&self) -> bool {
+        self.channel.is_connected()
+    }
+
     fn home_dir(&self) -> io::Result<PathBuf> {
         let result = self
             .channel

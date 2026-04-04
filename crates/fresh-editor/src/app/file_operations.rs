@@ -384,10 +384,33 @@ impl Editor {
     ///
     /// Checks modification times of open files to detect external changes.
     /// Returns true if any file was changed (requires re-render).
+    ///
+    /// To avoid blocking the event loop, metadata checks run on a background
+    /// thread. This method launches a poll if the interval has elapsed and no
+    /// poll is already in flight, then checks for results from a prior poll.
     pub fn poll_file_changes(&mut self) -> bool {
         // Skip if auto-revert is disabled
         if !self.auto_revert_enabled {
             return false;
+        }
+
+        // Check for results from a previous background poll
+        let mut any_changed = false;
+        if let Some(ref rx) = self.pending_file_poll_rx {
+            match rx.try_recv() {
+                Ok(results) => {
+                    self.pending_file_poll_rx = None;
+                    any_changed = self.process_file_poll_results(results);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Still in progress — don't block, don't start another
+                    return false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Background task panicked or was dropped
+                    self.pending_file_poll_rx = None;
+                }
+            }
         }
 
         // Check poll interval
@@ -400,7 +423,7 @@ impl Editor {
             poll_interval
         );
         if elapsed < poll_interval {
-            return false;
+            return any_changed;
         }
         self.last_auto_revert_poll = self.time_source.now();
 
@@ -411,24 +434,44 @@ impl Editor {
             .filter_map(|state| state.buffer.file_path().map(PathBuf::from))
             .collect();
 
-        let mut any_changed = false;
+        if files_to_check.is_empty() {
+            return any_changed;
+        }
 
-        for path in files_to_check {
-            // Get current mtime
-            let current_mtime = match self.filesystem.metadata(&path) {
-                Ok(meta) => match meta.modified {
-                    Some(mtime) => mtime,
-                    None => continue,
-                },
-                Err(_) => continue, // File might have been deleted
+        // Spawn background metadata checks
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fs = self.filesystem.clone();
+        std::thread::Builder::new()
+            .name("poll-file-changes".to_string())
+            .spawn(move || {
+                let results: Vec<(PathBuf, Option<std::time::SystemTime>)> = files_to_check
+                    .into_iter()
+                    .map(|path| {
+                        let mtime = fs.metadata(&path).ok().and_then(|m| m.modified);
+                        (path, mtime)
+                    })
+                    .collect();
+                let _ = tx.send(results);
+            })
+            .ok();
+        self.pending_file_poll_rx = Some(rx);
+
+        any_changed
+    }
+
+    /// Process results from a background file poll
+    fn process_file_poll_results(
+        &mut self,
+        results: Vec<(PathBuf, Option<std::time::SystemTime>)>,
+    ) -> bool {
+        let mut any_changed = false;
+        for (path, mtime_opt) in results {
+            let Some(current_mtime) = mtime_opt else {
+                continue;
             };
 
-            // Check if mtime has changed
             if let Some(&stored_mtime) = self.file_mod_times.get(&path) {
                 if current_mtime != stored_mtime {
-                    // Handle the file change (this includes debouncing)
-                    // Note: file_mod_times is updated by handle_file_changed after successful revert,
-                    // not here, to avoid the race where the revert check sees the already-updated mtime
                     let path_str = path.display().to_string();
                     if self.handle_async_file_changed(path_str) {
                         any_changed = true;
@@ -439,7 +482,6 @@ impl Editor {
                 self.file_mod_times.insert(path, current_mtime);
             }
         }
-
         any_changed
     }
 
@@ -447,22 +489,43 @@ impl Editor {
     ///
     /// Checks modification times of expanded directories to detect new/deleted files.
     /// Returns true if any directory was refreshed (requires re-render).
+    ///
+    /// Like poll_file_changes, metadata checks run on a background thread to
+    /// avoid blocking the event loop.
     pub fn poll_file_tree_changes(&mut self) -> bool {
+        use crate::view::file_tree::NodeId;
+
+        // Check for results from a previous background poll
+        let mut any_refreshed = false;
+        if let Some(ref rx) = self.pending_dir_poll_rx {
+            match rx.try_recv() {
+                Ok(results) => {
+                    self.pending_dir_poll_rx = None;
+                    any_refreshed = self.process_dir_poll_results(results);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    return false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.pending_dir_poll_rx = None;
+                }
+            }
+        }
+
         // Check poll interval
         let poll_interval =
             std::time::Duration::from_millis(self.config.editor.file_tree_poll_interval_ms);
         if self.time_source.elapsed_since(self.last_file_tree_poll) < poll_interval {
-            return false;
+            return any_refreshed;
         }
         self.last_file_tree_poll = self.time_source.now();
 
         // Get file explorer reference
         let Some(explorer) = &self.file_explorer else {
-            return false;
+            return any_refreshed;
         };
 
         // Collect expanded directories (node_id, path)
-        use crate::view::file_tree::NodeId;
         let expanded_dirs: Vec<(NodeId, PathBuf)> = explorer
             .tree()
             .all_nodes()
@@ -470,38 +533,66 @@ impl Editor {
             .map(|node| (node.id, node.entry.path.clone()))
             .collect();
 
-        // Check mtimes and collect directories that need refresh
-        let mut dirs_to_refresh: Vec<NodeId> = Vec::new();
+        if expanded_dirs.is_empty() {
+            // Still check git index (uses local filesystem, so it's fast)
+            let git_index_changed = self.check_git_index_mtime();
+            if git_index_changed {
+                self.refresh_all_expanded_dirs();
+            }
+            return any_refreshed || git_index_changed;
+        }
 
-        for (node_id, path) in expanded_dirs {
-            // Get current mtime
-            let current_mtime = match self.filesystem.metadata(&path) {
-                Ok(meta) => match meta.modified {
-                    Some(mtime) => mtime,
-                    None => continue,
-                },
-                Err(_) => continue, // Directory might have been deleted
+        // Spawn background metadata checks
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fs = self.filesystem.clone();
+        std::thread::Builder::new()
+            .name("poll-dir-changes".to_string())
+            .spawn(move || {
+                let results: Vec<(NodeId, PathBuf, Option<std::time::SystemTime>)> = expanded_dirs
+                    .into_iter()
+                    .map(|(node_id, path)| {
+                        let mtime = fs.metadata(&path).ok().and_then(|m| m.modified);
+                        (node_id, path, mtime)
+                    })
+                    .collect();
+                let _ = tx.send(results);
+            })
+            .ok();
+        self.pending_dir_poll_rx = Some(rx);
+
+        any_refreshed
+    }
+
+    /// Process results from a background directory poll
+    fn process_dir_poll_results(
+        &mut self,
+        results: Vec<(
+            crate::view::file_tree::NodeId,
+            PathBuf,
+            Option<std::time::SystemTime>,
+        )>,
+    ) -> bool {
+        let mut dirs_to_refresh = Vec::new();
+
+        for (node_id, path, mtime_opt) in results {
+            let Some(current_mtime) = mtime_opt else {
+                continue;
             };
 
-            // Check if mtime has changed
             if let Some(&stored_mtime) = self.dir_mod_times.get(&path) {
                 if current_mtime != stored_mtime {
-                    // Update stored mtime
                     self.dir_mod_times.insert(path.clone(), current_mtime);
                     dirs_to_refresh.push(node_id);
                     tracing::debug!("Directory changed: {:?}", path);
                 }
             } else {
-                // First time seeing this directory, record its mtime
                 self.dir_mod_times.insert(path, current_mtime);
             }
         }
 
         // Check .git/index mtime to detect commits, staging, checkouts, etc.
-        // Uses the same dir_mod_times map and poll interval as directory polling.
         let git_index_changed = self.check_git_index_mtime();
 
-        // Refresh changed directories
         if dirs_to_refresh.is_empty() && !git_index_changed {
             return false;
         }
@@ -517,6 +608,30 @@ impl Editor {
         }
 
         true
+    }
+
+    /// Refresh all expanded directories in the file tree (e.g., after git index change)
+    fn refresh_all_expanded_dirs(&mut self) {
+        let Some(explorer) = &mut self.file_explorer else {
+            return;
+        };
+        let Some(runtime) = &self.tokio_runtime else {
+            return;
+        };
+
+        let node_ids: Vec<crate::view::file_tree::NodeId> = explorer
+            .tree()
+            .all_nodes()
+            .filter(|node| node.is_dir() && node.is_expanded())
+            .map(|node| node.id)
+            .collect();
+
+        for node_id in node_ids {
+            let tree = explorer.tree_mut();
+            if let Err(e) = runtime.block_on(tree.refresh_node(node_id)) {
+                tracing::warn!("Failed to refresh directory: {}", e);
+            }
+        }
     }
 
     /// Check `.git/index` mtime to detect commits, staging, checkouts, etc.

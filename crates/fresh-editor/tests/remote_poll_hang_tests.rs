@@ -14,33 +14,158 @@ mod common;
 
 use common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::config::Config;
-use fresh::services::fs::{SlowFileSystem, SlowFsConfig};
+use fresh::model::filesystem::{
+    DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchCursor, FileSearchOptions,
+    FileSystem, FileWriter, SearchMatch, StdFileSystem,
+};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+
+/// A filesystem wrapper that delegates to StdFileSystem but can simulate
+/// a connection drop: after `set_hanging(true)`, metadata() blocks forever.
+/// Other operations (read, write) always delegate immediately so that
+/// file open/save works normally before the "drop" is triggered.
+struct DroppableFileSystem {
+    inner: StdFileSystem,
+    hanging: AtomicBool,
+}
+
+impl DroppableFileSystem {
+    fn new() -> Self {
+        Self {
+            inner: StdFileSystem,
+            hanging: AtomicBool::new(false),
+        }
+    }
+
+    fn set_hanging(&self, val: bool) {
+        self.hanging.store(val, Ordering::SeqCst);
+    }
+
+    /// Block forever if hanging is true (simulates dead remote connection)
+    fn block_if_hanging(&self) {
+        if self.hanging.load(Ordering::SeqCst) {
+            // Park the thread forever — simulates what happens when
+            // RemoteFileSystem calls request_blocking on a dead channel
+            loop {
+                std::thread::park();
+            }
+        }
+    }
+}
+
+// Delegate all FileSystem methods to StdFileSystem, but intercept metadata()
+impl FileSystem for DroppableFileSystem {
+    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.inner.read_file(path)
+    }
+    fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        self.inner.read_range(path, offset, len)
+    }
+    fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        self.inner.write_file(path, data)
+    }
+    fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_file(path)
+    }
+    fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
+        self.inner.open_file(path)
+    }
+    fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.open_file_for_write(path)
+    }
+    fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.open_file_for_append(path)
+    }
+    fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()> {
+        self.inner.set_file_length(path, len)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        self.inner.rename(from, to)
+    }
+    fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
+        self.inner.copy(from, to)
+    }
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        self.inner.remove_file(path)
+    }
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        self.inner.remove_dir(path)
+    }
+    fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        self.block_if_hanging();
+        self.inner.metadata(path)
+    }
+    fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        self.block_if_hanging();
+        self.inner.symlink_metadata(path)
+    }
+    fn is_dir(&self, path: &Path) -> io::Result<bool> {
+        self.inner.is_dir(path)
+    }
+    fn is_file(&self, path: &Path) -> io::Result<bool> {
+        self.inner.is_file(path)
+    }
+    fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
+        self.inner.set_permissions(path, permissions)
+    }
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        self.inner.read_dir(path)
+    }
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        self.inner.create_dir(path)
+    }
+    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+        self.inner.create_dir_all(path)
+    }
+    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+        self.inner.canonicalize(path)
+    }
+    fn current_uid(&self) -> u32 {
+        self.inner.current_uid()
+    }
+    fn search_file(
+        &self,
+        path: &Path,
+        pattern: &str,
+        opts: &FileSearchOptions,
+        cursor: &mut FileSearchCursor,
+    ) -> io::Result<Vec<SearchMatch>> {
+        self.inner.search_file(path, pattern, opts, cursor)
+    }
+    fn sudo_write(
+        &self,
+        path: &Path,
+        data: &[u8],
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> io::Result<()> {
+        self.inner.sudo_write(path, data, mode, uid, gid)
+    }
+}
 
 /// Test: poll_file_changes must not block the event loop when metadata() hangs.
 ///
 /// Scenario: A file is open in the editor. The filesystem's metadata() call
-/// takes a very long time (simulating a remote server that stopped responding).
+/// starts hanging (simulating a remote server that stopped responding).
 /// When poll_file_changes fires, it should not block the event loop.
 ///
 /// BUG: Currently hangs because poll_file_changes calls filesystem.metadata()
-/// synchronously in a loop over all open buffers. If metadata() blocks (as it
-/// does with RemoteFileSystem when the SSH connection drops), the entire editor
-/// freezes.
+/// synchronously in a loop over all open buffers.
 ///
-/// After the fix, process_async_messages() should return quickly even when the
-/// filesystem is slow/hanging.
+/// After the fix, process_async_messages() should return quickly because
+/// metadata checks run on a background thread.
 #[test]
 fn test_poll_file_changes_does_not_hang_with_slow_metadata() {
-    // Create a filesystem where metadata() blocks for a very long time
-    // (simulating a dead remote connection)
-    let slow_config = SlowFsConfig {
-        metadata_delay: Duration::from_secs(999),
-        ..SlowFsConfig::none()
-    };
-    let inner = Arc::new(fresh::model::filesystem::StdFileSystem);
-    let slow_fs = Arc::new(SlowFileSystem::new(inner, slow_config));
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file_path = temp_dir.path().join("test_file.txt");
+    std::fs::write(&file_path, "hello").unwrap();
+
+    let fs = Arc::new(DroppableFileSystem::new());
 
     let mut harness = EditorTestHarness::create(
         80,
@@ -53,22 +178,24 @@ fn test_poll_file_changes_does_not_hang_with_slow_metadata() {
                 },
                 ..Default::default()
             })
-            .with_filesystem(slow_fs),
+            .with_filesystem(fs.clone())
+            .with_working_dir(temp_dir.path().to_path_buf()),
     )
     .unwrap();
 
-    // Create a file and open it in the editor
-    let temp_dir = harness.project_dir().expect("harness should have a temp dir");
-    let file_path = temp_dir.join("test_file.txt");
-    std::fs::write(&file_path, "hello").unwrap();
+    // Open file while filesystem is healthy (metadata works normally)
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
+
+    // Simulate remote server going down
+    fs.set_hanging(true);
 
     // Advance time past the poll interval so poll_file_changes will fire
     harness.advance_time(Duration::from_millis(200));
 
-    // This call should return quickly, not block for 999 seconds.
-    // BUG: Currently hangs here because metadata() sleeps for 999s.
+    // This call should return quickly, not block forever.
+    // The metadata() call will be on a background thread that hangs,
+    // but the main loop should not wait for it.
     let _ = harness.editor_mut().process_async_messages();
 
     // If we get here, the fix is working — polling didn't block.
@@ -79,12 +206,11 @@ fn test_poll_file_changes_does_not_hang_with_slow_metadata() {
 /// Same issue as poll_file_changes but for directory mtime polling.
 #[test]
 fn test_poll_file_tree_changes_does_not_hang_with_slow_metadata() {
-    let slow_config = SlowFsConfig {
-        metadata_delay: Duration::from_secs(999),
-        ..SlowFsConfig::none()
-    };
-    let inner = Arc::new(fresh::model::filesystem::StdFileSystem);
-    let slow_fs = Arc::new(SlowFileSystem::new(inner, slow_config));
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file_path = temp_dir.path().join("test_file.txt");
+    std::fs::write(&file_path, "hello").unwrap();
+
+    let fs = Arc::new(DroppableFileSystem::new());
 
     let mut harness = EditorTestHarness::create(
         80,
@@ -98,16 +224,16 @@ fn test_poll_file_tree_changes_does_not_hang_with_slow_metadata() {
                 },
                 ..Default::default()
             })
-            .with_filesystem(slow_fs),
+            .with_filesystem(fs.clone())
+            .with_working_dir(temp_dir.path().to_path_buf()),
     )
     .unwrap();
 
-    // Create a file and open it (this triggers file tree population)
-    let temp_dir = harness.project_dir().expect("harness should have a temp dir");
-    let file_path = temp_dir.join("test_file.txt");
-    std::fs::write(&file_path, "hello").unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
+
+    // Simulate remote server going down
+    fs.set_hanging(true);
 
     // Advance time past the poll interval
     harness.advance_time(Duration::from_millis(200));

@@ -7,12 +7,18 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
 /// Default capacity for the per-request streaming data channel.
 const DEFAULT_DATA_CHANNEL_CAPACITY: usize = 64;
+
+/// Default timeout for remote requests. If a response is not received within
+/// this duration, the request fails with `ChannelError::Timeout` and the
+/// connection is marked as disconnected.
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Test-only: microseconds to sleep in the consumer loop between chunks.
 /// Set to a non-zero value from tests to simulate a slow consumer and
@@ -64,6 +70,8 @@ pub struct AgentChannel {
     runtime_handle: tokio::runtime::Handle,
     /// Capacity for per-request streaming data channels
     data_channel_capacity: usize,
+    /// Timeout for individual requests (stored as milliseconds for atomic access)
+    request_timeout_ms: AtomicU64,
 }
 
 impl AgentChannel {
@@ -157,6 +165,7 @@ impl AgentChannel {
             connected,
             runtime_handle,
             data_channel_capacity,
+            request_timeout_ms: AtomicU64::new(DEFAULT_REQUEST_TIMEOUT.as_millis() as u64),
         }
     }
 
@@ -220,6 +229,21 @@ impl AgentChannel {
         self.connected.load(Ordering::SeqCst)
     }
 
+    /// Set the request timeout duration.
+    ///
+    /// Requests that don't receive a response within this duration will fail
+    /// with `ChannelError::Timeout` and the connection will be marked as
+    /// disconnected.
+    pub fn set_request_timeout(&self, timeout: Duration) {
+        self.request_timeout_ms
+            .store(timeout.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    /// Get the current request timeout duration.
+    fn request_timeout(&self) -> Duration {
+        Duration::from_millis(self.request_timeout_ms.load(Ordering::SeqCst))
+    }
+
     /// Send a request and wait for the final result (ignoring streaming data)
     pub async fn request(
         &self,
@@ -228,14 +252,26 @@ impl AgentChannel {
     ) -> Result<serde_json::Value, ChannelError> {
         let (mut data_rx, result_rx) = self.request_streaming(method, params).await?;
 
-        // Drain streaming data
-        while data_rx.recv().await.is_some() {}
+        let timeout = self.request_timeout();
 
-        // Wait for final result
-        result_rx
-            .await
-            .map_err(|_| ChannelError::ChannelClosed)?
-            .map_err(ChannelError::Remote)
+        // Drain streaming data and wait for final result, with timeout.
+        let result = tokio::time::timeout(timeout, async {
+            while data_rx.recv().await.is_some() {}
+            result_rx
+                .await
+                .map_err(|_| ChannelError::ChannelClosed)?
+                .map_err(ChannelError::Remote)
+        })
+        .await;
+
+        match result {
+            Ok(inner) => inner,
+            Err(_elapsed) => {
+                warn!("request '{}' timed out after {:?}", method, timeout);
+                self.connected.store(false, Ordering::SeqCst);
+                Err(ChannelError::Timeout)
+            }
+        }
     }
 
     /// Send a request that may stream data
@@ -295,26 +331,40 @@ impl AgentChannel {
     ) -> Result<(Vec<serde_json::Value>, serde_json::Value), ChannelError> {
         let (mut data_rx, result_rx) = self.request_streaming(method, params).await?;
 
-        // Collect all streaming data
-        let mut data = Vec::new();
-        while let Some(chunk) = data_rx.recv().await {
-            data.push(chunk);
+        let timeout = self.request_timeout();
 
-            // Test hook: simulate slow consumer for backpressure testing.
-            // Zero-cost in production (atomic load + branch-not-taken).
-            let delay_us = TEST_RECV_DELAY_US.load(Ordering::Relaxed);
-            if delay_us > 0 {
-                tokio::time::sleep(tokio::time::Duration::from_micros(delay_us)).await;
+        let result = tokio::time::timeout(timeout, async {
+            // Collect all streaming data
+            let mut data = Vec::new();
+            while let Some(chunk) = data_rx.recv().await {
+                data.push(chunk);
+
+                // Test hook: simulate slow consumer for backpressure testing.
+                // Zero-cost in production (atomic load + branch-not-taken).
+                let delay_us = TEST_RECV_DELAY_US.load(Ordering::Relaxed);
+                if delay_us > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_micros(delay_us)).await;
+                }
+            }
+
+            // Wait for final result
+            let result = result_rx
+                .await
+                .map_err(|_| ChannelError::ChannelClosed)?
+                .map_err(ChannelError::Remote)?;
+
+            Ok((data, result))
+        })
+        .await;
+
+        match result {
+            Ok(inner) => inner,
+            Err(_elapsed) => {
+                warn!("streaming request timed out after {:?}", timeout);
+                self.connected.store(false, Ordering::SeqCst);
+                Err(ChannelError::Timeout)
             }
         }
-
-        // Wait for final result
-        let result = result_rx
-            .await
-            .map_err(|_| ChannelError::ChannelClosed)?
-            .map_err(ChannelError::Remote)?;
-
-        Ok((data, result))
     }
 
     /// Send a request with streaming data, synchronously (blocking)

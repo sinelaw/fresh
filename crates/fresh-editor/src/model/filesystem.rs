@@ -629,6 +629,15 @@ pub trait FileSystem: Send + Sync {
         None
     }
 
+    /// Check if a remote filesystem is currently connected.
+    ///
+    /// Returns `true` for local filesystems (always "connected") and for
+    /// remote filesystems with a healthy connection. Returns `false` when
+    /// the remote connection has been lost (e.g., timeout, SSH disconnect).
+    fn is_remote_connected(&self) -> bool {
+        true
+    }
+
     /// Get the home directory for this filesystem
     ///
     /// For local filesystems, returns the local home directory.
