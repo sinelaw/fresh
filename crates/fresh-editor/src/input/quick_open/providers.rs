@@ -567,9 +567,9 @@ mod tests {
     use super::*;
     use crate::input::quick_open::BufferInfo;
 
-    fn make_test_context() -> QuickOpenContext {
+    fn make_test_context(cwd: &str) -> QuickOpenContext {
         QuickOpenContext {
-            cwd: "/tmp".to_string(),
+            cwd: cwd.to_string(),
             open_buffers: vec![
                 BufferInfo {
                     id: 1,
@@ -597,7 +597,7 @@ mod tests {
     #[test]
     fn test_buffer_provider_suggestions() {
         let provider = BufferProvider::new();
-        let context = make_test_context();
+        let context = make_test_context("/tmp");
 
         let suggestions = provider.suggestions("", &context);
         assert_eq!(suggestions.len(), 2);
@@ -613,7 +613,7 @@ mod tests {
     #[test]
     fn test_buffer_provider_filter() {
         let provider = BufferProvider::new();
-        let context = make_test_context();
+        let context = make_test_context("/tmp");
 
         let suggestions = provider.suggestions("main", &context);
         assert_eq!(suggestions.len(), 1);
@@ -623,7 +623,7 @@ mod tests {
     #[test]
     fn test_goto_line_provider() {
         let provider = GotoLineProvider::new();
-        let context = make_test_context();
+        let context = make_test_context("/tmp");
 
         // Valid line number
         let suggestions = provider.suggestions("42", &context);
@@ -644,7 +644,7 @@ mod tests {
     #[test]
     fn test_goto_line_on_select() {
         let provider = GotoLineProvider::new();
-        let context = make_test_context();
+        let context = make_test_context("/tmp");
 
         let suggestions = provider.suggestions("42", &context);
         let result = provider.on_select(suggestions.first(), "42", &context);
@@ -652,5 +652,133 @@ mod tests {
             QuickOpenResult::GotoLine(line) => assert_eq!(line, 42),
             _ => panic!("Expected GotoLine result"),
         }
+    }
+
+    // ====================================================================
+    // FileProvider tests
+    // ====================================================================
+
+    /// A ProcessSpawner that always fails — forces FileProvider to use the
+    /// FileSystem walk fallback, which is exactly the code path that was
+    /// broken on Windows and remote filesystems.
+    struct FailingSpawner;
+
+    #[async_trait::async_trait]
+    impl crate::services::remote::ProcessSpawner for FailingSpawner {
+        async fn spawn(
+            &self,
+            _command: String,
+            _args: Vec<String>,
+            _cwd: Option<String>,
+        ) -> Result<crate::services::remote::SpawnResult, crate::services::remote::SpawnError>
+        {
+            Err(crate::services::remote::SpawnError::Process(
+                "no git in test".to_string(),
+            ))
+        }
+    }
+
+    /// Create a FileProvider backed by StdFileSystem and a FailingSpawner
+    /// (no runtime handle, so try_git_files is skipped entirely).
+    fn make_file_provider() -> FileProvider {
+        FileProvider::new(
+            std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
+            std::sync::Arc::new(FailingSpawner),
+            None, // no runtime → git ls-files path is skipped
+        )
+    }
+
+    #[test]
+    fn test_file_provider_discovers_files_via_walk() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        // Create a small project structure
+        std::fs::write(base.join("main.rs"), b"fn main() {}").unwrap();
+        std::fs::write(base.join("lib.rs"), b"pub mod foo;").unwrap();
+        std::fs::create_dir(base.join("src")).unwrap();
+        std::fs::write(base.join("src").join("foo.rs"), b"// foo").unwrap();
+
+        let provider = make_file_provider();
+        let context = make_test_context(&base.display().to_string());
+        let suggestions = provider.suggestions("", &context);
+
+        // Should find all 3 files
+        assert_eq!(suggestions.len(), 3);
+        let paths: Vec<&str> = suggestions
+            .iter()
+            .filter_map(|s| s.value.as_deref())
+            .collect();
+        assert!(paths.contains(&"main.rs"));
+        assert!(paths.contains(&"lib.rs"));
+        assert!(paths.contains(&"src/foo.rs"));
+    }
+
+    #[test]
+    fn test_file_provider_skips_ignored_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        std::fs::write(base.join("app.rs"), b"").unwrap();
+        // These directories should be skipped
+        std::fs::create_dir(base.join("node_modules")).unwrap();
+        std::fs::write(base.join("node_modules").join("pkg.js"), b"").unwrap();
+        std::fs::create_dir(base.join("target")).unwrap();
+        std::fs::write(base.join("target").join("debug.o"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let context = make_test_context(&base.display().to_string());
+        let suggestions = provider.suggestions("", &context);
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].value.as_deref(), Some("app.rs"));
+    }
+
+    #[test]
+    fn test_file_provider_skips_hidden_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        std::fs::write(base.join("visible.txt"), b"").unwrap();
+        std::fs::write(base.join(".hidden"), b"").unwrap();
+        std::fs::create_dir(base.join(".git")).unwrap();
+        std::fs::write(base.join(".git").join("config"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let context = make_test_context(&base.display().to_string());
+        let suggestions = provider.suggestions("", &context);
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].value.as_deref(), Some("visible.txt"));
+    }
+
+    #[test]
+    fn test_file_provider_fuzzy_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        std::fs::write(base.join("main.rs"), b"").unwrap();
+        std::fs::write(base.join("lib.rs"), b"").unwrap();
+        std::fs::write(base.join("README.md"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let context = make_test_context(&base.display().to_string());
+        let suggestions = provider.suggestions("main", &context);
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].value.as_deref(), Some("main.rs"));
+    }
+
+    #[test]
+    fn test_file_provider_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let provider = make_file_provider();
+        let context = make_test_context(&dir.path().display().to_string());
+        let suggestions = provider.suggestions("", &context);
+
+        // Should show "no files" disabled suggestion
+        assert_eq!(suggestions.len(), 1);
+        assert!(suggestions[0].disabled);
     }
 }
