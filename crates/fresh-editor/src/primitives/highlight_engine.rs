@@ -1127,18 +1127,6 @@ impl HighlightEngine {
         Self::None
     }
 
-    /// Create a highlighting engine for a specific tree-sitter language.
-    ///
-    /// This is useful when manually setting the language (e.g., from UI).
-    /// Uses tree-sitter for the specified language.
-    pub fn for_language(language: Language) -> Self {
-        if let Ok(highlighter) = Highlighter::new(language) {
-            Self::TreeSitter(Box::new(highlighter))
-        } else {
-            Self::None
-        }
-    }
-
     /// Create a highlighting engine for a syntax by name.
     ///
     /// This looks up the syntax in the grammar registry and creates a TextMate
