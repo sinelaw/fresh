@@ -3020,7 +3020,7 @@ fn test_inspect_after_saving_custom_theme() {
 
     harness.open_file(&test_file).unwrap();
     harness.render().unwrap();
-    tracing::info!("[test] file opened, starting step 1");
+    tracing::warn!("[test] file opened, starting step 1");
 
     // === Step 1: Open theme editor, select builtin, edit a color, save as custom ===
 
@@ -3035,12 +3035,12 @@ fn test_inspect_after_saving_custom_theme() {
         .unwrap();
     harness.render().unwrap();
 
-    tracing::info!("[test] waiting for 'Select theme to edit'");
+    tracing::warn!("[test] waiting for 'Select theme to edit'");
     harness
         .wait_until(|h| h.screen_to_string().contains("Select theme to edit"))
         .unwrap();
 
-    tracing::info!("[test] typing 'light' and pressing Enter");
+    tracing::warn!("[test] typing 'light' and pressing Enter");
     harness.type_text("light").unwrap();
     harness.render().unwrap();
     harness
@@ -3048,7 +3048,7 @@ fn test_inspect_after_saving_custom_theme() {
         .unwrap();
     harness.render().unwrap();
 
-    tracing::info!("[test] waiting for Theme Editor tab");
+    tracing::warn!("[test] waiting for Theme Editor tab");
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
@@ -3057,7 +3057,7 @@ fn test_inspect_after_saving_custom_theme() {
         .unwrap();
 
     // Expand Editor section and navigate to the first color field (bg)
-    tracing::info!("[test] expanding Editor section");
+    tracing::warn!("[test] expanding Editor section");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -3070,11 +3070,11 @@ fn test_inspect_after_saving_custom_theme() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    tracing::info!("[test] waiting for '#' (color edit field)");
+    tracing::warn!("[test] waiting for '#' (color edit field)");
     harness
         .wait_until(|h| h.screen_to_string().contains("#"))
         .unwrap();
-    tracing::info!("[test] typing color #FF0000");
+    tracing::warn!("[test] typing color #FF0000");
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
         .unwrap();
@@ -3085,18 +3085,18 @@ fn test_inspect_after_saving_custom_theme() {
         .unwrap();
     harness.render().unwrap();
 
-    tracing::info!("[test] waiting for Theme Editor after color edit");
+    tracing::warn!("[test] waiting for Theme Editor after color edit");
     harness
         .wait_until(|h| h.screen_to_string().contains("Theme Editor"))
         .unwrap();
 
     // Save as "light_custom" (with underscore to test normalization)
-    tracing::info!("[test] pressing Ctrl+S to save");
+    tracing::warn!("[test] pressing Ctrl+S to save");
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    tracing::info!("[test] waiting for 'Save theme as' dialog");
+    tracing::warn!("[test] waiting for 'Save theme as' dialog");
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
@@ -3104,7 +3104,7 @@ fn test_inspect_after_saving_custom_theme() {
         })
         .unwrap();
     harness.render().unwrap();
-    tracing::info!("[test] typing 'light_custom' and pressing Enter");
+    tracing::warn!("[test] typing 'light_custom' and pressing Enter");
     harness.type_text("light_custom").unwrap();
     harness.render().unwrap();
     harness
@@ -3112,7 +3112,7 @@ fn test_inspect_after_saving_custom_theme() {
         .unwrap();
     harness.render().unwrap();
 
-    tracing::info!("[test] waiting for saved/applied confirmation");
+    tracing::warn!("[test] waiting for saved/applied confirmation");
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
@@ -3121,17 +3121,17 @@ fn test_inspect_after_saving_custom_theme() {
         .unwrap();
 
     // === Step 2: Close theme editor via Escape ===
-    tracing::info!("[test] step 2: closing theme editor via Escape");
+    tracing::warn!("[test] step 2: closing theme editor via Escape");
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    tracing::info!("[test] waiting for 'Hello world' (main editor)");
+    tracing::warn!("[test] waiting for 'Hello world' (main editor)");
     harness
         .wait_until(|h| h.screen_to_string().contains("Hello world"))
         .unwrap();
 
     // === Step 3: Inspect Theme at Cursor — should work with the custom theme ===
-    tracing::info!("[test] step 3: opening Inspect Theme at Cursor");
+    tracing::warn!("[test] step 3: opening Inspect Theme at Cursor");
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -3144,7 +3144,7 @@ fn test_inspect_after_saving_custom_theme() {
     harness.render().unwrap();
 
     // Wait for theme editor to reopen and auto-navigate to editor fields
-    tracing::info!("[test] waiting for editor.fg/editor.bg fields");
+    tracing::warn!("[test] waiting for editor.fg/editor.bg fields");
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
