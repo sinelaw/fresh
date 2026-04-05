@@ -1929,7 +1929,6 @@ editor.on("buffer_closed", "on_buffer_closed");
 editor.defineMode("review-mode", [
     // Navigation (magit-style)
     ["Up", "review_nav_up"], ["Down", "review_nav_down"],
-    ["k", "review_nav_up"], ["j", "review_nav_down"],
     ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
     // Git actions
     ["s", "review_stage_file"], ["u", "review_unstage_file"], ["d", "review_discard_file"],
