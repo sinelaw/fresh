@@ -527,7 +527,7 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     const visibleDiffLines = diffLines.slice(state.diffScrollOffset, state.diffScrollOffset + mainRows);
 
     // --- Row 0: Toolbar ---
-    const toolbar = " [Esc] Close  [Up/Down] Navigate  [PgUp/PgDn] Scroll Diff  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down";
+    const toolbar = " [Esc] Close  [Up/Down] Navigate  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down";
     entries.push({
         text: toolbar.substring(0, W).padEnd(W) + "\n",
         style: { fg: STYLE_FOOTER },
