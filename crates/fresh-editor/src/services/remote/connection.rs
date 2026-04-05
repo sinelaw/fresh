@@ -13,7 +13,7 @@ use tokio::process::{Child, Command};
 /// Error type for SSH connection
 #[derive(Debug, thiserror::Error)]
 pub enum SshError {
-    #[error("Failed to spawn SSH process: {0}")]
+    #[error("Failed to spawn SSH process ({0}). Is OpenSSH installed and in your PATH?")]
     SpawnFailed(#[from] std::io::Error),
 
     #[error("Agent failed to start: {0}")]

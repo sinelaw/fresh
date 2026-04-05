@@ -3,8 +3,8 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::services::remote::{spawn_local_agent, RemoteFileSystem};
 use std::sync::Arc;
 
-fn create_test_filesystem(
-) -> Option<(RemoteFileSystem, tempfile::TempDir, tokio::runtime::Runtime)> {
+fn create_test_filesystem() -> Option<(RemoteFileSystem, tempfile::TempDir, tokio::runtime::Runtime)>
+{
     let temp_dir = tempfile::tempdir().ok()?;
     let rt = tokio::runtime::Runtime::new().ok()?;
 
@@ -61,11 +61,7 @@ fn test_remote_file_explorer_anchored_at_working_dir() {
 
     // The file explorer root should show "my_test_project" (the working dir name)
     // as the first directory entry, NOT the home directory name.
-    let home_dir_name = home_dir
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
+    let home_dir_name = home_dir.file_name().unwrap().to_string_lossy().to_string();
 
     // Find the first line in the explorer that contains a directory name.
     // The root node appears first; if the bug is present it will be the
