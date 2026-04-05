@@ -91,6 +91,7 @@ interface ReviewState {
   diffScrollOffset: number;
   viewportWidth: number;
   viewportHeight: number;
+  focusPanel: 'files' | 'diff';
 }
 
 const state: ReviewState = {
@@ -104,6 +105,7 @@ const state: ReviewState = {
   diffScrollOffset: 0,
   viewportWidth: 80,
   viewportHeight: 24,
+  focusPanel: 'files',
 };
 
 // --- Refresh State ---
@@ -527,7 +529,7 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     const visibleDiffLines = diffLines.slice(state.diffScrollOffset, state.diffScrollOffset + mainRows);
 
     // --- Row 0: Toolbar ---
-    const toolbar = " [Esc] Close  [Up/Down] Navigate  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down";
+    const toolbar = " [Esc] Close  [Tab] Switch Panel  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down";
     entries.push({
         text: toolbar.substring(0, W).padEnd(W) + "\n",
         style: { fg: STYLE_FOOTER },
@@ -536,14 +538,22 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
 
     // --- Row 1: Header ---
     const selectedFile = state.files[state.selectedIndex];
-    const leftHeader = " GIT STATUS";
-    const rightHeader = selectedFile ? ` DIFF FOR ${selectedFile.path}` : " DIFF";
+    const focusLeft = state.focusPanel === 'files';
+    const leftHeader = focusLeft ? " GIT STATUS *" : " GIT STATUS";
+    const rightHeader = selectedFile
+        ? (focusLeft ? ` DIFF FOR ${selectedFile.path}` : ` DIFF FOR ${selectedFile.path} *`)
+        : " DIFF";
     const leftHeaderPadded = leftHeader.padEnd(leftWidth).substring(0, leftWidth);
     const rightHeaderPadded = rightHeader.substring(0, rightWidth);
 
-    entries.push({ text: leftHeaderPadded, style: { fg: STYLE_HEADER, bold: true }, properties: { type: "header" } });
+    const leftHeaderStyle: Partial<OverlayOptions> = { fg: STYLE_HEADER, bold: true };
+    const rightHeaderStyle: Partial<OverlayOptions> = { fg: STYLE_HEADER, bold: true };
+    if (focusLeft) leftHeaderStyle.underline = true;
+    else rightHeaderStyle.underline = true;
+
+    entries.push({ text: leftHeaderPadded, style: leftHeaderStyle, properties: { type: "header" } });
     entries.push({ text: "│", style: { fg: STYLE_DIVIDER }, properties: { type: "divider" } });
-    entries.push({ text: rightHeaderPadded, style: { fg: STYLE_HEADER, bold: true }, properties: { type: "header" } });
+    entries.push({ text: rightHeaderPadded, style: rightHeaderStyle, properties: { type: "header" } });
     entries.push({ text: "\n", properties: { type: "newline" } });
 
     // --- Rows 2..H-1: Main content ---
@@ -606,39 +616,70 @@ registerHandler("review_refresh", review_refresh);
 // --- New magit navigation handlers (Step 3) ---
 
 function review_nav_up() {
-    if (state.files.length === 0) return;
-    if (state.selectedIndex > 0) {
-        state.selectedIndex--;
-        state.diffScrollOffset = 0;
+    if (state.focusPanel === 'files') {
+        if (state.files.length === 0) return;
+        if (state.selectedIndex > 0) {
+            state.selectedIndex--;
+            state.diffScrollOffset = 0;
+            updateMagitDisplay();
+        }
+    } else {
+        state.diffScrollOffset = Math.max(0, state.diffScrollOffset - 1);
         updateMagitDisplay();
     }
 }
 registerHandler("review_nav_up", review_nav_up);
 
 function review_nav_down() {
-    if (state.files.length === 0) return;
-    if (state.selectedIndex < state.files.length - 1) {
-        state.selectedIndex++;
-        state.diffScrollOffset = 0;
+    if (state.focusPanel === 'files') {
+        if (state.files.length === 0) return;
+        if (state.selectedIndex < state.files.length - 1) {
+            state.selectedIndex++;
+            state.diffScrollOffset = 0;
+            updateMagitDisplay();
+        }
+    } else {
+        state.diffScrollOffset++;
         updateMagitDisplay();
     }
 }
 registerHandler("review_nav_down", review_nav_down);
 
 function review_page_up() {
-    const mainRows = state.viewportHeight - 3;
-    state.diffScrollOffset = Math.max(0, state.diffScrollOffset - mainRows);
-    updateMagitDisplay();
+    const mainRows = state.viewportHeight - 2;
+    if (state.focusPanel === 'files') {
+        if (state.selectedIndex > 0) {
+            state.selectedIndex = Math.max(0, state.selectedIndex - mainRows);
+            state.diffScrollOffset = 0;
+            updateMagitDisplay();
+        }
+    } else {
+        state.diffScrollOffset = Math.max(0, state.diffScrollOffset - mainRows);
+        updateMagitDisplay();
+    }
 }
 registerHandler("review_page_up", review_page_up);
 
 function review_page_down() {
-    const mainRows = state.viewportHeight - 3;
-    state.diffScrollOffset += mainRows;
-    // Clamping happens in buildMagitDisplayEntries
-    updateMagitDisplay();
+    const mainRows = state.viewportHeight - 2;
+    if (state.focusPanel === 'files') {
+        if (state.selectedIndex < state.files.length - 1) {
+            state.selectedIndex = Math.min(state.files.length - 1, state.selectedIndex + mainRows);
+            state.diffScrollOffset = 0;
+            updateMagitDisplay();
+        }
+    } else {
+        state.diffScrollOffset += mainRows;
+        updateMagitDisplay();
+    }
 }
 registerHandler("review_page_down", review_page_down);
+
+function review_toggle_focus() {
+    state.focusPanel = state.focusPanel === 'files' ? 'diff' : 'files';
+    updateMagitDisplay();
+}
+registerHandler("review_toggle_focus", review_toggle_focus);
 
 // --- Real git stage/unstage/discard actions (Step 4) ---
 
@@ -1581,6 +1622,7 @@ async function start_review_diff() {
     state.selectedIndex = 0;
     state.fileScrollOffset = 0;
     state.diffScrollOffset = 0;
+    state.focusPanel = 'files';
 
     // Build initial display
     const initialEntries = buildMagitDisplayEntries();
@@ -1917,9 +1959,10 @@ registerHandler("on_buffer_closed", on_buffer_closed);
 editor.on("buffer_closed", "on_buffer_closed");
 
 editor.defineMode("review-mode", [
-    // Navigation (magit-style)
+    // Navigation
     ["Up", "review_nav_up"], ["Down", "review_nav_down"],
     ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
+    ["Tab", "review_toggle_focus"],
     // Git actions
     ["s", "review_stage_file"], ["u", "review_unstage_file"], ["d", "review_discard_file"],
     // Drill-down and close
