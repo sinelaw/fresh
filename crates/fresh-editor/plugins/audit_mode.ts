@@ -208,6 +208,46 @@ async function getGitDiff(): Promise<Hunk[]> {
             }
         }
     }
+
+    // Also include untracked (newly added) files
+    const untrackedResult = await editor.spawnProcess("git", ["ls-files", "--others", "--exclude-standard"]);
+    if (untrackedResult.exit_code === 0 && untrackedResult.stdout.trim()) {
+        const untrackedFiles = untrackedResult.stdout.trim().split('\n');
+        for (const file of untrackedFiles) {
+            const diffResult = await editor.spawnProcess("git", ["diff", "--no-index", "--unified=3", "--", "/dev/null", file]);
+            // git diff --no-index exits with 1 when there are differences, which is expected
+            if (diffResult.stdout) {
+                const diffLines = diffResult.stdout.split('\n');
+                let fileCurrentHunk: Hunk | null = null;
+                for (const dline of diffLines) {
+                    if (dline.startsWith('@@')) {
+                        const match = dline.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@(.*)/);
+                        if (match) {
+                            const newStart = parseInt(match[2]);
+                            fileCurrentHunk = {
+                                id: `${file}:${newStart}`,
+                                file: file,
+                                range: { start: newStart, end: newStart },
+                                oldRange: { start: 0, end: 0 },
+                                type: 'add',
+                                lines: [],
+                                status: 'pending',
+                                reviewStatus: 'pending',
+                                contextHeader: match[3]?.trim() || "",
+                                byteOffset: 0
+                            };
+                            hunks.push(fileCurrentHunk);
+                        }
+                    } else if (fileCurrentHunk && (dline.startsWith('+') || dline.startsWith('-') || dline.startsWith(' '))) {
+                        if (!dline.startsWith('---') && !dline.startsWith('+++')) {
+                            fileCurrentHunk.lines.push(dline);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     return hunks;
 }
 
@@ -1579,15 +1619,29 @@ async function side_by_side_diff_current_file() {
         }
     }
 
-    // Get hunks for this specific file (use -C gitRoot since filePath is relative to git root)
-    const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "HEAD", "--unified=3", "--", filePath]);
-    if (result.exit_code !== 0) {
-        editor.setStatus(editor.t("status.failed_git_diff"));
-        return;
+    // Check if the file is untracked
+    const isTrackedResult = await editor.spawnProcess("git", ["-C", gitRoot, "ls-files", "--", filePath]);
+    const isUntracked = isTrackedResult.exit_code !== 0 || !isTrackedResult.stdout.trim();
+
+    // Get hunks for this specific file
+    let diffOutput: string;
+    if (isUntracked) {
+        // For untracked files, use --no-index to diff against /dev/null
+        const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "--no-index", "--unified=3", "--", "/dev/null", filePath]);
+        // git diff --no-index exits with 1 when there are differences, which is expected
+        diffOutput = result.stdout || "";
+    } else {
+        // For tracked files, use normal diff against HEAD
+        const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "HEAD", "--unified=3", "--", filePath]);
+        if (result.exit_code !== 0) {
+            editor.setStatus(editor.t("status.failed_git_diff"));
+            return;
+        }
+        diffOutput = result.stdout;
     }
 
     // Parse hunks from diff output
-    const lines = result.stdout.split('\n');
+    const lines = diffOutput.split('\n');
     const fileHunks: Hunk[] = [];
     let currentHunk: Hunk | null = null;
 
@@ -1604,7 +1658,7 @@ async function side_by_side_diff_current_file() {
                     file: filePath,
                     range: { start: newStart, end: newStart + newCount - 1 },
                     oldRange: { start: oldStart, end: oldStart + oldCount - 1 },
-                    type: 'modify',
+                    type: isUntracked ? 'add' : 'modify',
                     lines: [],
                     status: 'pending',
                     reviewStatus: 'pending',
@@ -1626,12 +1680,18 @@ async function side_by_side_diff_current_file() {
     }
 
     // Get old (HEAD) and new (working) file content (use -C gitRoot since filePath is relative to git root)
-    const gitShow = await editor.spawnProcess("git", ["-C", gitRoot, "show", `HEAD:${filePath}`]);
-    if (gitShow.exit_code !== 0) {
-        editor.setStatus(editor.t("status.failed_old_new_file"));
-        return;
+    let oldContent: string;
+    if (isUntracked) {
+        // For untracked files, old content is empty (file didn't exist before)
+        oldContent = "";
+    } else {
+        const gitShow = await editor.spawnProcess("git", ["-C", gitRoot, "show", `HEAD:${filePath}`]);
+        if (gitShow.exit_code !== 0) {
+            editor.setStatus(editor.t("status.failed_old_new_file"));
+            return;
+        }
+        oldContent = gitShow.stdout;
     }
-    const oldContent = gitShow.stdout;
 
     // Read new file content (use absolute path for readFile)
     const newContent = await editor.readFile(absolutePath);
