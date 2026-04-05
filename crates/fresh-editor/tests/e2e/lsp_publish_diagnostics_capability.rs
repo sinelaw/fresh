@@ -118,11 +118,23 @@ while true; do
         "textDocument/inlayHint")
             send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
             ;;
-        "$/cancelRequest")
+        "textDocument/completion")
+            if [ -n "$msg_id" ]; then
+                send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+            fi
+            ;;
+        "$/cancelRequest"|"initialized")
+            # Notifications - no response needed
             ;;
         "shutdown")
             send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
             break
+            ;;
+        *)
+            # Respond to any unhandled requests to prevent pending request buildup
+            if [ -n "$msg_id" ]; then
+                send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            fi
             ;;
     esac
 done
@@ -228,11 +240,23 @@ while true; do
         "textDocument/inlayHint")
             send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
             ;;
-        "$/cancelRequest")
+        "textDocument/completion")
+            if [ -n "$msg_id" ]; then
+                send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+            fi
+            ;;
+        "$/cancelRequest"|"initialized")
+            # Notifications - no response needed
             ;;
         "shutdown")
             send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
             break
+            ;;
+        *)
+            # Respond to any unhandled requests to prevent pending request buildup
+            if [ -n "$msg_id" ]; then
+                send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            fi
             ;;
     esac
 done
@@ -293,11 +317,16 @@ fn test_strict_server_sends_diagnostics_with_capability() -> anyhow::Result<()> 
         }]),
     );
 
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
+    // Use HarnessOptions to create an empty plugins dir, preventing embedded
+    // plugin loading. Embedded plugins may send LSP requests (completion,
+    // hover, etc.) that the fake bash script doesn't handle, causing the
+    // editor's pending request queue to grow and potentially stall.
+    let mut harness = EditorTestHarness::create(
         120,
         30,
-        config,
-        temp_dir.path().to_path_buf(),
+        crate::common::harness::HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(temp_dir.path().to_path_buf()),
     )?;
 
     // Open the Python test file (triggers initialize + didOpen)
@@ -358,11 +387,12 @@ fn test_permissive_server_sends_diagnostics_without_capability() -> anyhow::Resu
         }]),
     );
 
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
+    let mut harness = EditorTestHarness::create(
         120,
         30,
-        config,
-        temp_dir.path().to_path_buf(),
+        crate::common::harness::HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(temp_dir.path().to_path_buf()),
     )?;
 
     // Open the C test file

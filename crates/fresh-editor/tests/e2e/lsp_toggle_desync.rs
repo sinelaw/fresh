@@ -37,23 +37,26 @@ LOG_FILE="${1:-/tmp/fake_lsp_body_log.txt}"
 
 # Function to read a message
 read_message() {
-    # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
+    while IFS= read -r line; do
+        # Strip carriage return (LSP uses CRLF line endings)
+        line="${line%$'\r'}"
         # Empty line marks end of headers
-        if [ -z "$key" ]; then
+        if [ -z "$line" ]; then
             break
         fi
+        # Parse "Key: Value" header
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -61,7 +64,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Main loop
@@ -96,7 +99,7 @@ while true; do
         "initialize")
             send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":["."]},"textDocumentSync":2}}}'
             ;;
-        "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave"|"textDocument/didClose")
+        "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave"|"textDocument/didClose"|"initialized")
             # Notifications - no response needed
             ;;
         "textDocument/diagnostic")
@@ -114,6 +117,12 @@ while true; do
         "shutdown")
             send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
             break
+            ;;
+        *)
+            # Respond to any unhandled requests to prevent pending request buildup
+            if [ -n "$msg_id" ]; then
+                send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            fi
             ;;
     esac
 done

@@ -401,7 +401,11 @@ fn test_vi_bug_r_not_implemented() {
 
     // ra should replace 'h' with 'a'
     send_key(&mut harness, 'r');
-    // After 'r' we should wait for a character — just send 'a'
+    // Wait for the plugin to enter replace-char mode before sending the
+    // replacement character (same pattern as send_operator_motion).
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-replace-char".to_string()))
+        .unwrap();
     send_key(&mut harness, 'a');
 
     harness.wait_for_buffer_content("aello\n").unwrap();
