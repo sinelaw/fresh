@@ -1369,3 +1369,87 @@ fn start_server(config: Config) {
     eprintln!("Context bg (outside hunk): {:?}", context_bg);
     eprintln!("Diff bg (inside hunk): {:?}", diff_bg);
 }
+
+/// Test that Review Diff shows newly added (untracked) files
+/// Reproduces https://github.com/sinelaw/fresh/issues/1452
+#[test]
+fn test_review_diff_shows_added_files() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    // Create an initial commit with the typical project files
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Create a brand new untracked file (not staged, not committed)
+    let new_file_path = repo.path.join("src/new_module.rs");
+    let new_file_content = r#"/// A brand new module
+pub fn new_function() {
+    println!("This is a new file!");
+}
+"#;
+    fs::write(&new_file_path, new_file_content).expect("Failed to create new file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Open any existing file (review diff shows all changes, not just current file)
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("main"))
+        .unwrap();
+
+    // Trigger the Review Diff command via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for the Review Diff async operation to complete
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            !screen.contains("Generating Review Diff Stream")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Review Diff (added file) screen:\n{}", screen);
+
+    // Should not have any errors
+    assert!(
+        !screen.contains("TypeError"),
+        "Should not show any TypeError. Screen:\n{}",
+        screen
+    );
+
+    // The new untracked file should appear in the review diff
+    assert!(
+        screen.contains("new_module.rs"),
+        "Review diff should show the newly added untracked file 'new_module.rs'. Screen:\n{}",
+        screen
+    );
+
+    // The content of the new file should be visible as additions
+    assert!(
+        screen.contains("new_function") || screen.contains("new file"),
+        "Review diff should show content from the new file. Screen:\n{}",
+        screen
+    );
+}
