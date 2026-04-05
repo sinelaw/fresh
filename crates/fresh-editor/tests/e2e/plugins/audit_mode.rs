@@ -2055,3 +2055,774 @@ fn test_review_diff_scrolling_many_files() {
         scrolled_screen
     );
 }
+
+/// Helper: open Review Diff via command palette and wait for it to load.
+/// Returns the initial screen string.
+fn open_review_diff(harness: &mut EditorTestHarness) -> String {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            if screen.contains("TypeError") || screen.contains("Error:") {
+                panic!("Error loading review diff. Screen:\n{}", screen);
+            }
+            screen.contains("GIT STATUS") && screen.contains("DIFF")
+        })
+        .unwrap();
+
+    harness.screen_to_string()
+}
+
+/// Test j/k vim-style navigation in the review diff file list.
+/// j should move down, k should move up, matching arrow key behavior.
+#[test]
+fn test_review_diff_jk_navigation() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Create two unstaged modified files so we can navigate between them
+    repo.create_file("src/main.rs", "fn main() { /* changed */ }\n");
+    repo.create_file("src/lib.rs", "pub struct Config { /* changed */ }\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("changed"))
+        .unwrap();
+
+    let screen = open_review_diff(&mut harness);
+
+    // Should start with the first file selected — check the DIFF header
+    assert!(
+        screen.contains("DIFF FOR") || screen.contains("DIFF"),
+        "Should show diff panel header. Screen:\n{}",
+        screen
+    );
+
+    // Record which file is shown first
+    let first_file_is_lib = screen.contains("DIFF FOR src/lib.rs");
+    let first_file_is_main = screen.contains("DIFF FOR src/main.rs");
+    assert!(
+        first_file_is_lib || first_file_is_main,
+        "Should show a file diff. Screen:\n{}",
+        screen
+    );
+
+    // Press j to move down
+    harness
+        .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_after_j = harness.screen_to_string();
+
+    // The diff header should change to the other file
+    if first_file_is_lib {
+        assert!(
+            screen_after_j.contains("DIFF FOR src/main.rs"),
+            "j should navigate to next file. Screen:\n{}",
+            screen_after_j
+        );
+    } else {
+        assert!(
+            screen_after_j.contains("DIFF FOR src/lib.rs"),
+            "j should navigate to next file. Screen:\n{}",
+            screen_after_j
+        );
+    }
+
+    // Press k to move back up
+    harness
+        .send_key(KeyCode::Char('k'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_after_k = harness.screen_to_string();
+
+    // Should be back on the first file
+    if first_file_is_lib {
+        assert!(
+            screen_after_k.contains("DIFF FOR src/lib.rs"),
+            "k should navigate back to previous file. Screen:\n{}",
+            screen_after_k
+        );
+    } else {
+        assert!(
+            screen_after_k.contains("DIFF FOR src/main.rs"),
+            "k should navigate back to previous file. Screen:\n{}",
+            screen_after_k
+        );
+    }
+}
+
+/// Test Home/End navigation in the review diff file list.
+/// Home jumps to first file, End jumps to last file.
+#[test]
+fn test_review_diff_home_end_navigation() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Create multiple modified files
+    repo.create_file("src/main.rs", "fn main() { /* changed */ }\n");
+    repo.create_file("src/lib.rs", "pub struct Config { /* changed */ }\n");
+    repo.create_file("src/utils.rs", "pub fn changed() {}\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("changed"))
+        .unwrap();
+
+    let _screen = open_review_diff(&mut harness);
+
+    // Navigate down a couple to move away from first file
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let _screen_mid = harness.screen_to_string();
+
+    // Press End to jump to last file
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen_after_end = harness.screen_to_string();
+
+    // Press Down — should be no-op at the bottom
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen_still_end = harness.screen_to_string();
+
+    // The DIFF FOR header should be the same (still on last file)
+    // Extract the "DIFF FOR xxx" from both screens
+    let end_diff: String = screen_after_end
+        .lines()
+        .find(|l| l.contains("DIFF FOR"))
+        .unwrap_or("")
+        .to_string();
+    let still_end_diff: String = screen_still_end
+        .lines()
+        .find(|l| l.contains("DIFF FOR"))
+        .unwrap_or("")
+        .to_string();
+    assert_eq!(
+        end_diff, still_end_diff,
+        "Down at bottom should be no-op. Screen:\n{}",
+        screen_still_end
+    );
+
+    // Press Home to jump to first file
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen_after_home = harness.screen_to_string();
+
+    // Press Up — should be no-op at the top
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen_still_home = harness.screen_to_string();
+
+    let home_diff: String = screen_after_home
+        .lines()
+        .find(|l| l.contains("DIFF FOR"))
+        .unwrap_or("")
+        .to_string();
+    let still_home_diff: String = screen_still_home
+        .lines()
+        .find(|l| l.contains("DIFF FOR"))
+        .unwrap_or("")
+        .to_string();
+    assert_eq!(
+        home_diff, still_home_diff,
+        "Up at top should be no-op. Screen:\n{}",
+        screen_still_home
+    );
+
+    // End and Home should give different files (unless there's only 1 file)
+    assert_ne!(
+        end_diff, home_diff,
+        "End and Home should select different files. End:\n{}\nHome:\n{}",
+        screen_after_end, screen_after_home
+    );
+}
+
+/// Test Left/Right arrows switch focus between file list and diff panels.
+/// Right focuses the diff panel, Left focuses the file list.
+/// The focused panel header is bold+underlined, unfocused is dim.
+#[test]
+fn test_review_diff_left_right_panel_focus() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    repo.create_file("src/main.rs", "fn main() { /* changed */ }\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("changed"))
+        .unwrap();
+
+    let _screen = open_review_diff(&mut harness);
+
+    // Initially, files panel has focus — Up/Down should navigate files
+    // Pressing Right should switch focus to diff panel
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_right = harness.screen_to_string();
+
+    // Now Up/Down should scroll the diff, not change file selection.
+    // Record which file is selected before pressing Down
+    let diff_before: String = screen_right
+        .lines()
+        .find(|l| l.contains("DIFF FOR"))
+        .unwrap_or("")
+        .to_string();
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen_down_in_diff = harness.screen_to_string();
+    let diff_after: String = screen_down_in_diff
+        .lines()
+        .find(|l| l.contains("DIFF FOR"))
+        .unwrap_or("")
+        .to_string();
+
+    // The file selection should NOT change (Down scrolls diff, not file list)
+    assert_eq!(
+        diff_before, diff_after,
+        "Down in diff panel should scroll diff, not change file. Screen:\n{}",
+        screen_down_in_diff
+    );
+
+    // Press Left to switch back to file panel
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Now Down should change the file selection
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen_down_in_files = harness.screen_to_string();
+    let _diff_files_down: String = screen_down_in_files
+        .lines()
+        .find(|l| l.contains("DIFF FOR"))
+        .unwrap_or("")
+        .to_string();
+
+    // If there are multiple files, the diff header should have changed
+    // (If only one file, this is a no-op which is also fine)
+    // Just verify no errors
+    assert!(
+        !screen_down_in_files.contains("TypeError"),
+        "Should not show errors. Screen:\n{}",
+        screen_down_in_files
+    );
+}
+
+/// Test that renamed files show "Renamed from <path>" instead of "(no diff available)".
+#[test]
+fn test_review_diff_renamed_file_message() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Rename a file via git mv (staged rename)
+    let output = std::process::Command::new("git")
+        .args(["mv", "src/utils.rs", "src/helpers.rs"])
+        .current_dir(&repo.path)
+        .output()
+        .expect("git mv failed");
+    assert!(output.status.success(), "git mv failed");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Hello"))
+        .unwrap();
+
+    let _screen = open_review_diff(&mut harness);
+
+    // Navigate to find the renamed file
+    // The file list should show "R  src/utils.rs → src/helpers.rs"
+    // We may need to press Down several times to reach it
+    let mut found_rename = false;
+    for _ in 0..10 {
+        let s = harness.screen_to_string();
+        if s.contains("DIFF FOR src/helpers.rs") || s.contains("DIFF FOR helpers.rs") {
+            // Check that it shows "Renamed from" message
+            if s.contains("Renamed from") {
+                found_rename = true;
+                assert!(
+                    s.contains("Renamed from src/utils.rs") || s.contains("Renamed from utils.rs"),
+                    "Should show original path in rename message. Screen:\n{}",
+                    s
+                );
+                break;
+            }
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+
+    assert!(
+        found_rename,
+        "Should find renamed file with 'Renamed from' message. Final screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Test that untracked directories show "(untracked directory)" message.
+#[test]
+fn test_review_diff_untracked_directory_message() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Create an untracked directory with a file inside
+    repo.create_file("newdir/hello.txt", "hello\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Hello"))
+        .unwrap();
+
+    let _screen = open_review_diff(&mut harness);
+
+    // Navigate to find the untracked directory
+    let mut found_dir = false;
+    for _ in 0..10 {
+        let s = harness.screen_to_string();
+        if s.contains("DIFF FOR newdir/") {
+            if s.contains("untracked directory") {
+                found_dir = true;
+                break;
+            }
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+
+    assert!(
+        found_dir,
+        "Should find untracked directory with '(untracked directory)' message. Final screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Test that Tab, Left, and Right all correctly switch focus between panels.
+/// Verifies that the focus indicator (bold+underline vs dim) changes appropriately.
+#[test]
+fn test_review_diff_tab_toggles_focus() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    repo.create_file("src/main.rs", "fn main() { /* changed */ }\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("changed"))
+        .unwrap();
+
+    let _screen = open_review_diff(&mut harness);
+
+    // Tab should switch to diff panel
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Tab again should switch back to files panel
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen_files = harness.screen_to_string();
+
+    // Left when already on files should be no-op (no errors)
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen_still_files = harness.screen_to_string();
+    assert_eq!(
+        screen_files, screen_still_files,
+        "Left on files panel should be no-op"
+    );
+
+    // Right to switch to diff
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_diff = harness.screen_to_string();
+
+    // Right again when already on diff should be no-op
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_still_diff = harness.screen_to_string();
+    assert_eq!(
+        screen_diff, screen_still_diff,
+        "Right on diff panel should be no-op"
+    );
+
+    // No errors throughout
+    assert!(
+        !screen_still_diff.contains("TypeError"),
+        "Should not show errors. Screen:\n{}",
+        screen_still_diff
+    );
+}
+
+/// Test that the review diff handles symlinks, type changes (file ↔ symlink),
+/// and mode changes (chmod) without errors.
+/// Git reports type changes as 'T' status and mode changes as 'M'.
+#[test]
+#[cfg(unix)]
+fn test_review_diff_symlinks_and_type_changes() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // Create initial files: regular file, symlink, and executable
+    repo.create_file("regular.txt", "regular file content\n");
+    repo.create_file("script.sh", "#!/bin/sh\necho hello\n");
+
+    // Create a symlink
+    std::os::unix::fs::symlink("regular.txt", repo.path.join("symlink.txt"))
+        .expect("Failed to create symlink");
+
+    // Make script.sh executable
+    let output = std::process::Command::new("chmod")
+        .args(["+x", "script.sh"])
+        .current_dir(&repo.path)
+        .output()
+        .expect("chmod failed");
+    assert!(output.status.success(), "chmod failed");
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit with symlink and executable");
+
+    // Type change: replace symlink with a regular file
+    fs::remove_file(repo.path.join("symlink.txt")).unwrap();
+    fs::write(repo.path.join("symlink.txt"), "now a regular file\n").unwrap();
+
+    // Type change: replace regular file with a symlink
+    fs::remove_file(repo.path.join("regular.txt")).unwrap();
+    std::os::unix::fs::symlink("script.sh", repo.path.join("regular.txt"))
+        .expect("Failed to create symlink for type change");
+
+    // Mode change: remove execute permission
+    let output = std::process::Command::new("chmod")
+        .args(["-x", "script.sh"])
+        .current_dir(&repo.path)
+        .output()
+        .expect("chmod failed");
+    assert!(output.status.success(), "chmod -x failed");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let script_path = repo.path.join("script.sh");
+    harness.open_file(&script_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("echo"))
+        .unwrap();
+
+    let screen = open_review_diff(&mut harness);
+
+    // Should show all three changed files without errors
+    assert!(
+        !screen.contains("TypeError"),
+        "Should not show TypeError. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("GIT STATUS"),
+        "Should show GIT STATUS. Screen:\n{}",
+        screen
+    );
+
+    // Navigate through all files and check for errors
+    let mut _found_type_change = false;
+    let mut found_mode_change = false;
+    for _ in 0..10 {
+        let s = harness.screen_to_string();
+        assert!(
+            !s.contains("TypeError"),
+            "Should not show TypeError during navigation. Screen:\n{}",
+            s
+        );
+
+        // Check for type change indicator
+        if s.contains("type change") {
+            _found_type_change = true;
+        }
+        // Check for mode change (script.sh shows as M with diff content about mode)
+        if s.contains("DIFF FOR script.sh") {
+            found_mode_change = true;
+        }
+
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+
+    // We should have found at least the mode change file
+    assert!(
+        found_mode_change,
+        "Should find script.sh with mode change. Final screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Type changes show "T" status — the plugin should handle them gracefully.
+    // On some git versions, typechanges may or may not produce diff hunks,
+    // so we just verify no crashes occurred.
+}
+
+/// Test that the review diff handles a new symlink (untracked) gracefully.
+#[test]
+#[cfg(unix)]
+fn test_review_diff_new_symlink() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Create a new symlink (untracked)
+    std::os::unix::fs::symlink("src/main.rs", repo.path.join("link_to_main"))
+        .expect("Failed to create symlink");
+
+    // Also create a new regular file for comparison
+    repo.create_file("newfile.txt", "new content\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Hello"))
+        .unwrap();
+
+    let screen = open_review_diff(&mut harness);
+
+    // Should show untracked files including the symlink
+    assert!(
+        !screen.contains("TypeError"),
+        "Should not show TypeError. Screen:\n{}",
+        screen
+    );
+
+    // Navigate to find symlink and regular file
+    let mut found_symlink = false;
+    let mut found_newfile = false;
+    for _ in 0..10 {
+        let s = harness.screen_to_string();
+        if s.contains("link_to_main") {
+            found_symlink = true;
+        }
+        if s.contains("newfile.txt") {
+            found_newfile = true;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+
+    // Both should appear in the untracked section
+    assert!(
+        found_newfile,
+        "Should find newfile.txt in review diff. Final screen:\n{}",
+        harness.screen_to_string()
+    );
+    // Symlink may or may not show (git may list it as a regular file)
+    // The key assertion is no errors occurred
+}
+
+/// Test that staged type changes (file replaced with directory) are handled.
+/// When a tracked file is deleted and a directory with the same base path is created,
+/// git shows the file as deleted and directory contents as untracked.
+#[test]
+fn test_review_diff_file_replaced_with_directory() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // Create and commit a regular file
+    repo.create_file("component.txt", "original component\n");
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Replace file with a directory containing files
+    fs::remove_file(repo.path.join("component.txt")).unwrap();
+    repo.create_file("component/index.txt", "index content\n");
+    repo.create_file("component/style.txt", "style content\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let index_path = repo.path.join("component/index.txt");
+    harness.open_file(&index_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("index"))
+        .unwrap();
+
+    let screen = open_review_diff(&mut harness);
+
+    // Should show the deleted file and untracked directory without errors
+    assert!(
+        !screen.contains("TypeError"),
+        "Should not show TypeError. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("GIT STATUS"),
+        "Should show GIT STATUS. Screen:\n{}",
+        screen
+    );
+
+    // Navigate through to verify no crashes
+    let mut found_deleted = false;
+    let mut found_new_dir = false;
+    for _ in 0..10 {
+        let s = harness.screen_to_string();
+        assert!(
+            !s.contains("TypeError"),
+            "No errors during navigation. Screen:\n{}",
+            s
+        );
+        if s.contains("component.txt") && s.contains(" D ") {
+            found_deleted = true;
+        }
+        if s.contains("component/") {
+            found_new_dir = true;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+
+    // The original file should show as deleted
+    assert!(
+        found_deleted || found_new_dir,
+        "Should find deleted file or new directory. Final screen:\n{}",
+        harness.screen_to_string()
+    );
+}

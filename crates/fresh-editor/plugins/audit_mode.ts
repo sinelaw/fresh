@@ -443,6 +443,8 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
             lines.push({ text: `Renamed from ${selectedFile.origPath}`, type: 'empty', style: { fg: STYLE_SECTION_HEADER } });
         } else if (selectedFile.status === 'D') {
             lines.push({ text: "(file deleted)", type: 'empty' });
+        } else if (selectedFile.status === 'T') {
+            lines.push({ text: "(type change: file ↔ symlink)", type: 'empty', style: { fg: STYLE_SECTION_HEADER } });
         } else if (selectedFile.status === '?' && selectedFile.path.endsWith('/')) {
             lines.push({ text: "(untracked directory)", type: 'empty' });
         } else {
