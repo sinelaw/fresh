@@ -79,6 +79,9 @@ pub struct SettingSchema {
     /// Whether this setting accepts null (i.e., can be "unset" to inherit).
     /// Derived from JSON Schema `"type": ["<type>", "null"]`.
     pub nullable: bool,
+    /// Dynamic enum source path: derive dropdown options from the keys of
+    /// another config property at runtime (e.g., "/languages").
+    pub enum_from: Option<String>,
 }
 
 /// Type of a setting, determines which control to render
@@ -195,6 +198,11 @@ struct RawSchema {
     /// anyOf combinator (used by schemars for Option<T> where T is a struct)
     #[serde(rename = "anyOf")]
     any_of: Option<Vec<RawSchema>>,
+    /// Dynamic enum: derive dropdown options from the keys of another config
+    /// property at runtime (e.g., `"x-enum-from": "/languages"` populates
+    /// the dropdown with keys from the `languages` HashMap).
+    #[serde(rename = "x-enum-from")]
+    enum_from: Option<String>,
 }
 
 /// An entry in the x-enum-values array
@@ -444,6 +452,10 @@ fn parse_setting(
         section,
         order,
         nullable,
+        enum_from: schema
+            .enum_from
+            .clone()
+            .or_else(|| resolved.enum_from.clone()),
     }
 }
 

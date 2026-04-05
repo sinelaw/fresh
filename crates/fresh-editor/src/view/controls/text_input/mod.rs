@@ -226,6 +226,21 @@ impl TextInputColors {
             disabled: theme.line_number_fg,
         }
     }
+
+    /// Create dimmed colors for read-only/inherited text inputs.
+    /// Shows brackets but with muted styling to indicate the field exists
+    /// but is not currently editable.
+    pub fn from_theme_disabled(theme: &crate::view::theme::Theme) -> Self {
+        Self {
+            label: theme.editor_fg,
+            text: theme.line_number_fg,
+            border: theme.line_number_fg,
+            placeholder: theme.line_number_fg,
+            cursor: theme.cursor,
+            focused: theme.selection_bg,
+            disabled: theme.line_number_fg,
+        }
+    }
 }
 
 /// Layout information returned after rendering for hit testing

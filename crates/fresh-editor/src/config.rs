@@ -385,6 +385,7 @@ pub struct Config {
     /// The referenced language's full configuration (grammar, comment_prefix,
     /// tab_size, etc.) is used for unrecognized files.
     #[serde(default)]
+    #[schemars(extend("x-enum-from" = "/languages"))]
     pub default_language: Option<String>,
 
     /// LSP server configurations by language.

@@ -1276,6 +1276,7 @@ mod tests {
                         section: None,
                         order: None,
                         nullable: false,
+                        enum_from: None,
                     },
                     SettingSchema {
                         path: "/command".to_string(),
@@ -1287,6 +1288,7 @@ mod tests {
                         section: None,
                         order: None,
                         nullable: false,
+                        enum_from: None,
                     },
                 ],
             },
@@ -1295,6 +1297,7 @@ mod tests {
             section: None,
             order: None,
             nullable: false,
+            enum_from: None,
         }
     }
 

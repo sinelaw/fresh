@@ -723,8 +723,37 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
                 .or_else(|| schema.default.as_ref().and_then(|d| d.as_str()))
                 .unwrap_or("");
 
-            let state = TextInputState::new(&schema.name).with_value(value);
-            SettingControl::Text(state)
+            // Check for dynamic enum: derive dropdown options from another config field's keys
+            if let Some(ref source_path) = schema.enum_from {
+                let mut options: Vec<String> = ctx
+                    .config_value
+                    .pointer(source_path)
+                    .and_then(|v| v.as_object())
+                    .map(|obj| obj.keys().cloned().collect())
+                    .unwrap_or_default();
+                options.sort();
+
+                // Add empty option for nullable fields (unset/inherit)
+                let mut display_names = Vec::new();
+                let mut values = Vec::new();
+                if schema.nullable {
+                    display_names.push("(none)".to_string());
+                    values.push(String::new());
+                }
+                for key in &options {
+                    display_names.push(key.clone());
+                    values.push(key.clone());
+                }
+
+                let current = if is_null { "" } else { value };
+                let selected = values.iter().position(|v| v == current).unwrap_or(0);
+                let state = DropdownState::with_values(display_names, values, &schema.name)
+                    .with_selected(selected);
+                SettingControl::Dropdown(state)
+            } else {
+                let state = TextInputState::new(&schema.name).with_value(value);
+                SettingControl::Text(state)
+            }
         }
 
         SettingType::Enum { options } => {
@@ -1229,6 +1258,7 @@ mod tests {
             section: None,
             order: None,
             nullable: false,
+            enum_from: None,
         };
 
         let config = sample_config();
@@ -1260,6 +1290,7 @@ mod tests {
             section: None,
             order: None,
             nullable: false,
+            enum_from: None,
         };
 
         let config = sample_config();
@@ -1289,6 +1320,7 @@ mod tests {
             section: None,
             order: None,
             nullable: false,
+            enum_from: None,
         };
 
         let config = sample_config();
@@ -1319,6 +1351,7 @@ mod tests {
             section: None,
             order: None,
             nullable: false,
+            enum_from: None,
         };
 
         let config = sample_config();

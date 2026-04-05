@@ -164,7 +164,8 @@
         "string",
         "null"
       ],
-      "default": null
+      "default": null,
+      "x-enum-from": "/languages"
     },
     "lsp": {
       "description": "LSP server configurations by language.\nEach language maps to one or more server configs (multi-LSP support).\nAccepts both single-object and array forms for backwards compatibility.",
