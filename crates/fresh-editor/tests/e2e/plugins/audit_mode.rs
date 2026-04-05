@@ -1787,17 +1787,25 @@ fn test_review_diff_shows_untracked_and_staged_new_files() {
         screen
     );
 
-    // The untracked file should appear in the review diff
+    // The untracked file should appear in the file list
     assert!(
         screen.contains("untracked_new.rs"),
         "Review diff should show the untracked file 'untracked_new.rs'. Screen:\n{}",
         screen
     );
 
-    // The untracked file's content should be visible
+    // Navigate down to the untracked file to see its content in the diff panel
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("untracked_func"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
     assert!(
         screen.contains("untracked_func"),
-        "Review diff should show content from the untracked file. Screen:\n{}",
+        "Review diff should show content from the untracked file after navigating. Screen:\n{}",
         screen
     );
 }
@@ -1882,15 +1890,25 @@ fn test_review_diff_only_new_files_no_modifications() {
         screen
     );
 
-    // The untracked file must appear
+    // The untracked file must appear in the file list
     assert!(
         screen.contains("brand_new_untracked.rs"),
         "Review diff should show untracked file 'brand_new_untracked.rs'. Screen:\n{}",
         screen
     );
+
+    // Navigate down to the untracked file to see its content in the diff panel
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("also_new"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
     assert!(
         screen.contains("also_new"),
-        "Review diff should show content from untracked file. Screen:\n{}",
+        "Review diff should show content from untracked file after navigating. Screen:\n{}",
         screen
     );
 }
