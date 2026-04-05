@@ -24,6 +24,16 @@ use super::{BufferMetadata, Editor};
 impl Editor {
     /// Save the active buffer
     pub fn save(&mut self) -> anyhow::Result<()> {
+        // Fail fast if remote connection is down
+        if !self.filesystem.is_remote_connected() {
+            anyhow::bail!(
+                "Cannot save: remote connection lost ({})",
+                self.filesystem
+                    .remote_connection_info()
+                    .unwrap_or("unknown host")
+            );
+        }
+
         let path = self
             .active_state()
             .buffer

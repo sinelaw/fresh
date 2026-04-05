@@ -30,7 +30,10 @@ use std::time::Duration;
 /// file open/save works normally before the "drop" is triggered.
 struct DroppableFileSystem {
     inner: StdFileSystem,
+    /// When true, metadata() blocks forever (simulates hanging remote)
     hanging: AtomicBool,
+    /// When true, all I/O operations return errors immediately (simulates disconnected remote)
+    disconnected: AtomicBool,
 }
 
 impl DroppableFileSystem {
@@ -38,6 +41,7 @@ impl DroppableFileSystem {
         Self {
             inner: StdFileSystem,
             hanging: AtomicBool::new(false),
+            disconnected: AtomicBool::new(false),
         }
     }
 
@@ -45,27 +49,45 @@ impl DroppableFileSystem {
         self.hanging.store(val, Ordering::SeqCst);
     }
 
+    fn set_disconnected(&self, val: bool) {
+        self.disconnected.store(val, Ordering::SeqCst);
+    }
+
     /// Block forever if hanging is true (simulates dead remote connection)
     fn block_if_hanging(&self) {
         if self.hanging.load(Ordering::SeqCst) {
-            // Park the thread forever — simulates what happens when
-            // RemoteFileSystem calls request_blocking on a dead channel
             loop {
                 std::thread::park();
             }
         }
     }
+
+    /// Return a "connection closed" error if disconnected
+    fn check_disconnected(&self) -> io::Result<()> {
+        if self.disconnected.load(Ordering::SeqCst) {
+            Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "Channel closed",
+            ))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 // Delegate all FileSystem methods to StdFileSystem, but intercept metadata()
+// and fail on write/read when disconnected.
 impl FileSystem for DroppableFileSystem {
     fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.check_disconnected()?;
         self.inner.read_file(path)
     }
     fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        self.check_disconnected()?;
         self.inner.read_range(path, offset, len)
     }
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        self.check_disconnected()?;
         self.inner.write_file(path, data)
     }
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
@@ -144,7 +166,15 @@ impl FileSystem for DroppableFileSystem {
         uid: u32,
         gid: u32,
     ) -> io::Result<()> {
+        self.check_disconnected()?;
         self.inner.sudo_write(path, data, mode, uid, gid)
+    }
+    fn remote_connection_info(&self) -> Option<&str> {
+        // Pretend to be remote so disconnected checks work
+        Some("test@localhost")
+    }
+    fn is_remote_connected(&self) -> bool {
+        !self.disconnected.load(Ordering::SeqCst)
     }
 }
 
@@ -240,4 +270,63 @@ fn test_poll_file_tree_changes_does_not_hang_with_slow_metadata() {
 
     // This should return quickly, not block.
     let _ = harness.editor_mut().process_async_messages();
+}
+
+/// Test: saving a file when the remote server is disconnected must not crash
+/// the editor. It should show an error in the status bar instead.
+///
+/// BUG: Currently the save error propagates through handle_key → run_event_loop
+/// and crashes the editor with "Channel closed".
+#[test]
+fn test_save_when_disconnected_does_not_crash() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file_path = temp_dir.path().join("test_file.txt");
+    std::fs::write(&file_path, "hello").unwrap();
+
+    let fs = Arc::new(DroppableFileSystem::new());
+
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_filesystem(fs.clone())
+            .with_working_dir(temp_dir.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // Open the file while filesystem is healthy
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Make an edit so the buffer is modified
+    harness.type_text("X").unwrap();
+
+    // Simulate remote server going down
+    fs.set_disconnected(true);
+
+    // Try to save (Ctrl+S). This must NOT crash — it should show an error
+    // in the status bar instead of propagating through handle_key.
+    //
+    // BUG: Without the fix, this panics with "Channel closed" because the
+    // save error propagates via ? through handle_action → handle_key →
+    // the test harness → unwrap().
+    let save_result = harness.send_key(
+        crossterm::event::KeyCode::Char('s'),
+        crossterm::event::KeyModifiers::CONTROL,
+    );
+    assert!(
+        save_result.is_ok(),
+        "Ctrl+S should not crash when disconnected, but got: {:?}",
+        save_result.err()
+    );
+
+    // Render should also succeed — the editor is still alive
+    harness.render().unwrap();
+
+    // Verify the disconnected indicator is visible on screen
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Disconnected"),
+        "Status bar should show disconnected state"
+    );
 }

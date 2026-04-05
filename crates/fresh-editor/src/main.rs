@@ -2731,6 +2731,12 @@ fn main() -> AnyhowResult<()> {
 }
 
 fn real_main() -> AnyhowResult<()> {
+    // Enable backtraces for error reporting if not already set.
+    // Errors that crash the editor are bugs — backtraces help diagnose them.
+    if std::env::var_os("RUST_BACKTRACE").is_none() {
+        std::env::set_var("RUST_BACKTRACE", "1");
+    }
+
     let cli = Cli::parse();
 
     // Print deprecation warnings for old flags

@@ -290,8 +290,9 @@ impl Editor {
                         t!("file.file_changed_prompt").to_string(),
                         PromptType::ConfirmSaveConflict,
                     );
-                } else {
-                    self.save()?;
+                } else if let Err(e) = self.save() {
+                    let msg = format!("{}", e);
+                    self.status_message = Some(t!("file.save_failed", error = &msg).to_string());
                 }
             }
             Action::SaveAs => {
