@@ -1694,3 +1694,206 @@ fn start_server(config: Config) {
         screen
     );
 }
+
+/// Test that Review Diff shows both untracked files AND newly git-added (staged) files
+/// that have never been committed. Previously only modified tracked files were shown.
+#[test]
+fn test_review_diff_shows_untracked_and_staged_new_files() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    // setup_typical_project already does an initial commit.
+
+    // Ignore the plugins directory so copied plugin files don't clutter the diff
+    repo.create_file(".gitignore", "plugins/\n");
+    repo.git_add(&[".gitignore"]);
+    repo.git_commit("Add gitignore");
+
+    // Now create two brand-new files:
+
+    // 1) A new file that is git-added (staged but never committed)
+    repo.create_file(
+        "src/staged_new.rs",
+        "pub fn staged_func() {\n    println!(\"I am staged\");\n}\n",
+    );
+    repo.stage_file("src/staged_new.rs");
+
+    // 2) A new file that is untracked (never staged or committed)
+    repo.create_file(
+        "src/untracked_new.rs",
+        "pub fn untracked_func() {\n    println!(\"I am untracked\");\n}\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Open an existing file (Review Diff shows all changes, not just current file)
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("main"))
+        .unwrap();
+
+    // Trigger Review Diff via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for the Review Diff async operation to complete
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            !screen.contains("Generating Review Diff Stream")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!(
+        "Review Diff (untracked + staged new) screen:\n{}",
+        screen
+    );
+
+    // Should not have any errors
+    assert!(
+        !screen.contains("TypeError"),
+        "Should not show any TypeError. Screen:\n{}",
+        screen
+    );
+
+    // The staged new file should appear in the review diff
+    assert!(
+        screen.contains("staged_new.rs"),
+        "Review diff should show the staged new file 'staged_new.rs'. Screen:\n{}",
+        screen
+    );
+
+    // The staged new file's content should be visible
+    assert!(
+        screen.contains("staged_func"),
+        "Review diff should show content from the staged new file. Screen:\n{}",
+        screen
+    );
+
+    // The untracked file should appear in the review diff
+    assert!(
+        screen.contains("untracked_new.rs"),
+        "Review diff should show the untracked file 'untracked_new.rs'. Screen:\n{}",
+        screen
+    );
+
+    // The untracked file's content should be visible
+    assert!(
+        screen.contains("untracked_func"),
+        "Review diff should show content from the untracked file. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that Review Diff shows files when they are the ONLY changes (no modifications).
+/// This catches cases where the diff only has new files and no tracked-file modifications.
+#[test]
+fn test_review_diff_only_new_files_no_modifications() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    // Ignore plugins so they don't clutter the diff
+    repo.create_file(".gitignore", "plugins/\n");
+    repo.git_add(&[".gitignore"]);
+    repo.git_commit("Add gitignore");
+
+    // Create ONLY new files — no modifications to existing tracked files
+    // 1) Staged new file
+    repo.create_file("src/brand_new_staged.rs", "pub fn brand_new() {}\n");
+    repo.stage_file("src/brand_new_staged.rs");
+
+    // 2) Untracked file
+    repo.create_file("src/brand_new_untracked.rs", "pub fn also_new() {}\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("main"))
+        .unwrap();
+
+    // Trigger Review Diff
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            !screen.contains("Generating Review Diff Stream")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!(
+        "Review Diff (only new files, no modifications) screen:\n{}",
+        screen
+    );
+
+    assert!(
+        !screen.contains("TypeError"),
+        "Should not show any TypeError. Screen:\n{}",
+        screen
+    );
+
+    // The staged new file must appear
+    assert!(
+        screen.contains("brand_new_staged.rs"),
+        "Review diff should show staged new file 'brand_new_staged.rs'. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("brand_new"),
+        "Review diff should show content from staged new file. Screen:\n{}",
+        screen
+    );
+
+    // The untracked file must appear
+    assert!(
+        screen.contains("brand_new_untracked.rs"),
+        "Review diff should show untracked file 'brand_new_untracked.rs'. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("also_new"),
+        "Review diff should show content from untracked file. Screen:\n{}",
+        screen
+    );
+}
