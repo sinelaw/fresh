@@ -59,13 +59,17 @@ fn test_did_open_sent_before_hover() -> anyhow::Result<()> {
         }]),
     );
 
-    // Create harness with config
+    // Create harness with empty plugins dir to prevent loading embedded
+    // plugins (unnecessary for this test and improves isolation/speed).
+    // Embedded plugins may send additional LSP requests that the fake
+    // bash script doesn't handle, causing pending request buildup.
     eprintln!("[TEST] Creating editor harness");
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
+    let mut harness = EditorTestHarness::create(
         120,
         30,
-        config,
-        temp_dir.path().to_path_buf(),
+        crate::common::harness::HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(temp_dir.path().to_path_buf()),
     )?;
     eprintln!("[TEST] Editor harness created");
 

@@ -31,21 +31,22 @@ impl FakeLspServer {
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -53,7 +54,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Main loop
@@ -172,27 +173,25 @@ DELAY={delay}
 
 # Function to read a message
 read_message() {{
-    # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${{line//$'\r'/}}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${{line#Content-Length:}}"
+                content_length="${{content_length// /}}"
+                ;;
+        esac
     done
 
-    # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }}
 
-# Function to send a message
 send_message() {{
     local message="$1"
     local length=${{#message}}
@@ -295,21 +294,22 @@ done
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -317,7 +317,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Main loop
@@ -433,21 +433,22 @@ done
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -455,7 +456,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Main loop
@@ -549,27 +550,25 @@ done
 
 # Function to read a message
 read_message() {{
-    # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${{line//$'\r'/}}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${{line#Content-Length:}}"
+                content_length="${{content_length// /}}"
+                ;;
+        esac
     done
 
-    # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }}
 
-# Function to send a message
 send_message() {{
     local message="$1"
     local length=${{#message}}
@@ -649,21 +648,22 @@ done
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -671,7 +671,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Main loop
@@ -767,21 +767,22 @@ done
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -789,7 +790,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Track whether we've initialized
@@ -873,21 +874,22 @@ done
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -895,7 +897,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Track result_id for incremental updates
@@ -1005,21 +1007,22 @@ done
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -1027,7 +1030,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Main loop
@@ -1112,23 +1115,26 @@ LOG_FILE="${1:-/tmp/fake_lsp_log.txt}"
 
 # Function to read a message
 read_message() {
-    # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
+    while IFS= read -r line; do
+        # Strip carriage return (LSP uses CRLF line endings)
+        line="${line%$'\r'}"
         # Empty line marks end of headers
-        if [ -z "$key" ]; then
+        if [ -z "$line" ]; then
             break
         fi
+        # Parse "Key: Value" header
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -1136,7 +1142,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Main loop
@@ -1176,7 +1182,7 @@ case "$method" in
         uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"uri":"'$uri'","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":10}}}}'
         ;;
-    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave")
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave"|"textDocument/didClose"|"initialized")
         # Notifications - no response needed
         ;;
     "textDocument/diagnostic")
@@ -1185,9 +1191,18 @@ case "$method" in
     "textDocument/inlayHint")
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
         ;;
+    "$/cancelRequest")
+        # Cancel notifications - no response needed
+        ;;
     "shutdown")
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
         break
+        ;;
+    *)
+        # Respond to any unhandled requests to prevent pending request buildup
+        if [ -n "$msg_id" ]; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        fi
         ;;
 esac
 done
@@ -1239,21 +1254,22 @@ done
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -1261,7 +1277,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Main loop
@@ -1345,21 +1361,22 @@ done
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -1367,7 +1384,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Main loop
@@ -1477,21 +1494,22 @@ done
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -1499,7 +1517,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Read env var value at startup
@@ -1603,21 +1621,22 @@ done
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -1625,7 +1644,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Main loop
@@ -1707,21 +1726,22 @@ done
 read_message() {
     # Read headers
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        # Empty line marks end of headers
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
 
     # Read content
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
@@ -1730,7 +1750,7 @@ send_message() {
     local message="$1"
     # Use printf %s to get the exact byte length after echo -en processing
     local length=$(echo -en "$message" | wc -c)
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 # Main loop
@@ -1835,7 +1855,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=$(echo -en "$message" | wc -c)
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 while true; do
@@ -1930,7 +1950,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 while true; do
@@ -2025,7 +2045,7 @@ read_message() {
 send_message() {
     local message="$1"
     local length=${#message}
-    echo -en "Content-Length: $length\r\n\r\n$message"
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
 while true; do
