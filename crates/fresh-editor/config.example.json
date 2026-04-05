@@ -45,6 +45,11 @@
   "keybindings": [],
   "keybinding_maps": {},
   "active_keybinding_map": "default",
+  "fallback": {
+    "grammar": "bash",
+    "comment_prefix": "#",
+    "auto_indent": true
+  },
   "languages": {
     "toml": {
       "extensions": [

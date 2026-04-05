@@ -191,6 +191,51 @@ The `grammar` field accepts a grammar name (case-insensitive). To see all availa
 fresh --cmd grammar list
 ```
 
+### Set a Fallback Language for Unrecognized Files
+
+When Fresh opens a file whose type it cannot detect (no matching extension, filename, or glob pattern), it shows it as "Plain Text" with no syntax highlighting. The `fallback` setting lets you assign a default language configuration for these unrecognized files — useful for `.conf`, `.rc`, `.rules`, and other config files that Fresh doesn't recognize.
+
+**In your config file** (`~/.config/fresh/config.json` or `.fresh/config.json`):
+
+```json
+{
+  "fallback": {
+    "grammar": "bash",
+    "comment_prefix": "#",
+    "auto_indent": true
+  }
+}
+```
+
+This tells Fresh: "When you don't know what language a file is, treat it as bash." The file will get bash syntax highlighting and `#` comments.
+
+The `fallback` field accepts the same fields as a language entry in the `languages` map. The most important field is `grammar`, which determines the syntax highlighting. Common values:
+
+| Grammar | Good for |
+|---------|----------|
+| `bash` | Shell-like config files (`.conf`, `.rc`, `.rules`, `.env`) |
+| `yaml` | YAML-like config files |
+| `json` | JSON-like config files |
+| `toml` | TOML-like config files |
+
+Other available fields: `comment_prefix`, `auto_indent`, `use_tabs`, `tab_size`, `line_wrap`, `format_on_save`, `formatter`, and more (same as any language config entry).
+
+To see all available grammar names, run:
+
+```
+fresh --cmd grammar list
+```
+
+**In the Settings UI:** Navigate to the `fallback` field under Settings. Replace `null` with a JSON object like `{"grammar": "bash", "comment_prefix": "#"}`.
+
+To disable the fallback (default behavior), set it to `null`:
+
+```json
+{
+  "fallback": null
+}
+```
+
 ### Customize LSP Settings
 
 Configure initialization options for a language server:
