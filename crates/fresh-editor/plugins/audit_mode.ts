@@ -65,6 +65,16 @@ interface Hunk {
 }
 
 /**
+ * A file entry from git status --porcelain
+ */
+interface FileEntry {
+  path: string;
+  status: string;           // 'M', 'A', 'D', 'R', 'C', '?'
+  category: 'staged' | 'unstaged' | 'untracked';
+  origPath?: string;         // for renames/copies
+}
+
+/**
  * Review Session State
  */
 interface ReviewState {
@@ -74,6 +84,13 @@ interface ReviewState {
   originalRequest?: string;
   overallFeedback?: string;
   reviewBufferId: number | null;
+  // New magit-style state
+  files: FileEntry[];
+  selectedIndex: number;
+  fileScrollOffset: number;
+  diffScrollOffset: number;
+  viewportWidth: number;
+  viewportHeight: number;
 }
 
 const state: ReviewState = {
@@ -81,6 +98,12 @@ const state: ReviewState = {
   hunkStatus: {},
   comments: [],
   reviewBufferId: null,
+  files: [],
+  selectedIndex: 0,
+  fileScrollOffset: 0,
+  diffScrollOffset: 0,
+  viewportWidth: 80,
+  viewportHeight: 24,
 };
 
 // --- Refresh State ---
@@ -255,6 +278,383 @@ async function getGitDiff(): Promise<Hunk[]> {
     });
 
     return allHunks;
+}
+
+// --- New git status detection (Step 1 of rewrite) ---
+
+/**
+ * Parse `git status --porcelain -z` output into FileEntry[].
+ *
+ * Format: each entry is "XY path\0" where X = index status, Y = worktree status.
+ * Renames/copies add "origPath\0" after the entry.
+ * A file can appear in BOTH staged and unstaged if both X and Y are set.
+ */
+function parseGitStatusPorcelain(raw: string): FileEntry[] {
+    const files: FileEntry[] = [];
+    if (!raw) return files;
+
+    // Split on null bytes
+    const parts = raw.split('\0');
+    let i = 0;
+    while (i < parts.length) {
+        const entry = parts[i];
+        if (entry.length < 3) { i++; continue; }
+
+        const x = entry[0]; // index (staged) status
+        const y = entry[1]; // worktree (unstaged) status
+        // entry[2] is a space
+        const path = entry.slice(3);
+
+        if (!path) { i++; continue; }
+
+        // Check for rename/copy — next part is the original path
+        let origPath: string | undefined;
+        if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
+            i++;
+            origPath = parts[i];
+        }
+
+        // Untracked files: XY = '??'
+        if (x === '?' && y === '?') {
+            files.push({ path, status: '?', category: 'untracked' });
+            i++;
+            continue;
+        }
+
+        // Ignored files: XY = '!!' — skip
+        if (x === '!' && y === '!') {
+            i++;
+            continue;
+        }
+
+        // Staged changes: X is not ' ' and not '?'
+        if (x !== ' ' && x !== '?') {
+            files.push({ path, status: x, category: 'staged', origPath });
+        }
+
+        // Unstaged changes: Y is not ' ' and not '?'
+        if (y !== ' ' && y !== '?') {
+            files.push({ path, status: y, category: 'unstaged', origPath });
+        }
+
+        i++;
+    }
+
+    return files;
+}
+
+/**
+ * Single source of truth for changed files using `git status --porcelain -z`.
+ */
+async function getGitStatus(): Promise<FileEntry[]> {
+    const result = await editor.spawnProcess("git", ["status", "--porcelain", "-z"]);
+    if (result.exit_code !== 0) return [];
+    return parseGitStatusPorcelain(result.stdout);
+}
+
+/**
+ * Fetch unified diffs for the given file entries.
+ * Groups by category to minimize git invocations.
+ */
+async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
+    const allHunks: Hunk[] = [];
+
+    const hasStaged = files.some(f => f.category === 'staged');
+    const hasUnstaged = files.some(f => f.category === 'unstaged');
+    const untrackedFiles = files.filter(f => f.category === 'untracked');
+
+    // Staged diffs
+    if (hasStaged) {
+        const result = await editor.spawnProcess("git", ["diff", "--cached", "--unified=3"]);
+        if (result.exit_code === 0 && result.stdout.trim()) {
+            allHunks.push(...parseDiffOutput(result.stdout, 'staged'));
+        }
+    }
+
+    // Unstaged diffs
+    if (hasUnstaged) {
+        const result = await editor.spawnProcess("git", ["diff", "--unified=3"]);
+        if (result.exit_code === 0 && result.stdout.trim()) {
+            allHunks.push(...parseDiffOutput(result.stdout, 'unstaged'));
+        }
+    }
+
+    // Untracked file diffs
+    for (const f of untrackedFiles) {
+        const result = await editor.spawnProcess("git", [
+            "diff", "--no-index", "--unified=3", "/dev/null", f.path
+        ]);
+        if (result.stdout.trim()) {
+            const hunks = parseDiffOutput(result.stdout, 'untracked');
+            for (const h of hunks) {
+                h.file = f.path;
+                h.id = `${f.path}:${h.range.start}:untracked`;
+                h.type = 'add';
+            }
+            allHunks.push(...hunks);
+        }
+    }
+
+    // Sort: staged → unstaged → untracked, then by filename
+    const statusOrder: Record<string, number> = { staged: 0, unstaged: 1, untracked: 2 };
+    allHunks.sort((a, b) => {
+        const orderA = statusOrder[a.gitStatus || 'unstaged'];
+        const orderB = statusOrder[b.gitStatus || 'unstaged'];
+        if (orderA !== orderB) return orderA - orderB;
+        return a.file.localeCompare(b.file);
+    });
+
+    return allHunks;
+}
+
+// --- New magit-style rendering (Step 2 of rewrite) ---
+
+const STYLE_SELECTED_BG: [number, number, number] = [50, 50, 90];
+const STYLE_DIVIDER: [number, number, number] = [60, 60, 60];
+const STYLE_FOOTER: [number, number, number] = [140, 140, 140];
+const STYLE_HUNK_HEADER: [number, number, number] = [100, 100, 200];
+
+interface ListLine {
+    text: string;
+    type: 'section-header' | 'file';
+    fileIndex?: number;     // index into state.files[]
+    style?: Partial<OverlayOptions>;
+    inlineOverlays?: InlineOverlay[];
+}
+
+interface DiffLine {
+    text: string;
+    type: 'hunk-header' | 'add' | 'remove' | 'context' | 'empty';
+    style?: Partial<OverlayOptions>;
+    inlineOverlays?: InlineOverlay[];
+}
+
+/**
+ * Build the file list lines for the left panel.
+ * Returns section headers (not selectable) and file entries.
+ */
+function buildFileListLines(): ListLine[] {
+    const lines: ListLine[] = [];
+    let lastCategory: string | undefined;
+
+    for (let i = 0; i < state.files.length; i++) {
+        const f = state.files[i];
+        // Section headers
+        if (f.category !== lastCategory) {
+            lastCategory = f.category;
+            let label = '';
+            if (f.category === 'staged')    label = editor.t("section.staged") || "Staged Changes";
+            else if (f.category === 'unstaged') label = editor.t("section.unstaged") || "Modified (Unstaged)";
+            else if (f.category === 'untracked') label = editor.t("section.untracked") || "Untracked Files";
+            lines.push({
+                text: `@ ${label}`,
+                type: 'section-header',
+                style: { fg: STYLE_SECTION_HEADER, bold: true },
+            });
+        }
+
+        // Status icon
+        const statusIcon = f.status === '?' ? 'A' : f.status;
+        const prefix = i === state.selectedIndex ? '>' : ' ';
+        const filename = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
+        lines.push({
+            text: `${prefix}${statusIcon}  ${filename}`,
+            type: 'file',
+            fileIndex: i,
+        });
+    }
+
+    return lines;
+}
+
+/**
+ * Build the diff lines for the right panel based on currently selected file.
+ */
+function buildDiffLines(rightWidth: number): DiffLine[] {
+    const lines: DiffLine[] = [];
+    if (state.files.length === 0) return lines;
+
+    const selectedFile = state.files[state.selectedIndex];
+    if (!selectedFile) return lines;
+
+    // Find hunks matching the selected file and category
+    const fileHunks = state.hunks.filter(
+        h => h.file === selectedFile.path && h.gitStatus === selectedFile.category
+    );
+
+    if (fileHunks.length === 0) {
+        lines.push({ text: "(no diff available)", type: 'empty' });
+        return lines;
+    }
+
+    for (const hunk of fileHunks) {
+        // Hunk header
+        const header = hunk.contextHeader
+            ? `@@ ${hunk.contextHeader} @@`
+            : `@@ -${hunk.oldRange.start} +${hunk.range.start} @@`;
+        lines.push({
+            text: header,
+            type: 'hunk-header',
+            style: { fg: STYLE_HUNK_HEADER, bold: true },
+        });
+
+        // Diff content lines
+        for (const line of hunk.lines) {
+            const prefix = line[0];
+            if (prefix === '+') {
+                lines.push({
+                    text: line,
+                    type: 'add',
+                    style: { fg: STYLE_ADD_TEXT, bg: STYLE_ADD_BG },
+                });
+            } else if (prefix === '-') {
+                lines.push({
+                    text: line,
+                    type: 'remove',
+                    style: { fg: STYLE_REMOVE_TEXT, bg: STYLE_REMOVE_BG },
+                });
+            } else {
+                lines.push({
+                    text: line,
+                    type: 'context',
+                });
+            }
+        }
+    }
+
+    return lines;
+}
+
+/**
+ * Build the full display as exactly viewportHeight lines.
+ * Layout:
+ *   Row 0:        Header (left: GIT STATUS, right: DIFF FOR <file>)
+ *   Rows 1..H-3:  Main content (left file list, │ divider, right diff)
+ *   Row H-2:      Separator (full-width ─)
+ *   Row H-1:      Hints bar
+ */
+function buildMagitDisplayEntries(): TextPropertyEntry[] {
+    const entries: TextPropertyEntry[] = [];
+    const H = state.viewportHeight;
+    const W = state.viewportWidth;
+    const leftWidth = Math.max(28, Math.floor(W * 0.3));
+    const rightWidth = W - leftWidth - 1; // 1 for divider
+
+    const allFileLines = buildFileListLines();
+    const diffLines = buildDiffLines(rightWidth);
+
+    const mainRows = H - 3; // rows 1..H-3
+
+    // --- File list scrolling ---
+    // Find selected line index in allFileLines
+    let selectedLineIdx = -1;
+    for (let i = 0; i < allFileLines.length; i++) {
+        if (allFileLines[i].type === 'file' && allFileLines[i].fileIndex === state.selectedIndex) {
+            selectedLineIdx = i;
+            break;
+        }
+    }
+    if (selectedLineIdx >= 0) {
+        if (selectedLineIdx < state.fileScrollOffset) {
+            state.fileScrollOffset = selectedLineIdx;
+        }
+        if (selectedLineIdx >= state.fileScrollOffset + mainRows) {
+            state.fileScrollOffset = selectedLineIdx - mainRows + 1;
+        }
+    }
+    const maxFileOffset = Math.max(0, allFileLines.length - mainRows);
+    if (state.fileScrollOffset > maxFileOffset) state.fileScrollOffset = maxFileOffset;
+    if (state.fileScrollOffset < 0) state.fileScrollOffset = 0;
+
+    const visibleFileLines = allFileLines.slice(state.fileScrollOffset, state.fileScrollOffset + mainRows);
+
+    // --- Diff scrolling ---
+    const maxDiffOffset = Math.max(0, diffLines.length - mainRows);
+    if (state.diffScrollOffset > maxDiffOffset) state.diffScrollOffset = maxDiffOffset;
+    if (state.diffScrollOffset < 0) state.diffScrollOffset = 0;
+
+    const visibleDiffLines = diffLines.slice(state.diffScrollOffset, state.diffScrollOffset + mainRows);
+
+    // --- Row 0: Header ---
+    const selectedFile = state.files[state.selectedIndex];
+    const leftHeader = " GIT STATUS";
+    const rightHeader = selectedFile ? ` DIFF FOR ${selectedFile.path}` : " DIFF";
+    const leftHeaderPadded = leftHeader.padEnd(leftWidth).substring(0, leftWidth);
+    const rightHeaderPadded = rightHeader.substring(0, rightWidth);
+
+    entries.push({ text: leftHeaderPadded, style: { fg: STYLE_HEADER, bold: true }, properties: { type: "header" } });
+    entries.push({ text: "│", style: { fg: STYLE_DIVIDER }, properties: { type: "divider" } });
+    entries.push({ text: rightHeaderPadded, style: { fg: STYLE_HEADER, bold: true }, properties: { type: "header" } });
+    entries.push({ text: "\n", properties: { type: "newline" } });
+
+    // --- Rows 1..H-3: Main content ---
+    for (let i = 0; i < mainRows; i++) {
+        const fileItem = visibleFileLines[i];
+        const diffItem = visibleDiffLines[i];
+
+        // Left panel
+        const leftText = fileItem ? (" " + fileItem.text) : "";
+        const leftPadded = leftText.padEnd(leftWidth).substring(0, leftWidth);
+        const isSelected = fileItem?.type === 'file' && fileItem.fileIndex === state.selectedIndex;
+
+        const leftEntry: TextPropertyEntry = {
+            text: leftPadded,
+            properties: {
+                type: fileItem?.type || "blank",
+                fileIndex: fileItem?.fileIndex,
+            },
+            style: fileItem?.style,
+            inlineOverlays: fileItem?.inlineOverlays,
+        };
+        if (isSelected) {
+            leftEntry.style = { ...(leftEntry.style || {}), bg: STYLE_SELECTED_BG, bold: true };
+        }
+        entries.push(leftEntry);
+
+        // Divider
+        entries.push({ text: "│", style: { fg: STYLE_DIVIDER }, properties: { type: "divider" } });
+
+        // Right panel
+        const rightText = diffItem ? (" " + diffItem.text) : "";
+        const rightTruncated = rightText.substring(0, rightWidth);
+        entries.push({
+            text: rightTruncated,
+            properties: { type: diffItem?.type || "blank" },
+            style: diffItem?.style,
+            inlineOverlays: diffItem?.inlineOverlays,
+        });
+
+        // Newline
+        entries.push({ text: "\n", properties: { type: "newline" } });
+    }
+
+    // --- Row H-2: Separator ---
+    const sepLine = "─".repeat(W);
+    entries.push({
+        text: sepLine + "\n",
+        style: { fg: STYLE_DIVIDER },
+        properties: { type: "separator" },
+    });
+
+    // --- Row H-1: Hints bar ---
+    const hints = " [Esc] Close  [j/k] Navigate  [PgUp/PgDn] Scroll Diff  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down";
+    entries.push({
+        text: hints.substring(0, W) + "\n",
+        style: { fg: STYLE_FOOTER },
+        properties: { type: "hints" },
+    });
+
+    return entries;
+}
+
+/**
+ * Refresh the display — rebuild entries and set buffer content.
+ */
+function updateMagitDisplay(): void {
+    if (state.reviewBufferId === null) return;
+    const entries = buildMagitDisplayEntries();
+    editor.clearNamespace(state.reviewBufferId, "review-diff");
+    editor.setVirtualBufferContent(state.reviewBufferId, entries);
 }
 
 interface HighlightTask {
@@ -713,6 +1113,101 @@ registerHandler("review_prev_hunk", review_prev_hunk);
 function review_refresh() { refreshReviewData(); }
 registerHandler("review_refresh", review_refresh);
 
+// --- New magit navigation handlers (Step 3) ---
+
+function review_nav_up() {
+    if (state.files.length === 0) return;
+    if (state.selectedIndex > 0) {
+        state.selectedIndex--;
+        state.diffScrollOffset = 0;
+        updateMagitDisplay();
+    }
+}
+registerHandler("review_nav_up", review_nav_up);
+
+function review_nav_down() {
+    if (state.files.length === 0) return;
+    if (state.selectedIndex < state.files.length - 1) {
+        state.selectedIndex++;
+        state.diffScrollOffset = 0;
+        updateMagitDisplay();
+    }
+}
+registerHandler("review_nav_down", review_nav_down);
+
+function review_page_up() {
+    const mainRows = state.viewportHeight - 3;
+    state.diffScrollOffset = Math.max(0, state.diffScrollOffset - mainRows);
+    updateMagitDisplay();
+}
+registerHandler("review_page_up", review_page_up);
+
+function review_page_down() {
+    const mainRows = state.viewportHeight - 3;
+    state.diffScrollOffset += mainRows;
+    // Clamping happens in buildMagitDisplayEntries
+    updateMagitDisplay();
+}
+registerHandler("review_page_down", review_page_down);
+
+// --- Real git stage/unstage/discard actions (Step 4) ---
+
+async function review_stage_file() {
+    if (state.files.length === 0) return;
+    const f = state.files[state.selectedIndex];
+    if (!f) return;
+    await editor.spawnProcess("git", ["add", "--", f.path]);
+    await refreshMagitData();
+}
+registerHandler("review_stage_file", review_stage_file);
+
+async function review_unstage_file() {
+    if (state.files.length === 0) return;
+    const f = state.files[state.selectedIndex];
+    if (!f) return;
+    await editor.spawnProcess("git", ["reset", "HEAD", "--", f.path]);
+    await refreshMagitData();
+}
+registerHandler("review_unstage_file", review_unstage_file);
+
+async function review_discard_file() {
+    if (state.files.length === 0) return;
+    const f = state.files[state.selectedIndex];
+    if (!f) return;
+    if (f.category === 'untracked') {
+        await editor.spawnProcess("rm", ["--", f.path]);
+    } else {
+        await editor.spawnProcess("git", ["checkout", "--", f.path]);
+    }
+    await refreshMagitData();
+}
+registerHandler("review_discard_file", review_discard_file);
+
+/**
+ * Refresh file list and diffs using the new git status approach, then re-render.
+ */
+async function refreshMagitData() {
+    const files = await getGitStatus();
+    state.files = files;
+    state.hunks = await fetchDiffsForFiles(files);
+    // Clamp selectedIndex
+    if (state.selectedIndex >= state.files.length) {
+        state.selectedIndex = Math.max(0, state.files.length - 1);
+    }
+    state.diffScrollOffset = 0;
+    updateMagitDisplay();
+}
+
+// --- Resize handler ---
+
+function onReviewDiffResize(data: { width: number; height: number }): void {
+    if (state.reviewBufferId === null) return;
+    state.viewportHeight = data.height;
+    state.viewportWidth = data.width;
+    updateMagitDisplay();
+}
+registerHandler("onReviewDiffResize", onReviewDiffResize);
+
 let activeDiffViewState: { lSplit: number, rSplit: number } | null = null;
 
 /**
@@ -1092,17 +1587,19 @@ interface CompositeDiffState {
 let activeCompositeDiffState: CompositeDiffState | null = null;
 
 async function review_drill_down() {
-    const bid = editor.getActiveBufferId();
-    const props = editor.getTextPropertiesAtCursor(bid);
-    if (props.length > 0 && props[0].hunkId) {
-        const id = props[0].hunkId as string;
-        const h = state.hunks.find(x => x.id === id);
-        if (!h) return;
+    // Use selected file from magit state instead of cursor properties
+    if (state.files.length === 0) return;
+    const selectedFile = state.files[state.selectedIndex];
+    if (!selectedFile) return;
 
-        editor.setStatus(editor.t("status.loading_diff"));
+    // Create a minimal hunk-like reference for the rest of the function
+    const h = { file: selectedFile.path, gitStatus: selectedFile.category };
 
-        // Get all hunks for this file
-        const fileHunks = state.hunks.filter(hunk => hunk.file === h.file);
+    editor.setStatus(editor.t("status.loading_diff"));
+
+    // Get all hunks for this file
+    const fileHunks = state.hunks.filter(hunk => hunk.file === h.file);
+    if (fileHunks.length === 0) return;
 
         // Get git root to construct absolute path
         const gitRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"]);
@@ -1568,17 +2065,32 @@ async function start_review_diff() {
     editor.setStatus(editor.t("status.generating"));
     editor.setContext("review-mode", true);
 
-    // Initial data fetch
-    const newHunks = await getGitDiff();
-    state.hunks = newHunks;
-    state.comments = []; // Reset comments for new session
+    // Get viewport size
+    const viewport = editor.getViewport();
+    if (viewport) {
+        state.viewportWidth = viewport.width;
+        state.viewportHeight = viewport.height;
+    }
+
+    // Fetch data using new git status approach
+    state.files = await getGitStatus();
+    state.hunks = await fetchDiffsForFiles(state.files);
+    state.comments = [];
+    state.selectedIndex = 0;
+    state.fileScrollOffset = 0;
+    state.diffScrollOffset = 0;
+
+    // Build initial display
+    const initialEntries = buildMagitDisplayEntries();
 
     const bufferId = await VirtualBufferFactory.create({
         name: "*Review Diff*", mode: "review-mode", readOnly: true,
-        entries: (await renderReviewStream()).entries, showLineNumbers: false
+        entries: initialEntries, showLineNumbers: false
     });
     state.reviewBufferId = bufferId;
-    await updateReviewUI(); // Apply initial highlights
+
+    // Register resize handler
+    editor.on("resize", "onReviewDiffResize");
 
     editor.setStatus(editor.t("status.review_summary", { count: String(state.hunks.length) }));
     editor.on("buffer_activated", "on_review_buffer_activated");
@@ -1589,6 +2101,7 @@ registerHandler("start_review_diff", start_review_diff);
 function stop_review_diff() {
     state.reviewBufferId = null;
     editor.setContext("review-mode", false);
+    editor.off("resize", "onReviewDiffResize");
     editor.off("buffer_activated", "on_review_buffer_activated");
     editor.off("buffer_closed", "on_review_buffer_closed");
     editor.setStatus(editor.t("status.stopped"));
@@ -1902,19 +2415,19 @@ registerHandler("on_buffer_closed", on_buffer_closed);
 editor.on("buffer_closed", "on_buffer_closed");
 
 editor.defineMode("review-mode", [
-    // Staging actions
-    ["s", "review_stage_hunk"], ["d", "review_discard_hunk"],
-    // Navigation
-    ["n", "review_next_hunk"], ["p", "review_prev_hunk"], ["r", "review_refresh"],
-    ["Enter", "review_drill_down"], ["q", "close"],
-    // Review actions
-    ["c", "review_add_comment"],
+    // Navigation (magit-style)
+    ["Up", "review_nav_up"], ["Down", "review_nav_down"],
+    ["k", "review_nav_up"], ["j", "review_nav_down"],
+    ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
+    // Git actions
+    ["s", "review_stage_file"], ["u", "review_unstage_file"], ["d", "review_discard_file"],
+    // Drill-down and close
+    ["Enter", "review_drill_down"], ["q", "close"], ["Escape", "close"],
+    ["r", "review_refresh"],
+    // Review actions (apply to all hunks of selected file)
     ["a", "review_approve_hunk"],
     ["x", "review_reject_hunk"],
-    ["!", "review_needs_changes"],
-    ["?", "review_question_hunk"],
-    ["u", "review_clear_status"],
-    ["O", "review_set_overall_feedback"],
+    ["c", "review_add_comment"],
     // Export
     ["E", "review_export_session"],
 ], true);

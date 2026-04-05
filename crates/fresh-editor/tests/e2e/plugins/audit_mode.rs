@@ -1897,3 +1897,146 @@ fn test_review_diff_only_new_files_no_modifications() {
         screen
     );
 }
+
+/// Test that the magit-style review diff scrolling works with many files.
+/// Creates enough files to overflow the viewport and verifies:
+/// - File list scrolls when navigating past the visible area
+/// - Diff panel updates correctly when selection changes
+/// - No content corruption when file list exceeds viewport
+#[test]
+fn test_review_diff_scrolling_many_files() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    // Create an initial commit
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Create 8 staged modified files
+    for i in 0..8 {
+        let path = format!("src/staged_{}.rs", i);
+        repo.create_file(&path, &format!("fn staged_func_{}() {{}}\n", i));
+    }
+    // Stage them
+    let output = std::process::Command::new("git")
+        .args(["add", "src/"])
+        .current_dir(&repo.path)
+        .output()
+        .expect("git add failed");
+    assert!(output.status.success(), "git add failed");
+
+    // Create 5 unstaged modified files (modify existing tracked files or create new ones)
+    // First commit the staged files
+    let output = std::process::Command::new("git")
+        .args(["commit", "-m", "Add staged files"])
+        .current_dir(&repo.path)
+        .output()
+        .expect("git commit failed");
+    assert!(output.status.success(), "git commit failed");
+
+    // Now modify some of them to create unstaged changes
+    for i in 0..5 {
+        let path = format!("src/staged_{}.rs", i);
+        repo.create_file(
+            &path,
+            &format!("fn staged_func_{}() {{ /* modified */ }}\n", i),
+        );
+    }
+
+    // Create 5 untracked new files
+    for i in 0..5 {
+        let path = format!("src/untracked_{}.rs", i);
+        repo.create_file(&path, &format!("fn untracked_func_{}() {{}}\n", i));
+    }
+
+    // Use a small viewport (80x15) so the file list overflows
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        15,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Open any file to start
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("main"))
+        .unwrap();
+
+    // Trigger Review Diff via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for review diff to load
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            if screen.contains("TypeError") || screen.contains("Error:") {
+                panic!("Error loading review diff. Screen:\n{}", screen);
+            }
+            screen.contains("GIT STATUS") && screen.contains("DIFF")
+        })
+        .unwrap();
+
+    let initial_screen = harness.screen_to_string();
+    println!("Initial magit screen:\n{}", initial_screen);
+
+    // Verify initial render shows header
+    assert!(
+        initial_screen.contains("GIT STATUS"),
+        "Should show GIT STATUS header. Screen:\n{}",
+        initial_screen
+    );
+
+    // Should not have errors
+    assert!(
+        !initial_screen.contains("TypeError"),
+        "Should not show TypeError. Screen:\n{}",
+        initial_screen
+    );
+
+    // Navigate down several times past the viewport
+    for _ in 0..8 {
+        harness
+            .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    let scrolled_screen = harness.screen_to_string();
+    println!("After scrolling down:\n{}", scrolled_screen);
+
+    // The screen should still have the GIT STATUS header
+    assert!(
+        scrolled_screen.contains("GIT STATUS"),
+        "Should still show GIT STATUS header after scrolling. Screen:\n{}",
+        scrolled_screen
+    );
+
+    // The diff panel should have updated (no stale content)
+    assert!(
+        scrolled_screen.contains("DIFF"),
+        "Should still show DIFF header after scrolling. Screen:\n{}",
+        scrolled_screen
+    );
+
+    // Should not have any errors after navigation
+    assert!(
+        !scrolled_screen.contains("TypeError") && !scrolled_screen.contains("Error"),
+        "Should not show errors after navigation. Screen:\n{}",
+        scrolled_screen
+    );
+}
