@@ -46,13 +46,14 @@ impl DetectedLanguage {
         Self::from_path_with_fallback(path, registry, languages, None)
     }
 
-    /// Like `from_path`, but also accepts an optional fallback language config
+    /// Like `from_path`, but also accepts an optional default language name
     /// that is applied when no language is detected (#1219).
+    /// The `default_language` must reference a key in the `languages` map.
     pub fn from_path_with_fallback(
         path: &Path,
         registry: &GrammarRegistry,
         languages: &HashMap<String, LanguageConfig>,
-        fallback: Option<&LanguageConfig>,
+        default_language: Option<&str>,
     ) -> Self {
         let highlighter = HighlightEngine::for_file(path, registry, Some(languages));
         let ts_language = Language::from_path(path);
@@ -72,25 +73,28 @@ impl DetectedLanguage {
             .map(|s| s.name.clone())
             .unwrap_or_else(|| name.clone());
 
-        // If no language was detected and a fallback config is set with a grammar,
-        // try to use the fallback grammar for highlighting (#1219)
+        // If no language was detected and a default_language is configured,
+        // look up its grammar for highlighting (#1219)
         if name == "text" && matches!(highlighter, HighlightEngine::None) {
-            if let Some(fb) = fallback {
-                if !fb.grammar.is_empty() {
-                    let fb_highlighter =
-                        HighlightEngine::for_syntax_name(&fb.grammar, registry, ts_language);
-                    if !matches!(fb_highlighter, HighlightEngine::None) {
-                        let fb_display = registry
-                            .find_syntax_by_name(&fb.grammar)
-                            .map(|s| s.name.clone())
-                            .unwrap_or_else(|| fb.grammar.clone());
-                        return Self {
-                            name,
-                            display_name: fb_display,
-                            highlighter: fb_highlighter,
-                            ts_language,
-                        };
-                    }
+            if let Some(lang_key) = default_language {
+                let grammar = languages
+                    .get(lang_key)
+                    .map(|lc| lc.grammar.as_str())
+                    .filter(|g| !g.is_empty())
+                    .unwrap_or(lang_key);
+                let fb_highlighter =
+                    HighlightEngine::for_syntax_name(grammar, registry, ts_language);
+                if !matches!(fb_highlighter, HighlightEngine::None) {
+                    let fb_display = registry
+                        .find_syntax_by_name(grammar)
+                        .map(|s| s.name.clone())
+                        .unwrap_or_else(|| grammar.to_string());
+                    return Self {
+                        name,
+                        display_name: fb_display,
+                        highlighter: fb_highlighter,
+                        ts_language,
+                    };
                 }
             }
         }

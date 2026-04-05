@@ -286,7 +286,7 @@ impl Editor {
                     &display_path,
                     &self.grammar_registry,
                     &self.config.languages,
-                    self.config.fallback.as_ref(),
+                    self.config.default_language.as_deref(),
                 );
             EditorState::from_buffer_with_language(buffer, detected)
         } else {
@@ -484,7 +484,7 @@ impl Editor {
                 &display_path,
                 &self.grammar_registry,
                 &self.config.languages,
-                self.config.fallback.as_ref(),
+                self.config.default_language.as_deref(),
             );
         let state = EditorState::from_buffer_with_language(buffer, detected);
 
@@ -589,7 +589,7 @@ impl Editor {
                 &display_path,
                 &self.grammar_registry,
                 &self.config.languages,
-                self.config.fallback.as_ref(),
+                self.config.default_language.as_deref(),
             );
 
         let mut state = EditorState::from_buffer_with_language(buffer, detected);
@@ -734,7 +734,7 @@ impl Editor {
                 &display_path,
                 &self.grammar_registry,
                 &self.config.languages,
-                self.config.fallback.as_ref(),
+                self.config.default_language.as_deref(),
             );
 
         let mut state = EditorState::from_buffer_with_language(buffer, detected);

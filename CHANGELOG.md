@@ -124,7 +124,7 @@ If you use the Vim plugin please drop a note at https://github.com/sinelaw/fresh
 
 * **Status Bar Language Info**: Shows "[syntax only]" when a language has no LSP config entry.
 
-* **Fallback Language Config**: Undetected file types now get a fallback language configuration (#1219).
+* **Default Language**: Set `default_language` to a language key (e.g., `"bash"`) so undetected file types use that language's full configuration (#1219). Replaces the previous `fallback` object; the old key is still accepted for backwards compatibility.
 
 * **File Deletion Uses Trash**: `removePath` now uses the system trash instead of permanent deletion.
 

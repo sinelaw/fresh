@@ -1,61 +1,30 @@
-//! E2E test: Fallback Language Config appears as a settings category
+//! E2E test: default_language appears as a setting in the General category
 //!
-//! Validates that the `fallback` field (Option<LanguageConfig>) is resolved
-//! through its anyOf schema into a proper settings category with individual
-//! typed controls, rather than being shown as a raw JSON editor.
+//! Validates that the `default_language` field (formerly `fallback`) appears
+//! as a simple text/dropdown setting in the General settings page.
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 
-/// The fallback field should appear as its own category in the sidebar,
-/// not as a raw JSON editor inside General.
+/// The default_language field should appear in the General settings category.
 #[test]
-fn test_fallback_is_settings_category() {
+fn test_default_language_in_general_settings() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     harness.render().unwrap();
 
     harness.open_settings().unwrap();
 
-    // "Fallback" should appear as a category in the sidebar
-    harness.assert_screen_contains("Fallback");
-}
-
-/// The Fallback category should show individual typed controls for
-/// LanguageConfig fields (Grammar text input, Auto Indent toggle, etc.)
-/// rather than a raw JSON editor.
-#[test]
-fn test_fallback_shows_typed_controls() {
-    let mut harness = EditorTestHarness::new(120, 50).unwrap();
-    harness.render().unwrap();
-
-    harness.open_settings().unwrap();
-
-    // Navigate down to select the "Fallback" category.
-    // Categories are alphabetically: Clipboard, Editor, Fallback, ...
-    // General is first (index 0), so Fallback is at index 3.
-    for _ in 0..10 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-
+    // General is the first category, already selected.
+    // Scroll down to find "Default Language" in the settings list.
+    for _ in 0..30 {
         let screen = harness.screen_to_string();
-        // When Fallback is selected, the right panel shows its sub-fields.
-        // "Auto Indent" is a LanguageConfig field that proves we have typed controls.
-        // Also check "Comment Prefix" to confirm it's the Fallback panel
-        // (not some other category that might also have "Auto Indent").
-        if screen.contains("Fallback")
-            && screen.contains("Auto Indent")
-            && screen.contains("Comment Prefix")
-            && screen.contains("Auto Close")
-        {
-            // Verify these are individual field controls, not a JSON blob
-            assert!(
-                screen.contains("Extensions"),
-                "Fallback should show Extensions as a list control. Screen:\n{screen}"
-            );
+        if screen.contains("Default Language") {
             return;
         }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
     }
 
     let screen = harness.screen_to_string();
-    panic!("Fallback category not found with typed controls. Screen:\n{screen}");
+    panic!("Default Language setting not found in General category. Screen:\n{screen}");
 }

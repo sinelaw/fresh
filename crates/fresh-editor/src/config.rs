@@ -379,13 +379,13 @@ pub struct Config {
     #[serde(default)]
     pub languages: HashMap<String, LanguageConfig>,
 
-    /// Language-specific configuration defaults for files whose type cannot be detected.
-    /// Settings here apply when no language matches by extension, filename, or glob pattern.
-    /// Individual settings (like auto_close) that are left unset (`null`) further fall back
-    /// to the corresponding global editor setting. For example, if `auto_close` is null here,
-    /// the global `editor.auto_close` value is used.
+    /// Default language for files whose type cannot be detected.
+    /// Must reference a key in the `languages` map (e.g., "bash").
+    /// Applied when no extension, filename, glob, or built-in detection matches.
+    /// The referenced language's full configuration (grammar, comment_prefix,
+    /// tab_size, etc.) is used for unrecognized files.
     #[serde(default)]
-    pub fallback: Option<LanguageConfig>,
+    pub default_language: Option<String>,
 
     /// LSP server configurations by language.
     /// Each language maps to one or more server configs (multi-LSP support).
@@ -1607,13 +1607,16 @@ impl BufferConfig {
 
         // Apply language-specific overrides if available.
         // If no language config matches and the language is "text" (undetected),
-        // try the fallback config (#1219).
+        // try the default_language config (#1219).
         let lang_config_ref = language_id
             .and_then(|id| global_config.languages.get(id))
-            .or({
-                // Apply fallback only when language is unknown ("text" or None)
+            .or_else(|| {
+                // Apply default_language only when language is unknown ("text" or None)
                 match language_id {
-                    None | Some("text") => global_config.fallback.as_ref(),
+                    None | Some("text") => global_config
+                        .default_language
+                        .as_deref()
+                        .and_then(|lang| global_config.languages.get(lang)),
                     _ => None,
                 }
             });
@@ -1804,7 +1807,7 @@ impl Default for Config {
             keybinding_maps: HashMap::new(), // User-defined maps go here
             active_keybinding_map: default_keybinding_map_name(),
             languages: Self::default_languages(),
-            fallback: None,
+            default_language: None,
             lsp: Self::default_lsp_config(),
             universal_lsp: Self::default_universal_lsp_config(),
             warnings: WarningsConfig::default(),
