@@ -1748,8 +1748,7 @@ read_message() {
 # Function to send a message
 send_message() {
     local message="$1"
-    # Use printf %s to get the exact byte length after echo -en processing
-    local length=$(echo -en "$message" | wc -c)
+    local length=${#message}
     printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
@@ -1772,9 +1771,9 @@ case "$method" in
         ;;
     "textDocument/codeAction")
         uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
-        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"title":"Extract function","kind":"refactor.extract","edit":{"changes":{}}},{"title":"Inline variable","kind":"refactor.inline","edit":{"changes":{}}},{"title":"Add missing import","kind":"quickfix","edit":{"changes":{"'$uri'":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"use std::io;\\n"}]}}}]}'
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"title":"Extract function","kind":"refactor.extract","edit":{"changes":{}}},{"title":"Inline variable","kind":"refactor.inline","edit":{"changes":{}}},{"title":"Add missing import","kind":"quickfix","edit":{"changes":{"'$uri'":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"use std::io;\n"}]}}}]}'
         ;;
-    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didClose")
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didClose"|"initialized")
         # Notifications — no response needed
         ;;
     "textDocument/diagnostic")
@@ -1789,6 +1788,8 @@ case "$method" in
     "textDocument/documentSymbol")
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
         ;;
+    "$/cancelRequest")
+        ;;
     "shutdown")
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
         break
@@ -1796,7 +1797,7 @@ case "$method" in
     *)
         # Respond to any unknown request so the client doesn't block
         if [ -n "$msg_id" ]; then
-            send_message '{"jsonrpc":"2.0","id":'$msg_id',"error":{"code":-32601,"message":"Method not found"}}'
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
         fi
         ;;
 esac
@@ -1837,24 +1838,26 @@ done
 # Function to read a message
 read_message() {
     local content_length=0
-    while IFS=: read -r key value; do
-        key=$(echo "$key" | tr -d '\r\n')
-        value=$(echo "$value" | tr -d '\r\n ')
-        if [ "$key" = "Content-Length" ]; then
-            content_length=$value
-        fi
-        if [ -z "$key" ]; then
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
             break
         fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
     done
-    if [ $content_length -gt 0 ]; then
-        dd bs=1 count=$content_length 2>/dev/null
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
     fi
 }
 
 send_message() {
     local message="$1"
-    local length=$(echo -en "$message" | wc -c)
+    local length=${#message}
     printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
 }
 
@@ -1873,7 +1876,7 @@ case "$method" in
         uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"title":"Format imports","kind":"source.organizeImports","edit":{"changes":{}}},{"title":"Convert to arrow function","kind":"refactor.rewrite","edit":{"changes":{}}}]}'
         ;;
-    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didClose")
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didClose"|"initialized")
         ;;
     "textDocument/diagnostic")
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[],"resultId":null}}'
@@ -1887,13 +1890,15 @@ case "$method" in
     "textDocument/documentSymbol")
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
         ;;
+    "$/cancelRequest")
+        ;;
     "shutdown")
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
         break
         ;;
     *)
         if [ -n "$msg_id" ]; then
-            send_message '{"jsonrpc":"2.0","id":'$msg_id',"error":{"code":-32601,"message":"Method not found"}}'
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
         fi
         ;;
 esac

@@ -45,11 +45,12 @@ fn test_code_action_number_key_selects_and_applies() -> anyhow::Result<()> {
         }]),
     );
 
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
+    let mut harness = EditorTestHarness::create(
         80,
         24,
-        config,
-        temp_dir.path().to_path_buf(),
+        crate::common::harness::HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(temp_dir.path().to_path_buf()),
     )?;
 
     harness.open_file(&test_file)?;
@@ -124,11 +125,12 @@ fn test_code_action_arrow_enter_applies() -> anyhow::Result<()> {
         }]),
     );
 
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
+    let mut harness = EditorTestHarness::create(
         80,
         24,
-        config,
-        temp_dir.path().to_path_buf(),
+        crate::common::harness::HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(temp_dir.path().to_path_buf()),
     )?;
 
     harness.open_file(&test_file)?;
