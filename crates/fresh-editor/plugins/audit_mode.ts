@@ -1933,7 +1933,7 @@ editor.defineMode("review-mode", [
     // Git actions
     ["s", "review_stage_file"], ["u", "review_unstage_file"], ["d", "review_discard_file"],
     // Drill-down and close
-    ["Enter", "review_drill_down"], ["q", "close"], ["Escape", "close"],
+    ["Enter", "review_drill_down"], ["Escape", "close"],
     ["r", "review_refresh"],
     // Review actions (apply to all hunks of selected file)
     ["a", "review_approve_hunk"],
