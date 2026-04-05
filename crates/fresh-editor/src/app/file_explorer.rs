@@ -139,8 +139,13 @@ impl Editor {
     }
 
     pub(crate) fn init_file_explorer(&mut self) {
-        // Use remote home directory if in remote mode, otherwise local working directory
-        let root_path = if self.filesystem.remote_connection_info().is_some() {
+        // Use working directory as root. For remote mode, fall back to the remote
+        // home directory only when working_dir doesn't exist on the remote
+        // filesystem (e.g. when no path was provided and working_dir defaulted
+        // to the local current directory).
+        let root_path = if self.filesystem.remote_connection_info().is_some()
+            && !self.filesystem.is_dir(&self.working_dir).unwrap_or(false)
+        {
             match self.filesystem.home_dir() {
                 Ok(home) => home,
                 Err(e) => {

@@ -3,8 +3,8 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::services::remote::{spawn_local_agent, RemoteFileSystem};
 use std::sync::Arc;
 
-fn create_test_filesystem() -> Option<(RemoteFileSystem, tempfile::TempDir, tokio::runtime::Runtime)>
-{
+fn create_test_filesystem(
+) -> Option<(RemoteFileSystem, tempfile::TempDir, tokio::runtime::Runtime)> {
     let temp_dir = tempfile::tempdir().ok()?;
     let rt = tokio::runtime::Runtime::new().ok()?;
 
@@ -12,6 +12,76 @@ fn create_test_filesystem() -> Option<(RemoteFileSystem, tempfile::TempDir, toki
     let fs = RemoteFileSystem::new(channel, "test@localhost".to_string());
 
     Some((fs, temp_dir, rt))
+}
+
+/// Test that the file explorer root is anchored at the provided working directory,
+/// not the remote home directory. Reproduces the bug where `fresh user@host:/some/path`
+/// would show the home directory instead of `/some/path` in the file explorer.
+#[test]
+fn test_remote_file_explorer_anchored_at_working_dir() {
+    let Some((fs, _temp_dir, _rt)) = create_test_filesystem() else {
+        eprintln!("Skipping test: could not create test filesystem");
+        return;
+    };
+    let fs_arc: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> = Arc::new(fs);
+
+    // Create a subdirectory to use as the working dir (simulating user@host:/path/to/project)
+    let home_dir = fs_arc.home_dir().unwrap();
+    let project_dir = home_dir.join("my_test_project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("hello.txt"), "hello world").unwrap();
+    std::fs::create_dir_all(project_dir.join("src")).unwrap();
+    std::fs::write(project_dir.join("src/main.rs"), "fn main() {}").unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(project_dir.clone())
+            .with_filesystem(fs_arc),
+    )
+    .unwrap();
+
+    // Open file explorer with Ctrl+E
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Wait for file explorer to initialize (it's async)
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Remote mode shows [hostname] instead of "File Explorer"
+            screen.contains("[localhost]") || screen.contains("File Explorer")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("File explorer screen:\n{screen}");
+
+    // The file explorer root should show "my_test_project" (the working dir name)
+    // as the first directory entry, NOT the home directory name.
+    let home_dir_name = home_dir
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    // Find the first line in the explorer that contains a directory name.
+    // The root node appears first; if the bug is present it will be the
+    // home dir (e.g. "root") instead of "my_test_project".
+    let first_dir_line = screen
+        .lines()
+        .find(|l| l.contains("my_test_project") || l.contains(&home_dir_name));
+
+    let first_dir_line = first_dir_line.expect("File explorer should show directory entries");
+    assert!(
+        first_dir_line.contains("my_test_project"),
+        "First directory in file explorer should be 'my_test_project' (the working dir), \
+         but got: {:?}. The explorer is rooted at the home directory '{}' instead.",
+        first_dir_line,
+        home_dir_name,
+    );
 }
 
 #[test]
