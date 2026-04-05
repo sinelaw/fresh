@@ -162,6 +162,17 @@ impl Editor {
     ///
     /// If the file doesn't exist, creates an unsaved buffer with that filename.
     pub fn open_file_no_focus(&mut self, path: &Path) -> anyhow::Result<BufferId> {
+        // Fail fast if the remote connection is down — don't attempt I/O that
+        // would either timeout or return confusing errors.
+        if !self.filesystem.is_remote_connected() {
+            anyhow::bail!(
+                "Cannot open file: remote connection lost ({})",
+                self.filesystem
+                    .remote_connection_info()
+                    .unwrap_or("unknown host")
+            );
+        }
+
         // Resolve relative paths against appropriate base directory
         // For remote mode, use the remote home directory; for local, use working_dir
         let base_dir = if self.filesystem.remote_connection_info().is_some() {

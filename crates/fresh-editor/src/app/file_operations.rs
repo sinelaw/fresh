@@ -654,30 +654,6 @@ impl Editor {
         true
     }
 
-    /// Refresh all expanded directories in the file tree (e.g., after git index change)
-    fn refresh_all_expanded_dirs(&mut self) {
-        let Some(explorer) = &mut self.file_explorer else {
-            return;
-        };
-        let Some(runtime) = &self.tokio_runtime else {
-            return;
-        };
-
-        let node_ids: Vec<crate::view::file_tree::NodeId> = explorer
-            .tree()
-            .all_nodes()
-            .filter(|node| node.is_dir() && node.is_expanded())
-            .map(|node| node.id)
-            .collect();
-
-        for node_id in node_ids {
-            let tree = explorer.tree_mut();
-            if let Err(e) = runtime.block_on(tree.refresh_node(node_id)) {
-                tracing::warn!("Failed to refresh directory: {}", e);
-            }
-        }
-    }
-
     /// Resolve the path to `.git/index` via `git rev-parse --git-dir`.
     /// Uses the `ProcessSpawner` so it works transparently on both local
     /// and remote (SSH) filesystems.

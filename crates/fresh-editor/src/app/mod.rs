@@ -774,6 +774,7 @@ pub struct Editor {
     /// Receiver for background file change poll results.
     /// When Some, a background metadata poll is in progress. Results arrive as
     /// `(path, Option<mtime>)` pairs — None means metadata() failed.
+    #[allow(clippy::type_complexity)]
     pending_file_poll_rx:
         Option<std::sync::mpsc::Receiver<Vec<(PathBuf, Option<std::time::SystemTime>)>>>,
 

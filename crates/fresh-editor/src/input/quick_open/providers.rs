@@ -487,6 +487,13 @@ impl QuickOpenProvider for FileProvider {
             &path_part
         };
 
+        // Show a clear error when the remote connection is lost
+        if !self.filesystem.is_remote_connected() {
+            return vec![Suggestion::disabled(
+                "Remote connection lost — cannot list files".to_string(),
+            )];
+        }
+
         let files = self.load_files(&context.cwd);
         if files.is_empty() {
             return vec![Suggestion::disabled(t!("quick_open.no_files").to_string())];

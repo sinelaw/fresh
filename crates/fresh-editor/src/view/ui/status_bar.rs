@@ -603,6 +603,9 @@ impl StatusBarRenderer {
         // Session/Remote indicator comes first (if present), then filename
         // Line and column are 0-indexed internally, but displayed as 1-indexed (standard editor convention)
         // For virtual buffers with hidden cursors, don't show line/column info
+        let remote_disconnected = remote_connection
+            .map(|conn| conn.contains("(Disconnected)"))
+            .unwrap_or(false);
         let remote_prefix = remote_connection
             .map(|conn| format!("[SSH:{}] ", conn))
             .unwrap_or_default();
@@ -757,12 +760,40 @@ impl StatusBarRenderer {
                 }
             }
 
-            spans.push(Span::styled(
-                displayed_left.clone(),
-                Style::default()
-                    .fg(theme.status_bar_fg)
-                    .bg(theme.status_bar_bg),
-            ));
+            // If remote is disconnected, render the [SSH:...] prefix with
+            // warning colors so the user notices the connection is lost.
+            if remote_disconnected && displayed_left.starts_with("[SSH:") {
+                if let Some(prefix_end) = displayed_left.find("] ") {
+                    let prefix = &displayed_left[..prefix_end + 2];
+                    let rest = &displayed_left[prefix_end + 2..];
+                    spans.push(Span::styled(
+                        prefix.to_string(),
+                        Style::default()
+                            .fg(theme.status_warning_indicator_fg)
+                            .bg(theme.status_warning_indicator_bg),
+                    ));
+                    spans.push(Span::styled(
+                        rest.to_string(),
+                        Style::default()
+                            .fg(theme.status_bar_fg)
+                            .bg(theme.status_bar_bg),
+                    ));
+                } else {
+                    spans.push(Span::styled(
+                        displayed_left.clone(),
+                        Style::default()
+                            .fg(theme.status_warning_indicator_fg)
+                            .bg(theme.status_warning_indicator_bg),
+                    ));
+                }
+            } else {
+                spans.push(Span::styled(
+                    displayed_left.clone(),
+                    Style::default()
+                        .fg(theme.status_bar_fg)
+                        .bg(theme.status_bar_bg),
+                ));
+            }
 
             // Add spacing to push right side indicators to the right
             if displayed_left_len + right_side_width < available_width {
@@ -973,12 +1004,21 @@ impl StatusBarRenderer {
                 left_status.clone()
             };
 
-            spans.push(Span::styled(
-                displayed_left.clone(),
-                Style::default()
-                    .fg(theme.status_bar_fg)
-                    .bg(theme.status_bar_bg),
-            ));
+            if remote_disconnected && displayed_left.starts_with("[SSH:") {
+                spans.push(Span::styled(
+                    displayed_left.clone(),
+                    Style::default()
+                        .fg(theme.status_warning_indicator_fg)
+                        .bg(theme.status_warning_indicator_bg),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    displayed_left.clone(),
+                    Style::default()
+                        .fg(theme.status_bar_fg)
+                        .bg(theme.status_bar_bg),
+                ));
+            }
 
             // Fill remaining width
             if displayed_left.len() < available_width {

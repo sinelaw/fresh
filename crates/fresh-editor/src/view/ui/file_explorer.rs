@@ -123,8 +123,20 @@ impl FileExplorerRenderer {
             format!(" File Explorer{} ", keybinding_suffix)
         };
 
-        // Title style: inverted colors (dark on light) when focused using theme colors
-        let (title_style, border_style) = if is_focused {
+        // Title style: use warning colors when remote is disconnected,
+        // otherwise inverted colors (dark on light) when focused.
+        let remote_disconnected = remote_connection
+            .map(|c| c.contains("(Disconnected)"))
+            .unwrap_or(false);
+        let (title_style, border_style) = if remote_disconnected {
+            (
+                Style::default()
+                    .fg(theme.status_warning_indicator_fg)
+                    .bg(theme.status_warning_indicator_bg)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.status_warning_indicator_bg),
+            )
+        } else if is_focused {
             (
                 Style::default()
                     .fg(theme.editor_bg)
