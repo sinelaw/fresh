@@ -439,7 +439,15 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
     );
 
     if (fileHunks.length === 0) {
-        lines.push({ text: "(no diff available)", type: 'empty' });
+        if (selectedFile.status === 'R' && selectedFile.origPath) {
+            lines.push({ text: `Renamed from ${selectedFile.origPath}`, type: 'empty', style: { fg: STYLE_SECTION_HEADER } });
+        } else if (selectedFile.status === 'D') {
+            lines.push({ text: "(file deleted)", type: 'empty' });
+        } else if (selectedFile.status === '?' && selectedFile.path.endsWith('/')) {
+            lines.push({ text: "(untracked directory)", type: 'empty' });
+        } else {
+            lines.push({ text: "(no diff available)", type: 'empty' });
+        }
         return lines;
     }
 
@@ -540,17 +548,19 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     // --- Row 1: Header ---
     const selectedFile = state.files[state.selectedIndex];
     const focusLeft = state.focusPanel === 'files';
-    const leftHeader = focusLeft ? " GIT STATUS *" : " GIT STATUS";
+    const leftHeader = " GIT STATUS";
     const rightHeader = selectedFile
-        ? (focusLeft ? ` DIFF FOR ${selectedFile.path}` : ` DIFF FOR ${selectedFile.path} *`)
+        ? ` DIFF FOR ${selectedFile.path}`
         : " DIFF";
     const leftHeaderPadded = leftHeader.padEnd(leftWidth).substring(0, leftWidth);
     const rightHeaderPadded = rightHeader.substring(0, rightWidth);
 
-    const leftHeaderStyle: Partial<OverlayOptions> = { fg: STYLE_HEADER, bold: true };
-    const rightHeaderStyle: Partial<OverlayOptions> = { fg: STYLE_HEADER, bold: true };
-    if (focusLeft) leftHeaderStyle.underline = true;
-    else rightHeaderStyle.underline = true;
+    const leftHeaderStyle: Partial<OverlayOptions> = focusLeft
+        ? { fg: STYLE_HEADER, bold: true, underline: true }
+        : { fg: STYLE_DIVIDER };
+    const rightHeaderStyle: Partial<OverlayOptions> = focusLeft
+        ? { fg: STYLE_DIVIDER }
+        : { fg: STYLE_HEADER, bold: true, underline: true };
 
     entries.push({ text: leftHeaderPadded, style: leftHeaderStyle, properties: { type: "header" } });
     entries.push({ text: "│", style: { fg: STYLE_DIVIDER }, properties: { type: "divider" } });
@@ -681,6 +691,54 @@ function review_toggle_focus() {
     updateMagitDisplay();
 }
 registerHandler("review_toggle_focus", review_toggle_focus);
+
+function review_focus_files() {
+    if (state.focusPanel !== 'files') {
+        state.focusPanel = 'files';
+        updateMagitDisplay();
+    }
+}
+registerHandler("review_focus_files", review_focus_files);
+
+function review_focus_diff() {
+    if (state.focusPanel !== 'diff') {
+        state.focusPanel = 'diff';
+        updateMagitDisplay();
+    }
+}
+registerHandler("review_focus_diff", review_focus_diff);
+
+function review_nav_home() {
+    if (state.focusPanel === 'files') {
+        if (state.files.length === 0) return;
+        state.selectedIndex = 0;
+        state.diffScrollOffset = 0;
+        updateMagitDisplay();
+    } else {
+        state.diffScrollOffset = 0;
+        updateMagitDisplay();
+    }
+}
+registerHandler("review_nav_home", review_nav_home);
+
+function review_nav_end() {
+    if (state.focusPanel === 'files') {
+        if (state.files.length === 0) return;
+        state.selectedIndex = state.files.length - 1;
+        state.diffScrollOffset = 0;
+        updateMagitDisplay();
+    } else {
+        // Scroll diff to bottom
+        const mainRows = state.viewportHeight - 2;
+        const selectedFile = state.files[state.selectedIndex];
+        if (selectedFile) {
+            const diffLines = buildDiffLines(state.viewportWidth - Math.max(28, Math.floor(state.viewportWidth * 0.3)) - 1);
+            state.diffScrollOffset = Math.max(0, diffLines.length - mainRows);
+        }
+        updateMagitDisplay();
+    }
+}
+registerHandler("review_nav_end", review_nav_end);
 
 // --- Real git stage/unstage/discard actions (Step 4) ---
 
@@ -1962,8 +2020,11 @@ editor.on("buffer_closed", "on_buffer_closed");
 editor.defineMode("review-mode", [
     // Navigation
     ["Up", "review_nav_up"], ["Down", "review_nav_down"],
+    ["k", "review_nav_up"], ["j", "review_nav_down"],
     ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
+    ["Home", "review_nav_home"], ["End", "review_nav_end"],
     ["Tab", "review_toggle_focus"],
+    ["Left", "review_focus_files"], ["Right", "review_focus_diff"],
     // Git actions
     ["s", "review_stage_file"], ["u", "review_unstage_file"], ["d", "review_discard_file"],
     // Drill-down and close
