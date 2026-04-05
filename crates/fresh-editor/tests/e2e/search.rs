@@ -2801,7 +2801,14 @@ fn test_search_status_bar_line_number_updates_on_f3() {
     )
     .unwrap();
 
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    // Use the temp dir as working dir so the status bar shows a short relative path
+    // (avoids long absolute paths truncating "Ln X, Col Y" on narrow terminals / Windows CI)
+    let mut harness = EditorTestHarness::create(
+        100,
+        24,
+        HarnessOptions::new().with_working_dir(temp_dir.path().to_path_buf()),
+    )
+    .unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
@@ -2828,7 +2835,6 @@ fn test_search_status_bar_line_number_updates_on_f3() {
     harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
     harness.process_async_and_render().unwrap();
 
-    // BUG: status bar should show Ln 3 but it stays at the line where search started
     harness.assert_screen_contains("Ln 3,");
 
     // F3 to go to third match (line 5)
