@@ -379,10 +379,11 @@ pub struct Config {
     #[serde(default)]
     pub languages: HashMap<String, LanguageConfig>,
 
-    /// Fallback configuration for files whose type cannot be detected.
-    /// Applied when no extension, filename, glob, or built-in detection matches.
-    /// Useful for setting a default grammar (e.g., "bash") and comment_prefix
-    /// for unrecognized .conf, .rc, .rules, etc. files.
+    /// Language-specific configuration defaults for files whose type cannot be detected.
+    /// Settings here apply when no language matches by extension, filename, or glob pattern.
+    /// Individual settings (like auto_close) that are left unset (`null`) further fall back
+    /// to the corresponding global editor setting. For example, if `auto_close` is null here,
+    /// the global `editor.auto_close` value is used.
     #[serde(default)]
     pub fallback: Option<LanguageConfig>,
 

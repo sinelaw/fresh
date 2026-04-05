@@ -368,6 +368,11 @@ impl Editor {
                     state.reset_current_to_default();
                 }
             }
+            SettingsHit::ClearCategoryButton => {
+                if let Some(ref mut state) = self.settings_state {
+                    state.clear_current_category();
+                }
+            }
             SettingsHit::EditButton => {
                 // Open config file for the selected layer
                 if let Some(ref state) = self.settings_state {

@@ -1153,6 +1153,7 @@
   "settings.btn_cancel": "Cancel",
   "settings.btn_reset": "Reset",
   "settings.btn_inherit": "Inherit",
+  "settings.btn_clear_category": "Clear All",
   "settings.inherited_badge": "(Inherited)",
   "settings.btn_edit": "Edit",
   "settings.help_search": "Type to search, ↑↓:Navigate  Enter:Jump  Esc:Cancel",

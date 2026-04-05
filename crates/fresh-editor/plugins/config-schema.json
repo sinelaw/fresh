@@ -159,7 +159,7 @@
       "default": {}
     },
     "fallback": {
-      "description": "Fallback configuration for files whose type cannot be detected.\nApplied when no extension, filename, glob, or built-in detection matches.\nUseful for setting a default grammar (e.g., \"bash\") and comment_prefix\nfor unrecognized .conf, .rc, .rules, etc. files.",
+      "description": "Language-specific configuration defaults for files whose type cannot be detected.\nSettings here apply when no language matches by extension, filename, or glob pattern.\nIndividual settings (like auto_close) that are left unset (`null`) further fall back\nto the corresponding global editor setting. For example, if `auto_close` is null here,\nthe global `editor.auto_close` value is used.",
       "anyOf": [
         {
           "$ref": "#/$defs/LanguageConfig"

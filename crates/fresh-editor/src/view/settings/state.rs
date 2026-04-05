@@ -694,6 +694,53 @@ impl SettingsState {
         }
     }
 
+    /// Clear a nullable category by setting its path to null and updating all items.
+    ///
+    /// This sets the category's root path (e.g., `/fallback`) to null in the target layer,
+    /// effectively removing the entire section. All items within the category are marked
+    /// as null/inherited.
+    pub fn clear_current_category(&mut self) {
+        let target_layer = self.target_layer;
+        let page = match self.current_page() {
+            Some(p) if p.nullable => p,
+            _ => return,
+        };
+        let page_path = page.path.clone();
+
+        // Set the category root to null
+        self.pending_changes
+            .insert(page_path.clone(), serde_json::Value::Null);
+
+        // Also remove any pending changes/deletions for child paths
+        let prefix = format!("{}/", page_path);
+        self.pending_changes
+            .retain(|path, _| !path.starts_with(&prefix));
+        self.pending_deletions
+            .retain(|path| !path.starts_with(&prefix));
+
+        // Update all items on the current page to reflect null/inherited state
+        if let Some(page) = self.current_page_mut() {
+            for item in &mut page.items {
+                if item.nullable {
+                    item.is_null = true;
+                    item.modified = false;
+                    item.layer_source = target_layer;
+                }
+            }
+        }
+    }
+
+    /// Check if any items in the current nullable category have non-null values.
+    pub fn current_category_has_values(&self) -> bool {
+        match self.current_page() {
+            Some(page) if page.nullable => {
+                page.items.iter().any(|item| !item.is_null && item.nullable)
+                    || page.items.iter().any(|item| item.modified)
+            }
+            _ => false,
+        }
+    }
+
     /// Handle a value change from user interaction
     pub fn on_value_changed(&mut self) {
         // Capture target_layer before any borrows

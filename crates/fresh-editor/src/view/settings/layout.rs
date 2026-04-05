@@ -27,6 +27,8 @@ pub struct SettingsLayout {
     pub cancel_button: Option<Rect>,
     /// Reset button area
     pub reset_button: Option<Rect>,
+    /// Clear category button area (shown in page header for nullable categories)
+    pub clear_category_button: Option<Rect>,
     /// Settings panel area (for scroll hit testing)
     pub settings_panel_area: Option<Rect>,
     /// Scrollbar area (for drag detection)
@@ -76,6 +78,7 @@ impl SettingsLayout {
             save_button: None,
             cancel_button: None,
             reset_button: None,
+            clear_category_button: None,
             settings_panel_area: None,
             scrollbar_area: None,
             search_scrollbar_area: None,
@@ -146,6 +149,11 @@ impl SettingsLayout {
         if let Some(ref reset) = self.reset_button {
             if point_in_rect(*reset, x, y) {
                 return Some(SettingsHit::ResetButton);
+            }
+        }
+        if let Some(ref clear_cat) = self.clear_category_button {
+            if point_in_rect(*clear_cat, x, y) {
+                return Some(SettingsHit::ClearCategoryButton);
             }
         }
 
@@ -338,6 +346,8 @@ pub enum SettingsHit {
     CancelButton,
     /// Click on reset button
     ResetButton,
+    /// Click on clear category button (for nullable categories)
+    ClearCategoryButton,
     /// Click on settings panel scrollbar
     Scrollbar,
     /// Click on settings panel (scrollable area)

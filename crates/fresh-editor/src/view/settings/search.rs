@@ -392,6 +392,7 @@ mod tests {
             name: name.to_string(),
             path: format!("/{}", name.to_lowercase()),
             description: None,
+            nullable: false,
             items,
             subpages: Vec::new(),
         }

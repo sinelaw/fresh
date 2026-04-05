@@ -580,6 +580,8 @@ pub struct SettingsPage {
     pub path: String,
     /// Description
     pub description: Option<String>,
+    /// Whether this page represents a nullable category that can be cleared as a whole
+    pub nullable: bool,
     /// Settings on this page
     pub items: Vec<SettingItem>,
     /// Subpages
@@ -650,6 +652,7 @@ fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
         name: category.name.clone(),
         path: category.path.clone(),
         description: category.description.clone(),
+        nullable: category.nullable,
         items,
         subpages,
     }

@@ -142,6 +142,9 @@ pub struct SettingCategory {
     pub path: String,
     /// Description of this category
     pub description: Option<String>,
+    /// Whether this category is nullable (e.g., `Option<LanguageConfig>`)
+    /// and can be cleared as a whole.
+    pub nullable: bool,
     /// Settings in this category
     pub settings: Vec<SettingSchema>,
     /// Subcategories
@@ -266,6 +269,16 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
         // Resolve references
         let resolved = resolve_ref(&prop, &defs);
 
+        // Detect if this property is nullable (Option<T> generates anyOf with null variant)
+        let is_nullable = prop.any_of.as_ref().is_some_and(|variants| {
+            variants.iter().any(|v| {
+                v.schema_type
+                    .as_ref()
+                    .map(|t| t.primary() == Some("null"))
+                    .unwrap_or(false)
+            })
+        });
+
         // Check if this property should be a standalone category (for Map types)
         if prop.standalone_category {
             // Create a category with the Map setting as its only content
@@ -274,16 +287,27 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
                 name: display_name,
                 path: path.clone(),
                 description: prop.description.clone().or(resolved.description.clone()),
+                nullable: is_nullable,
                 settings: vec![setting],
                 subcategories: Vec::new(),
             });
         } else if let Some(ref inner_props) = resolved.properties {
             // This is a category with nested settings
             let settings = parse_properties(inner_props, &path, &defs, &enum_values_map);
+            // Combine the field-level description (from the property's doc comment) with
+            // the resolved struct description, separated by a line break when both exist.
+            let description = match (&prop.description, &resolved.description) {
+                (Some(field_desc), Some(struct_desc)) if field_desc != struct_desc => {
+                    Some(format!("{}\n{}", field_desc, struct_desc))
+                }
+                (Some(d), _) | (_, Some(d)) => Some(d.clone()),
+                _ => None,
+            };
             categories.push(SettingCategory {
                 name: display_name,
                 path: path.clone(),
-                description: resolved.description.clone(),
+                description,
+                nullable: is_nullable,
                 settings,
                 subcategories: Vec::new(),
             });
@@ -304,6 +328,7 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
                 name: "General".to_string(),
                 path: String::new(),
                 description: Some("General settings".to_string()),
+                nullable: false,
                 settings: top_level_settings,
                 subcategories: Vec::new(),
             },

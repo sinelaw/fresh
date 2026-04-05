@@ -592,15 +592,39 @@ fn render_settings_panel(
     frame.render_widget(Paragraph::new(title), Rect::new(area.x, y, area.width, 1));
     y += 1;
 
-    // Page description
+    // Page description (supports multi-line descriptions separated by \n)
     if let Some(ref desc) = page.description {
         let desc_style = Style::default().fg(theme.line_number_fg);
-        let desc_line = Line::from(Span::styled(desc, desc_style));
+        let lines: Vec<Line> = desc
+            .lines()
+            .map(|line| Line::from(Span::styled(line, desc_style)))
+            .collect();
+        let line_count = lines.len() as u16;
         frame.render_widget(
-            Paragraph::new(desc_line),
-            Rect::new(area.x, y, area.width, 1),
+            Paragraph::new(lines),
+            Rect::new(area.x, y, area.width, line_count),
         );
+        y += line_count;
+    }
+
+    // "Clear" button for nullable categories (e.g., Option<LanguageConfig>)
+    if page.nullable && state.current_category_has_values() {
+        let btn_text = format!("[{}]", t!("settings.btn_clear_category"));
+        let btn_len = btn_text.len() as u16;
+        let is_hovered = matches!(state.hover_hit, Some(SettingsHit::ClearCategoryButton));
+        let btn_style = if is_hovered {
+            Style::default()
+                .fg(theme.menu_hover_fg)
+                .bg(theme.menu_hover_bg)
+        } else {
+            Style::default().fg(theme.line_number_fg)
+        };
+        let btn_area = Rect::new(area.x, y, btn_len, 1);
+        frame.render_widget(Paragraph::new(btn_text).style(btn_style), btn_area);
+        layout.clear_category_button = Some(btn_area);
         y += 1;
+    } else {
+        layout.clear_category_button = None;
     }
 
     y += 1; // Blank line
