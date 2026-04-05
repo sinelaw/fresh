@@ -929,11 +929,6 @@
           ],
           "default": null
         },
-        "highlighter": {
-          "description": "Preferred highlighter backend (auto, tree-sitter, or textmate)",
-          "$ref": "#/$defs/HighlighterPreference",
-          "default": "auto"
-        },
         "textmate_grammar": {
           "description": "Path to custom TextMate grammar file (optional)\nIf specified, this grammar will be used when highlighter is \"textmate\"",
           "type": [
@@ -1036,26 +1031,6 @@
         }
       },
       "x-display-field": "/grammar"
-    },
-    "HighlighterPreference": {
-      "description": "Preference for which syntax highlighting backend to use",
-      "oneOf": [
-        {
-          "description": "Use tree-sitter if available, fall back to TextMate",
-          "type": "string",
-          "const": "auto"
-        },
-        {
-          "description": "Force tree-sitter only (no highlighting if unavailable)",
-          "type": "string",
-          "const": "tree-sitter"
-        },
-        {
-          "description": "Force TextMate grammar (skip tree-sitter even if available)",
-          "type": "string",
-          "const": "textmate"
-        }
-      ]
     },
     "FormatterConfig": {
       "description": "Formatter configuration for a language",

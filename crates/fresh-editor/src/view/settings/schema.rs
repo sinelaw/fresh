@@ -189,6 +189,9 @@ struct RawSchema {
     /// Sort order override for field ordering in entry dialogs
     #[serde(rename = "x-order")]
     order: Option<i32>,
+    /// anyOf combinator (used by schemars for Option<T> where T is a struct)
+    #[serde(rename = "anyOf")]
+    any_of: Option<Vec<RawSchema>>,
 }
 
 /// An entry in the x-enum-values array
@@ -391,12 +394,20 @@ fn parse_setting(
     // Get order from schema or resolved ref
     let order = schema.order.or(resolved.order);
 
-    // Detect nullability from type array containing "null"
+    // Detect nullability from type array containing "null" or anyOf containing a null variant
     let nullable = resolved
         .schema_type
         .as_ref()
         .map(|t| t.contains_null())
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || schema.any_of.as_ref().map_or(false, |variants| {
+            variants.iter().any(|v| {
+                v.schema_type
+                    .as_ref()
+                    .map(|t| t.primary() == Some("null"))
+                    .unwrap_or(false)
+            })
+        });
 
     SettingSchema {
         path: path.to_string(),
@@ -547,7 +558,28 @@ fn determine_type(
             }
             SettingType::Complex
         }
-        _ => SettingType::Complex,
+        _ => {
+            // Check for anyOf pattern (used by schemars for Option<T>):
+            // anyOf: [{ $ref: "..." }, { type: "null" }]
+            // Resolve the non-null variant and determine its type.
+            if let Some(ref variants) = schema.any_of {
+                for variant in variants {
+                    // Skip the null variant
+                    let is_null = variant
+                        .schema_type
+                        .as_ref()
+                        .map(|t| t.primary() == Some("null"))
+                        .unwrap_or(false);
+                    if is_null {
+                        continue;
+                    }
+                    // Resolve this variant (it may be a $ref)
+                    let resolved_variant = resolve_ref(variant, defs);
+                    return determine_type(resolved_variant, defs, enum_values_map);
+                }
+            }
+            SettingType::Complex
+        }
     }
 }
 
@@ -693,6 +725,68 @@ mod tests {
         } else {
             panic!("Expected integer type");
         }
+    }
+
+    #[test]
+    fn test_any_of_nullable_object() {
+        // Tests that anyOf: [{$ref: "..."}, {type: "null"}] resolves to an Object type
+        // and is marked as nullable. This is the pattern schemars generates for Option<T>.
+        let schema_json = r##"
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Config",
+  "type": "object",
+  "properties": {
+    "fallback": {
+      "description": "Fallback language config",
+      "anyOf": [
+        { "$ref": "#/$defs/LanguageConfig" },
+        { "type": "null" }
+      ],
+      "default": null
+    }
+  },
+  "$defs": {
+    "LanguageConfig": {
+      "description": "Language-specific configuration",
+      "type": "object",
+      "properties": {
+        "grammar": {
+          "description": "Grammar name",
+          "type": "string",
+          "default": ""
+        },
+        "comment_prefix": {
+          "description": "Comment prefix",
+          "type": ["string", "null"],
+          "default": null
+        },
+        "auto_indent": {
+          "description": "Enable auto-indent",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}
+"##;
+        let categories = parse_schema(schema_json).unwrap();
+        let general = &categories[0];
+        let fallback = general
+            .settings
+            .iter()
+            .find(|s| s.path == "/fallback")
+            .unwrap();
+
+        // Should be an Object with properties, not Complex
+        assert!(
+            matches!(fallback.setting_type, SettingType::Object { ref properties } if properties.len() == 3),
+            "Expected Object with 3 properties, got {:?}",
+            fallback.setting_type
+        );
+        // Should be nullable (can be set to null)
+        assert!(fallback.nullable, "fallback should be nullable");
     }
 
     #[test]
