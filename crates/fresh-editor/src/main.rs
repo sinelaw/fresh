@@ -2727,7 +2727,21 @@ fn print_deprecation_warnings(cli: &Cli) {
 }
 
 fn main() -> AnyhowResult<()> {
-    real_main()
+    match real_main() {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // SSH connection errors are expected user-facing failures, not bugs.
+            // Print a clean error message without the stack backtrace.
+            if e.downcast_ref::<remote::SshError>().is_some()
+                || e.chain()
+                    .any(|cause| cause.downcast_ref::<remote::SshError>().is_some())
+            {
+                eprintln!("Error: {:#}", e);
+                std::process::exit(1);
+            }
+            Err(e)
+        }
+    }
 }
 
 fn real_main() -> AnyhowResult<()> {
