@@ -107,7 +107,6 @@ const state: ReviewState = {
 };
 
 // --- Refresh State ---
-let isUpdating = false;
 
 // --- Colors & Styles ---
 const STYLE_BORDER: [number, number, number] = [70, 70, 70]; 
@@ -234,53 +233,7 @@ function parseDiffOutput(stdout: string, gitStatus: 'staged' | 'unstaged' | 'unt
     return hunks;
 }
 
-async function getGitDiff(): Promise<Hunk[]> {
-    const allHunks: Hunk[] = [];
-
-    // Staged changes (git diff --cached)
-    const stagedResult = await editor.spawnProcess("git", ["diff", "--cached", "--unified=3"]);
-    if (stagedResult.exit_code === 0 && stagedResult.stdout.trim()) {
-        allHunks.push(...parseDiffOutput(stagedResult.stdout, 'staged'));
-    }
-
-    // Unstaged changes (git diff, working tree vs index)
-    const unstagedResult = await editor.spawnProcess("git", ["diff", "--unified=3"]);
-    if (unstagedResult.exit_code === 0 && unstagedResult.stdout.trim()) {
-        allHunks.push(...parseDiffOutput(unstagedResult.stdout, 'unstaged'));
-    }
-
-    // Untracked files
-    const untrackedResult = await editor.spawnProcess("git", ["ls-files", "--others", "--exclude-standard"]);
-    if (untrackedResult.exit_code === 0 && untrackedResult.stdout.trim()) {
-        const untrackedFiles = untrackedResult.stdout.trim().split('\n').filter(f => f.length > 0);
-        for (const file of untrackedFiles) {
-            const contentResult = await editor.spawnProcess("git", ["diff", "--no-index", "--unified=3", "/dev/null", file]);
-            if (contentResult.stdout.trim()) {
-                const hunks = parseDiffOutput(contentResult.stdout, 'untracked');
-                // Fix file paths from --no-index (may use full paths)
-                for (const h of hunks) {
-                    h.file = file;
-                    h.id = `${file}:${h.range.start}:untracked`;
-                    h.type = 'add';
-                }
-                allHunks.push(...hunks);
-            }
-        }
-    }
-
-    // Sort: staged first, then unstaged, then untracked
-    const statusOrder: Record<string, number> = { staged: 0, unstaged: 1, untracked: 2 };
-    allHunks.sort((a, b) => {
-        const orderA = statusOrder[a.gitStatus || 'unstaged'];
-        const orderB = statusOrder[b.gitStatus || 'unstaged'];
-        if (orderA !== orderB) return orderA - orderB;
-        return a.file.localeCompare(b.file);
-    });
-
-    return allHunks;
-}
-
-// --- New git status detection (Step 1 of rewrite) ---
+// --- Git status detection ---
 
 /**
  * Parse `git status --porcelain -z` output into FileEntry[].
@@ -657,460 +610,7 @@ function updateMagitDisplay(): void {
     editor.setVirtualBufferContent(state.reviewBufferId, entries);
 }
 
-interface HighlightTask {
-    range: [number, number];
-    fg: [number, number, number];
-    bg?: [number, number, number];
-    bold?: boolean;
-    italic?: boolean;
-    extend_to_line_end?: boolean;
-}
-
-/**
- * Render the Review Stream buffer content and return highlight tasks
- */
-async function renderReviewStream(): Promise<{ entries: TextPropertyEntry[], highlights: HighlightTask[] }> {
-  const entries: TextPropertyEntry[] = [];
-  const highlights: HighlightTask[] = [];
-  let currentFile = "";
-  let currentByte = 0;
-
-  // Add help header with keybindings at the TOP
-  const helpHeader = "╔" + "═".repeat(74) + "╗\n";
-  const helpLen0 = getByteLength(helpHeader);
-  entries.push({ text: helpHeader, properties: { type: "help" } });
-  highlights.push({ range: [currentByte, currentByte + helpLen0], fg: STYLE_COMMENT_BORDER });
-  currentByte += helpLen0;
-
-  const helpLine1 = "║ " + editor.t("panel.help_review").padEnd(72) + " ║\n";
-  const helpLen1 = getByteLength(helpLine1);
-  entries.push({ text: helpLine1, properties: { type: "help" } });
-  highlights.push({ range: [currentByte, currentByte + helpLen1], fg: STYLE_COMMENT });
-  currentByte += helpLen1;
-
-  const helpLine2 = "║ " + editor.t("panel.help_stage").padEnd(72) + " ║\n";
-  const helpLen2 = getByteLength(helpLine2);
-  entries.push({ text: helpLine2, properties: { type: "help" } });
-  highlights.push({ range: [currentByte, currentByte + helpLen2], fg: STYLE_COMMENT });
-  currentByte += helpLen2;
-
-  const helpLine3 = "║ " + editor.t("panel.help_export").padEnd(72) + " ║\n";
-  const helpLen3 = getByteLength(helpLine3);
-  entries.push({ text: helpLine3, properties: { type: "help" } });
-  highlights.push({ range: [currentByte, currentByte + helpLen3], fg: STYLE_COMMENT });
-  currentByte += helpLen3;
-
-  const helpFooter = "╚" + "═".repeat(74) + "╝\n\n";
-  const helpLen4 = getByteLength(helpFooter);
-  entries.push({ text: helpFooter, properties: { type: "help" } });
-  highlights.push({ range: [currentByte, currentByte + helpLen4], fg: STYLE_COMMENT_BORDER });
-  currentByte += helpLen4;
-
-  let currentSection: string | undefined = undefined;
-
-  for (let hunkIndex = 0; hunkIndex < state.hunks.length; hunkIndex++) {
-    const hunk = state.hunks[hunkIndex];
-
-    // Insert section header when git status category changes
-    if (hunk.gitStatus && hunk.gitStatus !== currentSection) {
-      currentSection = hunk.gitStatus;
-      currentFile = ""; // Reset file tracking so file banner re-appears in new section
-      const sectionKey = hunk.gitStatus === 'staged' ? 'section.staged'
-        : hunk.gitStatus === 'unstaged' ? 'section.unstaged'
-        : 'section.untracked';
-      const sectionLabel = ` ${editor.t(sectionKey)} `;
-      const totalWidth = 70;
-      const prefix = "── ";
-      const suffixLen = Math.max(0, totalWidth - prefix.length - sectionLabel.length);
-      const sectionLine = `\n${prefix}${sectionLabel}${"─".repeat(suffixLen)}\n`;
-      const sectionLen = getByteLength(sectionLine);
-      entries.push({ text: sectionLine, properties: { type: "section-header", gitStatus: hunk.gitStatus } });
-      highlights.push({ range: [currentByte, currentByte + sectionLen], fg: STYLE_SECTION_HEADER, bold: true });
-      currentByte += sectionLen;
-    }
-
-    if (hunk.file !== currentFile) {
-      // Header & Border
-      const titlePrefix = "┌─ ";
-      const titleLine = `${titlePrefix}${hunk.file} ${"─".repeat(Math.max(0, 60 - hunk.file.length))}\n`;
-      const titleLen = getByteLength(titleLine);
-      entries.push({ text: titleLine, properties: { type: "banner", file: hunk.file } });
-      highlights.push({ range: [currentByte, currentByte + titleLen], fg: STYLE_BORDER });
-      const prefixLen = getByteLength(titlePrefix);
-      highlights.push({ range: [currentByte + prefixLen, currentByte + prefixLen + getByteLength(hunk.file)], fg: STYLE_FILE_NAME, bold: true });
-      currentByte += titleLen;
-      currentFile = hunk.file;
-    }
-
-    hunk.byteOffset = currentByte;
-
-    // Status icons: staging (left) and review (right)
-    const stagingIcon = hunk.status === 'staged' ? '✓' : (hunk.status === 'discarded' ? '✗' : ' ');
-    const reviewIcon = hunk.reviewStatus === 'approved' ? '✓' :
-                       hunk.reviewStatus === 'rejected' ? '✗' :
-                       hunk.reviewStatus === 'needs_changes' ? '!' :
-                       hunk.reviewStatus === 'question' ? '?' : ' ';
-    const reviewLabel = hunk.reviewStatus !== 'pending' ? ` ← ${hunk.reviewStatus.toUpperCase()}` : '';
-
-    const headerPrefix = "│ ";
-    const headerText = `${headerPrefix}${stagingIcon} ${reviewIcon} [ ${hunk.contextHeader} ]${reviewLabel}\n`;
-    const headerLen = getByteLength(headerText);
-
-    let hunkColor = STYLE_HEADER;
-    if (hunk.status === 'staged') hunkColor = STYLE_STAGED;
-    else if (hunk.status === 'discarded') hunkColor = STYLE_DISCARDED;
-
-    let reviewColor = STYLE_HEADER;
-    if (hunk.reviewStatus === 'approved') reviewColor = STYLE_APPROVED;
-    else if (hunk.reviewStatus === 'rejected') reviewColor = STYLE_REJECTED;
-    else if (hunk.reviewStatus === 'needs_changes') reviewColor = STYLE_QUESTION;
-    else if (hunk.reviewStatus === 'question') reviewColor = STYLE_QUESTION;
-
-    entries.push({ text: headerText, properties: { type: "header", hunkId: hunk.id, index: hunkIndex } });
-    highlights.push({ range: [currentByte, currentByte + headerLen], fg: STYLE_BORDER });
-    const headerPrefixLen = getByteLength(headerPrefix);
-    // Staging icon
-    highlights.push({ range: [currentByte + headerPrefixLen, currentByte + headerPrefixLen + getByteLength(stagingIcon)], fg: hunkColor, bold: true });
-    // Review icon
-    highlights.push({ range: [currentByte + headerPrefixLen + getByteLength(stagingIcon) + 1, currentByte + headerPrefixLen + getByteLength(stagingIcon) + 1 + getByteLength(reviewIcon)], fg: reviewColor, bold: true });
-    // Context header
-    const contextStart = currentByte + headerPrefixLen + getByteLength(stagingIcon) + 1 + getByteLength(reviewIcon) + 3;
-    highlights.push({ range: [contextStart, currentByte + headerLen - getByteLength(reviewLabel) - 2], fg: hunkColor });
-    // Review label
-    if (reviewLabel) {
-      highlights.push({ range: [currentByte + headerLen - getByteLength(reviewLabel) - 1, currentByte + headerLen - 1], fg: reviewColor, bold: true });
-    }
-    currentByte += headerLen;
-
-    // Track actual file line numbers as we iterate
-    let oldLineNum = hunk.oldRange.start;
-    let newLineNum = hunk.range.start;
-
-    for (let i = 0; i < hunk.lines.length; i++) {
-        const line = hunk.lines[i];
-        const nextLine = hunk.lines[i + 1];
-        const marker = line[0];
-        const content = line.substring(1);
-        const linePrefix = "│   ";
-        const lineText = `${linePrefix}${marker} ${content}\n`;
-        const lineLen = getByteLength(lineText);
-        const prefixLen = getByteLength(linePrefix);
-
-        // Determine line type and which line numbers apply
-        const lineType: 'add' | 'remove' | 'context' =
-            marker === '+' ? 'add' : marker === '-' ? 'remove' : 'context';
-        const curOldLine = lineType !== 'add' ? oldLineNum : undefined;
-        const curNewLine = lineType !== 'remove' ? newLineNum : undefined;
-
-        if (line.startsWith('-') && nextLine && nextLine.startsWith('+') && hunk.status === 'pending') {
-            const oldContent = line.substring(1);
-            const newContent = nextLine.substring(1);
-            const diffParts = diffStrings(oldContent, newContent);
-
-            // Removed
-            entries.push({ text: lineText, properties: {
-                type: "content", hunkId: hunk.id, file: hunk.file,
-                lineType: 'remove', oldLine: curOldLine, lineContent: line
-            } });
-            highlights.push({ range: [currentByte, currentByte + lineLen], fg: STYLE_BORDER });
-            highlights.push({ range: [currentByte + prefixLen, currentByte + prefixLen + 1], fg: STYLE_REMOVE_TEXT, bold: true });
-            
-            let cbOffset = currentByte + prefixLen + 2; 
-            diffParts.forEach(p => {
-                const pLen = getByteLength(p.text);
-                if (p.type === 'removed') {
-                    highlights.push({ range: [cbOffset, cbOffset + pLen], fg: STYLE_REMOVE_TEXT, bg: STYLE_REMOVE_BG, bold: true });
-                    cbOffset += pLen;
-                } else if (p.type === 'unchanged') {
-                    highlights.push({ range: [cbOffset, cbOffset + pLen], fg: STYLE_REMOVE_TEXT });
-                    cbOffset += pLen;
-                }
-            });
-            currentByte += lineLen;
-
-            // Added (increment old line for the removed line we just processed)
-            oldLineNum++;
-            const nextLineText = `${linePrefix}+ ${nextLine.substring(1)}\n`;
-            const nextLineLen = getByteLength(nextLineText);
-            entries.push({ text: nextLineText, properties: {
-                type: "content", hunkId: hunk.id, file: hunk.file,
-                lineType: 'add', newLine: newLineNum, lineContent: nextLine
-            } });
-            newLineNum++;
-            highlights.push({ range: [currentByte, currentByte + nextLineLen], fg: STYLE_BORDER });
-            highlights.push({ range: [currentByte + prefixLen, currentByte + prefixLen + 1], fg: STYLE_ADD_TEXT, bold: true });
-
-            cbOffset = currentByte + prefixLen + 2; 
-            diffParts.forEach(p => {
-                const pLen = getByteLength(p.text);
-                if (p.type === 'added') {
-                    highlights.push({ range: [cbOffset, cbOffset + pLen], fg: STYLE_ADD_TEXT, bg: STYLE_ADD_BG, bold: true });
-                    cbOffset += pLen;
-                } else if (p.type === 'unchanged') {
-                    highlights.push({ range: [cbOffset, cbOffset + pLen], fg: STYLE_ADD_TEXT });
-                    cbOffset += pLen;
-                }
-            });
-            currentByte += nextLineLen;
-
-            // Render comments for the removed line (curOldLine before increment)
-            const removedLineComments = state.comments.filter(c =>
-                c.hunk_id === hunk.id && c.line_type === 'remove' && c.old_line === curOldLine
-            );
-            for (const comment of removedLineComments) {
-                const commentPrefix = `│   » [-${comment.old_line}] `;
-                const commentLines = comment.text.split('\n');
-                for (let ci = 0; ci < commentLines.length; ci++) {
-                    const prefix = ci === 0 ? commentPrefix : "│      ";
-                    const commentLine = `${prefix}${commentLines[ci]}\n`;
-                    const commentLineLen = getByteLength(commentLine);
-                    entries.push({ text: commentLine, properties: { type: "comment", commentId: comment.id, hunkId: hunk.id } });
-                    highlights.push({ range: [currentByte, currentByte + getByteLength(prefix)], fg: STYLE_COMMENT_BORDER });
-                    highlights.push({ range: [currentByte + getByteLength(prefix), currentByte + commentLineLen], fg: STYLE_COMMENT });
-                    currentByte += commentLineLen;
-                }
-            }
-
-            // Render comments for the added line (newLineNum - 1, since we already incremented)
-            const addedLineComments = state.comments.filter(c =>
-                c.hunk_id === hunk.id && c.line_type === 'add' && c.new_line === (newLineNum - 1)
-            );
-            for (const comment of addedLineComments) {
-                const commentPrefix = `│   » [+${comment.new_line}] `;
-                const commentLines = comment.text.split('\n');
-                for (let ci = 0; ci < commentLines.length; ci++) {
-                    const prefix = ci === 0 ? commentPrefix : "│      ";
-                    const commentLine = `${prefix}${commentLines[ci]}\n`;
-                    const commentLineLen = getByteLength(commentLine);
-                    entries.push({ text: commentLine, properties: { type: "comment", commentId: comment.id, hunkId: hunk.id } });
-                    highlights.push({ range: [currentByte, currentByte + getByteLength(prefix)], fg: STYLE_COMMENT_BORDER });
-                    highlights.push({ range: [currentByte + getByteLength(prefix), currentByte + commentLineLen], fg: STYLE_COMMENT });
-                    currentByte += commentLineLen;
-                }
-            }
-
-            i++;
-        } else {
-            entries.push({ text: lineText, properties: {
-                type: "content", hunkId: hunk.id, file: hunk.file,
-                lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line
-            } });
-            highlights.push({ range: [currentByte, currentByte + lineLen], fg: STYLE_BORDER });
-            if (hunk.status === 'pending') {
-                if (line.startsWith('+')) {
-                    highlights.push({ range: [currentByte + prefixLen, currentByte + prefixLen + 1], fg: STYLE_ADD_TEXT, bold: true });
-                    highlights.push({ range: [currentByte + prefixLen + 2, currentByte + lineLen], fg: STYLE_ADD_TEXT });
-                } else if (line.startsWith('-')) {
-                    highlights.push({ range: [currentByte + prefixLen, currentByte + prefixLen + 1], fg: STYLE_REMOVE_TEXT, bold: true });
-                    highlights.push({ range: [currentByte + prefixLen + 2, currentByte + lineLen], fg: STYLE_REMOVE_TEXT });
-                }
-            } else {
-                highlights.push({ range: [currentByte + prefixLen, currentByte + lineLen], fg: hunkColor });
-            }
-            currentByte += lineLen;
-
-            // Increment line counters based on line type
-            if (lineType === 'remove') oldLineNum++;
-            else if (lineType === 'add') newLineNum++;
-            else { oldLineNum++; newLineNum++; } // context
-
-            // Render any comments attached to this specific line
-            const lineComments = state.comments.filter(c =>
-                c.hunk_id === hunk.id && (
-                    (lineType === 'remove' && c.old_line === curOldLine) ||
-                    (lineType === 'add' && c.new_line === curNewLine) ||
-                    (lineType === 'context' && (c.old_line === curOldLine || c.new_line === curNewLine))
-                )
-            );
-            for (const comment of lineComments) {
-                const lineRef = comment.line_type === 'add'
-                    ? `+${comment.new_line}`
-                    : comment.line_type === 'remove'
-                    ? `-${comment.old_line}`
-                    : `${comment.new_line}`;
-                const commentPrefix = `│   » [${lineRef}] `;
-                const commentLines = comment.text.split('\n');
-                for (let ci = 0; ci < commentLines.length; ci++) {
-                    const prefix = ci === 0 ? commentPrefix : "│      ";
-                    const commentLine = `${prefix}${commentLines[ci]}\n`;
-                    const commentLineLen = getByteLength(commentLine);
-                    entries.push({ text: commentLine, properties: { type: "comment", commentId: comment.id, hunkId: hunk.id } });
-                    highlights.push({ range: [currentByte, currentByte + getByteLength(prefix)], fg: STYLE_COMMENT_BORDER });
-                    highlights.push({ range: [currentByte + getByteLength(prefix), currentByte + commentLineLen], fg: STYLE_COMMENT });
-                    currentByte += commentLineLen;
-                }
-            }
-        }
-    }
-
-    // Render any comments without specific line info at the end of hunk
-    const orphanComments = state.comments.filter(c =>
-        c.hunk_id === hunk.id && !c.old_line && !c.new_line
-    );
-    if (orphanComments.length > 0) {
-      const commentBorder = "│   ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n";
-      const borderLen = getByteLength(commentBorder);
-      entries.push({ text: commentBorder, properties: { type: "comment-border" } });
-      highlights.push({ range: [currentByte, currentByte + borderLen], fg: STYLE_COMMENT_BORDER });
-      currentByte += borderLen;
-
-      for (const comment of orphanComments) {
-        const commentPrefix = "│   » ";
-        const commentLines = comment.text.split('\n');
-        for (let ci = 0; ci < commentLines.length; ci++) {
-          const prefix = ci === 0 ? commentPrefix : "│      ";
-          const commentLine = `${prefix}${commentLines[ci]}\n`;
-          const commentLineLen = getByteLength(commentLine);
-          entries.push({ text: commentLine, properties: { type: "comment", commentId: comment.id, hunkId: hunk.id } });
-          highlights.push({ range: [currentByte, currentByte + getByteLength(prefix)], fg: STYLE_COMMENT_BORDER });
-          highlights.push({ range: [currentByte + getByteLength(prefix), currentByte + commentLineLen], fg: STYLE_COMMENT });
-          currentByte += commentLineLen;
-        }
-      }
-
-      entries.push({ text: commentBorder, properties: { type: "comment-border" } });
-      highlights.push({ range: [currentByte, currentByte + borderLen], fg: STYLE_COMMENT_BORDER });
-      currentByte += borderLen;
-    }
-
-    const isLastOfFile = hunkIndex === state.hunks.length - 1 || state.hunks[hunkIndex + 1].file !== hunk.file;
-    if (isLastOfFile) {
-        const bottomLine = `└${"─".repeat(64)}\n`;
-        const bottomLen = getByteLength(bottomLine);
-        entries.push({ text: bottomLine, properties: { type: "border" } });
-        highlights.push({ range: [currentByte, currentByte + bottomLen], fg: STYLE_BORDER });
-        currentByte += bottomLen;
-    }
-  }
-
-  if (entries.length === 0) {
-    entries.push({ text: editor.t("panel.no_changes") + "\n", properties: {} });
-  } else {
-    // Add help footer with keybindings
-    const helpSeparator = "\n" + "─".repeat(70) + "\n";
-    const helpLen1 = getByteLength(helpSeparator);
-    entries.push({ text: helpSeparator, properties: { type: "help" } });
-    highlights.push({ range: [currentByte, currentByte + helpLen1], fg: STYLE_BORDER });
-    currentByte += helpLen1;
-
-    const helpLine1 = editor.t("panel.help_review_footer") + "\n";
-    const helpLen2 = getByteLength(helpLine1);
-    entries.push({ text: helpLine1, properties: { type: "help" } });
-    highlights.push({ range: [currentByte, currentByte + helpLen2], fg: STYLE_COMMENT });
-    currentByte += helpLen2;
-
-    const helpLine2 = editor.t("panel.help_stage_footer") + "\n";
-    const helpLen3 = getByteLength(helpLine2);
-    entries.push({ text: helpLine2, properties: { type: "help" } });
-    highlights.push({ range: [currentByte, currentByte + helpLen3], fg: STYLE_COMMENT });
-    currentByte += helpLen3;
-
-    const helpLine3 = editor.t("panel.help_export_footer") + "\n";
-    const helpLen4 = getByteLength(helpLine3);
-    entries.push({ text: helpLine3, properties: { type: "help" } });
-    highlights.push({ range: [currentByte, currentByte + helpLen4], fg: STYLE_COMMENT });
-    currentByte += helpLen4;
-  }
-  return { entries, highlights };
-}
-
-/**
- * Updates the buffer UI (text and highlights) based on current state.hunks
- */
-async function updateReviewUI() {
-  if (state.reviewBufferId != null) {
-    const { entries, highlights } = await renderReviewStream();
-    editor.setVirtualBufferContent(state.reviewBufferId, entries);
-    
-    editor.clearNamespace(state.reviewBufferId, "review-diff");
-    highlights.forEach((h) => {
-        editor.addOverlay(state.reviewBufferId!, "review-diff", h.range[0], h.range[1], {
-            fg: h.fg,
-            bg: h.bg,
-            bold: h.bold || false,
-            italic: h.italic || false,
-        });
-    });
-  }
-}
-
-/**
- * Fetches latest diff data and refreshes the UI
- */
-async function refreshReviewData() {
-    if (isUpdating) return;
-    isUpdating = true;
-    editor.setStatus(editor.t("status.refreshing"));
-    try {
-        const newHunks = await getGitDiff();
-        newHunks.forEach(h => h.status = state.hunkStatus[h.id] || 'pending');
-        state.hunks = newHunks;
-        await updateReviewUI();
-        editor.setStatus(editor.t("status.updated", { count: String(state.hunks.length) }));
-    } catch (e) {
-        editor.debug(`ReviewDiff Error: ${e}`);
-    } finally {
-        isUpdating = false;
-    }
-}
-
-// --- Actions ---
-
-async function review_stage_hunk() {
-    const props = editor.getTextPropertiesAtCursor(editor.getActiveBufferId());
-    if (props.length > 0 && props[0].hunkId) {
-        const id = props[0].hunkId as string;
-        state.hunkStatus[id] = 'staged';
-        const h = state.hunks.find(x => x.id === id);
-        if (h) h.status = 'staged';
-        await updateReviewUI();
-    }
-}
-registerHandler("review_stage_hunk", review_stage_hunk);
-
-async function review_discard_hunk() {
-    const props = editor.getTextPropertiesAtCursor(editor.getActiveBufferId());
-    if (props.length > 0 && props[0].hunkId) {
-        const id = props[0].hunkId as string;
-        state.hunkStatus[id] = 'discarded';
-        const h = state.hunks.find(x => x.id === id);
-        if (h) h.status = 'discarded';
-        await updateReviewUI();
-    }
-}
-registerHandler("review_discard_hunk", review_discard_hunk);
-
-async function review_undo_action() {
-    const props = editor.getTextPropertiesAtCursor(editor.getActiveBufferId());
-    if (props.length > 0 && props[0].hunkId) {
-        const id = props[0].hunkId as string;
-        state.hunkStatus[id] = 'pending';
-        const h = state.hunks.find(x => x.id === id);
-        if (h) h.status = 'pending';
-        await updateReviewUI();
-    }
-}
-registerHandler("review_undo_action", review_undo_action);
-
-function review_next_hunk() {
-    const bid = editor.getActiveBufferId();
-    const props = editor.getTextPropertiesAtCursor(bid);
-    let cur = -1;
-    if (props.length > 0 && props[0].index !== undefined) cur = props[0].index as number;
-    if (cur + 1 < state.hunks.length) editor.setBufferCursor(bid, state.hunks[cur + 1].byteOffset);
-}
-registerHandler("review_next_hunk", review_next_hunk);
-
-function review_prev_hunk() {
-    const bid = editor.getActiveBufferId();
-    const props = editor.getTextPropertiesAtCursor(bid);
-    let cur = state.hunks.length;
-    if (props.length > 0 && props[0].index !== undefined) cur = props[0].index as number;
-    if (cur - 1 >= 0) editor.setBufferCursor(bid, state.hunks[cur - 1].byteOffset);
-}
-registerHandler("review_prev_hunk", review_prev_hunk);
-
-function review_refresh() { refreshReviewData(); }
+function review_refresh() { refreshMagitData(); }
 registerHandler("review_refresh", review_refresh);
 
 // --- New magit navigation handlers (Step 3) ---
@@ -1410,6 +910,15 @@ function computeFullFileAlignedDiff(oldContent: string, newContent: string, hunk
     return aligned;
 }
 
+interface HighlightTask {
+    range: [number, number];
+    fg: [number, number, number];
+    bg?: [number, number, number];
+    bold?: boolean;
+    italic?: boolean;
+    extend_to_line_end?: boolean;
+}
+
 /**
  * Generate virtual buffer content with diff highlighting for one side.
  * Returns entries, highlight tasks, and line byte offsets for scroll sync.
@@ -1601,161 +1110,158 @@ async function review_drill_down() {
     const fileHunks = state.hunks.filter(hunk => hunk.file === h.file);
     if (fileHunks.length === 0) return;
 
-        // Get git root to construct absolute path
-        const gitRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"]);
-        if (gitRootResult.exit_code !== 0) {
-            editor.setStatus(editor.t("status.not_git_repo"));
-            return;
-        }
-        const gitRoot = gitRootResult.stdout.trim();
-        const absoluteFilePath = editor.pathJoin(gitRoot, h.file);
-
-        // Get old (HEAD) and new (working) file content
-        let oldContent: string;
-        const gitShow = await editor.spawnProcess("git", ["show", `HEAD:${h.file}`]);
-        if (gitShow.exit_code !== 0) {
-            // File doesn't exist in HEAD - it's a new untracked file
-            oldContent = "";
-        } else {
-            oldContent = gitShow.stdout;
-        }
-
-        // Read new file content (use absolute path for readFile)
-        const newContent = await editor.readFile(absoluteFilePath);
-        if (newContent === null) {
-            editor.setStatus(editor.t("status.failed_new_version"));
-            return;
-        }
-
-        // Close any existing side-by-side views (old split-based approach)
-        if (activeSideBySideState) {
-            try {
-                if (activeSideBySideState.scrollSyncGroupId !== null) {
-                    (editor as any).removeScrollSyncGroup(activeSideBySideState.scrollSyncGroupId);
-                }
-                editor.closeBuffer(activeSideBySideState.oldBufferId);
-                editor.closeBuffer(activeSideBySideState.newBufferId);
-            } catch {}
-            activeSideBySideState = null;
-        }
-
-        // Close any existing composite diff view
-        if (activeCompositeDiffState) {
-            try {
-                editor.closeCompositeBuffer(activeCompositeDiffState.compositeBufferId);
-                editor.closeBuffer(activeCompositeDiffState.oldBufferId);
-                editor.closeBuffer(activeCompositeDiffState.newBufferId);
-            } catch {}
-            activeCompositeDiffState = null;
-        }
-
-        // Create virtual buffers for old and new content
-        const oldLines = oldContent.split('\n');
-        const newLines = newContent.split('\n');
-
-        const oldEntries: TextPropertyEntry[] = oldLines.map((line, idx) => ({
-            text: line + '\n',
-            properties: { type: 'line', lineNum: idx + 1 }
-        }));
-
-        const newEntries: TextPropertyEntry[] = newLines.map((line, idx) => ({
-            text: line + '\n',
-            properties: { type: 'line', lineNum: idx + 1 }
-        }));
-
-        // Create source buffers (hidden from tabs, used by composite)
-        const oldResult = await editor.createVirtualBuffer({
-            name: `*OLD:${h.file}*`,
-            mode: "normal",
-            readOnly: true,
-            entries: oldEntries,
-            showLineNumbers: true,
-            editingDisabled: true,
-            hiddenFromTabs: true
-        });
-        const oldBufferId = oldResult.bufferId;
-
-        const newResult = await editor.createVirtualBuffer({
-            name: `*NEW:${h.file}*`,
-            mode: "normal",
-            readOnly: true,
-            entries: newEntries,
-            showLineNumbers: true,
-            editingDisabled: true,
-            hiddenFromTabs: true
-        });
-        const newBufferId = newResult.bufferId;
-
-        // Convert hunks to composite buffer format (parse counts from git diff)
-        const compositeHunks: TsCompositeHunk[] = fileHunks.map(fh => {
-            // Parse actual counts from the hunk lines
-            let oldCount = 0, newCount = 0;
-            for (const line of fh.lines) {
-                if (line.startsWith('-')) oldCount++;
-                else if (line.startsWith('+')) newCount++;
-                else if (line.startsWith(' ')) { oldCount++; newCount++; }
-            }
-            return {
-                oldStart: Math.max(0, fh.oldRange.start - 1),  // Convert to 0-indexed (0 for new files)
-                oldCount: oldCount || 1,
-                newStart: Math.max(0, fh.range.start - 1),     // Convert to 0-indexed
-                newCount: newCount || 1
-            };
-        });
-
-        // Create composite buffer with side-by-side layout
-        const compositeBufferId = await editor.createCompositeBuffer({
-            name: `*Diff: ${h.file}*`,
-            mode: "diff-view",
-            layout: {
-                type: "side-by-side",
-                ratios: [0.5, 0.5],
-                showSeparator: true
-            },
-            sources: [
-                {
-                    bufferId: oldBufferId,
-                    label: "OLD (HEAD)",
-                    editable: false,
-                    style: {
-                        removeBg: [80, 40, 40],
-                        gutterStyle: "diff-markers"
-                    }
-                },
-                {
-                    bufferId: newBufferId,
-                    label: "NEW (Working)",
-                    editable: false,
-                    style: {
-                        addBg: [40, 80, 40],
-                        gutterStyle: "diff-markers"
-                    }
-                }
-            ],
-            hunks: compositeHunks.length > 0 ? compositeHunks : null
-        });
-
-        // Store state for cleanup
-        activeCompositeDiffState = {
-            compositeBufferId,
-            oldBufferId,
-            newBufferId,
-            filePath: h.file
-        };
-
-        // Show the composite buffer (replaces the review diff buffer)
-        editor.showBuffer(compositeBufferId);
-
-        const addedCount = fileHunks.reduce((sum, fh) => {
-            return sum + fh.lines.filter(l => l.startsWith('+')).length;
-        }, 0);
-        const removedCount = fileHunks.reduce((sum, fh) => {
-            return sum + fh.lines.filter(l => l.startsWith('-')).length;
-        }, 0);
-        const modifiedCount = Math.min(addedCount, removedCount);
-
-        editor.setStatus(editor.t("status.diff_summary", { added: String(addedCount), removed: String(removedCount), modified: String(modifiedCount) }));
+    // Get git root to construct absolute path
+    const gitRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"]);
+    if (gitRootResult.exit_code !== 0) {
+        editor.setStatus(editor.t("status.not_git_repo"));
+        return;
     }
+    const gitRoot = gitRootResult.stdout.trim();
+    const absoluteFilePath = editor.pathJoin(gitRoot, h.file);
+
+    // Get old (HEAD) and new (working) file content
+    let oldContent: string;
+    const gitShow = await editor.spawnProcess("git", ["show", `HEAD:${h.file}`]);
+    if (gitShow.exit_code !== 0) {
+        oldContent = "";
+    } else {
+        oldContent = gitShow.stdout;
+    }
+
+    // Read new file content (use absolute path for readFile)
+    const newContent = await editor.readFile(absoluteFilePath);
+    if (newContent === null) {
+        editor.setStatus(editor.t("status.failed_new_version"));
+        return;
+    }
+
+    // Close any existing side-by-side views (old split-based approach)
+    if (activeSideBySideState) {
+        try {
+            if (activeSideBySideState.scrollSyncGroupId !== null) {
+                (editor as any).removeScrollSyncGroup(activeSideBySideState.scrollSyncGroupId);
+            }
+            editor.closeBuffer(activeSideBySideState.oldBufferId);
+            editor.closeBuffer(activeSideBySideState.newBufferId);
+        } catch {}
+        activeSideBySideState = null;
+    }
+
+    // Close any existing composite diff view
+    if (activeCompositeDiffState) {
+        try {
+            editor.closeCompositeBuffer(activeCompositeDiffState.compositeBufferId);
+            editor.closeBuffer(activeCompositeDiffState.oldBufferId);
+            editor.closeBuffer(activeCompositeDiffState.newBufferId);
+        } catch {}
+        activeCompositeDiffState = null;
+    }
+
+    // Create virtual buffers for old and new content
+    const oldLines = oldContent.split('\n');
+    const newLines = newContent.split('\n');
+
+    const oldEntries: TextPropertyEntry[] = oldLines.map((line, idx) => ({
+        text: line + '\n',
+        properties: { type: 'line', lineNum: idx + 1 }
+    }));
+
+    const newEntries: TextPropertyEntry[] = newLines.map((line, idx) => ({
+        text: line + '\n',
+        properties: { type: 'line', lineNum: idx + 1 }
+    }));
+
+    // Create source buffers (hidden from tabs, used by composite)
+    const oldResult = await editor.createVirtualBuffer({
+        name: `*OLD:${h.file}*`,
+        mode: "normal",
+        readOnly: true,
+        entries: oldEntries,
+        showLineNumbers: true,
+        editingDisabled: true,
+        hiddenFromTabs: true
+    });
+    const oldBufferId = oldResult.bufferId;
+
+    const newResult = await editor.createVirtualBuffer({
+        name: `*NEW:${h.file}*`,
+        mode: "normal",
+        readOnly: true,
+        entries: newEntries,
+        showLineNumbers: true,
+        editingDisabled: true,
+        hiddenFromTabs: true
+    });
+    const newBufferId = newResult.bufferId;
+
+    // Convert hunks to composite buffer format (parse counts from git diff)
+    const compositeHunks: TsCompositeHunk[] = fileHunks.map(fh => {
+        let oldCount = 0, newCount = 0;
+        for (const line of fh.lines) {
+            if (line.startsWith('-')) oldCount++;
+            else if (line.startsWith('+')) newCount++;
+            else if (line.startsWith(' ')) { oldCount++; newCount++; }
+        }
+        return {
+            oldStart: Math.max(0, fh.oldRange.start - 1),
+            oldCount: oldCount || 1,
+            newStart: Math.max(0, fh.range.start - 1),
+            newCount: newCount || 1
+        };
+    });
+
+    // Create composite buffer with side-by-side layout
+    const compositeBufferId = await editor.createCompositeBuffer({
+        name: `*Diff: ${h.file}*`,
+        mode: "diff-view",
+        layout: {
+            type: "side-by-side",
+            ratios: [0.5, 0.5],
+            showSeparator: true
+        },
+        sources: [
+            {
+                bufferId: oldBufferId,
+                label: "OLD (HEAD)",
+                editable: false,
+                style: {
+                    removeBg: [80, 40, 40],
+                    gutterStyle: "diff-markers"
+                }
+            },
+            {
+                bufferId: newBufferId,
+                label: "NEW (Working)",
+                editable: false,
+                style: {
+                    addBg: [40, 80, 40],
+                    gutterStyle: "diff-markers"
+                }
+            }
+        ],
+        hunks: compositeHunks.length > 0 ? compositeHunks : null
+    });
+
+    // Store state for cleanup
+    activeCompositeDiffState = {
+        compositeBufferId,
+        oldBufferId,
+        newBufferId,
+        filePath: h.file
+    };
+
+    // Show the composite buffer (replaces the review diff buffer)
+    editor.showBuffer(compositeBufferId);
+
+    const addedCount = fileHunks.reduce((sum, fh) => {
+        return sum + fh.lines.filter(l => l.startsWith('+')).length;
+    }, 0);
+    const removedCount = fileHunks.reduce((sum, fh) => {
+        return sum + fh.lines.filter(l => l.startsWith('-')).length;
+    }, 0);
+    const modifiedCount = Math.min(addedCount, removedCount);
+
+    editor.setStatus(editor.t("status.diff_summary", { added: String(addedCount), removed: String(removedCount), modified: String(modifiedCount) }));
 }
 registerHandler("review_drill_down", review_drill_down);
 
@@ -1774,10 +1280,14 @@ editor.defineMode("diff-view", [
 // --- Review Comment Actions ---
 
 function getCurrentHunkId(): string | null {
-    const bid = editor.getActiveBufferId();
-    const props = editor.getTextPropertiesAtCursor(bid);
-    if (props.length > 0 && props[0].hunkId) return props[0].hunkId as string;
-    return null;
+    // In magit mode, get the first hunk of the selected file
+    if (state.files.length === 0) return null;
+    const selectedFile = state.files[state.selectedIndex];
+    if (!selectedFile) return null;
+    const hunk = state.hunks.find(
+        h => h.file === selectedFile.path && h.gitStatus === selectedFile.category
+    );
+    return hunk?.id || null;
 }
 
 interface PendingCommentInfo {
@@ -1790,20 +1300,22 @@ interface PendingCommentInfo {
 }
 
 function getCurrentLineInfo(): PendingCommentInfo | null {
-    const bid = editor.getActiveBufferId();
-    const props = editor.getTextPropertiesAtCursor(bid);
-    if (props.length > 0 && props[0].hunkId) {
-        const hunk = state.hunks.find(h => h.id === props[0].hunkId);
-        return {
-            hunkId: props[0].hunkId as string,
-            file: (props[0].file as string) || hunk?.file || '',
-            lineType: props[0].lineType as 'add' | 'remove' | 'context' | undefined,
-            oldLine: props[0].oldLine as number | undefined,
-            newLine: props[0].newLine as number | undefined,
-            lineContent: props[0].lineContent as string | undefined
-        };
-    }
-    return null;
+    // In magit mode, get info from the selected file's first hunk
+    if (state.files.length === 0) return null;
+    const selectedFile = state.files[state.selectedIndex];
+    if (!selectedFile) return null;
+    const hunk = state.hunks.find(
+        h => h.file === selectedFile.path && h.gitStatus === selectedFile.category
+    );
+    if (!hunk) return null;
+    return {
+        hunkId: hunk.id,
+        file: hunk.file,
+        lineType: undefined,
+        oldLine: undefined,
+        newLine: undefined,
+        lineContent: undefined
+    };
 }
 
 // Pending prompt state for event-based prompt handling
@@ -1850,7 +1362,7 @@ function on_review_prompt_confirm(args: { prompt_type: string; input: string }):
             line_type: pendingCommentInfo.lineType
         };
         state.comments.push(comment);
-        updateReviewUI();
+        updateMagitDisplay();
         let lineRef = 'hunk';
         if (comment.line_type === 'add' && comment.new_line) {
             lineRef = `line +${comment.new_line}`;
@@ -1887,7 +1399,7 @@ async function review_approve_hunk() {
     const h = state.hunks.find(x => x.id === hunkId);
     if (h) {
         h.reviewStatus = 'approved';
-        await updateReviewUI();
+        updateMagitDisplay();
         editor.setStatus(editor.t("status.hunk_approved"));
     }
 }
@@ -1899,7 +1411,7 @@ async function review_reject_hunk() {
     const h = state.hunks.find(x => x.id === hunkId);
     if (h) {
         h.reviewStatus = 'rejected';
-        await updateReviewUI();
+        updateMagitDisplay();
         editor.setStatus(editor.t("status.hunk_rejected"));
     }
 }
@@ -1911,7 +1423,7 @@ async function review_needs_changes() {
     const h = state.hunks.find(x => x.id === hunkId);
     if (h) {
         h.reviewStatus = 'needs_changes';
-        await updateReviewUI();
+        updateMagitDisplay();
         editor.setStatus(editor.t("status.hunk_needs_changes"));
     }
 }
@@ -1923,7 +1435,7 @@ async function review_question_hunk() {
     const h = state.hunks.find(x => x.id === hunkId);
     if (h) {
         h.reviewStatus = 'question';
-        await updateReviewUI();
+        updateMagitDisplay();
         editor.setStatus(editor.t("status.hunk_question"));
     }
 }
@@ -1935,7 +1447,7 @@ async function review_clear_status() {
     const h = state.hunks.find(x => x.id === hunkId);
     if (h) {
         h.reviewStatus = 'pending';
-        await updateReviewUI();
+        updateMagitDisplay();
         editor.setStatus(editor.t("status.hunk_status_cleared"));
     }
 }
@@ -2110,7 +1622,7 @@ registerHandler("stop_review_diff", stop_review_diff);
 
 
 function on_review_buffer_activated(data: any) {
-    if (data.buffer_id === state.reviewBufferId) refreshReviewData();
+    if (data.buffer_id === state.reviewBufferId) refreshMagitData();
 }
 registerHandler("on_review_buffer_activated", on_review_buffer_activated);
 
