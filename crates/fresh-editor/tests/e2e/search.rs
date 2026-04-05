@@ -2825,18 +2825,14 @@ fn test_search_status_bar_line_number_updates_on_f3() {
     harness.assert_screen_contains("Ln 1,");
 
     // F3 to go to second match (line 3)
-    harness
-        .send_key(KeyCode::F(3), KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
     harness.process_async_and_render().unwrap();
 
     // BUG: status bar should show Ln 3 but it stays at the line where search started
     harness.assert_screen_contains("Ln 3,");
 
     // F3 to go to third match (line 5)
-    harness
-        .send_key(KeyCode::F(3), KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
     harness.process_async_and_render().unwrap();
 
     harness.assert_screen_contains("Ln 5,");
