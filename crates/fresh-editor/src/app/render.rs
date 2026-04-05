@@ -2540,6 +2540,24 @@ impl Editor {
     ///
     /// Matches are capped at `MAX_SEARCH_MATCHES` to bound memory usage,
     /// and overlays are only created for the visible viewport.
+    /// Move the primary cursor to `position`, clear its selection anchor,
+    /// update the cached line number (used by the status bar), and scroll
+    /// the active split so the cursor is visible.
+    fn move_cursor_to_match(&mut self, position: usize) {
+        let active_split = self.split_manager.active_split();
+        let active_buffer = self.active_buffer();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.cursors.primary_mut().position = position;
+            view_state.cursors.primary_mut().anchor = None;
+            let state = self.buffers.get_mut(&active_buffer).unwrap();
+            if let Some(pos) = state.buffer.offset_to_position(position) {
+                state.primary_cursor_line_number =
+                    crate::model::buffer::LineNumber::Absolute(pos.line);
+            }
+            view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
+        }
+    }
+
     pub(super) fn perform_search(&mut self, query: &str) {
         if query.is_empty() {
             self.search_state = None;
@@ -2642,21 +2660,7 @@ impl Editor {
 
         // Move cursor to the first match
         let match_pos = matches[current_match_index];
-        {
-            let active_split = self.split_manager.active_split();
-            let active_buffer = self.active_buffer();
-            if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                view_state.cursors.primary_mut().position = match_pos;
-                view_state.cursors.primary_mut().anchor = None;
-                let state = self.buffers.get_mut(&active_buffer).unwrap();
-                // Update cached line number so the status bar shows the correct line
-                if let Some(pos) = state.buffer.offset_to_position(match_pos) {
-                    state.primary_cursor_line_number =
-                        crate::model::buffer::LineNumber::Absolute(pos.line);
-                }
-                view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-            }
-        }
+        self.move_cursor_to_match(match_pos);
 
         let num_matches = matches.len();
 
@@ -2979,21 +2983,7 @@ impl Editor {
             let match_pos = match_positions[target_index];
             let matches_len = match_positions.len();
 
-            {
-                let active_split = self.split_manager.active_split();
-                let active_buffer = self.active_buffer();
-                if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                    view_state.cursors.primary_mut().position = match_pos;
-                    view_state.cursors.primary_mut().anchor = None;
-                    let state = self.buffers.get_mut(&active_buffer).unwrap();
-                    // Update cached line number so the status bar shows the correct line
-                    if let Some(pos) = state.buffer.offset_to_position(match_pos) {
-                        state.primary_cursor_line_number =
-                            crate::model::buffer::LineNumber::Absolute(pos.line);
-                    }
-                    view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-                }
-            }
+            self.move_cursor_to_match(match_pos);
 
             self.set_status_message(
                 t!(
@@ -3388,20 +3378,7 @@ impl Editor {
         });
 
         // Move cursor to first match
-        let active_split = self.split_manager.active_split();
-        let active_buffer = self.active_buffer();
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            view_state.cursors.primary_mut().position = first_match_pos;
-            view_state.cursors.primary_mut().anchor = None;
-            // Ensure cursor is visible
-            let state = self.buffers.get_mut(&active_buffer).unwrap();
-            // Update cached line number so the status bar shows the correct line
-            if let Some(pos) = state.buffer.offset_to_position(first_match_pos) {
-                state.primary_cursor_line_number =
-                    crate::model::buffer::LineNumber::Absolute(pos.line);
-            }
-            view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-        }
+        self.move_cursor_to_match(first_match_pos);
 
         // Show the query-replace prompt
         self.prompt = Some(Prompt::new(
@@ -3705,21 +3682,7 @@ impl Editor {
 
     /// Move cursor to the current match in interactive replace
     pub(super) fn move_to_current_match(&mut self, ir_state: &InteractiveReplaceState) {
-        let match_pos = ir_state.current_match_pos;
-        let active_split = self.split_manager.active_split();
-        let active_buffer = self.active_buffer();
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            view_state.cursors.primary_mut().position = match_pos;
-            view_state.cursors.primary_mut().anchor = None;
-            // Ensure cursor is visible
-            let state = self.buffers.get_mut(&active_buffer).unwrap();
-            // Update cached line number so the status bar shows the correct line
-            if let Some(pos) = state.buffer.offset_to_position(match_pos) {
-                state.primary_cursor_line_number =
-                    crate::model::buffer::LineNumber::Absolute(pos.line);
-            }
-            view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-        }
+        self.move_cursor_to_match(ir_state.current_match_pos);
 
         // Update the prompt message (show [Wrapped] if we've wrapped around)
         let msg = if ir_state.has_wrapped {
