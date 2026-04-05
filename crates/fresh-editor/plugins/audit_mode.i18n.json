@@ -126,9 +126,9 @@
     "panel.help_review_footer": "REVIZE: [c]komentar  [a]schvalit  [x]odmitnout  [!]zmeny  [?]otazka  [u]zpet",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]zahodit  |  NAV: [n]dalsi [p]redchozi [Enter]detail  [q]ukoncit",
     "panel.help_export_footer": "EXPORT: [E]xportovat do .review/session.md  |  [O]celkove  [r]obnovit",
-    "section.staged": "Pripravene zmeny",
-    "section.unstaged": "Upravene (nepripravene)",
-    "section.untracked": "Nesledovane soubory",
+    "section.staged": "Připravené změny",
+    "section.unstaged": "Upravené (nepřipravené)",
+    "section.untracked": "Nesledované soubory",
     "debug.loaded": "Plugin revize rozdilu nacten s podporou komentaru"
   },
   "de": {
@@ -192,8 +192,8 @@
     "panel.help_review_footer": "REVIEW: [c]Kommentar  [a]Genehmigen  [x]Ablehnen  [!]Anderungen  [?]Frage  [u]Ruckgangig",
     "panel.help_stage_footer": "STAGE:  [s]tagen    [d]Verwerfen  |  NAV: [n]achster [p]rev [Enter]Details  [q]uit",
     "panel.help_export_footer": "EXPORT: [E]xportieren nach .review/session.md  |  [O]Gesamt  [r]Aktualisieren",
-    "section.staged": "Bereitgestellte Anderungen",
-    "section.unstaged": "Geandert (nicht bereitgestellt)",
+    "section.staged": "Bereitgestellte Änderungen",
+    "section.unstaged": "Geändert (nicht bereitgestellt)",
     "section.untracked": "Nicht verfolgte Dateien",
     "debug.loaded": "Review-Diff-Plugin mit Kommentarunterstutzung geladen"
   },
@@ -260,7 +260,7 @@
     "panel.help_export_footer": "EXPORTAR: [E]xportar a .review/session.md  |  [O]general  [r]efrescar",
     "section.staged": "Cambios preparados",
     "section.unstaged": "Modificados (sin preparar)",
-    "section.untracked": "Archivos sin seguimiento",
+    "section.untracked": "Archivos sin rastrear",
     "debug.loaded": "Plugin de revision de diferencias cargado con soporte de comentarios"
   },
   "fr": {
@@ -324,8 +324,8 @@
     "panel.help_review_footer": "REVUE: [c]ommentaire  [a]pprouver  [x]rejeter  [!]modifications  [?]question  [u]annuler",
     "panel.help_stage_footer": "STAGE:  [s]tager    [d]ecarter  |  NAV: [n]ext [p]rev [Enter]details  [q]uitter",
     "panel.help_export_footer": "EXPORT: [E]xporter vers .review/session.md  |  [O]general  [r]afraichir",
-    "section.staged": "Modifications indexees",
-    "section.unstaged": "Modifies (non indexes)",
+    "section.staged": "Modifications indexées",
+    "section.unstaged": "Modifiés (non indexés)",
     "section.untracked": "Fichiers non suivis",
     "debug.loaded": "Plugin de revue des differences charge avec prise en charge des commentaires"
   },
@@ -588,9 +588,9 @@
     "panel.help_review_footer": "REVISAO: [c]omentar  [a]provar  [x]rejeitar  [!]alteracoes  [?]pergunta  [u]desfazer",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]escartar  |  NAV: [n]ext [p]rev [Enter]detalhar  [q]sair",
     "panel.help_export_footer": "EXPORTAR: [E]xportar para .review/session.md  |  [O]geral  [r]atualizar",
-    "section.staged": "Alteracoes preparadas",
-    "section.unstaged": "Modificados (nao preparados)",
-    "section.untracked": "Arquivos nao rastreados",
+    "section.staged": "Alterações preparadas",
+    "section.unstaged": "Modificados (não preparados)",
+    "section.untracked": "Arquivos não rastreados",
     "debug.loaded": "Plugin de revisao de diferencas carregado com suporte a comentarios"
   },
   "ru": {
@@ -852,9 +852,9 @@
     "panel.help_review_footer": "XEM XÉT: [c]nhận xét  [a]duyệt  [x]từ chối  [!]cần thay đổi  [?]câu hỏi  [u]hoàn tác",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]bỏ  |  NAV: [n]tiếp [p]trước [Enter]chi tiết  [q]thoát",
     "panel.help_export_footer": "XUẤT: [E]xuất ra .review/session.md  |  [O]tổng thể  [r]làm mới",
-    "section.staged": "Thay doi da chuan bi",
-    "section.unstaged": "Da sua doi (chua chuan bi)",
-    "section.untracked": "Tep khong duoc theo doi",
+    "section.staged": "Thay đổi đã chuẩn bị",
+    "section.unstaged": "Đã sửa đổi (chưa chuẩn bị)",
+    "section.untracked": "Tệp không được theo dõi",
     "debug.loaded": "Plugin xem xét khác biệt đã tải với hỗ trợ nhận xét"
   },
   "zh-CN": {
