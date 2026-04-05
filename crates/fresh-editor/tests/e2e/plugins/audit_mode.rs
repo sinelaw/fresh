@@ -1549,3 +1549,148 @@ pub fn new_function() {
         screen
     );
 }
+
+/// Test that the review diff view shows section headers for staged, unstaged, and untracked files
+#[test]
+fn test_review_diff_section_headers() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    // Commit the plugin files so they don't appear as untracked
+    repo.git_add_all();
+    repo.git_commit("Add plugin files");
+
+    // 1. Staged change: modify lib.rs and stage it
+    repo.modify_file(
+        "src/lib.rs",
+        r#"pub struct Config {
+    pub port: u16,
+    pub host: String,
+    pub debug: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            port: 8080,
+            host: "localhost".to_string(),
+            debug: false,
+        }
+    }
+}
+
+pub fn process_request(data: &str) -> String {
+    format!("Processed: {}", data)
+}
+"#,
+    );
+    repo.stage_file("src/lib.rs");
+
+    // 2. Unstaged change: modify main.rs but don't stage it
+    repo.modify_file(
+        "src/main.rs",
+        r#"fn main() {
+    println!("Hello, modified world!");
+    let config = load_config();
+    start_server(config);
+}
+
+fn load_config() -> Config {
+    Config::default()
+}
+
+fn start_server(config: Config) {
+    println!("Starting server...");
+}
+"#,
+    );
+
+    // 3. Untracked file: create a brand new file
+    repo.create_file(
+        "src/new_module.rs",
+        "pub fn new_function() {\n    println!(\"I am new!\");\n}\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        50,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Open any file to start the editor
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("modified world"))
+        .unwrap();
+
+    // Trigger Review Diff via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for the Review Diff to finish loading
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            !screen.contains("Generating Review Diff Stream")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Review Diff with section headers:\n{}", screen);
+
+    // Should not have any errors
+    assert!(
+        !screen.contains("TypeError"),
+        "Should not show TypeError. Screen:\n{}",
+        screen
+    );
+
+    // Verify section headers are present
+    assert!(
+        screen.contains("Staged Changes"),
+        "Should show 'Staged Changes' section header. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("Modified (Unstaged)"),
+        "Should show 'Modified (Unstaged)' section header. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("Untracked Files"),
+        "Should show 'Untracked Files' section header. Screen:\n{}",
+        screen
+    );
+
+    // Verify the files appear under the correct sections
+    assert!(
+        screen.contains("lib.rs"),
+        "Should show staged file lib.rs. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("main.rs"),
+        "Should show unstaged file main.rs. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("new_module.rs"),
+        "Should show untracked file new_module.rs. Screen:\n{}",
+        screen
+    );
+}

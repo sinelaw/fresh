@@ -60,6 +60,9 @@
     "panel.help_review_footer": "REVIEW: [c]omment  [a]pprove  [x]reject  [!]needs-changes  [?]question  [u]ndo",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]iscard  |  NAV: [n]ext [p]rev [Enter]drill-down  [q]uit",
     "panel.help_export_footer": "EXPORT: [E]xport to .review/session.md  |  [O]verall feedback  [r]efresh",
+    "section.staged": "Staged Changes",
+    "section.unstaged": "Modified (Unstaged)",
+    "section.untracked": "Untracked Files",
     "debug.loaded": "Review Diff plugin loaded with review comments support"
   },
   "cs": {
@@ -123,6 +126,9 @@
     "panel.help_review_footer": "REVIZE: [c]komentar  [a]schvalit  [x]odmitnout  [!]zmeny  [?]otazka  [u]zpet",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]zahodit  |  NAV: [n]dalsi [p]redchozi [Enter]detail  [q]ukoncit",
     "panel.help_export_footer": "EXPORT: [E]xportovat do .review/session.md  |  [O]celkove  [r]obnovit",
+    "section.staged": "Pripravene zmeny",
+    "section.unstaged": "Upravene (nepripravene)",
+    "section.untracked": "Nesledovane soubory",
     "debug.loaded": "Plugin revize rozdilu nacten s podporou komentaru"
   },
   "de": {
@@ -186,6 +192,9 @@
     "panel.help_review_footer": "REVIEW: [c]Kommentar  [a]Genehmigen  [x]Ablehnen  [!]Anderungen  [?]Frage  [u]Ruckgangig",
     "panel.help_stage_footer": "STAGE:  [s]tagen    [d]Verwerfen  |  NAV: [n]achster [p]rev [Enter]Details  [q]uit",
     "panel.help_export_footer": "EXPORT: [E]xportieren nach .review/session.md  |  [O]Gesamt  [r]Aktualisieren",
+    "section.staged": "Bereitgestellte Anderungen",
+    "section.unstaged": "Geandert (nicht bereitgestellt)",
+    "section.untracked": "Nicht verfolgte Dateien",
     "debug.loaded": "Review-Diff-Plugin mit Kommentarunterstutzung geladen"
   },
   "es": {
@@ -249,6 +258,9 @@
     "panel.help_review_footer": "REVISION: [c]omentar  [a]probar  [x]rechazar  [!]cambios  [?]pregunta  [u]deshacer",
     "panel.help_stage_footer": "PREPARAR:  [s]tage    [d]escartar  |  NAV: [n]ext [p]rev [Enter]detallar  [q]salir",
     "panel.help_export_footer": "EXPORTAR: [E]xportar a .review/session.md  |  [O]general  [r]efrescar",
+    "section.staged": "Cambios preparados",
+    "section.unstaged": "Modificados (sin preparar)",
+    "section.untracked": "Archivos sin seguimiento",
     "debug.loaded": "Plugin de revision de diferencias cargado con soporte de comentarios"
   },
   "fr": {
@@ -312,6 +324,9 @@
     "panel.help_review_footer": "REVUE: [c]ommentaire  [a]pprouver  [x]rejeter  [!]modifications  [?]question  [u]annuler",
     "panel.help_stage_footer": "STAGE:  [s]tager    [d]ecarter  |  NAV: [n]ext [p]rev [Enter]details  [q]uitter",
     "panel.help_export_footer": "EXPORT: [E]xporter vers .review/session.md  |  [O]general  [r]afraichir",
+    "section.staged": "Modifications indexees",
+    "section.unstaged": "Modifies (non indexes)",
+    "section.untracked": "Fichiers non suivis",
     "debug.loaded": "Plugin de revue des differences charge avec prise en charge des commentaires"
   },
   "it": {
@@ -375,6 +390,9 @@
     "panel.help_review_footer": "REVISIONE: [c]ommenta  [a]pprova  [x]rifiuta  [!]richiede-modifiche  [?]domanda  [u]ndo",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]iscard  |  NAV: [n]ext [p]rev [Enter]drill-down  [q]uit",
     "panel.help_export_footer": "EXPORT: [E]sporta in .review/session.md  |  [O]verall feedback  [r]efresh",
+    "section.staged": "Modifiche preparate",
+    "section.unstaged": "Modificati (non preparati)",
+    "section.untracked": "File non tracciati",
     "debug.loaded": "Plugin Revisione differenze caricato con supporto commenti"
   },
   "ja": {
@@ -438,6 +456,9 @@
     "panel.help_review_footer": "レビュー: [c]コメント  [a]承認  [x]却下  [!]変更要  [?]質問  [u]元に戻す",
     "panel.help_stage_footer": "ステージ:  [s]ステージ    [d]破棄  |  NAV: [n]次 [p]前 [Enter]詳細  [q]終了",
     "panel.help_export_footer": "エクスポート: [E]xport to .review/session.md  |  [O]全体  [r]更新",
+    "section.staged": "ステージ済みの変更",
+    "section.unstaged": "変更あり（未ステージ）",
+    "section.untracked": "未追跡ファイル",
     "debug.loaded": "レビュー差分プラグインがコメントサポート付きで読み込まれました"
   },
   "ko": {
@@ -501,6 +522,9 @@
     "panel.help_review_footer": "검토: [c]코멘트  [a]승인  [x]거부  [!]변경  [?]질문  [u]실행취소",
     "panel.help_stage_footer": "스테이지:  [s]테이지    [d]삭제  |  NAV: [n]다음 [p]이전 [Enter]상세  [q]종료",
     "panel.help_export_footer": "내보내기: [E]xport to .review/session.md  |  [O]전체  [r]새로고침",
+    "section.staged": "스테이지된 변경사항",
+    "section.unstaged": "수정됨 (스테이지 안됨)",
+    "section.untracked": "추적되지 않는 파일",
     "debug.loaded": "리뷰 차이점 플러그인이 코멘트 지원과 함께 로드되었습니다"
   },
   "pt-BR": {
@@ -564,6 +588,9 @@
     "panel.help_review_footer": "REVISAO: [c]omentar  [a]provar  [x]rejeitar  [!]alteracoes  [?]pergunta  [u]desfazer",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]escartar  |  NAV: [n]ext [p]rev [Enter]detalhar  [q]sair",
     "panel.help_export_footer": "EXPORTAR: [E]xportar para .review/session.md  |  [O]geral  [r]atualizar",
+    "section.staged": "Alteracoes preparadas",
+    "section.unstaged": "Modificados (nao preparados)",
+    "section.untracked": "Arquivos nao rastreados",
     "debug.loaded": "Plugin de revisao de diferencas carregado com suporte a comentarios"
   },
   "ru": {
@@ -627,6 +654,9 @@
     "panel.help_review_footer": "РЕВЬЮ: [c]комментарий  [a]одобрить  [x]отклонить  [!]изменения  [?]вопрос  [u]отменить",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]отбросить  |  NAV: [n]след [p]пред [Enter]детали  [q]выход",
     "panel.help_export_footer": "ЭКСПОРТ: [E]кспорт в .review/session.md  |  [O]бщий  [r]обновить",
+    "section.staged": "Подготовленные изменения",
+    "section.unstaged": "Изменённые (неподготовленные)",
+    "section.untracked": "Неотслеживаемые файлы",
     "debug.loaded": "Плагин ревью изменений загружен с поддержкой комментариев"
   },
   "th": {
@@ -690,6 +720,9 @@
     "panel.help_review_footer": "ตรวจสอบ: [c]ความคิดเห็น  [a]อนุมัติ  [x]ปฏิเสธ  [!]แก้ไข  [?]คำถาม  [u]ยกเลิก",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]ทิ้ง  |  NAV: [n]ถัดไป [p]ก่อนหน้า [Enter]รายละเอียด  [q]ออก",
     "panel.help_export_footer": "ส่งออก: [E]xport to .review/session.md  |  [O]โดยรวม  [r]รีเฟรช",
+    "section.staged": "การเปลี่ยนแปลงที่จัดเตรียมแล้ว",
+    "section.unstaged": "แก้ไขแล้ว (ยังไม่จัดเตรียม)",
+    "section.untracked": "ไฟล์ที่ไม่ได้ติดตาม",
     "debug.loaded": "โหลดปลั๊กอินตรวจสอบความแตกต่างพร้อมรองรับความคิดเห็นแล้ว"
   },
   "uk": {
@@ -753,6 +786,9 @@
     "panel.help_review_footer": "РЕВ'Ю: [c]коментар  [a]схвалити  [x]відхилити  [!]зміни  [?]питання  [u]скасувати",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]відкинути  |  NAV: [n]наст [p]попер [Enter]деталі  [q]вихід",
     "panel.help_export_footer": "ЕКСПОРТ: [E]кспорт до .review/session.md  |  [O]загальний  [r]оновити",
+    "section.staged": "Підготовлені зміни",
+    "section.unstaged": "Змінені (непідготовлені)",
+    "section.untracked": "Невідстежувані файли",
     "debug.loaded": "Плагін рев'ю змін завантажено з підтримкою коментарів"
   },
   "vi": {
@@ -816,6 +852,9 @@
     "panel.help_review_footer": "XEM XÉT: [c]nhận xét  [a]duyệt  [x]từ chối  [!]cần thay đổi  [?]câu hỏi  [u]hoàn tác",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]bỏ  |  NAV: [n]tiếp [p]trước [Enter]chi tiết  [q]thoát",
     "panel.help_export_footer": "XUẤT: [E]xuất ra .review/session.md  |  [O]tổng thể  [r]làm mới",
+    "section.staged": "Thay doi da chuan bi",
+    "section.unstaged": "Da sua doi (chua chuan bi)",
+    "section.untracked": "Tep khong duoc theo doi",
     "debug.loaded": "Plugin xem xét khác biệt đã tải với hỗ trợ nhận xét"
   },
   "zh-CN": {
@@ -879,6 +918,9 @@
     "panel.help_review_footer": "审查: [c]评论  [a]批准  [x]拒绝  [!]修改  [?]提问  [u]撤销",
     "panel.help_stage_footer": "暂存:  [s]暂存    [d]丢弃  |  导航: [n]下一个 [p]上一个 [Enter]详情  [q]退出",
     "panel.help_export_footer": "导出: [E]导出到.review/session.md  |  [O]总体  [r]刷新",
+    "section.staged": "已暂存的更改",
+    "section.unstaged": "已修改（未暂存）",
+    "section.untracked": "未跟踪的文件",
     "debug.loaded": "审查差异插件已加载，支持评论功能"
   }
 }

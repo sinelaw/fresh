@@ -61,6 +61,7 @@ interface Hunk {
   reviewStatus: ReviewStatus;
   contextHeader: string;
   byteOffset: number; // Position in the virtual buffer
+  gitStatus?: 'staged' | 'unstaged' | 'untracked';
 }
 
 /**
@@ -95,6 +96,7 @@ const STYLE_ADD_TEXT: [number, number, number] = [150, 255, 150]; // Very Bright
 const STYLE_REMOVE_TEXT: [number, number, number] = [255, 150, 150]; // Very Bright Red
 const STYLE_STAGED: [number, number, number] = [100, 100, 100];
 const STYLE_DISCARDED: [number, number, number] = [120, 60, 60];
+const STYLE_SECTION_HEADER: [number, number, number] = [180, 140, 255]; // Purple for section headers
 const STYLE_COMMENT: [number, number, number] = [180, 180, 100]; // Yellow for comments
 const STYLE_COMMENT_BORDER: [number, number, number] = [100, 100, 60];
 const STYLE_APPROVED: [number, number, number] = [100, 200, 100]; // Green checkmark
@@ -166,11 +168,8 @@ function diffStrings(oldStr: string, newStr: string): DiffPart[] {
     return coalesced;
 }
 
-async function getGitDiff(): Promise<Hunk[]> {
-    const result = await editor.spawnProcess("git", ["diff", "HEAD", "--unified=3"]);
-    if (result.exit_code !== 0) return [];
-
-    const lines = result.stdout.split('\n');
+function parseDiffOutput(stdout: string, gitStatus: 'staged' | 'unstaged' | 'untracked'): Hunk[] {
+    const lines = stdout.split('\n');
     const hunks: Hunk[] = [];
     let currentFile = "";
     let currentHunk: Hunk | null = null;
@@ -189,7 +188,7 @@ async function getGitDiff(): Promise<Hunk[]> {
                 const oldStart = parseInt(match[1]);
                 const newStart = parseInt(match[2]);
                 currentHunk = {
-                    id: `${currentFile}:${newStart}`,
+                    id: `${currentFile}:${newStart}:${gitStatus}`,
                     file: currentFile,
                     range: { start: newStart, end: newStart },
                     oldRange: { start: oldStart, end: oldStart },
@@ -198,7 +197,8 @@ async function getGitDiff(): Promise<Hunk[]> {
                     status: 'pending',
                     reviewStatus: 'pending',
                     contextHeader: match[3]?.trim() || "",
-                    byteOffset: 0
+                    byteOffset: 0,
+                    gitStatus
                 };
                 hunks.push(currentHunk);
             }
@@ -208,47 +208,53 @@ async function getGitDiff(): Promise<Hunk[]> {
             }
         }
     }
+    return hunks;
+}
 
-    // Also include untracked (newly added) files
+async function getGitDiff(): Promise<Hunk[]> {
+    const allHunks: Hunk[] = [];
+
+    // Staged changes (git diff --cached)
+    const stagedResult = await editor.spawnProcess("git", ["diff", "--cached", "--unified=3"]);
+    if (stagedResult.exit_code === 0 && stagedResult.stdout.trim()) {
+        allHunks.push(...parseDiffOutput(stagedResult.stdout, 'staged'));
+    }
+
+    // Unstaged changes (git diff, working tree vs index)
+    const unstagedResult = await editor.spawnProcess("git", ["diff", "--unified=3"]);
+    if (unstagedResult.exit_code === 0 && unstagedResult.stdout.trim()) {
+        allHunks.push(...parseDiffOutput(unstagedResult.stdout, 'unstaged'));
+    }
+
+    // Untracked files
     const untrackedResult = await editor.spawnProcess("git", ["ls-files", "--others", "--exclude-standard"]);
     if (untrackedResult.exit_code === 0 && untrackedResult.stdout.trim()) {
-        const untrackedFiles = untrackedResult.stdout.trim().split('\n');
+        const untrackedFiles = untrackedResult.stdout.trim().split('\n').filter(f => f.length > 0);
         for (const file of untrackedFiles) {
-            const diffResult = await editor.spawnProcess("git", ["diff", "--no-index", "--unified=3", "--", "/dev/null", file]);
-            // git diff --no-index exits with 1 when there are differences, which is expected
-            if (diffResult.stdout) {
-                const diffLines = diffResult.stdout.split('\n');
-                let fileCurrentHunk: Hunk | null = null;
-                for (const dline of diffLines) {
-                    if (dline.startsWith('@@')) {
-                        const match = dline.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@(.*)/);
-                        if (match) {
-                            const newStart = parseInt(match[2]);
-                            fileCurrentHunk = {
-                                id: `${file}:${newStart}`,
-                                file: file,
-                                range: { start: newStart, end: newStart },
-                                oldRange: { start: 0, end: 0 },
-                                type: 'add',
-                                lines: [],
-                                status: 'pending',
-                                reviewStatus: 'pending',
-                                contextHeader: match[3]?.trim() || "",
-                                byteOffset: 0
-                            };
-                            hunks.push(fileCurrentHunk);
-                        }
-                    } else if (fileCurrentHunk && (dline.startsWith('+') || dline.startsWith('-') || dline.startsWith(' '))) {
-                        if (!dline.startsWith('---') && !dline.startsWith('+++')) {
-                            fileCurrentHunk.lines.push(dline);
-                        }
-                    }
+            const contentResult = await editor.spawnProcess("git", ["diff", "--no-index", "--unified=3", "/dev/null", file]);
+            if (contentResult.stdout.trim()) {
+                const hunks = parseDiffOutput(contentResult.stdout, 'untracked');
+                // Fix file paths from --no-index (may use full paths)
+                for (const h of hunks) {
+                    h.file = file;
+                    h.id = `${file}:${h.range.start}:untracked`;
+                    h.type = 'add';
                 }
+                allHunks.push(...hunks);
             }
         }
     }
 
-    return hunks;
+    // Sort: staged first, then unstaged, then untracked
+    const statusOrder: Record<string, number> = { staged: 0, unstaged: 1, untracked: 2 };
+    allHunks.sort((a, b) => {
+        const orderA = statusOrder[a.gitStatus || 'unstaged'];
+        const orderB = statusOrder[b.gitStatus || 'unstaged'];
+        if (orderA !== orderB) return orderA - orderB;
+        return a.file.localeCompare(b.file);
+    });
+
+    return allHunks;
 }
 
 interface HighlightTask {
@@ -300,8 +306,29 @@ async function renderReviewStream(): Promise<{ entries: TextPropertyEntry[], hig
   highlights.push({ range: [currentByte, currentByte + helpLen4], fg: STYLE_COMMENT_BORDER });
   currentByte += helpLen4;
 
+  let currentSection: string | undefined = undefined;
+
   for (let hunkIndex = 0; hunkIndex < state.hunks.length; hunkIndex++) {
     const hunk = state.hunks[hunkIndex];
+
+    // Insert section header when git status category changes
+    if (hunk.gitStatus && hunk.gitStatus !== currentSection) {
+      currentSection = hunk.gitStatus;
+      currentFile = ""; // Reset file tracking so file banner re-appears in new section
+      const sectionKey = hunk.gitStatus === 'staged' ? 'section.staged'
+        : hunk.gitStatus === 'unstaged' ? 'section.unstaged'
+        : 'section.untracked';
+      const sectionLabel = ` ${editor.t(sectionKey)} `;
+      const totalWidth = 70;
+      const prefix = "── ";
+      const suffixLen = Math.max(0, totalWidth - prefix.length - sectionLabel.length);
+      const sectionLine = `\n${prefix}${sectionLabel}${"─".repeat(suffixLen)}\n`;
+      const sectionLen = getByteLength(sectionLine);
+      entries.push({ text: sectionLine, properties: { type: "section-header", gitStatus: hunk.gitStatus } });
+      highlights.push({ range: [currentByte, currentByte + sectionLen], fg: STYLE_SECTION_HEADER, bold: true });
+      currentByte += sectionLen;
+    }
+
     if (hunk.file !== currentFile) {
       // Header & Border
       const titlePrefix = "┌─ ";
