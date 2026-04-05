@@ -1764,10 +1764,7 @@ fn test_review_diff_shows_untracked_and_staged_new_files() {
         .unwrap();
 
     let screen = harness.screen_to_string();
-    println!(
-        "Review Diff (untracked + staged new) screen:\n{}",
-        screen
-    );
+    println!("Review Diff (untracked + staged new) screen:\n{}", screen);
 
     // Should not have any errors
     assert!(

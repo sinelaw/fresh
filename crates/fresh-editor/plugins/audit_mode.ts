@@ -481,10 +481,9 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
 /**
  * Build the full display as exactly viewportHeight lines.
  * Layout:
- *   Row 0:        Header (left: GIT STATUS, right: DIFF FOR <file>)
- *   Rows 1..H-3:  Main content (left file list, │ divider, right diff)
- *   Row H-2:      Separator (full-width ─)
- *   Row H-1:      Hints bar
+ *   Row 0:        Toolbar (shortcuts)
+ *   Row 1:        Header (left: GIT STATUS, right: DIFF FOR <file>)
+ *   Rows 2..H-1:  Main content (left file list, │ divider, right diff)
  */
 function buildMagitDisplayEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
@@ -496,10 +495,9 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     const allFileLines = buildFileListLines();
     const diffLines = buildDiffLines(rightWidth);
 
-    const mainRows = H - 3; // rows 1..H-3
+    const mainRows = H - 2; // rows 2..H-1
 
     // --- File list scrolling ---
-    // Find selected line index in allFileLines
     let selectedLineIdx = -1;
     for (let i = 0; i < allFileLines.length; i++) {
         if (allFileLines[i].type === 'file' && allFileLines[i].fileIndex === state.selectedIndex) {
@@ -528,7 +526,15 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
 
     const visibleDiffLines = diffLines.slice(state.diffScrollOffset, state.diffScrollOffset + mainRows);
 
-    // --- Row 0: Header ---
+    // --- Row 0: Toolbar ---
+    const toolbar = " [Esc] Close  [Up/Down] Navigate  [PgUp/PgDn] Scroll Diff  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down";
+    entries.push({
+        text: toolbar.substring(0, W).padEnd(W) + "\n",
+        style: { fg: STYLE_FOOTER },
+        properties: { type: "toolbar" },
+    });
+
+    // --- Row 1: Header ---
     const selectedFile = state.files[state.selectedIndex];
     const leftHeader = " GIT STATUS";
     const rightHeader = selectedFile ? ` DIFF FOR ${selectedFile.path}` : " DIFF";
@@ -540,7 +546,7 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     entries.push({ text: rightHeaderPadded, style: { fg: STYLE_HEADER, bold: true }, properties: { type: "header" } });
     entries.push({ text: "\n", properties: { type: "newline" } });
 
-    // --- Rows 1..H-3: Main content ---
+    // --- Rows 2..H-1: Main content ---
     for (let i = 0; i < mainRows; i++) {
         const fileItem = visibleFileLines[i];
         const diffItem = visibleDiffLines[i];
@@ -580,22 +586,6 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
         // Newline
         entries.push({ text: "\n", properties: { type: "newline" } });
     }
-
-    // --- Row H-2: Separator ---
-    const sepLine = "─".repeat(W);
-    entries.push({
-        text: sepLine + "\n",
-        style: { fg: STYLE_DIVIDER },
-        properties: { type: "separator" },
-    });
-
-    // --- Row H-1: Hints bar ---
-    const hints = " [Esc] Close  [j/k] Navigate  [PgUp/PgDn] Scroll Diff  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down";
-    entries.push({
-        text: hints.substring(0, W) + "\n",
-        style: { fg: STYLE_FOOTER },
-        properties: { type: "hints" },
-    });
 
     return entries;
 }
