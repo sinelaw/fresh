@@ -2786,3 +2786,58 @@ fn test_search_f3_navigates_all_matches_large_file() {
         harness.assert_screen_contains(&format!("Match {} of 4", n));
     }
 }
+
+/// Test that the status bar line number updates when stepping through search results (F3).
+/// Regression test for https://github.com/sinelaw/fresh/issues/1466
+#[test]
+fn test_search_status_bar_line_number_updates_on_f3() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create a file where "hello" appears on lines 1, 3, and 5
+    std::fs::write(
+        &file_path,
+        "hello world\nline two\nhello again\nline four\nhello final\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Verify we start at line 1
+    harness.assert_screen_contains("Ln 1, Col 1");
+
+    // Open search with Ctrl+F
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type search query and confirm
+    harness.type_text("hello").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // First match is on line 1 — status bar should show Ln 1
+    harness.assert_screen_contains("Ln 1,");
+
+    // F3 to go to second match (line 3)
+    harness
+        .send_key(KeyCode::F(3), KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // BUG: status bar should show Ln 3 but it stays at the line where search started
+    harness.assert_screen_contains("Ln 3,");
+
+    // F3 to go to third match (line 5)
+    harness
+        .send_key(KeyCode::F(3), KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    harness.assert_screen_contains("Ln 5,");
+}
