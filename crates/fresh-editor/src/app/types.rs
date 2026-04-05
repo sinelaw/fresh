@@ -212,25 +212,32 @@ impl BufferMetadata {
     /// Create metadata for a file-backed buffer
     ///
     /// # Arguments
-    /// * `path` - The canonical absolute path to the file
+    /// * `canonical_path` - The canonical (symlink-resolved) absolute path to the file
+    /// * `display_path` - The user-visible path before canonicalization (for library detection)
     /// * `working_dir` - The canonical working directory for computing relative display name
-    pub fn with_file(path: PathBuf, working_dir: &Path) -> Self {
+    pub fn with_file(canonical_path: PathBuf, display_path: &Path, working_dir: &Path) -> Self {
         // Compute URI from the absolute path
-        let file_uri = file_path_to_lsp_uri(&path);
+        let file_uri = file_path_to_lsp_uri(&canonical_path);
 
         // Compute display name (project-relative when under working_dir, else absolute path).
         // Use canonicalized forms first to handle macOS /var -> /private/var differences.
-        let display_name = Self::display_name_for_path(&path, working_dir);
+        let display_name = Self::display_name_for_path(&canonical_path, working_dir);
 
         // Check if this is a library file (in vendor directories or standard libraries).
         // Library files are read-only (to prevent accidental edits) but LSP stays
         // enabled so that Goto Definition, Hover, Find References, etc. still work
         // when the user navigates into library source code (issue #1344).
-        let is_library = Self::is_library_path(&path, working_dir);
+        //
+        // A file is only considered a library file if BOTH the canonical path and the
+        // user-visible path are in a library directory. This prevents symlinked dotfiles
+        // (e.g., ~/.bash_profile -> /nix/store/...) from being marked read-only when
+        // the user explicitly opened a non-library path (issue #1469).
+        let is_library = Self::is_library_path(&canonical_path, working_dir)
+            && Self::is_library_path(display_path, working_dir);
 
         Self {
             kind: BufferKind::File {
-                path,
+                path: canonical_path,
                 uri: file_uri,
             },
             display_name,

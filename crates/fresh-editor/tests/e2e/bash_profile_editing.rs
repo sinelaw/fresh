@@ -26,11 +26,8 @@ fn test_bash_profile_is_editable() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(
-            &bash_profile_path,
-            std::fs::Permissions::from_mode(0o644),
-        )
-        .unwrap();
+        std::fs::set_permissions(&bash_profile_path, std::fs::Permissions::from_mode(0o644))
+            .unwrap();
     }
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();

@@ -338,18 +338,11 @@ impl Editor {
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         // Create metadata for this buffer
-        let mut metadata =
-            super::types::BufferMetadata::with_file(path.to_path_buf(), &self.working_dir);
-
-        // Fix for issue #1469: If the user-visible (pre-canonicalization) path is NOT
-        // in a library directory but the canonical path IS (e.g., ~/.bash_profile is a
-        // symlink to /nix/store/... via home-manager), don't mark it as a library file.
-        // The user explicitly opened a non-library path; respect their intent.
-        if metadata.read_only
-            && !super::types::BufferMetadata::is_library_path(&display_path, &self.working_dir)
-        {
-            metadata.read_only = false;
-        }
+        let mut metadata = super::types::BufferMetadata::with_file(
+            path.to_path_buf(),
+            &display_path,
+            &self.working_dir,
+        );
 
         // Mark binary files in metadata and disable LSP
         if is_binary {
@@ -489,8 +482,11 @@ impl Editor {
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         // Create metadata
-        let metadata =
-            super::types::BufferMetadata::with_file(path.to_path_buf(), &self.working_dir);
+        let metadata = super::types::BufferMetadata::with_file(
+            path.to_path_buf(),
+            &display_path,
+            &self.working_dir,
+        );
         self.buffer_metadata.insert(buffer_id, metadata);
 
         // Add to preferred split's tabs (avoids labeled splits like sidebars)
@@ -595,8 +591,11 @@ impl Editor {
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
-        let metadata =
-            super::types::BufferMetadata::with_file(path.to_path_buf(), &self.working_dir);
+        let metadata = super::types::BufferMetadata::with_file(
+            path.to_path_buf(),
+            &display_path,
+            &self.working_dir,
+        );
         self.buffer_metadata.insert(buffer_id, metadata);
 
         // Add to preferred split's tabs (avoids labeled splits like sidebars)
@@ -737,8 +736,11 @@ impl Editor {
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
-        let metadata =
-            super::types::BufferMetadata::with_file(path.to_path_buf(), &self.working_dir);
+        let metadata = super::types::BufferMetadata::with_file(
+            path.to_path_buf(),
+            &display_path,
+            &self.working_dir,
+        );
         self.buffer_metadata.insert(buffer_id, metadata);
 
         // Add to preferred split's tabs (avoids labeled splits like sidebars)
