@@ -769,8 +769,8 @@ impl StatusBarRenderer {
                     spans.push(Span::styled(
                         prefix.to_string(),
                         Style::default()
-                            .fg(theme.status_warning_indicator_fg)
-                            .bg(theme.status_warning_indicator_bg),
+                            .fg(theme.status_error_indicator_fg)
+                            .bg(theme.status_error_indicator_bg),
                     ));
                     spans.push(Span::styled(
                         rest.to_string(),
@@ -782,8 +782,8 @@ impl StatusBarRenderer {
                     spans.push(Span::styled(
                         displayed_left.clone(),
                         Style::default()
-                            .fg(theme.status_warning_indicator_fg)
-                            .bg(theme.status_warning_indicator_bg),
+                            .fg(theme.status_error_indicator_fg)
+                            .bg(theme.status_error_indicator_bg),
                     ));
                 }
             } else {
@@ -1008,8 +1008,8 @@ impl StatusBarRenderer {
                 spans.push(Span::styled(
                     displayed_left.clone(),
                     Style::default()
-                        .fg(theme.status_warning_indicator_fg)
-                        .bg(theme.status_warning_indicator_bg),
+                        .fg(theme.status_error_indicator_fg)
+                        .bg(theme.status_error_indicator_bg),
                 ));
             } else {
                 spans.push(Span::styled(

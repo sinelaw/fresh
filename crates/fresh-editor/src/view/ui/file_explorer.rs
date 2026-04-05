@@ -131,10 +131,10 @@ impl FileExplorerRenderer {
         let (title_style, border_style) = if remote_disconnected {
             (
                 Style::default()
-                    .fg(theme.status_warning_indicator_fg)
-                    .bg(theme.status_warning_indicator_bg)
+                    .fg(theme.status_error_indicator_fg)
+                    .bg(theme.status_error_indicator_bg)
                     .add_modifier(Modifier::BOLD),
-                Style::default().fg(theme.status_warning_indicator_bg),
+                Style::default().fg(theme.status_error_indicator_bg),
             )
         } else if is_focused {
             (
