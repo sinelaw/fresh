@@ -151,9 +151,7 @@ impl SshConnection {
         let mut ready_line = String::new();
         match reader.read_line(&mut ready_line).await {
             Ok(0) => {
-                return Err(SshError::AgentStartFailed(
-                    "connection closed (check terminal for SSH errors)".to_string(),
-                ));
+                return Err(ssh_eof_error(&mut child, &params).await);
             }
             Ok(_) => {}
             Err(e) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),
@@ -334,6 +332,55 @@ where
 
 /// Establish a new SSH connection and return the raw transport + child process.
 ///
+/// Build a descriptive error when the SSH process closes stdout (EOF) without
+/// sending a ready message. We wait for the SSH process to exit and inspect its
+/// exit code to give the user a more actionable message than a generic
+/// "connection closed".
+async fn ssh_eof_error(child: &mut Child, params: &ConnectionParams) -> SshError {
+    // Give SSH a moment to finish so we can read its exit code.
+    let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await;
+
+    let hint = match status {
+        Ok(Ok(status)) => {
+            match status.code() {
+                // 255 is SSH's conventional exit code for connection errors
+                // (host unreachable, connection refused, DNS failure, auth
+                // failure, etc.).
+                Some(255) => format!(
+                    "SSH could not connect to {}. Check that the host is \
+                     reachable, the hostname is correct, and your SSH \
+                     credentials are valid (exit code 255)",
+                    params
+                ),
+                Some(127) => format!(
+                    "python3 was not found on the remote host {}. \
+                     Ensure Python 3 is installed on the remote machine",
+                    params
+                ),
+                Some(code) => format!(
+                    "SSH process exited with code {} while connecting to {}",
+                    code, params
+                ),
+                None => format!(
+                    "SSH process was killed by a signal while connecting to {}",
+                    params
+                ),
+            }
+        }
+        Ok(Err(e)) => format!("failed to get SSH exit status: {}", e),
+        Err(_) => {
+            // Timed out waiting for exit — kill it so we don't leak.
+            let _ = child.start_kill();
+            format!(
+                "SSH process did not exit in time while connecting to {}",
+                params
+            )
+        }
+    };
+
+    SshError::AgentStartFailed(hint)
+}
+
 /// This is the lower-level function used by both `SshConnection::connect` and
 /// the reconnect task. It spawns an SSH process, bootstraps the Python agent,
 /// and returns the reader/writer pair ready for use with `AgentChannel`.
@@ -395,9 +442,7 @@ async fn establish_ssh_transport(
     let mut ready_line = String::new();
     match reader.read_line(&mut ready_line).await {
         Ok(0) => {
-            return Err(SshError::AgentStartFailed(
-                "connection closed during reconnect".to_string(),
-            ));
+            return Err(ssh_eof_error(&mut child, params).await);
         }
         Ok(_) => {}
         Err(e) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),
