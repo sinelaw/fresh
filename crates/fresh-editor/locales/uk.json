@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "Автозакриття",
   "action.settings_inherit": "Успадкувати значення (скасувати перевизначення)",
   "settings.btn_inherit": "Успадкувати",
+  "settings.btn_clear_category": "Очистити все",
   "settings.inherited_badge": "(Успадковано)"
 }

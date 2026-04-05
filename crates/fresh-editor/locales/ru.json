@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "Автозакрытие",
   "action.settings_inherit": "Наследовать значение (сбросить переопределение)",
   "settings.btn_inherit": "Наследовать",
+  "settings.btn_clear_category": "Очистить всё",
   "settings.inherited_badge": "(Унаследовано)"
 }

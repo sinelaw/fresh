@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "Cierre automático",
   "action.settings_inherit": "Heredar valor (quitar anulación)",
   "settings.btn_inherit": "Heredar",
+  "settings.btn_clear_category": "Borrar todo",
   "settings.inherited_badge": "(Heredado)"
 }

@@ -1291,11 +1291,10 @@ fn test_settings_percentage_value_saves_correctly() {
     // Open settings
     harness.open_settings().unwrap();
 
-    // Navigate to File Explorer category (down five times from General)
-    // Categories: General, Clipboard, Editor, Fallback, File Browser, File Explorer, ...
+    // Navigate to File Explorer category (down four times from General)
+    // Categories: General, Clipboard, Editor, File Browser, File Explorer, ...
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Clipboard
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Editor
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Fallback
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // File Browser
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // File Explorer
     harness.render().unwrap();
@@ -1906,7 +1905,7 @@ fn test_entry_dialog_focus_indicator() {
     // Navigate down to find a language entry in the Languages list
     // Languages section is after Keybinding Maps and Keybindings sections
     // Navigate down many times to reach Languages
-    for _ in 0..10 {
+    for _ in 0..11 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();

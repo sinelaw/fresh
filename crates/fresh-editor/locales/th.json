@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "ปิดอัตโนมัติ",
   "action.settings_inherit": "สืบทอดค่า (ยกเลิกการแทนที่)",
   "settings.btn_inherit": "สืบทอด",
+  "settings.btn_clear_category": "ล้างทั้งหมด",
   "settings.inherited_badge": "(สืบทอด)"
 }

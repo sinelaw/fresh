@@ -925,7 +925,8 @@ fn render_setting_item_pure(
         skip_top,
         theme,
         label_width.map(|w| w.saturating_sub(focus_indicator_width)),
-        item.read_only || item.is_null, // Treat null values as read-only (dimmed display)
+        item.read_only,
+        item.is_null,
     );
 
     // Render nullable UI elements: (Inherited) badge or [Inherit] button
@@ -1051,6 +1052,7 @@ fn render_control(
     theme: &Theme,
     label_width: Option<u16>,
     read_only: bool,
+    is_null: bool,
 ) -> ControlLayoutInfo {
     match control {
         // Single-row controls: only render if not skipped
@@ -1102,7 +1104,29 @@ fn render_control(
                 return ControlLayoutInfo::Text(Rect::default());
             }
             if read_only {
-                // Render read-only text with dimmed brackets to indicate input presence
+                // Truly read-only fields (e.g., Key: in entry dialogs) render as plain text
+                let label_w = label_width.unwrap_or(20);
+                let label_style = Style::default().fg(theme.editor_fg);
+                let value_style = Style::default().fg(theme.line_number_fg);
+                let label = format!("{}: ", state.label);
+                let value = &state.value;
+
+                let label_area = Rect::new(area.x, area.y, label_w, 1);
+                let value_area = Rect::new(
+                    area.x + label_w,
+                    area.y,
+                    area.width.saturating_sub(label_w),
+                    1,
+                );
+
+                frame.render_widget(Paragraph::new(label.clone()).style(label_style), label_area);
+                frame.render_widget(
+                    Paragraph::new(value.as_str()).style(value_style),
+                    value_area,
+                );
+                ControlLayoutInfo::Text(Rect::default())
+            } else if is_null {
+                // Nullable-null fields render with dimmed brackets to indicate input presence
                 let colors = TextInputColors::from_theme_disabled(theme);
                 let text_layout =
                     render_text_input_aligned(frame, area, state, &colors, 30, label_width);
@@ -3236,6 +3260,7 @@ fn render_entry_dialog_inner(
             theme,
             Some(label_col_width.saturating_sub(focus_indicator_width)),
             item.read_only,
+            item.is_null,
         );
 
         screen_y += render_height as u16;

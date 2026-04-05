@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "Tự động đóng",
   "action.settings_inherit": "Kế thừa giá trị (bỏ ghi đè)",
   "settings.btn_inherit": "Kế thừa",
+  "settings.btn_clear_category": "Xóa tất cả",
   "settings.inherited_badge": "(Kế thừa)"
 }

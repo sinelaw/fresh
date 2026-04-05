@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "自動閉じ",
   "action.settings_inherit": "値を継承（上書きを解除）",
   "settings.btn_inherit": "継承",
+  "settings.btn_clear_category": "すべてクリア",
   "settings.inherited_badge": "（継承済み）"
 }

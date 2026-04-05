@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "Fechamento automático",
   "action.settings_inherit": "Herdar valor (remover substituição)",
   "settings.btn_inherit": "Herdar",
+  "settings.btn_clear_category": "Limpar tudo",
   "settings.inherited_badge": "(Herdado)"
 }

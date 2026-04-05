@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "Automatické uzavírání",
   "action.settings_inherit": "Zdědit hodnotu (zrušit přepsání)",
   "settings.btn_inherit": "Zdědit",
+  "settings.btn_clear_category": "Vymazat vše",
   "settings.inherited_badge": "(Zděděno)"
 }

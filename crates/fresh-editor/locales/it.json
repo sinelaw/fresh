@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "Chiusura automatica",
   "action.settings_inherit": "Eredita valore (rimuovi sovrascrittura)",
   "settings.btn_inherit": "Eredita",
+  "settings.btn_clear_category": "Cancella tutto",
   "settings.inherited_badge": "(Ereditato)"
 }

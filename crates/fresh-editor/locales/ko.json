@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "자동 닫기",
   "action.settings_inherit": "값 상속 (재정의 해제)",
   "settings.btn_inherit": "상속",
+  "settings.btn_clear_category": "모두 지우기",
   "settings.inherited_badge": "(상속됨)"
 }

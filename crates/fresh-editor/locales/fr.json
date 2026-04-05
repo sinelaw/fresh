@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "Fermeture automatique",
   "action.settings_inherit": "Hériter la valeur (supprimer le remplacement)",
   "settings.btn_inherit": "Hériter",
+  "settings.btn_clear_category": "Tout effacer",
   "settings.inherited_badge": "(Hérité)"
 }

@@ -1293,5 +1293,6 @@
   "settings.field.editor.auto_close": "Automatisches Schließen",
   "action.settings_inherit": "Wert erben (Überschreibung aufheben)",
   "settings.btn_inherit": "Erben",
+  "settings.btn_clear_category": "Alle löschen",
   "settings.inherited_badge": "(Geerbt)"
 }
