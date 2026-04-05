@@ -1453,3 +1453,99 @@ pub fn new_function() {
         screen
     );
 }
+
+/// Test that drill-down (side-by-side diff) works for newly added (untracked) files
+/// Before the fix, review_drill_down() would fail because git show HEAD:<file> errors
+/// for files that don't exist in HEAD, causing a silent early return.
+/// Reproduces https://github.com/sinelaw/fresh/issues/1452
+#[test]
+fn test_review_diff_drill_down_added_file() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    // Create an initial commit
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Create a brand new untracked file
+    let new_file_path = repo.path.join("src/new_module.rs");
+    let new_file_content = r#"/// A brand new module
+pub fn new_function() {
+    println!("This is a new file!");
+}
+"#;
+    fs::write(&new_file_path, new_file_content).expect("Failed to create new file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Open any file to start
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("main"))
+        .unwrap();
+
+    // Trigger Review Diff
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for Review Diff to complete and show the untracked file's hunk
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            !screen.contains("Generating Review Diff Stream") && screen.contains("hunks")
+        })
+        .unwrap();
+
+    // Navigate to the first hunk using 'n' (next hunk), then drill down with Enter
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for side-by-side diff view to open - tab shows "*Diff: <filename>*"
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("*Diff:") || screen.contains("OLD (HEAD)")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Drill-down (added file) screen:\n{}", screen);
+
+    // Before the fix, git show HEAD:<file> would fail for untracked files
+    // and the drill-down would silently abort with "failed" status
+    assert!(
+        !screen.contains("TypeError"),
+        "Should not show any TypeError. Screen:\n{}",
+        screen
+    );
+
+    // The new file content should be visible in the side-by-side view
+    assert!(
+        screen.contains("new_function") || screen.contains("brand new"),
+        "Side-by-side diff should show the new file's content. Screen:\n{}",
+        screen
+    );
+}

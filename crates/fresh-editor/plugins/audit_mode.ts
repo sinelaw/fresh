@@ -1172,9 +1172,9 @@ async function review_drill_down() {
                 else if (line.startsWith(' ')) { oldCount++; newCount++; }
             }
             return {
-                oldStart: fh.oldRange.start - 1,  // Convert to 0-indexed
+                oldStart: Math.max(0, fh.oldRange.start - 1),  // Convert to 0-indexed (0 for new files)
                 oldCount: oldCount || 1,
-                newStart: fh.range.start - 1,     // Convert to 0-indexed
+                newStart: Math.max(0, fh.range.start - 1),     // Convert to 0-indexed
                 newCount: newCount || 1
             };
         });
@@ -1763,9 +1763,9 @@ async function side_by_side_diff_current_file() {
 
     // Convert hunks to composite buffer format
     const compositeHunks: TsCompositeHunk[] = fileHunks.map(h => ({
-        oldStart: h.oldRange.start - 1,  // Convert to 0-indexed
-        oldCount: h.oldRange.end - h.oldRange.start + 1,
-        newStart: h.range.start - 1,     // Convert to 0-indexed
+        oldStart: Math.max(0, h.oldRange.start - 1),  // Convert to 0-indexed (0 for new files)
+        oldCount: Math.max(1, h.oldRange.end - h.oldRange.start + 1),
+        newStart: Math.max(0, h.range.start - 1),     // Convert to 0-indexed
         newCount: h.range.end - h.range.start + 1
     }));
 
