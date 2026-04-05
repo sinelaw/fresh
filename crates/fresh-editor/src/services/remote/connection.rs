@@ -370,7 +370,9 @@ async fn ssh_eof_error(child: &mut Child, params: &ConnectionParams) -> SshError
         Ok(Err(e)) => format!("failed to get SSH exit status: {}", e),
         Err(_) => {
             // Timed out waiting for exit — kill it so we don't leak.
-            let _ = child.start_kill();
+            if let Err(e) = child.start_kill() {
+                tracing::warn!("Failed to kill timed-out SSH process: {}", e);
+            }
             format!(
                 "SSH process did not exit in time while connecting to {}",
                 params
