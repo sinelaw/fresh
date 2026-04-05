@@ -837,4 +837,43 @@ mod tests {
         assert_eq!(humanize_name("check_for_updates"), "Check For Updates");
         assert_eq!(humanize_name("lsp"), "Lsp");
     }
+
+    #[test]
+    fn test_enum_from_parsed_from_schema() {
+        let schema_json = r##"{
+            "type": "object",
+            "properties": {
+                "default_language": {
+                    "type": ["string", "null"],
+                    "x-enum-from": "/languages"
+                },
+                "theme": {
+                    "type": "string"
+                }
+            }
+        }"##;
+
+        let categories = parse_schema(schema_json).unwrap();
+        let general = &categories[0];
+        let default_lang = general
+            .settings
+            .iter()
+            .find(|s| s.name == "Default Language")
+            .expect("should have Default Language setting");
+
+        assert_eq!(
+            default_lang.enum_from.as_deref(),
+            Some("/languages"),
+            "enum_from should be parsed from x-enum-from"
+        );
+        assert!(default_lang.nullable, "should be nullable");
+
+        // theme should not have enum_from
+        let theme = general
+            .settings
+            .iter()
+            .find(|s| s.name == "Theme")
+            .expect("should have Theme setting");
+        assert!(theme.enum_from.is_none());
+    }
 }
