@@ -111,21 +111,22 @@ const state: ReviewState = {
 // --- Refresh State ---
 
 // --- Colors & Styles ---
-const STYLE_BORDER: [number, number, number] = [70, 70, 70]; 
-const STYLE_HEADER: [number, number, number] = [120, 120, 255]; 
-const STYLE_FILE_NAME: [number, number, number] = [220, 220, 100]; 
-const STYLE_ADD_BG: [number, number, number] = [40, 100, 40]; // Brighter Green BG
-const STYLE_REMOVE_BG: [number, number, number] = [100, 40, 40]; // Brighter Red BG
-const STYLE_ADD_TEXT: [number, number, number] = [150, 255, 150]; // Very Bright Green
-const STYLE_REMOVE_TEXT: [number, number, number] = [255, 150, 150]; // Very Bright Red
-const STYLE_STAGED: [number, number, number] = [100, 100, 100];
-const STYLE_DISCARDED: [number, number, number] = [120, 60, 60];
-const STYLE_SECTION_HEADER: [number, number, number] = [180, 140, 255]; // Purple for section headers
-const STYLE_COMMENT: [number, number, number] = [180, 180, 100]; // Yellow for comments
-const STYLE_COMMENT_BORDER: [number, number, number] = [100, 100, 60];
-const STYLE_APPROVED: [number, number, number] = [100, 200, 100]; // Green checkmark
-const STYLE_REJECTED: [number, number, number] = [200, 100, 100]; // Red X
-const STYLE_QUESTION: [number, number, number] = [200, 200, 100]; // Yellow ?
+// Colors use theme keys where possible, falling back to direct values
+const STYLE_BORDER: OverlayColorSpec = "ui.split_separator_fg";
+const STYLE_HEADER: OverlayColorSpec = "syntax.keyword";
+const STYLE_FILE_NAME: OverlayColorSpec = "syntax.string";
+const STYLE_ADD_BG: OverlayColorSpec = "editor.diff_add_bg";
+const STYLE_REMOVE_BG: OverlayColorSpec = "editor.diff_remove_bg";
+const STYLE_ADD_TEXT: OverlayColorSpec = "diagnostic.info_fg";
+const STYLE_REMOVE_TEXT: OverlayColorSpec = "diagnostic.error_fg";
+const STYLE_STAGED: OverlayColorSpec = "editor.line_number_fg";
+const STYLE_DISCARDED: OverlayColorSpec = "diagnostic.error_fg";
+const STYLE_SECTION_HEADER: OverlayColorSpec = "syntax.type";
+const STYLE_COMMENT: OverlayColorSpec = "diagnostic.warning_fg";
+const STYLE_COMMENT_BORDER: OverlayColorSpec = "ui.split_separator_fg";
+const STYLE_APPROVED: OverlayColorSpec = "diagnostic.info_fg";
+const STYLE_REJECTED: OverlayColorSpec = "diagnostic.error_fg";
+const STYLE_QUESTION: OverlayColorSpec = "diagnostic.warning_fg";
 
 /**
  * Calculate UTF-8 byte length of a string manually since TextEncoder is not available
@@ -364,10 +365,10 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
 // --- New magit-style rendering (Step 2 of rewrite) ---
 
-const STYLE_SELECTED_BG: [number, number, number] = [50, 50, 90];
-const STYLE_DIVIDER: [number, number, number] = [60, 60, 60];
-const STYLE_FOOTER: [number, number, number] = [140, 140, 140];
-const STYLE_HUNK_HEADER: [number, number, number] = [100, 100, 200];
+const STYLE_SELECTED_BG: OverlayColorSpec = "editor.selection_bg";
+const STYLE_DIVIDER: OverlayColorSpec = "ui.split_separator_fg";
+const STYLE_FOOTER: OverlayColorSpec = "ui.status_bar_fg";
+const STYLE_HUNK_HEADER: OverlayColorSpec = "syntax.keyword";
 
 interface ListLine {
     text: string;
@@ -943,8 +944,8 @@ function computeFullFileAlignedDiff(oldContent: string, newContent: string, hunk
 
 interface HighlightTask {
     range: [number, number];
-    fg: [number, number, number];
-    bg?: [number, number, number];
+    fg: OverlayColorSpec;
+    bg?: OverlayColorSpec;
     bold?: boolean;
     italic?: boolean;
     extend_to_line_end?: boolean;
