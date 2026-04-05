@@ -1087,12 +1087,14 @@ async function review_drill_down() {
         const absoluteFilePath = editor.pathJoin(gitRoot, h.file);
 
         // Get old (HEAD) and new (working) file content
+        let oldContent: string;
         const gitShow = await editor.spawnProcess("git", ["show", `HEAD:${h.file}`]);
         if (gitShow.exit_code !== 0) {
-            editor.setStatus(editor.t("status.failed_old_version"));
-            return;
+            // File doesn't exist in HEAD - it's a new untracked file
+            oldContent = "";
+        } else {
+            oldContent = gitShow.stdout;
         }
-        const oldContent = gitShow.stdout;
 
         // Read new file content (use absolute path for readFile)
         const newContent = await editor.readFile(absoluteFilePath);
