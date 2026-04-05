@@ -2649,6 +2649,11 @@ impl Editor {
                 view_state.cursors.primary_mut().position = match_pos;
                 view_state.cursors.primary_mut().anchor = None;
                 let state = self.buffers.get_mut(&active_buffer).unwrap();
+                // Update cached line number so the status bar shows the correct line
+                if let Some(pos) = state.buffer.offset_to_position(match_pos) {
+                    state.primary_cursor_line_number =
+                        crate::model::buffer::LineNumber::Absolute(pos.line);
+                }
                 view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
             }
         }
@@ -2981,6 +2986,11 @@ impl Editor {
                     view_state.cursors.primary_mut().position = match_pos;
                     view_state.cursors.primary_mut().anchor = None;
                     let state = self.buffers.get_mut(&active_buffer).unwrap();
+                    // Update cached line number so the status bar shows the correct line
+                    if let Some(pos) = state.buffer.offset_to_position(match_pos) {
+                        state.primary_cursor_line_number =
+                            crate::model::buffer::LineNumber::Absolute(pos.line);
+                    }
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                 }
             }
@@ -3385,6 +3395,11 @@ impl Editor {
             view_state.cursors.primary_mut().anchor = None;
             // Ensure cursor is visible
             let state = self.buffers.get_mut(&active_buffer).unwrap();
+            // Update cached line number so the status bar shows the correct line
+            if let Some(pos) = state.buffer.offset_to_position(first_match_pos) {
+                state.primary_cursor_line_number =
+                    crate::model::buffer::LineNumber::Absolute(pos.line);
+            }
             view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
         }
 
@@ -3698,6 +3713,11 @@ impl Editor {
             view_state.cursors.primary_mut().anchor = None;
             // Ensure cursor is visible
             let state = self.buffers.get_mut(&active_buffer).unwrap();
+            // Update cached line number so the status bar shows the correct line
+            if let Some(pos) = state.buffer.offset_to_position(match_pos) {
+                state.primary_cursor_line_number =
+                    crate::model::buffer::LineNumber::Absolute(pos.line);
+            }
             view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
         }
 
