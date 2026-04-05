@@ -1150,6 +1150,8 @@ fn connect_remote(remote: &RemoteLocation) -> AnyhowResult<FilesystemResult> {
         identity_file: None,
     };
 
+    eprintln!("Connecting via SSH to {}@{}...", remote.user, remote.host);
+
     // Establish SSH connection (this is async, so we block on it)
     let connection = rt
         .block_on(remote::SshConnection::connect(connection_params))
