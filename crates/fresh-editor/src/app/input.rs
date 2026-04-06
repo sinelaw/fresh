@@ -3164,10 +3164,18 @@ impl Editor {
             .iter()
             .map(|info| {
                 let is_current = Some(info) == available_themes.get(current_index);
+                // Strip URL scheme for cleaner display
+                let display_key = info
+                    .key
+                    .strip_prefix("https://")
+                    .or_else(|| info.key.strip_prefix("http://"))
+                    .or_else(|| info.key.strip_prefix("file:///"))
+                    .or_else(|| info.key.strip_prefix("file://"))
+                    .unwrap_or(&info.key);
                 let description = if is_current {
-                    Some(format!("{} (current)", info.key))
+                    Some(format!("{} (current)", display_key))
                 } else {
-                    Some(info.key.clone())
+                    Some(display_key.to_string())
                 };
                 crate::input::commands::Suggestion {
                     text: info.name.clone(),
