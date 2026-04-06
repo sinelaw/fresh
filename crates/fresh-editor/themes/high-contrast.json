@@ -5,7 +5,7 @@
     "fg": [255, 255, 255],
     "cursor": [255, 255, 255],
     "inactive_cursor": [127, 127, 127],
-    "selection_bg": [30, 35, 50],
+    "selection_bg": [50, 60, 90],
     "current_line_bg": [20, 20, 20],
     "line_number_fg": [140, 140, 140],
     "line_number_bg": [0, 0, 0],
