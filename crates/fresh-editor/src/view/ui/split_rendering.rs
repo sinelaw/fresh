@@ -1228,6 +1228,11 @@ impl SplitRenderer {
                 let view_prefs =
                     Self::resolve_view_preferences(state, split_view_states.as_deref(), split_id);
 
+                // When cursors are hidden, also suppress current-line highlighting
+                // and selection rendering so the buffer appears fully non-interactive.
+                let effective_highlight_current_line =
+                    view_prefs.highlight_current_line && state.show_cursors;
+
                 let mut empty_folds = FoldManager::new();
                 let folds = split_view_states
                     .as_deref_mut()
@@ -1263,7 +1268,7 @@ impl SplitRenderer {
                     software_cursor_only,
                     &view_prefs.rulers,
                     view_prefs.show_line_numbers,
-                    view_prefs.highlight_current_line,
+                    effective_highlight_current_line,
                     diagnostics_inline_text,
                     show_tilde,
                     cell_theme_map,
@@ -1474,6 +1479,9 @@ impl SplitRenderer {
             let view_prefs =
                 Self::resolve_view_preferences(state, Some(&*split_view_states), split_id);
 
+            let effective_highlight_current_line =
+                view_prefs.highlight_current_line && state.show_cursors;
+
             let mut empty_folds = FoldManager::new();
             let folds = split_view_states
                 .get_mut(&split_id)
@@ -1499,7 +1507,7 @@ impl SplitRenderer {
                 session_mode,
                 software_cursor_only,
                 view_prefs.show_line_numbers,
-                view_prefs.highlight_current_line,
+                effective_highlight_current_line,
                 diagnostics_inline_text,
                 show_tilde,
                 None, // No cell theme map for layout-only computation
@@ -4053,6 +4061,17 @@ impl SplitRenderer {
         state: &EditorState,
         cursors: &crate::model::cursor::Cursors,
     ) -> SelectionContext {
+        // When cursors are hidden, suppress all visual selection feedback
+        // (no selection highlight, no block rects, no cursor positions)
+        if !state.show_cursors {
+            return SelectionContext {
+                ranges: Vec::new(),
+                block_rects: Vec::new(),
+                cursor_positions: Vec::new(),
+                primary_cursor_position: cursors.primary().position,
+            };
+        }
+
         let ranges: Vec<Range<usize>> = cursors
             .iter()
             .filter_map(|(_, cursor)| {
@@ -4092,11 +4111,10 @@ impl SplitRenderer {
             })
             .collect();
 
-        let cursor_positions: Vec<usize> = if state.show_cursors {
-            cursors.iter().map(|(_, cursor)| cursor.position).collect()
-        } else {
-            Vec::new()
-        };
+        let cursor_positions: Vec<usize> = cursors
+            .iter()
+            .map(|(_, cursor)| cursor.position)
+            .collect();
 
         SelectionContext {
             ranges,
