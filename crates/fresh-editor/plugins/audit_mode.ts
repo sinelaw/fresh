@@ -542,7 +542,7 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     const visibleDiffLines = diffLines.slice(state.diffScrollOffset, state.diffScrollOffset + mainRows);
 
     // --- Row 0: Toolbar ---
-    const toolbar = " [Tab] Switch Panel  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down";
+    const toolbar = " [Tab] Switch Panel  [Alt+s] Stage  [Alt+u] Unstage  [Alt+d] Discard  [Enter] Drill-Down";
     entries.push({
         text: toolbar.substring(0, W).padEnd(W) + "\n",
         style: { fg: STYLE_FOOTER, bg: "ui.status_bar_bg" as OverlayColorSpec, extendToLineEnd: true },
@@ -1713,7 +1713,7 @@ async function start_review_diff() {
 
     const bufferId = await VirtualBufferFactory.create({
         name: "*Review Diff*", mode: "review-mode", readOnly: true,
-        entries: initialEntries, showLineNumbers: false
+        entries: initialEntries, showLineNumbers: false, showCursors: false
     });
     state.reviewBufferId = bufferId;
 
@@ -2043,24 +2043,24 @@ registerHandler("on_buffer_closed", on_buffer_closed);
 editor.on("buffer_closed", "on_buffer_closed");
 
 editor.defineMode("review-mode", [
-    // Navigation
+    // Navigation (arrow keys, vim keys, page keys)
     ["Up", "review_nav_up"], ["Down", "review_nav_down"],
     ["k", "review_nav_up"], ["j", "review_nav_down"],
     ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
     ["Home", "review_nav_home"], ["End", "review_nav_end"],
     ["Tab", "review_toggle_focus"],
     ["Left", "review_focus_files"], ["Right", "review_focus_diff"],
-    // Git actions
-    ["s", "review_stage_file"], ["u", "review_unstage_file"], ["d", "review_discard_file"],
     // Drill-down
     ["Enter", "review_drill_down"],
-    ["r", "review_refresh"],
-    // Review actions (apply to all hunks of selected file)
-    ["a", "review_approve_hunk"],
-    ["x", "review_reject_hunk"],
-    ["c", "review_add_comment"],
+    // Git actions (Alt+ to avoid accidental activation)
+    ["Alt+s", "review_stage_file"], ["Alt+u", "review_unstage_file"], ["Alt+d", "review_discard_file"],
+    ["Alt+r", "review_refresh"],
+    // Review actions (Alt+ to avoid accidental activation)
+    ["Alt+a", "review_approve_hunk"],
+    ["Alt+x", "review_reject_hunk"],
+    ["Alt+c", "review_add_comment"],
     // Export
-    ["E", "review_export_session"],
+    ["Alt+e", "review_export_session"],
 ], true);
 
 editor.debug("Review Diff plugin loaded with review comments support");

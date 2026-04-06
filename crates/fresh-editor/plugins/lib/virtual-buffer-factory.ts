@@ -12,6 +12,8 @@ export interface VirtualBufferOptions {
   entries: TextPropertyEntry[];
   /** Whether to show line numbers (default false) */
   showLineNumbers?: boolean;
+  /** Whether to show cursors (default true) */
+  showCursors?: boolean;
   /** Whether editing is disabled (default true) */
   editingDisabled?: boolean;
   /** Whether buffer is read-only (default true) */
@@ -55,6 +57,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         mode,
         entries,
         showLineNumbers = false,
+        showCursors,
         editingDisabled = true,
         readOnly = true,
       } = options;
@@ -65,6 +68,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         readOnly,
         entries,
         showLineNumbers,
+        showCursors,
         editingDisabled,
       });
       return result.bufferId;
@@ -79,6 +83,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         mode,
         entries,
         showLineNumbers = false,
+        showCursors,
         editingDisabled = true,
         readOnly = true,
       } = options;
@@ -90,6 +95,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         entries,
         splitId,
         showLineNumbers,
+        showCursors,
         editingDisabled,
       });
       return result.bufferId;
@@ -106,6 +112,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         ratio = 0.3,
         panelId,
         showLineNumbers = false,
+        showCursors,
         editingDisabled = true,
         readOnly = true,
       } = options;
@@ -118,6 +125,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         ratio,
         panelId,
         showLineNumbers,
+        showCursors,
         editingDisabled,
       });
       return result.bufferId;
