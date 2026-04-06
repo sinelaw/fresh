@@ -1191,6 +1191,14 @@ interface EditorAPI {
 	*/
 	closeCompositeBuffer(bufferId: number): boolean;
 	/**
+	* Navigate to the next hunk in a composite buffer
+	*/
+	compositeNextHunk(bufferId: number): boolean;
+	/**
+	* Navigate to the previous hunk in a composite buffer
+	*/
+	compositePrevHunk(bufferId: number): boolean;
+	/**
 	* Request syntax highlights for a buffer range (async)
 	*/
 	getHighlights(bufferId: number, start: number, end: number): Promise<TsHighlightSpan[]>;

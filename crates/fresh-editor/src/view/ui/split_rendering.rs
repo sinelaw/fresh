@@ -4111,10 +4111,8 @@ impl SplitRenderer {
             })
             .collect();
 
-        let cursor_positions: Vec<usize> = cursors
-            .iter()
-            .map(|(_, cursor)| cursor.position)
-            .collect();
+        let cursor_positions: Vec<usize> =
+            cursors.iter().map(|(_, cursor)| cursor.position).collect();
 
         SelectionContext {
             ranges,

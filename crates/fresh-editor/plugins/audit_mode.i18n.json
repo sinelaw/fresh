@@ -1,7 +1,7 @@
 {
   "en": {
     "cmd.review_diff": "Review Diff",
-    "cmd.review_diff_desc": "Start code review session",
+    "cmd.review_diff_desc": "Review git status and diffs in a code review session",
     "cmd.stop_review_diff": "Stop Review Diff",
     "cmd.stop_review_diff_desc": "Stop the review session",
     "cmd.refresh_review_diff": "Refresh Review Diff",

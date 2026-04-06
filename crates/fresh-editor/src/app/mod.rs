@@ -6678,6 +6678,14 @@ impl Editor {
             PluginCommand::CloseCompositeBuffer { buffer_id } => {
                 self.close_composite_buffer(buffer_id);
             }
+            PluginCommand::CompositeNextHunk { buffer_id } => {
+                let split_id = self.split_manager.active_split();
+                self.composite_next_hunk(split_id, buffer_id);
+            }
+            PluginCommand::CompositePrevHunk { buffer_id } => {
+                let split_id = self.split_manager.active_split();
+                self.composite_prev_hunk(split_id, buffer_id);
+            }
 
             // ==================== File Operations ====================
             PluginCommand::SaveBufferToPath { buffer_id, path } => {

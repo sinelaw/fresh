@@ -822,6 +822,8 @@ mod tests {
             "createCompositeBuffer",
             "updateCompositeAlignment",
             "closeCompositeBuffer",
+            "compositeNextHunk",
+            "compositePrevHunk",
             "getHighlights",
             "addOverlay",
             "clearNamespace",

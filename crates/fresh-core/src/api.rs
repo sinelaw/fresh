@@ -1385,6 +1385,12 @@ pub enum PluginCommand {
     /// Close a composite buffer
     CloseCompositeBuffer { buffer_id: BufferId },
 
+    /// Navigate to the next hunk in a composite buffer
+    CompositeNextHunk { buffer_id: BufferId },
+
+    /// Navigate to the previous hunk in a composite buffer
+    CompositePrevHunk { buffer_id: BufferId },
+
     /// Focus a specific split
     FocusSplit { split_id: SplitId },
 

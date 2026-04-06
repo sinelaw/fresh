@@ -1337,7 +1337,7 @@ async function review_drill_down() {
         sources: [
             {
                 bufferId: oldBufferId,
-                label: "OLD (HEAD)",
+                label: "OLD (HEAD)  [n/] next  [p/[] prev  [q] close",
                 editable: false,
                 style: {
                     removeBg: [80, 40, 40],
@@ -1368,6 +1368,11 @@ async function review_drill_down() {
     // Show the composite buffer (replaces the review diff buffer)
     editor.showBuffer(compositeBufferId);
 
+    // Auto-jump to first hunk after opening
+    if (compositeHunks.length > 0) {
+        editor.compositeNextHunk(compositeBufferId);
+    }
+
     const addedCount = fileHunks.reduce((sum, fh) => {
         return sum + fh.lines.filter(l => l.startsWith('+')).length;
     }, 0);
@@ -1379,6 +1384,20 @@ async function review_drill_down() {
     editor.setStatus(editor.t("status.diff_summary", { added: String(addedCount), removed: String(removedCount), modified: String(modifiedCount) }));
 }
 registerHandler("review_drill_down", review_drill_down);
+
+// --- Hunk navigation for side-by-side diff view ---
+
+function review_next_hunk() {
+    if (!activeCompositeDiffState) return;
+    editor.compositeNextHunk(activeCompositeDiffState.compositeBufferId);
+}
+registerHandler("review_next_hunk", review_next_hunk);
+
+function review_prev_hunk() {
+    if (!activeCompositeDiffState) return;
+    editor.compositePrevHunk(activeCompositeDiffState.compositeBufferId);
+}
+registerHandler("review_prev_hunk", review_prev_hunk);
 
 // Define the diff-view mode - inherits from "normal" for all standard navigation/selection/copy
 // Only adds diff-specific keybindings (close, hunk navigation)
@@ -1949,7 +1968,7 @@ async function side_by_side_diff_current_file() {
         sources: [
             {
                 bufferId: oldBufferId,
-                label: "OLD (HEAD)",
+                label: "OLD (HEAD)  [n/] next  [p/[] prev  [q] close",
                 editable: false,
                 style: {
                     removeBg: [80, 40, 40],

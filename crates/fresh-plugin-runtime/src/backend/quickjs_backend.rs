@@ -1985,6 +1985,24 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Navigate to the next hunk in a composite buffer
+    pub fn composite_next_hunk(&self, buffer_id: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::CompositeNextHunk {
+                buffer_id: BufferId(buffer_id as usize),
+            })
+            .is_ok()
+    }
+
+    /// Navigate to the previous hunk in a composite buffer
+    pub fn composite_prev_hunk(&self, buffer_id: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::CompositePrevHunk {
+                buffer_id: BufferId(buffer_id as usize),
+            })
+            .is_ok()
+    }
+
     // === Highlights ===
 
     /// Request syntax highlights for a buffer range (async)
