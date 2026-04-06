@@ -4,11 +4,11 @@
     "bg": [0, 43, 54],
     "fg": [131, 148, 150],
     "cursor": [38, 139, 210],
-    "selection_bg": [7, 54, 66],
+    "selection_bg": [22, 72, 86],
     "current_line_bg": [7, 54, 66],
-    "line_number_fg": [88, 110, 117],
+    "line_number_fg": [101, 123, 131],
     "line_number_bg": [0, 43, 54],
-    "whitespace_indicator_fg": [0, 60, 75]
+    "whitespace_indicator_fg": [40, 80, 95]
   },
   "ui": {
     "tab_active_fg": [253, 246, 227],
@@ -22,19 +22,22 @@
     "prompt_bg": [181, 137, 0],
     "prompt_selection_fg": [253, 246, 227],
     "prompt_selection_bg": [38, 139, 210],
-    "popup_border_fg": [88, 110, 117],
+    "popup_border_fg": [101, 123, 131],
     "popup_bg": [7, 54, 66],
     "popup_selection_bg": [38, 139, 210],
-    "popup_text_fg": [131, 148, 150],
+    "popup_selection_fg": [253, 246, 227],
+    "popup_text_fg": [147, 161, 161],
     "suggestion_bg": [7, 54, 66],
     "suggestion_selected_bg": [38, 139, 210],
     "help_bg": [0, 43, 54],
-    "help_fg": [131, 148, 150],
+    "help_fg": [147, 161, 161],
     "help_key_fg": [42, 161, 152],
-    "help_separator_fg": [88, 110, 117],
+    "help_separator_fg": [101, 123, 131],
     "help_indicator_fg": [220, 50, 47],
     "help_indicator_bg": [0, 43, 54],
-    "split_separator_fg": [88, 110, 117]
+    "split_separator_fg": [101, 123, 131],
+    "settings_selected_bg": [38, 139, 210],
+    "settings_selected_fg": [253, 246, 227]
   },
   "search": {
     "match_bg": [181, 137, 0],
@@ -47,17 +50,19 @@
     "warning_bg": [30, 54, 54],
     "info_fg": [38, 139, 210],
     "info_bg": [0, 50, 66],
-    "hint_fg": [88, 110, 117],
+    "hint_fg": [101, 123, 131],
     "hint_bg": [0, 43, 54]
   },
   "syntax": {
     "keyword": [133, 153, 0],
     "string": [42, 161, 152],
-    "comment": [88, 110, 117],
+    "comment": [101, 123, 131],
     "function": [38, 139, 210],
     "type": [181, 137, 0],
     "variable": [131, 148, 150],
     "constant": [203, 75, 22],
-    "operator": [131, 148, 150]
+    "operator": [131, 148, 150],
+    "punctuation_bracket": [147, 161, 161],
+    "punctuation_delimiter": [147, 161, 161]
   }
 }

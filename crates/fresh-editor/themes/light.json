@@ -98,6 +98,8 @@
     "type": [0, 128, 128],
     "variable": [0, 16, 128],
     "constant": [0, 112, 193],
-    "operator": [0, 0, 0]
+    "operator": [0, 0, 0],
+    "punctuation_bracket": [50, 50, 50],
+    "punctuation_delimiter": [50, 50, 50]
   }
 }

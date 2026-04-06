@@ -4,11 +4,11 @@
     "bg": [46, 52, 64],
     "fg": [216, 222, 233],
     "cursor": [136, 192, 208],
-    "selection_bg": [67, 76, 94],
+    "selection_bg": [80, 92, 116],
     "current_line_bg": [59, 66, 82],
-    "line_number_fg": [76, 86, 106],
+    "line_number_fg": [107, 118, 140],
     "line_number_bg": [46, 52, 64],
-    "whitespace_indicator_fg": [67, 76, 94]
+    "whitespace_indicator_fg": [90, 100, 120]
   },
   "ui": {
     "tab_active_fg": [236, 239, 244],
@@ -22,19 +22,22 @@
     "prompt_bg": [163, 190, 140],
     "prompt_selection_fg": [236, 239, 244],
     "prompt_selection_bg": [94, 129, 172],
-    "popup_border_fg": [76, 86, 106],
+    "popup_border_fg": [107, 118, 140],
     "popup_bg": [59, 66, 82],
     "popup_selection_bg": [94, 129, 172],
+    "popup_selection_fg": [236, 239, 244],
     "popup_text_fg": [216, 222, 233],
     "suggestion_bg": [59, 66, 82],
     "suggestion_selected_bg": [94, 129, 172],
     "help_bg": [46, 52, 64],
     "help_fg": [216, 222, 233],
     "help_key_fg": [136, 192, 208],
-    "help_separator_fg": [76, 86, 106],
+    "help_separator_fg": [107, 118, 140],
     "help_indicator_fg": [191, 97, 106],
     "help_indicator_bg": [46, 52, 64],
-    "split_separator_fg": [76, 86, 106]
+    "split_separator_fg": [107, 118, 140],
+    "settings_selected_bg": [94, 129, 172],
+    "settings_selected_fg": [236, 239, 244]
   },
   "search": {
     "match_bg": [235, 203, 139],
@@ -47,17 +50,19 @@
     "warning_bg": [59, 56, 46],
     "info_fg": [129, 161, 193],
     "info_bg": [46, 52, 64],
-    "hint_fg": [76, 86, 106],
+    "hint_fg": [107, 118, 140],
     "hint_bg": [46, 52, 64]
   },
   "syntax": {
     "keyword": [129, 161, 193],
     "string": [163, 190, 140],
-    "comment": [76, 86, 106],
+    "comment": [107, 118, 140],
     "function": [136, 192, 208],
     "type": [143, 188, 187],
     "variable": [216, 222, 233],
     "constant": [180, 142, 173],
-    "operator": [129, 161, 193]
+    "operator": [129, 161, 193],
+    "punctuation_bracket": [180, 188, 200],
+    "punctuation_delimiter": [180, 188, 200]
   }
 }
