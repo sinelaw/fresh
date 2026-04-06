@@ -3164,14 +3164,23 @@ impl Editor {
             .iter()
             .map(|info| {
                 let is_current = Some(info) == available_themes.get(current_index);
-                // Strip URL scheme for cleaner display
-                let display_key = info
-                    .key
-                    .strip_prefix("https://")
-                    .or_else(|| info.key.strip_prefix("http://"))
-                    .or_else(|| info.key.strip_prefix("file:///"))
-                    .or_else(|| info.key.strip_prefix("file://"))
-                    .unwrap_or(&info.key);
+                // Build a short display key for the description column.
+                // - file:// URLs: strip prefix to show path relative to user themes dir
+                // - https:// URLs: strip scheme
+                let display_key: std::borrow::Cow<'_, str> =
+                    if let Some(path_str) = info.key.strip_prefix("file://") {
+                        let path = std::path::Path::new(path_str);
+                        let themes_dir = self.dir_context.themes_dir();
+                        path.strip_prefix(&themes_dir)
+                            .map(|rel| rel.to_string_lossy())
+                            .unwrap_or_else(|_| path.to_string_lossy())
+                    } else if let Some(rest) = info.key.strip_prefix("https://") {
+                        std::borrow::Cow::Borrowed(rest)
+                    } else if let Some(rest) = info.key.strip_prefix("http://") {
+                        std::borrow::Cow::Borrowed(rest)
+                    } else {
+                        std::borrow::Cow::Borrowed(info.key.as_str())
+                    };
                 let description = if is_current {
                     Some(format!("{} (current)", display_key))
                 } else {

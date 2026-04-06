@@ -709,3 +709,76 @@ fn test_diagnostic_overlay_colors_update_on_theme_change() -> anyhow::Result<()>
 
     Ok(())
 }
+
+/// Theme selector should display URLs without scheme prefixes (https://, file://).
+///
+/// User themes have `file:///path/to/theme.json` keys. The selector should strip
+/// the `file://` prefix but preserve the leading `/` so it shows `/path/to/theme.json`.
+#[test]
+fn test_theme_selector_strips_url_scheme_from_display() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Install a custom theme so there's a file:// URL in the list
+    let themes_dir = temp_dir.path().join("config").join("themes");
+    fs::create_dir_all(&themes_dir).unwrap();
+    fs::write(
+        themes_dir.join("catppuccin-mocha.json"),
+        custom_catppuccin_theme_json(),
+    )
+    .unwrap();
+
+    let project_root = temp_dir.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(project_root)
+            .with_shared_dir_context(dir_context)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    // Open command palette and select theme
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Select Theme").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("Select theme").unwrap();
+
+    // Clear input and type catppuccin to filter to the custom theme
+    for _ in 0..20 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("catppuccin").unwrap();
+    harness.render().unwrap();
+
+    // The screen should show just the relative filename, not the full path or file:// URL
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("file://"),
+        "Theme selector should not display 'file://' scheme prefix. Screen:\n{}",
+        screen
+    );
+    // Should show just the filename relative to the themes dir
+    assert!(
+        screen.contains("catppuccin-mocha.json"),
+        "Theme selector should show the relative path under themes dir. Screen:\n{}",
+        screen
+    );
+
+    // Dismiss the prompt
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    drop(temp_dir);
+}
