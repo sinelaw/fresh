@@ -2052,15 +2052,15 @@ editor.defineMode("review-mode", [
     ["Left", "review_focus_files"], ["Right", "review_focus_diff"],
     // Drill-down
     ["Enter", "review_drill_down"],
-    // Git actions (Alt+ to avoid accidental activation)
-    ["Alt+s", "review_stage_file"], ["Alt+u", "review_unstage_file"], ["Alt+d", "review_discard_file"],
-    ["Alt+r", "review_refresh"],
-    // Review actions (Alt+ to avoid accidental activation)
-    ["Alt+a", "review_approve_hunk"],
-    ["Alt+x", "review_reject_hunk"],
-    ["Alt+c", "review_add_comment"],
+    // Git actions
+    ["M-s", "review_stage_file"], ["M-u", "review_unstage_file"], ["M-d", "review_discard_file"],
+    ["M-r", "review_refresh"],
+    // Review actions
+    ["M-a", "review_approve_hunk"],
+    ["M-x", "review_reject_hunk"],
+    ["M-c", "review_add_comment"],
     // Export
-    ["Alt+e", "review_export_session"],
+    ["M-e", "review_export_session"],
 ], true);
 
 editor.debug("Review Diff plugin loaded with review comments support");
