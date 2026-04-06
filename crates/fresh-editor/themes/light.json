@@ -47,6 +47,7 @@
     "popup_selection_bg": [209, 226, 243],
     "popup_text_fg": [30, 30, 30],
     "suggestion_bg": [232, 238, 245],
+    "popup_selection_fg": [0, 0, 0],
     "suggestion_selected_bg": [209, 226, 243],
     "help_bg": [255, 255, 255],
     "help_fg": [0, 0, 0],

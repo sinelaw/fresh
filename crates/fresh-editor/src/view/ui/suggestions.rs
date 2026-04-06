@@ -151,7 +151,7 @@ impl SuggestionsRenderer {
             } else if is_selected {
                 // Highlight selected suggestion with theme colors
                 Style::default()
-                    .fg(theme.popup_text_fg)
+                    .fg(theme.popup_selection_fg)
                     .bg(theme.suggestion_selected_bg)
             } else if is_hovered {
                 // Hover highlight
