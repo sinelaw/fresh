@@ -1,6 +1,6 @@
 %YAML 1.2
 ---
-# AutoHotkey v2 syntax highlighting for Fresh editor
+# AutoHotkey syntax highlighting for Fresh editor (v1 and v2)
 # Based on https://github.com/SALZKARTOFFEEEL/ahk-sublime-syntax (MIT License)
 name: AutoHotkey
 file_extensions:
@@ -9,7 +9,8 @@ file_extensions:
 scope: source.ahk
 
 variables:
-  functions: (?i:Abs|(?:A)?(?:Sin|Cos|Tan)|BlockInput|Ceil|Chr|Click|ClipWait|ComObj(?:Active|Array|Connect|Create|Error|Flags|Get|Query|Type|Value)?|Control(?:AddItem|Choose(?:String)?|Click|DeleteItem|EditPaste|FindItem|Focus|Get(?:Checked|Choice|Current(?:Col|Line)|Enabled|Focus|Hwnd|Line(?:Count)?|List|Pos|Selected|(?:Ex)?Style|Tab|Text|Visible)|Hide(?:DropDown)?|Move|Set(?:Checked|Enabled|(?:Ex)?Style|Tab|Text)|Show(?:DropDown)?)|CoordMode|Critical|Date(?:Add|Diff)|DetectHidden(?:Text|Windows)|Dir(?:Copy|Create|Delete|Move|Select)|DllCall|Download|Drive(?:Get)?|Env(?:Get|Set)?|Exp|File(?:Append|Copy|CreateShortcut|Delete|Encoding|Exist|Install|Get(?:Attrib|Shortcut|Size|Time|Version)|Move|Open|Read|Recycle(?:Empty)?|Select|Set(?:Attrib|Time))|Floor|Format(?:Time)?|Func|GetKey(?:Name|SC|State|VK)|Group(?:Activate|Add|Close|Deactivate)|Gui(?:Create|CtrlFromHwnd|FromHwnd)|Hotkey|ImageSearch|Ini(?:Delete|Read|Write)|Input(?:Box|End)?|InStr|Is(?:ByRef|Func|Label|Object)|Key(?:History|Wait)|List(?:Hotkeys|Lines|Vars)|LoadPicture|Log|Ln|Menu(?:Get(?:Handle|Name)|Select)?|Mod|MonitorGet|Mouse(?:Click(?:Drag)?|GetPos|Move)|MsgBox|Num(?:Get|Put)|Obj(?:AddRef|Release|BindMethod|RawSet)|On(?:ClipboardChange|Exit|Message)|Ord|OutputDebug|Pixel(?:GetColor|Search)|PostMessage|Process(?:Close|Exist|SetPriority|Wait(?:Close)?)|Random|RegEx(?:Match|Replace)|Reg(?:Delete(?:Key)?|Read|Write)|RegisterCallback|Round|Run(?:As|Wait)?|Send(?:Raw|Input|Play|Event|Level|Message|Mode)?|Set(?:CapslockState|ControlDelay|DefaultMouseSpeed|KeyDelay|NumlockState|ScrollLockState|RegView|StoreCaplockMode|Timer|TitleMatchMode|WinDelay|WorkingDir)|Shutdown|Sleep|Sort|Sound(?:Beep|Get|Play|Set)|SplitPath|Sqrt|StatusBar(?:GetText|Wait)|Str(?:Get|Put)|StringCaseSense|Str(?:Len|Lower|Replace|Split|Upper)|SubStr|SysGet|Thread|ToolTip|TrayTip|Trim|RTrim|LTrim|Type|VarSetCapacity|Win(?:Activate(?:Bottom)?|Active|Close|Exist|Get(?:Class|Controls(?:Hwnd)?|Count|(?:Ex)?Style|ID(?:Last)?|List|MinMax|PID|Process(?:Name|Path)|Pos|Text|Title|TransColor|Transparent)|Hide|Kill|Maximize|Minimize(?:All(?:Undo)?)?|Move(?:Bottom|Top)?|Redraw|Restore|Set(?:AlwaysOnTop|Enabled|(?:Ex)?Style|Region|Title|TransColor|Transparent)|Show|Wait(?:Active|Close|NotActive)?))
+  # Combined v1 commands and v2 functions from official AutoHotkey references
+  functions: (?i:Abs|(?:A)?(?:Sin|Cos|Tan)|AutoTrim|BlockInput|Buffer|CallbackCreate|CallbackFree|CaretGetPos|Ceil|Chr|Click|ClipboardAll|ClipWait|ComCall|ComObj(?:Active|Array|Connect|Create|Error|Flags|FromPtr|Get|Query|Type|Value)?|ComObject|ComValue|Control(?:AddItem|Choose(?:Index|String)?|Click|DeleteItem|EditPaste|FindItem|Focus|Get(?:Checked|Choice|ClassNN|Current(?:Col|Line)|Enabled|Focus|Hwnd|Index|Items|Line(?:Count)?|List|Pos|Selected|(?:Ex)?Style|Tab|Text|Visible)?|Hide(?:DropDown)?|Move|Send|Set(?:Checked|Enabled|(?:Ex)?Style|Tab|Text)?|Show(?:DropDown)?)|CoordMode|Critical|Date(?:Add|Diff)|DetectHidden(?:Text|Windows)|Dir(?:Copy|Create|Delete|Exist|Move|Select)|DllCall|Download|Drive(?:Eject|Get(?:Capacity|FileSystem|Label|List|Serial|SpaceFree|Status(?:CD)?|Type)?|Lock|Retract|SetLabel|Unlock)?|Edit(?:GetCurrentCol|GetCurrentLine|GetLine|GetLineCount|GetSelectedText|Paste)?|Env(?:Add|Div|Get|Mult|Set|Sub|Update)?|Exit(?:App)?|Exp|File(?:Append|Copy(?:Dir)?|CreateDir|CreateShortcut|Delete|Encoding|Exist|Get(?:Attrib|Shortcut|Size|Time|Version)|Install|Move(?:Dir)?|Open|Read(?:Line)?|Recycle(?:Empty)?|RemoveDir|Select(?:File|Folder)?|Set(?:Attrib|Time))|Float|Floor|Format(?:Time)?|Func|GetKey(?:Name|SC|State|VK)|GetMethod|Group(?:Activate|Add|Close|Deactivate)|Gui(?:Control(?:Get)?|Create|CtrlFromHwnd|FromHwnd)?|HasBase|HasMethod|HasProp|Hotkey|Hotstring|IL_(?:Add|Create|Destroy)|IfMsgBox|ImageSearch|Ini(?:Delete|Read|Write)|Input(?:Box|End|Hook)?|InstallKeybdHook|InstallMouseHook|InStr|Integer|Is(?:ByRef|Func|Label|Object)|Key(?:History|Wait)|List(?:Hotkeys|Lines|Vars)|ListViewGetContent|LoadPicture|Log|Ln|Map|Max|Menu(?:Bar|FromHandle|Get(?:Handle|Name)|Select)?|Min|Mod|Monitor(?:Get(?:Count|Name|Primary|WorkArea)?)|Mouse(?:Click(?:Drag)?|GetPos|Move)|MsgBox|Num(?:Get|Put)|Number|Obj(?:AddRef|BindMethod|GetBase|GetCapacity|HasOwnProp|OwnPropCount|OwnProps|RawGet|RawSet|Release|SetBase|SetCapacity)|On(?:ClipboardChange|Error|Exit|Message)|Ord|OutputDebug|Pause|Persistent|Pixel(?:GetColor|Search)|PostMessage|Process(?:Close|Exist|GetName|GetParent|GetPath|SetPriority|Wait(?:Close)?)|Progress|Random|RegCreateKey|RegEx(?:Match|Replace)|Reg(?:Delete(?:Key)?|Read|Write)|RegisterCallback|Reload|Round|Run(?:As|Wait)?|Send(?:Raw|Input|Play|Event|Level|Message|Mode)?|Set(?:BatchLines|Cap(?:sLock|lock)State|ControlDelay|DefaultMouseSpeed|Env|Format|KeyDelay|MouseDelay|Num(?:Lock|lock)State|RegView|Scroll(?:Lock|lock)State|StoreCap(?:sLock|lock)Mode|Timer|TitleMatchMode|WinDelay|WorkingDir)|Shutdown|Sleep|Sort|Sound(?:Beep|Get(?:Interface|Mute|Name|Volume|WaveVolume)?|Play|Set(?:Mute|Volume|WaveVolume)?)|SplashImage|SplashTextOn|SplashTextOff|SplitPath|Sqrt|StatusBar(?:GetText|Wait)|Str(?:Compare|Get|Len|Lower|Ptr|Put|Replace|Split|Title|Upper)|String(?:CaseSense|GetPos|Left|Len|Lower|Mid|Replace|Right|Split|TrimLeft|TrimRight|Upper)|SubStr|Suspend|Switch|SysGet(?:IPAddresses)?|Thread|ToolTip|Transform|TraySetIcon|TrayTip|Trim|RTrim|LTrim|Type|UrlDownloadToFile|VarSetCapacity|VarSetStrCapacity|VerCompare|Win(?:Activate(?:Bottom)?|Active|Close|Exist|Get(?:ActiveStats|ActiveTitle|Class|ClientPos|Controls(?:Hwnd)?|Count|(?:Ex)?Style|ID(?:Last)?|List|MinMax|PID|Process(?:Name|Path)|Pos|Text|Title|TransColor|Transparent)?|Hide|Kill|Maximize|MenuSelectItem|Minimize(?:All(?:Undo)?)?|Move(?:Bottom|Top)?|Redraw|Restore|Set(?:AlwaysOnTop|Enabled|(?:Ex)?Style|Region|Title|TransColor|Transparent)?|Show|Wait(?:Active|Close|NotActive)?))
   valid_name: (?i:\b([a-z_]|[^[:ascii:]])(\w|[^[:ascii:]])*\b)
   invalid_name: (?i:\b(([0-9](\w|[^[:ascii:]])+)|And|Contains|In|Is|New|Not|Or|Break|Catch|Continue|Else|Finally|For|Gosub|Goto|If|Loop|LoopFile|LoopParse|LoopRead|LoopReg|Return|Throw|Try|Until|While)\b)
   keys: (?i:[a-z0-9]|[LRM]Button|XButton[12]|Wheel(Up|Down|Left|Right)|CapsLock|Space|Tab|Enter|Return|Escape|Esc|Backspace|BS|ScrollLock|Delete|Del|Insert|Ins|Home|End|PgUp|PgDn|Up|Down|Left|Right|NumLock|Numpad([0-9]|Dot|Div|Mult|Add|Sub|Enter)|F([1-9]|1[0-9]|2[0-4])|[LR]Win|((L|R)?(Control|Ctrl|Alt|Shift))|Browser_(Back|Forward|Refresh|Stop|Search|Favorites|Home)|Volume_(Mute|Down|Up)|Media_(Next|Prev|Stop|Play_Pause)|Launch_(Mail|Media|App[12])|AppsKey|PrintScreen|CtrlBreak|Pause|Break|Help|Sleep|SC[0-9A-F]{3}|VK[0-9A-F]{2})(?i:\s+Up)?
@@ -54,7 +55,7 @@ contexts:
             0: keyword.ahk
             1: constant.numeric.integer.ahk
           pop: true
-        - match: (?i:ErrorStdOut|InstallKeybdHook|InstallMouseHook|NoTrayIcon|Persistent|WinActivateForce)\b
+        - match: (?i:ErrorStdOut|InstallKeybdHook|InstallMouseHook|NoTrayIcon|Persistent|WinActivateForce|NoEnv|AllowSameLineComments|SuspendExempt)\b
           scope: keyword.ahk
           pop: true
         - match: (?i:MaxThreadsBuffer|UseHook)\b\s+(?i:On|Off)?
@@ -66,7 +67,7 @@ contexts:
             2: string.unquoted.ahk
             3: hotstring.option.ahk
           pop: true
-        - match: (?i:If\b)
+        - match: (?i:(?:Hot)?If\b)
           scope: keyword.ahk
           pop: true
           push: Expressions
@@ -98,6 +99,12 @@ contexts:
         - match: (?i:(Warn)\b(\s+(UseUnset(Local|Global)|LocalSameAsGlobal|All)?(\s*,\s*)?(MsgBox|StdOut|OutputDebug|Off)?)?)
           scope: keyword.ahk
           pop: true
+        - match: (?i:(Requires)\b.*)
+          scope: keyword.ahk
+          pop: true
+        - match: (?i:(DllLoad)\b.*)
+          scope: keyword.ahk
+          pop: true
         - match: $
           pop: true
 
@@ -115,7 +122,7 @@ contexts:
       captures:
         1: keyword.control.conditional.ahk
 
-    - match: (?i:(Return))(?=\s|$)
+    - match: (?i:(Return))(?=\s|,|$)
       scope: keyword.control.flow.ahk
 
     - match: (?i:(Gosub|Goto)(?=\s|$)(\s+([^\s,`]+))?)
@@ -143,6 +150,12 @@ contexts:
         7: variable.language.ahk
         10: keyword.operator.word.ahk
     - match: (?i:Until)(?=\s)
+      scope: keyword.control.flow.ahk
+    - match: (?i:(Switch))(?=\s|$)
+      scope: keyword.control.flow.ahk
+    - match: (?i:(Case))(?=\s|$)
+      scope: keyword.control.flow.ahk
+    - match: (?i:(Default))(?=\s*:)
       scope: keyword.control.flow.ahk
 
   Hotkeys:
@@ -254,6 +267,8 @@ contexts:
         - match: (:)
           scope: keyword.operator.ternary.else.ahk
           pop: true
+        - match: $
+          pop: true
 
   numbers:
     - include: decimal_integers
@@ -297,6 +312,16 @@ contexts:
         2: entity.name.class.ahk
 
   predefined_function_calls:
+    # v2 function call syntax: Func(args)
+    - match: ({{functions}})(?=\()
+      scope: support.function.builtin.ahk
+      push:
+        - include: Expressions
+        - meta_scope: meta.function-call.ahk
+        - match: (\))
+          pop: true
+
+    # v2 function call or v1 command with space-separated args: Func arg1
     - match: ({{functions}})(?=\s+)
       scope: support.function.builtin.ahk
       push:
@@ -305,13 +330,9 @@ contexts:
         - match: ($)
           pop: true
 
-    - match: ({{functions}})(?=\()
+    # v1 command syntax: Command, arg1, arg2
+    - match: ({{functions}})(?=,)
       scope: support.function.builtin.ahk
-      push:
-        - include: Expressions
-        - meta_scope: meta.function-call.ahk
-        - match: (\))
-          pop: true
 
   custom_function_calls:
     - match: ({{valid_name}})(?=\()
@@ -326,7 +347,18 @@ contexts:
     - match: (True|False)
       scope: constant.language.ahk
 
-    - match: \b(?i:A_(Space|Tab|Args|(Initial)?WorkingDir|Script(Dir|Name|FullPath|Hwnd)|Line(Number|File)|This(Func|Label)|Ahk(Version|Path)|IsCompiled|IsUnicode|YYYY|M{2,4}|D{2,4}|WDay|YDay|YWeek|Hour|Min|(M)?Sec|Now(UTC)?|TickCount|Is(Suspended|Paused|Critical)|TitleMatchMode(Speed)?|DetectHidden(Windows|Text)|StringCaseSense|FileEncoding|Send(Mode|Level)|StoreCapslockMode|Key(Delay|Duration)(Play)?|(Win|Control)Delay|MouseDelay(Play)?|DefaulMouseSpeed|CoordMode(ToolTip|Pixel|Mouse|Caret|Menu)|RegView|Icon(Hidden|Tip|File|Number)|TimeIdle(Physical)?|This(Menu(Item(Pos)?)?|Hotkey)|Prior(Hotkey|Key)|TimeSince(This|Prior)Hotkey|EndChar|ComSpec|Temp|OSVersion|Is64bitOS|PtrSize|Language|(Computer|User)Name|WinDir|ProgramFiles|(AppData|Desktop|StartMenu|Programs|Startup)(Common)?|MyDocuments|IsAdmin|Screen(Width|Height|DPI)|IPAdress[1-4]|Cursor|Caret(X|Y)|EventInfo|LastError|Index|LoopFile((Short)?Name|Ext|(Full|Short)?Path|Dir|Time(Modified|Created|Accessed)|Attrib|Size(KB|MB)?)|LoopReg(Name|Type|Key|TimeModified)|Loop(ReadLine|Field))|Clipboard(All)?|ErrorLevel)\b
+    # v1 %variable% dereference syntax
+    - match: (%)([\w]+)(%)
+      captures:
+        1: punctuation.definition.variable.begin.ahk
+        2: variable.other.ahk
+        3: punctuation.definition.variable.end.ahk
+
+    - match: \b(?i:A_(Space|Tab|Args|(Initial)?WorkingDir|Script(Dir|Name|FullPath|Hwnd)|Line(Number|File)|This(Func|Label)|Ahk(Version|Path)|IsCompiled|IsUnicode|YYYY|M{2,4}|D{2,4}|WDay|YDay|YWeek|Hour|Min|(M)?Sec|Now(UTC)?|TickCount|Is(Suspended|Paused|Critical)|TitleMatchMode(Speed)?|DetectHidden(Windows|Text)|StringCaseSense|FileEncoding|Send(Mode|Level)|StoreCapslockMode|Key(Delay|Duration)(Play)?|(Win|Control)Delay|MouseDelay(Play)?|DefaultMouseSpeed|CoordMode(ToolTip|Pixel|Mouse|Caret|Menu)|RegView|Icon(Hidden|Tip|File|Number)|TimeIdle(Physical|Keyboard|Mouse)?|This(Menu(Item(Pos)?)?|Hotkey)|Prior(Hotkey|Key)|TimeSince(This|Prior)Hotkey|EndChar|ComSpec|Temp|OS(Type|Version)|Is64bitOS|PtrSize|Language|(Computer|User)Name|WinDir|ProgramFiles|(AppData|Desktop|StartMenu|Programs|Startup)(Common)?|MyDocuments|IsAdmin|Screen(Width|Height|DPI)|IPAddress[1-4]|Cursor|Caret(X|Y)|EventInfo|LastError|Index|LoopFile((Short)?Name|Ext|(Full|Short)?Path|Dir|Time(Modified|Created|Accessed)|Attrib|Size(KB|MB)?)|LoopReg(Name|Type|Key|TimeModified)|Loop(ReadLine|Field)|TrayMenu|AllowMainWindow|MenuMaskKey|ClipboardAll))\b
+      scope: variable.language.ahk
+
+    # v1 built-in variables without A_ prefix
+    - match: \b(?i:Clipboard|ErrorLevel)\b
       scope: variable.language.ahk
 
     - match: ({{invalid_name}})
