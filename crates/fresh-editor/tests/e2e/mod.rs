@@ -142,6 +142,7 @@ pub mod terminal_close;
 pub mod terminal_resize;
 pub mod test_scrollbar_keybinds_cursor;
 pub mod theme;
+pub mod theme_screenshots;
 pub mod toggle_bars;
 pub mod toggle_comment;
 pub mod triple_click;
