@@ -66,6 +66,15 @@ impl Editor {
             self.key_context = KeyContext::Normal;
             self.set_status_message(t!("explorer.closed").to_string());
         }
+
+        // Notify plugins that the viewport dimensions changed (sidebar affects available width)
+        self.plugin_manager.run_hook(
+            "resize",
+            fresh_core::hooks::HookArgs::Resize {
+                width: self.terminal_width,
+                height: self.terminal_height,
+            },
+        );
     }
 
     pub fn show_file_explorer(&mut self) {

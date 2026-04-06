@@ -464,20 +464,22 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
             style: { fg: STYLE_HUNK_HEADER, bold: true },
         });
 
-        // Diff content lines
+        // Diff content lines — only set background color so the normal editor
+        // foreground stays readable across all themes. The bg uses theme-aware
+        // diff colors that each theme can customize.
         for (const line of hunk.lines) {
             const prefix = line[0];
             if (prefix === '+') {
                 lines.push({
                     text: line,
                     type: 'add',
-                    style: { fg: STYLE_ADD_TEXT, bg: STYLE_ADD_BG },
+                    style: { bg: STYLE_ADD_BG, extendToLineEnd: true },
                 });
             } else if (prefix === '-') {
                 lines.push({
                     text: line,
                     type: 'remove',
-                    style: { fg: STYLE_REMOVE_TEXT, bg: STYLE_REMOVE_BG },
+                    style: { bg: STYLE_REMOVE_BG, extendToLineEnd: true },
                 });
             } else {
                 lines.push({
@@ -540,10 +542,10 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     const visibleDiffLines = diffLines.slice(state.diffScrollOffset, state.diffScrollOffset + mainRows);
 
     // --- Row 0: Toolbar ---
-    const toolbar = " [Esc] Close  [Tab] Switch Panel  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down";
+    const toolbar = " [Tab] Switch Panel  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down";
     entries.push({
         text: toolbar.substring(0, W).padEnd(W) + "\n",
-        style: { fg: STYLE_FOOTER },
+        style: { fg: STYLE_FOOTER, bg: "ui.status_bar_bg" as OverlayColorSpec, extendToLineEnd: true },
         properties: { type: "toolbar" },
     });
 
@@ -596,13 +598,17 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
         // Divider
         entries.push({ text: "│", style: { fg: STYLE_DIVIDER }, properties: { type: "divider" } });
 
-        // Right panel
+        // Right panel — when diff panel is focused, highlight the top line as cursor
         const rightText = diffItem ? (" " + diffItem.text) : "";
         const rightTruncated = rightText.substring(0, rightWidth);
+        const isDiffCursorLine = !focusLeft && i === 0 && diffItem != null;
+        const rightStyle = isDiffCursorLine
+            ? { ...(diffItem?.style || {}), bg: STYLE_SELECTED_BG, extendToLineEnd: true }
+            : diffItem?.style;
         entries.push({
             text: rightTruncated,
             properties: { type: diffItem?.type || "blank" },
-            style: diffItem?.style,
+            style: rightStyle,
             inlineOverlays: diffItem?.inlineOverlays,
         });
 
@@ -615,9 +621,11 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
 
 /**
  * Refresh the display — rebuild entries and set buffer content.
+ * Always re-queries viewport dimensions to handle sidebar toggles and splits.
  */
 function updateMagitDisplay(): void {
     if (state.reviewBufferId === null) return;
+    refreshViewportDimensions();
     const entries = buildMagitDisplayEntries();
     editor.clearNamespace(state.reviewBufferId, "review-diff");
     editor.setVirtualBufferContent(state.reviewBufferId, entries);
@@ -792,10 +800,25 @@ async function refreshMagitData() {
 
 // --- Resize handler ---
 
-function onReviewDiffResize(data: { width: number; height: number }): void {
+/**
+ * Refresh viewport dimensions from the actual split viewport.
+ * This accounts for sidebars (file explorer) that reduce available width,
+ * unlike the terminal-level resize event which reports full terminal size.
+ */
+function refreshViewportDimensions(): boolean {
+    const viewport = editor.getViewport();
+    if (viewport) {
+        const changed = viewport.width !== state.viewportWidth || viewport.height !== state.viewportHeight;
+        state.viewportWidth = viewport.width;
+        state.viewportHeight = viewport.height;
+        return changed;
+    }
+    return false;
+}
+
+function onReviewDiffResize(_data: { width: number; height: number }): void {
     if (state.reviewBufferId === null) return;
-    state.viewportHeight = data.height;
-    state.viewportWidth = data.width;
+    refreshViewportDimensions();
     updateMagitDisplay();
 }
 registerHandler("onReviewDiffResize", onReviewDiffResize);
@@ -2029,8 +2052,8 @@ editor.defineMode("review-mode", [
     ["Left", "review_focus_files"], ["Right", "review_focus_diff"],
     // Git actions
     ["s", "review_stage_file"], ["u", "review_unstage_file"], ["d", "review_discard_file"],
-    // Drill-down and close
-    ["Enter", "review_drill_down"], ["Escape", "close"],
+    // Drill-down
+    ["Enter", "review_drill_down"],
     ["r", "review_refresh"],
     // Review actions (apply to all hunks of selected file)
     ["a", "review_approve_hunk"],
