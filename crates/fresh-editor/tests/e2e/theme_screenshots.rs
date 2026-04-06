@@ -342,8 +342,7 @@ fn scene_diagnostics(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
     snap(h, s, Some("Diagnostics"), 300);
 
     // Clear overlays
-    h.apply_event(Event::ClearOverlays)
-    .unwrap();
+    h.apply_event(Event::ClearOverlays).unwrap();
     h.render().unwrap();
 }
 
@@ -441,8 +440,7 @@ fn scene_diff_highlights(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
     h.render().unwrap();
     snap(h, s, Some("Diff"), 300);
 
-    h.apply_event(Event::ClearOverlays)
-    .unwrap();
+    h.apply_event(Event::ClearOverlays).unwrap();
     h.render().unwrap();
 }
 
@@ -540,8 +538,5 @@ fn theme_screenshot_gallery() {
     s.finalize().unwrap();
 
     println!("Theme gallery generated for '{}'", theme);
-    println!(
-        "Frames: docs/blog/{}/frames/",
-        gallery_name
-    );
+    println!("Frames: docs/blog/{}/frames/", gallery_name);
 }
