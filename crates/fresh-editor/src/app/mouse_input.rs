@@ -1624,6 +1624,9 @@ impl Editor {
                 // Click on track - jump to position
                 self.mouse_state.dragging_scrollbar = Some(split_id);
                 self.handle_scrollbar_jump(col, row, split_id, buffer_id, scrollbar_rect)?;
+                // The thumb has now moved to the click position, so update
+                // hover target from track to thumb.
+                self.mouse_state.hover_target = Some(HoverTarget::ScrollbarThumb(split_id));
             }
             return Ok(());
         }

@@ -2253,3 +2253,124 @@ fn test_double_click_drag_backward_keeps_initial_word_selected() {
         final_selection
     );
 }
+
+/// Test that hovering over the scrollbar track highlights only the hovered cell,
+/// not the entire track.
+#[test]
+fn test_scrollbar_track_hover_highlights_single_cell() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create scrollable content
+    let content: String = (1..=100)
+        .map(|i| format!("Line {i} with some content\n"))
+        .collect();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
+    harness.render().unwrap();
+
+    let scrollbar_col: u16 = 79;
+    let (content_first_row, content_last_row) = harness.content_area_rows();
+
+    // Find two distinct track cells (not on the thumb)
+    let mut track_rows: Vec<u16> = Vec::new();
+    for row in content_first_row..=content_last_row {
+        if harness.is_scrollbar_track_at(scrollbar_col, row as u16) {
+            track_rows.push(row as u16);
+        }
+    }
+    assert!(
+        track_rows.len() >= 2,
+        "Need at least 2 track cells, found {}",
+        track_rows.len()
+    );
+
+    let hover_row = track_rows[0];
+    let other_track_row = track_rows[track_rows.len() - 1];
+
+    // Record styles before hover
+    let style_before_hover = harness.get_cell_style(scrollbar_col, hover_row).unwrap();
+    let style_before_other = harness
+        .get_cell_style(scrollbar_col, other_track_row)
+        .unwrap();
+
+    // Move mouse to one track cell
+    harness.mouse_move(scrollbar_col, hover_row).unwrap();
+
+    // The hovered cell should have a different (hover) background
+    let style_after_hover = harness.get_cell_style(scrollbar_col, hover_row).unwrap();
+    assert_ne!(
+        style_before_hover.bg, style_after_hover.bg,
+        "Hovered track cell at row {} should change color on hover",
+        hover_row
+    );
+
+    // Other track cells should NOT be highlighted
+    let style_after_other = harness
+        .get_cell_style(scrollbar_col, other_track_row)
+        .unwrap();
+    assert_eq!(
+        style_before_other.bg, style_after_other.bg,
+        "Non-hovered track cell at row {} should NOT change color (before: {:?}, after: {:?})",
+        other_track_row, style_before_other.bg, style_after_other.bg
+    );
+}
+
+/// Test that hovering over a track cell highlights it, then clicking jumps the
+/// thumb there and the single-cell hover highlight disappears.
+#[test]
+fn test_scrollbar_track_hover_then_click_clears_highlight() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create scrollable content
+    let content: String = (1..=200)
+        .map(|i| format!("Line {i} with some content\n"))
+        .collect();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
+    harness.render().unwrap();
+
+    let scrollbar_col: u16 = 79;
+    let (content_first_row, content_last_row) = harness.content_area_rows();
+
+    // Find a track cell far from the thumb (pick the last track cell)
+    let mut click_row = None;
+    for row in (content_first_row..=content_last_row).rev() {
+        if harness.is_scrollbar_track_at(scrollbar_col, row as u16) {
+            click_row = Some(row as u16);
+            break;
+        }
+    }
+    let click_row = click_row.expect("Should have a track cell to click");
+
+    // Record the normal track style before any interaction
+    let normal_style = harness.get_cell_style(scrollbar_col, click_row).unwrap();
+
+    // Step 1: Hover over the track cell - should highlight it
+    harness.mouse_move(scrollbar_col, click_row).unwrap();
+    let hover_style = harness.get_cell_style(scrollbar_col, click_row).unwrap();
+    assert_ne!(
+        normal_style.bg, hover_style.bg,
+        "Track cell at row {} should be highlighted on hover",
+        click_row
+    );
+
+    // Step 2: Click the track cell - thumb should jump there
+    let top_line_before = harness.top_line_number();
+    harness.mouse_click(scrollbar_col, click_row).unwrap();
+    let top_line_after = harness.top_line_number();
+    assert!(
+        top_line_after > top_line_before,
+        "Clicking track should scroll down (before: {}, after: {})",
+        top_line_before,
+        top_line_after
+    );
+
+    // Step 3: After click, the thumb jumped toward the click position. The mouse
+    // is still there, so if the thumb now covers that cell it should show thumb
+    // style. Either way, the track hover highlight must NOT appear — the click
+    // transitions the hover target to ScrollbarThumb.
+    let post_click_style = harness.get_cell_style(scrollbar_col, click_row).unwrap();
+    assert_ne!(
+        post_click_style.bg, hover_style.bg,
+        "After clicking, cell at row {} should not show track hover highlight (got: {:?})",
+        click_row, post_click_style.bg
+    );
+}
