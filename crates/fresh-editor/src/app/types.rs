@@ -445,8 +445,8 @@ pub enum HoverTarget {
     SplitSeparator(ContainerId, SplitDirection),
     /// Hovering over a scrollbar thumb (split_id)
     ScrollbarThumb(LeafId),
-    /// Hovering over a scrollbar track (split_id)
-    ScrollbarTrack(LeafId),
+    /// Hovering over a scrollbar track (split_id, relative_row)
+    ScrollbarTrack(LeafId, u16),
     /// Hovering over a menu bar item (menu_index)
     MenuBarItem(usize),
     /// Hovering over a menu dropdown item (menu_index, item_index)

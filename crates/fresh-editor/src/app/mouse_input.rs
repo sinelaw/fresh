@@ -962,7 +962,7 @@ impl Editor {
                 if is_on_thumb {
                     return Some(HoverTarget::ScrollbarThumb(*split_id));
                 } else {
-                    return Some(HoverTarget::ScrollbarTrack(*split_id));
+                    return Some(HoverTarget::ScrollbarTrack(*split_id, relative_row as u16));
                 }
             }
         }

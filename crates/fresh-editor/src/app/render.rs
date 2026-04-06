@@ -1223,34 +1223,24 @@ impl Editor {
                     }
                 }
             }
-            Some(HoverTarget::ScrollbarTrack(split_id)) => {
-                // Highlight scrollbar track but preserve the thumb
-                for (sid, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
+            Some(HoverTarget::ScrollbarTrack(split_id, hovered_row)) => {
+                // Highlight only the hovered cell on the scrollbar track
+                for (sid, _buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in
                     &self.cached_layout.split_areas
                 {
                     if sid == split_id {
                         let track_hover_style =
                             Style::default().bg(self.theme.scrollbar_track_hover_fg);
-                        let thumb_style = Style::default().bg(self.theme.scrollbar_thumb_fg);
-                        for row_offset in 0..scrollbar_rect.height {
-                            let is_thumb = (row_offset as usize) >= *thumb_start
-                                && (row_offset as usize) < *thumb_end;
-                            let style = if is_thumb {
-                                thumb_style
-                            } else {
-                                track_hover_style
-                            };
-                            let paragraph = Paragraph::new(Span::styled(" ", style));
-                            frame.render_widget(
-                                paragraph,
-                                ratatui::layout::Rect::new(
-                                    scrollbar_rect.x,
-                                    scrollbar_rect.y + row_offset,
-                                    1,
-                                    1,
-                                ),
-                            );
-                        }
+                        let paragraph = Paragraph::new(Span::styled(" ", track_hover_style));
+                        frame.render_widget(
+                            paragraph,
+                            ratatui::layout::Rect::new(
+                                scrollbar_rect.x,
+                                scrollbar_rect.y + hovered_row,
+                                1,
+                                1,
+                            ),
+                        );
                     }
                 }
             }
