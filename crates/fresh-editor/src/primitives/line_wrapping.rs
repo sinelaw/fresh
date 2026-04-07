@@ -140,6 +140,19 @@ pub fn wrap_line(text: &str, config: &WrapConfig) -> Vec<WrappedSegment> {
         }];
     }
 
+    // Guard against zero or very small widths that would produce one segment per
+    // character, causing pathological memory usage (see memory-leak-investigation.md).
+    // Return the entire line as a single unwrapped segment instead.
+    if config.first_line_width < 2 {
+        return vec![WrappedSegment {
+            text: text.to_string(),
+            is_continuation: false,
+            indent_cols: 0,
+            start_char_offset: 0,
+            end_char_offset: text.chars().count(),
+        }];
+    }
+
     // Detect hanging indent from leading whitespace
     let indent_cols = if config.hanging_indent {
         detect_indent(text, config.first_line_width)

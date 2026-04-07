@@ -2345,7 +2345,7 @@ impl SplitRenderer {
     }
 
     fn scrollbar_line_counts(
-        state: &EditorState,
+        state: &mut EditorState,
         viewport: &crate::view::viewport::Viewport,
         large_file_threshold_bytes: u64,
         buffer_len: usize,
@@ -2376,8 +2376,13 @@ impl SplitRenderer {
 
     /// Calculate scrollbar position based on visual rows (for line-wrapped content)
     /// Returns (total_visual_rows, top_visual_row)
+    ///
+    /// Uses a cache to avoid re-wrapping every line on each frame. The cache is
+    /// invalidated when the buffer version, viewport width, or wrap settings change.
+    /// When only top_byte changes (scrolling), the cached total_visual_rows is reused
+    /// and only the top_visual_row is recomputed.
     fn scrollbar_visual_row_counts(
-        state: &EditorState,
+        state: &mut EditorState,
         viewport: &crate::view::viewport::Viewport,
         buffer_len: usize,
     ) -> (usize, usize) {
@@ -2387,6 +2392,27 @@ impl SplitRenderer {
             return (1, 0);
         }
 
+        let buf_version = state.buffer.version();
+        let cache = &state.scrollbar_row_cache;
+
+        // Check if the cache is valid: same buffer version, viewport width, and wrap settings
+        let cache_fully_valid = cache.valid
+            && cache.buffer_version == buf_version
+            && cache.viewport_width == viewport.width
+            && cache.wrap_indent == viewport.wrap_indent
+            && cache.top_byte == viewport.top_byte
+            && cache.top_view_line_offset == viewport.top_view_line_offset;
+
+        if cache_fully_valid {
+            return (cache.total_visual_rows, cache.top_visual_row);
+        }
+
+        // Check if we can reuse the total_visual_rows (only top_byte changed)
+        let total_rows_valid = cache.valid
+            && cache.buffer_version == buf_version
+            && cache.viewport_width == viewport.width
+            && cache.wrap_indent == viewport.wrap_indent;
+
         let gutter_width = viewport.gutter_width(&state.buffer);
         let wrap_config = WrapConfig::new(
             viewport.width as usize,
@@ -2395,53 +2421,109 @@ impl SplitRenderer {
             viewport.wrap_indent,
         );
 
-        // Count total visual rows and find top visual row
-        // Use get_line which doesn't require mutable buffer access
+        let line_count = state
+            .buffer
+            .line_count()
+            .unwrap_or_else(|| (buffer_len / state.buffer.estimated_line_length()).max(1));
+
         let mut total_visual_rows = 0;
         let mut top_visual_row = 0;
         let mut found_top = false;
 
-        // Get total line count (if available) or estimate
-        let line_count = state.buffer.line_count().unwrap_or_else(|| {
-            // Estimate based on buffer size and configured line length
-            (buffer_len / state.buffer.estimated_line_length()).max(1)
-        });
+        if total_rows_valid {
+            // Buffer hasn't changed — only need to find the new top_visual_row
+            total_visual_rows = cache.total_visual_rows;
+            for line_idx in 0..line_count {
+                let line_start = state
+                    .buffer
+                    .line_start_offset(line_idx)
+                    .unwrap_or(buffer_len);
 
-        for line_idx in 0..line_count {
-            // Get the line start offset to check if we've reached top_byte
-            let line_start = state
-                .buffer
-                .line_start_offset(line_idx)
-                .unwrap_or(buffer_len);
+                if line_start >= viewport.top_byte {
+                    top_visual_row = total_visual_rows.min(
+                        // We actually need to count rows up to this line
+                        // so fall through to full computation below
+                        0,
+                    );
+                    // Can't shortcut top_visual_row without counting rows up to here.
+                    // Fall through to full computation.
+                    break;
+                }
+            }
+            // We need the row count up to top_byte, so do a partial scan
+            let mut rows_before_top = 0;
+            for line_idx in 0..line_count {
+                let line_start = state
+                    .buffer
+                    .line_start_offset(line_idx)
+                    .unwrap_or(buffer_len);
 
-            // Check if this is the top line
-            if !found_top && line_start >= viewport.top_byte {
-                top_visual_row = total_visual_rows + viewport.top_view_line_offset;
-                found_top = true;
+                if line_start >= viewport.top_byte {
+                    top_visual_row = rows_before_top + viewport.top_view_line_offset;
+                    found_top = true;
+                    break;
+                }
+
+                let line_content = if let Some(bytes) = state.buffer.get_line(line_idx) {
+                    String::from_utf8_lossy(&bytes)
+                        .trim_end_matches('\n')
+                        .trim_end_matches('\r')
+                        .to_string()
+                } else {
+                    break;
+                };
+
+                let segments = wrap_line(&line_content, &wrap_config);
+                rows_before_top += segments.len().max(1);
             }
 
-            // Get line content
-            let line_content = if let Some(bytes) = state.buffer.get_line(line_idx) {
-                String::from_utf8_lossy(&bytes)
-                    .trim_end_matches('\n')
-                    .trim_end_matches('\r')
-                    .to_string()
-            } else {
-                break;
-            };
+            if !found_top {
+                top_visual_row = total_visual_rows.saturating_sub(1);
+            }
+        } else {
+            // Full recomputation needed
+            for line_idx in 0..line_count {
+                let line_start = state
+                    .buffer
+                    .line_start_offset(line_idx)
+                    .unwrap_or(buffer_len);
 
-            let segments = wrap_line(&line_content, &wrap_config);
-            let visual_rows_in_line = segments.len().max(1);
-            total_visual_rows += visual_rows_in_line;
+                if !found_top && line_start >= viewport.top_byte {
+                    top_visual_row = total_visual_rows + viewport.top_view_line_offset;
+                    found_top = true;
+                }
+
+                let line_content = if let Some(bytes) = state.buffer.get_line(line_idx) {
+                    String::from_utf8_lossy(&bytes)
+                        .trim_end_matches('\n')
+                        .trim_end_matches('\r')
+                        .to_string()
+                } else {
+                    break;
+                };
+
+                let segments = wrap_line(&line_content, &wrap_config);
+                total_visual_rows += segments.len().max(1);
+            }
+
+            if !found_top {
+                top_visual_row = total_visual_rows.saturating_sub(1);
+            }
+
+            total_visual_rows = total_visual_rows.max(1);
         }
 
-        // Handle case where top_byte is at/past end of buffer
-        if !found_top {
-            top_visual_row = total_visual_rows.saturating_sub(1);
-        }
-
-        // Ensure at least 1 total row
-        total_visual_rows = total_visual_rows.max(1);
+        // Update cache
+        state.scrollbar_row_cache = crate::state::ScrollbarRowCache {
+            buffer_version: buf_version,
+            viewport_width: viewport.width,
+            wrap_indent: viewport.wrap_indent,
+            total_visual_rows,
+            top_byte: viewport.top_byte,
+            top_visual_row,
+            top_view_line_offset: viewport.top_view_line_offset,
+            valid: true,
+        };
 
         (total_visual_rows, top_visual_row)
     }
@@ -3684,11 +3766,18 @@ impl SplitRenderer {
         /// Minimum content width for continuation lines when hanging indent is active.
         const MIN_CONTINUATION_CONTENT_WIDTH: usize = 10;
 
-        let mut wrapped = Vec::new();
-        let mut current_line_width: usize = 0;
-
         // Calculate available width (accounting for gutter on first line only)
         let available_width = content_width.saturating_sub(gutter_width);
+
+        // Guard against zero or very small available width which would produce
+        // one Break per character, causing pathological memory usage.
+        // Return tokens unwrapped instead of exploding memory.
+        if available_width < 2 {
+            return tokens;
+        }
+
+        let mut wrapped = Vec::new();
+        let mut current_line_width: usize = 0;
 
         // Hanging indent state: the visual indent width for the current logical line.
         // Reset to 0 on each Newline, measured from leading whitespace.
@@ -3715,10 +3804,11 @@ impl SplitRenderer {
 
         /// Emit a Break token followed by hanging indent spaces.
         /// Updates current_line_width to reflect the indent.
+        /// Uses a pre-computed indent string to avoid repeated allocations.
         fn emit_break_with_indent(
             wrapped: &mut Vec<ViewTokenWire>,
             current_line_width: &mut usize,
-            line_indent: usize,
+            indent_string: &str,
         ) {
             wrapped.push(ViewTokenWire {
                 source_offset: None,
@@ -3726,15 +3816,20 @@ impl SplitRenderer {
                 style: None,
             });
             *current_line_width = 0;
-            if line_indent > 0 {
+            if !indent_string.is_empty() {
                 wrapped.push(ViewTokenWire {
                     source_offset: None,
-                    kind: ViewTokenWireKind::Text(" ".repeat(line_indent)),
+                    kind: ViewTokenWireKind::Text(indent_string.to_string()),
                     style: None,
                 });
-                *current_line_width = line_indent;
+                *current_line_width = indent_string.len();
             }
         }
+
+        // Pre-computed indent string, updated only when line_indent changes.
+        // Avoids allocating " ".repeat(n) on every Break emission.
+        let mut cached_indent_string = String::new();
+        let mut cached_indent_len: usize = 0;
 
         for token in tokens {
             match &token.kind {
@@ -3743,6 +3838,8 @@ impl SplitRenderer {
                     wrapped.push(token);
                     current_line_width = 0;
                     line_indent = 0;
+                    cached_indent_string.clear();
+                    cached_indent_len = 0;
                     measuring_indent = hanging_indent;
                     on_continuation = false;
                 }
@@ -3777,6 +3874,11 @@ impl SplitRenderer {
                         if line_indent + MIN_CONTINUATION_CONTENT_WIDTH > available_width {
                             line_indent = 0;
                         }
+                        // Rebuild cached indent string if indent changed
+                        if line_indent != cached_indent_len {
+                            cached_indent_string = " ".repeat(line_indent);
+                            cached_indent_len = line_indent;
+                        }
                     }
 
                     let eff_width = effective_width(available_width, line_indent, on_continuation);
@@ -3788,7 +3890,11 @@ impl SplitRenderer {
                     if current_line_width > 0 && current_line_width + text_visual_width > eff_width
                     {
                         on_continuation = true;
-                        emit_break_with_indent(&mut wrapped, &mut current_line_width, line_indent);
+                        emit_break_with_indent(
+                            &mut wrapped,
+                            &mut current_line_width,
+                            &cached_indent_string,
+                        );
                     }
 
                     let eff_width = effective_width(available_width, line_indent, on_continuation);
@@ -3816,14 +3922,22 @@ impl SplitRenderer {
                             // by summing visual widths until we exceed available width
                             let remaining_width = eff_width.saturating_sub(current_line_width);
                             if remaining_width == 0 {
-                                // Need to break to next line
-                                on_continuation = true;
-                                emit_break_with_indent(
-                                    &mut wrapped,
-                                    &mut current_line_width,
-                                    line_indent,
-                                );
-                                continue;
+                                // Need to break to next line.
+                                // If we already are on a continuation and line_indent
+                                // fills half or more of available_width, breaking again
+                                // would leave remaining_width == 0 again — infinite loop.
+                                // Force-emit at least one grapheme to guarantee progress.
+                                if on_continuation && current_line_width >= eff_width {
+                                    // Force one grapheme onto this line to avoid infinite loop
+                                } else {
+                                    on_continuation = true;
+                                    emit_break_with_indent(
+                                        &mut wrapped,
+                                        &mut current_line_width,
+                                        &cached_indent_string,
+                                    );
+                                    continue;
+                                }
                             }
 
                             let mut chunk_visual_width = 0;
@@ -3889,7 +4003,7 @@ impl SplitRenderer {
                                 emit_break_with_indent(
                                     &mut wrapped,
                                     &mut current_line_width,
-                                    line_indent,
+                                    &cached_indent_string,
                                 );
                             }
                         }
@@ -3912,7 +4026,11 @@ impl SplitRenderer {
                     // Spaces count toward line width
                     if current_line_width + 1 > eff_width {
                         on_continuation = true;
-                        emit_break_with_indent(&mut wrapped, &mut current_line_width, line_indent);
+                        emit_break_with_indent(
+                            &mut wrapped,
+                            &mut current_line_width,
+                            &cached_indent_string,
+                        );
                     }
                     wrapped.push(token);
                     current_line_width += 1;
@@ -3943,7 +4061,11 @@ impl SplitRenderer {
                     let byte_display_width = 4;
                     if current_line_width + byte_display_width > eff_width {
                         on_continuation = true;
-                        emit_break_with_indent(&mut wrapped, &mut current_line_width, line_indent);
+                        emit_break_with_indent(
+                            &mut wrapped,
+                            &mut current_line_width,
+                            &cached_indent_string,
+                        );
                     }
                     wrapped.push(token);
                     current_line_width += byte_display_width;

@@ -219,6 +219,32 @@ pub struct EditorState {
     // TODO: Consider embedding `DetectedLanguage` directly in `EditorState`
     // instead of copying its fields, to avoid duplication between the two structs.
     pub display_name: String,
+
+    /// Cached scrollbar visual row counts to avoid O(n) recomputation per frame.
+    /// Invalidated when buffer version, viewport width, or top_byte changes.
+    pub scrollbar_row_cache: ScrollbarRowCache,
+}
+
+/// Cache for scrollbar visual row counts.
+/// Avoids re-wrapping every line in the file on each render frame.
+#[derive(Debug, Clone, Default)]
+pub struct ScrollbarRowCache {
+    /// Buffer version when this cache was computed
+    pub buffer_version: u64,
+    /// Viewport width used for wrapping
+    pub viewport_width: u16,
+    /// Whether wrap indent was enabled
+    pub wrap_indent: bool,
+    /// Cached total visual rows
+    pub total_visual_rows: usize,
+    /// top_byte → top_visual_row mapping from last computation
+    pub top_byte: usize,
+    /// Cached top visual row
+    pub top_visual_row: usize,
+    /// top_view_line_offset used in the computation
+    pub top_view_line_offset: usize,
+    /// Whether the cache has been populated at least once
+    pub valid: bool,
 }
 
 impl EditorState {
@@ -271,6 +297,7 @@ impl EditorState {
             folding_ranges: Vec::new(),
             language: "text".to_string(),
             display_name: "Text".to_string(),
+            scrollbar_row_cache: ScrollbarRowCache::default(),
         }
     }
 

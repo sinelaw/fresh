@@ -68,15 +68,23 @@ fn test_page_down_to_bottom_no_memory_explosion() {
     let mut i = 0;
     loop {
         let screen_before = harness.screen_to_string();
-        harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
         let screen_after = harness.screen_to_string();
         i += 1;
 
         if i % 10 == 0 {
             let rss = current_rss_kb();
             let growth_mb = (rss as i64 - baseline as i64) / 1024;
-            eprintln!("page_down #{i}: RSS={} MB  growth={growth_mb} MB", rss / 1024);
-            assert!(growth_mb < MAX_GROWTH_MB, "Memory exploded at PageDown #{i}: grew {growth_mb} MB");
+            eprintln!(
+                "page_down #{i}: RSS={} MB  growth={growth_mb} MB",
+                rss / 1024
+            );
+            assert!(
+                growth_mb < MAX_GROWTH_MB,
+                "Memory exploded at PageDown #{i}: grew {growth_mb} MB"
+            );
         }
 
         if screen_before == screen_after || i > 500 {
@@ -87,7 +95,10 @@ fn test_page_down_to_bottom_no_memory_explosion() {
 
     let growth_mb = (current_rss_kb() as i64 - baseline as i64) / 1024;
     eprintln!("final growth: {growth_mb} MB");
-    assert!(growth_mb < MAX_GROWTH_MB, "Memory grew {growth_mb} MB scrolling to bottom");
+    assert!(
+        growth_mb < MAX_GROWTH_MB,
+        "Memory grew {growth_mb} MB scrolling to bottom"
+    );
 }
 
 /// PageDown to bottom using CrosstermBackend (real ANSI output path).
@@ -114,30 +125,20 @@ fn test_page_down_to_bottom_crossterm_backend_no_memory_explosion() {
     const H: u16 = 40;
     const MAX_GROWTH_MB: i64 = 80;
 
-    // Set a virtual memory limit so the test fails with allocation error
-    // instead of OOM-killing the whole test process.
-    // 512 MB is generous for scrolling a 372KB file.
-    #[cfg(target_os = "linux")]
-    {
-        use std::io::Write;
-        // Use prlimit via /proc/self to set RLIMIT_AS without libc dependency
-        let pid = std::process::id();
-        let limit_bytes: u64 = 1024 * 1024 * 1024;
-        // Set via the shell as a fallback-safe approach
-        let _ = std::process::Command::new("prlimit")
-            .args([
-                &format!("--pid={pid}"),
-                &format!("--as={limit_bytes}:{limit_bytes}"),
-            ])
-            .output();
-    }
+    // Note: prlimit was previously used to cap virtual memory at 1GB, but this
+    // caused thread spawn failures. The actual fixes (width=0 guard, cached
+    // scrollbar counts, fixed viewport) prevent the OOM, so the RSS assertion
+    // below is sufficient.
 
     // Use CrosstermBackend writing to a sink (discards output but exercises
-    // the full ANSI diff + escape sequence generation path)
+    // the full ANSI diff + escape sequence generation path).
+    // Use Viewport::Fixed to prevent autoresize() from querying the real terminal
+    // size (which may return 0x0 when writing to a sink, causing pathological wrapping).
     let sink = std::io::sink();
     let backend = ratatui::backend::CrosstermBackend::new(sink);
-    let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    terminal.resize(ratatui::layout::Rect::new(0, 0, W, H)).unwrap();
+    let viewport = ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, W, H));
+    let mut terminal =
+        ratatui::Terminal::with_options(backend, ratatui::TerminalOptions { viewport }).unwrap();
 
     let temp_dir = tempfile::TempDir::new().unwrap();
     let dir_context = DirectoryContext::for_testing(temp_dir.path());
@@ -169,14 +170,19 @@ fn test_page_down_to_bottom_crossterm_backend_no_memory_explosion() {
     eprintln!("baseline (CrosstermBackend): {} MB", baseline / 1024);
 
     for i in 0..300 {
-        editor.handle_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+        editor
+            .handle_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
         let _ = editor.process_async_messages();
         terminal.draw(|frame| editor.render(frame)).unwrap();
 
         if i % 10 == 0 {
             let rss = current_rss_kb();
             let growth_mb = (rss as i64 - baseline as i64) / 1024;
-            eprintln!("page_down #{i}: RSS={} MB  growth={growth_mb} MB", rss / 1024);
+            eprintln!(
+                "page_down #{i}: RSS={} MB  growth={growth_mb} MB",
+                rss / 1024
+            );
             assert!(
                 growth_mb < MAX_GROWTH_MB,
                 "Memory exploded at PageDown #{i}: grew {growth_mb} MB (CrosstermBackend path)"
@@ -186,5 +192,8 @@ fn test_page_down_to_bottom_crossterm_backend_no_memory_explosion() {
 
     let growth_mb = (current_rss_kb() as i64 - baseline as i64) / 1024;
     eprintln!("final growth (CrosstermBackend): {growth_mb} MB");
-    assert!(growth_mb < MAX_GROWTH_MB, "Memory grew {growth_mb} MB with CrosstermBackend");
+    assert!(
+        growth_mb < MAX_GROWTH_MB,
+        "Memory grew {growth_mb} MB with CrosstermBackend"
+    );
 }
