@@ -43,8 +43,8 @@ fn generate_multi_hunk_content() -> (String, String, Vec<DiffHunk>) {
     let new_content = new_lines.join("\n") + "\n";
 
     let hunks = vec![
-        DiffHunk::new(19, 3, 19, 3), // Hunk 1 at line 20
-        DiffHunk::new(59, 4, 59, 4), // Hunk 2 at line 60
+        DiffHunk::new(19, 3, 19, 3),   // Hunk 1 at line 20
+        DiffHunk::new(59, 4, 59, 4),   // Hunk 2 at line 60
         DiffHunk::new(119, 5, 119, 5), // Hunk 3 at line 120
     ];
 
@@ -123,7 +123,9 @@ fn test_next_hunk_navigation_shows_hunk_content() {
     );
 
     // Jump to hunk 1 (around line 20)
-    harness.editor_mut().composite_next_hunk_active(composite_id);
+    harness
+        .editor_mut()
+        .composite_next_hunk_active(composite_id);
     harness.render().unwrap();
 
     let after_first = harness.screen_to_string();
@@ -134,7 +136,9 @@ fn test_next_hunk_navigation_shows_hunk_content() {
     );
 
     // Jump to hunk 2 (around line 60)
-    harness.editor_mut().composite_next_hunk_active(composite_id);
+    harness
+        .editor_mut()
+        .composite_next_hunk_active(composite_id);
     harness.render().unwrap();
 
     let after_second = harness.screen_to_string();
@@ -145,7 +149,9 @@ fn test_next_hunk_navigation_shows_hunk_content() {
     );
 
     // Jump to hunk 3 (around line 120)
-    harness.editor_mut().composite_next_hunk_active(composite_id);
+    harness
+        .editor_mut()
+        .composite_next_hunk_active(composite_id);
     harness.render().unwrap();
 
     let after_third = harness.screen_to_string();
@@ -165,7 +171,9 @@ fn test_prev_hunk_navigation() {
 
     // Navigate to hunk 3
     for _ in 0..3 {
-        harness.editor_mut().composite_next_hunk_active(composite_id);
+        harness
+            .editor_mut()
+            .composite_next_hunk_active(composite_id);
     }
     harness.render().unwrap();
 
@@ -177,7 +185,9 @@ fn test_prev_hunk_navigation() {
     );
 
     // Go back to hunk 2
-    harness.editor_mut().composite_prev_hunk_active(composite_id);
+    harness
+        .editor_mut()
+        .composite_prev_hunk_active(composite_id);
     harness.render().unwrap();
 
     let at_hunk2 = harness.screen_to_string();
@@ -197,8 +207,12 @@ fn test_hunk_navigation_shows_context_above() {
     let composite_id = setup_diff(&mut harness, &old_content, &new_content, &hunks);
 
     // Jump to hunk 2 (at line 60)
-    harness.editor_mut().composite_next_hunk_active(composite_id);
-    harness.editor_mut().composite_next_hunk_active(composite_id);
+    harness
+        .editor_mut()
+        .composite_next_hunk_active(composite_id);
+    harness
+        .editor_mut()
+        .composite_next_hunk_active(composite_id);
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
@@ -210,8 +224,10 @@ fn test_hunk_navigation_shows_context_above() {
     // With 40-line viewport and 1/3 context above (~13 lines), lines around 47-58
     // should be visible before the hunk at line 60
     assert!(
-        screen.contains("Line 55 original") || screen.contains("Line 56 original")
-            || screen.contains("Line 57 original") || screen.contains("Line 54 original"),
+        screen.contains("Line 55 original")
+            || screen.contains("Line 56 original")
+            || screen.contains("Line 57 original")
+            || screen.contains("Line 54 original"),
         "Context lines before hunk 2 should be visible (centering). Screen:\n{}",
         screen
     );
