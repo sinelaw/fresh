@@ -473,3 +473,74 @@ fn test_flush_layout_enables_hunk_nav_before_render() {
         screen
     );
 }
+
+/// Test that flushLayout + multiple compositeNextHunk calls can jump to
+/// hunk 3 before the first render — the full imperative alternative to
+/// initialFocusHunk.
+#[test]
+fn test_flush_layout_jump_to_third_hunk_before_render() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let (old_content, new_content, hunks) = generate_multi_hunk_content();
+
+    let old_buffer_id =
+        harness
+            .editor_mut()
+            .create_virtual_buffer("OLD".to_string(), "text".to_string(), true);
+    harness
+        .editor_mut()
+        .set_virtual_buffer_content(old_buffer_id, vec![TextPropertyEntry::text(&old_content)])
+        .unwrap();
+
+    let new_buffer_id =
+        harness
+            .editor_mut()
+            .create_virtual_buffer("NEW".to_string(), "text".to_string(), true);
+    harness
+        .editor_mut()
+        .set_virtual_buffer_content(new_buffer_id, vec![TextPropertyEntry::text(&new_content)])
+        .unwrap();
+
+    let sources = vec![
+        SourcePane::new(old_buffer_id, "OLD", false).with_style(PaneStyle::old_diff()),
+        SourcePane::new(new_buffer_id, "NEW", false).with_style(PaneStyle::new_diff()),
+    ];
+
+    let layout = CompositeLayout::SideBySide {
+        ratios: vec![0.5, 0.5],
+        show_separator: true,
+    };
+
+    let composite_id = harness.editor_mut().create_composite_buffer(
+        "Diff View".to_string(),
+        "diff-view".to_string(),
+        layout,
+        sources,
+    );
+
+    let old_line_count = old_content.lines().count();
+    let new_line_count = new_content.lines().count();
+    let alignment = LineAlignment::from_hunks(&hunks, old_line_count, new_line_count);
+    harness
+        .editor_mut()
+        .set_composite_alignment(composite_id, alignment);
+
+    // Switch without rendering
+    harness.editor_mut().switch_buffer(composite_id);
+
+    // flushLayout, then jump 3 times to reach hunk 3
+    harness.editor_mut().flush_layout();
+    for _ in 0..3 {
+        harness
+            .editor_mut()
+            .composite_next_hunk_active(composite_id);
+    }
+
+    // First render should show hunk 3
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("MODIFIED in hunk 3"),
+        "Hunk 3 should be visible after flushLayout + 3x next_hunk (no prior render). Screen:\n{}",
+        screen
+    );
+}
