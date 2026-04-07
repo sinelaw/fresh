@@ -7,6 +7,7 @@
 // - Hunk is centered with context lines above
 
 use crate::common::harness::EditorTestHarness;
+use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::model::composite_buffer::{
     CompositeLayout, DiffHunk, LineAlignment, PaneStyle, SourcePane,
 };
@@ -229,6 +230,246 @@ fn test_hunk_navigation_shows_context_above() {
             || screen.contains("Line 57 original")
             || screen.contains("Line 54 original"),
         "Context lines before hunk 2 should be visible (centering). Screen:\n{}",
+        screen
+    );
+}
+
+/// Helper that creates a composite buffer with initial_focus_hunk set,
+/// WITHOUT calling compositeNextHunk afterwards. The first render should
+/// auto-scroll to the specified hunk.
+fn setup_diff_with_initial_focus(
+    harness: &mut EditorTestHarness,
+    old_content: &str,
+    new_content: &str,
+    hunks: &[DiffHunk],
+    initial_focus_hunk: usize,
+) -> BufferId {
+    let old_buffer_id =
+        harness
+            .editor_mut()
+            .create_virtual_buffer("OLD".to_string(), "text".to_string(), true);
+    harness
+        .editor_mut()
+        .set_virtual_buffer_content(old_buffer_id, vec![TextPropertyEntry::text(old_content)])
+        .unwrap();
+
+    let new_buffer_id =
+        harness
+            .editor_mut()
+            .create_virtual_buffer("NEW".to_string(), "text".to_string(), true);
+    harness
+        .editor_mut()
+        .set_virtual_buffer_content(new_buffer_id, vec![TextPropertyEntry::text(new_content)])
+        .unwrap();
+
+    let sources = vec![
+        SourcePane::new(old_buffer_id, "OLD", false).with_style(PaneStyle::old_diff()),
+        SourcePane::new(new_buffer_id, "NEW", false).with_style(PaneStyle::new_diff()),
+    ];
+
+    let layout = CompositeLayout::SideBySide {
+        ratios: vec![0.5, 0.5],
+        show_separator: true,
+    };
+
+    let composite_id = harness.editor_mut().create_composite_buffer(
+        "Diff View".to_string(),
+        "diff-view".to_string(),
+        layout,
+        sources,
+    );
+
+    let old_line_count = old_content.lines().count();
+    let new_line_count = new_content.lines().count();
+    let alignment = LineAlignment::from_hunks(hunks, old_line_count, new_line_count);
+    harness
+        .editor_mut()
+        .set_composite_alignment(composite_id, alignment);
+
+    // Set initial focus hunk BEFORE showing the buffer
+    harness
+        .editor_mut()
+        .get_composite_mut(composite_id)
+        .unwrap()
+        .initial_focus_hunk = Some(initial_focus_hunk);
+
+    // Show buffer and render — the first render should apply the initial focus
+    harness.editor_mut().switch_buffer(composite_id);
+    harness.render().unwrap();
+
+    composite_id
+}
+
+/// Test that initial_focus_hunk=0 auto-scrolls to the first hunk on first render.
+/// No imperative compositeNextHunk call needed.
+#[test]
+fn test_initial_focus_hunk_scrolls_to_first_hunk_on_first_render() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let (old_content, new_content, hunks) = generate_multi_hunk_content();
+    let _composite_id =
+        setup_diff_with_initial_focus(&mut harness, &old_content, &new_content, &hunks, 0);
+
+    let screen = harness.screen_to_string();
+
+    // First hunk is at line 20. With initial_focus_hunk=0, the first render
+    // should scroll there. Line 1 should NOT be visible (it's above the viewport).
+    assert!(
+        !screen.contains("Line 1 original"),
+        "Line 1 should NOT be visible when initial_focus_hunk=0. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("MODIFIED in hunk 1"),
+        "Hunk 1 content should be visible on first render. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that initial_focus_hunk=2 auto-scrolls to the third hunk.
+#[test]
+fn test_initial_focus_hunk_scrolls_to_nth_hunk() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let (old_content, new_content, hunks) = generate_multi_hunk_content();
+    let _composite_id =
+        setup_diff_with_initial_focus(&mut harness, &old_content, &new_content, &hunks, 2);
+
+    let screen = harness.screen_to_string();
+
+    assert!(
+        screen.contains("MODIFIED in hunk 3"),
+        "Hunk 3 content should be visible on first render with initial_focus_hunk=2. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that initial_focus_hunk is consumed (one-shot) — subsequent renders
+/// don't re-apply it after the user has scrolled away.
+#[test]
+fn test_initial_focus_hunk_is_consumed_after_first_render() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let (old_content, new_content, hunks) = generate_multi_hunk_content();
+    let composite_id =
+        setup_diff_with_initial_focus(&mut harness, &old_content, &new_content, &hunks, 2);
+
+    // First render scrolled to hunk 3
+    let screen = harness.screen_to_string();
+    assert!(screen.contains("MODIFIED in hunk 3"));
+
+    // Manually scroll back to top
+    for _ in 0..50 {
+        harness.mouse_scroll_up(60, 20).unwrap();
+    }
+    harness.render().unwrap();
+
+    let screen_after_scroll = harness.screen_to_string();
+    // Should see early content, NOT snapped back to hunk 3
+    assert!(
+        screen_after_scroll.contains("Line 1 original"),
+        "After scrolling up, should see Line 1 (initial_focus_hunk should not re-apply). Screen:\n{}",
+        screen_after_scroll
+    );
+
+    // Verify the flag was consumed
+    assert!(
+        harness
+            .editor_mut()
+            .get_composite_mut(composite_id)
+            .unwrap()
+            .initial_focus_hunk
+            .is_none(),
+        "initial_focus_hunk should be None after first render consumed it"
+    );
+}
+
+// =============================================================================
+// flushLayout tests
+// =============================================================================
+
+/// Test that flushLayout creates CompositeViewState before render,
+/// enabling composite_next_hunk to work without a render cycle.
+#[test]
+fn test_flush_layout_enables_hunk_nav_before_render() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let (old_content, new_content, hunks) = generate_multi_hunk_content();
+    let composite_id = setup_diff(&mut harness, &old_content, &new_content, &hunks);
+
+    // At this point setup_diff already rendered once, so view state exists.
+    // To test flushLayout properly, we need to simulate the case where
+    // view state doesn't exist yet. Create a fresh composite buffer,
+    // switch to it without rendering, then use flushLayout.
+
+    let old_buffer_id =
+        harness
+            .editor_mut()
+            .create_virtual_buffer("OLD2".to_string(), "text".to_string(), true);
+    harness
+        .editor_mut()
+        .set_virtual_buffer_content(old_buffer_id, vec![TextPropertyEntry::text(&old_content)])
+        .unwrap();
+
+    let new_buffer_id =
+        harness
+            .editor_mut()
+            .create_virtual_buffer("NEW2".to_string(), "text".to_string(), true);
+    harness
+        .editor_mut()
+        .set_virtual_buffer_content(new_buffer_id, vec![TextPropertyEntry::text(&new_content)])
+        .unwrap();
+
+    let sources = vec![
+        SourcePane::new(old_buffer_id, "OLD", false).with_style(PaneStyle::old_diff()),
+        SourcePane::new(new_buffer_id, "NEW", false).with_style(PaneStyle::new_diff()),
+    ];
+
+    let layout = CompositeLayout::SideBySide {
+        ratios: vec![0.5, 0.5],
+        show_separator: true,
+    };
+
+    let composite_id2 = harness.editor_mut().create_composite_buffer(
+        "Diff View 2".to_string(),
+        "diff-view".to_string(),
+        layout,
+        sources,
+    );
+
+    let old_line_count = old_content.lines().count();
+    let new_line_count = new_content.lines().count();
+    let alignment = LineAlignment::from_hunks(&hunks, old_line_count, new_line_count);
+    harness
+        .editor_mut()
+        .set_composite_alignment(composite_id2, alignment);
+
+    // Switch to the new composite buffer WITHOUT rendering
+    harness.editor_mut().switch_buffer(composite_id2);
+
+    // Without flushLayout, composite_next_hunk returns false (no view state)
+    let result_without_flush = harness
+        .editor_mut()
+        .composite_next_hunk_active(composite_id2);
+    assert!(
+        !result_without_flush,
+        "composite_next_hunk should fail without flushLayout (no view state)"
+    );
+
+    // Call flushLayout to materialize the view state
+    harness.editor_mut().flush_layout();
+
+    // Now composite_next_hunk should succeed
+    let result_with_flush = harness
+        .editor_mut()
+        .composite_next_hunk_active(composite_id2);
+    assert!(
+        result_with_flush,
+        "composite_next_hunk should succeed after flushLayout"
+    );
+
+    // Render and verify the hunk is visible
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("MODIFIED in hunk 1"),
+        "Hunk 1 should be visible after flushLayout + composite_next_hunk. Screen:\n{}",
         screen
     );
 }

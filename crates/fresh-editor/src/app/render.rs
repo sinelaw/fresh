@@ -444,7 +444,7 @@ impl Editor {
             &mut self.buffers,
             &self.buffer_metadata,
             &mut self.event_logs,
-            &self.composite_buffers,
+            &mut self.composite_buffers,
             &mut self.composite_view_states,
             &self.theme,
             self.ansi_background.as_ref(),

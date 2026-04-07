@@ -947,7 +947,7 @@ impl SplitRenderer {
         buffers: &mut HashMap<BufferId, EditorState>,
         buffer_metadata: &HashMap<BufferId, BufferMetadata>,
         event_logs: &mut HashMap<BufferId, EventLog>,
-        composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
+        composite_buffers: &mut HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
         composite_view_states: &mut HashMap<
             (LeafId, BufferId),
             crate::view::composite_view::CompositeViewState,
@@ -1097,6 +1097,10 @@ impl SplitRenderer {
             if let Some(state) = state_opt {
                 // Check if this is a composite buffer - render differently
                 if state.is_composite_buffer {
+                    // Take initial_focus_hunk before borrowing composite immutably
+                    let initial_focus_hunk = composite_buffers
+                        .get_mut(&buffer_id)
+                        .and_then(|c| c.initial_focus_hunk.take());
                     if let Some(composite) = composite_buffers.get(&buffer_id) {
                         // Update SplitViewState viewport to match actual rendered area
                         // This ensures cursor movement uses correct viewport height after resize
@@ -1122,6 +1126,34 @@ impl SplitRenderer {
                                     buffer_id, pane_count,
                                 )
                             });
+
+                        // Apply deferred initial focus hunk (first render only).
+                        // This runs here because it's the only place where both the
+                        // CompositeViewState and the correct viewport height exist.
+                        if let Some(hunk_index) = initial_focus_hunk {
+                            let mut target_row = None;
+                            // Walk hunk headers to find the Nth one
+                            let mut hunk_count = 0usize;
+                            for (row_idx, row) in composite.alignment.rows.iter().enumerate() {
+                                if row.row_type
+                                    == crate::model::composite_buffer::RowType::HunkHeader
+                                {
+                                    if hunk_count == hunk_index {
+                                        target_row = Some(row_idx);
+                                        break;
+                                    }
+                                    hunk_count += 1;
+                                }
+                            }
+                            if let Some(row) = target_row {
+                                let viewport_height =
+                                    layout.content_rect.height.saturating_sub(1) as usize;
+                                let context_above = viewport_height / 3;
+                                view_state.cursor_row = row;
+                                view_state.scroll_row = row.saturating_sub(context_above);
+                            }
+                        }
+
                         // Render composite buffer with side-by-side panes
                         Self::render_composite_buffer(
                             frame,

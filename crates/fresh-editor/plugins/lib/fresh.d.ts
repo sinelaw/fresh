@@ -156,6 +156,12 @@ type TsCreateCompositeBufferOptions = {
 	* Diff hunks for alignment (optional)
 	*/
 	hunks: Array<TsCompositeHunk> | null;
+	/**
+	* When set, the first render will scroll to center the Nth hunk (0-indexed).
+	* This avoids timing issues with imperative scroll commands that depend on
+	* render-created state (viewport dimensions, view state).
+	*/
+	initialFocusHunk?: number;
 };
 type ViewportInfo = {
 	/**
@@ -1190,6 +1196,12 @@ interface EditorAPI {
 	* Close a composite buffer
 	*/
 	closeCompositeBuffer(bufferId: number): boolean;
+	/**
+	* Force-materialize render-dependent state (like `layoutIfNeeded` in UIKit).
+	* After calling this, commands that depend on view state created during
+	* rendering (e.g., `compositeNextHunk`) will work correctly.
+	*/
+	flushLayout(): boolean;
 	/**
 	* Navigate to the next hunk in a composite buffer
 	*/

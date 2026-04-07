@@ -6668,15 +6668,27 @@ impl Editor {
                 layout,
                 sources,
                 hunks,
+                initial_focus_hunk,
                 request_id,
             } => {
-                self.handle_create_composite_buffer(name, mode, layout, sources, hunks, request_id);
+                self.handle_create_composite_buffer(
+                    name,
+                    mode,
+                    layout,
+                    sources,
+                    hunks,
+                    initial_focus_hunk,
+                    request_id,
+                );
             }
             PluginCommand::UpdateCompositeAlignment { buffer_id, hunks } => {
                 self.handle_update_composite_alignment(buffer_id, hunks);
             }
             PluginCommand::CloseCompositeBuffer { buffer_id } => {
                 self.close_composite_buffer(buffer_id);
+            }
+            PluginCommand::FlushLayout => {
+                self.flush_layout();
             }
             PluginCommand::CompositeNextHunk { buffer_id } => {
                 let split_id = self.split_manager.active_split();

@@ -1379,7 +1379,8 @@ async function review_drill_down() {
                 }
             }
         ],
-        hunks: compositeHunks.length > 0 ? compositeHunks : null
+        hunks: compositeHunks.length > 0 ? compositeHunks : null,
+        initialFocusHunk: compositeHunks.length > 0 ? 0 : undefined
     });
 
     // Store state for cleanup
@@ -1392,11 +1393,6 @@ async function review_drill_down() {
 
     // Show the composite buffer (replaces the review diff buffer)
     editor.showBuffer(compositeBufferId);
-
-    // Auto-jump to first hunk after opening
-    if (compositeHunks.length > 0) {
-        editor.compositeNextHunk(compositeBufferId);
-    }
 
     const addedCount = fileHunks.reduce((sum, fh) => {
         return sum + fh.lines.filter(l => l.startsWith('+')).length;
@@ -2011,7 +2007,8 @@ async function side_by_side_diff_current_file() {
                 }
             }
         ],
-        hunks: compositeHunks.length > 0 ? compositeHunks : null
+        hunks: compositeHunks.length > 0 ? compositeHunks : null,
+        initialFocusHunk: compositeHunks.length > 0 ? 0 : undefined
     });
 
     // Store state for cleanup

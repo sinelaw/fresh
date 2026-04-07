@@ -32,6 +32,11 @@ pub struct CompositeBuffer {
 
     /// Mode for keybindings
     pub mode: String,
+
+    /// When set, the first render will scroll to center this hunk (0-indexed)
+    /// and then clear this field. This avoids timing issues where imperative
+    /// scroll commands depend on render-created state (viewport, view state).
+    pub initial_focus_hunk: Option<usize>,
 }
 
 impl CompositeBuffer {
@@ -52,6 +57,7 @@ impl CompositeBuffer {
             sources,
             alignment: LineAlignment::empty(pane_count),
             active_pane: 0,
+            initial_focus_hunk: None,
         }
     }
 

@@ -622,6 +622,12 @@ pub struct CreateCompositeBufferOptions {
     /// Diff hunks for alignment (optional)
     #[serde(default)]
     pub hunks: Option<Vec<CompositeHunk>>,
+    /// When set, the first render will scroll to center the Nth hunk (0-indexed).
+    /// This avoids timing issues with imperative scroll commands that depend on
+    /// render-created state (viewport dimensions, view state).
+    #[serde(default, rename = "initialFocusHunk")]
+    #[ts(optional, rename = "initialFocusHunk")]
+    pub initial_focus_hunk: Option<usize>,
 }
 
 /// Wire-format view token kind (serialized for plugin transforms)
@@ -1372,6 +1378,8 @@ pub enum PluginCommand {
         sources: Vec<CompositeSourceConfig>,
         /// Diff hunks for line alignment (optional)
         hunks: Option<Vec<CompositeHunk>>,
+        /// When set, first render scrolls to center this hunk (0-indexed)
+        initial_focus_hunk: Option<usize>,
         /// Request ID for async response
         request_id: Option<u64>,
     },
@@ -1384,6 +1392,14 @@ pub enum PluginCommand {
 
     /// Close a composite buffer
     CloseCompositeBuffer { buffer_id: BufferId },
+
+    /// Force-materialize render-dependent state (like `layoutIfNeeded` in UIKit).
+    ///
+    /// Creates `CompositeViewState` for any visible composite buffer that doesn't
+    /// have one, and syncs viewport dimensions from split layout. This ensures
+    /// subsequent commands can read/modify view state that is normally created
+    /// lazily during the render cycle.
+    FlushLayout,
 
     /// Navigate to the next hunk in a composite buffer
     CompositeNextHunk { buffer_id: BufferId },

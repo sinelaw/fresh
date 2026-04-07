@@ -125,6 +125,41 @@ fn find_word_end_right(line: &str, from_column: usize, line_length: usize) -> us
 
 impl Editor {
     // =========================================================================
+    // Layout Flush (synchronous state materialization)
+    // =========================================================================
+
+    /// Force-materialize render-dependent state for all visible splits.
+    ///
+    /// This is the editor's equivalent of iOS `layoutIfNeeded()` or browser
+    /// forced reflow. It ensures that `CompositeViewState` entries exist for
+    /// any visible composite buffer, using the split's current viewport
+    /// dimensions. After calling this, commands like `compositeNextHunk` can
+    /// safely read and modify view state that would otherwise only exist after
+    /// the next render cycle.
+    pub fn flush_layout(&mut self) {
+        use crate::view::composite_view::CompositeViewState;
+
+        let visible = self
+            .split_manager
+            .get_visible_buffers(ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width: self.terminal_width,
+                height: self.terminal_height,
+            });
+
+        for (split_id, buffer_id, _area) in &visible {
+            // Only process composite buffers
+            if let Some(composite) = self.composite_buffers.get(buffer_id) {
+                let pane_count = composite.pane_count();
+                self.composite_view_states
+                    .entry((*split_id, *buffer_id))
+                    .or_insert_with(|| CompositeViewState::new(*buffer_id, pane_count));
+            }
+        }
+    }
+
+    // =========================================================================
     // Composite Buffer Methods
     // =========================================================================
 
@@ -1022,6 +1057,7 @@ impl Editor {
         layout_config: fresh_core::api::CompositeLayoutConfig,
         source_configs: Vec<fresh_core::api::CompositeSourceConfig>,
         hunks: Option<Vec<fresh_core::api::CompositeHunk>>,
+        initial_focus_hunk: Option<usize>,
         _request_id: Option<u64>,
     ) {
         use crate::model::composite_buffer::{
@@ -1089,6 +1125,13 @@ impl Editor {
 
             let alignment = LineAlignment::from_hunks(&diff_hunks, old_line_count, new_line_count);
             self.set_composite_alignment(buffer_id, alignment);
+        }
+
+        // Store initial focus hunk for the first render to apply
+        if initial_focus_hunk.is_some() {
+            if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {
+                composite.initial_focus_hunk = initial_focus_hunk;
+            }
         }
 
         tracing::info!(

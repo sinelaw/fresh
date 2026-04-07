@@ -1958,6 +1958,7 @@ impl JsEditorApi {
                 layout: opts.layout,
                 sources: opts.sources,
                 hunks: opts.hunks,
+                initial_focus_hunk: opts.initial_focus_hunk,
                 request_id: Some(id),
             });
 
@@ -1983,6 +1984,13 @@ impl JsEditorApi {
                 buffer_id: BufferId(buffer_id as usize),
             })
             .is_ok()
+    }
+
+    /// Force-materialize render-dependent state (like `layoutIfNeeded` in UIKit).
+    /// After calling this, commands that depend on view state created during
+    /// rendering (e.g., `compositeNextHunk`) will work correctly.
+    pub fn flush_layout(&self) -> bool {
+        self.command_sender.send(PluginCommand::FlushLayout).is_ok()
     }
 
     /// Navigate to the next hunk in a composite buffer
