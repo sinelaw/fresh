@@ -2875,6 +2875,7 @@ impl Editor {
                 let (_, name, desc) = options[current_index];
                 prompt.input = format!("{} ({})", name, desc);
                 prompt.cursor_pos = prompt.input.len();
+                prompt.selection_anchor = Some(0);
             }
         }
     }
@@ -2998,6 +2999,7 @@ impl Editor {
                 let enc = Encoding::all()[current_index];
                 prompt.input = format!("{} ({})", enc.display_name(), enc.description());
                 prompt.cursor_pos = prompt.input.len();
+                prompt.selection_anchor = Some(0);
             }
         }
     }
@@ -3215,6 +3217,8 @@ impl Editor {
                     prompt.input = current_theme_key.to_string();
                 }
                 prompt.cursor_pos = prompt.input.len();
+                // Select all so typing replaces the pre-filled value
+                prompt.selection_anchor = Some(0);
             }
         }
     }
@@ -3407,9 +3411,9 @@ impl Editor {
         if let Some(prompt) = self.prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
-                // Also set input to match selected map
                 prompt.input = current_map.to_string();
                 prompt.cursor_pos = prompt.input.len();
+                prompt.selection_anchor = Some(0);
             }
         }
     }
@@ -3500,6 +3504,7 @@ impl Editor {
                 prompt.selected_suggestion = Some(current_index);
                 prompt.input = CursorStyle::DESCRIPTIONS[current_index].to_string();
                 prompt.cursor_pos = prompt.input.len();
+                prompt.selection_anchor = Some(0);
             }
         }
     }
