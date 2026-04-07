@@ -2007,8 +2007,7 @@ async function side_by_side_diff_current_file() {
                 }
             }
         ],
-        hunks: compositeHunks.length > 0 ? compositeHunks : null,
-        initialFocusHunk: compositeHunks.length > 0 ? 0 : undefined
+        hunks: compositeHunks.length > 0 ? compositeHunks : null
     });
 
     // Store state for cleanup
