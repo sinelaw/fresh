@@ -60,9 +60,9 @@
     "panel.help_review_footer": "REVIEW: [c]omment  [a]pprove  [x]reject  [!]needs-changes  [?]question  [u]ndo",
     "panel.help_stage_footer": "STAGE:  [s]tage    [d]iscard  |  NAV: [n]ext [p]rev [Enter]drill-down  [q]uit",
     "panel.help_export_footer": "EXPORT: [E]xport to .review/session.md  |  [O]verall feedback  [r]efresh",
-    "section.staged": "Staged Changes",
-    "section.unstaged": "Modified (Unstaged)",
-    "section.untracked": "Untracked Files",
+    "section.staged": "Staged",
+    "section.unstaged": "Changes",
+    "section.untracked": "Untracked",
     "debug.loaded": "Review Diff plugin loaded with review comments support"
   },
   "cs": {

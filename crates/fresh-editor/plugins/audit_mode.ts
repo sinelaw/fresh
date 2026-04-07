@@ -296,6 +296,15 @@ function parseGitStatusPorcelain(raw: string): FileEntry[] {
         i++;
     }
 
+    // Sort: staged → unstaged → untracked, then by filename
+    const categoryOrder: Record<string, number> = { staged: 0, unstaged: 1, untracked: 2 };
+    files.sort((a, b) => {
+        const orderA = categoryOrder[a.category] ?? 2;
+        const orderB = categoryOrder[b.category] ?? 2;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.path.localeCompare(b.path);
+    });
+
     return files;
 }
 
@@ -399,11 +408,11 @@ function buildFileListLines(): ListLine[] {
         if (f.category !== lastCategory) {
             lastCategory = f.category;
             let label = '';
-            if (f.category === 'staged')    label = editor.t("section.staged") || "Staged Changes";
-            else if (f.category === 'unstaged') label = editor.t("section.unstaged") || "Modified (Unstaged)";
-            else if (f.category === 'untracked') label = editor.t("section.untracked") || "Untracked Files";
+            if (f.category === 'staged')    label = editor.t("section.staged") || "Staged";
+            else if (f.category === 'unstaged') label = editor.t("section.unstaged") || "Changes";
+            else if (f.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
             lines.push({
-                text: `@ ${label}`,
+                text: `▸ ${label}`,
                 type: 'section-header',
                 style: { fg: STYLE_SECTION_HEADER, bold: true },
             });
