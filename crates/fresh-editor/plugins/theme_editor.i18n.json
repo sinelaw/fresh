@@ -302,7 +302,11 @@
     "field.punctuation_delimiter": "oddělovač",
     "field.punctuation_delimiter_desc": "oddělovačs (;, ,, .)",
     "suggestion.current_builtin": "(aktuální · vestavěný · pouze pro čtení)",
-    "prompt.save_as_builtin_error": "Nelze přepsat vestavěný motiv, zvolte jiný název: "
+    "prompt.save_as_builtin_error": "Nelze přepsat vestavěný motiv, zvolte jiný název: ",
+    "field.diff_add_highlight_bg": "Zvýraznění přidaného diff",
+    "field.diff_add_highlight_bg_desc": "Zvýraznění na úrovni slov pro přidaný obsah",
+    "field.diff_remove_highlight_bg": "Zvýraznění odebraného diff",
+    "field.diff_remove_highlight_bg_desc": "Zvýraznění na úrovni slov pro odebraný obsah"
   },
   "de": {
     "cmd.edit_theme": "Theme bearbeiten",
@@ -572,6 +576,10 @@
     "field.diff_add_bg_desc": "Diff added line background",
     "field.diff_remove_bg": "Diff Removed Background",
     "field.diff_remove_bg_desc": "Diff removed line background",
+    "field.diff_add_highlight_bg": "Diff Hinzugefügt Hervorhebung",
+    "field.diff_add_highlight_bg_desc": "Wort-Hervorhebung für hinzugefügten Inhalt",
+    "field.diff_remove_highlight_bg": "Diff Entfernt Hervorhebung",
+    "field.diff_remove_highlight_bg_desc": "Wort-Hervorhebung für entfernten Inhalt",
     "field.diff_modify_bg": "Diff Modified Background",
     "field.diff_modify_bg_desc": "Diff modified line background",
     "field.status_warning_indicator_bg": "Warning Indicator Background",
@@ -741,6 +749,10 @@
     "field.diff_add_bg_desc": "Diff added line background",
     "field.diff_remove_bg": "Diff Removed Background",
     "field.diff_remove_bg_desc": "Diff removed line background",
+    "field.diff_add_highlight_bg": "Diff Added Highlight",
+    "field.diff_add_highlight_bg_desc": "Word-level highlight for added content",
+    "field.diff_remove_highlight_bg": "Diff Removed Highlight",
+    "field.diff_remove_highlight_bg_desc": "Word-level highlight for removed content",
     "field.diff_modify_bg": "Diff Modified Background",
     "field.diff_modify_bg_desc": "Diff modified line background",
     "field.tab_active_fg": "Active Tab Foreground",
@@ -1182,6 +1194,10 @@
     "field.diff_add_bg_desc": "Diff added line background",
     "field.diff_remove_bg": "Diff Removed Background",
     "field.diff_remove_bg_desc": "Diff removed line background",
+    "field.diff_add_highlight_bg": "Resaltado Diff Añadido",
+    "field.diff_add_highlight_bg_desc": "Resaltado a nivel de palabra para contenido añadido",
+    "field.diff_remove_highlight_bg": "Resaltado Diff Eliminado",
+    "field.diff_remove_highlight_bg_desc": "Resaltado a nivel de palabra para contenido eliminado",
     "field.diff_modify_bg": "Diff Modified Background",
     "field.diff_modify_bg_desc": "Diff modified line background",
     "field.status_warning_indicator_bg": "Warning Indicator Background",
@@ -1487,6 +1503,10 @@
     "field.diff_add_bg_desc": "Diff added line background",
     "field.diff_remove_bg": "Diff Removed Background",
     "field.diff_remove_bg_desc": "Diff removed line background",
+    "field.diff_add_highlight_bg": "Surlignage Diff Ajouté",
+    "field.diff_add_highlight_bg_desc": "Surlignage au niveau des mots pour le contenu ajouté",
+    "field.diff_remove_highlight_bg": "Surlignage Diff Supprimé",
+    "field.diff_remove_highlight_bg_desc": "Surlignage au niveau des mots pour le contenu supprimé",
     "field.diff_modify_bg": "Diff Modified Background",
     "field.diff_modify_bg_desc": "Diff modified line background",
     "field.status_warning_indicator_bg": "Warning Indicator Background",
@@ -1792,6 +1812,10 @@
     "field.diff_add_bg_desc": "Diff added line background",
     "field.diff_remove_bg": "Diff Removed Background",
     "field.diff_remove_bg_desc": "Diff removed line background",
+    "field.diff_add_highlight_bg": "Diff追加ハイライト",
+    "field.diff_add_highlight_bg_desc": "追加コンテンツの単語レベルハイライト",
+    "field.diff_remove_highlight_bg": "Diff削除ハイライト",
+    "field.diff_remove_highlight_bg_desc": "削除コンテンツの単語レベルハイライト",
     "field.diff_modify_bg": "Diff Modified Background",
     "field.diff_modify_bg_desc": "Diff modified line background",
     "field.status_warning_indicator_bg": "Warning Indicator Background",
@@ -2132,7 +2156,11 @@
     "field.punctuation_delimiter": "구분자",
     "field.punctuation_delimiter_desc": "구분자s (;, ,, .)",
     "suggestion.current_builtin": "(현재 · 기본 제공 · 읽기 전용)",
-    "prompt.save_as_builtin_error": "기본 제공 테마를 덮어쓸 수 없습니다. 다른 이름을 입력하세요: "
+    "prompt.save_as_builtin_error": "기본 제공 테마를 덮어쓸 수 없습니다. 다른 이름을 입력하세요: ",
+    "field.diff_add_highlight_bg": "Diff 추가 하이라이트",
+    "field.diff_add_highlight_bg_desc": "추가된 콘텐츠의 단어 수준 하이라이트",
+    "field.diff_remove_highlight_bg": "Diff 삭제 하이라이트",
+    "field.diff_remove_highlight_bg_desc": "삭제된 콘텐츠의 단어 수준 하이라이트"
   },
   "pt-BR": {
     "cmd.edit_theme": "editar Theme",
@@ -2437,7 +2465,11 @@
     "field.punctuation_delimiter": "delimitador",
     "field.punctuation_delimiter_desc": "delimitadors (;, ,, .)",
     "suggestion.current_builtin": "(atual · integrado · somente leitura)",
-    "prompt.save_as_builtin_error": "Não é possível sobrescrever tema integrado, escolha outro nome: "
+    "prompt.save_as_builtin_error": "Não é possível sobrescrever tema integrado, escolha outro nome: ",
+    "field.diff_add_highlight_bg": "Destaque Diff Adicionado",
+    "field.diff_add_highlight_bg_desc": "Destaque a nível de palavra para conteúdo adicionado",
+    "field.diff_remove_highlight_bg": "Destaque Diff Removido",
+    "field.diff_remove_highlight_bg_desc": "Destaque a nível de palavra para conteúdo removido"
   },
   "ru": {
     "cmd.edit_theme": "редактировать Theme",
@@ -2742,7 +2774,11 @@
     "field.punctuation_delimiter": "разделитель",
     "field.punctuation_delimiter_desc": "разделительs (;, ,, .)",
     "suggestion.current_builtin": "(текущий · встроенная · только чтение)",
-    "prompt.save_as_builtin_error": "Невозможно перезаписать встроенную тему, выберите другое имя: "
+    "prompt.save_as_builtin_error": "Невозможно перезаписать встроенную тему, выберите другое имя: ",
+    "field.diff_add_highlight_bg": "Подсветка добавленного Diff",
+    "field.diff_add_highlight_bg_desc": "Пословная подсветка добавленного содержимого",
+    "field.diff_remove_highlight_bg": "Подсветка удалённого Diff",
+    "field.diff_remove_highlight_bg_desc": "Пословная подсветка удалённого содержимого"
   },
   "th": {
     "cmd.edit_theme": "แก้ไข Theme",
@@ -3047,7 +3083,11 @@
     "field.punctuation_delimiter": "ตัวคั่น",
     "field.punctuation_delimiter_desc": "ตัวคั่นs (;, ,, .)",
     "suggestion.current_builtin": "(ปัจจุบัน · ในตัว · อ่านอย่างเดียว)",
-    "prompt.save_as_builtin_error": "ไม่สามารถเขียนทับธีมในตัวได้ กรุณาเลือกชื่ออื่น: "
+    "prompt.save_as_builtin_error": "ไม่สามารถเขียนทับธีมในตัวได้ กรุณาเลือกชื่ออื่น: ",
+    "field.diff_add_highlight_bg": "ไฮไลท์ Diff เพิ่ม",
+    "field.diff_add_highlight_bg_desc": "ไฮไลท์ระดับคำสำหรับเนื้อหาที่เพิ่ม",
+    "field.diff_remove_highlight_bg": "ไฮไลท์ Diff ลบ",
+    "field.diff_remove_highlight_bg_desc": "ไฮไลท์ระดับคำสำหรับเนื้อหาที่ลบ"
   },
   "uk": {
     "cmd.edit_theme": "редагувати Theme",
@@ -3352,7 +3392,11 @@
     "field.punctuation_delimiter": "роздільник",
     "field.punctuation_delimiter_desc": "роздільникs (;, ,, .)",
     "suggestion.current_builtin": "(поточний · вбудована · лише читання)",
-    "prompt.save_as_builtin_error": "Неможливо перезаписати вбудовану тему, виберіть іншу назву: "
+    "prompt.save_as_builtin_error": "Неможливо перезаписати вбудовану тему, виберіть іншу назву: ",
+    "field.diff_add_highlight_bg": "Підсвітка доданого Diff",
+    "field.diff_add_highlight_bg_desc": "Пословна підсвітка доданого вмісту",
+    "field.diff_remove_highlight_bg": "Підсвітка видаленого Diff",
+    "field.diff_remove_highlight_bg_desc": "Пословна підсвітка видаленого вмісту"
   },
   "vi": {
     "cmd.edit_theme": "Chỉnh sửa giao diện",
@@ -3657,7 +3701,11 @@
     "field.punctuation_delimiter": "Dấu phân cách",
     "field.punctuation_delimiter_desc": "Dấu phân cách (;, ,, .)",
     "suggestion.current_builtin": "(hiện tại · có sẵn · chỉ đọc)",
-    "prompt.save_as_builtin_error": "Không thể ghi đè chủ đề có sẵn, chọn tên khác: "
+    "prompt.save_as_builtin_error": "Không thể ghi đè chủ đề có sẵn, chọn tên khác: ",
+    "field.diff_add_highlight_bg": "Tô sáng Diff thêm",
+    "field.diff_add_highlight_bg_desc": "Tô sáng mức từ cho nội dung được thêm",
+    "field.diff_remove_highlight_bg": "Tô sáng Diff xóa",
+    "field.diff_remove_highlight_bg_desc": "Tô sáng mức từ cho nội dung bị xóa"
   },
   "zh-CN": {
     "cmd.edit_theme": "编辑主题",
@@ -3927,6 +3975,10 @@
     "field.diff_add_bg_desc": "Diff added line background",
     "field.diff_remove_bg": "Diff Removed Background",
     "field.diff_remove_bg_desc": "Diff removed line background",
+    "field.diff_add_highlight_bg": "Diff添加高亮",
+    "field.diff_add_highlight_bg_desc": "添加内容的词级高亮",
+    "field.diff_remove_highlight_bg": "Diff删除高亮",
+    "field.diff_remove_highlight_bg_desc": "删除内容的词级高亮",
     "field.diff_modify_bg": "Diff Modified Background",
     "field.diff_modify_bg_desc": "Diff modified line background",
     "field.status_warning_indicator_bg": "Warning Indicator Background",
@@ -4267,6 +4319,10 @@
     "field.punctuation_delimiter": "Delimitatore",
     "field.punctuation_delimiter_desc": "Delimitatori e separatori (;, ,, .)",
     "suggestion.current_builtin": "(corrente · integrato · sola lettura)",
-    "prompt.save_as_builtin_error": "Impossibile sovrascrivere il tema integrato, scegli un altro nome: "
+    "prompt.save_as_builtin_error": "Impossibile sovrascrivere il tema integrato, scegli un altro nome: ",
+    "field.diff_add_highlight_bg": "Evidenziazione Diff Aggiunta",
+    "field.diff_add_highlight_bg_desc": "Evidenziazione a livello di parola per contenuto aggiunto",
+    "field.diff_remove_highlight_bg": "Evidenziazione Diff Rimossa",
+    "field.diff_remove_highlight_bg_desc": "Evidenziazione a livello di parola per contenuto rimosso"
   }
 }

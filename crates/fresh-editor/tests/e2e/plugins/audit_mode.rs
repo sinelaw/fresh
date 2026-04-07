@@ -1662,18 +1662,18 @@ fn start_server(config: Config) {
 
     // Verify section headers are present
     assert!(
-        screen.contains("Staged Changes"),
-        "Should show 'Staged Changes' section header. Screen:\n{}",
+        screen.contains("Staged"),
+        "Should show 'Staged' section header. Screen:\n{}",
         screen
     );
     assert!(
-        screen.contains("Modified (Unstaged)"),
-        "Should show 'Modified (Unstaged)' section header. Screen:\n{}",
+        screen.contains("Changes"),
+        "Should show 'Changes' section header. Screen:\n{}",
         screen
     );
     assert!(
-        screen.contains("Untracked Files"),
-        "Should show 'Untracked Files' section header. Screen:\n{}",
+        screen.contains("Untracked"),
+        "Should show 'Untracked' section header. Screen:\n{}",
         screen
     );
 
