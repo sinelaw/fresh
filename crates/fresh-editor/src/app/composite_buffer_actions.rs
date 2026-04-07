@@ -261,28 +261,51 @@ impl Editor {
         }
     }
 
-    /// Navigate to the next hunk in a composite buffer's diff view
+    /// Navigate to the next hunk using the active split.
+    pub fn composite_next_hunk_active(&mut self, buffer_id: BufferId) -> bool {
+        let split_id = self.split_manager.active_split();
+        self.composite_next_hunk(split_id, buffer_id)
+    }
+
+    /// Navigate to the previous hunk using the active split.
+    pub fn composite_prev_hunk_active(&mut self, buffer_id: BufferId) -> bool {
+        let split_id = self.split_manager.active_split();
+        self.composite_prev_hunk(split_id, buffer_id)
+    }
+
+    /// Navigate to the next hunk in a composite buffer's diff view.
+    /// Centers the hunk header in the viewport and moves the cursor to it.
     pub fn composite_next_hunk(&mut self, split_id: LeafId, buffer_id: BufferId) -> bool {
+        let viewport_height = self.get_composite_viewport_height(split_id);
         if let (Some(composite), Some(view_state)) = (
             self.composite_buffers.get(&buffer_id),
             self.composite_view_states.get_mut(&(split_id, buffer_id)),
         ) {
-            if let Some(next_row) = composite.alignment.next_hunk_row(view_state.scroll_row) {
-                view_state.scroll_row = next_row;
+            // Search from cursor position (not scroll position) to avoid
+            // finding the same hunk when scroll is offset for centering
+            if let Some(next_row) = composite.alignment.next_hunk_row(view_state.cursor_row) {
+                view_state.cursor_row = next_row;
+                // Scroll so the hunk header is ~1/3 from the top of the viewport
+                let context_above = viewport_height / 3;
+                view_state.scroll_row = next_row.saturating_sub(context_above);
                 return true;
             }
         }
         false
     }
 
-    /// Navigate to the previous hunk in a composite buffer's diff view
+    /// Navigate to the previous hunk in a composite buffer's diff view.
+    /// Centers the hunk header in the viewport and moves the cursor to it.
     pub fn composite_prev_hunk(&mut self, split_id: LeafId, buffer_id: BufferId) -> bool {
+        let viewport_height = self.get_composite_viewport_height(split_id);
         if let (Some(composite), Some(view_state)) = (
             self.composite_buffers.get(&buffer_id),
             self.composite_view_states.get_mut(&(split_id, buffer_id)),
         ) {
-            if let Some(prev_row) = composite.alignment.prev_hunk_row(view_state.scroll_row) {
-                view_state.scroll_row = prev_row;
+            if let Some(prev_row) = composite.alignment.prev_hunk_row(view_state.cursor_row) {
+                view_state.cursor_row = prev_row;
+                let context_above = viewport_height / 3;
+                view_state.scroll_row = prev_row.saturating_sub(context_above);
                 return true;
             }
         }

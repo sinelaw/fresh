@@ -542,7 +542,7 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     const visibleDiffLines = diffLines.slice(state.diffScrollOffset, state.diffScrollOffset + mainRows);
 
     // --- Row 0: Toolbar ---
-    const toolbar = " [Tab] Switch Panel  [Alt+s] Stage  [Alt+u] Unstage  [Alt+d] Discard  [Enter] Drill-Down";
+    const toolbar = " [Tab] Switch Panel  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down  [r] Refresh";
     entries.push({
         text: toolbar.substring(0, W).padEnd(W) + "\n",
         style: { fg: STYLE_FOOTER, bg: "ui.status_bar_bg" as OverlayColorSpec, extendToLineEnd: true },
@@ -770,18 +770,43 @@ async function review_unstage_file() {
 }
 registerHandler("review_unstage_file", review_unstage_file);
 
-async function review_discard_file() {
+function review_discard_file() {
     if (state.files.length === 0) return;
     const f = state.files[state.selectedIndex];
     if (!f) return;
-    if (f.category === 'untracked') {
-        await editor.spawnProcess("rm", ["--", f.path]);
-    } else {
-        await editor.spawnProcess("git", ["checkout", "--", f.path]);
-    }
-    await refreshMagitData();
+
+    // Show confirmation prompt — discard is destructive and irreversible
+    const action = f.category === 'untracked' ? "Delete" : "Discard changes in";
+    editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
+    const suggestions: PromptSuggestion[] = [
+        { text: `${action} file`, description: "Permanently lose changes", value: "discard" },
+        { text: "Cancel", description: "Keep the file as-is", value: "cancel" },
+    ];
+    editor.setPromptSuggestions(suggestions);
 }
 registerHandler("review_discard_file", review_discard_file);
+
+async function on_review_discard_confirm(args: { prompt_type: string; input: string; selected_index: number | null }): Promise<boolean> {
+    if (args.prompt_type !== "review-discard-confirm") return true;
+
+    const response = args.input.trim().toLowerCase();
+    if (response === "discard" || args.selected_index === 0) {
+        const f = state.files[state.selectedIndex];
+        if (f) {
+            if (f.category === 'untracked') {
+                await editor.spawnProcess("rm", ["--", f.path]);
+            } else {
+                await editor.spawnProcess("git", ["checkout", "--", f.path]);
+            }
+            await refreshMagitData();
+            editor.setStatus(`Discarded: ${f.path}`);
+        }
+    } else {
+        editor.setStatus("Discard cancelled");
+    }
+    return false;
+}
+registerHandler("on_review_discard_confirm", on_review_discard_confirm);
 
 /**
  * Refresh file list and diffs using the new git status approach, then re-render.
@@ -1525,6 +1550,7 @@ registerHandler("on_review_prompt_cancel", on_review_prompt_cancel);
 
 // Register prompt event handlers
 editor.on("prompt_confirmed", "on_review_prompt_confirm");
+editor.on("prompt_confirmed", "on_review_discard_confirm");
 editor.on("prompt_cancelled", "on_review_prompt_cancel");
 
 async function review_approve_hunk() {
@@ -2071,15 +2097,15 @@ editor.defineMode("review-mode", [
     ["Left", "review_focus_files"], ["Right", "review_focus_diff"],
     // Drill-down
     ["Enter", "review_drill_down"],
-    // Git actions
-    ["M-s", "review_stage_file"], ["M-u", "review_unstage_file"], ["M-d", "review_discard_file"],
-    ["M-r", "review_refresh"],
+    // Git actions (plain letter keys — safe because buffer is read-only with cursors hidden)
+    ["s", "review_stage_file"], ["u", "review_unstage_file"],
+    ["d", "review_discard_file"],
+    ["r", "review_refresh"],
     // Review actions
-    ["M-a", "review_approve_hunk"],
-    ["M-x", "review_reject_hunk"],
-    ["M-c", "review_add_comment"],
+    ["a", "review_approve_hunk"],
+    ["c", "review_add_comment"],
     // Export
-    ["M-e", "review_export_session"],
+    ["e", "review_export_session"],
 ], true);
 
 editor.debug("Review Diff plugin loaded with review comments support");
