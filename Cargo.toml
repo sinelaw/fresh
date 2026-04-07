@@ -50,7 +50,7 @@ rust-i18n = "3.1.5"
 schemars = { version = "1.2", features = ["preserve_order"] }
 rquickjs = { version = "0.11", features = ["futures", "macro"] }
 rquickjs-serde = "0.5"
-oxc_allocator = "0.115.0"
+oxc_allocator = "0.124.0"
 oxc_ast = "0.115.0"
 oxc_parser = "0.115.0"
 oxc_transformer = "0.115.0"
