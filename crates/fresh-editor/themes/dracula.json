@@ -8,6 +8,10 @@
     "current_line_bg": [50, 52, 66],
     "line_number_fg": [98, 114, 164],
     "line_number_bg": [40, 42, 54],
+    "diff_add_bg": [40, 65, 45],
+    "diff_remove_bg": [75, 40, 45],
+    "diff_add_highlight_bg": [45, 85, 50],
+    "diff_remove_highlight_bg": [100, 40, 50],
     "whitespace_indicator_fg": [68, 71, 90]
   },
   "ui": {

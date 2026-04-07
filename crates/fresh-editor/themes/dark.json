@@ -9,8 +9,10 @@
     "current_line_bg": [40, 40, 40],
     "line_number_fg": [100, 100, 100],
     "line_number_bg": [30, 30, 30],
-    "diff_add_bg": [35, 60, 35],
-    "diff_remove_bg": [70, 35, 35],
+    "diff_add_bg": [30, 60, 30],
+    "diff_remove_bg": [70, 30, 30],
+    "diff_add_highlight_bg": [35, 80, 35],
+    "diff_remove_highlight_bg": [95, 35, 35],
     "diff_modify_bg": [40, 38, 30],
     "whitespace_indicator_fg": [70, 70, 70]
   },

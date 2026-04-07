@@ -9,9 +9,11 @@
     "current_line_bg": [20, 20, 20],
     "line_number_fg": [140, 140, 140],
     "line_number_bg": [0, 0, 0],
-    "diff_add_bg": [0, 35, 0],
-    "diff_remove_bg": [50, 0, 0],
-    "diff_modify_bg": [25, 22, 0],
+    "diff_add_bg": [0, 80, 0],
+    "diff_remove_bg": [100, 0, 0],
+    "diff_modify_bg": [60, 55, 0],
+    "diff_add_highlight_bg": [0, 110, 0],
+    "diff_remove_highlight_bg": [140, 0, 0],
     "whitespace_indicator_fg": [80, 80, 80]
   },
   "ui": {

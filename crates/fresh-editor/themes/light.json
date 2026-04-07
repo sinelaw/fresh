@@ -11,6 +11,8 @@
     "line_number_bg": [255, 255, 255],
     "diff_add_bg": [200, 255, 200],
     "diff_remove_bg": [255, 200, 200],
+    "diff_add_highlight_bg": [150, 235, 150],
+    "diff_remove_highlight_bg": [235, 150, 150],
     "diff_modify_bg": [255, 252, 240],
     "whitespace_indicator_fg": [200, 200, 200]
   },

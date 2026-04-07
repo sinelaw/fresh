@@ -266,6 +266,14 @@ pub struct EditorColors {
     /// Diff removed line background
     #[serde(default = "default_diff_remove_bg")]
     pub diff_remove_bg: ColorDef,
+    /// Diff added word-level highlight background (optional override)
+    /// When not set, computed by brightening diff_add_bg
+    #[serde(default)]
+    pub diff_add_highlight_bg: Option<ColorDef>,
+    /// Diff removed word-level highlight background (optional override)
+    /// When not set, computed by brightening diff_remove_bg
+    #[serde(default)]
+    pub diff_remove_highlight_bg: Option<ColorDef>,
     /// Diff modified line background
     #[serde(default = "default_diff_modify_bg")]
     pub diff_modify_bg: ColorDef,
@@ -1023,9 +1031,17 @@ impl From<ThemeFile> for Theme {
             diff_add_bg: file.editor.diff_add_bg.clone().into(),
             diff_remove_bg: file.editor.diff_remove_bg.clone().into(),
             diff_modify_bg: file.editor.diff_modify_bg.into(),
-            // Compute brighter highlight colors from base diff colors
-            diff_add_highlight_bg: brighten_color(file.editor.diff_add_bg.into(), 40),
-            diff_remove_highlight_bg: brighten_color(file.editor.diff_remove_bg.into(), 40),
+            // Use explicit override if provided, otherwise brighten from base
+            diff_add_highlight_bg: file
+                .editor
+                .diff_add_highlight_bg
+                .map(|c| c.into())
+                .unwrap_or_else(|| brighten_color(file.editor.diff_add_bg.into(), 40)),
+            diff_remove_highlight_bg: file
+                .editor
+                .diff_remove_highlight_bg
+                .map(|c| c.into())
+                .unwrap_or_else(|| brighten_color(file.editor.diff_remove_bg.into(), 40)),
             tab_active_fg: file.ui.tab_active_fg.into(),
             tab_active_bg: file.ui.tab_active_bg.into(),
             tab_inactive_fg: file.ui.tab_inactive_fg.into(),
@@ -1128,6 +1144,8 @@ impl From<Theme> for ThemeFile {
                 line_number_bg: theme.line_number_bg.into(),
                 diff_add_bg: theme.diff_add_bg.into(),
                 diff_remove_bg: theme.diff_remove_bg.into(),
+                diff_add_highlight_bg: Some(theme.diff_add_highlight_bg.into()),
+                diff_remove_highlight_bg: Some(theme.diff_remove_highlight_bg.into()),
                 diff_modify_bg: theme.diff_modify_bg.into(),
                 ruler_bg: theme.ruler_bg.into(),
                 whitespace_indicator_fg: theme.whitespace_indicator_fg.into(),

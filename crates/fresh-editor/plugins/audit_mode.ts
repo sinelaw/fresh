@@ -1374,7 +1374,6 @@ async function review_drill_down() {
                 label: "OLD (HEAD)  [n/] next  [p/[] prev  [q] close",
                 editable: false,
                 style: {
-                    removeBg: [80, 40, 40],
                     gutterStyle: "diff-markers"
                 }
             },
@@ -1383,7 +1382,6 @@ async function review_drill_down() {
                 label: "NEW (Working)",
                 editable: false,
                 style: {
-                    addBg: [40, 80, 40],
                     gutterStyle: "diff-markers"
                 }
             }
@@ -2002,7 +2000,6 @@ async function side_by_side_diff_current_file() {
                 label: "OLD (HEAD)  [n/] next  [p/[] prev  [q] close",
                 editable: false,
                 style: {
-                    removeBg: [80, 40, 40],
                     gutterStyle: "diff-markers"
                 }
             },
@@ -2011,7 +2008,6 @@ async function side_by_side_diff_current_file() {
                 label: "NEW (Working)",
                 editable: false,
                 style: {
-                    addBg: [40, 80, 40],
                     gutterStyle: "diff-markers"
                 }
             }
