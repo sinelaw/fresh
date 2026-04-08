@@ -39,6 +39,7 @@
     "status.no_changes": "No changes in this file",
     "status.failed_old_new_file": "Failed to load old file version (file may be new)",
     "prompt.comment": "Comment on %{line}: ",
+    "prompt.edit_comment": "Edit comment on %{line}: ",
     "prompt.overall_comment": "Note: ",
     "prompt.discard_hunk": "Discard this hunk in \"%{file}\"? This cannot be undone.",
     "panel.no_changes": "No changes to review.",

@@ -379,6 +379,7 @@ interface DiffLine {
     oldLine?: number;
     newLine?: number;
     lineContent?: string;
+    commentId?: string;
 }
 
 /**
@@ -464,6 +465,7 @@ function pushLineComments(
         lines.push({
             text: `  \u00bb [${lineRef}] ${comment.text}`,
             type: 'comment',
+            commentId: comment.id,
             style: { fg: STYLE_COMMENT, italic: true },
         });
     }
@@ -639,12 +641,12 @@ function buildToolbar(W: number): TextPropertyEntry {
     const groups: HintItem[][] = state.focusPanel === 'files'
         ? [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
-            [{ key: "c", label: "Comment" }, { key: "C", label: "Note" }],
+            [{ key: "c", label: "Comment" }, { key: "C", label: "Note" }, { key: "x", label: "Del" }],
             [{ key: "↵", label: "Open" }, { key: "Tab", label: "Switch" }, { key: "e", label: "Export" }, { key: "r", label: "Refresh" }, { key: "q", label: "Close" }],
           ]
         : [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
-            [{ key: "c", label: "Comment" }, { key: "C", label: "Note" }],
+            [{ key: "c", label: "Comment" }, { key: "C", label: "Note" }, { key: "x", label: "Del" }],
             [{ key: "n", label: "Next" }, { key: "p", label: "Prev" }, { key: "Tab", label: "Switch" }, { key: "e", label: "Export" }, { key: "q", label: "Close" }],
           ];
 
@@ -1869,6 +1871,39 @@ function getCurrentLineInfo(): PendingCommentInfo | null {
 
 // Pending prompt state for event-based prompt handling
 let pendingCommentInfo: PendingCommentInfo | null = null;
+let editingCommentId: string | null = null; // non-null when editing an existing comment
+
+/**
+ * Find an existing comment at the current diff cursor position,
+ * either on the comment display line itself or on the diff line above it.
+ */
+function findCommentAtCursor(): ReviewComment | null {
+    if (state.files.length === 0) return null;
+    const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
+    const rightWidth = state.viewportWidth - leftWidth - 1;
+    const diffLines = buildDiffLines(rightWidth);
+    if (diffLines.length === 0) return null;
+    const idx = Math.min(state.diffSelectedLine, diffLines.length - 1);
+    const line = diffLines[idx];
+    if (!line) return null;
+
+    // Cursor is directly on a comment display line
+    if (line.type === 'comment' && line.commentId) {
+        return state.comments.find(c => c.id === line.commentId) || null;
+    }
+
+    // Cursor is on a diff line — check if there's a comment for this line
+    if (line.hunkId && (line.lineType === 'add' || line.lineType === 'remove' || line.lineType === 'context')) {
+        return state.comments.find(c =>
+            c.hunk_id === line.hunkId && (
+                (c.line_type === 'add' && c.new_line === line.newLine) ||
+                (c.line_type === 'remove' && c.old_line === line.oldLine) ||
+                (c.line_type === 'context' && c.new_line === line.newLine)
+            )
+        ) || null;
+    }
+    return null;
+}
 
 async function review_add_comment() {
     const info = getCurrentLineInfo();
@@ -1876,9 +1911,13 @@ async function review_add_comment() {
         editor.setStatus(editor.t("status.no_hunk_selected"));
         return;
     }
-    pendingCommentInfo = info;
 
-    // Show line context in prompt (if on a specific line)
+    // Check for existing comment to edit
+    const existing = findCommentAtCursor();
+
+    pendingCommentInfo = info;
+    editingCommentId = existing?.id || null;
+
     let lineRef = 'hunk';
     if (info.lineType === 'add' && info.newLine) {
         lineRef = `+${info.newLine}`;
@@ -1889,15 +1928,88 @@ async function review_add_comment() {
     } else if (info.oldLine) {
         lineRef = `L${info.oldLine}`;
     }
-    editor.startPrompt(editor.t("prompt.comment", { line: lineRef }), "review-comment");
+
+    const label = existing
+        ? (editor.t("prompt.edit_comment", { line: lineRef }) || `Edit comment on ${lineRef}: `)
+        : editor.t("prompt.comment", { line: lineRef });
+
+    if (existing) {
+        editor.startPromptWithInitial(label, "review-comment", existing.text);
+    } else {
+        editor.startPrompt(label, "review-comment");
+    }
 }
 registerHandler("review_add_comment", review_add_comment);
+
+let pendingDeleteCommentId: string | null = null;
+
+async function review_delete_comment() {
+    let target: ReviewComment | null = null;
+
+    if (state.focusPanel === 'diff') {
+        target = findCommentAtCursor();
+    } else {
+        // File panel: target the last note
+        const notes = state.comments.filter(c => c.hunk_id === '__overall__');
+        if (notes.length > 0) target = notes[notes.length - 1];
+    }
+
+    if (!target) {
+        editor.setStatus("No comment to delete");
+        return;
+    }
+
+    pendingDeleteCommentId = target.id;
+    const preview = target.text.length > 40 ? target.text.substring(0, 37) + '...' : target.text;
+    editor.startPrompt(`Delete "${preview}"?`, "review-delete-comment-confirm");
+    const suggestions: PromptSuggestion[] = [
+        { text: "Delete", description: "Remove this comment", value: "delete" },
+        { text: "Cancel", description: "Keep the comment", value: "cancel" },
+    ];
+    editor.setPromptSuggestions(suggestions);
+}
+registerHandler("review_delete_comment", review_delete_comment);
+
+function on_review_delete_comment_confirm(args: { prompt_type: string; input: string; selected_index: number | null }): boolean {
+    if (args.prompt_type !== "review-delete-comment-confirm") return true;
+    const response = args.input.trim().toLowerCase();
+    if ((response === "delete" || args.selected_index === 0) && pendingDeleteCommentId) {
+        state.comments = state.comments.filter(c => c.id !== pendingDeleteCommentId);
+        updateMagitDisplay();
+        editor.setStatus("Comment deleted");
+    } else {
+        editor.setStatus("Delete cancelled");
+    }
+    pendingDeleteCommentId = null;
+    return false;
+}
+registerHandler("on_review_delete_comment_confirm", on_review_delete_comment_confirm);
 
 // Prompt event handlers
 function on_review_prompt_confirm(args: { prompt_type: string; input: string }): boolean {
     if (args.prompt_type !== "review-comment") {
-        return true; // Not our prompt
+        return true;
     }
+
+    if (editingCommentId) {
+        // Edit mode: update existing comment (empty text keeps the comment unchanged)
+        if (args.input && args.input.trim()) {
+            const existing = state.comments.find(c => c.id === editingCommentId);
+            if (existing) {
+                existing.text = args.input.trim();
+                existing.timestamp = new Date().toISOString();
+                updateMagitDisplay();
+                editor.setStatus("Comment updated");
+            }
+        } else {
+            editor.setStatus("Comment unchanged (use x to delete)");
+        }
+        editingCommentId = null;
+        pendingCommentInfo = null;
+        return true;
+    }
+
+    // New comment mode
     if (pendingCommentInfo && args.input && args.input.trim()) {
         const comment: ReviewComment = {
             id: `comment-${Date.now()}`,
@@ -1932,6 +2044,7 @@ registerHandler("on_review_prompt_confirm", on_review_prompt_confirm);
 function on_review_prompt_cancel(args: { prompt_type: string }): boolean {
     if (args.prompt_type === "review-comment") {
         pendingCommentInfo = null;
+        editingCommentId = null;
         editor.setStatus(editor.t("status.comment_cancelled"));
     }
     return true;
@@ -1943,15 +2056,46 @@ editor.on("prompt_confirmed", "on_review_prompt_confirm");
 editor.on("prompt_confirmed", "on_review_discard_confirm");
 editor.on("prompt_confirmed", "on_review_discard_hunk_confirm");
 editor.on("prompt_confirmed", "on_review_overall_comment_confirm");
+editor.on("prompt_confirmed", "on_review_delete_comment_confirm");
 editor.on("prompt_cancelled", "on_review_prompt_cancel");
 
+let editingNoteId: string | null = null;
+
 async function review_add_overall_comment() {
-    editor.startPrompt(editor.t("prompt.overall_comment") || "Overall comment: ", "review-overall-comment");
+    const notes = state.comments.filter(c => c.hunk_id === '__overall__');
+    const label = editor.t("prompt.overall_comment") || "Note: ";
+
+    if (notes.length > 0) {
+        // Edit most recent note
+        const last = notes[notes.length - 1];
+        editingNoteId = last.id;
+        editor.startPromptWithInitial(label, "review-overall-comment", last.text);
+    } else {
+        editingNoteId = null;
+        editor.startPrompt(label, "review-overall-comment");
+    }
 }
 registerHandler("review_add_overall_comment", review_add_overall_comment);
 
 function on_review_overall_comment_confirm(args: { prompt_type: string; input: string }): boolean {
     if (args.prompt_type !== "review-overall-comment") return true;
+
+    if (editingNoteId) {
+        if (args.input && args.input.trim()) {
+            const existing = state.comments.find(c => c.id === editingNoteId);
+            if (existing) {
+                existing.text = args.input.trim();
+                existing.timestamp = new Date().toISOString();
+                updateMagitDisplay();
+                editor.setStatus("Note updated");
+            }
+        } else {
+            editor.setStatus("Note unchanged (use x to delete)");
+        }
+        editingNoteId = null;
+        return true;
+    }
+
     if (args.input && args.input.trim()) {
         const comment: ReviewComment = {
             id: `comment-${Date.now()}`,
@@ -1961,7 +2105,8 @@ function on_review_overall_comment_confirm(args: { prompt_type: string; input: s
             timestamp: new Date().toISOString(),
         };
         state.comments.push(comment);
-        editor.setStatus(editor.t("status.overall_comment_added") || "Overall comment added");
+        updateMagitDisplay();
+        editor.setStatus(editor.t("status.overall_comment_added") || "Note added");
     }
     return true;
 }
@@ -2424,6 +2569,7 @@ editor.defineMode("review-mode", [
     // Comments
     ["c", "review_add_comment"],
     ["C", "review_add_overall_comment"],
+    ["x", "review_delete_comment"],
     // Close & export
     ["q", "close"],
     ["e", "review_export_session"],
