@@ -442,6 +442,35 @@ function buildFileListLines(): ListLine[] {
 }
 
 /**
+ * Push inline comment lines for a given diff line into the lines array.
+ */
+function pushLineComments(
+    lines: DiffLine[], hunk: Hunk,
+    lineType: 'add' | 'remove' | 'context',
+    oldLine: number | undefined, newLine: number | undefined
+) {
+    const lineComments = state.comments.filter(c =>
+        c.hunk_id === hunk.id && (
+            (c.line_type === 'add' && c.new_line === newLine) ||
+            (c.line_type === 'remove' && c.old_line === oldLine) ||
+            (c.line_type === 'context' && c.new_line === newLine)
+        )
+    );
+    for (const comment of lineComments) {
+        const lineRef = comment.line_type === 'add'
+            ? `+${comment.new_line}`
+            : comment.line_type === 'remove'
+            ? `-${comment.old_line}`
+            : `${comment.new_line}`;
+        lines.push({
+            text: `  \u00bb [${lineRef}] ${comment.text}`,
+            type: 'comment',
+            style: { fg: STYLE_COMMENT, italic: true },
+        });
+    }
+}
+
+/**
  * Build the diff lines for the right panel based on currently selected file.
  */
 function buildDiffLines(rightWidth: number): DiffLine[] {
@@ -472,36 +501,100 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
     }
 
     for (const hunk of fileHunks) {
-        // Hunk header
-        const header = hunk.contextHeader
+        // Hunk header with review status indicator
+        let header = hunk.contextHeader
             ? `@@ ${hunk.contextHeader} @@`
             : `@@ -${hunk.oldRange.start} +${hunk.range.start} @@`;
+
+        let headerStyle: Partial<OverlayOptions> = { fg: STYLE_HUNK_HEADER, bold: true };
+        if (hunk.reviewStatus !== 'pending') {
+            const statusIcons: Record<string, string> = {
+                approved: ' \u2713 APPROVED', rejected: ' \u2717 REJECTED',
+                needs_changes: ' ! NEEDS CHANGES', question: ' ? QUESTION'
+            };
+            const statusColors: Record<string, OverlayColorSpec> = {
+                approved: STYLE_APPROVED, rejected: STYLE_REJECTED,
+                needs_changes: STYLE_QUESTION, question: STYLE_QUESTION
+            };
+            header += statusIcons[hunk.reviewStatus] || '';
+            headerStyle = { fg: statusColors[hunk.reviewStatus] || STYLE_HUNK_HEADER, bold: true };
+        }
+
         lines.push({
             text: header,
             type: 'hunk-header',
             hunkId: hunk.id,
             file: hunk.file,
-            style: { fg: STYLE_HUNK_HEADER, bold: true },
+            style: headerStyle,
         });
 
         // Track actual file line numbers as we iterate
         let oldLineNum = hunk.oldRange.start;
         let newLineNum = hunk.range.start;
 
-        // Diff content lines — only set background color so the normal editor
-        // foreground stays readable across all themes. The bg uses theme-aware
-        // diff colors that each theme can customize.
-        for (const line of hunk.lines) {
+        // Diff content lines with word-level highlighting for adjacent -/+ pairs
+        for (let li = 0; li < hunk.lines.length; li++) {
+            const line = hunk.lines[li];
+            const nextLine = hunk.lines[li + 1];
             const prefix = line[0];
             const lineType: 'add' | 'remove' | 'context' =
                 prefix === '+' ? 'add' : prefix === '-' ? 'remove' : 'context';
             const curOldLine = lineType !== 'add' ? oldLineNum : undefined;
             const curNewLine = lineType !== 'remove' ? newLineNum : undefined;
 
+            // Detect adjacent -/+ pair for word-level diff
+            if (prefix === '-' && nextLine && nextLine[0] === '+') {
+                const oldContent = line.substring(1);
+                const newContent = nextLine.substring(1);
+                const parts = diffStrings(oldContent, newContent);
+
+                // Build inline overlays for removed line
+                const removeOverlays: InlineOverlay[] = [];
+                let rOffset = getByteLength(line[0]); // skip prefix
+                for (const part of parts) {
+                    const pLen = getByteLength(part.text);
+                    if (part.type === 'removed') {
+                        removeOverlays.push({ start: rOffset, end: rOffset + pLen, style: { fg: STYLE_REMOVE_TEXT, bg: STYLE_REMOVE_BG, bold: true } });
+                    }
+                    if (part.type !== 'added') rOffset += pLen;
+                }
+                lines.push({
+                    text: line, type: 'remove',
+                    style: { bg: STYLE_REMOVE_BG, extendToLineEnd: true },
+                    hunkId: hunk.id, file: hunk.file,
+                    lineType: 'remove', oldLine: curOldLine, newLine: undefined, lineContent: line,
+                    inlineOverlays: removeOverlays.length > 0 ? removeOverlays : undefined,
+                });
+                // Inline comments for the removed line
+                pushLineComments(lines, hunk, 'remove', curOldLine, undefined);
+                oldLineNum++;
+
+                // Build inline overlays for added line
+                const addOverlays: InlineOverlay[] = [];
+                let aOffset = getByteLength(nextLine[0]);
+                for (const part of parts) {
+                    const pLen = getByteLength(part.text);
+                    if (part.type === 'added') {
+                        addOverlays.push({ start: aOffset, end: aOffset + pLen, style: { fg: STYLE_ADD_TEXT, bg: STYLE_ADD_BG, bold: true } });
+                    }
+                    if (part.type !== 'removed') aOffset += pLen;
+                }
+                lines.push({
+                    text: nextLine, type: 'add',
+                    style: { bg: STYLE_ADD_BG, extendToLineEnd: true },
+                    hunkId: hunk.id, file: hunk.file,
+                    lineType: 'add', oldLine: undefined, newLine: newLineNum, lineContent: nextLine,
+                    inlineOverlays: addOverlays.length > 0 ? addOverlays : undefined,
+                });
+                pushLineComments(lines, hunk, 'add', undefined, newLineNum);
+                newLineNum++;
+                li++; // skip the + line we already processed
+                continue;
+            }
+
             if (prefix === '+') {
                 lines.push({
-                    text: line,
-                    type: 'add',
+                    text: line, type: 'add',
                     style: { bg: STYLE_ADD_BG, extendToLineEnd: true },
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
@@ -509,8 +602,7 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
                 newLineNum++;
             } else if (prefix === '-') {
                 lines.push({
-                    text: line,
-                    type: 'remove',
+                    text: line, type: 'remove',
                     style: { bg: STYLE_REMOVE_BG, extendToLineEnd: true },
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
@@ -518,8 +610,7 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
                 oldLineNum++;
             } else {
                 lines.push({
-                    text: line,
-                    type: 'context',
+                    text: line, type: 'context',
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
                 });
@@ -528,25 +619,7 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
             }
 
             // Render inline comments attached to this line
-            const lineComments = state.comments.filter(c =>
-                c.hunk_id === hunk.id && (
-                    (c.line_type === 'add' && c.new_line === curNewLine) ||
-                    (c.line_type === 'remove' && c.old_line === curOldLine) ||
-                    (c.line_type === 'context' && c.new_line === curNewLine)
-                )
-            );
-            for (const comment of lineComments) {
-                const lineRef = comment.line_type === 'add'
-                    ? `+${comment.new_line}`
-                    : comment.line_type === 'remove'
-                    ? `-${comment.old_line}`
-                    : `${comment.new_line}`;
-                lines.push({
-                    text: `  \u00bb [${lineRef}] ${comment.text}`,
-                    type: 'comment',
-                    style: { fg: STYLE_COMMENT, italic: true },
-                });
-            }
+            pushLineComments(lines, hunk, lineType, curOldLine, curNewLine);
         }
     }
 
@@ -608,7 +681,9 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     const visibleDiffLines = diffLines.slice(state.diffScrollOffset, state.diffScrollOffset + mainRows);
 
     // --- Row 0: Toolbar ---
-    const toolbar = " [Tab] Switch Panel  [s] Stage  [u] Unstage  [d] Discard  [c] Comment  [Enter] Drill-Down  [r] Refresh";
+    const toolbar = state.focusPanel === 'files'
+        ? " [Tab] Switch  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down  [r] Refresh  [q] Close"
+        : " [Tab] Switch  [s] Stage Hunk  [c] Comment  [a] Approve  [x] Reject  [n/p] Hunk Nav  [q] Close";
     entries.push({
         text: toolbar.substring(0, W).padEnd(W) + "\n",
         style: { fg: STYLE_FOOTER, bg: "ui.status_bar_bg" as OverlayColorSpec, extendToLineEnd: true },
@@ -846,8 +921,80 @@ registerHandler("review_nav_end", review_nav_end);
 
 // --- Real git stage/unstage/discard actions (Step 4) ---
 
+/**
+ * Build a minimal unified diff patch for a single hunk.
+ */
+function buildHunkPatch(filePath: string, hunk: Hunk): string {
+    const oldCount = hunk.lines.filter(l => l[0] === '-' || l[0] === ' ').length;
+    const newCount = hunk.lines.filter(l => l[0] === '+' || l[0] === ' ').length;
+    const header = `@@ -${hunk.oldRange.start},${oldCount} +${hunk.range.start},${newCount} @@`;
+    return [
+        `diff --git a/${filePath} b/${filePath}`,
+        `--- a/${filePath}`,
+        `+++ b/${filePath}`,
+        header,
+        ...hunk.lines,
+        ''
+    ].join('\n');
+}
+
+/**
+ * Write a patch to a temp file and apply it with the given flags.
+ * Returns true on success.
+ */
+async function applyHunkPatch(patch: string, flags: string[]): Promise<boolean> {
+    const tmpDir = editor.getTempDir();
+    const patchPath = editor.pathJoin(tmpDir, `fresh-review-${Date.now()}.patch`);
+    editor.writeFile(patchPath, patch);
+    // Validate first
+    const check = await editor.spawnProcess("git", ["apply", "--check", ...flags, patchPath]);
+    if (check.exit_code !== 0) {
+        editor.setStatus("Patch failed: " + (check.stderr || "").trim());
+        return false;
+    }
+    const result = await editor.spawnProcess("git", ["apply", ...flags, patchPath]);
+    return result.exit_code === 0;
+}
+
+/**
+ * Get the hunk at the current diff cursor position, or null.
+ */
+function getHunkAtDiffCursor(): Hunk | null {
+    if (state.files.length === 0) return null;
+    const selectedFile = state.files[state.selectedIndex];
+    if (!selectedFile) return null;
+    const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
+    const rightWidth = state.viewportWidth - leftWidth - 1;
+    const diffLines = buildDiffLines(rightWidth);
+    if (diffLines.length === 0) return null;
+    const idx = Math.min(state.diffSelectedLine, diffLines.length - 1);
+    const line = diffLines[idx];
+    if (line && line.hunkId) {
+        return state.hunks.find(h => h.id === line.hunkId) || null;
+    }
+    // Fallback: first hunk for the file
+    return state.hunks.find(
+        h => h.file === selectedFile.path && h.gitStatus === selectedFile.category
+    ) || null;
+}
+
 async function review_stage_file() {
     if (state.files.length === 0) return;
+    if (state.focusPanel === 'diff') {
+        // Hunk-level staging
+        const hunk = getHunkAtDiffCursor();
+        if (!hunk || !hunk.file) return;
+        if (hunk.gitStatus === 'untracked') {
+            await editor.spawnProcess("git", ["add", "--", hunk.file]);
+        } else {
+            const patch = buildHunkPatch(hunk.file, hunk);
+            const ok = await applyHunkPatch(patch, ["--cached"]);
+            if (!ok) return;
+        }
+        editor.setStatus(editor.t("status.hunk_staged") || "Hunk staged");
+        await refreshMagitData();
+        return;
+    }
     const f = state.files[state.selectedIndex];
     if (!f) return;
     await editor.spawnProcess("git", ["add", "--", f.path]);
@@ -857,6 +1004,20 @@ registerHandler("review_stage_file", review_stage_file);
 
 async function review_unstage_file() {
     if (state.files.length === 0) return;
+    if (state.focusPanel === 'diff') {
+        // Hunk-level unstaging
+        const hunk = getHunkAtDiffCursor();
+        if (!hunk || !hunk.file || hunk.gitStatus !== 'staged') {
+            editor.setStatus("Can only unstage staged hunks");
+            return;
+        }
+        const patch = buildHunkPatch(hunk.file, hunk);
+        const ok = await applyHunkPatch(patch, ["--cached", "--reverse"]);
+        if (!ok) return;
+        editor.setStatus(editor.t("status.hunk_unstaged") || "Hunk unstaged");
+        await refreshMagitData();
+        return;
+    }
     const f = state.files[state.selectedIndex];
     if (!f) return;
     await editor.spawnProcess("git", ["reset", "HEAD", "--", f.path]);
@@ -866,6 +1027,22 @@ registerHandler("review_unstage_file", review_unstage_file);
 
 function review_discard_file() {
     if (state.files.length === 0) return;
+    if (state.focusPanel === 'diff') {
+        // Hunk-level discard — show confirmation
+        const hunk = getHunkAtDiffCursor();
+        if (!hunk || !hunk.file) return;
+        editor.startPrompt(
+            editor.t("prompt.discard_hunk", { file: hunk.file }) ||
+            `Discard this hunk in "${hunk.file}"? This cannot be undone.`,
+            "review-discard-hunk-confirm"
+        );
+        const suggestions: PromptSuggestion[] = [
+            { text: "Discard hunk", description: "Permanently lose this change", value: "discard" },
+            { text: "Cancel", description: "Keep the hunk as-is", value: "cancel" },
+        ];
+        editor.setPromptSuggestions(suggestions);
+        return;
+    }
     const f = state.files[state.selectedIndex];
     if (!f) return;
 
@@ -879,6 +1056,26 @@ function review_discard_file() {
     editor.setPromptSuggestions(suggestions);
 }
 registerHandler("review_discard_file", review_discard_file);
+
+async function on_review_discard_hunk_confirm(args: { prompt_type: string; input: string; selected_index: number | null }): Promise<boolean> {
+    if (args.prompt_type !== "review-discard-hunk-confirm") return true;
+    const response = args.input.trim().toLowerCase();
+    if (response === "discard" || args.selected_index === 0) {
+        const hunk = getHunkAtDiffCursor();
+        if (hunk && hunk.file) {
+            const patch = buildHunkPatch(hunk.file, hunk);
+            const ok = await applyHunkPatch(patch, ["--reverse"]);
+            if (ok) {
+                editor.setStatus(editor.t("status.hunk_discarded") || "Hunk discarded");
+                await refreshMagitData();
+            }
+        }
+    } else {
+        editor.setStatus("Discard cancelled");
+    }
+    return false;
+}
+registerHandler("on_review_discard_hunk_confirm", on_review_discard_hunk_confirm);
 
 async function on_review_discard_confirm(args: { prompt_type: string; input: string; selected_index: number | null }): Promise<boolean> {
     if (args.prompt_type !== "review-discard-confirm") return true;
@@ -1502,12 +1699,44 @@ registerHandler("review_drill_down", review_drill_down);
 // --- Hunk navigation for side-by-side diff view ---
 
 function review_next_hunk() {
+    // In magit review-mode diff panel: jump to next hunk header
+    if (state.reviewBufferId !== null && state.focusPanel === 'diff') {
+        const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
+        const rightWidth = state.viewportWidth - leftWidth - 1;
+        const diffLines = buildDiffLines(rightWidth);
+        for (let i = state.diffSelectedLine + 1; i < diffLines.length; i++) {
+            if (diffLines[i].type === 'hunk-header') {
+                state.diffSelectedLine = i;
+                scrollDiffToSelected();
+                updateMagitDisplay();
+                return;
+            }
+        }
+        return;
+    }
+    // In composite diff-view: use built-in hunk nav
     if (!activeCompositeDiffState) return;
     editor.compositeNextHunk(activeCompositeDiffState.compositeBufferId);
 }
 registerHandler("review_next_hunk", review_next_hunk);
 
 function review_prev_hunk() {
+    // In magit review-mode diff panel: jump to prev hunk header
+    if (state.reviewBufferId !== null && state.focusPanel === 'diff') {
+        const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
+        const rightWidth = state.viewportWidth - leftWidth - 1;
+        const diffLines = buildDiffLines(rightWidth);
+        for (let i = state.diffSelectedLine - 1; i >= 0; i--) {
+            if (diffLines[i].type === 'hunk-header') {
+                state.diffSelectedLine = i;
+                scrollDiffToSelected();
+                updateMagitDisplay();
+                return;
+            }
+        }
+        return;
+    }
+    // In composite diff-view: use built-in hunk nav
     if (!activeCompositeDiffState) return;
     editor.compositePrevHunk(activeCompositeDiffState.compositeBufferId);
 }
@@ -1528,14 +1757,30 @@ editor.defineMode("diff-view", [
 // --- Review Comment Actions ---
 
 function getCurrentHunkId(): string | null {
-    // In magit mode, get the first hunk of the selected file
     if (state.files.length === 0) return null;
+    if (state.focusPanel === 'diff') {
+        const hunk = getHunkAtDiffCursor();
+        return hunk?.id || null;
+    }
+    // File panel: return first hunk for selected file
     const selectedFile = state.files[state.selectedIndex];
     if (!selectedFile) return null;
     const hunk = state.hunks.find(
         h => h.file === selectedFile.path && h.gitStatus === selectedFile.category
     );
     return hunk?.id || null;
+}
+
+/**
+ * Get all hunk IDs for the currently selected file.
+ */
+function getCurrentFileHunkIds(): string[] {
+    if (state.files.length === 0) return [];
+    const selectedFile = state.files[state.selectedIndex];
+    if (!selectedFile) return [];
+    return state.hunks
+        .filter(h => h.file === selectedFile.path && h.gitStatus === selectedFile.category)
+        .map(h => h.id);
 }
 
 interface PendingCommentInfo {
@@ -1654,65 +1899,57 @@ registerHandler("on_review_prompt_cancel", on_review_prompt_cancel);
 // Register prompt event handlers
 editor.on("prompt_confirmed", "on_review_prompt_confirm");
 editor.on("prompt_confirmed", "on_review_discard_confirm");
+editor.on("prompt_confirmed", "on_review_discard_hunk_confirm");
 editor.on("prompt_cancelled", "on_review_prompt_cancel");
 
-async function review_approve_hunk() {
-    const hunkId = getCurrentHunkId();
-    if (!hunkId) return;
-    const h = state.hunks.find(x => x.id === hunkId);
-    if (h) {
-        h.reviewStatus = 'approved';
+/**
+ * Set review status on hunks. When diff panel focused, applies to current hunk.
+ * When file panel focused, applies to all hunks of the selected file.
+ */
+function setReviewStatus(status: ReviewStatus, statusKey: string) {
+    if (state.focusPanel === 'diff') {
+        const hunkId = getCurrentHunkId();
+        if (!hunkId) return;
+        const h = state.hunks.find(x => x.id === hunkId);
+        if (h) {
+            h.reviewStatus = status;
+            updateMagitDisplay();
+            editor.setStatus(editor.t(statusKey));
+        }
+    } else {
+        const ids = getCurrentFileHunkIds();
+        if (ids.length === 0) return;
+        for (const id of ids) {
+            const h = state.hunks.find(x => x.id === id);
+            if (h) h.reviewStatus = status;
+        }
         updateMagitDisplay();
-        editor.setStatus(editor.t("status.hunk_approved"));
+        editor.setStatus(editor.t(statusKey));
     }
+}
+
+async function review_approve_hunk() {
+    setReviewStatus('approved', "status.hunk_approved");
 }
 registerHandler("review_approve_hunk", review_approve_hunk);
 
 async function review_reject_hunk() {
-    const hunkId = getCurrentHunkId();
-    if (!hunkId) return;
-    const h = state.hunks.find(x => x.id === hunkId);
-    if (h) {
-        h.reviewStatus = 'rejected';
-        updateMagitDisplay();
-        editor.setStatus(editor.t("status.hunk_rejected"));
-    }
+    setReviewStatus('rejected', "status.hunk_rejected");
 }
 registerHandler("review_reject_hunk", review_reject_hunk);
 
 async function review_needs_changes() {
-    const hunkId = getCurrentHunkId();
-    if (!hunkId) return;
-    const h = state.hunks.find(x => x.id === hunkId);
-    if (h) {
-        h.reviewStatus = 'needs_changes';
-        updateMagitDisplay();
-        editor.setStatus(editor.t("status.hunk_needs_changes"));
-    }
+    setReviewStatus('needs_changes', "status.hunk_needs_changes");
 }
 registerHandler("review_needs_changes", review_needs_changes);
 
 async function review_question_hunk() {
-    const hunkId = getCurrentHunkId();
-    if (!hunkId) return;
-    const h = state.hunks.find(x => x.id === hunkId);
-    if (h) {
-        h.reviewStatus = 'question';
-        updateMagitDisplay();
-        editor.setStatus(editor.t("status.hunk_question"));
-    }
+    setReviewStatus('question', "status.hunk_question");
 }
 registerHandler("review_question_hunk", review_question_hunk);
 
 async function review_clear_status() {
-    const hunkId = getCurrentHunkId();
-    if (!hunkId) return;
-    const h = state.hunks.find(x => x.id === hunkId);
-    if (h) {
-        h.reviewStatus = 'pending';
-        updateMagitDisplay();
-        editor.setStatus(editor.t("status.hunk_status_cleared"));
-    }
+    setReviewStatus('pending', "status.hunk_status_cleared");
 }
 registerHandler("review_clear_status", review_clear_status);
 
@@ -2197,15 +2434,23 @@ editor.defineMode("review-mode", [
     ["Home", "review_nav_home"], ["End", "review_nav_end"],
     ["Tab", "review_toggle_focus"],
     ["Left", "review_focus_files"], ["Right", "review_focus_diff"],
+    // Hunk navigation (diff panel)
+    ["n", "review_next_hunk"], ["p", "review_prev_hunk"],
     // Drill-down
     ["Enter", "review_drill_down"],
-    // Git actions (plain letter keys — safe because buffer is read-only with cursors hidden)
+    // Git actions (context-sensitive: file-level or hunk-level based on focus)
     ["s", "review_stage_file"], ["u", "review_unstage_file"],
     ["d", "review_discard_file"],
     ["r", "review_refresh"],
     // Review actions
     ["a", "review_approve_hunk"],
+    ["x", "review_reject_hunk"],
+    ["!", "review_needs_changes"],
+    ["?", "review_question_hunk"],
     ["c", "review_add_comment"],
+    ["O", "review_set_overall_feedback"],
+    // Close
+    ["q", "close"],
     // Export
     ["e", "review_export_session"],
 ], true);
