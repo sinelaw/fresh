@@ -414,6 +414,35 @@ pub struct Config {
     /// Package manager settings for plugin/theme installation
     #[serde(default)]
     pub packages: PackagesConfig,
+
+    /// Devcontainer settings
+    #[serde(default)]
+    pub devcontainer: DevcontainerConfig,
+}
+
+/// Configuration for devcontainer support
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DevcontainerConfig {
+    /// Automatically detect devcontainer.json when opening a directory (default: true)
+    #[serde(default = "default_true")]
+    pub auto_detect: bool,
+
+    /// Path to the devcontainer CLI executable (default: "devcontainer")
+    #[serde(default = "default_devcontainer_cli_path")]
+    pub cli_path: String,
+}
+
+impl Default for DevcontainerConfig {
+    fn default() -> Self {
+        Self {
+            auto_detect: true,
+            cli_path: default_devcontainer_cli_path(),
+        }
+    }
+}
+
+fn default_devcontainer_cli_path() -> String {
+    "devcontainer".to_string()
 }
 
 fn default_keybinding_map_name() -> KeybindingMapName {
@@ -2023,6 +2052,7 @@ impl Default for Config {
             warnings: WarningsConfig::default(),
             plugins: HashMap::new(), // Populated when scanning for plugins
             packages: PackagesConfig::default(),
+            devcontainer: DevcontainerConfig::default(),
         }
     }
 }

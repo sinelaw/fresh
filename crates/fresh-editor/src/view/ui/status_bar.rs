@@ -561,7 +561,13 @@ impl StatusBarRenderer {
                     .unwrap_or(false);
                 let remote_prefix = ctx
                     .remote_connection
-                    .map(|conn| format!("{SSH_PREFIX}{conn}{SSH_PREFIX_TERMINATOR}"))
+                    .map(|conn| {
+                        if conn.starts_with("Container:") {
+                            format!("[{}] ", conn)
+                        } else {
+                            format!("{SSH_PREFIX}{conn}{SSH_PREFIX_TERMINATOR}")
+                        }
+                    })
                     .unwrap_or_default();
                 let session_prefix = ctx
                     .session_name

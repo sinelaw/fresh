@@ -493,6 +493,8 @@ struct SetupState {
     process_spawner: std::sync::Arc<dyn remote::ProcessSpawner>,
     /// Remote session resources - must be kept alive for remote editing
     _remote_session: Option<RemoteSession>,
+    /// Devcontainer session resources - must be kept alive for container editing
+    _devcontainer_session: Option<DevcontainerSession>,
     /// Key translator for input calibration
     key_translator: KeyTranslator,
     #[cfg(target_os = "linux")]
@@ -1115,6 +1117,16 @@ struct RemoteSession {
     _reconnect_handle: tokio::task::JoinHandle<()>,
 }
 
+/// Holds resources needed for devcontainer editing (kept alive for duration of session)
+struct DevcontainerSession {
+    /// The container connection - dropping this closes the agent process
+    _connection: fresh::services::devcontainer::ContainerConnection,
+    /// Tokio runtime for async operations
+    _runtime: tokio::runtime::Runtime,
+    /// Background reconnect task handle - dropping this aborts the task
+    _reconnect_handle: tokio::task::JoinHandle<()>,
+}
+
 /// Result of creating filesystem - includes optional remote session to keep alive
 struct FilesystemResult {
     filesystem: std::sync::Arc<dyn FileSystem + Send + Sync>,
@@ -1122,6 +1134,8 @@ struct FilesystemResult {
     process_spawner: std::sync::Arc<dyn remote::ProcessSpawner>,
     /// Remote session resources - must be kept alive for remote editing
     remote_session: Option<RemoteSession>,
+    /// Devcontainer session resources - must be kept alive for container editing
+    devcontainer_session: Option<DevcontainerSession>,
 }
 
 /// Create filesystem for local or remote editing
@@ -1133,6 +1147,7 @@ fn create_filesystem(remote_info: &Option<RemoteLocation>) -> AnyhowResult<Files
             filesystem: std::sync::Arc::new(StdFileSystem),
             process_spawner: std::sync::Arc::new(remote::LocalProcessSpawner),
             remote_session: None,
+            devcontainer_session: None,
         })
     }
 }
@@ -1187,7 +1202,92 @@ fn connect_remote(remote: &RemoteLocation) -> AnyhowResult<FilesystemResult> {
             _runtime: rt,
             _reconnect_handle: reconnect_handle,
         }),
+        devcontainer_session: None,
     })
+}
+
+/// Start a devcontainer and return a RemoteFileSystem connected to it.
+///
+/// Uses the `devcontainer` CLI to build/start the container, then establishes
+/// an agent connection via `docker exec`.
+fn connect_devcontainer(
+    workspace_path: &Path,
+    cli_path: &str,
+) -> AnyhowResult<(FilesystemResult, PathBuf)> {
+    use fresh::services::devcontainer::{ContainerConnection, DevcontainerCli};
+
+    let rt = tokio::runtime::Runtime::new()
+        .context("Failed to create Tokio runtime for devcontainer")?;
+
+    let cli = if cli_path == "devcontainer" {
+        DevcontainerCli::new()
+    } else {
+        DevcontainerCli::with_path(cli_path.to_string())
+    };
+
+    // Check prerequisites
+    eprintln!("Checking devcontainer CLI...");
+    if !rt.block_on(cli.is_available()) {
+        anyhow::bail!(
+            "devcontainer CLI not found. Install with: npm install -g @devcontainers/cli"
+        );
+    }
+
+    eprintln!("Checking Docker...");
+    rt.block_on(cli.check_docker())
+        .context("Docker is not available")?;
+
+    // Build and start the container
+    eprintln!("Starting devcontainer (this may take a while on first run)...");
+    let up_result = rt
+        .block_on(cli.up(workspace_path))
+        .context("Failed to start devcontainer")?;
+
+    eprintln!(
+        "Container started: {}",
+        &up_result.container_id[..12.min(up_result.container_id.len())]
+    );
+
+    let remote_workspace = PathBuf::from(&up_result.remote_workspace_folder);
+
+    // Connect to the container via docker exec + Python agent
+    eprintln!("Connecting to container...");
+    let connection = rt
+        .block_on(ContainerConnection::connect(
+            up_result.container_id,
+            remote_workspace.clone(),
+        ))
+        .context("Failed to connect to devcontainer")?;
+
+    let connection_string = connection.connection_string();
+    let channel = connection.channel();
+
+    tracing::info!("Connected to devcontainer: {}", connection_string);
+
+    let filesystem = std::sync::Arc::new(remote::RemoteFileSystem::new(
+        channel.clone(),
+        connection_string,
+    ));
+    let process_spawner = std::sync::Arc::new(remote::RemoteProcessSpawner::new(channel.clone()));
+
+    // Spawn background reconnect task
+    let reconnect_handle = {
+        let _guard = rt.enter();
+        connection.spawn_reconnect_task()
+    };
+
+    let result = FilesystemResult {
+        filesystem,
+        process_spawner,
+        remote_session: None,
+        devcontainer_session: Some(DevcontainerSession {
+            _connection: connection,
+            _runtime: rt,
+            _reconnect_handle: reconnect_handle,
+        }),
+    };
+
+    Ok((result, remote_workspace))
 }
 
 fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
@@ -1320,6 +1420,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         filesystem,
         process_spawner,
         remote_session,
+        devcontainer_session,
     } = create_filesystem(&remote_info)?;
     tracing::info!("Filesystem created");
 
@@ -1341,6 +1442,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     // Load config using the layered config system
     // For remote editing, use current local dir for config (remote doesn't have our config)
+    // Config is loaded early so devcontainer detection can respect auto_detect setting
     tracing::info!("Loading config...");
     let effective_working_dir = if remote_info.is_some() {
         std::env::current_dir().unwrap_or_default()
@@ -1369,6 +1471,58 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     } else {
         config::Config::load_with_layers(&dir_context, &effective_working_dir)
     };
+
+    // Devcontainer detection: if opening a local directory, check for .devcontainer config
+    let (filesystem, process_spawner, devcontainer_session) =
+        if remote_info.is_none() && config.devcontainer.auto_detect {
+            if let Some(ref dir) = working_dir {
+                if let Some(detected) =
+                    fresh::services::devcontainer::detect_devcontainer(dir, filesystem.as_ref())
+                {
+                    tracing::info!(
+                        "Devcontainer config detected: {}",
+                        detected.config_path.display()
+                    );
+                    // Prompt user on stderr (before terminal raw mode)
+                    eprint!(
+                        "Devcontainer detected ({}). Open in container? [y/N] ",
+                        detected.config_path.display()
+                    );
+                    let mut answer = String::new();
+                    if io::stdin().read_line(&mut answer).is_ok()
+                        && answer.trim().eq_ignore_ascii_case("y")
+                    {
+                        match connect_devcontainer(
+                            &detected.workspace_path,
+                            &config.devcontainer.cli_path,
+                        ) {
+                            Ok((result, remote_workspace)) => {
+                                // Override working_dir to the container's workspace folder
+                                working_dir = Some(remote_workspace);
+                                (
+                                    result.filesystem,
+                                    result.process_spawner,
+                                    result.devcontainer_session,
+                                )
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: Failed to start devcontainer: {}", e);
+                                eprintln!("Falling back to local filesystem.");
+                                (filesystem, process_spawner, devcontainer_session)
+                            }
+                        }
+                    } else {
+                        (filesystem, process_spawner, devcontainer_session)
+                    }
+                } else {
+                    (filesystem, process_spawner, devcontainer_session)
+                }
+            } else {
+                (filesystem, process_spawner, devcontainer_session)
+            }
+        } else {
+            (filesystem, process_spawner, devcontainer_session)
+        };
 
     tracing::info!("Config loaded");
 
@@ -1453,6 +1607,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         filesystem,
         process_spawner,
         _remote_session: remote_session,
+        _devcontainer_session: devcontainer_session,
     })
 }
 
@@ -2936,6 +3091,7 @@ fn real_main() -> AnyhowResult<()> {
         filesystem,
         process_spawner,
         _remote_session,
+        _devcontainer_session,
     } = initialize_app(&args).context("Failed to initialize application")?;
 
     let mut current_working_dir = initial_working_dir;
