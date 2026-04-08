@@ -416,6 +416,27 @@ function buildFileListLines(): ListLine[] {
         });
     }
 
+    // Show overall notes at the bottom of the file list
+    const notes = state.comments.filter(c => c.hunk_id === '__overall__');
+    if (notes.length > 0) {
+        lines.push({ text: '', type: 'section-header' }); // blank separator
+        lines.push({
+            text: `▸ Notes (${notes.length})`,
+            type: 'section-header',
+            style: { fg: STYLE_COMMENT, bold: true },
+        });
+        for (const note of notes) {
+            const truncated = note.text.length > 40
+                ? note.text.substring(0, 37) + '...'
+                : note.text;
+            lines.push({
+                text: `  ${truncated}`,
+                type: 'section-header',
+                style: { fg: STYLE_COMMENT, italic: true },
+            });
+        }
+    }
+
     return lines;
 }
 
