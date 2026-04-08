@@ -339,6 +339,16 @@ impl FileProvider {
         }
     }
 
+    /// Cancel any in-progress background file load.
+    /// Called when the user closes Quick Open so we don't keep walking.
+    pub fn cancel_loading(&self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut c) = self.cache.lock() {
+            c.loading = false;
+        }
+    }
+
     /// Update the file cache with results from a background load.
     pub fn set_cache(&self, files: std::sync::Arc<Vec<FileEntry>>) {
         if let Ok(mut c) = self.cache.lock() {

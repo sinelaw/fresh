@@ -4138,6 +4138,18 @@ impl Editor {
                             .resolve_callback(callback_id, "null".to_string());
                     }
                 }
+                PromptType::QuickOpen => {
+                    // Cancel any in-progress background file loading
+                    if let Some((provider, _)) = self.quick_open_registry.get_provider_for_input("")
+                    {
+                        if let Some(fp) = provider
+                            .as_any()
+                            .downcast_ref::<crate::input::quick_open::providers::FileProvider>(
+                        ) {
+                            fp.cancel_loading();
+                        }
+                    }
+                }
                 _ => {}
             }
         }

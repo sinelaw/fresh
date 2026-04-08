@@ -562,6 +562,65 @@ def cmd_cancel(id, p):
     send(id, r={})
 
 
+def cmd_walk_files(id, p):
+    """Recursively walk a directory, streaming file paths in batches.
+
+    Skips hidden entries (dot-prefixed) and directories in skip_dirs.
+    Sends batches of relative paths as streaming data messages.
+    Stops after max_files (default 50000).
+    """
+    root = validate_path(p["path"])
+    skip_dirs = set(p.get("skip_dirs", []))
+    max_files = p.get("max_files", 50000)
+    batch_size = 500
+
+    count = 0
+    batch = []
+    stack = [root]
+
+    while stack:
+        if id in cancelled:
+            send(id, r={"count": count, "cancelled": True})
+            return
+
+        d = stack.pop()
+        try:
+            entries = os.scandir(d)
+        except OSError:
+            continue
+
+        for entry in entries:
+            if id in cancelled:
+                send(id, r={"count": count, "cancelled": True})
+                return
+
+            if entry.name.startswith("."):
+                continue
+
+            try:
+                if entry.is_file(follow_symlinks=False):
+                    rel = os.path.relpath(entry.path, root)
+                    batch.append(rel)
+                    count += 1
+                    if len(batch) >= batch_size:
+                        send(id, d={"files": batch})
+                        batch = []
+                    if count >= max_files:
+                        if batch:
+                            send(id, d={"files": batch})
+                        send(id, r={"count": count})
+                        return
+                elif entry.is_dir(follow_symlinks=False):
+                    if entry.name not in skip_dirs:
+                        stack.append(entry.path)
+            except OSError:
+                continue
+
+    if batch:
+        send(id, d={"files": batch})
+    send(id, r={"count": count})
+
+
 # === Method dispatch ===
 
 METHODS = {
@@ -587,6 +646,7 @@ METHODS = {
     "exec": cmd_exec,
     "kill": cmd_kill,
     "cancel": cmd_cancel,
+    "walk_files": cmd_walk_files,
 }
 
 

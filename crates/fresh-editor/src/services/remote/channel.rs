@@ -532,6 +532,30 @@ impl AgentChannel {
             .block_on(self.request_with_data(method, params))
     }
 
+    /// Send a streaming request synchronously, returning receivers for
+    /// incremental processing.
+    ///
+    /// Unlike `request_with_data_blocking` which collects all data into
+    /// memory, this returns the raw receivers so callers can process each
+    /// chunk as it arrives (e.g., for `walk_files` where the server sends
+    /// file paths in batches).
+    ///
+    /// Use `data_rx.blocking_recv()` to receive chunks from a sync context.
+    pub fn request_streaming_blocking(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<
+        (
+            mpsc::Receiver<serde_json::Value>,
+            oneshot::Receiver<Result<serde_json::Value, String>>,
+        ),
+        ChannelError,
+    > {
+        self.runtime_handle
+            .block_on(self.request_streaming(method, params))
+    }
+
     /// Cancel a request
     pub async fn cancel(&self, request_id: u64) -> Result<(), ChannelError> {
         use crate::services::remote::protocol::cancel_params;
