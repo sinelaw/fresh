@@ -683,6 +683,89 @@ pub trait FileSystem: Send + Sync {
     /// - `gid`: Owner group ID
     fn sudo_write(&self, path: &Path, data: &[u8], mode: u32, uid: u32, gid: u32)
         -> io::Result<()>;
+
+    // ========================================================================
+    // Directory Walking
+    // ========================================================================
+
+    /// Recursively walk a directory tree, invoking `on_file` for each file.
+    ///
+    /// Skips hidden entries (dot-prefixed names) and directories whose
+    /// basename appears in `skip_dirs`.  The walk stops early when:
+    /// - `on_file` returns `false` (caller reached its limit), or
+    /// - `cancel` is set to `true` (e.g. user closed the dialog).
+    ///
+    /// `on_file` receives `(absolute_path, path_relative_to_root)`.
+    ///
+    /// `skip_dirs` entries are **basenames** matched at every depth
+    /// (e.g. `"node_modules"` skips every `node_modules` directory in the
+    /// tree).
+    ///
+    /// // TODO: support .gitignore-style glob patterns in addition to
+    /// // basename matching, so callers can express richer ignore rules
+    /// // (e.g. `build/`, `*.o`, `vendor/**`).
+    ///
+    /// The default implementation uses `std::fs::read_dir` lazily so that
+    /// memory usage is O(tree depth), not O(directory size).  Remote
+    /// implementations should override this to walk server-side and stream
+    /// results back via the channel, avoiding per-directory round-trips.
+    fn walk_files(
+        &self,
+        root: &Path,
+        skip_dirs: &[&str],
+        cancel: &std::sync::atomic::AtomicBool,
+        on_file: &mut dyn FnMut(&Path, &str) -> bool,
+    ) -> io::Result<()> {
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(());
+            }
+
+            // Use std::fs::read_dir iterator directly — NOT self.read_dir()
+            // which collects into a Vec.  This keeps memory O(1) per directory
+            // even for directories with millions of entries.
+            let iter = match std::fs::read_dir(&dir) {
+                Ok(it) => it,
+                Err(_) => continue,
+            };
+
+            for entry in iter {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Ok(());
+                }
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+
+                // Skip hidden entries
+                if name_str.starts_with('.') {
+                    continue;
+                }
+
+                let ft = match entry.file_type() {
+                    Ok(ft) => ft,
+                    Err(_) => continue,
+                };
+                let path = entry.path();
+
+                if ft.is_file() {
+                    if let Ok(rel) = path.strip_prefix(root) {
+                        let rel_str = rel.to_string_lossy().replace('\\', "/");
+                        if !on_file(&path, &rel_str) {
+                            return Ok(());
+                        }
+                    }
+                } else if ft.is_dir() && !skip_dirs.contains(&name_str.as_ref()) {
+                    stack.push(path);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -1869,5 +1952,239 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].context, "CCC");
         assert_eq!(matches[0].line, 3);
+    }
+
+    // ====================================================================
+    // walk_files tests
+    // ====================================================================
+
+    /// Helper: create a directory tree for walk_files tests.
+    /// Returns the tempdir (must be kept alive for the duration of the test).
+    fn make_walk_tree() -> tempfile::TempDir {
+        let fs = StdFileSystem;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // root/
+        //   a.txt
+        //   b.txt
+        //   sub/
+        //     c.txt
+        //     deep/
+        //       d.txt
+        //   .hidden_dir/
+        //     secret.txt
+        //   .hidden_file
+        //   node_modules/
+        //     pkg.json
+        //   target/
+        //     debug.o
+        fs.write_file(&root.join("a.txt"), b"a").unwrap();
+        fs.write_file(&root.join("b.txt"), b"b").unwrap();
+        fs.create_dir_all(&root.join("sub/deep")).unwrap();
+        fs.write_file(&root.join("sub/c.txt"), b"c").unwrap();
+        fs.write_file(&root.join("sub/deep/d.txt"), b"d").unwrap();
+        fs.create_dir_all(&root.join(".hidden_dir")).unwrap();
+        fs.write_file(&root.join(".hidden_dir/secret.txt"), b"s").unwrap();
+        fs.write_file(&root.join(".hidden_file"), b"h").unwrap();
+        fs.create_dir_all(&root.join("node_modules")).unwrap();
+        fs.write_file(&root.join("node_modules/pkg.json"), b"{}").unwrap();
+        fs.create_dir_all(&root.join("target")).unwrap();
+        fs.write_file(&root.join("target/debug.o"), b"elf").unwrap();
+
+        tmp
+    }
+
+    #[test]
+    fn test_walk_files_std_basic() {
+        let tmp = make_walk_tree();
+        let fs = StdFileSystem;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut found: Vec<String> = Vec::new();
+
+        fs.walk_files(
+            tmp.path(),
+            &["node_modules", "target"],
+            &cancel,
+            &mut |_path, rel| {
+                found.push(rel.to_string());
+                true
+            },
+        )
+        .unwrap();
+
+        found.sort();
+        assert_eq!(found, vec!["a.txt", "b.txt", "sub/c.txt", "sub/deep/d.txt"]);
+    }
+
+    #[test]
+    fn test_walk_files_std_skips_hidden() {
+        let tmp = make_walk_tree();
+        let fs = StdFileSystem;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut found: Vec<String> = Vec::new();
+
+        fs.walk_files(tmp.path(), &[], &cancel, &mut |_path, rel| {
+            found.push(rel.to_string());
+            true
+        })
+        .unwrap();
+
+        // Hidden files/dirs should be excluded, but node_modules and target
+        // are NOT skipped (empty skip list)
+        assert!(!found.iter().any(|f| f.contains(".hidden")));
+        assert!(found.iter().any(|f| f.contains("node_modules")));
+        assert!(found.iter().any(|f| f.contains("target")));
+    }
+
+    #[test]
+    fn test_walk_files_std_skip_dirs() {
+        let tmp = make_walk_tree();
+        let fs = StdFileSystem;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut found: Vec<String> = Vec::new();
+
+        fs.walk_files(
+            tmp.path(),
+            &["node_modules", "target", "deep"],
+            &cancel,
+            &mut |_path, rel| {
+                found.push(rel.to_string());
+                true
+            },
+        )
+        .unwrap();
+
+        found.sort();
+        // "deep" dir is also skipped, so d.txt should not appear
+        assert_eq!(found, vec!["a.txt", "b.txt", "sub/c.txt"]);
+    }
+
+    #[test]
+    fn test_walk_files_std_cancel() {
+        let tmp = make_walk_tree();
+        let fs = StdFileSystem;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut found: Vec<String> = Vec::new();
+
+        fs.walk_files(
+            tmp.path(),
+            &["node_modules", "target"],
+            &cancel,
+            &mut |_path, rel| {
+                found.push(rel.to_string());
+                // Cancel after finding the first file
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                true
+            },
+        )
+        .unwrap();
+
+        assert_eq!(found.len(), 1, "Should stop after cancel is set");
+    }
+
+    #[test]
+    fn test_walk_files_std_on_file_returns_false() {
+        let tmp = make_walk_tree();
+        let fs = StdFileSystem;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut count = 0usize;
+
+        fs.walk_files(
+            tmp.path(),
+            &["node_modules", "target"],
+            &cancel,
+            &mut |_path, _rel| {
+                count += 1;
+                count < 2 // stop after 2 files
+            },
+        )
+        .unwrap();
+
+        assert_eq!(count, 2, "Should stop when on_file returns false");
+    }
+
+    #[test]
+    fn test_walk_files_std_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fs = StdFileSystem;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut found: Vec<String> = Vec::new();
+
+        fs.walk_files(tmp.path(), &[], &cancel, &mut |_path, rel| {
+            found.push(rel.to_string());
+            true
+        })
+        .unwrap();
+
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn test_walk_files_std_nonexistent_root() {
+        let fs = StdFileSystem;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut found: Vec<String> = Vec::new();
+
+        // Non-existent root should not panic, just return Ok with no files
+        let result = fs.walk_files(
+            Path::new("/nonexistent/path/that/does/not/exist"),
+            &[],
+            &cancel,
+            &mut |_path, rel| {
+                found.push(rel.to_string());
+                true
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn test_walk_files_std_relative_paths_use_forward_slashes() {
+        let tmp = make_walk_tree();
+        let fs = StdFileSystem;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut found: Vec<String> = Vec::new();
+
+        fs.walk_files(
+            tmp.path(),
+            &["node_modules", "target"],
+            &cancel,
+            &mut |_path, rel| {
+                found.push(rel.to_string());
+                true
+            },
+        )
+        .unwrap();
+
+        // All paths should use forward slashes (even on Windows)
+        for path in &found {
+            assert!(!path.contains('\\'), "Path should use / not \\: {}", path);
+        }
+    }
+
+    #[test]
+    fn test_walk_files_noop_returns_ok_empty() {
+        let fs = NoopFileSystem;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut found: Vec<String> = Vec::new();
+
+        // NoopFileSystem uses the default impl which calls std::fs::read_dir
+        // on a non-existent path — the default impl handles read_dir errors
+        // gracefully by continuing, so it returns Ok with no files.
+        let result = fs.walk_files(
+            Path::new("/noop/path"),
+            &[],
+            &cancel,
+            &mut |_path, rel| {
+                found.push(rel.to_string());
+                true
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(found.is_empty());
     }
 }
