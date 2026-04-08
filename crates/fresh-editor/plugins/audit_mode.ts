@@ -388,7 +388,7 @@ interface DiffLine {
  * Build the file list lines for the left panel.
  * Returns section headers (not selectable) and file entries.
  */
-function buildFileListLines(): ListLine[] {
+function buildFileListLines(leftWidth?: number): ListLine[] {
     const lines: ListLine[] = [];
     let lastCategory: string | undefined;
 
@@ -419,7 +419,7 @@ function buildFileListLines(): ListLine[] {
         });
     }
 
-    // Show session note at the bottom of the file list
+    // Show session note at the bottom of the file list, word-wrapped
     if (state.note) {
         lines.push({ text: '', type: 'section-header' }); // blank separator
         lines.push({
@@ -427,14 +427,21 @@ function buildFileListLines(): ListLine[] {
             type: 'section-header',
             style: { fg: STYLE_COMMENT, bold: true },
         });
-        const truncated = state.note.length > 40
-            ? state.note.substring(0, 37) + '...'
-            : state.note;
-        lines.push({
-            text: `  ${truncated}`,
-            type: 'section-header',
-            style: { fg: STYLE_COMMENT, italic: true },
-        });
+        // Wrap note text to fit left panel (minus 3 for "  " prefix + padding)
+        const wrapWidth = Math.max(20, (leftWidth || 40) - 3);
+        const words = state.note.split(' ');
+        let line = '';
+        for (const word of words) {
+            if (line && (line.length + 1 + word.length) > wrapWidth) {
+                lines.push({ text: `  ${line}`, type: 'section-header', style: { fg: STYLE_COMMENT, italic: true } });
+                line = word;
+            } else {
+                line = line ? `${line} ${word}` : word;
+            }
+        }
+        if (line) {
+            lines.push({ text: `  ${line}`, type: 'section-header', style: { fg: STYLE_COMMENT, italic: true } });
+        }
     }
 
     return lines;
@@ -640,12 +647,12 @@ function buildToolbar(W: number): TextPropertyEntry {
     const groups: HintItem[][] = state.focusPanel === 'files'
         ? [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
-            [{ key: "c", label: "Comment" }, { key: "C", label: "Note" }, { key: "x", label: "Del" }],
+            [{ key: "c", label: "Comment" }, { key: "N", label: "Note" }, { key: "x", label: "Del" }],
             [{ key: "↵", label: "Open" }, { key: "Tab", label: "Switch" }, { key: "e", label: "Export" }, { key: "r", label: "Refresh" }, { key: "q", label: "Close" }],
           ]
         : [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
-            [{ key: "c", label: "Comment" }, { key: "C", label: "Note" }, { key: "x", label: "Del" }],
+            [{ key: "c", label: "Comment" }, { key: "N", label: "Note" }, { key: "x", label: "Del" }],
             [{ key: "n", label: "Next" }, { key: "p", label: "Prev" }, { key: "Tab", label: "Switch" }, { key: "e", label: "Export" }, { key: "q", label: "Close" }],
           ];
 
@@ -699,7 +706,7 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     const leftWidth = Math.max(28, Math.floor(W * 0.3));
     const rightWidth = W - leftWidth - 1; // 1 for divider
 
-    const allFileLines = buildFileListLines();
+    const allFileLines = buildFileListLines(leftWidth);
     const diffLines = buildDiffLines(rightWidth);
 
     const mainRows = H - 2; // rows 2..H-1
@@ -2551,7 +2558,7 @@ editor.defineMode("review-mode", [
     ["r", "review_refresh"],
     // Comments
     ["c", "review_add_comment"],
-    ["C", "review_edit_note"],
+    ["N", "review_edit_note"],
     ["x", "review_delete_comment"],
     // Close & export
     ["q", "close"],
