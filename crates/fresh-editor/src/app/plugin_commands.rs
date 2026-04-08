@@ -40,73 +40,6 @@ fn make_search_opts(
     }
 }
 
-/// Recursively walk `dir` via the `FileSystem` trait, collecting file paths.
-/// Skips hidden entries (dot-prefixed) and common non-source directories.
-fn walk_files_recursive(
-    fs: &dyn crate::model::filesystem::FileSystem,
-    dir: &std::path::Path,
-    out: &mut Vec<std::path::PathBuf>,
-) {
-    let entries = match fs.read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries {
-        // Skip hidden files/dirs
-        if entry.name.starts_with('.') {
-            continue;
-        }
-        match entry.entry_type {
-            crate::model::filesystem::EntryType::File => {
-                out.push(entry.path);
-            }
-            crate::model::filesystem::EntryType::Directory => {
-                if !IGNORED_DIRS.contains(&entry.name.as_str()) {
-                    walk_files_recursive(fs, &entry.path, out);
-                }
-            }
-            _ => {} // skip symlinks etc. for now
-        }
-    }
-}
-
-/// Streaming variant: recursively walks and sends each file path via callback.
-/// Returns early if `cancel` is set or callback returns false (receiver dropped).
-fn walk_files_streaming(
-    fs: &dyn crate::model::filesystem::FileSystem,
-    dir: &std::path::Path,
-    cancel: &std::sync::atomic::AtomicBool,
-    send: &mut dyn FnMut(std::path::PathBuf) -> bool,
-) {
-    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-        return;
-    }
-    let entries = match fs.read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries {
-        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            return;
-        }
-        if entry.name.starts_with('.') {
-            continue;
-        }
-        match entry.entry_type {
-            crate::model::filesystem::EntryType::File => {
-                if !send(entry.path) {
-                    return;
-                }
-            }
-            crate::model::filesystem::EntryType::Directory => {
-                if !IGNORED_DIRS.contains(&entry.name.as_str()) {
-                    walk_files_streaming(fs, &entry.path, cancel, send);
-                }
-            }
-            _ => {}
-        }
-    }
-}
 
 impl Editor {
     // ==================== Menu Helpers ====================
@@ -1954,8 +1887,17 @@ impl Editor {
 
         // Collect all project files via FileSystem trait (works for both local and remote)
         let cwd = self.working_dir.clone();
+        let cancel = std::sync::atomic::AtomicBool::new(false);
         let mut file_paths: Vec<std::path::PathBuf> = Vec::new();
-        walk_files_recursive(&*self.filesystem, &cwd, &mut file_paths);
+        let _ = self.filesystem.walk_files(
+            &cwd,
+            IGNORED_DIRS,
+            &cancel,
+            &mut |path, _rel| {
+                file_paths.push(path.to_path_buf());
+                true
+            },
+        );
 
         // Search each file: open buffers via piece tree, others via fs.search_file
         for file_path in &file_paths {
@@ -2136,10 +2078,15 @@ impl Editor {
                 );
                 let mut file_count = 0usize;
 
-                walk_files_streaming(&*filesystem_walker, &cwd, &cancel_walker, &mut |path| {
-                    file_count += 1;
-                    path_tx.blocking_send(path).is_ok()
-                });
+                let _ = filesystem_walker.walk_files(
+                    &cwd,
+                    IGNORED_DIRS,
+                    &cancel_walker,
+                    &mut |path, _rel| {
+                        file_count += 1;
+                        path_tx.blocking_send(path.to_path_buf()).is_ok()
+                    },
+                );
 
                 tracing::info!(
                     "GrepStreaming walker: done, sent {} files (search_id={})",

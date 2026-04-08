@@ -429,41 +429,18 @@ impl FileProvider {
         use std::path::Path;
 
         let base = Path::new(cwd);
+        let cancel = std::sync::atomic::AtomicBool::new(false);
         let mut files = Vec::new();
-        let mut stack = vec![base.to_path_buf()];
 
-        while let Some(dir) = stack.pop() {
-            let entries = match self.filesystem.read_dir(&dir) {
-                Ok(entries) => entries,
-                Err(_) => continue,
-            };
-
-            for entry in entries {
-                // Skip hidden files/dirs (dot-prefixed)
-                if entry.name.starts_with('.') {
-                    continue;
-                }
-
-                match entry.entry_type {
-                    crate::model::filesystem::EntryType::File => {
-                        if let Ok(rel) = entry.path.strip_prefix(base) {
-                            // Normalize to forward slashes for consistent display
-                            let rel_str = rel.to_string_lossy().replace('\\', "/");
-                            files.push(rel_str);
-                            if files.len() >= MAX_FILES {
-                                return Some(files);
-                            }
-                        }
-                    }
-                    crate::model::filesystem::EntryType::Directory => {
-                        if !IGNORED_DIRS.contains(&entry.name.as_str()) {
-                            stack.push(entry.path);
-                        }
-                    }
-                    _ => {} // skip symlinks etc.
-                }
-            }
-        }
+        let _ = self.filesystem.walk_files(
+            base,
+            IGNORED_DIRS,
+            &cancel,
+            &mut |_path, rel| {
+                files.push(rel.to_string());
+                files.len() < MAX_FILES
+            },
+        );
 
         if files.is_empty() {
             None
