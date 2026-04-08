@@ -40,7 +40,6 @@ fn make_search_opts(
     }
 }
 
-
 impl Editor {
     // ==================== Menu Helpers ====================
 
@@ -1889,15 +1888,12 @@ impl Editor {
         let cwd = self.working_dir.clone();
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let mut file_paths: Vec<std::path::PathBuf> = Vec::new();
-        let _ = self.filesystem.walk_files(
-            &cwd,
-            IGNORED_DIRS,
-            &cancel,
-            &mut |path, _rel| {
+        let _ = self
+            .filesystem
+            .walk_files(&cwd, IGNORED_DIRS, &cancel, &mut |path, _rel| {
                 file_paths.push(path.to_path_buf());
                 true
-            },
-        );
+            });
 
         // Search each file: open buffers via piece tree, others via fs.search_file
         for file_path in &file_paths {

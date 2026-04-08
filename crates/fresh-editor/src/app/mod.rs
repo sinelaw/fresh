@@ -1298,6 +1298,7 @@ impl Editor {
             Arc::clone(&filesystem),
             Arc::clone(&process_spawner),
             tokio_runtime.as_ref().map(|rt| rt.handle().clone()),
+            Some(async_bridge.sender()),
         )));
         quick_open_registry.register(Box::new(CommandProvider::new(
             Arc::clone(&command_registry),
@@ -5039,6 +5040,26 @@ impl Editor {
 
                     // Flush any plugin grammars that arrived during the build
                     self.flush_pending_grammars();
+                }
+                AsyncMessage::QuickOpenFilesLoaded(files) => {
+                    // Update the file provider cache and refresh suggestions
+                    // if Quick Open is currently showing file mode (empty prefix).
+                    if let Some((provider, _)) = self.quick_open_registry.get_provider_for_input("")
+                    {
+                        if let Some(fp) = provider
+                            .as_any()
+                            .downcast_ref::<crate::input::quick_open::providers::FileProvider>(
+                        ) {
+                            fp.set_cache(files);
+                        }
+                    }
+                    // Refresh the Quick Open suggestions if the prompt is open
+                    if let Some(prompt) = &self.prompt {
+                        if prompt.prompt_type == PromptType::QuickOpen {
+                            let input = prompt.input.clone();
+                            self.update_quick_open_suggestions(&input);
+                        }
+                    }
                 }
             }
         }

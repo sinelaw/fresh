@@ -149,6 +149,9 @@ pub trait QuickOpenProvider: Send + Sync {
         query: &str,
         context: &QuickOpenContext,
     ) -> QuickOpenResult;
+
+    /// Downcast support for concrete provider access (e.g., updating cache).
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Registry for quick open providers
@@ -228,6 +231,10 @@ mod tests {
             _context: &QuickOpenContext,
         ) -> QuickOpenResult {
             QuickOpenResult::None
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
         }
     }
 

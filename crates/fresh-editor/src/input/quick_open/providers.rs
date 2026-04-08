@@ -94,6 +94,10 @@ impl QuickOpenProvider for CommandProvider {
         }
         QuickOpenResult::ExecuteAction(action)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ============================================================================
@@ -169,6 +173,10 @@ impl QuickOpenProvider for BufferProvider {
             .map(QuickOpenResult::ShowBuffer)
             .unwrap_or(QuickOpenResult::None)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ============================================================================
@@ -231,6 +239,10 @@ impl QuickOpenProvider for GotoLineProvider {
             .map(QuickOpenResult::GotoLine)
             .unwrap_or(QuickOpenResult::None)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ============================================================================
@@ -250,40 +262,9 @@ const IGNORED_DIRS: &[&str] = &[
 
 const MAX_FILES: usize = 50_000;
 
-/// Provider for finding files in the project
-///
-/// Uses `git ls-files` via [`ProcessSpawner`] as the fast path (respects
-/// `.gitignore`, works on remote hosts), then falls back to recursive
-/// directory walking via the [`FileSystem`] trait (works on all platforms
-/// including Windows, and on remote filesystems).
-pub struct FileProvider {
-    /// Cached file list (populated lazily)
-    file_cache: std::sync::Arc<std::sync::RwLock<Option<Vec<FileEntry>>>>,
-    /// Frecency data for ranking
-    frecency: std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, FrecencyData>>>,
-    /// Filesystem abstraction (local or remote)
-    filesystem: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
-    /// Process spawner for running git (local or remote)
-    process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
-    /// Tokio runtime handle for blocking on async ProcessSpawner calls
-    runtime_handle: Option<tokio::runtime::Handle>,
-}
-
-// Manual Clone: all fields are Arc/Option<Handle> which are Clone
-impl Clone for FileProvider {
-    fn clone(&self) -> Self {
-        Self {
-            file_cache: self.file_cache.clone(),
-            frecency: self.frecency.clone(),
-            filesystem: self.filesystem.clone(),
-            process_spawner: self.process_spawner.clone(),
-            runtime_handle: self.runtime_handle.clone(),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct FileEntry {
+/// A single file entry in the Quick Open file list.
+#[derive(Clone, Debug)]
+pub struct FileEntry {
     relative_path: String,
     frecency_score: f64,
 }
@@ -294,25 +275,75 @@ struct FrecencyData {
     last_access: std::time::Instant,
 }
 
+/// Shared state between the FileProvider and its background loading task.
+///
+/// Wrapped in a single `Arc<Mutex<>>` to keep the FileProvider struct flat.
+struct FileCache {
+    /// The cached file list, or `None` if not yet loaded.
+    files: Option<std::sync::Arc<Vec<FileEntry>>>,
+    /// Whether a background load is in progress.
+    loading: bool,
+}
+
+/// Provider for finding files in the project.
+///
+/// Uses `git ls-files` via [`ProcessSpawner`] as the fast path (respects
+/// `.gitignore`, works on remote hosts), then falls back to recursive
+/// directory walking via the [`FileSystem`] trait.
+///
+/// File enumeration runs on a background thread to avoid blocking the UI.
+/// When the cache is empty, `suggestions()` returns a "Loading…" placeholder
+/// and kicks off a background task.  When the task finishes it sends an
+/// `AsyncMessage::QuickOpenFilesLoaded` which the editor handles by calling
+/// `set_cache()` and refreshing the prompt.
+#[derive(Clone)]
+pub struct FileProvider {
+    cache: std::sync::Arc<std::sync::Mutex<FileCache>>,
+    frecency: std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, FrecencyData>>>,
+    filesystem: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+    process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
+    runtime_handle: Option<tokio::runtime::Handle>,
+    async_sender: Option<std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>>,
+    /// Cancel flag shared with the background walk task.
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
 impl FileProvider {
     pub fn new(
         filesystem: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
         process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
         runtime_handle: Option<tokio::runtime::Handle>,
+        async_sender: Option<std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>>,
     ) -> Self {
         Self {
-            file_cache: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(FileCache {
+                files: None,
+                loading: false,
+            })),
             frecency: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             filesystem,
             process_spawner,
             runtime_handle,
+            async_sender,
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
-    /// Clear the file cache (e.g., after file system changes)
+    /// Clear the file cache (e.g., after file system changes).
     pub fn clear_cache(&self) {
-        if let Ok(mut cache) = self.file_cache.write() {
-            *cache = None;
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut c) = self.cache.lock() {
+            c.files = None;
+            c.loading = false;
+        }
+    }
+
+    /// Update the file cache with results from a background load.
+    pub fn set_cache(&self, files: std::sync::Arc<Vec<FileEntry>>) {
+        if let Ok(mut c) = self.cache.lock() {
+            c.files = Some(files);
+            c.loading = false;
         }
     }
 
@@ -329,49 +360,88 @@ impl FileProvider {
     }
 
     fn get_frecency_score(&self, path: &str) -> f64 {
-        if let Ok(frecency) = self.frecency.read() {
-            if let Some(data) = frecency.get(path) {
-                let hours_since_access = data.last_access.elapsed().as_secs_f64() / 3600.0;
-
-                // Mozilla-style frecency weighting
-                let recency_weight = if hours_since_access < 4.0 {
-                    100.0
-                } else if hours_since_access < 24.0 {
-                    70.0
-                } else if hours_since_access < 24.0 * 7.0 {
-                    50.0
-                } else if hours_since_access < 24.0 * 30.0 {
-                    30.0
-                } else if hours_since_access < 24.0 * 90.0 {
-                    10.0
-                } else {
-                    1.0
-                };
-
-                return data.access_count as f64 * recency_weight;
-            }
-        }
-        0.0
+        self.frecency
+            .read()
+            .ok()
+            .and_then(|m| m.get(path).map(frecency_score))
+            .unwrap_or(0.0)
     }
 
-    /// Load files from the project directory
-    fn load_files(&self, cwd: &str) -> Vec<FileEntry> {
-        // Check cache first
-        if let Ok(cache) = self.file_cache.read() {
-            if let Some(files) = cache.as_ref() {
-                return files.clone();
-            }
+    /// Get the cached file list, or `None` if not yet loaded.
+    ///
+    /// If no cache exists and no load is in progress, spawns a background
+    /// task that will populate the cache and notify the UI via
+    /// `AsyncMessage::QuickOpenFilesLoaded`.
+    fn get_or_start_loading(&self, cwd: &str) -> Option<std::sync::Arc<Vec<FileEntry>>> {
+        let mut cache = self.cache.lock().ok()?;
+
+        if let Some(files) = &cache.files {
+            return Some(std::sync::Arc::clone(files));
         }
 
-        // Fast path: git ls-files via ProcessSpawner (works locally and remotely)
-        // Fallback: recursive walk via FileSystem trait (works on all platforms)
+        if cache.loading {
+            return None; // already loading
+        }
+
+        // No cache, not loading — kick off background load
+        let (sender, handle) = match (&self.async_sender, &self.runtime_handle) {
+            (Some(s), Some(h)) => (s.clone(), h.clone()),
+            _ => {
+                // No async support — fall back to synchronous load
+                drop(cache);
+                return self.load_files_sync(cwd);
+            }
+        };
+
+        cache.loading = true;
+        // Reset cancel flag for this new load
+        self.cancel
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        let cancel = std::sync::Arc::clone(&self.cancel);
+        let frecency = std::sync::Arc::clone(&self.frecency);
+        let filesystem = std::sync::Arc::clone(&self.filesystem);
+        let process_spawner = std::sync::Arc::clone(&self.process_spawner);
+        let cwd = cwd.to_string();
+
+        handle.spawn_blocking(move || {
+            let files = try_git_files_blocking(&process_spawner, &cwd)
+                .or_else(|| try_walk_dir_blocking(&*filesystem, &cwd, &cancel))
+                .unwrap_or_default();
+
+            let frecency_map = frecency.read().ok();
+            let entries: Vec<FileEntry> = files
+                .into_iter()
+                .map(|path| {
+                    let score = frecency_map
+                        .as_ref()
+                        .and_then(|m| m.get(&path))
+                        .map(|d| frecency_score(d))
+                        .unwrap_or(0.0);
+                    FileEntry {
+                        relative_path: path,
+                        frecency_score: score,
+                    }
+                })
+                .collect();
+
+            let _ = sender.send(
+                crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded(
+                    std::sync::Arc::new(entries),
+                ),
+            );
+        });
+
+        None
+    }
+
+    /// Synchronous fallback when no tokio runtime is available (e.g., tests).
+    fn load_files_sync(&self, cwd: &str) -> Option<std::sync::Arc<Vec<FileEntry>>> {
         let files = self
             .try_git_files(cwd)
             .or_else(|| self.try_walk_dir(cwd))
             .unwrap_or_default();
 
-        // Add frecency scores
-        let files: Vec<FileEntry> = files
+        let entries: Vec<FileEntry> = files
             .into_iter()
             .map(|path| FileEntry {
                 frecency_score: self.get_frecency_score(&path),
@@ -379,75 +449,114 @@ impl FileProvider {
             })
             .collect();
 
-        // Update cache
-        if let Ok(mut cache) = self.file_cache.write() {
-            *cache = Some(files.clone());
-        }
-
-        files
-    }
-
-    /// Try listing files via `git ls-files` using the ProcessSpawner.
-    ///
-    /// This is the fast path: it respects `.gitignore`, is fast on large repos,
-    /// and works on remote hosts via RemoteProcessSpawner.
-    fn try_git_files(&self, cwd: &str) -> Option<Vec<String>> {
-        let handle = self.runtime_handle.as_ref()?;
-        let result = handle
-            .block_on(self.process_spawner.spawn(
-                "git".to_string(),
-                vec![
-                    "ls-files".to_string(),
-                    "--cached".to_string(),
-                    "--others".to_string(),
-                    "--exclude-standard".to_string(),
-                ],
-                Some(cwd.to_string()),
-            ))
-            .ok()?;
-
-        if result.exit_code != 0 {
-            return None;
-        }
-
-        let files: Vec<String> = result
-            .stdout
-            .lines()
-            .filter(|line| !line.is_empty() && !line.starts_with(".git/"))
-            .map(|s| s.to_string())
-            .collect();
-
+        let files = std::sync::Arc::new(entries);
+        self.set_cache(std::sync::Arc::clone(&files));
         Some(files)
     }
 
-    /// Recursive directory walk via the FileSystem trait.
-    ///
-    /// This is the universal fallback that works on all platforms (including
-    /// Windows where git/fd/find may not be available) and on remote
-    /// filesystems via RemoteFileSystem.
-    fn try_walk_dir(&self, cwd: &str) -> Option<Vec<String>> {
-        use std::path::Path;
-
-        let base = Path::new(cwd);
-        let cancel = std::sync::atomic::AtomicBool::new(false);
-        let mut files = Vec::new();
-
-        let _ = self.filesystem.walk_files(
-            base,
-            IGNORED_DIRS,
-            &cancel,
-            &mut |_path, rel| {
-                files.push(rel.to_string());
-                files.len() < MAX_FILES
-            },
-        );
-
-        if files.is_empty() {
-            None
-        } else {
-            Some(files)
-        }
+    /// Synchronous `try_git_files` — used by the sync fallback path.
+    fn try_git_files(&self, cwd: &str) -> Option<Vec<String>> {
+        let handle = self.runtime_handle.as_ref()?;
+        try_git_files_with_handle(&self.process_spawner, cwd, handle)
     }
+
+    /// Synchronous `try_walk_dir` — used by the sync fallback path.
+    fn try_walk_dir(&self, cwd: &str) -> Option<Vec<String>> {
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        try_walk_dir_blocking(&*self.filesystem, cwd, &cancel)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Free functions used by both the sync path and the background task
+// ---------------------------------------------------------------------------
+
+/// List files via `git ls-files` using a `ProcessSpawner` (blocking).
+///
+/// Called from `spawn_blocking` so we can't hold a tokio runtime handle —
+/// `ProcessSpawner::spawn` is async, so we use `tokio::runtime::Handle::block_on`
+/// from *inside* the blocking thread.
+fn try_git_files_blocking(
+    spawner: &std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
+    cwd: &str,
+) -> Option<Vec<String>> {
+    // Inside spawn_blocking we can use Handle::current() since the runtime is alive.
+    let handle = tokio::runtime::Handle::try_current().ok()?;
+    try_git_files_with_handle(spawner, cwd, &handle)
+}
+
+fn try_git_files_with_handle(
+    spawner: &std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
+    cwd: &str,
+    handle: &tokio::runtime::Handle,
+) -> Option<Vec<String>> {
+    let result = handle
+        .block_on(spawner.spawn(
+            "git".to_string(),
+            vec![
+                "ls-files".to_string(),
+                "--cached".to_string(),
+                "--others".to_string(),
+                "--exclude-standard".to_string(),
+            ],
+            Some(cwd.to_string()),
+        ))
+        .ok()?;
+
+    if result.exit_code != 0 {
+        return None;
+    }
+
+    let files: Vec<String> = result
+        .stdout
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with(".git/"))
+        .map(|s| s.to_string())
+        .collect();
+
+    Some(files)
+}
+
+/// Walk the directory tree via `FileSystem::walk_files` (blocking).
+fn try_walk_dir_blocking(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    cwd: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Option<Vec<String>> {
+    use std::path::Path;
+
+    let base = Path::new(cwd);
+    let mut files = Vec::new();
+
+    let _ = fs.walk_files(base, IGNORED_DIRS, cancel, &mut |_path, rel| {
+        files.push(rel.to_string());
+        files.len() < MAX_FILES
+    });
+
+    if files.is_empty() {
+        None
+    } else {
+        Some(files)
+    }
+}
+
+/// Compute frecency score for a single entry.
+fn frecency_score(data: &FrecencyData) -> f64 {
+    let hours_since_access = data.last_access.elapsed().as_secs_f64() / 3600.0;
+    let recency_weight = if hours_since_access < 4.0 {
+        100.0
+    } else if hours_since_access < 24.0 {
+        70.0
+    } else if hours_since_access < 24.0 * 7.0 {
+        50.0
+    } else if hours_since_access < 24.0 * 30.0 {
+        30.0
+    } else if hours_since_access < 24.0 * 90.0 {
+        10.0
+    } else {
+        1.0
+    };
+    data.access_count as f64 * recency_weight
 }
 
 impl QuickOpenProvider for FileProvider {
@@ -471,27 +580,34 @@ impl QuickOpenProvider for FileProvider {
             )];
         }
 
-        let files = self.load_files(&context.cwd);
+        // Get cached files or kick off background load
+        let files = match self.get_or_start_loading(&context.cwd) {
+            Some(f) => f,
+            None => {
+                // Background load in progress — show placeholder
+                return vec![Suggestion::disabled("Loading files…".to_string())];
+            }
+        };
+
         if files.is_empty() {
             return vec![Suggestion::disabled(t!("quick_open.no_files").to_string())];
         }
 
         let max_results = 100;
-        let mut scored: Vec<(FileEntry, i32)> = if search_query.is_empty() {
-            let mut files = files;
-            files.sort_by(|a, b| {
-                b.frecency_score
-                    .partial_cmp(&a.frecency_score)
+
+        // Work with references to avoid cloning the whole Arc<Vec>
+        let mut scored: Vec<(&FileEntry, i32)> = if search_query.is_empty() {
+            let mut entries: Vec<_> = files.iter().map(|f| (f, 0i32)).collect();
+            entries.sort_by(|a, b| {
+                b.0.frecency_score
+                    .partial_cmp(&a.0.frecency_score)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            files
-                .into_iter()
-                .take(max_results)
-                .map(|f| (f, 0))
-                .collect()
+            entries.truncate(max_results);
+            entries
         } else {
             files
-                .into_iter()
+                .iter()
                 .filter_map(|file| {
                     let m = fuzzy_match(search_query, &file.relative_path);
                     if !m.matched {
@@ -509,7 +625,7 @@ impl QuickOpenProvider for FileProvider {
         scored
             .into_iter()
             .map(|(file, _)| {
-                Suggestion::new(file.relative_path.clone()).with_value(file.relative_path)
+                Suggestion::new(file.relative_path.clone()).with_value(file.relative_path.clone())
             })
             .collect()
     }
@@ -543,6 +659,10 @@ impl QuickOpenProvider for FileProvider {
         }
 
         QuickOpenResult::None
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -668,7 +788,8 @@ mod tests {
         FileProvider::new(
             std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
             std::sync::Arc::new(FailingSpawner),
-            None, // no runtime → git ls-files path is skipped
+            None, // no runtime → git ls-files path is skipped, sync fallback used
+            None, // no async sender → sync fallback used
         )
     }
 

@@ -276,6 +276,9 @@ pub enum AsyncMessage {
         registry: std::sync::Arc<crate::primitives::grammar::GrammarRegistry>,
         callback_ids: Vec<fresh_core::api::JsCallbackId>,
     },
+
+    /// Quick Open file list loaded by a background task.
+    QuickOpenFilesLoaded(std::sync::Arc<Vec<crate::input::quick_open::providers::FileEntry>>),
 }
 
 /// LSP progress value types
