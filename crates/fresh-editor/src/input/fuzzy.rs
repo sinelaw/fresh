@@ -22,6 +22,10 @@ mod score {
     pub const EXACT_MATCH: i32 = 100;
     /// Bonus for exact base name match (query matches filename without extension)
     pub const EXACT_BASENAME_MATCH: i32 = 80;
+    /// Bonus for a contiguous substring match (all query chars are consecutive
+    /// in the target but not necessarily from position 0). This ensures that
+    /// e.g. "results" in "results.json" ranks above scattered r-e-s-u-l-t-s.
+    pub const CONTIGUOUS_SUBSTRING: i32 = 64;
 }
 
 /// Result of a fuzzy match, containing match status and quality score
@@ -184,48 +188,133 @@ fn fuzzy_match_single_term(query: &str, target: &str) -> FuzzyMatch {
     let query_lower: Vec<char> = query.to_lowercase().chars().collect();
     let target_chars: Vec<char> = target.chars().collect();
     let target_lower: Vec<char> = target.to_lowercase().chars().collect();
+    let query_len = query_lower.len();
+    let target_len = target_lower.len();
 
-    // Try to find the best matching positions using a greedy approach
-    // that considers bonuses at each step
-    let result = find_best_match(&query_lower, &target_chars, &target_lower);
+    // Try to find the best matching positions using a DP approach
+    let dp_result = find_best_match(&query_lower, &target_chars, &target_lower);
 
-    if let Some((positions, mut final_score)) = result {
-        // Apply exact match bonuses to prioritize exact matches
-        let query_len = query_lower.len();
-        let target_len = target_lower.len();
+    // Also check for a contiguous substring match.  The DP may miss this
+    // because it optimises per-character bonuses (word boundaries, etc.)
+    // which can favour scattered matches over a tight substring.  We score
+    // the contiguous match separately and take the better of the two.
+    let substr_result = find_contiguous_match(&query_lower, &target_chars, &target_lower);
 
-        // Exact match bonus: query matches entire target
-        if query_len == target_len {
-            final_score += score::EXACT_MATCH;
-        } else if target_len > query_len {
-            // Check if the query is a prefix match (all consecutive from start)
-            let is_prefix_match = positions.len() == query_len
-                && positions.iter().enumerate().all(|(i, &pos)| pos == i);
+    // Pick the better result
+    let (positions, mut final_score) = match (dp_result, substr_result) {
+        (Some(dp), Some(sub)) => {
+            if sub.1 >= dp.1 {
+                sub
+            } else {
+                dp
+            }
+        }
+        (Some(dp), None) => dp,
+        (None, Some(sub)) => sub,
+        (None, None) => return FuzzyMatch::no_match(),
+    };
 
-            if is_prefix_match {
-                let next_char = target_chars[query_len];
+    // Check if all matched positions are consecutive (contiguous substring)
+    let is_contiguous =
+        positions.len() == query_len && positions.windows(2).all(|w| w[1] == w[0] + 1);
 
-                // Highest priority: exact basename match (before extension)
-                // This handles "config" matching "config.rs" better than "config_manager.rs"
-                if next_char == '.' {
-                    final_score += score::EXACT_MATCH; // Full exact match bonus for extension case
-                }
-                // Second priority: match before word separator (hyphen, underscore, space)
-                // This handles "fresh" matching "fresh-editor" better than "freshness"
-                else if next_char == '-' || next_char == '_' || next_char == ' ' {
-                    final_score += score::EXACT_BASENAME_MATCH;
-                }
+    if is_contiguous {
+        // Contiguous substring bonus — the query appears as an
+        // unbroken run in the target, which should always beat
+        // scattered character matches.
+        final_score += score::CONTIGUOUS_SUBSTRING;
+    }
+
+    // Exact match bonus: query matches entire target
+    if query_len == target_len {
+        final_score += score::EXACT_MATCH;
+    } else if target_len > query_len && is_contiguous {
+        // Check if the query is a prefix match (all consecutive from start)
+        let is_prefix_match = positions.iter().enumerate().all(|(i, &pos)| pos == i);
+
+        if is_prefix_match {
+            let next_char = target_chars[query_len];
+
+            // Highest priority: exact basename match (before extension)
+            // This handles "config" matching "config.rs" better than "config_manager.rs"
+            if next_char == '.' {
+                final_score += score::EXACT_MATCH;
+            }
+            // Second priority: match before word separator (hyphen, underscore, space)
+            // This handles "fresh" matching "fresh-editor" better than "freshness"
+            else if next_char == '-' || next_char == '_' || next_char == ' ' {
+                final_score += score::EXACT_BASENAME_MATCH;
+            }
+        }
+    }
+
+    FuzzyMatch {
+        matched: true,
+        score: final_score,
+        match_positions: positions,
+    }
+}
+
+/// Find the best contiguous substring match of `query` in `target`.
+///
+/// Scans for all occurrences of the query as a substring and picks the
+/// one with the highest score (preferring word boundaries, basename, etc.).
+fn find_contiguous_match(
+    query: &[char],
+    target_chars: &[char],
+    target_lower: &[char],
+) -> Option<(Vec<usize>, i32)> {
+    let m = query.len();
+    let n = target_lower.len();
+    if m == 0 || m > n {
+        return None;
+    }
+
+    let mut best: Option<(Vec<usize>, i32)> = None;
+
+    for start in 0..=n - m {
+        // Check if query matches at this position
+        if target_lower[start..start + m] != *query {
+            continue;
+        }
+
+        // Score this contiguous match
+        let mut match_score = 0;
+
+        // Start of string bonus
+        if start == 0 {
+            match_score += score::START_OF_STRING;
+        }
+
+        // Word boundary bonus for the first character
+        if start > 0 {
+            let prev_char = target_chars[start - 1];
+            if prev_char == ' '
+                || prev_char == '_'
+                || prev_char == '-'
+                || prev_char == '/'
+                || prev_char == '.'
+            {
+                match_score += score::WORD_BOUNDARY;
+            } else if prev_char.is_lowercase() && target_chars[start].is_uppercase() {
+                match_score += score::CAMEL_CASE;
             }
         }
 
-        FuzzyMatch {
-            matched: true,
-            score: final_score,
-            match_positions: positions,
+        // Consecutive bonus for chars 1..m
+        match_score += score::CONSECUTIVE * (m as i32 - 1);
+
+        let is_better = match &best {
+            None => true,
+            Some((_, s)) => match_score > *s,
+        };
+        if is_better {
+            let positions: Vec<usize> = (start..start + m).collect();
+            best = Some((positions, match_score));
         }
-    } else {
-        FuzzyMatch::no_match()
     }
+
+    best
 }
 
 /// Find the best matching positions for query in target
@@ -652,6 +741,23 @@ mod tests {
             "exact target should score higher: exact={}, partial={}",
             exact.score,
             partial.score
+        );
+    }
+
+    #[test]
+    fn test_contiguous_substring_beats_scattered() {
+        // "results" as a contiguous substring in the path should rank above
+        // scattered r-e-s-u-l-t-s across different path components
+        let contiguous = fuzzy_match("results", "repos/editor-benchmark/results.json");
+        let scattered = fuzzy_match("results", "repos/quicklsp/LSP_TEST_REPORT.md");
+
+        assert!(contiguous.matched);
+        assert!(scattered.matched);
+        assert!(
+            contiguous.score > scattered.score,
+            "contiguous ({}) should beat scattered ({})",
+            contiguous.score,
+            scattered.score
         );
     }
 }
