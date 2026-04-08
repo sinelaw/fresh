@@ -2004,10 +2004,12 @@ mod tests {
         fs.write_file(&root.join("sub/c.txt"), b"c").unwrap();
         fs.write_file(&root.join("sub/deep/d.txt"), b"d").unwrap();
         fs.create_dir_all(&root.join(".hidden_dir")).unwrap();
-        fs.write_file(&root.join(".hidden_dir/secret.txt"), b"s").unwrap();
+        fs.write_file(&root.join(".hidden_dir/secret.txt"), b"s")
+            .unwrap();
         fs.write_file(&root.join(".hidden_file"), b"h").unwrap();
         fs.create_dir_all(&root.join("node_modules")).unwrap();
-        fs.write_file(&root.join("node_modules/pkg.json"), b"{}").unwrap();
+        fs.write_file(&root.join("node_modules/pkg.json"), b"{}")
+            .unwrap();
         fs.create_dir_all(&root.join("target")).unwrap();
         fs.write_file(&root.join("target/debug.o"), b"elf").unwrap();
 
@@ -2189,12 +2191,9 @@ mod tests {
         let fs = NoopFileSystem;
         let cancel = std::sync::atomic::AtomicBool::new(false);
 
-        let result = fs.walk_files(
-            Path::new("/noop/path"),
-            &[],
-            &cancel,
-            &mut |_path, _rel| true,
-        );
+        let result = fs.walk_files(Path::new("/noop/path"), &[], &cancel, &mut |_path, _rel| {
+            true
+        });
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
