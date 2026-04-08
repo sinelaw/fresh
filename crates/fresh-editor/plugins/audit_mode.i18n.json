@@ -86,7 +86,16 @@
     "section.staged": "Připravené změny",
     "section.unstaged": "Upravené (nepřipravené)",
     "section.untracked": "Nesledované soubory",
-    "debug.loaded": "Plugin revize rozdilu nacten s podporou komentaru"
+    "debug.loaded": "Plugin revize rozdilu nacten s podporou komentaru",
+    "cmd.edit_note": "Revize: Upravit poznámku",
+    "cmd.edit_note_desc": "Upravit poznámku relace",
+    "prompt.discard_hunk": "Zahodit tento blok v \"%{file}\"? Tuto akci nelze vrátit.",
+    "prompt.edit_comment": "Upravit komentář na %{line}: ",
+    "prompt.overall_comment": "Poznámka: ",
+    "status.hunk_discarded": "Blok zahozen",
+    "status.hunk_staged": "Blok připraven",
+    "status.hunk_unstaged": "Blok odstraněn z přípravy",
+    "status.overall_comment_added": "Poznámka přidána"
   },
   "de": {
     "cmd.review_diff": "Unterschiede prufen",
@@ -126,7 +135,16 @@
     "section.staged": "Bereitgestellte Änderungen",
     "section.unstaged": "Geändert (nicht bereitgestellt)",
     "section.untracked": "Nicht verfolgte Dateien",
-    "debug.loaded": "Review-Diff-Plugin mit Kommentarunterstutzung geladen"
+    "debug.loaded": "Review-Diff-Plugin mit Kommentarunterstutzung geladen",
+    "cmd.edit_note": "Review: Notiz bearbeiten",
+    "cmd.edit_note_desc": "Sitzungsnotiz bearbeiten",
+    "prompt.discard_hunk": "Diesen Block in \"%{file}\" verwerfen? Dies kann nicht rückgängig gemacht werden.",
+    "prompt.edit_comment": "Kommentar bei %{line} bearbeiten: ",
+    "prompt.overall_comment": "Notiz: ",
+    "status.hunk_discarded": "Block verworfen",
+    "status.hunk_staged": "Block bereitgestellt",
+    "status.hunk_unstaged": "Block aus Bereitstellung entfernt",
+    "status.overall_comment_added": "Notiz hinzugefügt"
   },
   "es": {
     "cmd.review_diff": "Revisar Diferencias",
@@ -166,7 +184,16 @@
     "section.staged": "Cambios preparados",
     "section.unstaged": "Modificados (sin preparar)",
     "section.untracked": "Archivos sin rastrear",
-    "debug.loaded": "Plugin de revision de diferencias cargado con soporte de comentarios"
+    "debug.loaded": "Plugin de revision de diferencias cargado con soporte de comentarios",
+    "cmd.edit_note": "Revisión: Editar nota",
+    "cmd.edit_note_desc": "Editar la nota de la sesión",
+    "prompt.discard_hunk": "¿Descartar este bloque en \"%{file}\"? Esta acción no se puede deshacer.",
+    "prompt.edit_comment": "Editar comentario en %{line}: ",
+    "prompt.overall_comment": "Nota: ",
+    "status.hunk_discarded": "Bloque descartado",
+    "status.hunk_staged": "Bloque preparado",
+    "status.hunk_unstaged": "Bloque retirado de preparación",
+    "status.overall_comment_added": "Nota añadida"
   },
   "fr": {
     "cmd.review_diff": "Revoir les Differences",
@@ -206,7 +233,16 @@
     "section.staged": "Modifications indexées",
     "section.unstaged": "Modifiés (non indexés)",
     "section.untracked": "Fichiers non suivis",
-    "debug.loaded": "Plugin de revue des differences charge avec prise en charge des commentaires"
+    "debug.loaded": "Plugin de revue des differences charge avec prise en charge des commentaires",
+    "cmd.edit_note": "Revue : Modifier la note",
+    "cmd.edit_note_desc": "Modifier la note de session",
+    "prompt.discard_hunk": "Supprimer ce bloc dans \"%{file}\" ? Cette action est irréversible.",
+    "prompt.edit_comment": "Modifier le commentaire sur %{line} : ",
+    "prompt.overall_comment": "Note : ",
+    "status.hunk_discarded": "Bloc supprimé",
+    "status.hunk_staged": "Bloc indexé",
+    "status.hunk_unstaged": "Bloc retiré de l'index",
+    "status.overall_comment_added": "Note ajoutée"
   },
   "it": {
     "cmd.review_diff": "Revisiona differenze",
@@ -246,7 +282,16 @@
     "section.staged": "Modifiche preparate",
     "section.unstaged": "Modificati (non preparati)",
     "section.untracked": "File non tracciati",
-    "debug.loaded": "Plugin Revisione differenze caricato con supporto commenti"
+    "debug.loaded": "Plugin Revisione differenze caricato con supporto commenti",
+    "cmd.edit_note": "Revisione: Modifica nota",
+    "cmd.edit_note_desc": "Modifica la nota della sessione",
+    "prompt.discard_hunk": "Eliminare questo blocco in \"%{file}\"? Questa azione non può essere annullata.",
+    "prompt.edit_comment": "Modifica commento su %{line}: ",
+    "prompt.overall_comment": "Nota: ",
+    "status.hunk_discarded": "Blocco eliminato",
+    "status.hunk_staged": "Blocco preparato",
+    "status.hunk_unstaged": "Blocco rimosso dalla preparazione",
+    "status.overall_comment_added": "Nota aggiunta"
   },
   "ja": {
     "cmd.review_diff": "差分レビュー",
@@ -286,7 +331,16 @@
     "section.staged": "ステージ済みの変更",
     "section.unstaged": "変更あり（未ステージ）",
     "section.untracked": "未追跡ファイル",
-    "debug.loaded": "レビュー差分プラグインがコメントサポート付きで読み込まれました"
+    "debug.loaded": "レビュー差分プラグインがコメントサポート付きで読み込まれました",
+    "cmd.edit_note": "レビュー: メモを編集",
+    "cmd.edit_note_desc": "セッションメモを編集",
+    "prompt.discard_hunk": "\"%{file}\" のこのハンクを破棄しますか？この操作は元に戻せません。",
+    "prompt.edit_comment": "%{line} のコメントを編集: ",
+    "prompt.overall_comment": "メモ: ",
+    "status.hunk_discarded": "ハンクを破棄しました",
+    "status.hunk_staged": "ハンクをステージしました",
+    "status.hunk_unstaged": "ハンクをアンステージしました",
+    "status.overall_comment_added": "メモを追加しました"
   },
   "ko": {
     "cmd.review_diff": "차이점 검토",
@@ -326,7 +380,16 @@
     "section.staged": "스테이지된 변경사항",
     "section.unstaged": "수정됨 (스테이지 안됨)",
     "section.untracked": "추적되지 않는 파일",
-    "debug.loaded": "리뷰 차이점 플러그인이 코멘트 지원과 함께 로드되었습니다"
+    "debug.loaded": "리뷰 차이점 플러그인이 코멘트 지원과 함께 로드되었습니다",
+    "cmd.edit_note": "검토: 메모 편집",
+    "cmd.edit_note_desc": "세션 메모 편집",
+    "prompt.discard_hunk": "\"%{file}\"의 이 헝크를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+    "prompt.edit_comment": "%{line}의 코멘트 편집: ",
+    "prompt.overall_comment": "메모: ",
+    "status.hunk_discarded": "헝크가 삭제되었습니다",
+    "status.hunk_staged": "헝크가 스테이지되었습니다",
+    "status.hunk_unstaged": "헝크가 언스테이지되었습니다",
+    "status.overall_comment_added": "메모가 추가되었습니다"
   },
   "pt-BR": {
     "cmd.review_diff": "Revisar Diferencas",
@@ -366,7 +429,16 @@
     "section.staged": "Alterações preparadas",
     "section.unstaged": "Modificados (não preparados)",
     "section.untracked": "Arquivos não rastreados",
-    "debug.loaded": "Plugin de revisao de diferencas carregado com suporte a comentarios"
+    "debug.loaded": "Plugin de revisao de diferencas carregado com suporte a comentarios",
+    "cmd.edit_note": "Revisão: Editar nota",
+    "cmd.edit_note_desc": "Editar a nota da sessão",
+    "prompt.discard_hunk": "Descartar este bloco em \"%{file}\"? Esta ação não pode ser desfeita.",
+    "prompt.edit_comment": "Editar comentário em %{line}: ",
+    "prompt.overall_comment": "Nota: ",
+    "status.hunk_discarded": "Bloco descartado",
+    "status.hunk_staged": "Bloco preparado",
+    "status.hunk_unstaged": "Bloco removido da preparação",
+    "status.overall_comment_added": "Nota adicionada"
   },
   "ru": {
     "cmd.review_diff": "Просмотр изменений",
@@ -406,7 +478,16 @@
     "section.staged": "Подготовленные изменения",
     "section.unstaged": "Изменённые (неподготовленные)",
     "section.untracked": "Неотслеживаемые файлы",
-    "debug.loaded": "Плагин ревью изменений загружен с поддержкой комментариев"
+    "debug.loaded": "Плагин ревью изменений загружен с поддержкой комментариев",
+    "cmd.edit_note": "Ревью: Редактировать заметку",
+    "cmd.edit_note_desc": "Редактировать заметку сессии",
+    "prompt.discard_hunk": "Отбросить этот блок в \"%{file}\"? Это действие нельзя отменить.",
+    "prompt.edit_comment": "Редактировать комментарий на %{line}: ",
+    "prompt.overall_comment": "Заметка: ",
+    "status.hunk_discarded": "Блок отброшен",
+    "status.hunk_staged": "Блок подготовлен",
+    "status.hunk_unstaged": "Блок убран из подготовки",
+    "status.overall_comment_added": "Заметка добавлена"
   },
   "th": {
     "cmd.review_diff": "ตรวจสอบความแตกต่าง",
@@ -446,7 +527,16 @@
     "section.staged": "การเปลี่ยนแปลงที่จัดเตรียมแล้ว",
     "section.unstaged": "แก้ไขแล้ว (ยังไม่จัดเตรียม)",
     "section.untracked": "ไฟล์ที่ไม่ได้ติดตาม",
-    "debug.loaded": "โหลดปลั๊กอินตรวจสอบความแตกต่างพร้อมรองรับความคิดเห็นแล้ว"
+    "debug.loaded": "โหลดปลั๊กอินตรวจสอบความแตกต่างพร้อมรองรับความคิดเห็นแล้ว",
+    "cmd.edit_note": "ตรวจสอบ: แก้ไขบันทึก",
+    "cmd.edit_note_desc": "แก้ไขบันทึกของเซสชัน",
+    "prompt.discard_hunk": "ทิ้งบล็อกนี้ใน \"%{file}\" หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้",
+    "prompt.edit_comment": "แก้ไขความคิดเห็นที่ %{line}: ",
+    "prompt.overall_comment": "บันทึก: ",
+    "status.hunk_discarded": "ทิ้งบล็อกแล้ว",
+    "status.hunk_staged": "สเตจบล็อกแล้ว",
+    "status.hunk_unstaged": "ยกเลิกสเตจบล็อกแล้ว",
+    "status.overall_comment_added": "เพิ่มบันทึกแล้ว"
   },
   "uk": {
     "cmd.review_diff": "Перегляд змін",
@@ -486,7 +576,16 @@
     "section.staged": "Підготовлені зміни",
     "section.unstaged": "Змінені (непідготовлені)",
     "section.untracked": "Невідстежувані файли",
-    "debug.loaded": "Плагін рев'ю змін завантажено з підтримкою коментарів"
+    "debug.loaded": "Плагін рев'ю змін завантажено з підтримкою коментарів",
+    "cmd.edit_note": "Рев'ю: Редагувати нотатку",
+    "cmd.edit_note_desc": "Редагувати нотатку сесії",
+    "prompt.discard_hunk": "Відкинути цей блок у \"%{file}\"? Цю дію не можна скасувати.",
+    "prompt.edit_comment": "Редагувати коментар на %{line}: ",
+    "prompt.overall_comment": "Нотатка: ",
+    "status.hunk_discarded": "Блок відкинуто",
+    "status.hunk_staged": "Блок підготовлено",
+    "status.hunk_unstaged": "Блок прибрано з підготовки",
+    "status.overall_comment_added": "Нотатку додано"
   },
   "vi": {
     "cmd.review_diff": "Xem xét khác biệt",
@@ -526,7 +625,16 @@
     "section.staged": "Thay đổi đã chuẩn bị",
     "section.unstaged": "Đã sửa đổi (chưa chuẩn bị)",
     "section.untracked": "Tệp không được theo dõi",
-    "debug.loaded": "Plugin xem xét khác biệt đã tải với hỗ trợ nhận xét"
+    "debug.loaded": "Plugin xem xét khác biệt đã tải với hỗ trợ nhận xét",
+    "cmd.edit_note": "Xem xét: Sửa ghi chú",
+    "cmd.edit_note_desc": "Sửa ghi chú phiên",
+    "prompt.discard_hunk": "Bỏ khối này trong \"%{file}\"? Hành động này không thể hoàn tác.",
+    "prompt.edit_comment": "Sửa nhận xét tại %{line}: ",
+    "prompt.overall_comment": "Ghi chú: ",
+    "status.hunk_discarded": "Đã bỏ khối",
+    "status.hunk_staged": "Đã đưa khối vào vùng chuẩn bị",
+    "status.hunk_unstaged": "Đã bỏ khối khỏi vùng chuẩn bị",
+    "status.overall_comment_added": "Đã thêm ghi chú"
   },
   "zh-CN": {
     "cmd.review_diff": "审查差异",
@@ -566,6 +674,15 @@
     "section.staged": "已暂存的更改",
     "section.unstaged": "已修改（未暂存）",
     "section.untracked": "未跟踪的文件",
-    "debug.loaded": "审查差异插件已加载，支持评论功能"
+    "debug.loaded": "审查差异插件已加载，支持评论功能",
+    "cmd.edit_note": "审查: 编辑备注",
+    "cmd.edit_note_desc": "编辑会话备注",
+    "prompt.discard_hunk": "丢弃 \"%{file}\" 中的此代码块？此操作无法撤销。",
+    "prompt.edit_comment": "编辑 %{line} 的评论: ",
+    "prompt.overall_comment": "备注: ",
+    "status.hunk_discarded": "代码块已丢弃",
+    "status.hunk_staged": "代码块已暂存",
+    "status.hunk_unstaged": "代码块已取消暂存",
+    "status.overall_comment_added": "备注已添加"
   }
 }
