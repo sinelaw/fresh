@@ -705,67 +705,18 @@ pub trait FileSystem: Send + Sync {
     /// // basename matching, so callers can express richer ignore rules
     /// // (e.g. `build/`, `*.o`, `vendor/**`).
     ///
-    /// The default implementation uses `std::fs::read_dir` lazily so that
-    /// memory usage is O(tree depth), not O(directory size).  Remote
-    /// implementations should override this to walk server-side and stream
-    /// results back via the channel, avoiding per-directory round-trips.
+    /// Each implementation must walk the filesystem it owns.  Local
+    /// implementations should iterate `std::fs::read_dir` lazily (not
+    /// collect into a Vec) so memory stays O(tree depth).  Remote
+    /// implementations should walk server-side and stream results back
+    /// via the channel, avoiding per-directory round-trips.
     fn walk_files(
         &self,
         root: &Path,
         skip_dirs: &[&str],
         cancel: &std::sync::atomic::AtomicBool,
         on_file: &mut dyn FnMut(&Path, &str) -> bool,
-    ) -> io::Result<()> {
-        let mut stack = vec![root.to_path_buf()];
-        while let Some(dir) = stack.pop() {
-            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                return Ok(());
-            }
-
-            // Use std::fs::read_dir iterator directly — NOT self.read_dir()
-            // which collects into a Vec.  This keeps memory O(1) per directory
-            // even for directories with millions of entries.
-            let iter = match std::fs::read_dir(&dir) {
-                Ok(it) => it,
-                Err(_) => continue,
-            };
-
-            for entry in iter {
-                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                    return Ok(());
-                }
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(_) => continue,
-                };
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-
-                // Skip hidden entries
-                if name_str.starts_with('.') {
-                    continue;
-                }
-
-                let ft = match entry.file_type() {
-                    Ok(ft) => ft,
-                    Err(_) => continue,
-                };
-                let path = entry.path();
-
-                if ft.is_file() {
-                    if let Ok(rel) = path.strip_prefix(root) {
-                        let rel_str = rel.to_string_lossy().replace('\\', "/");
-                        if !on_file(&path, &rel_str) {
-                            return Ok(());
-                        }
-                    }
-                } else if ft.is_dir() && !skip_dirs.contains(&name_str.as_ref()) {
-                    stack.push(path);
-                }
-            }
-        }
-        Ok(())
-    }
+    ) -> io::Result<()>;
 }
 
 // ============================================================================
@@ -1319,6 +1270,64 @@ impl FileSystem for StdFileSystem {
     ) -> io::Result<Vec<SearchMatch>> {
         default_search_file(self, path, pattern, opts, cursor)
     }
+
+    fn walk_files(
+        &self,
+        root: &Path,
+        skip_dirs: &[&str],
+        cancel: &std::sync::atomic::AtomicBool,
+        on_file: &mut dyn FnMut(&Path, &str) -> bool,
+    ) -> io::Result<()> {
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(());
+            }
+
+            // Use std::fs::read_dir iterator directly — NOT self.read_dir()
+            // which collects into a Vec.  This keeps memory O(1) per directory
+            // even for directories with millions of entries.
+            let iter = match std::fs::read_dir(&dir) {
+                Ok(it) => it,
+                Err(_) => continue,
+            };
+
+            for entry in iter {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Ok(());
+                }
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+
+                // Skip hidden entries
+                if name_str.starts_with('.') {
+                    continue;
+                }
+
+                let ft = match entry.file_type() {
+                    Ok(ft) => ft,
+                    Err(_) => continue,
+                };
+                let path = entry.path();
+
+                if ft.is_file() {
+                    if let Ok(rel) = path.strip_prefix(root) {
+                        let rel_str = rel.to_string_lossy().replace('\\', "/");
+                        if !on_file(&path, &rel_str) {
+                            return Ok(());
+                        }
+                    }
+                } else if ft.is_dir() && !skip_dirs.contains(&name_str.as_ref()) {
+                    stack.push(path);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -1447,6 +1456,16 @@ impl FileSystem for NoopFileSystem {
         _mode: u32,
         _uid: u32,
         _gid: u32,
+    ) -> io::Result<()> {
+        Self::unsupported()
+    }
+
+    fn walk_files(
+        &self,
+        _root: &Path,
+        _skip_dirs: &[&str],
+        _cancel: &std::sync::atomic::AtomicBool,
+        _on_file: &mut dyn FnMut(&Path, &str) -> bool,
     ) -> io::Result<()> {
         Self::unsupported()
     }
@@ -2166,25 +2185,18 @@ mod tests {
     }
 
     #[test]
-    fn test_walk_files_noop_returns_ok_empty() {
+    fn test_walk_files_noop_returns_error() {
         let fs = NoopFileSystem;
         let cancel = std::sync::atomic::AtomicBool::new(false);
-        let mut found: Vec<String> = Vec::new();
 
-        // NoopFileSystem uses the default impl which calls std::fs::read_dir
-        // on a non-existent path — the default impl handles read_dir errors
-        // gracefully by continuing, so it returns Ok with no files.
         let result = fs.walk_files(
             Path::new("/noop/path"),
             &[],
             &cancel,
-            &mut |_path, rel| {
-                found.push(rel.to_string());
-                true
-            },
+            &mut |_path, _rel| true,
         );
 
-        assert!(result.is_ok());
-        assert!(found.is_empty());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
     }
 }

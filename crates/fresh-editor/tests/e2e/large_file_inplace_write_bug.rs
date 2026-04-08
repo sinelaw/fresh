@@ -165,6 +165,16 @@ impl FileSystem for NotOwnerFileSystem {
     ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
         fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
     }
+
+    fn walk_files(
+        &self,
+        root: &Path,
+        skip_dirs: &[&str],
+        cancel: &std::sync::atomic::AtomicBool,
+        on_file: &mut dyn FnMut(&Path, &str) -> bool,
+    ) -> io::Result<()> {
+        self.inner.walk_files(root, skip_dirs, cancel, on_file)
+    }
 }
 
 /// Test that saving a large file with in-place write mode preserves all data.
@@ -509,6 +519,16 @@ impl FileSystem for CrashDuringStreamFileSystem {
         cursor: &mut fresh::model::filesystem::FileSearchCursor,
     ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
         fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
+    }
+
+    fn walk_files(
+        &self,
+        root: &Path,
+        skip_dirs: &[&str],
+        cancel: &std::sync::atomic::AtomicBool,
+        on_file: &mut dyn FnMut(&Path, &str) -> bool,
+    ) -> io::Result<()> {
+        self.inner.walk_files(root, skip_dirs, cancel, on_file)
     }
 }
 

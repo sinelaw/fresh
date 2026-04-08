@@ -597,6 +597,57 @@ impl FileSystem for RemoteFileSystem {
             .map_err(Self::to_io_error)?;
         Ok(())
     }
+
+    fn walk_files(
+        &self,
+        root: &Path,
+        skip_dirs: &[&str],
+        cancel: &std::sync::atomic::AtomicBool,
+        on_file: &mut dyn FnMut(&Path, &str) -> bool,
+    ) -> io::Result<()> {
+        // TODO: implement server-side walk using request_streaming to avoid
+        // per-directory round-trips.  For now, fall back to walking via
+        // self.read_dir() which does one RPC per directory.
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(());
+            }
+
+            let entries = match self.read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+
+            for entry in entries {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Ok(());
+                }
+
+                if entry.name.starts_with('.') {
+                    continue;
+                }
+
+                match entry.entry_type {
+                    crate::model::filesystem::EntryType::File => {
+                        if let Ok(rel) = entry.path.strip_prefix(root) {
+                            let rel_str = rel.to_string_lossy().replace('\\', "/");
+                            if !on_file(&entry.path, &rel_str) {
+                                return Ok(());
+                            }
+                        }
+                    }
+                    crate::model::filesystem::EntryType::Directory => {
+                        if !skip_dirs.contains(&entry.name.as_str()) {
+                            stack.push(entry.path);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Remote file reader - wraps in-memory data

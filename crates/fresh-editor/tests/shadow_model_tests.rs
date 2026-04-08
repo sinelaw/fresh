@@ -181,6 +181,16 @@ impl FileSystem for ConfigurableFileSystem {
         self.inner.sudo_write(path, data, mode, uid, gid)
     }
 
+    fn walk_files(
+        &self,
+        root: &Path,
+        skip_dirs: &[&str],
+        cancel: &std::sync::atomic::AtomicBool,
+        on_file: &mut dyn FnMut(&Path, &str) -> bool,
+    ) -> io::Result<()> {
+        self.inner.walk_files(root, skip_dirs, cancel, on_file)
+    }
+
     fn write_patched(
         &self,
         src: &Path,

@@ -327,6 +327,17 @@ impl FileSystem for SlowFileSystem {
             .fetch_add(1, Ordering::SeqCst);
         crate::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
     }
+
+    fn walk_files(
+        &self,
+        root: &Path,
+        skip_dirs: &[&str],
+        cancel: &std::sync::atomic::AtomicBool,
+        on_file: &mut dyn FnMut(&Path, &str) -> bool,
+    ) -> io::Result<()> {
+        self.add_delay(self.config.read_dir_delay);
+        self.inner.walk_files(root, skip_dirs, cancel, on_file)
+    }
 }
 
 #[cfg(test)]
