@@ -1888,12 +1888,15 @@ impl Editor {
         let cwd = self.working_dir.clone();
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let mut file_paths: Vec<std::path::PathBuf> = Vec::new();
-        let _ = self
-            .filesystem
-            .walk_files(&cwd, IGNORED_DIRS, &cancel, &mut |path, _rel| {
-                file_paths.push(path.to_path_buf());
-                true
-            });
+        if let Err(e) =
+            self.filesystem
+                .walk_files(&cwd, IGNORED_DIRS, &cancel, &mut |path, _rel| {
+                    file_paths.push(path.to_path_buf());
+                    true
+                })
+        {
+            tracing::warn!("walk_files failed: {}", e);
+        }
 
         // Search each file: open buffers via piece tree, others via fs.search_file
         for file_path in &file_paths {
@@ -2074,7 +2077,7 @@ impl Editor {
                 );
                 let mut file_count = 0usize;
 
-                let _ = filesystem_walker.walk_files(
+                if let Err(e) = filesystem_walker.walk_files(
                     &cwd,
                     IGNORED_DIRS,
                     &cancel_walker,
@@ -2082,7 +2085,9 @@ impl Editor {
                         file_count += 1;
                         path_tx.blocking_send(path.to_path_buf()).is_ok()
                     },
-                );
+                ) {
+                    tracing::warn!("GrepStreaming walk_files failed: {}", e);
+                }
 
                 tracing::info!(
                     "GrepStreaming walker: done, sent {} files (search_id={})",

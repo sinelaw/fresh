@@ -541,6 +541,7 @@ impl AgentChannel {
     /// file paths in batches).
     ///
     /// Use `data_rx.blocking_recv()` to receive chunks from a sync context.
+    #[allow(clippy::type_complexity)]
     pub fn request_streaming_blocking(
         &self,
         method: &str,

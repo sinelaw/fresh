@@ -647,8 +647,9 @@ impl FileSystem for RemoteFileSystem {
             }
         }
 
-        // Drain the final result (ignore errors — we got the data we needed)
-        let _ = result_rx.blocking_recv();
+        // Drain the final result — channel may already be closed if the
+        // server finished before we read this, which is fine.
+        drop(result_rx.blocking_recv());
         Ok(())
     }
 }

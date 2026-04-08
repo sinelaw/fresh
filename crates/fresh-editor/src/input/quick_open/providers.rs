@@ -425,7 +425,7 @@ impl FileProvider {
                     let score = frecency_map
                         .as_ref()
                         .and_then(|m| m.get(&path))
-                        .map(|d| frecency_score(d))
+                        .map(frecency_score)
                         .unwrap_or(0.0);
                     FileEntry {
                         relative_path: path,
@@ -434,11 +434,12 @@ impl FileProvider {
                 })
                 .collect();
 
-            let _ = sender.send(
+            // Receiver may be dropped if the editor is shutting down — that's fine.
+            drop(sender.send(
                 crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded(
                     std::sync::Arc::new(entries),
                 ),
-            );
+            ));
         });
 
         None
@@ -538,10 +539,13 @@ fn try_walk_dir_blocking(
     let base = Path::new(cwd);
     let mut files = Vec::new();
 
-    let _ = fs.walk_files(base, IGNORED_DIRS, cancel, &mut |_path, rel| {
-        files.push(rel.to_string());
-        files.len() < MAX_FILES
-    });
+    // Errors (e.g., root doesn't exist) are treated as "no files found".
+    drop(
+        fs.walk_files(base, IGNORED_DIRS, cancel, &mut |_path, rel| {
+            files.push(rel.to_string());
+            files.len() < MAX_FILES
+        }),
+    );
 
     if files.is_empty() {
         None
