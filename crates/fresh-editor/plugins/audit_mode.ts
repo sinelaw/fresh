@@ -3,26 +3,15 @@
 /// <reference path="./lib/virtual-buffer-factory.ts" />
 
 // Review Diff Plugin
-// Provides a unified workflow for reviewing code changes (diffs, conflicts, AI outputs).
-//
-// TODO: This plugin has incomplete/broken functionality:
-// - Uses editor.prompt() which doesn't exist in the API (needs event-based prompt)
-// - Uses VirtualBufferOptions.read_only (should be readOnly)
-// - References stop_review_diff which is undefined
+// Magit-style split-panel UI for reviewing and staging code changes.
+// Left panel: file list (staged/unstaged/untracked). Right panel: diff.
+// Actions: stage/unstage/discard hunks or files, line comments, export.
 const editor = getEditor();
 
 import { createVirtualBufferFactory } from "./lib/virtual-buffer-factory.ts";
 const VirtualBufferFactory = createVirtualBufferFactory(editor);
 
-/**
- * Hunk status for staging
- */
-type HunkStatus = 'pending' | 'staged' | 'discarded';
 
-/**
- * Review status for a hunk
- */
-type ReviewStatus = 'pending' | 'approved' | 'needs_changes' | 'rejected' | 'question';
 
 /**
  * A review comment attached to a specific line in a file
@@ -57,8 +46,6 @@ interface Hunk {
   oldRange: { start: number; end: number };  // old file line range
   type: 'add' | 'remove' | 'modify';
   lines: string[];
-  status: HunkStatus;
-  reviewStatus: ReviewStatus;
   contextHeader: string;
   byteOffset: number; // Position in the virtual buffer
   gitStatus?: 'staged' | 'unstaged' | 'untracked';
@@ -79,10 +66,7 @@ interface FileEntry {
  */
 interface ReviewState {
   hunks: Hunk[];
-  hunkStatus: Record<string, HunkStatus>;
   comments: ReviewComment[];
-  originalRequest?: string;
-  overallFeedback?: string;
   reviewBufferId: number | null;
   // New magit-style state
   files: FileEntry[];
@@ -97,7 +81,6 @@ interface ReviewState {
 
 const state: ReviewState = {
   hunks: [],
-  hunkStatus: {},
   comments: [],
   reviewBufferId: null,
   files: [],
@@ -121,14 +104,10 @@ const STYLE_ADD_BG: OverlayColorSpec = "editor.diff_add_bg";
 const STYLE_REMOVE_BG: OverlayColorSpec = "editor.diff_remove_bg";
 const STYLE_ADD_TEXT: OverlayColorSpec = "diagnostic.info_fg";
 const STYLE_REMOVE_TEXT: OverlayColorSpec = "diagnostic.error_fg";
-const STYLE_STAGED: OverlayColorSpec = "editor.line_number_fg";
-const STYLE_DISCARDED: OverlayColorSpec = "diagnostic.error_fg";
+
 const STYLE_SECTION_HEADER: OverlayColorSpec = "syntax.type";
 const STYLE_COMMENT: OverlayColorSpec = "diagnostic.warning_fg";
-const STYLE_COMMENT_BORDER: OverlayColorSpec = "ui.split_separator_fg";
-const STYLE_APPROVED: OverlayColorSpec = "diagnostic.info_fg";
-const STYLE_REJECTED: OverlayColorSpec = "diagnostic.error_fg";
-const STYLE_QUESTION: OverlayColorSpec = "diagnostic.warning_fg";
+
 
 /**
  * Calculate UTF-8 byte length of a string manually since TextEncoder is not available
@@ -222,7 +201,6 @@ function parseDiffOutput(stdout: string, gitStatus: 'staged' | 'unstaged' | 'unt
                     type: 'modify',
                     lines: [],
                     status: 'pending',
-                    reviewStatus: 'pending',
                     contextHeader: match[3]?.trim() || "",
                     byteOffset: 0,
                     gitStatus
@@ -502,30 +480,16 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
 
     for (const hunk of fileHunks) {
         // Hunk header with review status indicator
-        let header = hunk.contextHeader
+        const header = hunk.contextHeader
             ? `@@ ${hunk.contextHeader} @@`
             : `@@ -${hunk.oldRange.start} +${hunk.range.start} @@`;
-
-        let headerStyle: Partial<OverlayOptions> = { fg: STYLE_HUNK_HEADER, bold: true };
-        if (hunk.reviewStatus !== 'pending') {
-            const statusIcons: Record<string, string> = {
-                approved: ' \u2713 APPROVED', rejected: ' \u2717 REJECTED',
-                needs_changes: ' ! NEEDS CHANGES', question: ' ? QUESTION'
-            };
-            const statusColors: Record<string, OverlayColorSpec> = {
-                approved: STYLE_APPROVED, rejected: STYLE_REJECTED,
-                needs_changes: STYLE_QUESTION, question: STYLE_QUESTION
-            };
-            header += statusIcons[hunk.reviewStatus] || '';
-            headerStyle = { fg: statusColors[hunk.reviewStatus] || STYLE_HUNK_HEADER, bold: true };
-        }
 
         lines.push({
             text: header,
             type: 'hunk-header',
             hunkId: hunk.id,
             file: hunk.file,
-            style: headerStyle,
+            style: { fg: STYLE_HUNK_HEADER, bold: true },
         });
 
         // Track actual file line numbers as we iterate
@@ -654,12 +618,12 @@ function buildToolbar(W: number): TextPropertyEntry {
     const groups: HintItem[][] = state.focusPanel === 'files'
         ? [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
-            [{ key: "a", label: "Approve" }, { key: "x", label: "Reject" }],
+            [{ key: "c", label: "Comment" }, { key: "C", label: "Note" }],
             [{ key: "↵", label: "Open" }, { key: "Tab", label: "Switch" }, { key: "e", label: "Export" }, { key: "r", label: "Refresh" }, { key: "q", label: "Close" }],
           ]
         : [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
-            [{ key: "c", label: "Comment" }, { key: "a", label: "Approve" }, { key: "x", label: "Reject" }, { key: "!", label: "NeedsFix" }, { key: "?", label: "Question" }],
+            [{ key: "c", label: "Comment" }, { key: "C", label: "Note" }],
             [{ key: "n", label: "Next" }, { key: "p", label: "Prev" }, { key: "Tab", label: "Switch" }, { key: "e", label: "Export" }, { key: "q", label: "Close" }],
           ];
 
@@ -1838,17 +1802,7 @@ function getCurrentHunkId(): string | null {
     return hunk?.id || null;
 }
 
-/**
- * Get all hunk IDs for the currently selected file.
- */
-function getCurrentFileHunkIds(): string[] {
-    if (state.files.length === 0) return [];
-    const selectedFile = state.files[state.selectedIndex];
-    if (!selectedFile) return [];
-    return state.hunks
-        .filter(h => h.file === selectedFile.path && h.gitStatus === selectedFile.category)
-        .map(h => h.id);
-}
+
 
 interface PendingCommentInfo {
     hunkId: string;
@@ -1967,136 +1921,92 @@ registerHandler("on_review_prompt_cancel", on_review_prompt_cancel);
 editor.on("prompt_confirmed", "on_review_prompt_confirm");
 editor.on("prompt_confirmed", "on_review_discard_confirm");
 editor.on("prompt_confirmed", "on_review_discard_hunk_confirm");
+editor.on("prompt_confirmed", "on_review_overall_comment_confirm");
 editor.on("prompt_cancelled", "on_review_prompt_cancel");
 
-/**
- * Set review status on hunks. When diff panel focused, applies to current hunk.
- * When file panel focused, applies to all hunks of the selected file.
- */
-function setReviewStatus(status: ReviewStatus, statusKey: string) {
-    if (state.focusPanel === 'diff') {
-        const hunkId = getCurrentHunkId();
-        if (!hunkId) return;
-        const h = state.hunks.find(x => x.id === hunkId);
-        if (h) {
-            h.reviewStatus = status;
-            updateMagitDisplay();
-            editor.setStatus(editor.t(statusKey));
-        }
-    } else {
-        const ids = getCurrentFileHunkIds();
-        if (ids.length === 0) return;
-        for (const id of ids) {
-            const h = state.hunks.find(x => x.id === id);
-            if (h) h.reviewStatus = status;
-        }
-        updateMagitDisplay();
-        editor.setStatus(editor.t(statusKey));
+async function review_add_overall_comment() {
+    editor.startPrompt(editor.t("prompt.overall_comment") || "Overall comment: ", "review-overall-comment");
+}
+registerHandler("review_add_overall_comment", review_add_overall_comment);
+
+function on_review_overall_comment_confirm(args: { prompt_type: string; input: string }): boolean {
+    if (args.prompt_type !== "review-overall-comment") return true;
+    if (args.input && args.input.trim()) {
+        const comment: ReviewComment = {
+            id: `comment-${Date.now()}`,
+            hunk_id: '__overall__',
+            file: '',
+            text: args.input.trim(),
+            timestamp: new Date().toISOString(),
+        };
+        state.comments.push(comment);
+        editor.setStatus(editor.t("status.overall_comment_added") || "Overall comment added");
     }
+    return true;
 }
-
-async function review_approve_hunk() {
-    setReviewStatus('approved', "status.hunk_approved");
-}
-registerHandler("review_approve_hunk", review_approve_hunk);
-
-async function review_reject_hunk() {
-    setReviewStatus('rejected', "status.hunk_rejected");
-}
-registerHandler("review_reject_hunk", review_reject_hunk);
-
-async function review_needs_changes() {
-    setReviewStatus('needs_changes', "status.hunk_needs_changes");
-}
-registerHandler("review_needs_changes", review_needs_changes);
-
-async function review_question_hunk() {
-    setReviewStatus('question', "status.hunk_question");
-}
-registerHandler("review_question_hunk", review_question_hunk);
-
-async function review_clear_status() {
-    setReviewStatus('pending', "status.hunk_status_cleared");
-}
-registerHandler("review_clear_status", review_clear_status);
-
-async function review_set_overall_feedback() {
-    const text = await editor.prompt(editor.t("prompt.overall_feedback"), state.overallFeedback || "");
-    if (text !== null) {
-        state.overallFeedback = text.trim();
-        editor.setStatus(text.trim() ? editor.t("status.feedback_set") : editor.t("status.feedback_cleared"));
-    }
-}
-registerHandler("review_set_overall_feedback", review_set_overall_feedback);
+registerHandler("on_review_overall_comment_confirm", on_review_overall_comment_confirm);
 
 async function review_export_session() {
     const cwd = editor.getCwd();
     const reviewDir = editor.pathJoin(cwd, ".review");
 
-    // Generate markdown content (writeFile creates parent directories)
     let md = `# Code Review Session\n`;
     md += `Date: ${new Date().toISOString()}\n\n`;
 
-    if (state.originalRequest) {
-        md += `## Original Request\n${state.originalRequest}\n\n`;
+    // Overall (non-line-specific) comments
+    const overallComments = state.comments.filter(c => c.hunk_id === '__overall__');
+    if (overallComments.length > 0) {
+        md += `## Notes\n`;
+        for (const c of overallComments) {
+            md += `- ${c.text}\n`;
+        }
+        md += `\n`;
     }
 
-    if (state.overallFeedback) {
-        md += `## Overall Feedback\n${state.overallFeedback}\n\n`;
-    }
-
-    // Stats
-    const approved = state.hunks.filter(h => h.reviewStatus === 'approved').length;
-    const rejected = state.hunks.filter(h => h.reviewStatus === 'rejected').length;
-    const needsChanges = state.hunks.filter(h => h.reviewStatus === 'needs_changes').length;
-    const questions = state.hunks.filter(h => h.reviewStatus === 'question').length;
+    // Summary
+    const filesWithComments = new Set(state.comments.filter(c => c.hunk_id !== '__overall__').map(c => c.file)).size;
     md += `## Summary\n`;
-    md += `- Total hunks: ${state.hunks.length}\n`;
-    md += `- Approved: ${approved}\n`;
-    md += `- Rejected: ${rejected}\n`;
-    md += `- Needs changes: ${needsChanges}\n`;
-    md += `- Questions: ${questions}\n\n`;
+    md += `- Files: ${state.files.length}\n`;
+    md += `- Hunks: ${state.hunks.length}\n`;
+    if (filesWithComments > 0) {
+        md += `- Files with comments: ${filesWithComments}\n`;
+    }
+    md += `\n`;
 
-    // Group by file
-    const fileGroups: Record<string, Hunk[]> = {};
-    for (const hunk of state.hunks) {
-        if (!fileGroups[hunk.file]) fileGroups[hunk.file] = [];
-        fileGroups[hunk.file].push(hunk);
+    // Group comments by file
+    const fileComments: Record<string, ReviewComment[]> = {};
+    for (const c of state.comments) {
+        if (c.hunk_id === '__overall__') continue;
+        const file = c.file || 'unknown';
+        if (!fileComments[file]) fileComments[file] = [];
+        fileComments[file].push(c);
     }
 
-    for (const [file, hunks] of Object.entries(fileGroups)) {
-        md += `## File: ${file}\n\n`;
-        for (const hunk of hunks) {
-            const statusStr = hunk.reviewStatus.toUpperCase();
-            md += `### ${hunk.contextHeader || 'Hunk'} (line ${hunk.range.start})\n`;
-            md += `**Status**: ${statusStr}\n\n`;
-
-            const hunkComments = state.comments.filter(c => c.hunk_id === hunk.id);
-            if (hunkComments.length > 0) {
-                md += `**Comments:**\n`;
-                for (const c of hunkComments) {
-                    // Format line reference
-                    let lineRef = '';
-                    if (c.line_type === 'add' && c.new_line) {
-                        lineRef = `[+${c.new_line}]`;
-                    } else if (c.line_type === 'remove' && c.old_line) {
-                        lineRef = `[-${c.old_line}]`;
-                    } else if (c.new_line) {
-                        lineRef = `[L${c.new_line}]`;
-                    } else if (c.old_line) {
-                        lineRef = `[L${c.old_line}]`;
-                    }
-                    md += `> 💬 ${lineRef} ${c.text}\n`;
-                    if (c.line_content) {
-                        md += `> \`${c.line_content.trim()}\`\n`;
-                    }
-                    md += `\n`;
-                }
+    for (const [file, comments] of Object.entries(fileComments)) {
+        md += `## ${file}\n\n`;
+        for (const c of comments) {
+            let lineRef = '';
+            if (c.line_type === 'add' && c.new_line) {
+                lineRef = `line +${c.new_line}`;
+            } else if (c.line_type === 'remove' && c.old_line) {
+                lineRef = `line -${c.old_line}`;
+            } else if (c.new_line) {
+                lineRef = `line ${c.new_line}`;
+            } else if (c.old_line) {
+                lineRef = `line ${c.old_line}`;
+            }
+            if (lineRef) {
+                md += `- **${lineRef}**: ${c.text}\n`;
+            } else {
+                md += `- ${c.text}\n`;
+            }
+            if (c.line_content) {
+                md += `  \`${c.line_content.trim()}\`\n`;
             }
         }
+        md += `\n`;
     }
 
-    // Write file
     const filePath = editor.pathJoin(reviewDir, "session.md");
     await editor.writeFile(filePath, md);
     editor.setStatus(editor.t("status.exported", { path: filePath }));
@@ -2106,33 +2016,20 @@ registerHandler("review_export_session", review_export_session);
 async function review_export_json() {
     const cwd = editor.getCwd();
     const reviewDir = editor.pathJoin(cwd, ".review");
-    // writeFile creates parent directories
 
     const session = {
-        version: "1.0",
+        version: "2.0",
         timestamp: new Date().toISOString(),
-        original_request: state.originalRequest || null,
-        overall_feedback: state.overallFeedback || null,
-        files: {} as Record<string, any>
+        notes: state.comments.filter(c => c.hunk_id === '__overall__').map(c => c.text),
+        comments: state.comments.filter(c => c.hunk_id !== '__overall__').map(c => ({
+            file: c.file,
+            text: c.text,
+            line_type: c.line_type || null,
+            old_line: c.old_line || null,
+            new_line: c.new_line || null,
+            line_content: c.line_content || null
+        }))
     };
-
-    for (const hunk of state.hunks) {
-        if (!session.files[hunk.file]) session.files[hunk.file] = { hunks: [] };
-        const hunkComments = state.comments.filter(c => c.hunk_id === hunk.id);
-        session.files[hunk.file].hunks.push({
-            context: hunk.contextHeader,
-            old_lines: [hunk.oldRange.start, hunk.oldRange.end],
-            new_lines: [hunk.range.start, hunk.range.end],
-            status: hunk.reviewStatus,
-            comments: hunkComments.map(c => ({
-                text: c.text,
-                line_type: c.line_type || null,
-                old_line: c.old_line || null,
-                new_line: c.new_line || null,
-                line_content: c.line_content || null
-            }))
-        });
-    }
 
     const filePath = editor.pathJoin(reviewDir, "session.json");
     await editor.writeFile(filePath, JSON.stringify(session, null, 2));
@@ -2284,7 +2181,6 @@ async function side_by_side_diff_current_file() {
                     type: isUntracked ? 'add' : 'modify',
                     lines: [],
                     status: 'pending',
-                    reviewStatus: 'pending',
                     contextHeader: match[5]?.trim() || "",
                     byteOffset: 0
                 };
@@ -2451,12 +2347,7 @@ editor.registerCommand("%cmd.side_by_side_diff", "%cmd.side_by_side_diff_desc", 
 
 // Review Comment Commands
 editor.registerCommand("%cmd.add_comment", "%cmd.add_comment_desc", "review_add_comment", "review-mode");
-editor.registerCommand("%cmd.approve_hunk", "%cmd.approve_hunk_desc", "review_approve_hunk", "review-mode");
-editor.registerCommand("%cmd.reject_hunk", "%cmd.reject_hunk_desc", "review_reject_hunk", "review-mode");
-editor.registerCommand("%cmd.needs_changes", "%cmd.needs_changes_desc", "review_needs_changes", "review-mode");
-editor.registerCommand("%cmd.question", "%cmd.question_desc", "review_question_hunk", "review-mode");
-editor.registerCommand("%cmd.clear_status", "%cmd.clear_status_desc", "review_clear_status", "review-mode");
-editor.registerCommand("%cmd.overall_feedback", "%cmd.overall_feedback_desc", "review_set_overall_feedback", "review-mode");
+editor.registerCommand("%cmd.add_overall_comment", "%cmd.add_overall_comment_desc", "review_add_overall_comment", "review-mode");
 editor.registerCommand("%cmd.export_markdown", "%cmd.export_markdown_desc", "review_export_session", "review-mode");
 editor.registerCommand("%cmd.export_json", "%cmd.export_json_desc", "review_export_json", "review-mode");
 
@@ -2509,16 +2400,11 @@ editor.defineMode("review-mode", [
     ["s", "review_stage_file"], ["u", "review_unstage_file"],
     ["d", "review_discard_file"],
     ["r", "review_refresh"],
-    // Review actions
-    ["a", "review_approve_hunk"],
-    ["x", "review_reject_hunk"],
-    ["!", "review_needs_changes"],
-    ["?", "review_question_hunk"],
+    // Comments
     ["c", "review_add_comment"],
-    ["O", "review_set_overall_feedback"],
-    // Close
+    ["C", "review_add_overall_comment"],
+    // Close & export
     ["q", "close"],
-    // Export
     ["e", "review_export_session"],
 ], true);
 
