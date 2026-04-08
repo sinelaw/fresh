@@ -89,6 +89,7 @@ interface ReviewState {
   selectedIndex: number;
   fileScrollOffset: number;
   diffScrollOffset: number;
+  diffSelectedLine: number;
   viewportWidth: number;
   viewportHeight: number;
   focusPanel: 'files' | 'diff';
@@ -103,6 +104,7 @@ const state: ReviewState = {
   selectedIndex: 0,
   fileScrollOffset: 0,
   diffScrollOffset: 0,
+  diffSelectedLine: 0,
   viewportWidth: 80,
   viewportHeight: 24,
   focusPanel: 'files',
@@ -389,9 +391,16 @@ interface ListLine {
 
 interface DiffLine {
     text: string;
-    type: 'hunk-header' | 'add' | 'remove' | 'context' | 'empty';
+    type: 'hunk-header' | 'add' | 'remove' | 'context' | 'empty' | 'comment';
     style?: Partial<OverlayOptions>;
     inlineOverlays?: InlineOverlay[];
+    // Line metadata for comment attachment
+    hunkId?: string;
+    file?: string;
+    lineType?: 'add' | 'remove' | 'context';
+    oldLine?: number;
+    newLine?: number;
+    lineContent?: string;
 }
 
 /**
@@ -470,30 +479,72 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
         lines.push({
             text: header,
             type: 'hunk-header',
+            hunkId: hunk.id,
+            file: hunk.file,
             style: { fg: STYLE_HUNK_HEADER, bold: true },
         });
+
+        // Track actual file line numbers as we iterate
+        let oldLineNum = hunk.oldRange.start;
+        let newLineNum = hunk.range.start;
 
         // Diff content lines — only set background color so the normal editor
         // foreground stays readable across all themes. The bg uses theme-aware
         // diff colors that each theme can customize.
         for (const line of hunk.lines) {
             const prefix = line[0];
+            const lineType: 'add' | 'remove' | 'context' =
+                prefix === '+' ? 'add' : prefix === '-' ? 'remove' : 'context';
+            const curOldLine = lineType !== 'add' ? oldLineNum : undefined;
+            const curNewLine = lineType !== 'remove' ? newLineNum : undefined;
+
             if (prefix === '+') {
                 lines.push({
                     text: line,
                     type: 'add',
                     style: { bg: STYLE_ADD_BG, extendToLineEnd: true },
+                    hunkId: hunk.id, file: hunk.file,
+                    lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
                 });
+                newLineNum++;
             } else if (prefix === '-') {
                 lines.push({
                     text: line,
                     type: 'remove',
                     style: { bg: STYLE_REMOVE_BG, extendToLineEnd: true },
+                    hunkId: hunk.id, file: hunk.file,
+                    lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
                 });
+                oldLineNum++;
             } else {
                 lines.push({
                     text: line,
                     type: 'context',
+                    hunkId: hunk.id, file: hunk.file,
+                    lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
+                });
+                oldLineNum++;
+                newLineNum++;
+            }
+
+            // Render inline comments attached to this line
+            const lineComments = state.comments.filter(c =>
+                c.hunk_id === hunk.id && (
+                    (c.line_type === 'add' && c.new_line === curNewLine) ||
+                    (c.line_type === 'remove' && c.old_line === curOldLine) ||
+                    (c.line_type === 'context' && c.new_line === curNewLine)
+                )
+            );
+            for (const comment of lineComments) {
+                const lineRef = comment.line_type === 'add'
+                    ? `+${comment.new_line}`
+                    : comment.line_type === 'remove'
+                    ? `-${comment.old_line}`
+                    : `${comment.new_line}`;
+                lines.push({
+                    text: `  \u00bb [${lineRef}] ${comment.text}`,
+                    type: 'comment',
+                    style: { fg: STYLE_COMMENT, italic: true },
                 });
             }
         }
@@ -543,7 +594,13 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
 
     const visibleFileLines = allFileLines.slice(state.fileScrollOffset, state.fileScrollOffset + mainRows);
 
-    // --- Diff scrolling ---
+    // --- Diff scrolling & selected line clamping ---
+    if (diffLines.length > 0) {
+        if (state.diffSelectedLine >= diffLines.length) state.diffSelectedLine = diffLines.length - 1;
+        if (state.diffSelectedLine < 0) state.diffSelectedLine = 0;
+    } else {
+        state.diffSelectedLine = 0;
+    }
     const maxDiffOffset = Math.max(0, diffLines.length - mainRows);
     if (state.diffScrollOffset > maxDiffOffset) state.diffScrollOffset = maxDiffOffset;
     if (state.diffScrollOffset < 0) state.diffScrollOffset = 0;
@@ -551,7 +608,7 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     const visibleDiffLines = diffLines.slice(state.diffScrollOffset, state.diffScrollOffset + mainRows);
 
     // --- Row 0: Toolbar ---
-    const toolbar = " [Tab] Switch Panel  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down  [r] Refresh";
+    const toolbar = " [Tab] Switch Panel  [s] Stage  [u] Unstage  [d] Discard  [c] Comment  [Enter] Drill-Down  [r] Refresh";
     entries.push({
         text: toolbar.substring(0, W).padEnd(W) + "\n",
         style: { fg: STYLE_FOOTER, bg: "ui.status_bar_bg" as OverlayColorSpec, extendToLineEnd: true },
@@ -607,10 +664,11 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
         // Divider
         entries.push({ text: "│", style: { fg: STYLE_DIVIDER }, properties: { type: "divider" } });
 
-        // Right panel — when diff panel is focused, highlight the top line as cursor
+        // Right panel — when diff panel is focused, highlight the selected line
         const rightText = diffItem ? (" " + diffItem.text) : "";
         const rightTruncated = rightText.substring(0, rightWidth);
-        const isDiffCursorLine = !focusLeft && i === 0 && diffItem != null;
+        const diffLineIndex = state.diffScrollOffset + i;
+        const isDiffCursorLine = !focusLeft && diffLineIndex === state.diffSelectedLine && diffItem != null;
         const rightStyle = isDiffCursorLine
             ? { ...(diffItem?.style || {}), bg: STYLE_SELECTED_BG, extendToLineEnd: true }
             : diffItem?.style;
@@ -626,6 +684,19 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
     }
 
     return entries;
+}
+
+/**
+ * Ensure the diff scroll offset keeps the selected line visible.
+ */
+function scrollDiffToSelected(): void {
+    const mainRows = state.viewportHeight - 2;
+    if (state.diffSelectedLine < state.diffScrollOffset) {
+        state.diffScrollOffset = state.diffSelectedLine;
+    }
+    if (state.diffSelectedLine >= state.diffScrollOffset + mainRows) {
+        state.diffScrollOffset = state.diffSelectedLine - mainRows + 1;
+    }
 }
 
 /**
@@ -651,10 +722,14 @@ function review_nav_up() {
         if (state.selectedIndex > 0) {
             state.selectedIndex--;
             state.diffScrollOffset = 0;
+            state.diffSelectedLine = 0;
             updateMagitDisplay();
         }
     } else {
-        state.diffScrollOffset = Math.max(0, state.diffScrollOffset - 1);
+        if (state.diffSelectedLine > 0) {
+            state.diffSelectedLine--;
+            scrollDiffToSelected();
+        }
         updateMagitDisplay();
     }
 }
@@ -666,10 +741,12 @@ function review_nav_down() {
         if (state.selectedIndex < state.files.length - 1) {
             state.selectedIndex++;
             state.diffScrollOffset = 0;
+            state.diffSelectedLine = 0;
             updateMagitDisplay();
         }
     } else {
-        state.diffScrollOffset++;
+        state.diffSelectedLine++;
+        scrollDiffToSelected();
         updateMagitDisplay();
     }
 }
@@ -681,9 +758,11 @@ function review_page_up() {
         if (state.selectedIndex > 0) {
             state.selectedIndex = Math.max(0, state.selectedIndex - mainRows);
             state.diffScrollOffset = 0;
+            state.diffSelectedLine = 0;
             updateMagitDisplay();
         }
     } else {
+        state.diffSelectedLine = Math.max(0, state.diffSelectedLine - mainRows);
         state.diffScrollOffset = Math.max(0, state.diffScrollOffset - mainRows);
         updateMagitDisplay();
     }
@@ -696,9 +775,11 @@ function review_page_down() {
         if (state.selectedIndex < state.files.length - 1) {
             state.selectedIndex = Math.min(state.files.length - 1, state.selectedIndex + mainRows);
             state.diffScrollOffset = 0;
+            state.diffSelectedLine = 0;
             updateMagitDisplay();
         }
     } else {
+        state.diffSelectedLine += mainRows;
         state.diffScrollOffset += mainRows;
         updateMagitDisplay();
     }
@@ -732,9 +813,11 @@ function review_nav_home() {
         if (state.files.length === 0) return;
         state.selectedIndex = 0;
         state.diffScrollOffset = 0;
+        state.diffSelectedLine = 0;
         updateMagitDisplay();
     } else {
         state.diffScrollOffset = 0;
+        state.diffSelectedLine = 0;
         updateMagitDisplay();
     }
 }
@@ -745,6 +828,7 @@ function review_nav_end() {
         if (state.files.length === 0) return;
         state.selectedIndex = state.files.length - 1;
         state.diffScrollOffset = 0;
+        state.diffSelectedLine = 0;
         updateMagitDisplay();
     } else {
         // Scroll diff to bottom
@@ -752,6 +836,7 @@ function review_nav_end() {
         const selectedFile = state.files[state.selectedIndex];
         if (selectedFile) {
             const diffLines = buildDiffLines(state.viewportWidth - Math.max(28, Math.floor(state.viewportWidth * 0.3)) - 1);
+            state.diffSelectedLine = Math.max(0, diffLines.length - 1);
             state.diffScrollOffset = Math.max(0, diffLines.length - mainRows);
         }
         updateMagitDisplay();
@@ -829,6 +914,7 @@ async function refreshMagitData() {
         state.selectedIndex = Math.max(0, state.files.length - 1);
     }
     state.diffScrollOffset = 0;
+    state.diffSelectedLine = 0;
     updateMagitDisplay();
 }
 
@@ -1462,21 +1548,35 @@ interface PendingCommentInfo {
 }
 
 function getCurrentLineInfo(): PendingCommentInfo | null {
-    // In magit mode, get info from the selected file's first hunk
+    // In magit mode, get line-level info from the selected diff line
     if (state.files.length === 0) return null;
     const selectedFile = state.files[state.selectedIndex];
     if (!selectedFile) return null;
-    const hunk = state.hunks.find(
-        h => h.file === selectedFile.path && h.gitStatus === selectedFile.category
-    );
-    if (!hunk) return null;
+
+    // Build diff lines and find the one at the current selection
+    const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
+    const rightWidth = state.viewportWidth - leftWidth - 1;
+    const diffLines = buildDiffLines(rightWidth);
+    if (diffLines.length === 0) return null;
+
+    const idx = Math.min(state.diffSelectedLine, diffLines.length - 1);
+    const line = diffLines[idx];
+    if (!line || !line.hunkId) {
+        // Fallback: find first hunk for this file
+        const hunk = state.hunks.find(
+            h => h.file === selectedFile.path && h.gitStatus === selectedFile.category
+        );
+        if (!hunk) return null;
+        return { hunkId: hunk.id, file: hunk.file };
+    }
+
     return {
-        hunkId: hunk.id,
-        file: hunk.file,
-        lineType: undefined,
-        oldLine: undefined,
-        newLine: undefined,
-        lineContent: undefined
+        hunkId: line.hunkId,
+        file: line.file || selectedFile.path,
+        lineType: line.lineType,
+        oldLine: line.oldLine,
+        newLine: line.newLine,
+        lineContent: line.lineContent
     };
 }
 
@@ -1754,6 +1854,7 @@ async function start_review_diff() {
     state.selectedIndex = 0;
     state.fileScrollOffset = 0;
     state.diffScrollOffset = 0;
+    state.diffSelectedLine = 0;
     state.focusPanel = 'files';
 
     // Build initial display
