@@ -48,7 +48,7 @@
     "status.hunk_unstaged": "Hunk unstaged",
     "status.hunk_discarded": "Hunk discarded",
     "status.generating": "Generating Review Diff Stream...",
-    "status.review_summary": "Review Diff: %{count} hunks | [c]omment [a]pprove [r]efresh [e]xport",
+    "status.review_summary": "Review Diff: %{count} hunks",
     "status.stopped": "Review Diff Mode stopped.",
     "status.no_file_open": "No file open - cannot show diff",
     "status.failed_git_diff": "Failed to get git diff for file",

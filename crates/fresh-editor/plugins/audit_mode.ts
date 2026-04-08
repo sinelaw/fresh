@@ -633,6 +633,79 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
  *   Row 1:        Header (left: GIT STATUS, right: DIFF FOR <file>)
  *   Rows 2..H-1:  Main content (left file list, │ divider, right diff)
  */
+
+// Theme colors for toolbar key hints
+const STYLE_KEY_FG: OverlayColorSpec = "syntax.keyword";
+const STYLE_KEY_BG: OverlayColorSpec = "editor.selection_bg";
+const STYLE_HINT_FG: OverlayColorSpec = "editor.line_number_fg";
+const STYLE_TOOLBAR_BG: OverlayColorSpec = "ui.status_bar_bg";
+const STYLE_TOOLBAR_SEP: OverlayColorSpec = "ui.split_separator_fg";
+
+interface HintItem {
+    key: string;
+    label: string;
+}
+
+/**
+ * Build a styled toolbar entry with highlighted key hints.
+ * Keys get bold + keyword color; labels get dim text; groups separated by │.
+ */
+function buildToolbar(W: number): TextPropertyEntry {
+    const groups: HintItem[][] = state.focusPanel === 'files'
+        ? [
+            [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
+            [{ key: "↵", label: "Drill-Down" }, { key: "Tab", label: "Switch" }],
+            [{ key: "r", label: "Refresh" }, { key: "q", label: "Close" }],
+          ]
+        : [
+            [{ key: "s", label: "Stage" }, { key: "c", label: "Comment" }],
+            [{ key: "a", label: "Approve" }, { key: "x", label: "Reject" }, { key: "!", label: "NeedsFix" }, { key: "?", label: "Question" }],
+            [{ key: "n", label: "Next" }, { key: "p", label: "Prev" }, { key: "Tab", label: "Switch" }, { key: "q", label: "Close" }],
+          ];
+
+    // Build text and collect overlay ranges
+    const overlays: InlineOverlay[] = [];
+    let text = " ";
+    let bytePos = getByteLength(" ");
+
+    for (let g = 0; g < groups.length; g++) {
+        if (g > 0) {
+            const sep = " │ ";
+            overlays.push({ start: bytePos, end: bytePos + getByteLength(sep), style: { fg: STYLE_TOOLBAR_SEP } });
+            text += sep;
+            bytePos += getByteLength(sep);
+        }
+        for (let h = 0; h < groups[g].length; h++) {
+            const item = groups[g][h];
+            if (h > 0) {
+                text += "  ";
+                bytePos += getByteLength("  ");
+            }
+            // Key: bold with highlight
+            const keyText = item.key;
+            const keyLen = getByteLength(keyText);
+            overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bg: STYLE_KEY_BG, bold: true } });
+            text += keyText;
+            bytePos += keyLen;
+
+            // Space + label: dim
+            const labelText = " " + item.label;
+            const labelLen = getByteLength(labelText);
+            overlays.push({ start: bytePos, end: bytePos + labelLen, style: { fg: STYLE_HINT_FG } });
+            text += labelText;
+            bytePos += labelLen;
+        }
+    }
+
+    const padded = text.substring(0, W).padEnd(W) + "\n";
+    return {
+        text: padded,
+        properties: { type: "toolbar" },
+        style: { bg: STYLE_TOOLBAR_BG, extendToLineEnd: true },
+        inlineOverlays: overlays,
+    };
+}
+
 function buildMagitDisplayEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
     const H = state.viewportHeight;
@@ -680,15 +753,9 @@ function buildMagitDisplayEntries(): TextPropertyEntry[] {
 
     const visibleDiffLines = diffLines.slice(state.diffScrollOffset, state.diffScrollOffset + mainRows);
 
-    // --- Row 0: Toolbar ---
-    const toolbar = state.focusPanel === 'files'
-        ? " [Tab] Switch  [s] Stage  [u] Unstage  [d] Discard  [Enter] Drill-Down  [r] Refresh  [q] Close"
-        : " [Tab] Switch  [s] Stage Hunk  [c] Comment  [a] Approve  [x] Reject  [n/p] Hunk Nav  [q] Close";
-    entries.push({
-        text: toolbar.substring(0, W).padEnd(W) + "\n",
-        style: { fg: STYLE_FOOTER, bg: "ui.status_bar_bg" as OverlayColorSpec, extendToLineEnd: true },
-        properties: { type: "toolbar" },
-    });
+    // --- Row 0: Toolbar with styled key hints ---
+    const toolbarEntry = buildToolbar(W);
+    entries.push(toolbarEntry);
 
     // --- Row 1: Header ---
     const selectedFile = state.files[state.selectedIndex];
