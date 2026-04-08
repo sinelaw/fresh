@@ -654,13 +654,13 @@ function buildToolbar(W: number): TextPropertyEntry {
     const groups: HintItem[][] = state.focusPanel === 'files'
         ? [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
-            [{ key: "↵", label: "Drill-Down" }, { key: "Tab", label: "Switch" }],
-            [{ key: "r", label: "Refresh" }, { key: "q", label: "Close" }],
+            [{ key: "a", label: "Approve" }, { key: "x", label: "Reject" }],
+            [{ key: "↵", label: "Open" }, { key: "Tab", label: "Switch" }, { key: "e", label: "Export" }, { key: "r", label: "Refresh" }, { key: "q", label: "Close" }],
           ]
         : [
-            [{ key: "s", label: "Stage" }, { key: "c", label: "Comment" }],
-            [{ key: "a", label: "Approve" }, { key: "x", label: "Reject" }, { key: "!", label: "NeedsFix" }, { key: "?", label: "Question" }],
-            [{ key: "n", label: "Next" }, { key: "p", label: "Prev" }, { key: "Tab", label: "Switch" }, { key: "q", label: "Close" }],
+            [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
+            [{ key: "c", label: "Comment" }, { key: "a", label: "Approve" }, { key: "x", label: "Reject" }, { key: "!", label: "NeedsFix" }, { key: "?", label: "Question" }],
+            [{ key: "n", label: "Next" }, { key: "p", label: "Prev" }, { key: "Tab", label: "Switch" }, { key: "e", label: "Export" }, { key: "q", label: "Close" }],
           ];
 
     // Build text and collect overlay ranges
