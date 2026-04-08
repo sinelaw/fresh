@@ -67,6 +67,7 @@ interface FileEntry {
 interface ReviewState {
   hunks: Hunk[];
   comments: ReviewComment[];
+  note: string;
   reviewBufferId: number | null;
   // New magit-style state
   files: FileEntry[];
@@ -82,6 +83,7 @@ interface ReviewState {
 const state: ReviewState = {
   hunks: [],
   comments: [],
+  note: '',
   reviewBufferId: null,
   files: [],
   selectedIndex: 0,
@@ -417,25 +419,22 @@ function buildFileListLines(): ListLine[] {
         });
     }
 
-    // Show overall notes at the bottom of the file list
-    const notes = state.comments.filter(c => c.hunk_id === '__overall__');
-    if (notes.length > 0) {
+    // Show session note at the bottom of the file list
+    if (state.note) {
         lines.push({ text: '', type: 'section-header' }); // blank separator
         lines.push({
-            text: `▸ Notes (${notes.length})`,
+            text: `▸ Note`,
             type: 'section-header',
             style: { fg: STYLE_COMMENT, bold: true },
         });
-        for (const note of notes) {
-            const truncated = note.text.length > 40
-                ? note.text.substring(0, 37) + '...'
-                : note.text;
-            lines.push({
-                text: `  ${truncated}`,
-                type: 'section-header',
-                style: { fg: STYLE_COMMENT, italic: true },
-            });
-        }
+        const truncated = state.note.length > 40
+            ? state.note.substring(0, 37) + '...'
+            : state.note;
+        lines.push({
+            text: `  ${truncated}`,
+            type: 'section-header',
+            style: { fg: STYLE_COMMENT, italic: true },
+        });
     }
 
     return lines;
@@ -1954,6 +1953,19 @@ async function review_delete_comment() {
         if (notes.length > 0) target = notes[notes.length - 1];
     }
 
+    // File panel: delete note
+    if (!target && state.focusPanel === 'files' && state.note) {
+        pendingDeleteCommentId = '__note__';
+        const preview = state.note.length > 40 ? state.note.substring(0, 37) + '...' : state.note;
+        editor.startPrompt(`Delete note "${preview}"?`, "review-delete-comment-confirm");
+        const suggestions: PromptSuggestion[] = [
+            { text: "Delete", description: "Remove this note", value: "delete" },
+            { text: "Cancel", description: "Keep the note", value: "cancel" },
+        ];
+        editor.setPromptSuggestions(suggestions);
+        return;
+    }
+
     if (!target) {
         editor.setStatus("No comment to delete");
         return;
@@ -1974,9 +1986,13 @@ function on_review_delete_comment_confirm(args: { prompt_type: string; input: st
     if (args.prompt_type !== "review-delete-comment-confirm") return true;
     const response = args.input.trim().toLowerCase();
     if ((response === "delete" || args.selected_index === 0) && pendingDeleteCommentId) {
-        state.comments = state.comments.filter(c => c.id !== pendingDeleteCommentId);
+        if (pendingDeleteCommentId === '__note__') {
+            state.note = '';
+        } else {
+            state.comments = state.comments.filter(c => c.id !== pendingDeleteCommentId);
+        }
         updateMagitDisplay();
-        editor.setStatus("Comment deleted");
+        editor.setStatus("Deleted");
     } else {
         editor.setStatus("Delete cancelled");
     }
@@ -2055,62 +2071,35 @@ registerHandler("on_review_prompt_cancel", on_review_prompt_cancel);
 editor.on("prompt_confirmed", "on_review_prompt_confirm");
 editor.on("prompt_confirmed", "on_review_discard_confirm");
 editor.on("prompt_confirmed", "on_review_discard_hunk_confirm");
-editor.on("prompt_confirmed", "on_review_overall_comment_confirm");
+editor.on("prompt_confirmed", "on_review_edit_note_confirm");
 editor.on("prompt_confirmed", "on_review_delete_comment_confirm");
 editor.on("prompt_cancelled", "on_review_prompt_cancel");
 
-let editingNoteId: string | null = null;
-
-async function review_add_overall_comment() {
-    const notes = state.comments.filter(c => c.hunk_id === '__overall__');
+async function review_edit_note() {
     const label = editor.t("prompt.overall_comment") || "Note: ";
-
-    if (notes.length > 0) {
-        // Edit most recent note
-        const last = notes[notes.length - 1];
-        editingNoteId = last.id;
-        editor.startPromptWithInitial(label, "review-overall-comment", last.text);
+    if (state.note) {
+        editor.startPromptWithInitial(label, "review-edit-note", state.note);
     } else {
-        editingNoteId = null;
-        editor.startPrompt(label, "review-overall-comment");
+        editor.startPrompt(label, "review-edit-note");
     }
 }
-registerHandler("review_add_overall_comment", review_add_overall_comment);
+registerHandler("review_edit_note", review_edit_note);
 
-function on_review_overall_comment_confirm(args: { prompt_type: string; input: string }): boolean {
-    if (args.prompt_type !== "review-overall-comment") return true;
-
-    if (editingNoteId) {
-        if (args.input && args.input.trim()) {
-            const existing = state.comments.find(c => c.id === editingNoteId);
-            if (existing) {
-                existing.text = args.input.trim();
-                existing.timestamp = new Date().toISOString();
-                updateMagitDisplay();
-                editor.setStatus("Note updated");
-            }
-        } else {
+function on_review_edit_note_confirm(args: { prompt_type: string; input: string }): boolean {
+    if (args.prompt_type !== "review-edit-note") return true;
+    if (args.input && args.input.trim()) {
+        state.note = args.input.trim();
+        updateMagitDisplay();
+        editor.setStatus(state.note ? "Note saved" : "Note cleared");
+    } else {
+        // Empty submission: keep existing note unchanged (use x to delete)
+        if (state.note) {
             editor.setStatus("Note unchanged (use x to delete)");
         }
-        editingNoteId = null;
-        return true;
-    }
-
-    if (args.input && args.input.trim()) {
-        const comment: ReviewComment = {
-            id: `comment-${Date.now()}`,
-            hunk_id: '__overall__',
-            file: '',
-            text: args.input.trim(),
-            timestamp: new Date().toISOString(),
-        };
-        state.comments.push(comment);
-        updateMagitDisplay();
-        editor.setStatus(editor.t("status.overall_comment_added") || "Note added");
     }
     return true;
 }
-registerHandler("on_review_overall_comment_confirm", on_review_overall_comment_confirm);
+registerHandler("on_review_edit_note_confirm", on_review_edit_note_confirm);
 
 async function review_export_session() {
     const cwd = editor.getCwd();
@@ -2119,18 +2108,12 @@ async function review_export_session() {
     let md = `# Code Review Session\n`;
     md += `Date: ${new Date().toISOString()}\n\n`;
 
-    // Overall (non-line-specific) comments
-    const overallComments = state.comments.filter(c => c.hunk_id === '__overall__');
-    if (overallComments.length > 0) {
-        md += `## Notes\n`;
-        for (const c of overallComments) {
-            md += `- ${c.text}\n`;
-        }
-        md += `\n`;
+    if (state.note) {
+        md += `## Note\n${state.note}\n\n`;
     }
 
     // Summary
-    const filesWithComments = new Set(state.comments.filter(c => c.hunk_id !== '__overall__').map(c => c.file)).size;
+    const filesWithComments = new Set(state.comments.map(c => c.file)).size;
     md += `## Summary\n`;
     md += `- Files: ${state.files.length}\n`;
     md += `- Hunks: ${state.hunks.length}\n`;
@@ -2142,7 +2125,6 @@ async function review_export_session() {
     // Group comments by file
     const fileComments: Record<string, ReviewComment[]> = {};
     for (const c of state.comments) {
-        if (c.hunk_id === '__overall__') continue;
         const file = c.file || 'unknown';
         if (!fileComments[file]) fileComments[file] = [];
         fileComments[file].push(c);
@@ -2186,8 +2168,8 @@ async function review_export_json() {
     const session = {
         version: "2.0",
         timestamp: new Date().toISOString(),
-        notes: state.comments.filter(c => c.hunk_id === '__overall__').map(c => c.text),
-        comments: state.comments.filter(c => c.hunk_id !== '__overall__').map(c => ({
+        note: state.note || null,
+        comments: state.comments.map(c => ({
             file: c.file,
             text: c.text,
             line_type: c.line_type || null,
@@ -2218,6 +2200,7 @@ async function start_review_diff() {
     state.files = await getGitStatus();
     state.hunks = await fetchDiffsForFiles(state.files);
     state.comments = [];
+    state.note = '';
     state.selectedIndex = 0;
     state.fileScrollOffset = 0;
     state.diffScrollOffset = 0;
@@ -2513,7 +2496,7 @@ editor.registerCommand("%cmd.side_by_side_diff", "%cmd.side_by_side_diff_desc", 
 
 // Review Comment Commands
 editor.registerCommand("%cmd.add_comment", "%cmd.add_comment_desc", "review_add_comment", "review-mode");
-editor.registerCommand("%cmd.add_overall_comment", "%cmd.add_overall_comment_desc", "review_add_overall_comment", "review-mode");
+editor.registerCommand("%cmd.edit_note", "%cmd.edit_note_desc", "review_edit_note", "review-mode");
 editor.registerCommand("%cmd.export_markdown", "%cmd.export_markdown_desc", "review_export_session", "review-mode");
 editor.registerCommand("%cmd.export_json", "%cmd.export_json_desc", "review_export_json", "review-mode");
 
@@ -2568,7 +2551,7 @@ editor.defineMode("review-mode", [
     ["r", "review_refresh"],
     // Comments
     ["c", "review_add_comment"],
-    ["C", "review_add_overall_comment"],
+    ["C", "review_edit_note"],
     ["x", "review_delete_comment"],
     // Close & export
     ["q", "close"],
