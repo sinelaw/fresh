@@ -41,11 +41,31 @@ fn open_theme_editor(harness: &mut EditorTestHarness) {
         .unwrap();
     harness.render().unwrap();
 
-    // Wait for theme editor to fully load
+    // Wait for theme editor to fully load.
+    //
+    // We must wait for the PANEL CONTENT to be populated, not just for the
+    // `*Theme Editor*` tab label to appear. The tab bar updates as soon as
+    // the buffer group is created, which happens BEFORE the plugin runs
+    // `setPanelContent` to populate the tree/picker/footer panels. On slower
+    // platforms (e.g. Windows) there's a visible race window in which the
+    // tab is in place but every panel is still blank — previously this
+    // helper used `screen.contains("Editor")` which matches the `*Theme
+    // Editor*` tab label, so the wait returned during that blank window
+    // and every subsequent `contains("Theme Editor:")` / `contains("#...")`
+    // assertion in the callers raced against a half-rendered UI.
+    //
+    // Instead, wait for per-panel content the plugin writes via
+    // setPanelContent:
+    //   - `Theme Editor: ` — the first line of the tree (left) panel,
+    //     e.g. "Theme Editor: dark".
+    //   - `Select a color field` (when nothing is selected yet) or `Hex:`
+    //     (after a color has been picked) — both only appear after the
+    //     picker (right) panel has been populated.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Theme Editor:") || screen.contains("Editor")
+            screen.contains("Theme Editor: ")
+                && (screen.contains("Select a color field") || screen.contains("Hex:"))
         })
         .unwrap();
 }
