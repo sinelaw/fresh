@@ -619,12 +619,24 @@ impl LspManager {
             .unwrap_or_default()
     }
 
-    /// Force spawn LSP server(s) for a language, bypassing auto_start checks.
+    /// Force spawn LSP server(s) for a language.
     ///
-    /// Spawns all enabled servers configured for the language.
-    /// Returns a mutable reference to the primary (first) handle if any were spawned.
+    /// Spawns servers configured for the language, filtered as follows:
+    /// - If the language is in `allowed_languages` (the user explicitly
+    ///   started or approved this language via a manual command), spawns
+    ///   every configured server regardless of its `enabled` / `auto_start`
+    ///   flags. This is the "manual" path used by the command palette's
+    ///   Start / Restart LSP commands and the LSP confirmation popup.
+    /// - Otherwise (the auto-start path, reached via `try_spawn` on buffer
+    ///   load or by crash recovery), spawns only servers that have both
+    ///   `enabled=true` AND `auto_start=true`. Each config's own
+    ///   `auto_start` flag is honoured individually, so configuring one
+    ///   auto-start server alongside an opt-in manual server no longer
+    ///   drags the manual one along for the ride.
     ///
-    /// The `file_path` is used for workspace root detection via `root_markers`.
+    /// Returns a mutable reference to the primary (first) handle if any
+    /// were spawned. The `file_path` is used for workspace root detection
+    /// via `root_markers`.
     pub fn force_spawn(
         &mut self,
         language: &str,
@@ -681,12 +693,22 @@ impl LspManager {
         };
 
         let mut spawned_handles = Vec::new();
+        let manually_allowed = self.allowed_languages.contains(language);
 
         for config in &configs {
-            // Skip disabled configs unless the user explicitly started this language
-            // via the command palette (allowed_languages).
-            if !config.enabled && !self.allowed_languages.contains(language) {
-                continue;
+            if manually_allowed {
+                // User explicitly started this language via command palette:
+                // spawn every configured server, even if individually
+                // disabled or marked not-auto-start.
+            } else {
+                // Auto-start path: only spawn servers that the user has
+                // opted into both via `enabled=true` AND `auto_start=true`.
+                // This honours each config's flags independently so that
+                // e.g. configuring rust-auto (auto_start=true) alongside
+                // rust-manual (auto_start=false) does not spawn both.
+                if !config.enabled || !config.auto_start {
+                    continue;
+                }
             }
 
             if config.command.is_empty() {
