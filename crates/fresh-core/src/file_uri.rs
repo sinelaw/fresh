@@ -472,14 +472,40 @@ mod tests {
 
     #[test]
     fn incomplete_percent_sequence_preserved() {
-        // Malformed %X or trailing % should be passed through
+        // Malformed %X or trailing % should be passed through.
+        // The trailing forms (`%` at len-1 and `%X` at len-2) exercise the
+        // `i + 2 < bytes.len()` guard in percent_decode — without it, the
+        // function would read past the end of the input and panic.
+        // percent_decode runs on all platforms, so these cases are effective
+        // regardless of target.
         #[cfg(not(windows))]
         {
             let path = file_uri_to_path("file:///home/100%/file.txt").unwrap();
             assert_eq!(path, PathBuf::from("/home/100%/file.txt"));
+
+            // `%` is the final byte: no trailing nibbles at all.
+            let path = file_uri_to_path("file:///a%").unwrap();
+            assert_eq!(path, PathBuf::from("/a%"));
+
+            // `%X` is the final two bytes: exactly one trailing nibble, which
+            // is the off-by-one that the `i + 2 < len` check guards against.
+            let path = file_uri_to_path("file:///a%X").unwrap();
+            assert_eq!(path, PathBuf::from("/a%X"));
+
+            // `%XY` where Y is a non-hex char: both trailing bytes present but
+            // not a valid escape, so the `%` is preserved literally.
+            let path = file_uri_to_path("file:///a%XY").unwrap();
+            assert_eq!(path, PathBuf::from("/a%XY"));
         }
         #[cfg(windows)]
-        assert!(file_uri_to_path("file:///home/100%/file.txt").is_none());
+        {
+            // On Windows the drive-letter check rejects these URIs, but
+            // percent_decode still runs first — so the boundary cases above
+            // (`a%` and especially `a%X`) are what exercise its guard here.
+            assert!(file_uri_to_path("file:///home/100%/file.txt").is_none());
+            assert!(file_uri_to_path("file:///a%").is_none());
+            assert!(file_uri_to_path("file:///a%X").is_none());
+        }
     }
 
     // ── Windows-style URI decoding (testable on all platforms) ─
