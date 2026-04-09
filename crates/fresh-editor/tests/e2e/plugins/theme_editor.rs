@@ -3865,70 +3865,78 @@ fn test_named_color_swatch_uses_native_ansi_color() {
         .unwrap();
 
     // The "ui" section is collapsed by default. Navigate down until the
-    // selection indicator (▸) is on the UI Elements section header.
-    // After each Down key, wait for the screen to actually change before
-    // checking and sending the next key. Without this wait, the plugin's
-    // async key processing can batch multiple keys, causing the selection
-    // to skip positions and miss the UI Elements line entirely.
+    // selection indicator (▸) lands on the UI Elements section header.
+    //
+    // Use true semantic waiting: after each Down press, wait until the
+    // *selected line's content* (the line containing ▸) actually changes.
+    // Waiting on "screen changed" is unreliable because unrelated async
+    // work (timers, async redraws, etc.) can flip a cell between the
+    // key-press and the real selection update, making the previous wait
+    // return early and letting the test race ahead of the plugin thread —
+    // which was the source of this test's intermittent timeouts.
     let selection_indicator = '\u{25B8}'; // ▸
-    let mut found_ui_section = false;
-    for _ in 0..50 {
-        let screen_before = harness.screen_to_string();
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        // Wait for the screen to reflect the key press before proceeding
-        harness
-            .wait_until(|h| h.screen_to_string() != screen_before)
-            .unwrap();
-        let screen = harness.screen_to_string();
-        // Check if the selected line (containing ▸) is the collapsed UI section
-        if screen
+    let selected_line = |h: &EditorTestHarness| -> Option<String> {
+        h.screen_to_string()
             .lines()
-            .any(|l| l.contains(selection_indicator) && (l.contains("> UI") || l.contains("> ui")))
+            .find(|l| l.contains(selection_indicator))
+            .map(|s| s.to_string())
+    };
+    let line_is_collapsed_ui_section = |l: &str| l.contains("> UI") || l.contains("> ui");
+    let line_is_expanded_ui_section = |l: &str| l.contains("▼ UI") || l.contains("▼ ui");
+
+    loop {
+        if selected_line(&harness)
+            .as_deref()
+            .map(line_is_collapsed_ui_section)
+            .unwrap_or(false)
         {
-            found_ui_section = true;
             break;
         }
+        let before = selected_line(&harness);
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.wait_until(|h| selected_line(h) != before).unwrap();
     }
 
-    let screen_before_expand = harness.screen_to_string();
-    assert!(
-        found_ui_section,
-        "Should have found UI section header. Screen:\n{}",
-        screen_before_expand
-    );
-
-    // Expand the UI section
+    // Expand the UI section and wait semantically for the selected line
+    // to flip from collapsed (▸> UI) to expanded (▸▼ UI).
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    harness
+        .wait_until(|h| {
+            selected_line(h)
+                .as_deref()
+                .map(line_is_expanded_ui_section)
+                .unwrap_or(false)
+        })
+        .unwrap();
 
     // Navigate down to tab_active_fg within the expanded UI section.
-    // The UI section has many fields from the schema, so we need enough presses.
-    // Wait for each key to take effect (same reason as above: async batching).
-    for _ in 0..80 {
-        let screen_before = harness.screen_to_string();
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness
-            .wait_until(|h| h.screen_to_string() != screen_before)
-            .unwrap();
-        let screen = harness.screen_to_string();
-        // Stop when the selected line contains tab_active_fg
-        if screen
-            .lines()
-            .any(|l| l.contains(selection_indicator) && l.contains("tab_active_fg"))
+    // Same semantic-wait pattern: wait for the selected line's content to
+    // change after each Down press, not just for any screen cell to flip.
+    loop {
+        if selected_line(&harness)
+            .as_deref()
+            .map(|l| l.contains("tab_active_fg"))
+            .unwrap_or(false)
         {
             break;
         }
+        let before = selected_line(&harness);
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.wait_until(|h| selected_line(h) != before).unwrap();
     }
 
-    // Move selection away so the tab_active_fg row renders without selection
-    // highlight (which changes bg color and breaks swatch detection where fg==bg).
+    // Move selection away so the tab_active_fg row renders without the
+    // selection highlight (which adds a bg overlay that breaks the
+    // fg==bg swatch detection).
+    let before = selected_line(&harness);
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.process_async_and_render().unwrap();
+    harness.wait_until(|h| selected_line(h) != before).unwrap();
 
-    // Wait for the tab_active_fg swatch to render with the correct native ANSI
-    // Yellow color. On slow CI the plugin may not have finished painting yet.
+    // Wait for the tab_active_fg swatch to render with the correct native
+    // ANSI Yellow color. On slow CI the plugin may not have finished
+    // painting the inline overlay yet.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
