@@ -511,6 +511,44 @@ mod tests {
     }
 
     #[test]
+    fn test_multi_term_joined_by_arbitrary_chars_ranks_above_scattered() {
+        // The tight-span bonus is not specific to path separators:
+        // "etc hosts" should rank a target like "etcmohosts" (two chars
+        // between the terms, no separator at all) above a target where
+        // the individual characters e-t-c-h-o-s-t-s are scattered with
+        // big gaps, even though both targets satisfy the per-term
+        // subsequence check.
+        let tight = fuzzy_match("etc hosts", "etcmohosts");
+        let scattered = fuzzy_match("etc hosts", "eblatblacblahblaoblasblatblas");
+
+        assert!(tight.matched);
+        assert!(scattered.matched);
+        assert!(
+            tight.score > scattered.score,
+            "etcmohosts ({}) should outrank scattered ({})",
+            tight.score,
+            scattered.score
+        );
+    }
+
+    #[test]
+    fn test_multi_term_camel_case_joined_ranks_above_scattered() {
+        // "save file" → "saveFile" (zero characters between, just a
+        // camelCase transition) should get the tight-span bonus too.
+        let camel = fuzzy_match("save file", "saveFile.rs");
+        let scattered = fuzzy_match("save file", "savepoint_filetree_handler.rs");
+
+        assert!(camel.matched);
+        assert!(scattered.matched);
+        assert!(
+            camel.score > scattered.score,
+            "saveFile.rs ({}) should outrank scattered ({})",
+            camel.score,
+            scattered.score
+        );
+    }
+
+    #[test]
     fn test_amortized_apis_equivalent_to_oneshot() {
         // Both amortized entry points (`fuzzy_match_prepared` borrowing a
         // pre-built `PreparedPattern`, and `FuzzyMatcher` reusing scratch

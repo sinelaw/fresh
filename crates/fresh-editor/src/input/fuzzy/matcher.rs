@@ -249,28 +249,38 @@ fn score_multi_term(
     all_positions.sort_unstable();
     all_positions.dedup();
 
-    // Bonus: reward targets where the query's terms, joined by a common
-    // path/word separator, appear as a single contiguous substring.  This
-    // makes "etc hosts" rank "/etc/hosts" above scattered alternatives
-    // (both terms contiguous but far apart in the target), and makes
-    // "save file" rank "save_file.rs" above "savepoint/filetree.rs".
+    // Tight-span bonus: reward targets where each term appears as a
+    // contiguous substring and all the term matches are packed close
+    // together (regardless of what sits between them).  This handles
+    // every realistic "the query reconstructs a single name" case
+    // uniformly — "/etc/hosts", "save_file.rs", "saveFile.rs",
+    // "etcmohosts", even "foo.bar.baz" — without hard-coding a list
+    // of separator characters that would miss camelCase, runs-together
+    // words, or unusual punctuation.
     //
-    // We try each plausible separator in turn and stop at the first
-    // match — targets that reconstruct the query with any common
-    // separator get a single EXACT_MATCH boost, which is enough to
-    // outrank a pure sum-of-per-term-scores tie.
-    //
-    // The legacy space-separator case (lower_chars, e.g. "Package: Packages")
-    // is covered here too as the first separator we try.
-    if let Some((char_start, total_len)) =
-        find_joined_terms(target_lower, &pattern.terms, &pattern.lower_chars)
-    {
-        total_score += score::EXACT_MATCH;
+    // The bonus fires iff:
+    //   1. Every term appears as a contiguous substring in `target_lower`,
+    //   2. In the order given by the query, and
+    //   3. The gap between consecutive term matches is small (we allow
+    //      up to 4 chars per gap — generous enough for "etcmohosts"
+    //      and "foo/bar/baz" but not for two terms at opposite ends
+    //      of a long path).
+    if let Some((span_start, span_end)) = find_sequential_term_span(target_lower, &pattern.terms) {
+        let term_len_sum: usize = pattern.terms.iter().map(|t| t.lower_chars.len()).sum();
+        let span_len = span_end - span_start;
+        let gap_excess = span_len.saturating_sub(term_len_sum);
+        let num_gaps = pattern.terms.len().saturating_sub(1);
+        // Tolerance scales with the number of gaps: 4 chars per gap.
+        let max_gap_excess = num_gaps.saturating_mul(4);
 
-        let target_char_count = target_chars.len();
-        all_positions = (char_start..char_start + total_len)
-            .filter(|&i| i < target_char_count)
-            .collect();
+        if gap_excess <= max_gap_excess {
+            total_score += score::EXACT_MATCH;
+
+            let target_char_count = target_chars.len();
+            all_positions = (span_start..span_end)
+                .filter(|&i| i < target_char_count)
+                .collect();
+        }
     }
 
     FuzzyMatch {
@@ -280,74 +290,41 @@ fn score_multi_term(
     }
 }
 
-/// Try to find the pattern's terms in `target_lower` as a single
-/// contiguous substring joined by one of a small set of common
-/// separators (space, slash, underscore, dash, dot, backslash).
+/// Greedily find the first sequential occurrence of each term as a
+/// contiguous substring in `target_lower`, advancing past each match
+/// before searching for the next term.  Returns the `(start, end)`
+/// char indices of the overall span covering the first term's start
+/// through the last term's end, or `None` if any term can't be found
+/// contiguously in the required order.
 ///
-/// Returns `Some((char_start, total_len))` on the first separator that
-/// matches, where `total_len` is the length of the joined needle in
-/// characters (so the caller can rebuild match positions covering
-/// exactly the matched span, including the separators).
-///
-/// Allocates at most one `Vec<char>` (reused across separator attempts)
-/// and short-circuits on first match, so the hot-path cost is bounded
-/// by `(num_separators + 1) × find_chars_slice` on average.
-fn find_joined_terms(
+/// "Greedy" here means we take the *earliest* occurrence of each term,
+/// not the tightest span — tighter spans would require backtracking
+/// and are not worth the cost for a ranking signal.
+fn find_sequential_term_span(
     target_lower: &[char],
     terms: &[PreparedTerm],
-    literal_query_lower: &[char],
 ) -> Option<(usize, usize)> {
-    // First try the literal query (preserves original whitespace exactly,
-    // so "Package: Packages" keeps its colon-space separator).
-    if let Some(start) = find_chars_slice(target_lower, literal_query_lower) {
-        return Some((start, literal_query_lower.len()));
-    }
-
-    if terms.len() < 2 {
-        // Single-term multi-term path should never happen (that case is
-        // routed to `score_single_term` in `match_prepared`), but guard
-        // against degenerate callers.
-        return None;
-    }
-
-    // Try joining terms with each separator in turn.  We intentionally
-    // skip space here — the literal-query attempt above already covered
-    // any whitespace form of the original query.
-    const JOIN_SEPARATORS: &[char] = &['/', '_', '-', '.', '\\'];
-
-    // Reserve enough capacity for the longest possible joined needle
-    // (every term + one separator per gap).  Reused across attempts.
-    let term_len_sum: usize = terms.iter().map(|t| t.lower_chars.len()).sum();
-    let needle_len = term_len_sum + terms.len() - 1;
-    let mut needle: Vec<char> = Vec::with_capacity(needle_len);
-
-    for &sep in JOIN_SEPARATORS {
-        needle.clear();
-        for (i, term) in terms.iter().enumerate() {
-            if i > 0 {
-                needle.push(sep);
-            }
-            needle.extend(term.lower_chars.iter().copied());
+    let mut search_from = 0;
+    let mut first_start: Option<usize> = None;
+    let mut last_end = 0;
+    for term in terms {
+        let needle = &term.lower_chars;
+        if needle.is_empty() {
+            continue;
         }
-        if let Some(start) = find_chars_slice(target_lower, &needle) {
-            return Some((start, needle.len()));
+        if search_from + needle.len() > target_lower.len() {
+            return None;
         }
+        let end_bound = target_lower.len() - needle.len();
+        let found =
+            (search_from..=end_bound).find(|&s| target_lower[s..s + needle.len()] == *needle)?;
+        if first_start.is_none() {
+            first_start = Some(found);
+        }
+        search_from = found + needle.len();
+        last_end = search_from;
     }
-
-    None
-}
-
-/// Find the first occurrence of `needle` as a contiguous slice inside
-/// `haystack`, both as `&[char]`.  Returns the char index of the match.
-fn find_chars_slice(haystack: &[char], needle: &[char]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    if needle.len() > haystack.len() {
-        return None;
-    }
-    let last_start = haystack.len() - needle.len();
-    (0..=last_start).find(|&start| haystack[start..start + needle.len()] == *needle)
+    first_start.map(|start| (start, last_end))
 }
 
 /// Find the best contiguous substring match of `query` in `target`.
