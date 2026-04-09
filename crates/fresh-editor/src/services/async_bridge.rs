@@ -278,7 +278,12 @@ pub enum AsyncMessage {
     },
 
     /// Quick Open file list loaded by a background task.
-    QuickOpenFilesLoaded(std::sync::Arc<Vec<crate::input::quick_open::providers::FileEntry>>),
+    /// `complete` is `true` when the scan is finished, `false` for incremental
+    /// partial updates sent while the walk is still in progress.
+    QuickOpenFilesLoaded {
+        files: std::sync::Arc<Vec<crate::input::quick_open::providers::FileEntry>>,
+        complete: bool,
+    },
 }
 
 /// LSP progress value types

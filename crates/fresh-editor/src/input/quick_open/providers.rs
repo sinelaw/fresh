@@ -349,12 +349,28 @@ impl FileProvider {
         }
     }
 
-    /// Update the file cache with results from a background load.
+    /// Update the file cache with final results from a completed background load.
     pub fn set_cache(&self, files: std::sync::Arc<Vec<FileEntry>>) {
         if let Ok(mut c) = self.cache.lock() {
             c.files = Some(files);
             c.loading = false;
         }
+    }
+
+    /// Update the file cache with partial results while the background scan
+    /// is still running.  Unlike [`set_cache`], this keeps `loading = true`.
+    pub fn set_partial_cache(&self, files: std::sync::Arc<Vec<FileEntry>>) {
+        if let Ok(mut c) = self.cache.lock() {
+            c.files = Some(files);
+            // Keep c.loading = true — the walk is still in progress.
+        }
+    }
+
+    /// Returns `true` if a background file scan is in progress.
+    fn is_loading(&self) -> bool {
+        self.cache
+            .lock()
+            .map_or(false, |c| c.loading)
     }
 
     /// Record file access for frecency ranking
@@ -375,6 +391,83 @@ impl FileProvider {
             .ok()
             .and_then(|m| m.get(path).map(frecency_score))
             .unwrap_or(0.0)
+    }
+
+    /// Probe the filesystem directly for files matching `query` as a path
+    /// prefix.  This is fast (typically one `read_dir` call) and provides
+    /// immediate results even while the full recursive scan is in progress.
+    ///
+    /// For example, if `cwd` is `/` and `query` is `etc/hosts`, this will
+    /// list `/etc/` and return every file whose name starts with `hosts`
+    /// (e.g. `etc/hosts`, `etc/hosts.allow`, `etc/hosts.deny`).
+    fn probe_prefix(&self, cwd: &str, query: &str) -> Vec<FileEntry> {
+        use std::path::Path;
+
+        if query.is_empty() {
+            return vec![];
+        }
+
+        let abs_path = Path::new(cwd).join(query);
+        let mut results = Vec::new();
+
+        // If the query points to a directory, list its file contents.
+        if let Ok(entries) = self.filesystem.read_dir(&abs_path) {
+            let query_trimmed = query.trim_end_matches('/');
+            for entry in entries {
+                if entry.is_file() && !entry.name.starts_with('.') {
+                    let rel = format!("{}/{}", query_trimmed, entry.name);
+                    results.push(FileEntry {
+                        frecency_score: self.get_frecency_score(&rel),
+                        relative_path: rel,
+                    });
+                }
+            }
+            results.truncate(50);
+            return results;
+        }
+
+        // Otherwise, list the parent directory and filter by the basename
+        // prefix (e.g. query "etc/hosts" → parent "/etc", prefix "hosts").
+        let parent = match abs_path.parent() {
+            Some(p) => p,
+            None => return results,
+        };
+        let basename = match abs_path.file_name().and_then(|n| n.to_str()) {
+            Some(b) => b,
+            None => return results,
+        };
+
+        let rel_parent = match parent.strip_prefix(cwd) {
+            Ok(p) => {
+                let s = p.to_string_lossy().replace('\\', "/");
+                s
+            }
+            Err(_) => return results,
+        };
+
+        if let Ok(entries) = self.filesystem.read_dir(parent) {
+            for entry in entries {
+                if entry.name.starts_with('.') {
+                    continue;
+                }
+                if !entry.name.starts_with(basename) {
+                    continue;
+                }
+                if entry.is_file() {
+                    let rel = if rel_parent.is_empty() {
+                        entry.name.clone()
+                    } else {
+                        format!("{}/{}", rel_parent, entry.name)
+                    };
+                    results.push(FileEntry {
+                        frecency_score: self.get_frecency_score(&rel),
+                        relative_path: rel,
+                    });
+                }
+            }
+        }
+
+        results
     }
 
     /// Get the cached file list, or `None` if not yet loaded.
@@ -414,32 +507,35 @@ impl FileProvider {
         let cwd = cwd.to_string();
 
         handle.spawn_blocking(move || {
-            let files = try_git_files_blocking(&process_spawner, &cwd)
-                .or_else(|| try_walk_dir_blocking(&*filesystem, &cwd, &cancel))
-                .unwrap_or_default();
+            // Fast path: git ls-files returns everything at once.
+            if let Some(files) = try_git_files_blocking(&process_spawner, &cwd) {
+                let frecency_map = frecency.read().ok();
+                let entries: Vec<FileEntry> = files
+                    .into_iter()
+                    .map(|path| {
+                        let score = frecency_map
+                            .as_ref()
+                            .and_then(|m| m.get(&path))
+                            .map(frecency_score)
+                            .unwrap_or(0.0);
+                        FileEntry {
+                            relative_path: path,
+                            frecency_score: score,
+                        }
+                    })
+                    .collect();
+                drop(sender.send(
+                    crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
+                        files: std::sync::Arc::new(entries),
+                        complete: true,
+                    },
+                ));
+                return;
+            }
 
-            let frecency_map = frecency.read().ok();
-            let entries: Vec<FileEntry> = files
-                .into_iter()
-                .map(|path| {
-                    let score = frecency_map
-                        .as_ref()
-                        .and_then(|m| m.get(&path))
-                        .map(frecency_score)
-                        .unwrap_or(0.0);
-                    FileEntry {
-                        relative_path: path,
-                        frecency_score: score,
-                    }
-                })
-                .collect();
-
-            // Receiver may be dropped if the editor is shutting down — that's fine.
-            drop(sender.send(
-                crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded(
-                    std::sync::Arc::new(entries),
-                ),
-            ));
+            // Slow path: directory walk with periodic incremental updates so
+            // the UI can show partial results while the scan continues.
+            walk_dir_with_updates(&*filesystem, &cwd, &cancel, &frecency, &sender);
         });
 
         None
@@ -554,6 +650,76 @@ fn try_walk_dir_blocking(
     }
 }
 
+/// Minimum interval between incremental partial-result updates sent to the UI
+/// during a directory walk.
+const WALK_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Walk the directory tree, sending periodic partial updates to the UI so
+/// fuzzy results can be recalculated as new files are discovered.
+fn walk_dir_with_updates(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    cwd: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+    frecency: &std::sync::RwLock<std::collections::HashMap<String, FrecencyData>>,
+    sender: &std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>,
+) {
+    use std::path::Path;
+
+    let base = Path::new(cwd);
+    let mut paths: Vec<String> = Vec::new();
+    let mut last_send = std::time::Instant::now();
+
+    let _ = fs.walk_files(base, IGNORED_DIRS, cancel, &mut |_path, rel| {
+        paths.push(rel.to_string());
+
+        // Send a partial snapshot at regular intervals.
+        if last_send.elapsed() >= WALK_UPDATE_INTERVAL {
+            let frecency_map = frecency.read().ok();
+            let entries: Vec<FileEntry> = paths
+                .iter()
+                .map(|p| FileEntry {
+                    frecency_score: frecency_map
+                        .as_ref()
+                        .and_then(|m| m.get(p).map(frecency_score))
+                        .unwrap_or(0.0),
+                    relative_path: p.clone(),
+                })
+                .collect();
+            let _ = sender.send(
+                crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
+                    files: std::sync::Arc::new(entries),
+                    complete: false,
+                },
+            );
+            last_send = std::time::Instant::now();
+        }
+
+        paths.len() < MAX_FILES
+    });
+
+    // Send the final complete result.
+    let frecency_map = frecency.read().ok();
+    let entries: Vec<FileEntry> = paths
+        .into_iter()
+        .map(|p| {
+            let score = frecency_map
+                .as_ref()
+                .and_then(|m| m.get(&p).map(frecency_score))
+                .unwrap_or(0.0);
+            FileEntry {
+                relative_path: p,
+                frecency_score: score,
+            }
+        })
+        .collect();
+    let _ = sender.send(
+        crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
+            files: std::sync::Arc::new(entries),
+            complete: true,
+        },
+    );
+}
+
 /// Compute frecency score for a single entry.
 fn frecency_score(data: &FrecencyData) -> f64 {
     let hours_since_access = data.last_access.elapsed().as_secs_f64() / 3600.0;
@@ -594,54 +760,108 @@ impl QuickOpenProvider for FileProvider {
             )];
         }
 
-        // Get cached files or kick off background load
-        let files = match self.get_or_start_loading(&context.cwd) {
-            Some(f) => f,
-            None => {
-                // Background load in progress — show placeholder
-                return vec![Suggestion::disabled("Loading files…".to_string())];
-            }
+        // Get cached files (may be partial during an in-progress scan) or
+        // kick off a background load.
+        let files = self.get_or_start_loading(&context.cwd);
+        let still_loading = self.is_loading();
+
+        // Fast prefix probe: check the filesystem directly for the query
+        // treated as a literal path prefix.  This gives instant results even
+        // before the recursive scan reaches the relevant directory.
+        let prefix_entries = if !search_query.is_empty() && (files.is_none() || still_loading) {
+            self.probe_prefix(&context.cwd, search_query)
+        } else {
+            vec![]
         };
 
-        if files.is_empty() {
-            return vec![Suggestion::disabled(t!("quick_open.no_files").to_string())];
+        let has_files = files.as_ref().map_or(false, |f| !f.is_empty());
+
+        if !has_files && prefix_entries.is_empty() {
+            if still_loading {
+                return vec![Suggestion::disabled("Loading files…".to_string())];
+            } else {
+                return vec![Suggestion::disabled(t!("quick_open.no_files").to_string())];
+            }
         }
 
         let max_results = 100;
 
-        // Work with references to avoid cloning the whole Arc<Vec>
-        let mut scored: Vec<(&FileEntry, i32)> = if search_query.is_empty() {
-            let mut entries: Vec<_> = files.iter().map(|f| (f, 0i32)).collect();
-            entries.sort_by(|a, b| {
-                b.0.frecency_score
-                    .partial_cmp(&a.0.frecency_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            entries.truncate(max_results);
-            entries
-        } else {
-            files
-                .iter()
-                .filter_map(|file| {
+        // Collect prefix-probe paths for deduplication.
+        let prefix_set: std::collections::HashSet<&str> = prefix_entries
+            .iter()
+            .map(|e| e.relative_path.as_str())
+            .collect();
+
+        // Score bonus applied to files confirmed to exist via the prefix probe.
+        const PREFIX_PROBE_BOOST: i32 = 200;
+
+        // We accumulate (path, score) pairs from both sources and merge.
+        let mut scored: Vec<(String, i32)> = Vec::new();
+
+        // 1) Prefix-probe results (filesystem-confirmed, high priority).
+        for entry in &prefix_entries {
+            let m = fuzzy_match(search_query, &entry.relative_path);
+            let base_score = if m.matched { m.score } else { 0 };
+            let frecency_boost = (entry.frecency_score / 100.0).min(20.0) as i32;
+            scored.push((
+                entry.relative_path.clone(),
+                base_score + frecency_boost + PREFIX_PROBE_BOOST,
+            ));
+        }
+
+        // 2) Cached file list (may be partial if scan is still running).
+        if let Some(files) = &files {
+            if search_query.is_empty() {
+                let mut entries: Vec<_> = files.iter().map(|f| (f, 0i32)).collect();
+                entries.sort_by(|a, b| {
+                    b.0.frecency_score
+                        .partial_cmp(&a.0.frecency_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                entries.truncate(max_results);
+                for (f, s) in entries {
+                    scored.push((f.relative_path.clone(), s));
+                }
+            } else {
+                for file in files.iter() {
+                    // Skip entries already present from the prefix probe.
+                    if prefix_set.contains(file.relative_path.as_str()) {
+                        continue;
+                    }
                     let m = fuzzy_match(search_query, &file.relative_path);
                     if !m.matched {
-                        return None;
+                        continue;
                     }
                     let frecency_boost = (file.frecency_score / 100.0).min(20.0) as i32;
-                    Some((file, m.score + frecency_boost))
-                })
-                .collect()
-        };
+                    let mut score = m.score + frecency_boost;
+                    // Boost files whose relative path starts with the query —
+                    // i.e. the query is a literal prefix of the path.
+                    if file.relative_path.starts_with(search_query) {
+                        score += PREFIX_PROBE_BOOST;
+                    }
+                    scored.push((file.relative_path.clone(), score));
+                }
+            }
+        }
 
         scored.sort_by(|a, b| b.1.cmp(&a.1));
         scored.truncate(max_results);
 
-        scored
+        let mut suggestions: Vec<Suggestion> = scored
             .into_iter()
-            .map(|(file, _)| {
-                Suggestion::new(file.relative_path.clone()).with_value(file.relative_path.clone())
-            })
-            .collect()
+            .map(|(path, _)| Suggestion::new(path.clone()).with_value(path))
+            .collect();
+
+        if still_loading {
+            let msg = if suggestions.is_empty() {
+                "Loading files…"
+            } else {
+                "Scanning for more files…"
+            };
+            suggestions.push(Suggestion::disabled(msg.to_string()));
+        }
+
+        suggestions
     }
 
     fn on_select(
@@ -899,5 +1119,138 @@ mod tests {
         // Should show "no files" disabled suggestion
         assert_eq!(suggestions.len(), 1);
         assert!(suggestions[0].disabled);
+    }
+
+    // ====================================================================
+    // Prefix probe tests
+    // ====================================================================
+
+    #[test]
+    fn test_probe_prefix_exact_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        std::fs::create_dir(base.join("etc")).unwrap();
+        std::fs::write(base.join("etc").join("hosts"), b"").unwrap();
+        std::fs::write(base.join("etc").join("hosts.allow"), b"").unwrap();
+        std::fs::write(base.join("etc").join("hosts.deny"), b"").unwrap();
+        std::fs::write(base.join("etc").join("passwd"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let results = provider.probe_prefix(&base.display().to_string(), "etc/hosts");
+
+        let paths: Vec<&str> = results.iter().map(|e| e.relative_path.as_str()).collect();
+        assert!(paths.contains(&"etc/hosts"));
+        assert!(paths.contains(&"etc/hosts.allow"));
+        assert!(paths.contains(&"etc/hosts.deny"));
+        // passwd does not start with "hosts"
+        assert!(!paths.contains(&"etc/passwd"));
+    }
+
+    #[test]
+    fn test_probe_prefix_directory_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        std::fs::create_dir(base.join("src")).unwrap();
+        std::fs::write(base.join("src").join("main.rs"), b"").unwrap();
+        std::fs::write(base.join("src").join("lib.rs"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let results = provider.probe_prefix(&base.display().to_string(), "src");
+
+        // "src" is a directory, so it lists its contents
+        let paths: Vec<&str> = results.iter().map(|e| e.relative_path.as_str()).collect();
+        assert!(paths.contains(&"src/main.rs"));
+        assert!(paths.contains(&"src/lib.rs"));
+    }
+
+    #[test]
+    fn test_probe_prefix_no_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        std::fs::write(base.join("README.md"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let results =
+            provider.probe_prefix(&base.display().to_string(), "nonexistent/path/to/file");
+
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_probe_prefix_root_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        std::fs::write(base.join("Makefile"), b"").unwrap();
+        std::fs::write(base.join("Makefile.bak"), b"").unwrap();
+        std::fs::write(base.join("README.md"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let results = provider.probe_prefix(&base.display().to_string(), "Makefile");
+
+        let paths: Vec<&str> = results.iter().map(|e| e.relative_path.as_str()).collect();
+        assert!(paths.contains(&"Makefile"));
+        assert!(paths.contains(&"Makefile.bak"));
+        assert!(!paths.contains(&"README.md"));
+    }
+
+    // ====================================================================
+    // Prefix scoring boost tests
+    // ====================================================================
+
+    #[test]
+    fn test_prefix_match_ranks_above_fuzzy_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        // Create files where "src/main" is a prefix of one path and
+        // fuzzy-matches another.
+        std::fs::create_dir(base.join("src")).unwrap();
+        std::fs::write(base.join("src").join("main.rs"), b"").unwrap();
+        // "some_random_main_file.rs" also fuzzy-matches "src/main" (the
+        // characters s, r, c, m, a, i, n exist), but the prefix match
+        // should rank higher.
+        std::fs::write(base.join("src").join("manager.rs"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let context = make_test_context(&base.display().to_string());
+        let suggestions = provider.suggestions("src/main", &context);
+
+        // The exact prefix match should be first
+        assert!(!suggestions.is_empty());
+        assert_eq!(suggestions[0].value.as_deref(), Some("src/main.rs"));
+    }
+
+    #[test]
+    fn test_set_partial_cache_keeps_loading() {
+        let provider = make_file_provider();
+
+        // Simulate background loading start
+        {
+            let mut cache = provider.cache.lock().unwrap();
+            cache.loading = true;
+        }
+
+        // Partial cache update should keep loading = true
+        let partial = std::sync::Arc::new(vec![FileEntry {
+            relative_path: "foo.rs".to_string(),
+            frecency_score: 0.0,
+        }]);
+        provider.set_partial_cache(partial);
+
+        assert!(provider.is_loading());
+        assert!(provider.cache.lock().unwrap().files.is_some());
+
+        // Final set_cache should clear loading
+        let final_files = std::sync::Arc::new(vec![FileEntry {
+            relative_path: "foo.rs".to_string(),
+            frecency_score: 0.0,
+        }]);
+        provider.set_cache(final_files);
+
+        assert!(!provider.is_loading());
     }
 }
