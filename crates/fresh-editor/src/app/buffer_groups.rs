@@ -115,6 +115,18 @@ impl super::Editor {
             meta.display_name = name.clone();
         }
 
+        // Remove non-representative panel buffers from any other split's
+        // open_buffers list (they were added during create_virtual_buffer).
+        // Only the representative should appear as a tab.
+        let hidden_panel_ids: Vec<BufferId> = panel_buffers
+            .values()
+            .copied()
+            .filter(|id| *id != first_buffer_id)
+            .collect();
+        for (_leaf_id, vs) in self.split_view_states.iter_mut() {
+            vs.open_buffers.retain(|b| !hidden_panel_ids.contains(b));
+        }
+
         let representative_split = Some(active_leaf);
 
         // Register the group
