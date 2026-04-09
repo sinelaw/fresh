@@ -84,3 +84,21 @@ impl Suggestion {
         self.disabled.unwrap_or(false)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `is_disabled` mirrors the `disabled` option and treats `None` as enabled.
+    #[test]
+    fn is_disabled_reflects_disabled_field() {
+        let mut s = Suggestion::new("foo".into());
+        assert!(!s.is_disabled(), "None defaults to enabled");
+
+        s.disabled = Some(false);
+        assert!(!s.is_disabled());
+
+        s.disabled = Some(true);
+        assert!(s.is_disabled());
+    }
+}
