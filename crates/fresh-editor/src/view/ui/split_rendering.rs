@@ -1551,10 +1551,42 @@ impl SplitRenderer {
             }
         }
 
-        // Render split separators
+        // Render split separators — for both the main tree and any
+        // active Grouped subtrees dispatched at render time.
         let separators = split_manager.get_separators(area);
         for (direction, x, y, length) in separators {
             Self::render_separator(frame, direction, x, y, length, theme);
+        }
+        // Walk base_visible again to render internal separators of active
+        // groups (the group's Split nodes live in the side-map, not in the
+        // main split tree, so split_manager doesn't know about them).
+        for (main_split_id, _main_buffer_id, split_area) in &base_visible {
+            let active_group = split_view_states
+                .as_deref()
+                .and_then(|svs| svs.get(main_split_id))
+                .and_then(|vs| vs.active_group_tab);
+            if let Some(group_leaf) = active_group {
+                if let Some(grouped) = grouped_subtrees.get(&group_leaf) {
+                    let split_tab_bar_visible = tab_bar_visible
+                        && !split_view_states
+                            .as_deref()
+                            .and_then(|svs| svs.get(main_split_id))
+                            .is_some_and(|vs| vs.suppress_chrome);
+                    let main_layout = Self::split_layout(
+                        *split_area,
+                        split_tab_bar_visible,
+                        show_vertical_scrollbar,
+                        show_horizontal_scrollbar,
+                    );
+                    if let crate::view::split::SplitNode::Grouped { layout, .. } = grouped {
+                        for (direction, x, y, length) in
+                            layout.get_separators(main_layout.content_rect)
+                        {
+                            Self::render_separator(frame, direction, x, y, length, theme);
+                        }
+                    }
+                }
+            }
         }
 
         (

@@ -848,6 +848,18 @@ function buildToolbarPanelEntries(): TextPropertyEntry[] {
 function buildFilesPanelEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
     const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
+
+    // Header row: "GIT STATUS" — emphasized when the files panel has focus.
+    const focusLeft = state.focusPanel === 'files';
+    const headerStyle: Partial<OverlayOptions> = focusLeft
+        ? { fg: STYLE_HEADER, bold: true, underline: true }
+        : { fg: STYLE_DIVIDER };
+    entries.push({
+        text: " GIT STATUS\n",
+        style: headerStyle,
+        properties: { type: "header" },
+    });
+
     const lines = buildFileListLines(leftWidth);
     for (const line of lines) {
         const isSelected = line.type === 'file' && line.fileIndex === state.selectedIndex;
@@ -869,6 +881,22 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
     const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
     const rightWidth = state.viewportWidth - leftWidth - 1;
+
+    // Header row: "DIFF FOR <file>" — emphasized when the diff panel has focus.
+    const focusDiffHeader = state.focusPanel === 'diff';
+    const selectedFile = state.files[state.selectedIndex];
+    const rightHeader = selectedFile
+        ? ` DIFF FOR ${selectedFile.path}`
+        : " DIFF";
+    const rightHeaderStyle: Partial<OverlayOptions> = focusDiffHeader
+        ? { fg: STYLE_HEADER, bold: true, underline: true }
+        : { fg: STYLE_DIVIDER };
+    entries.push({
+        text: rightHeader + "\n",
+        style: rightHeaderStyle,
+        properties: { type: "header" },
+    });
+
     const lines = buildDiffLines(rightWidth);
     const focusDiff = state.focusPanel === 'diff';
     for (let i = 0; i < lines.length; i++) {
