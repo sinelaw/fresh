@@ -8,7 +8,7 @@
 
 use super::{QuickOpenContext, QuickOpenProvider, QuickOpenResult};
 use crate::input::commands::Suggestion;
-use crate::input::fuzzy::fuzzy_match;
+use crate::input::fuzzy::{fuzzy_match_prepared, PreparedPattern};
 use rust_i18n::t;
 
 // ============================================================================
@@ -125,20 +125,14 @@ impl QuickOpenProvider for BufferProvider {
     }
 
     fn suggestions(&self, query: &str, context: &QuickOpenContext) -> Vec<Suggestion> {
+        // Build the prepared pattern once and reuse it across all buffers.
+        let pattern = PreparedPattern::new(query);
         let mut scored: Vec<(Suggestion, i32, usize)> = context
             .open_buffers
             .iter()
             .filter(|buf| !buf.path.is_empty())
             .filter_map(|buf| {
-                let m = if query.is_empty() {
-                    crate::input::fuzzy::FuzzyMatch {
-                        matched: true,
-                        score: 0,
-                        match_positions: vec![],
-                    }
-                } else {
-                    fuzzy_match(query, &buf.name)
-                };
+                let m = fuzzy_match_prepared(&pattern, &buf.name);
                 if !m.matched {
                     return None;
                 }
@@ -816,12 +810,17 @@ impl QuickOpenProvider for FileProvider {
         // Score bonus applied to files confirmed to exist via the prefix probe.
         const PREFIX_PROBE_BOOST: i32 = 200;
 
+        // Prepare the query once per keystroke.  This hoists the
+        // lowercasing / char-vec / ASCII-check work out of the per-file
+        // loop, where it previously dominated the profile.
+        let pattern = PreparedPattern::new(search_query);
+
         // We accumulate (path, score) pairs from both sources and merge.
         let mut scored: Vec<(String, i32)> = Vec::new();
 
         // 1) Prefix-probe results (filesystem-confirmed, high priority).
         for entry in &prefix_entries {
-            let m = fuzzy_match(search_query, &entry.relative_path);
+            let m = fuzzy_match_prepared(&pattern, &entry.relative_path);
             let base_score = if m.matched { m.score } else { 0 };
             let frecency_boost = (entry.frecency_score / 100.0).min(20.0) as i32;
             scored.push((
@@ -849,7 +848,7 @@ impl QuickOpenProvider for FileProvider {
                     if prefix_set.contains(file.relative_path.as_str()) {
                         continue;
                     }
-                    let m = fuzzy_match(search_query, &file.relative_path);
+                    let m = fuzzy_match_prepared(&pattern, &file.relative_path);
                     if !m.matched {
                         continue;
                     }

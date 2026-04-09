@@ -1,11 +1,40 @@
-//! Fuzzy matching algorithm inspired by fzf
+//! Fuzzy matching algorithm inspired by fzf.
 //!
 //! Provides substring-style fuzzy matching where query characters must appear
-//! in order in the target string, but not necessarily consecutively.
-//! Matching is case-insensitive.
+//! in order in the target string, but not necessarily consecutively.  Matching
+//! is case-insensitive.
+//!
+//! # Hot-path usage
+//!
+//! For a single keystroke matched against many candidates, build a
+//! [`PreparedPattern`] once and call [`fuzzy_match_prepared`] per candidate:
+//!
+//! ```ignore
+//! let pattern = PreparedPattern::new(user_input);
+//! for file in files {
+//!     let result = fuzzy_match_prepared(&pattern, &file.path);
+//!     // ...
+//! }
+//! ```
+//!
+//! The convenience wrapper [`fuzzy_match`] rebuilds the `PreparedPattern` on
+//! every call — fine for one-shot use, wasteful in a loop.
+//!
+//! # Module layout
+//!
+//! - [`pattern`] owns [`PreparedPattern`] and the non-allocating subsequence
+//!   rejection used as the hot-path gate.
+//! - [`matcher`] owns the scoring DP (with an arena-based backpointer chain
+//!   instead of cloning position vectors) and the contiguous-substring
+//!   scorer that runs in parallel with it.
 
-/// Score bonus constants for match quality ranking
-mod score {
+mod matcher;
+mod pattern;
+
+pub use pattern::PreparedPattern;
+
+/// Score bonus constants for match quality ranking.
+pub(crate) mod score {
     /// Bonus for consecutive character matches
     pub const CONSECUTIVE: i32 = 16;
     /// Bonus for matching at word boundary (after space, underscore, etc.)
@@ -70,6 +99,10 @@ impl PartialOrd for FuzzyMatch {
 
 /// Perform fzf-style fuzzy matching of a query against a target string.
 ///
+/// Convenience wrapper that builds a [`PreparedPattern`] internally.  For
+/// hot paths matching one query against many targets, prefer building a
+/// [`PreparedPattern`] once and calling [`fuzzy_match_prepared`] per target.
+///
 /// Returns a `FuzzyMatch` containing:
 /// - `matched`: true if all query characters appear in order in the target
 /// - `score`: quality score based on match positions (consecutive matches, word boundaries, etc.)
@@ -104,348 +137,19 @@ impl PartialOrd for FuzzyMatch {
 /// assert!(result.matched);
 /// ```
 pub fn fuzzy_match(query: &str, target: &str) -> FuzzyMatch {
-    if query.is_empty() {
-        return FuzzyMatch {
-            matched: true,
-            score: 0,
-            match_positions: Vec::new(),
-        };
-    }
-
-    // Split query into terms by whitespace
-    let terms: Vec<&str> = query.split_whitespace().collect();
-
-    // If query is only whitespace, treat as empty query
-    if terms.is_empty() {
-        return FuzzyMatch {
-            matched: true,
-            score: 0,
-            match_positions: Vec::new(),
-        };
-    }
-
-    // If there are multiple terms, match each independently
-    if terms.len() > 1 {
-        return fuzzy_match_multi_term(query, &terms, target);
-    }
-
-    // Single term - use the trimmed version
-    fuzzy_match_single_term(terms[0], target)
+    let pattern = PreparedPattern::new(query);
+    fuzzy_match_prepared(&pattern, target)
 }
 
-/// Match multiple space-separated terms against a target.
-/// All terms must match for the overall match to succeed.
-fn fuzzy_match_multi_term(original_query: &str, terms: &[&str], target: &str) -> FuzzyMatch {
-    let mut total_score = 0;
-    let mut all_positions = Vec::new();
-
-    for term in terms {
-        let result = fuzzy_match_single_term(term, target);
-        if !result.matched {
-            return FuzzyMatch::no_match();
-        }
-        total_score += result.score;
-        all_positions.extend(result.match_positions);
-    }
-
-    // Sort and deduplicate positions (terms may have overlapping matches)
-    all_positions.sort_unstable();
-    all_positions.dedup();
-
-    // Bonus: if the original query (with spaces) appears as a contiguous substring
-    // in the target, give a significant bonus to prefer exact/substring matches
-    // over scattered multi-term matches.
-    let query_lower = original_query.to_lowercase();
-    let target_lower = target.to_lowercase();
-    if let Some(start_pos) = target_lower.find(&query_lower) {
-        // The original query appears verbatim in the target - give exact match bonus
-        total_score += score::EXACT_MATCH;
-
-        // Rebuild positions to show the contiguous match instead of scattered matches
-        let query_chars: Vec<char> = original_query.chars().collect();
-        let target_chars: Vec<char> = target.chars().collect();
-
-        // Find the byte offset -> char index mapping for the start position
-        let char_start = target
-            .char_indices()
-            .position(|(byte_idx, _)| byte_idx == start_pos)
-            .unwrap_or(0);
-
-        all_positions = (char_start..char_start + query_chars.len())
-            .filter(|&i| i < target_chars.len())
-            .collect();
-    }
-
-    FuzzyMatch {
-        matched: true,
-        score: total_score,
-        match_positions: all_positions,
-    }
-}
-
-/// Match a single term (no spaces) against a target string.
-fn fuzzy_match_single_term(query: &str, target: &str) -> FuzzyMatch {
-    let query_lower: Vec<char> = query.to_lowercase().chars().collect();
-    let target_chars: Vec<char> = target.chars().collect();
-    let target_lower: Vec<char> = target.to_lowercase().chars().collect();
-    let query_len = query_lower.len();
-    let target_len = target_lower.len();
-
-    // Try to find the best matching positions using a DP approach
-    let dp_result = find_best_match(&query_lower, &target_chars, &target_lower);
-
-    // Also check for a contiguous substring match.  The DP may miss this
-    // because it optimises per-character bonuses (word boundaries, etc.)
-    // which can favour scattered matches over a tight substring.  We score
-    // the contiguous match separately and take the better of the two.
-    let substr_result = find_contiguous_match(&query_lower, &target_chars, &target_lower);
-
-    // Pick the better result
-    let (positions, mut final_score) = match (dp_result, substr_result) {
-        (Some(dp), Some(sub)) => {
-            if sub.1 >= dp.1 {
-                sub
-            } else {
-                dp
-            }
-        }
-        (Some(dp), None) => dp,
-        (None, Some(sub)) => sub,
-        (None, None) => return FuzzyMatch::no_match(),
-    };
-
-    // Check if all matched positions are consecutive (contiguous substring)
-    let is_contiguous =
-        positions.len() == query_len && positions.windows(2).all(|w| w[1] == w[0] + 1);
-
-    if is_contiguous {
-        // Contiguous substring bonus — the query appears as an
-        // unbroken run in the target, which should always beat
-        // scattered character matches.
-        final_score += score::CONTIGUOUS_SUBSTRING;
-    }
-
-    // Exact match bonus: query matches entire target
-    if query_len == target_len {
-        final_score += score::EXACT_MATCH;
-    } else if target_len > query_len && is_contiguous {
-        // Check if the query is a prefix match (all consecutive from start)
-        let is_prefix_match = positions.iter().enumerate().all(|(i, &pos)| pos == i);
-
-        if is_prefix_match {
-            let next_char = target_chars[query_len];
-
-            // Highest priority: exact basename match (before extension)
-            // This handles "config" matching "config.rs" better than "config_manager.rs"
-            if next_char == '.' {
-                final_score += score::EXACT_MATCH;
-            }
-            // Second priority: match before word separator (hyphen, underscore, space)
-            // This handles "fresh" matching "fresh-editor" better than "freshness"
-            else if next_char == '-' || next_char == '_' || next_char == ' ' {
-                final_score += score::EXACT_BASENAME_MATCH;
-            }
-        }
-    }
-
-    FuzzyMatch {
-        matched: true,
-        score: final_score,
-        match_positions: positions,
-    }
-}
-
-/// Find the best contiguous substring match of `query` in `target`.
+/// Perform fuzzy matching using a pre-prepared pattern.
 ///
-/// Scans for all occurrences of the query as a substring and picks the
-/// one with the highest score (preferring word boundaries, basename, etc.).
-fn find_contiguous_match(
-    query: &[char],
-    target_chars: &[char],
-    target_lower: &[char],
-) -> Option<(Vec<usize>, i32)> {
-    let m = query.len();
-    let n = target_lower.len();
-    if m == 0 || m > n {
-        return None;
-    }
-
-    let mut best: Option<(Vec<usize>, i32)> = None;
-
-    for start in 0..=n - m {
-        // Check if query matches at this position
-        if target_lower[start..start + m] != *query {
-            continue;
-        }
-
-        // Score this contiguous match
-        let mut match_score = 0;
-
-        // Start of string bonus
-        if start == 0 {
-            match_score += score::START_OF_STRING;
-        }
-
-        // Word boundary bonus for the first character
-        if start > 0 {
-            let prev_char = target_chars[start - 1];
-            if prev_char == ' '
-                || prev_char == '_'
-                || prev_char == '-'
-                || prev_char == '/'
-                || prev_char == '.'
-            {
-                match_score += score::WORD_BOUNDARY;
-            } else if prev_char.is_lowercase() && target_chars[start].is_uppercase() {
-                match_score += score::CAMEL_CASE;
-            }
-        }
-
-        // Consecutive bonus for chars 1..m
-        match_score += score::CONSECUTIVE * (m as i32 - 1);
-
-        let is_better = match &best {
-            None => true,
-            Some((_, s)) => match_score > *s,
-        };
-        if is_better {
-            let positions: Vec<usize> = (start..start + m).collect();
-            best = Some((positions, match_score));
-        }
-    }
-
-    best
+/// This is the hot-path entry point — build the [`PreparedPattern`] once
+/// and call this per target to amortise query-preparation work.
+pub fn fuzzy_match_prepared(pattern: &PreparedPattern, target: &str) -> FuzzyMatch {
+    matcher::match_prepared(pattern, target)
 }
 
-/// Find the best matching positions for query in target
-fn find_best_match(
-    query: &[char],
-    target_chars: &[char],
-    target_lower: &[char],
-) -> Option<(Vec<usize>, i32)> {
-    if query.is_empty() {
-        return Some((Vec::new(), 0));
-    }
-
-    // Use dynamic programming to find the best match
-    // For each query position and target position, track the best score achievable
-    let n = target_lower.len();
-    let m = query.len();
-
-    if n < m {
-        return None;
-    }
-
-    // First, check if a match is even possible (quick rejection)
-    {
-        let mut qi = 0;
-        for &tc in target_lower {
-            if qi < m && tc == query[qi] {
-                qi += 1;
-            }
-        }
-        if qi < m {
-            return None; // Not all query chars matched
-        }
-    }
-
-    // dp[qi] = (best_score, prev_match_pos) for matching query[0..qi]
-    // We'll track match positions separately
-    #[derive(Clone)]
-    struct State {
-        score: i32,
-        positions: Vec<usize>,
-        last_match_pos: Option<usize>,
-    }
-
-    let mut best_for_query_len: Vec<Option<State>> = vec![None; m + 1];
-    best_for_query_len[0] = Some(State {
-        score: 0,
-        positions: Vec::new(),
-        last_match_pos: None,
-    });
-
-    for ti in 0..n {
-        // Process in reverse to avoid using updated values in same iteration
-        for qi in (0..m).rev() {
-            if target_lower[ti] != query[qi] {
-                continue;
-            }
-
-            let prev_state = &best_for_query_len[qi];
-            if prev_state.is_none() {
-                continue;
-            }
-            let prev = prev_state.as_ref().unwrap();
-
-            // Check if this position is valid (must be after last match)
-            if let Some(last_pos) = prev.last_match_pos {
-                if ti <= last_pos {
-                    continue;
-                }
-            }
-
-            // Calculate score for matching query[qi] at target[ti]
-            let mut match_score = 0;
-
-            // Start of string bonus
-            if ti == 0 {
-                match_score += score::START_OF_STRING;
-            }
-
-            // Word boundary bonus
-            if ti > 0 {
-                let prev_char = target_chars[ti - 1];
-                if prev_char == ' '
-                    || prev_char == '_'
-                    || prev_char == '-'
-                    || prev_char == '/'
-                    || prev_char == '.'
-                {
-                    match_score += score::WORD_BOUNDARY;
-                } else if prev_char.is_lowercase() && target_chars[ti].is_uppercase() {
-                    match_score += score::CAMEL_CASE;
-                }
-            }
-
-            // Consecutive match bonus
-            if let Some(last_pos) = prev.last_match_pos {
-                if ti == last_pos + 1 {
-                    match_score += score::CONSECUTIVE;
-                } else {
-                    // Gap penalty
-                    let gap_size = ti - last_pos - 1;
-                    match_score += score::GAP_START_PENALTY;
-                    match_score += score::GAP_PENALTY * (gap_size as i32 - 1).max(0);
-                }
-            }
-
-            let new_score = prev.score + match_score;
-
-            let current = &best_for_query_len[qi + 1];
-            let should_update = match current {
-                None => true,
-                Some(curr) => new_score > curr.score,
-            };
-
-            if should_update {
-                let mut new_positions = prev.positions.clone();
-                new_positions.push(ti);
-                best_for_query_len[qi + 1] = Some(State {
-                    score: new_score,
-                    positions: new_positions,
-                    last_match_pos: Some(ti),
-                });
-            }
-        }
-    }
-
-    best_for_query_len[m]
-        .as_ref()
-        .map(|s| (s.positions.clone(), s.score))
-}
-
-/// Filter a list of items using fuzzy matching, returning sorted results
+/// Filter a list of items using fuzzy matching, returning sorted results.
 ///
 /// Items are sorted by match quality (best matches first).
 /// Non-matching items are excluded.
@@ -453,10 +157,11 @@ pub fn fuzzy_filter<T, F>(query: &str, items: &[T], get_text: F) -> Vec<(usize, 
 where
     F: Fn(&T) -> &str,
 {
+    let pattern = PreparedPattern::new(query);
     let mut results: Vec<(usize, FuzzyMatch)> = items
         .iter()
         .enumerate()
-        .map(|(idx, item)| (idx, fuzzy_match(query, get_text(item))))
+        .map(|(idx, item)| (idx, fuzzy_match_prepared(&pattern, get_text(item))))
         .filter(|(_, m)| m.matched)
         .collect();
 
@@ -759,5 +464,19 @@ mod tests {
             contiguous.score,
             scattered.score
         );
+    }
+
+    #[test]
+    fn test_prepared_pattern_reused_across_targets() {
+        // Sanity: PreparedPattern should produce the same result as the
+        // convenience wrapper across multiple targets.
+        let pattern = PreparedPattern::new("main");
+        let direct = fuzzy_match("main", "src/main.rs");
+        let prepared = fuzzy_match_prepared(&pattern, "src/main.rs");
+        assert_eq!(direct, prepared);
+
+        let direct2 = fuzzy_match("main", "lib/other.rs");
+        let prepared2 = fuzzy_match_prepared(&pattern, "lib/other.rs");
+        assert_eq!(direct2, prepared2);
     }
 }
