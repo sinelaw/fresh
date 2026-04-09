@@ -23,21 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download x86_64 tarball from artifacts
-        uses: actions/download-artifact@v7
-        with:
-          name: artifacts-x86_64-unknown-linux-gnu
-          path: dist-artifacts/
-
-      - name: Download aarch64 tarball from artifacts
-        uses: actions/download-artifact@v7
-        with:
-          name: artifacts-aarch64-unknown-linux-gnu
-          path: dist-artifacts/
-
-      - name: Compute checksums
+      - name: Download linux tarballs from release
         id: checksum
         run: |
+          mkdir -p dist-artifacts
+          curl -fsSL "https://github.com/sinelaw/fresh/releases/download/v${VERSION}/fresh-editor-x86_64-unknown-linux-gnu.tar.xz" \
+            -o dist-artifacts/fresh-editor-x86_64-unknown-linux-gnu.tar.xz
+          curl -fsSL "https://github.com/sinelaw/fresh/releases/download/v${VERSION}/fresh-editor-aarch64-unknown-linux-gnu.tar.xz" \
+            -o dist-artifacts/fresh-editor-aarch64-unknown-linux-gnu.tar.xz
           SHA256_X86_64=$(sha256sum dist-artifacts/fresh-editor-x86_64-unknown-linux-gnu.tar.xz | cut -d' ' -f1)
           SHA256_AARCH64=$(sha256sum dist-artifacts/fresh-editor-aarch64-unknown-linux-gnu.tar.xz | cut -d' ' -f1)
           echo "sha256_x86_64=$SHA256_X86_64" >> "$GITHUB_OUTPUT"
