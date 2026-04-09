@@ -2323,54 +2323,75 @@ impl Editor {
 
     /// Switch to next buffer in current split's tabs
     pub fn next_buffer(&mut self) {
-        let ids = self.visible_buffers_for_active_split();
-
-        if ids.is_empty() {
-            return;
-        }
-
-        if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer()) {
-            let next_idx = (idx + 1) % ids.len();
-            if ids[next_idx] != self.active_buffer() {
-                // Save current position before switching
-                self.position_history.commit_pending_movement();
-
-                // Also explicitly record current position
-                let cursors = self.active_cursors();
-                let position = cursors.primary().position;
-                let anchor = cursors.primary().anchor;
-                self.position_history
-                    .record_movement(self.active_buffer(), position, anchor);
-                self.position_history.commit_pending_movement();
-
-                self.set_active_buffer(ids[next_idx]);
-            }
-        }
+        self.cycle_tab(1);
     }
 
     /// Switch to previous buffer in current split's tabs
     pub fn prev_buffer(&mut self) {
-        let ids = self.visible_buffers_for_active_split();
+        self.cycle_tab(-1);
+    }
 
-        if ids.is_empty() {
+    /// Cycle through the active split's tab targets (buffers AND groups).
+    /// Direction: +1 = next, -1 = previous.
+    fn cycle_tab(&mut self, direction: i32) {
+        use crate::view::split::TabTarget;
+
+        let active_split = self.split_manager.active_split();
+        let Some(view_state) = self.split_view_states.get(&active_split) else {
+            return;
+        };
+
+        // Collect visible tab targets, filtering out hidden buffers.
+        let targets: Vec<TabTarget> = view_state
+            .open_buffers
+            .iter()
+            .copied()
+            .filter(|t| match t {
+                TabTarget::Buffer(id) => !self
+                    .buffer_metadata
+                    .get(id)
+                    .map(|m| m.hidden_from_tabs)
+                    .unwrap_or(false),
+                TabTarget::Group(_) => true,
+            })
+            .collect();
+
+        if targets.len() < 2 {
             return;
         }
 
-        if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer()) {
-            let prev_idx = if idx == 0 { ids.len() - 1 } else { idx - 1 };
-            if ids[prev_idx] != self.active_buffer() {
-                // Save current position before switching
-                self.position_history.commit_pending_movement();
+        let current_target = view_state.active_target();
+        let Some(idx) = targets.iter().position(|t| *t == current_target) else {
+            return;
+        };
 
-                // Also explicitly record current position
-                let cursors = self.active_cursors();
-                let position = cursors.primary().position;
-                let anchor = cursors.primary().anchor;
-                self.position_history
-                    .record_movement(self.active_buffer(), position, anchor);
-                self.position_history.commit_pending_movement();
+        let next_idx = if direction > 0 {
+            (idx + 1) % targets.len()
+        } else if idx == 0 {
+            targets.len() - 1
+        } else {
+            idx - 1
+        };
 
-                self.set_active_buffer(ids[prev_idx]);
+        if targets[next_idx] == current_target {
+            return;
+        }
+
+        // Save current position before switching
+        self.position_history.commit_pending_movement();
+        let cursors = self.active_cursors();
+        let position = cursors.primary().position;
+        let anchor = cursors.primary().anchor;
+        self.position_history
+            .record_movement(self.active_buffer(), position, anchor);
+        self.position_history.commit_pending_movement();
+
+        match targets[next_idx] {
+            TabTarget::Buffer(buffer_id) => {
+                self.set_active_buffer(buffer_id);
+            }
+            TabTarget::Group(group_leaf_id) => {
+                self.activate_group_tab(group_leaf_id);
             }
         }
     }

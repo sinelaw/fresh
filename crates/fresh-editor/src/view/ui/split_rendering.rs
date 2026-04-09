@@ -989,19 +989,33 @@ impl SplitRenderer {
         let _span = tracing::trace_span!("render_content").entered();
 
         // Get all visible splits with their areas.
-        // Each entry is (tab_bar_owner_split, effective_leaf_id, buffer_id, rect).
-        // For regular splits, tab_bar_owner == effective_leaf_id.
-        // For inner group panels, tab_bar_owner is the main split that hosts
-        // the group, and effective_leaf_id is the panel's leaf inside the
-        // Grouped subtree.
+        //
+        // Each entry in `visible_buffers` is
+        //   (tab_bar_owner_split, effective_leaf_id, buffer_id, split_area, kind)
+        //
+        // where `kind` is:
+        //   - `Normal`: regular split. Render tab bar + buffer content.
+        //   - `GroupTabBarOnly`: main split where a group is active. Render
+        //     the tab bar (to show the group tab) but skip buffer content
+        //     (the group's inner leaves will fill it).
+        //   - `InnerLeaf`: a leaf inside a Grouped subtree. `split_area` is
+        //     the already-computed content rect for this inner leaf; no tab
+        //     bar is rendered.
+        #[derive(Copy, Clone, PartialEq, Eq)]
+        enum RenderKind {
+            Normal,
+            GroupTabBarOnly,
+            InnerLeaf,
+        }
+
         let base_visible = split_manager.get_visible_buffers(area);
         let active_split_id = split_manager.active_split();
         let has_multiple_splits = base_visible.len() > 1;
 
         // Expand groups: for each main leaf, if its SplitViewState has an
-        // active group tab, substitute the main leaf with the group's inner
-        // leaves. The tab bar still belongs to the main leaf.
-        let mut visible_buffers: Vec<(LeafId, LeafId, BufferId, Rect)> = Vec::new();
+        // active group tab, emit a tab-bar-only entry for the main split
+        // followed by one InnerLeaf entry per panel.
+        let mut visible_buffers: Vec<(LeafId, LeafId, BufferId, Rect, RenderKind)> = Vec::new();
         for (main_split_id, main_buffer_id, split_area) in &base_visible {
             let active_group = split_view_states
                 .as_deref()
@@ -1022,35 +1036,21 @@ impl SplitRenderer {
                         show_vertical_scrollbar,
                         show_horizontal_scrollbar,
                     );
-                    // Walk the group's subtree and collect inner leaves.
                     let inner_leaves = grouped.get_leaves_with_rects(main_layout.content_rect);
-                    // Push a synthetic entry for the main split so its tab bar
-                    // still gets rendered. We use its own buffer_id as a
-                    // placeholder content that won't actually be drawn
-                    // (suppressed by the `is_group_container` check later).
                     visible_buffers.push((
                         *main_split_id,
                         *main_split_id,
                         *main_buffer_id,
                         *split_area,
+                        RenderKind::GroupTabBarOnly,
                     ));
-                    for (inner_leaf, inner_buffer, _inner_rect) in inner_leaves {
-                        // The inner rect is already in content-space (no tab bar).
-                        // But we pass the FULL split_area here so the main
-                        // rendering loop can compute the layout as usual.
-                        // The inner leaves have `suppress_chrome=true` so they
-                        // don't draw tab bars, and their rects are the full
-                        // split area scaled down by the group layout tree.
-                        //
-                        // Since the group's layout computed rects inside
-                        // main_layout.content_rect, we need to translate those
-                        // back. Simpler: store the already-computed inner rect
-                        // and let the rendering code use it directly.
+                    for (inner_leaf, inner_buffer, inner_rect) in inner_leaves {
                         visible_buffers.push((
                             *main_split_id,
                             inner_leaf,
                             inner_buffer,
-                            _inner_rect,
+                            inner_rect,
+                            RenderKind::InnerLeaf,
                         ));
                     }
                     continue;
@@ -1062,6 +1062,7 @@ impl SplitRenderer {
                 *main_split_id,
                 *main_buffer_id,
                 *split_area,
+                RenderKind::Normal,
             ));
         }
 
@@ -1075,17 +1076,11 @@ impl SplitRenderer {
         let mut view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>> = HashMap::new();
 
         // Render each split.
-        //
-        // Each entry is (main_split_id, effective_leaf_id, buffer_id, split_area).
-        // - When they're the same, it's a regular split (render tab bar for
-        //   main_split_id, render buffer in content area).
-        // - When they differ, it's an inner leaf of a group whose tab bar
-        //   lives on main_split_id. The tab bar was already rendered by the
-        //   preceding main-split entry, and split_area is the inner leaf's
-        //   content rect directly.
-        for (main_split_id, split_id, buffer_id, split_area) in visible_buffers {
+        for (main_split_id, split_id, buffer_id, split_area, kind) in visible_buffers {
             let is_active = split_id == active_split_id;
-            let is_inner_group_leaf = main_split_id != split_id;
+            let is_inner_group_leaf = kind == RenderKind::InnerLeaf;
+            let skip_content = kind == RenderKind::GroupTabBarOnly;
+            let _ = main_split_id; // no longer needed below, kept for clarity
 
             // Suppress chrome (tab bar) for splits in buffer groups
             let split_tab_bar_visible = !is_inner_group_leaf
@@ -1232,6 +1227,14 @@ impl SplitRenderer {
                         maximize_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
                     }
                 }
+            }
+
+            // For GroupTabBarOnly entries we've already rendered the tab bar;
+            // skip buffer content rendering so the group's inner leaves can
+            // draw into the content rect without being overwritten.
+            if skip_content {
+                view_line_mappings.insert(split_id, Vec::new());
+                continue;
             }
 
             // Get references separately to avoid double borrow

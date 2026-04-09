@@ -341,13 +341,38 @@ impl super::Editor {
     }
 
     /// Focus a specific panel in a buffer group.
+    ///
+    /// If the panel's inner leaf is not in the main split tree (side-map
+    /// approach), this activates the group tab on whichever split hosts it
+    /// and marks the panel's leaf as the focused inner leaf.
     pub(super) fn focus_panel(&mut self, group_id: usize, panel_name: String) {
         let bg_id = BufferGroupId(group_id);
-        if let Some(group) = self.buffer_groups.get(&bg_id) {
-            if let Some(&split_id) = group.panel_splits.get(&panel_name) {
-                if let Some(&buffer_id) = group.panel_buffers.get(&panel_name) {
-                    self.focus_split(split_id, buffer_id);
-                }
+        let (group_leaf_id, inner_leaf) = match self.buffer_groups.get(&bg_id) {
+            Some(group) => {
+                let Some(&inner) = group.panel_splits.get(&panel_name) else {
+                    return;
+                };
+                let Some(leaf) = group.representative_split else {
+                    return;
+                };
+                (leaf, inner)
+            }
+            None => return,
+        };
+
+        // Find the host split whose open_buffers contains this group tab.
+        let host_split = self
+            .split_view_states
+            .iter()
+            .find(|(_, vs)| vs.has_group(group_leaf_id))
+            .map(|(sid, _)| *sid);
+
+        if let Some(host_split) = host_split {
+            // Ensure the host split is the active one.
+            self.split_manager.set_active_split(host_split);
+            if let Some(vs) = self.split_view_states.get_mut(&host_split) {
+                vs.active_group_tab = Some(group_leaf_id);
+                vs.focused_group_leaf = Some(inner_leaf);
             }
         }
     }
