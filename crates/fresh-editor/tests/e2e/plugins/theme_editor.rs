@@ -3952,28 +3952,24 @@ fn test_named_color_swatch_uses_native_ansi_color() {
         .unwrap();
 }
 
-/// Bug reproduction (currently failing — `#[ignore]`d so CI stays green).
+/// Regression test: switching the active theme via "Select Theme" while a
+/// theme-editor plugin buffer is open must refresh the overlay colors the
+/// plugin painted with.
 ///
-/// Switching the active theme via "Select Theme" while a theme-editor
-/// plugin virtual buffer is open leaves the plugin-provided overlay colors
-/// stale. The `theme_editor` plugin builds its UI by calling
-/// `setPanelContent` once with `TextPropertyEntry`s whose styles contain
-/// hardcoded RGB values (e.g. `colors.header = [100, 180, 255]`). These get
-/// baked into `OverlayFace::Style { style }` at
-/// `set_virtual_buffer_content` time and never refresh, so after a theme
-/// switch the plugin buffer still paints text with the old theme's
-/// hardcoded RGB values while the rest of the editor has moved to the new
-/// theme.
+/// The bug was that the plugin resolved its UI palette client-side — it
+/// read `editor.getThemeData()` in JS, dug out the RGB tuple for
+/// `syntax.keyword`, and handed the RGB array to `setVirtualBufferContent`.
+/// That made the overlay an `OverlayFace::Style` with baked RGB, so the
+/// core's render-time theme-key resolver (`split_rendering.rs` →
+/// `ThemedStyle` branch) was bypassed and a theme switch left the buffer
+/// painted in the old theme's colors.
 ///
-/// Plugin buffers should be re-asked to paint themselves after a theme
-/// change (e.g. via a `theme_changed` plugin hook, or by having plugins
-/// use theme keys like audit_mode does). This test reproduces the missing
-/// behaviour: after switching from dark to light, the theme-editor header
-/// text's fg should change, but it stays at the dark-theme RGB.
-///
-/// TODO: remove `#[ignore]` once the bug is fixed.
+/// The fix is to pass theme-key strings (e.g. `"syntax.keyword"`) straight
+/// through to the core. `OverlayFace::from_options` then stores the key
+/// in `ThemedStyle { fg_theme: Some("syntax.keyword"), .. }` and the next
+/// render resolves it against `ctx.theme` — which is the new theme after
+/// `apply_theme`.
 #[test]
-#[ignore = "Reproduces #TODO: plugin buffer overlay colors not refreshed on theme change"]
 fn test_theme_editor_colors_update_on_theme_change() {
     init_tracing_from_env();
 

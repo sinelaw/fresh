@@ -450,70 +450,19 @@ const state: ThemeEditorState = {
 // =============================================================================
 
 /**
- * UI palette for the theme editor's own chrome. Each role is resolved from
- * the currently-active theme so the editor inherits the host theme's look,
- * with a luma-chosen hardcoded palette as a safety net for themes that
- * don't define the keys we look up.
- */
-interface UIColors {
-  sectionHeader: OverlayColorSpec;
-  fieldName: OverlayColorSpec;
-  customValue: OverlayColorSpec;
-  description: OverlayColorSpec;
-  footer: OverlayColorSpec;
-  selectionBg: OverlayColorSpec;
-  divider: OverlayColorSpec;
-  header: OverlayColorSpec;
-  pickerLabel: OverlayColorSpec;
-  pickerValue: OverlayColorSpec;
-  pickerFocusBg: OverlayColorSpec;
-  filterText: OverlayColorSpec;
-}
-
-/**
- * Fallback palette for dark host themes. Used when the active theme doesn't
- * define the keys in THEME_KEY_CANDIDATES (or when we can't read its data).
- */
-const DARK_FALLBACK: UIColors = {
-  sectionHeader: [255, 200, 100],
-  fieldName: [200, 200, 255],
-  customValue: [100, 255, 100],
-  description: [120, 120, 120],
-  footer: [100, 100, 100],
-  selectionBg: [50, 50, 80],
-  divider: [60, 60, 80],
-  header: [100, 180, 255],
-  pickerLabel: [180, 180, 200],
-  pickerValue: [255, 255, 255],
-  pickerFocusBg: [40, 60, 100],
-  filterText: [200, 200, 100],
-};
-
-/**
- * Fallback palette for light host themes. Dark fg and light bg highlights
- * so text stays legible on near-white backgrounds.
- */
-const LIGHT_FALLBACK: UIColors = {
-  sectionHeader: [160, 90, 0],
-  fieldName: [30, 50, 140],
-  customValue: [0, 120, 0],
-  description: [95, 95, 95],
-  footer: [90, 90, 90],
-  selectionBg: [210, 225, 250],
-  divider: [180, 180, 195],
-  header: [20, 80, 180],
-  pickerLabel: [70, 70, 90],
-  pickerValue: [0, 0, 0],
-  pickerFocusBg: [200, 220, 255],
-  filterText: [140, 90, 0],
-};
-
-/**
- * For each UI role, an ordered list of theme key paths to try. The first
- * path that resolves to a usable color wins; otherwise we fall back to the
- * hardcoded palette.
+ * UI palette for the theme editor's own chrome.
  *
- * Important: we can only use keys that the theme defines as readable on
+ * Each role maps to a theme-key path (e.g. `"syntax.keyword"`). The plugin
+ * passes these strings straight through to the core as
+ * `OverlayColorSpec::ThemeKey`, and the core's renderer resolves them
+ * against the *currently-active* theme on every frame
+ * (see `OverlayFace::from_options` → `OverlayFace::ThemedStyle`, and the
+ * render-time lookup in `split_rendering.rs`). That means the theme editor
+ * inherits the host theme's look and automatically picks up theme switches
+ * without the plugin having to rebuild its overlays or even be notified —
+ * the `resolve_theme_key` lookup runs with the new theme on the next render.
+ *
+ * Important: we only use keys that the theme defines as readable on
  * `editor.bg` (since that's the background the theme editor draws over).
  * That rules out `ui.menu_*`, `ui.tab_*`, etc. — those are designed for
  * their own bg pairs (e.g. `ui.menu_active_fg` on `ui.menu_active_bg`) and
@@ -521,100 +470,26 @@ const LIGHT_FALLBACK: UIColors = {
  * high-contrast, where `ui.menu_active_fg` is pure black). So we only pull
  * from `editor.*` and `syntax.*`, and lean on bold + distinct syntax roles
  * to give each UI element its own visual identity.
- */
-const THEME_KEY_CANDIDATES: Record<keyof UIColors, readonly string[]> = {
-  sectionHeader: ["syntax.keyword", "syntax.function", "editor.fg"],
-  fieldName:     ["editor.fg"],
-  customValue:   ["syntax.string", "syntax.constant", "editor.fg"],
-  description:   ["syntax.comment", "editor.line_number_fg", "editor.whitespace_indicator_fg"],
-  footer:        ["editor.line_number_fg", "editor.fg"],
-  selectionBg:   ["editor.selection_bg", "editor.current_line_bg"],
-  divider:       ["editor.line_number_fg", "editor.whitespace_indicator_fg"],
-  header:        ["syntax.keyword", "syntax.function", "editor.fg"],
-  pickerLabel:   ["editor.fg"],
-  pickerValue:   ["syntax.constant", "syntax.function", "editor.fg"],
-  pickerFocusBg: ["editor.selection_bg", "editor.current_line_bg"],
-  filterText:    ["syntax.function", "syntax.constant", "editor.fg"],
-};
-
-/**
- * Active UI palette. Rebuilt at render time from the currently-applied
- * editor theme so the theme editor inherits that theme's look.
  *
- * This is separate from `state.themeData` (the theme being *edited*) — what
- * matters for the editor UI's own contrast is the theme the terminal is
- * actually rendering with, not the theme data the user is mutating.
+ * We don't need a client-side fallback chain: the core's `Theme` struct has
+ * serde defaults for every field, so `resolve_theme_key` always returns a
+ * value for any key listed here — a stub theme file can omit them and the
+ * defaults still apply.
  */
-let colors: UIColors = DARK_FALLBACK;
-
-/**
- * Resolve a theme value at one of the candidate paths into an
- * OverlayColorSpec. Accepts RGB 3-tuples and recognised named colors
- * ("Red", "Blue", …); rejects "Default"/"Reset" since those are
- * transparent and would give no contrast.
- */
-function resolveThemeColor(
-  themeData: Record<string, unknown>,
-  candidates: readonly string[]
-): OverlayColorSpec | null {
-  for (const path of candidates) {
-    const value = getNestedValue(themeData, path);
-    if (Array.isArray(value) && value.length === 3 &&
-        typeof value[0] === "number" &&
-        typeof value[1] === "number" &&
-        typeof value[2] === "number") {
-      return [value[0], value[1], value[2]];
-    }
-    if (typeof value === "string" && value in NAMED_COLORS) {
-      return value;
-    }
-  }
-  return null;
-}
-
-/**
- * Rebuild the `colors` palette from the active editor theme. For each
- * UI role we try the theme-key candidates in order, then fall back to
- * the luma-chosen hardcoded palette for any role the theme doesn't
- * cover. Safe to call on every redraw.
- */
-function updateActiveColorsFromConfig(): void {
-  let themeData: Record<string, unknown> | null = null;
-  try {
-    const config = editor.getConfig() as Record<string, unknown> | null;
-    const themeKey = (config?.theme as string) || "dark";
-    themeData = editor.getThemeData(themeKey) as Record<string, unknown> | null;
-  } catch {
-    themeData = null;
-  }
-
-  // Pick the fallback palette based on the theme's editor.bg luma, so any
-  // roles missing from the theme still land in the right contrast bucket.
-  let fallback: UIColors = DARK_FALLBACK;
-  if (themeData) {
-    const bg = getNestedValue(themeData, "editor.bg");
-    if (Array.isArray(bg) && bg.length === 3 &&
-        typeof bg[0] === "number" &&
-        typeof bg[1] === "number" &&
-        typeof bg[2] === "number") {
-      // Rec. 601 luma; threshold picked so near-white bgs flip to LIGHT.
-      const luma = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2];
-      fallback = luma > 140 ? LIGHT_FALLBACK : DARK_FALLBACK;
-    }
-  }
-
-  if (!themeData) {
-    colors = fallback;
-    return;
-  }
-
-  const resolved = {} as UIColors;
-  for (const role of Object.keys(THEME_KEY_CANDIDATES) as Array<keyof UIColors>) {
-    const fromTheme = resolveThemeColor(themeData, THEME_KEY_CANDIDATES[role]);
-    resolved[role] = fromTheme ?? fallback[role];
-  }
-  colors = resolved;
-}
+const colors = {
+  sectionHeader: "syntax.keyword",
+  fieldName:     "editor.fg",
+  customValue:   "syntax.string",
+  description:   "syntax.comment",
+  footer:        "editor.line_number_fg",
+  selectionBg:   "editor.selection_bg",
+  divider:       "editor.line_number_fg",
+  header:        "syntax.keyword",
+  pickerLabel:   "editor.fg",
+  pickerValue:   "syntax.constant",
+  pickerFocusBg: "editor.selection_bg",
+  filterText:    "syntax.function",
+} as const satisfies Record<string, OverlayColorSpec>;
 
 // =============================================================================
 // Keyboard Shortcuts (defined once, used in mode and i18n)
@@ -1561,12 +1436,6 @@ function buildFooterPanelEntries(): TextPropertyEntry[] {
 
 function updateDisplay(): void {
   isUpdatingDisplay = true;
-
-  // Pick the right UI palette for the currently-active editor theme so the
-  // theme editor stays readable on both light and dark themes. Done on every
-  // refresh (cheap in-memory lookup) so switching the active theme while the
-  // editor is open takes effect on the next redraw.
-  updateActiveColorsFromConfig();
 
   // Always refresh viewport dimensions
   const viewport = editor.getViewport();
