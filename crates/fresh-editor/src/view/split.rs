@@ -480,9 +480,7 @@ impl SplitViewState {
 
     /// Check if a buffer is open in this split
     pub fn has_buffer(&self, buffer_id: BufferId) -> bool {
-        self.open_buffers
-            .iter()
-            .any(|t| *t == TabTarget::Buffer(buffer_id))
+        self.open_buffers.contains(&TabTarget::Buffer(buffer_id))
     }
 
     /// Add a group tab to this split's tabs (if not already present)
@@ -500,9 +498,7 @@ impl SplitViewState {
 
     /// Check if a group tab is open in this split
     pub fn has_group(&self, leaf_id: LeafId) -> bool {
-        self.open_buffers
-            .iter()
-            .any(|t| *t == TabTarget::Group(leaf_id))
+        self.open_buffers.contains(&TabTarget::Group(leaf_id))
     }
 
     /// Iterate over only the buffer-tab ids in open_buffers (skipping groups).

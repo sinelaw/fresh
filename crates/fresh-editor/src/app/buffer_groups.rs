@@ -326,7 +326,9 @@ impl super::Editor {
 
             // Close all panel buffers
             for buffer_id in group.panel_buffers.values() {
-                let _ = self.close_buffer(*buffer_id);
+                if let Err(e) = self.close_buffer(*buffer_id) {
+                    tracing::warn!("Failed to close panel buffer {:?}: {}", buffer_id, e);
+                }
             }
 
             // Ensure the active split now has a valid active_target.

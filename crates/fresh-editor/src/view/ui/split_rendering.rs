@@ -1029,7 +1029,7 @@ impl SplitRenderer {
                         && !split_view_states
                             .as_deref()
                             .and_then(|svs| svs.get(main_split_id))
-                            .map_or(false, |vs| vs.suppress_chrome);
+                            .is_some_and(|vs| vs.suppress_chrome);
                     let main_layout = Self::split_layout(
                         *split_area,
                         split_tab_bar_visible,
@@ -1088,13 +1088,13 @@ impl SplitRenderer {
                 && !split_view_states
                     .as_deref()
                     .and_then(|svs| svs.get(&split_id))
-                    .map_or(false, |vs| vs.suppress_chrome);
+                    .is_some_and(|vs| vs.suppress_chrome);
             // Hide tildes per-split (e.g., for buffer group panels)
             let split_show_tilde = show_tilde
                 && !split_view_states
                     .as_deref()
                     .and_then(|svs| svs.get(&split_id))
-                    .map_or(false, |vs| vs.hide_tilde);
+                    .is_some_and(|vs| vs.hide_tilde);
 
             let layout = if is_inner_group_leaf {
                 // Inner leaf: split_area IS the content rect already.

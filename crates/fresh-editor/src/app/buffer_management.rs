@@ -2287,40 +2287,6 @@ impl Editor {
         }
     }
 
-    /// Get visible (non-hidden) buffers for the current split.
-    /// This filters out buffers with hidden_from_tabs=true.
-    fn visible_buffers_for_active_split(&self) -> Vec<BufferId> {
-        let active_split = self.split_manager.active_split();
-        if let Some(view_state) = self.split_view_states.get(&active_split) {
-            view_state
-                .buffer_tab_ids()
-                .filter(|id| {
-                    !self
-                        .buffer_metadata
-                        .get(id)
-                        .map(|m| m.hidden_from_tabs)
-                        .unwrap_or(false)
-                })
-                .collect()
-        } else {
-            // Fallback to all visible buffers if no view state
-            let mut all_ids: Vec<_> = self
-                .buffers
-                .keys()
-                .copied()
-                .filter(|id| {
-                    !self
-                        .buffer_metadata
-                        .get(id)
-                        .map(|m| m.hidden_from_tabs)
-                        .unwrap_or(false)
-                })
-                .collect();
-            all_ids.sort_by_key(|id| id.0);
-            all_ids
-        }
-    }
-
     /// Switch to next buffer in current split's tabs
     pub fn next_buffer(&mut self) {
         self.cycle_tab(1);
