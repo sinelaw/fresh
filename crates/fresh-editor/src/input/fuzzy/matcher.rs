@@ -249,17 +249,26 @@ fn score_multi_term(
     all_positions.sort_unstable();
     all_positions.dedup();
 
-    // Bonus: if the whole original query (with spaces) appears as a
-    // contiguous substring in the target, give an exact-match bonus.
-    // Operates entirely on the existing scratch `Vec<char>` — no fresh
-    // `target.to_lowercase()` allocation.
-    if let Some(char_start) = find_chars_slice(target_lower, &pattern.lower_chars) {
+    // Bonus: reward targets where the query's terms, joined by a common
+    // path/word separator, appear as a single contiguous substring.  This
+    // makes "etc hosts" rank "/etc/hosts" above scattered alternatives
+    // (both terms contiguous but far apart in the target), and makes
+    // "save file" rank "save_file.rs" above "savepoint/filetree.rs".
+    //
+    // We try each plausible separator in turn and stop at the first
+    // match — targets that reconstruct the query with any common
+    // separator get a single EXACT_MATCH boost, which is enough to
+    // outrank a pure sum-of-per-term-scores tie.
+    //
+    // The legacy space-separator case (lower_chars, e.g. "Package: Packages")
+    // is covered here too as the first separator we try.
+    if let Some((char_start, total_len)) =
+        find_joined_terms(target_lower, &pattern.terms, &pattern.lower_chars)
+    {
         total_score += score::EXACT_MATCH;
 
-        let query_char_count = pattern.lower_chars.len();
         let target_char_count = target_chars.len();
-
-        all_positions = (char_start..char_start + query_char_count)
+        all_positions = (char_start..char_start + total_len)
             .filter(|&i| i < target_char_count)
             .collect();
     }
@@ -269,6 +278,63 @@ fn score_multi_term(
         score: total_score,
         match_positions: all_positions,
     }
+}
+
+/// Try to find the pattern's terms in `target_lower` as a single
+/// contiguous substring joined by one of a small set of common
+/// separators (space, slash, underscore, dash, dot, backslash).
+///
+/// Returns `Some((char_start, total_len))` on the first separator that
+/// matches, where `total_len` is the length of the joined needle in
+/// characters (so the caller can rebuild match positions covering
+/// exactly the matched span, including the separators).
+///
+/// Allocates at most one `Vec<char>` (reused across separator attempts)
+/// and short-circuits on first match, so the hot-path cost is bounded
+/// by `(num_separators + 1) × find_chars_slice` on average.
+fn find_joined_terms(
+    target_lower: &[char],
+    terms: &[PreparedTerm],
+    literal_query_lower: &[char],
+) -> Option<(usize, usize)> {
+    // First try the literal query (preserves original whitespace exactly,
+    // so "Package: Packages" keeps its colon-space separator).
+    if let Some(start) = find_chars_slice(target_lower, literal_query_lower) {
+        return Some((start, literal_query_lower.len()));
+    }
+
+    if terms.len() < 2 {
+        // Single-term multi-term path should never happen (that case is
+        // routed to `score_single_term` in `match_prepared`), but guard
+        // against degenerate callers.
+        return None;
+    }
+
+    // Try joining terms with each separator in turn.  We intentionally
+    // skip space here — the literal-query attempt above already covered
+    // any whitespace form of the original query.
+    const JOIN_SEPARATORS: &[char] = &['/', '_', '-', '.', '\\'];
+
+    // Reserve enough capacity for the longest possible joined needle
+    // (every term + one separator per gap).  Reused across attempts.
+    let term_len_sum: usize = terms.iter().map(|t| t.lower_chars.len()).sum();
+    let needle_len = term_len_sum + terms.len() - 1;
+    let mut needle: Vec<char> = Vec::with_capacity(needle_len);
+
+    for &sep in JOIN_SEPARATORS {
+        needle.clear();
+        for (i, term) in terms.iter().enumerate() {
+            if i > 0 {
+                needle.push(sep);
+            }
+            needle.extend(term.lower_chars.iter().copied());
+        }
+        if let Some(start) = find_chars_slice(target_lower, &needle) {
+            return Some((start, needle.len()));
+        }
+    }
+
+    None
 }
 
 /// Find the first occurrence of `needle` as a contiguous slice inside

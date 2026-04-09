@@ -475,6 +475,42 @@ mod tests {
     }
 
     #[test]
+    fn test_multi_term_joined_by_path_separator_ranks_above_scattered() {
+        // When the user types "etc hosts" (two terms), a target that
+        // reconstructs the query with a common path separator between
+        // the terms (e.g. "/etc/hosts") must rank higher than a target
+        // where each term matches individually but scattered across
+        // unrelated path components.
+        let joined = fuzzy_match("etc hosts", "/etc/hosts");
+        let scattered = fuzzy_match("etc hosts", "some/etc/deeply/nested/host_tests/foo.rs");
+
+        assert!(joined.matched);
+        assert!(scattered.matched);
+        assert!(
+            joined.score > scattered.score,
+            "joined /etc/hosts ({}) should outrank scattered ({})",
+            joined.score,
+            scattered.score
+        );
+    }
+
+    #[test]
+    fn test_multi_term_joined_by_underscore_ranks_above_scattered() {
+        // Same idea with an underscore separator: "save file" → "save_file.rs".
+        let joined = fuzzy_match("save file", "src/utils/save_file.rs");
+        let scattered = fuzzy_match("save file", "src/storage/savepoint/filetree_handler.rs");
+
+        assert!(joined.matched);
+        assert!(scattered.matched);
+        assert!(
+            joined.score > scattered.score,
+            "joined save_file.rs ({}) should outrank scattered ({})",
+            joined.score,
+            scattered.score
+        );
+    }
+
+    #[test]
     fn test_amortized_apis_equivalent_to_oneshot() {
         // Both amortized entry points (`fuzzy_match_prepared` borrowing a
         // pre-built `PreparedPattern`, and `FuzzyMatcher` reusing scratch
