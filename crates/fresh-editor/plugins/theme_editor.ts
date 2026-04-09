@@ -450,91 +450,163 @@ const state: ThemeEditorState = {
 // =============================================================================
 
 /**
- * Palette tuned for themes with a dark editor background.
- * Foreground colors are light so they pop against the dark bg.
+ * UI palette for the theme editor's own chrome. Each role is resolved from
+ * the currently-active theme so the editor inherits the host theme's look,
+ * with a luma-chosen hardcoded palette as a safety net for themes that
+ * don't define the keys we look up.
  */
-const DARK_COLORS = {
-  sectionHeader: [255, 200, 100] as RGB,   // Gold
-  fieldName: [200, 200, 255] as RGB,       // Light blue
-  defaultValue: [150, 150, 150] as RGB,    // Gray
-  customValue: [100, 255, 100] as RGB,     // Green
-  description: [120, 120, 120] as RGB,     // Dim gray
-  modified: [255, 255, 100] as RGB,        // Yellow
-  footer: [100, 100, 100] as RGB,          // Gray
-  colorBlock: [200, 200, 200] as RGB,      // Light gray for color swatch outline
-  selectionBg: [50, 50, 80] as RGB,        // Dark blue-gray for selected field
-  divider: [60, 60, 80] as RGB,            // Muted divider color
-  header: [100, 180, 255] as RGB,          // Header blue
-  pickerLabel: [180, 180, 200] as RGB,     // Picker section labels
-  pickerValue: [255, 255, 255] as RGB,     // Picker value text
-  pickerFocusBg: [40, 60, 100] as RGB,     // Picker focused item bg
-  filterText: [200, 200, 100] as RGB,      // Filter input text
-  previewBg: [25, 25, 30] as RGB,          // Preview background
+interface UIColors {
+  sectionHeader: OverlayColorSpec;
+  fieldName: OverlayColorSpec;
+  customValue: OverlayColorSpec;
+  description: OverlayColorSpec;
+  footer: OverlayColorSpec;
+  selectionBg: OverlayColorSpec;
+  divider: OverlayColorSpec;
+  header: OverlayColorSpec;
+  pickerLabel: OverlayColorSpec;
+  pickerValue: OverlayColorSpec;
+  pickerFocusBg: OverlayColorSpec;
+  filterText: OverlayColorSpec;
+}
+
+/**
+ * Fallback palette for dark host themes. Used when the active theme doesn't
+ * define the keys in THEME_KEY_CANDIDATES (or when we can't read its data).
+ */
+const DARK_FALLBACK: UIColors = {
+  sectionHeader: [255, 200, 100],
+  fieldName: [200, 200, 255],
+  customValue: [100, 255, 100],
+  description: [120, 120, 120],
+  footer: [100, 100, 100],
+  selectionBg: [50, 50, 80],
+  divider: [60, 60, 80],
+  header: [100, 180, 255],
+  pickerLabel: [180, 180, 200],
+  pickerValue: [255, 255, 255],
+  pickerFocusBg: [40, 60, 100],
+  filterText: [200, 200, 100],
 };
 
 /**
- * Palette tuned for themes with a light editor background.
- * Foreground colors are dark/saturated so they remain legible on white-ish bg,
- * and highlight backgrounds are light so dark fg stays readable inside them.
+ * Fallback palette for light host themes. Dark fg and light bg highlights
+ * so text stays legible on near-white backgrounds.
  */
-const LIGHT_COLORS: typeof DARK_COLORS = {
-  sectionHeader: [160, 90, 0] as RGB,      // Dark amber
-  fieldName: [30, 50, 140] as RGB,         // Dark blue
-  defaultValue: [110, 110, 110] as RGB,    // Medium gray
-  customValue: [0, 120, 0] as RGB,         // Dark green
-  description: [95, 95, 95] as RGB,        // Dim gray
-  modified: [170, 90, 0] as RGB,           // Dark amber (matches sectionHeader family)
-  footer: [90, 90, 90] as RGB,             // Gray
-  colorBlock: [80, 80, 80] as RGB,         // Dark gray for swatch outline
-  selectionBg: [210, 225, 250] as RGB,     // Light blue row highlight
-  divider: [180, 180, 195] as RGB,         // Light gray divider
-  header: [20, 80, 180] as RGB,            // Dark blue header
-  pickerLabel: [70, 70, 90] as RGB,        // Dark picker labels
-  pickerValue: [0, 0, 0] as RGB,           // Black picker value text
-  pickerFocusBg: [200, 220, 255] as RGB,   // Light blue picker focus bg
-  filterText: [140, 90, 0] as RGB,         // Dark gold filter text
-  previewBg: [245, 245, 250] as RGB,       // Very light preview bg
+const LIGHT_FALLBACK: UIColors = {
+  sectionHeader: [160, 90, 0],
+  fieldName: [30, 50, 140],
+  customValue: [0, 120, 0],
+  description: [95, 95, 95],
+  footer: [90, 90, 90],
+  selectionBg: [210, 225, 250],
+  divider: [180, 180, 195],
+  header: [20, 80, 180],
+  pickerLabel: [70, 70, 90],
+  pickerValue: [0, 0, 0],
+  pickerFocusBg: [200, 220, 255],
+  filterText: [140, 90, 0],
 };
 
 /**
- * Active UI palette. Picked at render time based on the currently-applied
- * editor theme's background luminance so the theme editor stays readable
- * regardless of whether the user has a light or dark theme active.
+ * For each UI role, an ordered list of theme key paths to try. The first
+ * path that resolves to a usable color wins; otherwise we fall back to the
+ * hardcoded palette. Keys are picked so that the theme editor's chrome
+ * matches the host theme's existing chrome conventions (menu, status bar,
+ * selection, etc.) rather than clashing with it.
+ */
+const THEME_KEY_CANDIDATES: Record<keyof UIColors, readonly string[]> = {
+  sectionHeader: ["ui.menu_active_fg", "ui.tab_active_fg", "editor.fg"],
+  fieldName:     ["ui.menu_fg", "editor.fg"],
+  customValue:   ["syntax.string", "syntax.constant", "editor.fg"],
+  description:   ["syntax.comment", "editor.line_number_fg", "ui.menu_disabled_fg"],
+  footer:        ["ui.status_bar_fg", "ui.menu_fg", "editor.fg"],
+  selectionBg:   ["editor.selection_bg", "ui.menu_highlight_bg", "ui.popup_selection_bg"],
+  divider:       ["ui.split_separator_fg", "ui.menu_border_fg", "ui.menu_separator_fg"],
+  header:        ["ui.tab_active_fg", "ui.menu_active_fg", "editor.fg"],
+  pickerLabel:   ["ui.menu_fg", "editor.fg"],
+  pickerValue:   ["ui.menu_active_fg", "editor.fg"],
+  pickerFocusBg: ["ui.popup_selection_bg", "ui.menu_highlight_bg", "editor.selection_bg"],
+  filterText:    ["syntax.keyword", "ui.tab_active_fg", "editor.fg"],
+};
+
+/**
+ * Active UI palette. Rebuilt at render time from the currently-applied
+ * editor theme so the theme editor inherits that theme's look.
  *
  * This is separate from `state.themeData` (the theme being *edited*) — what
  * matters for the editor UI's own contrast is the theme the terminal is
  * actually rendering with, not the theme data the user is mutating.
  */
-let colors: typeof DARK_COLORS = DARK_COLORS;
+let colors: UIColors = DARK_FALLBACK;
 
 /**
- * Refresh the `colors` palette based on the active editor theme's background.
- * Safe to call repeatedly; falls back to DARK_COLORS if anything goes wrong.
+ * Resolve a theme value at one of the candidate paths into an
+ * OverlayColorSpec. Accepts RGB 3-tuples and recognised named colors
+ * ("Red", "Blue", …); rejects "Default"/"Reset" since those are
+ * transparent and would give no contrast.
+ */
+function resolveThemeColor(
+  themeData: Record<string, unknown>,
+  candidates: readonly string[]
+): OverlayColorSpec | null {
+  for (const path of candidates) {
+    const value = getNestedValue(themeData, path);
+    if (Array.isArray(value) && value.length === 3 &&
+        typeof value[0] === "number" &&
+        typeof value[1] === "number" &&
+        typeof value[2] === "number") {
+      return [value[0], value[1], value[2]];
+    }
+    if (typeof value === "string" && value in NAMED_COLORS) {
+      return value;
+    }
+  }
+  return null;
+}
+
+/**
+ * Rebuild the `colors` palette from the active editor theme. For each
+ * UI role we try the theme-key candidates in order, then fall back to
+ * the luma-chosen hardcoded palette for any role the theme doesn't
+ * cover. Safe to call on every redraw.
  */
 function updateActiveColorsFromConfig(): void {
+  let themeData: Record<string, unknown> | null = null;
   try {
     const config = editor.getConfig() as Record<string, unknown> | null;
     const themeKey = (config?.theme as string) || "dark";
-    const themeData = editor.getThemeData(themeKey) as Record<string, unknown> | null;
-    if (!themeData) {
-      colors = DARK_COLORS;
-      return;
-    }
-    const bg = getNestedValue(themeData, "editor.bg");
-    if (Array.isArray(bg) && bg.length === 3) {
-      const r = bg[0] as number;
-      const g = bg[1] as number;
-      const b = bg[2] as number;
-      // Rec. 601 luma; threshold picked so near-white bgs flip to LIGHT
-      const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-      colors = luma > 140 ? LIGHT_COLORS : DARK_COLORS;
-    } else {
-      // Named / Default bg — assume dark (terminal default is typically dark)
-      colors = DARK_COLORS;
-    }
+    themeData = editor.getThemeData(themeKey) as Record<string, unknown> | null;
   } catch {
-    colors = DARK_COLORS;
+    themeData = null;
   }
+
+  // Pick the fallback palette based on the theme's editor.bg luma, so any
+  // roles missing from the theme still land in the right contrast bucket.
+  let fallback: UIColors = DARK_FALLBACK;
+  if (themeData) {
+    const bg = getNestedValue(themeData, "editor.bg");
+    if (Array.isArray(bg) && bg.length === 3 &&
+        typeof bg[0] === "number" &&
+        typeof bg[1] === "number" &&
+        typeof bg[2] === "number") {
+      // Rec. 601 luma; threshold picked so near-white bgs flip to LIGHT.
+      const luma = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2];
+      fallback = luma > 140 ? LIGHT_FALLBACK : DARK_FALLBACK;
+    }
+  }
+
+  if (!themeData) {
+    colors = fallback;
+    return;
+  }
+
+  const resolved = {} as UIColors;
+  for (const role of Object.keys(THEME_KEY_CANDIDATES) as Array<keyof UIColors>) {
+    const fromTheme = resolveThemeColor(themeData, THEME_KEY_CANDIDATES[role]);
+    resolved[role] = fromTheme ?? fallback[role];
+  }
+  colors = resolved;
 }
 
 // =============================================================================
@@ -1321,7 +1393,7 @@ function addBackgroundHighlight(
   bufferId: number,
   start: number,
   end: number,
-  bgColor: RGB
+  bgColor: OverlayColorSpec
 ): void {
   editor.addOverlay(bufferId, "theme-sel", start, end, { bg: bgColor });
 }
