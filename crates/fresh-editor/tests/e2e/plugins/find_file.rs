@@ -506,3 +506,110 @@ fn test_quick_open_buffer_autocomplete() {
     // Should now show alpha file content
     harness.assert_screen_contains("ALPHA_CONTENT");
 }
+
+// ============================================================================
+// Prefix Probe Tests (file mode — query treated as a literal path prefix)
+// ============================================================================
+
+/// End-to-end regression test for the Quick Open prefix probe.
+///
+/// When the user types a path-like query (e.g. `etc/hosts`), the file
+/// provider should check the filesystem directly for files whose path
+/// starts with the query and surface them at the top of the suggestion
+/// list — even when scattered fuzzy matches elsewhere in the corpus
+/// contain the same characters in the same order.
+///
+/// This reproduces the bug found during manual tmux testing: running
+/// the editor rooted at `/` and typing `etc/hosts` should show
+/// `etc/hosts`, `etc/host.conf`, `etc/hostname` at the top, not
+/// `usr/local/go/.../host_test.go`-style scattered matches.
+#[test]
+fn test_quick_open_file_prefix_probe_ranks_at_top() {
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(120, 40, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Build a small corpus that would confuse a naive fuzzy matcher:
+    //   - `etc/hosts` is the literal file we want to surface
+    //   - `etc/hosts.allow` and `etc/hosts.deny` are basename-prefix
+    //     siblings (basename starts with "hosts") that the probe
+    //     should also surface.
+    //   - `etc/passwd` lives in the same directory but must not match.
+    //   - `usr/local/go/src/net/http/cgi/host_test.go` scatter-matches
+    //     the characters of "etc/hosts" across multiple path components
+    //     and would rank first under a pure fuzzy scorer.
+    fs::create_dir_all(project_root.join("etc")).unwrap();
+    fs::write(project_root.join("etc/hosts"), "127.0.0.1 localhost\n").unwrap();
+    fs::write(project_root.join("etc/hosts.allow"), "").unwrap();
+    fs::write(project_root.join("etc/hosts.deny"), "").unwrap();
+    fs::write(project_root.join("etc/passwd"), "").unwrap();
+
+    fs::create_dir_all(project_root.join("usr/local/go/src/net/http/cgi")).unwrap();
+    fs::write(
+        project_root.join("usr/local/go/src/net/http/cgi/host_test.go"),
+        "",
+    )
+    .unwrap();
+    fs::write(
+        project_root.join("usr/local/go/src/net/http/cgi/host.go"),
+        "",
+    )
+    .unwrap();
+
+    // Open something so the harness is in a rendered state.
+    let readme = project_root.join("README.md");
+    fs::write(&readme, "readme\n").unwrap();
+    harness.open_file(&readme).unwrap();
+    harness.render().unwrap();
+
+    // Open Quick Open (starts in command mode with `>`), delete the
+    // prefix to switch to file mode, then type the prefix query.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("etc/hosts").unwrap();
+
+    // Wait for the probe to populate the suggestion list with
+    // filesystem-confirmed matches.  `etc/hosts` is the one we most
+    // care about — its absence would indicate the probe is broken.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("etc/hosts"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let pos_hosts = screen
+        .find("etc/hosts")
+        .expect("etc/hosts should appear in suggestions");
+
+    // Prefix-probe siblings should also be present.  They are
+    // filesystem-confirmed by the basename prefix scan.
+    assert!(
+        screen.contains("etc/hosts.allow"),
+        "etc/hosts.allow should appear in suggestions, screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("etc/hosts.deny"),
+        "etc/hosts.deny should appear in suggestions, screen:\n{screen}"
+    );
+    // `etc/passwd` lives alongside the matches but its basename does
+    // not start with "hosts", so it must be filtered out.
+    assert!(
+        !screen.contains("etc/passwd"),
+        "etc/passwd must not appear for query 'etc/hosts', screen:\n{screen}"
+    );
+
+    // The scattered fuzzy match must not rank above the prefix match:
+    // if `host_test.go` shows up at all, it must be *after* `etc/hosts`
+    // in the rendered list.
+    if let Some(pos_scattered) = screen.find("host_test.go") {
+        assert!(
+            pos_hosts < pos_scattered,
+            "etc/hosts should rank above the scattered match, got\n{screen}"
+        );
+    }
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
