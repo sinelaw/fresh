@@ -15,10 +15,10 @@
 /// paths that match one query against thousands of targets (Quick Open).
 #[derive(Debug, Clone)]
 pub struct PreparedPattern {
-    /// Original query string (for substring lookups in multi-term mode).
-    pub(super) original: String,
-    /// Lowercased version of the original query (for substring find).
-    pub(super) lower_str: String,
+    /// Lowercased version of the original query as a `Vec<char>`.  Used by
+    /// the multi-term contiguous-substring bonus to operate directly on the
+    /// scratch `target_lower: Vec<char>` without a fresh `String` allocation.
+    pub(super) lower_chars: Vec<char>,
     /// Individual whitespace-separated terms, pre-lowercased and indexed.
     pub(super) terms: Vec<PreparedTerm>,
 }
@@ -52,14 +52,13 @@ impl PreparedTerm {
 impl PreparedPattern {
     /// Prepare a query for repeated fuzzy matching.
     pub fn new(query: &str) -> Self {
-        let original = query.to_string();
-        let lower_str = query.to_lowercase();
+        // Build the lowercased char buffer once.  We intentionally avoid
+        // constructing a `String` for the lowercased form (it isn't needed
+        // by any matcher path now that the multi-term substring find
+        // operates on `Vec<char>`), saving one allocation per pattern.
+        let lower_chars: Vec<char> = query.chars().flat_map(|c| c.to_lowercase()).collect();
         let terms: Vec<PreparedTerm> = query.split_whitespace().map(PreparedTerm::new).collect();
-        Self {
-            original,
-            lower_str,
-            terms,
-        }
+        Self { lower_chars, terms }
     }
 
     /// Returns `true` if the prepared query has no terms (empty or whitespace-only).

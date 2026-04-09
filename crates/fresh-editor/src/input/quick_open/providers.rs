@@ -8,7 +8,7 @@
 
 use super::{QuickOpenContext, QuickOpenProvider, QuickOpenResult};
 use crate::input::commands::Suggestion;
-use crate::input::fuzzy::{fuzzy_match_prepared, PreparedPattern};
+use crate::input::fuzzy::FuzzyMatcher;
 use rust_i18n::t;
 
 // ============================================================================
@@ -125,14 +125,14 @@ impl QuickOpenProvider for BufferProvider {
     }
 
     fn suggestions(&self, query: &str, context: &QuickOpenContext) -> Vec<Suggestion> {
-        // Build the prepared pattern once and reuse it across all buffers.
-        let pattern = PreparedPattern::new(query);
+        // Build the matcher once and reuse it across all buffers.
+        let mut matcher = FuzzyMatcher::new(query);
         let mut scored: Vec<(Suggestion, i32, usize)> = context
             .open_buffers
             .iter()
             .filter(|buf| !buf.path.is_empty())
             .filter_map(|buf| {
-                let m = fuzzy_match_prepared(&pattern, &buf.name);
+                let m = matcher.match_target(&buf.name);
                 if !m.matched {
                     return None;
                 }
@@ -810,17 +810,18 @@ impl QuickOpenProvider for FileProvider {
         // Score bonus applied to files confirmed to exist via the prefix probe.
         const PREFIX_PROBE_BOOST: i32 = 200;
 
-        // Prepare the query once per keystroke.  This hoists the
-        // lowercasing / char-vec / ASCII-check work out of the per-file
-        // loop, where it previously dominated the profile.
-        let pattern = PreparedPattern::new(search_query);
+        // Build one matcher and reuse it for every target on this keystroke.
+        // The matcher owns the prepared pattern *and* two `Vec<char>` scratch
+        // buffers, so neither query preparation nor per-target allocation
+        // happens on the hot loop after its first iteration.
+        let mut matcher = FuzzyMatcher::new(search_query);
 
         // We accumulate (path, score) pairs from both sources and merge.
         let mut scored: Vec<(String, i32)> = Vec::new();
 
         // 1) Prefix-probe results (filesystem-confirmed, high priority).
         for entry in &prefix_entries {
-            let m = fuzzy_match_prepared(&pattern, &entry.relative_path);
+            let m = matcher.match_target(&entry.relative_path);
             let base_score = if m.matched { m.score } else { 0 };
             let frecency_boost = (entry.frecency_score / 100.0).min(20.0) as i32;
             scored.push((
@@ -848,7 +849,7 @@ impl QuickOpenProvider for FileProvider {
                     if prefix_set.contains(file.relative_path.as_str()) {
                         continue;
                     }
-                    let m = fuzzy_match_prepared(&pattern, &file.relative_path);
+                    let m = matcher.match_target(&file.relative_path);
                     if !m.matched {
                         continue;
                     }
@@ -1145,76 +1146,88 @@ mod tests {
     // Prefix probe tests
     // ====================================================================
 
+    /// Covers every probe_prefix behaviour in a single tempdir:
+    ///   - basename-prefix match inside a subdirectory
+    ///   - directory-listing match when the query *is* a directory
+    ///   - empty result for a nonexistent path
+    ///   - basename-prefix match at the cwd root (empty rel_parent path)
     #[test]
-    fn test_probe_prefix_exact_file() {
+    fn test_probe_prefix_all_shapes() {
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path();
 
+        // Subdirectory with multiple basename-prefix siblings + one unrelated file
         std::fs::create_dir(base.join("etc")).unwrap();
         std::fs::write(base.join("etc").join("hosts"), b"").unwrap();
         std::fs::write(base.join("etc").join("hosts.allow"), b"").unwrap();
         std::fs::write(base.join("etc").join("hosts.deny"), b"").unwrap();
         std::fs::write(base.join("etc").join("passwd"), b"").unwrap();
 
-        let provider = make_file_provider();
-        let results = provider.probe_prefix(&base.display().to_string(), "etc/hosts");
-
-        let paths: Vec<&str> = results.iter().map(|e| e.relative_path.as_str()).collect();
-        assert!(paths.contains(&"etc/hosts"));
-        assert!(paths.contains(&"etc/hosts.allow"));
-        assert!(paths.contains(&"etc/hosts.deny"));
-        // passwd does not start with "hosts"
-        assert!(!paths.contains(&"etc/passwd"));
-    }
-
-    #[test]
-    fn test_probe_prefix_directory_listing() {
-        let dir = tempfile::tempdir().unwrap();
-        let base = dir.path();
-
+        // Subdirectory for the directory-listing query
         std::fs::create_dir(base.join("src")).unwrap();
         std::fs::write(base.join("src").join("main.rs"), b"").unwrap();
         std::fs::write(base.join("src").join("lib.rs"), b"").unwrap();
 
-        let provider = make_file_provider();
-        let results = provider.probe_prefix(&base.display().to_string(), "src");
-
-        // "src" is a directory, so it lists its contents
-        let paths: Vec<&str> = results.iter().map(|e| e.relative_path.as_str()).collect();
-        assert!(paths.contains(&"src/main.rs"));
-        assert!(paths.contains(&"src/lib.rs"));
-    }
-
-    #[test]
-    fn test_probe_prefix_no_match() {
-        let dir = tempfile::tempdir().unwrap();
-        let base = dir.path();
-
-        std::fs::write(base.join("README.md"), b"").unwrap();
-
-        let provider = make_file_provider();
-        let results =
-            provider.probe_prefix(&base.display().to_string(), "nonexistent/path/to/file");
-
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn test_probe_prefix_root_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let base = dir.path();
-
+        // Root-level files with a basename-prefix sibling + one unrelated file
         std::fs::write(base.join("Makefile"), b"").unwrap();
         std::fs::write(base.join("Makefile.bak"), b"").unwrap();
         std::fs::write(base.join("README.md"), b"").unwrap();
 
         let provider = make_file_provider();
-        let results = provider.probe_prefix(&base.display().to_string(), "Makefile");
+        let cwd = base.display().to_string();
 
-        let paths: Vec<&str> = results.iter().map(|e| e.relative_path.as_str()).collect();
-        assert!(paths.contains(&"Makefile"));
-        assert!(paths.contains(&"Makefile.bak"));
-        assert!(!paths.contains(&"README.md"));
+        // 1. Basename prefix inside a subdirectory (rel_parent = "etc")
+        let r = provider.probe_prefix(&cwd, "etc/hosts");
+        let paths: Vec<&str> = r.iter().map(|e| e.relative_path.as_str()).collect();
+        assert!(
+            paths.contains(&"etc/hosts"),
+            "missing etc/hosts in {paths:?}"
+        );
+        assert!(
+            paths.contains(&"etc/hosts.allow"),
+            "missing etc/hosts.allow in {paths:?}"
+        );
+        assert!(
+            paths.contains(&"etc/hosts.deny"),
+            "missing etc/hosts.deny in {paths:?}"
+        );
+        assert!(
+            !paths.contains(&"etc/passwd"),
+            "passwd shouldn't match prefix 'hosts': {paths:?}"
+        );
+
+        // 2. Directory query — the query is itself a directory, so we list it.
+        let r = provider.probe_prefix(&cwd, "src");
+        let paths: Vec<&str> = r.iter().map(|e| e.relative_path.as_str()).collect();
+        assert!(
+            paths.contains(&"src/main.rs"),
+            "missing src/main.rs in {paths:?}"
+        );
+        assert!(
+            paths.contains(&"src/lib.rs"),
+            "missing src/lib.rs in {paths:?}"
+        );
+
+        // 3. Nonexistent path — neither parent-dir probe nor dir listing finds anything.
+        let r = provider.probe_prefix(&cwd, "nonexistent/path/to/file");
+        assert!(
+            r.is_empty(),
+            "nonexistent query should return empty, got {:?}",
+            r.iter().map(|e| &e.relative_path).collect::<Vec<_>>()
+        );
+
+        // 4. Basename prefix at the cwd root (rel_parent is empty).
+        let r = provider.probe_prefix(&cwd, "Makefile");
+        let paths: Vec<&str> = r.iter().map(|e| e.relative_path.as_str()).collect();
+        assert!(paths.contains(&"Makefile"), "missing Makefile in {paths:?}");
+        assert!(
+            paths.contains(&"Makefile.bak"),
+            "missing Makefile.bak in {paths:?}"
+        );
+        assert!(
+            !paths.contains(&"README.md"),
+            "README.md shouldn't match prefix 'Makefile': {paths:?}"
+        );
     }
 
     // ====================================================================

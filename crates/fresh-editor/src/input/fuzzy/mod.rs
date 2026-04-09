@@ -7,18 +7,25 @@
 //! # Hot-path usage
 //!
 //! For a single keystroke matched against many candidates, build a
-//! [`PreparedPattern`] once and call [`fuzzy_match_prepared`] per candidate:
+//! [`FuzzyMatcher`] once and reuse it.  The matcher owns both the
+//! [`PreparedPattern`] *and* two reusable `Vec<char>` scratch buffers, so
+//! after the first call neither query preparation nor target-side scratch
+//! touches the allocator:
 //!
 //! ```ignore
-//! let pattern = PreparedPattern::new(user_input);
+//! let mut matcher = FuzzyMatcher::new(user_input);
 //! for file in files {
-//!     let result = fuzzy_match_prepared(&pattern, &file.path);
+//!     let result = matcher.match_target(&file.path);
 //!     // ...
 //! }
 //! ```
 //!
-//! The convenience wrapper [`fuzzy_match`] rebuilds the `PreparedPattern` on
-//! every call — fine for one-shot use, wasteful in a loop.
+//! The convenience wrapper [`fuzzy_match`] rebuilds the matcher on every
+//! call — fine for one-shot use, wasteful in a loop.
+//!
+//! The legacy [`fuzzy_match_prepared`] entry point still exists for
+//! callers that want query amortisation without scratch amortisation; it
+//! internally clones the pattern into a throwaway [`FuzzyMatcher`].
 //!
 //! # Module layout
 //!
@@ -31,6 +38,7 @@
 mod matcher;
 mod pattern;
 
+pub use matcher::FuzzyMatcher;
 pub use pattern::PreparedPattern;
 
 /// Score bonus constants for match quality ranking.
@@ -467,16 +475,50 @@ mod tests {
     }
 
     #[test]
-    fn test_prepared_pattern_reused_across_targets() {
-        // Sanity: PreparedPattern should produce the same result as the
-        // convenience wrapper across multiple targets.
-        let pattern = PreparedPattern::new("main");
-        let direct = fuzzy_match("main", "src/main.rs");
-        let prepared = fuzzy_match_prepared(&pattern, "src/main.rs");
-        assert_eq!(direct, prepared);
+    fn test_amortized_apis_equivalent_to_oneshot() {
+        // Both amortized entry points (`fuzzy_match_prepared` borrowing a
+        // pre-built `PreparedPattern`, and `FuzzyMatcher` reusing scratch
+        // across calls) must produce identical results to the one-shot
+        // `fuzzy_match` wrapper for every (query, target) pair.
+        //
+        // The target list is arranged to cover:
+        //   - long target first, then shorter ones (scratch-growth /
+        //     stale-tail check — if `FuzzyMatcher` didn't clear its
+        //     scratch correctly, a subsequent shorter target would see
+        //     leftover chars and diverge from the one-shot).
+        //   - matches interleaved with rejections (rejection path must
+        //     not corrupt scratch for the next accepting call).
+        //   - an empty target (edge case).
+        let queries = ["main", "config", "results", "sf", "save file"];
+        let targets = [
+            "a/very/long/path/to/some/nested/src/main.rs", // warm scratch large
+            "src/main.rs",                                 // shorter, still matches "main"
+            "src/app/config.rs",                           // rejects "main", matches "config"
+            "repos/editor-benchmark/results.json",         // matches "results"
+            "Save File",                                   // matches "sf" / "save file"
+            "nomatchatall",                                // rejects most queries
+            "README.md",
+            "",
+        ];
 
-        let direct2 = fuzzy_match("main", "lib/other.rs");
-        let prepared2 = fuzzy_match_prepared(&pattern, "lib/other.rs");
-        assert_eq!(direct2, prepared2);
+        for query in queries {
+            let pattern = PreparedPattern::new(query);
+            let mut matcher = FuzzyMatcher::new(query);
+            for target in targets {
+                let oneshot = fuzzy_match(query, target);
+                let prepared = fuzzy_match_prepared(&pattern, target);
+                let reused = matcher.match_target(target);
+                assert_eq!(
+                    oneshot, prepared,
+                    "fuzzy_match_prepared mismatch for query={:?} target={:?}",
+                    query, target
+                );
+                assert_eq!(
+                    oneshot, reused,
+                    "FuzzyMatcher reuse mismatch for query={:?} target={:?}",
+                    query, target
+                );
+            }
+        }
     }
 }
