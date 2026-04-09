@@ -511,23 +511,30 @@ const LIGHT_FALLBACK: UIColors = {
 /**
  * For each UI role, an ordered list of theme key paths to try. The first
  * path that resolves to a usable color wins; otherwise we fall back to the
- * hardcoded palette. Keys are picked so that the theme editor's chrome
- * matches the host theme's existing chrome conventions (menu, status bar,
- * selection, etc.) rather than clashing with it.
+ * hardcoded palette.
+ *
+ * Important: we can only use keys that the theme defines as readable on
+ * `editor.bg` (since that's the background the theme editor draws over).
+ * That rules out `ui.menu_*`, `ui.tab_*`, etc. — those are designed for
+ * their own bg pairs (e.g. `ui.menu_active_fg` on `ui.menu_active_bg`) and
+ * will clash or go invisible when drawn on `editor.bg` (notoriously in
+ * high-contrast, where `ui.menu_active_fg` is pure black). So we only pull
+ * from `editor.*` and `syntax.*`, and lean on bold + distinct syntax roles
+ * to give each UI element its own visual identity.
  */
 const THEME_KEY_CANDIDATES: Record<keyof UIColors, readonly string[]> = {
-  sectionHeader: ["ui.menu_active_fg", "ui.tab_active_fg", "editor.fg"],
-  fieldName:     ["ui.menu_fg", "editor.fg"],
+  sectionHeader: ["syntax.keyword", "syntax.function", "editor.fg"],
+  fieldName:     ["editor.fg"],
   customValue:   ["syntax.string", "syntax.constant", "editor.fg"],
-  description:   ["syntax.comment", "editor.line_number_fg", "ui.menu_disabled_fg"],
-  footer:        ["ui.status_bar_fg", "ui.menu_fg", "editor.fg"],
-  selectionBg:   ["editor.selection_bg", "ui.menu_highlight_bg", "ui.popup_selection_bg"],
-  divider:       ["ui.split_separator_fg", "ui.menu_border_fg", "ui.menu_separator_fg"],
-  header:        ["ui.tab_active_fg", "ui.menu_active_fg", "editor.fg"],
-  pickerLabel:   ["ui.menu_fg", "editor.fg"],
-  pickerValue:   ["ui.menu_active_fg", "editor.fg"],
-  pickerFocusBg: ["ui.popup_selection_bg", "ui.menu_highlight_bg", "editor.selection_bg"],
-  filterText:    ["syntax.keyword", "ui.tab_active_fg", "editor.fg"],
+  description:   ["syntax.comment", "editor.line_number_fg", "editor.whitespace_indicator_fg"],
+  footer:        ["editor.line_number_fg", "editor.fg"],
+  selectionBg:   ["editor.selection_bg", "editor.current_line_bg"],
+  divider:       ["editor.line_number_fg", "editor.whitespace_indicator_fg"],
+  header:        ["syntax.keyword", "syntax.function", "editor.fg"],
+  pickerLabel:   ["editor.fg"],
+  pickerValue:   ["syntax.constant", "syntax.function", "editor.fg"],
+  pickerFocusBg: ["editor.selection_bg", "editor.current_line_bg"],
+  filterText:    ["syntax.function", "syntax.constant", "editor.fg"],
 };
 
 /**
