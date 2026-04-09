@@ -2588,11 +2588,19 @@ fn test_theme_editor_select_nostalgia_from_dropdown() {
     harness.render().unwrap();
     eprintln!("[TEST] Enter pressed, waiting for Theme Editor to load...");
 
-    // Wait for theme editor to fully load
+    // Wait for theme editor to fully load.
+    //
+    // Must wait for per-panel content (populated by setPanelContent) rather
+    // than just the `*Theme Editor*` tab label — see `open_theme_editor` for
+    // the full rationale. The tab label appears as soon as the buffer group
+    // is created, which is BEFORE the plugin populates the tree/picker
+    // panels, and on Windows CI that race window is wide enough that the
+    // subsequent assertions below consistently observed blank panels.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Theme Editor") && !screen.contains("Loading theme editor")
+            screen.contains("Theme Editor: ")
+                && (screen.contains("Select a color field") || screen.contains("Hex:"))
         })
         .unwrap();
     eprintln!("[TEST] Theme Editor loaded");
