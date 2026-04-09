@@ -532,6 +532,31 @@ impl Editor {
     /// Request LSP completion at current cursor position.
     /// Sends completion requests to all eligible servers for merged results.
     pub(crate) fn request_completion(&mut self) {
+        // A new completion request starts a fresh batch. Cancel any
+        // previous in-flight completion requests so their late responses
+        // are ignored (handle_completion_response drops responses whose
+        // request_id isn't in pending_completion_requests), and drop any
+        // leftover items from a previous popup that was closed via the
+        // "pass-through" path (hide_popup() without handle_popup_cancel,
+        // e.g. Enter or a non-word character while the popup was open).
+        // Without this, the new response would be merged into the stale
+        // items by `handle_completion_response`'s extend branch, leading
+        // to duplicate / stale entries in the rendered popup — see the
+        // regression test in
+        // crates/fresh-editor/tests/e2e/lsp_completion_duplicate_entries_1514.rs
+        // and sinelaw/fresh#1514.
+        if !self.pending_completion_requests.is_empty() {
+            let ids: Vec<u64> = self.pending_completion_requests.drain().collect();
+            for request_id in ids {
+                tracing::debug!(
+                    "Canceling previous pending LSP completion request {}",
+                    request_id
+                );
+                self.send_lsp_cancel_request(request_id);
+            }
+        }
+        self.completion_items = None;
+
         // Get the current buffer and cursor position
         let cursor_pos = self.active_cursors().primary().position;
         let state = self.active_state();
