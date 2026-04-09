@@ -49,15 +49,32 @@ impl super::Editor {
         let layout = self.build_group_layout(&desc, &mode, &mut panel_buffers)?;
 
         // Build the split tree directly from the layout
-        let split_tree = self.build_split_tree(&layout, &mut panel_splits)?;
+        let group_tree = self.build_split_tree(&layout, &mut panel_splits)?;
 
         // Determine the active leaf (first scrollable panel, fallback to any leaf)
         let active_leaf = find_first_scrollable_leaf(&layout, &panel_splits)
             .or_else(|| panel_splits.values().next().copied())
             .ok_or("No panels in layout")?;
 
-        // Replace the split manager's root with our tree
-        self.split_manager.replace_root(split_tree, active_leaf);
+        // Wrap the existing root and the group tree in an outer split so the
+        // original buffers (with their tab bars) remain visible alongside
+        // the group. The group takes 80% of the width by default.
+        let old_root = self.split_manager.root().clone();
+        let outer_split_id = self.split_manager.allocate_split_id();
+        let combined = crate::view::split::SplitNode::Split {
+            direction: crate::model::event::SplitDirection::Vertical,
+            first: Box::new(old_root),
+            second: Box::new(group_tree),
+            ratio: 0.2,
+            split_id: crate::model::event::ContainerId(outer_split_id),
+            fixed_first: None,
+            fixed_second: None,
+        };
+        self.split_manager.replace_root(combined, active_leaf);
+
+        // Determine the first scrollable panel — it's the "representative"
+        // and keeps its tab bar visible so the group name shows as a tab entry.
+        let first_scrollable_name = find_first_scrollable_name(&layout).unwrap_or_default();
 
         // Create SplitViewState for each panel split
         let (tw, th) = (self.terminal_width, self.terminal_height);
@@ -65,8 +82,11 @@ impl super::Editor {
             let buffer_id = *panel_buffers
                 .get(panel_name)
                 .ok_or(format!("Panel '{}' has no buffer", panel_name))?;
+            let is_representative = *panel_name == first_scrollable_name;
             let mut vs = SplitViewState::with_buffer(tw, th, buffer_id);
-            vs.suppress_chrome = true;
+            // Representative shows its tab bar (so the group name is visible).
+            // Other panels suppress chrome.
+            vs.suppress_chrome = !is_representative;
             vs.hide_tilde = true;
             if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
                 bs.show_line_numbers = false;
@@ -75,9 +95,9 @@ impl super::Editor {
             self.split_view_states.insert(*leaf_id, vs);
         }
 
-        // Use the first scrollable panel as the representative
+        // The first scrollable panel is the representative
         let first_buffer_id = *panel_buffers
-            .get(&find_first_scrollable_name(&layout).unwrap_or_default())
+            .get(&first_scrollable_name)
             .or_else(|| panel_buffers.values().next())
             .ok_or("No panels")?;
 

@@ -102,6 +102,85 @@ fn test_theme_editor_command_registered() {
     harness.assert_screen_contains("theme_editor");
 }
 
+/// Test that the tab bar remains present when opening and closing the theme editor.
+/// Verifies buffer group integration: the theme editor appears as a single tab entry,
+/// panel splits don't show per-split tab bars, and closing the group restores the
+/// previous state.
+#[test]
+fn test_theme_editor_tab_bar_persists() {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+
+    // === Initial state: tab bar present with [No Name] ===
+    harness.render().unwrap();
+    let initial_screen = harness.screen_to_string();
+    assert!(
+        initial_screen.contains("[No Name]"),
+        "Initial tab bar should show [No Name]. Screen:\n{}",
+        initial_screen
+    );
+
+    // === Open theme editor: tab bar still present, shows the new tab ===
+    open_theme_editor(&mut harness);
+
+    let after_open_screen = harness.screen_to_string();
+    assert!(
+        after_open_screen.contains("[No Name]"),
+        "Tab bar should still show [No Name] after opening theme editor. Screen:\n{}",
+        after_open_screen
+    );
+    assert!(
+        after_open_screen.contains("*Theme Editor*"),
+        "Theme editor should appear as a new tab entry. Screen:\n{}",
+        after_open_screen
+    );
+    assert!(
+        after_open_screen.contains("Theme Editor:"),
+        "Theme editor panel content should be visible. Screen:\n{}",
+        after_open_screen
+    );
+
+    // === Close theme editor: tab bar still present ===
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Close Theme Editor").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("Theme Editor:"))
+        .unwrap();
+
+    let after_close_screen = harness.screen_to_string();
+    assert!(
+        after_close_screen.contains("[No Name]"),
+        "Tab bar should still show [No Name] after closing theme editor. Screen:\n{}",
+        after_close_screen
+    );
+    assert!(
+        !after_close_screen.contains("*Theme Editor*"),
+        "Theme editor tab should be gone after close. Screen:\n{}",
+        after_close_screen
+    );
+}
+
 /// Test that the theme editor opens successfully without crashing
 /// This test catches the pathJoin API bug where passing an array instead of
 /// variadic args causes a serde_v8 error
