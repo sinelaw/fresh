@@ -1905,7 +1905,7 @@ impl Editor {
         let current_split_tabs = self
             .split_view_states
             .get(&active_split)
-            .map(|vs| vs.open_buffers.clone())
+            .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
 
         // If this is the only tab in this split and there are no other splits with this buffer,
@@ -2028,7 +2028,7 @@ impl Editor {
         let split_tabs = self
             .split_view_states
             .get(&split_id)
-            .map(|vs| vs.open_buffers.clone())
+            .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
 
         let is_last_viewport = buffer_in_other_splits == 0;
@@ -2097,7 +2097,7 @@ impl Editor {
         let split_tabs = self
             .split_view_states
             .get(&split_id)
-            .map(|vs| vs.open_buffers.clone())
+            .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
 
         // Close all tabs except the one we want to keep
@@ -2130,7 +2130,7 @@ impl Editor {
         let split_tabs = self
             .split_view_states
             .get(&split_id)
-            .map(|vs| vs.open_buffers.clone())
+            .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
 
         // Find the index of the target buffer
@@ -2160,7 +2160,7 @@ impl Editor {
         let split_tabs = self
             .split_view_states
             .get(&split_id)
-            .map(|vs| vs.open_buffers.clone())
+            .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
 
         // Find the index of the target buffer
@@ -2190,7 +2190,7 @@ impl Editor {
         let split_tabs = self
             .split_view_states
             .get(&split_id)
-            .map(|vs| vs.open_buffers.clone())
+            .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
 
         let mut closed = 0;
@@ -2240,7 +2240,7 @@ impl Editor {
         let split_tabs = self
             .split_view_states
             .get(&split_id)
-            .map(|vs| vs.open_buffers.clone())
+            .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
 
         let is_last_viewport = buffer_in_other_splits == 0;
@@ -2293,9 +2293,7 @@ impl Editor {
         let active_split = self.split_manager.active_split();
         if let Some(view_state) = self.split_view_states.get(&active_split) {
             view_state
-                .open_buffers
-                .iter()
-                .copied()
+                .buffer_tab_ids()
                 .filter(|id| {
                     !self
                         .buffer_metadata

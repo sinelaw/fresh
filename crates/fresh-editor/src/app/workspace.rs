@@ -992,7 +992,7 @@ impl Editor {
         let referenced: HashSet<BufferId> = self
             .split_view_states
             .values()
-            .flat_map(|vs| vs.open_buffers.iter().copied())
+            .flat_map(|vs| vs.buffer_tab_ids())
             .collect();
         let orphans: Vec<BufferId> =
             self.buffers
@@ -1171,7 +1171,7 @@ impl Editor {
                 let total = state.buffer.total_bytes();
                 // Update cursor position in all splits that show this buffer
                 for vs in self.split_view_states.values_mut() {
-                    if vs.open_buffers.contains(&buffer_id) {
+                    if vs.has_buffer(buffer_id) {
                         vs.cursors.primary_mut().position = total;
                     }
                 }
@@ -1401,8 +1401,8 @@ impl Editor {
                 match tab {
                     SerializedTabRef::File(rel_path) => {
                         if let Some(&buffer_id) = path_to_buffer.get(rel_path) {
-                            if !view_state.open_buffers.contains(&buffer_id) {
-                                view_state.open_buffers.push(buffer_id);
+                            if !view_state.has_buffer(buffer_id) {
+                                view_state.add_buffer(buffer_id);
                             }
                             // Ensure keyed state exists for this buffer
                             view_state.ensure_buffer_state(buffer_id);
@@ -1417,8 +1417,8 @@ impl Editor {
                     }
                     SerializedTabRef::Terminal(index) => {
                         if let Some(&buffer_id) = terminal_buffers.get(index) {
-                            if !view_state.open_buffers.contains(&buffer_id) {
-                                view_state.open_buffers.push(buffer_id);
+                            if !view_state.has_buffer(buffer_id) {
+                                view_state.add_buffer(buffer_id);
                             }
                             view_state
                                 .ensure_buffer_state(buffer_id)
@@ -1428,8 +1428,8 @@ impl Editor {
                     }
                     SerializedTabRef::Unnamed(recovery_id) => {
                         if let Some(&buffer_id) = unnamed_buffers.get(recovery_id) {
-                            if !view_state.open_buffers.contains(&buffer_id) {
-                                view_state.open_buffers.push(buffer_id);
+                            if !view_state.has_buffer(buffer_id) {
+                                view_state.add_buffer(buffer_id);
                             }
                             view_state.ensure_buffer_state(buffer_id);
                         }
@@ -1443,7 +1443,7 @@ impl Editor {
             // manager still points to (#1278).
             if view_state.open_buffers.is_empty() {
                 if let Some(buf) = self.split_manager.buffer_for_split(current_split_id) {
-                    view_state.open_buffers.push(buf);
+                    view_state.add_buffer(buf);
                     view_state.ensure_buffer_state(buf);
                 }
             }
@@ -1461,8 +1461,8 @@ impl Editor {
             // Backward compatibility path using open_files/active_file_index
             for rel_path in &split_state.open_files {
                 if let Some(&buffer_id) = path_to_buffer.get(rel_path) {
-                    if !view_state.open_buffers.contains(&buffer_id) {
-                        view_state.open_buffers.push(buffer_id);
+                    if !view_state.has_buffer(buffer_id) {
+                        view_state.add_buffer(buffer_id);
                     }
                     view_state.ensure_buffer_state(buffer_id);
                 }
@@ -1621,6 +1621,19 @@ fn serialize_split_node(
     split_labels: &HashMap<SplitId, String>,
 ) -> SerializedSplitNode {
     match node {
+        SplitNode::Grouped { layout, .. } => {
+            // Grouped nodes are rebuilt by plugins on load; serialize just
+            // the inner layout so the split tree structure is preserved
+            // without the group wrapper.
+            serialize_split_node(
+                layout,
+                buffer_metadata,
+                working_dir,
+                terminal_buffers,
+                terminal_indices,
+                split_labels,
+            )
+        }
         SplitNode::Leaf {
             buffer_id,
             split_id,
@@ -1715,7 +1728,9 @@ fn serialize_split_view_state(
     let mut open_files = Vec::new();
     let mut active_tab_index = None;
 
-    for buffer_id in &view_state.open_buffers {
+    // Only serialize buffer tabs; group tabs are rebuilt by plugins on load.
+    for buffer_id in view_state.buffer_tab_ids() {
+        let buffer_id = &buffer_id;
         let tab_index = open_tabs.len();
         if let Some(terminal_id) = terminal_buffers.get(buffer_id) {
             if let Some(idx) = terminal_indices.get(terminal_id) {

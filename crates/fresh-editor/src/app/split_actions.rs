@@ -140,10 +140,10 @@ impl Editor {
 
                 // Transfer tabs from closed split to the new active split
                 if let Some(view_state) = self.split_view_states.get_mut(&new_active_split) {
-                    for buffer_id in closing_split_tabs {
+                    for target in closing_split_tabs {
                         // Only add if not already in the split's tabs
-                        if !view_state.open_buffers.contains(&buffer_id) {
-                            view_state.open_buffers.push(buffer_id);
+                        if !view_state.open_buffers.contains(&target) {
+                            view_state.open_buffers.push(target);
                         }
                     }
                 }
@@ -360,7 +360,7 @@ impl Editor {
     pub fn get_split_tabs(&self, split_id: LeafId) -> Vec<BufferId> {
         self.split_view_states
             .get(&split_id)
-            .map(|vs| vs.open_buffers.clone())
+            .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default()
     }
 

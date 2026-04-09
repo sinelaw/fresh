@@ -189,7 +189,7 @@ impl Editor {
 
         // Set up split view state
         if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-            view_state.open_buffers.push(buffer_id);
+            view_state.add_buffer(buffer_id);
             // Terminal buffers should not wrap lines so escape sequences stay intact
             view_state.viewport.line_wrap_enabled = false;
         }

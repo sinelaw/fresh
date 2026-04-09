@@ -3718,7 +3718,7 @@ impl Editor {
             let is_valid = self
                 .split_view_states
                 .get(&active_split)
-                .is_some_and(|vs| vs.open_buffers.contains(&prev_id));
+                .is_some_and(|vs| vs.has_buffer(prev_id));
 
             if is_valid && prev_id != self.active_buffer() {
                 // Save current position before switching
@@ -3743,11 +3743,12 @@ impl Editor {
     /// Start the switch-to-tab-by-name prompt with suggestions from open buffers
     fn start_switch_to_tab_prompt(&mut self) {
         let active_split = self.split_manager.active_split();
-        let open_buffers = if let Some(view_state) = self.split_view_states.get(&active_split) {
-            view_state.open_buffers.clone()
-        } else {
-            return;
-        };
+        let open_buffers: Vec<BufferId> =
+            if let Some(view_state) = self.split_view_states.get(&active_split) {
+                view_state.buffer_tab_ids_vec()
+            } else {
+                return;
+            };
 
         if open_buffers.is_empty() {
             self.set_status_message(t!("status.no_tabs_in_split").to_string());
@@ -3813,7 +3814,7 @@ impl Editor {
         let is_valid = self
             .split_view_states
             .get(&active_split)
-            .is_some_and(|vs| vs.open_buffers.contains(&buffer_id));
+            .is_some_and(|vs| vs.has_buffer(buffer_id));
 
         if !is_valid {
             self.set_status_message(t!("status.tab_not_found").to_string());

@@ -934,11 +934,11 @@ impl Editor {
 
         for (split_id, tab_layout) in &self.cached_layout.tab_layouts {
             match tab_layout.hit_test(col, row) {
-                Some(TabHit::CloseButton(buffer_id)) => {
-                    return Some(HoverTarget::TabCloseButton(buffer_id, *split_id));
+                Some(TabHit::CloseButton(target)) => {
+                    return Some(HoverTarget::TabCloseButton(target, *split_id));
                 }
-                Some(TabHit::TabName(buffer_id)) => {
-                    return Some(HoverTarget::TabName(buffer_id, *split_id));
+                Some(TabHit::TabName(target)) => {
+                    return Some(HoverTarget::TabName(target, *split_id));
                 }
                 Some(TabHit::ScrollLeft)
                 | Some(TabHit::ScrollRight)
@@ -1888,19 +1888,34 @@ impl Editor {
 
         if let Some((split_id, hit)) = tab_hit {
             match hit {
-                TabHit::CloseButton(buffer_id) => {
-                    self.focus_split(split_id, buffer_id);
-                    self.close_tab_in_split(buffer_id, split_id);
+                TabHit::CloseButton(target) => {
+                    match target {
+                        crate::view::split::TabTarget::Buffer(buffer_id) => {
+                            self.focus_split(split_id, buffer_id);
+                            self.close_tab_in_split(buffer_id, split_id);
+                        }
+                        crate::view::split::TabTarget::Group(group_leaf) => {
+                            self.close_buffer_group_by_leaf(group_leaf);
+                        }
+                    }
                     return Ok(());
                 }
-                TabHit::TabName(buffer_id) => {
-                    self.focus_split(split_id, buffer_id);
-                    // Start potential tab drag (will only become active after moving threshold)
-                    self.mouse_state.dragging_tab = Some(super::types::TabDragState::new(
-                        buffer_id,
-                        split_id,
-                        (col, row),
-                    ));
+                TabHit::TabName(target) => {
+                    match target {
+                        crate::view::split::TabTarget::Buffer(buffer_id) => {
+                            self.focus_split(split_id, buffer_id);
+                            // Start potential tab drag (will only become active after moving threshold)
+                            self.mouse_state.dragging_tab = Some(
+                                super::types::TabDragState::new(buffer_id, split_id, (col, row)),
+                            );
+                        }
+                        crate::view::split::TabTarget::Group(group_leaf) => {
+                            // Activate the group tab: set the active leaf to the
+                            // group's preferred inner leaf so this group is
+                            // rendered and its scrollable panel receives focus.
+                            self.activate_group_tab(group_leaf);
+                        }
+                    }
                     return Ok(());
                 }
                 TabHit::ScrollLeft => {
@@ -2381,8 +2396,10 @@ impl Editor {
         let tab_hit =
             self.cached_layout.tab_layouts.iter().find_map(
                 |(split_id, tab_layout)| match tab_layout.hit_test(col, row) {
-                    Some(TabHit::TabName(buffer_id) | TabHit::CloseButton(buffer_id)) => {
-                        Some((*split_id, buffer_id))
+                    Some(TabHit::TabName(target) | TabHit::CloseButton(target)) => {
+                        // Context menu only makes sense for buffer tabs; groups are
+                        // plugin-managed and closed via the close button.
+                        target.as_buffer().map(|bid| (*split_id, bid))
                     }
                     _ => None,
                 },

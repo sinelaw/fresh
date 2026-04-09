@@ -9175,8 +9175,13 @@ mod tests {
             .rename_file_path(std::path::PathBuf::from("ccc_long_name_03.txt"));
 
         {
+            use crate::view::split::TabTarget;
             let view_state = editor.split_view_states.get_mut(&split_id).unwrap();
-            view_state.open_buffers = vec![buf1, buf2, buf3];
+            view_state.open_buffers = vec![
+                TabTarget::Buffer(buf1),
+                TabTarget::Buffer(buf2),
+                TabTarget::Buffer(buf3),
+            ];
             view_state.tab_scroll_offset = 50;
         }
 
@@ -9197,8 +9202,8 @@ mod tests {
         editor.ensure_active_tab_visible(split_id, buf3, 25);
         let view_state = editor.split_view_states.get(&split_id).unwrap();
         assert!(view_state.tab_scroll_offset > 0);
-        let total_width: usize = view_state
-            .open_buffers
+        let buffer_ids: Vec<_> = view_state.buffer_tab_ids_vec();
+        let total_width: usize = buffer_ids
             .iter()
             .enumerate()
             .map(|(idx, id)| {
@@ -9211,7 +9216,7 @@ mod tests {
                     .map(|s| s.chars().count())
                     .unwrap_or(0);
                 let tab_width = 2 + name_len;
-                if idx < view_state.open_buffers.len() - 1 {
+                if idx < buffer_ids.len() - 1 {
                     tab_width + 1 // separator
                 } else {
                     tab_width

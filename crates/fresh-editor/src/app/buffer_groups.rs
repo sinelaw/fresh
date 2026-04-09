@@ -124,7 +124,10 @@ impl super::Editor {
             .filter(|id| *id != first_buffer_id)
             .collect();
         for (_leaf_id, vs) in self.split_view_states.iter_mut() {
-            vs.open_buffers.retain(|b| !hidden_panel_ids.contains(b));
+            vs.open_buffers.retain(|t| match t {
+                crate::view::split::TabTarget::Buffer(b) => !hidden_panel_ids.contains(b),
+                crate::view::split::TabTarget::Group(_) => true,
+            });
         }
 
         let representative_split = Some(active_leaf);
@@ -333,6 +336,53 @@ impl super::Editor {
                     self.focus_split(split_id, buffer_id);
                 }
             }
+        }
+    }
+
+    /// Activate a group tab by its Grouped-node LeafId: set the active leaf
+    /// to the group's `active_inner_leaf`, which causes the group's subtree
+    /// to be the visible content in its parent split.
+    pub(crate) fn activate_group_tab(&mut self, group_leaf: LeafId) {
+        // Look up the Grouped node in the tree and find its inner active leaf.
+        let target_leaf = if let Some(crate::view::split::SplitNode::Grouped {
+            active_inner_leaf,
+            ..
+        }) = self.split_manager.root().find_grouped(group_leaf)
+        {
+            *active_inner_leaf
+        } else {
+            return;
+        };
+
+        // Find the buffer id of the target leaf
+        if let Some(buffer_id) = self.split_manager.get_buffer_id(target_leaf.into()) {
+            self.focus_split(target_leaf, buffer_id);
+        }
+    }
+
+    /// Close a buffer group by its Grouped-node LeafId (used by tab close button).
+    pub(crate) fn close_buffer_group_by_leaf(&mut self, group_leaf: LeafId) {
+        // Find the BufferGroupId whose Grouped node has this LeafId.
+        // We stored `representative_split = active_leaf` which is the first scrollable
+        // panel's LeafId — but the Grouped node's LeafId is separate.
+        // Easiest: search buffer_groups by checking whose panel_splits maps an
+        // inner leaf that lives under this Grouped node.
+        let bg_id_opt = self
+            .buffer_groups
+            .iter()
+            .find(|(_, g)| {
+                // A group's Grouped node contains all its panel_splits as inner leaves.
+                g.panel_splits.values().any(|inner_leaf| {
+                    self.split_manager
+                        .root()
+                        .grouped_ancestor_of((*inner_leaf).into())
+                        == Some(group_leaf)
+                })
+            })
+            .map(|(id, _)| id.0);
+
+        if let Some(bg_id) = bg_id_opt {
+            self.close_buffer_group(bg_id);
         }
     }
 }

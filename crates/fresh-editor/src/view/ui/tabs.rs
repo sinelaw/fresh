@@ -1,9 +1,10 @@
 //! Tab bar rendering for multiple buffers
 
 use crate::app::BufferMetadata;
-use crate::model::event::BufferId;
+use crate::model::event::{BufferId, LeafId};
 use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
+use crate::view::split::TabTarget;
 use crate::view::ui::layout::point_in_rect;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -15,12 +16,19 @@ use std::collections::HashMap;
 /// Hit area for a single tab
 #[derive(Debug, Clone)]
 pub struct TabHitArea {
-    /// The buffer ID this tab represents
-    pub buffer_id: BufferId,
-    /// The area covering the tab name (clickable to switch to buffer)
+    /// The tab target this tab represents (buffer or group)
+    pub target: TabTarget,
+    /// The area covering the tab name (clickable to switch to the target)
     pub tab_area: Rect,
     /// The area covering the close button
     pub close_area: Rect,
+}
+
+impl TabHitArea {
+    /// Backwards-compatible access: returns the buffer id if this is a buffer tab.
+    pub fn buffer_id(&self) -> Option<BufferId> {
+        self.target.as_buffer()
+    }
 }
 
 /// Layout information for hit testing tab interactions
@@ -42,10 +50,10 @@ pub struct TabLayout {
 /// Hit test result for tab interactions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabHit {
-    /// Hit the tab name area (click to switch buffer)
-    TabName(BufferId),
+    /// Hit the tab name area (click to switch to this target)
+    TabName(TabTarget),
     /// Hit the close button area
-    CloseButton(BufferId),
+    CloseButton(TabTarget),
     /// Hit the tab bar background
     BarBackground,
     /// Hit the left scroll button
@@ -96,11 +104,11 @@ impl TabLayout {
         for tab in &self.tabs {
             // Check close button first (it's inside the tab area)
             if point_in_rect(tab.close_area, x, y) {
-                return Some(TabHit::CloseButton(tab.buffer_id));
+                return Some(TabHit::CloseButton(tab.target));
             }
             // Check tab area
             if point_in_rect(tab.tab_area, x, y) {
-                return Some(TabHit::TabName(tab.buffer_id));
+                return Some(TabHit::TabName(tab.target));
             }
         }
 
@@ -185,50 +193,62 @@ pub fn scroll_to_show_tab(
     result
 }
 
-/// Resolve display names for tab buffers, disambiguating duplicates by appending a number.
+/// Resolve display names for tab targets, disambiguating duplicates by appending a number.
 /// For example, if there are three unnamed buffers, they become "[No Name]", "[No Name] 2", "[No Name] 3".
 /// Similarly, duplicate filenames get numbered: "main.rs", "main.rs 2".
+///
+/// `group_names` provides the display name for each group tab (`TabTarget::Group`).
 fn resolve_tab_names(
-    split_buffers: &[BufferId],
+    tab_targets: &[TabTarget],
     buffers: &HashMap<BufferId, EditorState>,
     buffer_metadata: &HashMap<BufferId, BufferMetadata>,
     composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
-) -> HashMap<BufferId, String> {
-    let mut names: Vec<(BufferId, String)> = Vec::new();
+    group_names: &HashMap<LeafId, String>,
+) -> HashMap<TabTarget, String> {
+    let mut names: Vec<(TabTarget, String)> = Vec::new();
 
-    for id in split_buffers.iter() {
-        let is_regular_buffer = buffers.contains_key(id);
-        let is_composite_buffer = composite_buffers.contains_key(id);
-        if !is_regular_buffer && !is_composite_buffer {
-            continue;
-        }
-        if let Some(meta) = buffer_metadata.get(id) {
-            if meta.hidden_from_tabs {
-                continue;
+    for t in tab_targets.iter() {
+        match t {
+            TabTarget::Buffer(id) => {
+                let is_regular_buffer = buffers.contains_key(id);
+                let is_composite_buffer = composite_buffers.contains_key(id);
+                if !is_regular_buffer && !is_composite_buffer {
+                    continue;
+                }
+                if let Some(meta) = buffer_metadata.get(id) {
+                    if meta.hidden_from_tabs {
+                        continue;
+                    }
+                }
+
+                let meta = buffer_metadata.get(id);
+                let is_terminal = meta
+                    .and_then(|m| m.virtual_mode())
+                    .map(|mode| mode == "terminal")
+                    .unwrap_or(false);
+
+                let name = if is_composite_buffer {
+                    meta.map(|m| m.display_name.as_str())
+                } else if is_terminal {
+                    meta.map(|m| m.display_name.as_str())
+                } else {
+                    buffers
+                        .get(id)
+                        .and_then(|state| state.buffer.file_path())
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_str())
+                        .or_else(|| meta.map(|m| m.display_name.as_str()))
+                }
+                .unwrap_or("[No Name]");
+
+                names.push((*t, name.to_string()));
+            }
+            TabTarget::Group(leaf_id) => {
+                if let Some(name) = group_names.get(leaf_id) {
+                    names.push((*t, name.clone()));
+                }
             }
         }
-
-        let meta = buffer_metadata.get(id);
-        let is_terminal = meta
-            .and_then(|m| m.virtual_mode())
-            .map(|mode| mode == "terminal")
-            .unwrap_or(false);
-
-        let name = if is_composite_buffer {
-            meta.map(|m| m.display_name.as_str())
-        } else if is_terminal {
-            meta.map(|m| m.display_name.as_str())
-        } else {
-            buffers
-                .get(id)
-                .and_then(|state| state.buffer.file_path())
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .or_else(|| meta.map(|m| m.display_name.as_str()))
-        }
-        .unwrap_or("[No Name]");
-
-        names.push((*id, name.to_string()));
     }
 
     // Count occurrences of each name
@@ -240,13 +260,13 @@ fn resolve_tab_names(
     // Assign disambiguated names — all duplicates get a number, including the first
     let mut result = HashMap::new();
     let mut name_indices: HashMap<String, usize> = HashMap::new();
-    for (id, name) in &names {
+    for (t, name) in &names {
         if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
             let idx = name_indices.entry(name.clone()).or_insert(0);
             *idx += 1;
-            result.insert(*id, format!("{} {}", name, idx));
+            result.insert(*t, format!("{} {}", name, idx));
         } else {
-            result.insert(*id, name.clone());
+            result.insert(*t, name.clone());
         }
     }
 
@@ -254,57 +274,58 @@ fn resolve_tab_names(
 }
 
 /// Calculate tab widths for scroll offset calculations.
-/// Returns (tab_widths, rendered_buffer_ids) where tab_widths includes separators.
+/// Returns (tab_widths, rendered_targets) where tab_widths includes separators.
 /// This uses the same logic as render_for_split to ensure consistency.
 pub fn calculate_tab_widths(
-    split_buffers: &[BufferId],
+    tab_targets: &[TabTarget],
     buffers: &HashMap<BufferId, EditorState>,
     buffer_metadata: &HashMap<BufferId, BufferMetadata>,
     composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
-) -> (Vec<usize>, Vec<BufferId>) {
+    group_names: &HashMap<LeafId, String>,
+) -> (Vec<usize>, Vec<TabTarget>) {
     let mut tab_widths: Vec<usize> = Vec::new();
-    let mut rendered_buffer_ids: Vec<BufferId> = Vec::new();
-    let resolved_names =
-        resolve_tab_names(split_buffers, buffers, buffer_metadata, composite_buffers);
+    let mut rendered_targets: Vec<TabTarget> = Vec::new();
+    let resolved_names = resolve_tab_names(
+        tab_targets,
+        buffers,
+        buffer_metadata,
+        composite_buffers,
+        group_names,
+    );
 
-    for id in split_buffers.iter() {
-        // Check if this is a regular buffer or a composite buffer
-        let is_regular_buffer = buffers.contains_key(id);
-        let is_composite_buffer = composite_buffers.contains_key(id);
-
-        if !is_regular_buffer && !is_composite_buffer {
+    for t in tab_targets.iter() {
+        // Skip targets we couldn't resolve a name for (hidden, missing, etc.)
+        let Some(name) = resolved_names.get(t) else {
             continue;
-        }
-
-        // Skip buffers that are marked as hidden from tabs
-        if let Some(meta) = buffer_metadata.get(id) {
-            if meta.hidden_from_tabs {
-                continue;
-            }
-        }
-
-        let name = resolved_names
-            .get(id)
-            .map(|s| s.as_str())
-            .unwrap_or("[No Name]");
-
-        // Calculate modified indicator
-        let modified = if is_composite_buffer {
-            ""
-        } else if let Some(state) = buffers.get(id) {
-            if state.buffer.is_modified() {
-                "*"
-            } else {
-                ""
-            }
-        } else {
-            ""
         };
 
-        let binary_indicator = if buffer_metadata.get(id).map(|m| m.binary).unwrap_or(false) {
-            " [BIN]"
-        } else {
-            ""
+        // Calculate modified indicator (groups and composite buffers don't show it)
+        let modified = match t {
+            TabTarget::Buffer(id) => {
+                if composite_buffers.contains_key(id) {
+                    ""
+                } else if let Some(state) = buffers.get(id) {
+                    if state.buffer.is_modified() {
+                        "*"
+                    } else {
+                        ""
+                    }
+                } else {
+                    ""
+                }
+            }
+            TabTarget::Group(_) => "",
+        };
+
+        let binary_indicator = match t {
+            TabTarget::Buffer(id) => {
+                if buffer_metadata.get(id).map(|m| m.binary).unwrap_or(false) {
+                    " [BIN]"
+                } else {
+                    ""
+                }
+            }
+            TabTarget::Group(_) => "",
         };
 
         // Same format as render_for_split: " {name}{modified}{binary_indicator} " + "× "
@@ -313,15 +334,15 @@ pub fn calculate_tab_widths(
         let tab_width = str_width(&tab_name_text) + str_width(close_text);
 
         // Add separator if not first tab
-        if !rendered_buffer_ids.is_empty() {
+        if !rendered_targets.is_empty() {
             tab_widths.push(1); // separator
         }
 
         tab_widths.push(tab_width);
-        rendered_buffer_ids.push(*id);
+        rendered_targets.push(*t);
     }
 
-    (tab_widths, rendered_buffer_ids)
+    (tab_widths, rendered_targets)
 }
 
 impl TabsRenderer {
@@ -344,15 +365,16 @@ impl TabsRenderer {
     pub fn render_for_split(
         frame: &mut Frame,
         area: Rect,
-        split_buffers: &[BufferId],
+        tab_targets: &[TabTarget],
         buffers: &HashMap<BufferId, EditorState>,
         buffer_metadata: &HashMap<BufferId, BufferMetadata>,
         composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
-        active_buffer: BufferId,
+        active_target: TabTarget,
         theme: &crate::view::theme::Theme,
         is_active_split: bool,
         tab_scroll_offset: usize,
-        hovered_tab: Option<(BufferId, bool)>, // (buffer_id, is_close_button)
+        hovered_tab: Option<(TabTarget, bool)>, // (target, is_close_button)
+        group_names: &HashMap<LeafId, String>,
     ) -> TabLayout {
         let mut layout = TabLayout::new(area);
         const SCROLL_INDICATOR_LEFT: &str = "<";
@@ -361,56 +383,57 @@ impl TabsRenderer {
 
         let mut all_tab_spans: Vec<(Span, usize)> = Vec::new(); // Store (Span, display_width)
         let mut tab_ranges: Vec<(usize, usize, usize)> = Vec::new(); // (start, end, close_start) positions for each tab
-        let mut rendered_buffer_ids: Vec<BufferId> = Vec::new(); // Track which buffers actually got rendered
-        let resolved_names =
-            resolve_tab_names(split_buffers, buffers, buffer_metadata, composite_buffers);
+        let mut rendered_targets: Vec<TabTarget> = Vec::new(); // Track which targets actually got rendered
+        let resolved_names = resolve_tab_names(
+            tab_targets,
+            buffers,
+            buffer_metadata,
+            composite_buffers,
+            group_names,
+        );
 
         // First, build all spans and calculate their display widths
-        for id in split_buffers.iter() {
-            // Check if this is a regular buffer or a composite buffer
-            let is_regular_buffer = buffers.contains_key(id);
-            let is_composite_buffer = composite_buffers.contains_key(id);
-
-            if !is_regular_buffer && !is_composite_buffer {
+        for t in tab_targets.iter() {
+            // Skip targets we couldn't resolve (hidden buffers, missing groups)
+            let Some(name_owned) = resolved_names.get(t).cloned() else {
                 continue;
-            }
-
-            // Skip buffers that are marked as hidden from tabs (e.g., composite source buffers)
-            if let Some(meta) = buffer_metadata.get(id) {
-                if meta.hidden_from_tabs {
-                    continue;
-                }
-            }
-            rendered_buffer_ids.push(*id);
-
-            let name = resolved_names
-                .get(id)
-                .map(|s| s.as_str())
-                .unwrap_or("[No Name]");
-
-            // For composite buffers, never show as modified (they're read-only views)
-            let modified = if is_composite_buffer {
-                ""
-            } else if let Some(state) = buffers.get(id) {
-                if state.buffer.is_modified() {
-                    "*"
-                } else {
-                    ""
-                }
-            } else {
-                ""
             };
-            let binary_indicator = if buffer_metadata.get(id).map(|m| m.binary).unwrap_or(false) {
-                " [BIN]"
-            } else {
-                ""
+            let name = name_owned.as_str();
+            rendered_targets.push(*t);
+
+            // For composite buffers and groups, never show as modified
+            let modified = match t {
+                TabTarget::Buffer(id) => {
+                    if composite_buffers.contains_key(id) {
+                        ""
+                    } else if let Some(state) = buffers.get(id) {
+                        if state.buffer.is_modified() {
+                            "*"
+                        } else {
+                            ""
+                        }
+                    } else {
+                        ""
+                    }
+                }
+                TabTarget::Group(_) => "",
+            };
+            let binary_indicator = match t {
+                TabTarget::Buffer(id) => {
+                    if buffer_metadata.get(id).map(|m| m.binary).unwrap_or(false) {
+                        " [BIN]"
+                    } else {
+                        ""
+                    }
+                }
+                TabTarget::Group(_) => "",
             };
 
-            let is_active = *id == active_buffer;
+            let is_active = *t == active_target;
 
             // Check hover state for this tab
             let (is_hovered_name, is_hovered_close) = match hovered_tab {
-                Some((hover_buf, is_close)) if hover_buf == *id => (!is_close, is_close),
+                Some((hover_target, is_close)) if hover_target == *t => (!is_close, is_close),
                 _ => (false, false),
             };
 
@@ -491,7 +514,7 @@ impl TabsRenderer {
                 final_spans.push(span.clone());
             }
             // Add separator if not the last tab
-            if tab_idx < rendered_buffer_ids.len().saturating_sub(1) {
+            if tab_idx < rendered_targets.len().saturating_sub(1) {
                 final_spans.push((
                     Span::styled(" ", Style::default().bg(theme.tab_separator_bg)),
                     1,
@@ -506,11 +529,9 @@ impl TabsRenderer {
         let max_width = area.width as usize;
 
         let total_width: usize = all_tab_spans.iter().map(|(_, w)| w).sum();
-        // Use rendered_buffer_ids (not split_buffers) to find active index,
-        // since some buffers may have been skipped if not in buffers HashMap
-        let _active_tab_idx = rendered_buffer_ids
-            .iter()
-            .position(|id| *id == active_buffer);
+        // Use rendered_targets (not tab_targets) to find active index,
+        // since some targets may have been skipped
+        let _active_tab_idx = rendered_targets.iter().position(|t| *t == active_target);
 
         let mut tab_widths: Vec<usize> = Vec::new();
         for (start, end, _close_start) in &tab_ranges {
@@ -632,7 +653,7 @@ impl TabsRenderer {
                 Some(Rect::new(right_x, area.y, SCROLL_INDICATOR_WIDTH as u16, 1));
         }
 
-        for (idx, buffer_id) in rendered_buffer_ids.iter().enumerate() {
+        for (idx, target) in rendered_targets.iter().enumerate() {
             let (logical_start, logical_end, logical_close_start) = tab_ranges[idx];
 
             // Convert logical positions to screen positions
@@ -677,7 +698,7 @@ impl TabsRenderer {
             let close_width = screen_end.saturating_sub(screen_close_start);
 
             layout.tabs.push(TabHitArea {
-                buffer_id: *buffer_id,
+                target: *target,
                 tab_area: Rect::new(screen_start, area.y, tab_width, 1),
                 close_area: Rect::new(screen_close_start, area.y, close_width, 1),
             });
@@ -701,19 +722,23 @@ impl TabsRenderer {
         // Sort buffer IDs to ensure consistent tab order
         let mut buffer_ids: Vec<_> = buffers.keys().copied().collect();
         buffer_ids.sort_by_key(|id| id.0);
+        let tab_targets: Vec<TabTarget> =
+            buffer_ids.into_iter().map(TabTarget::Buffer).collect();
+        let group_names = HashMap::new();
 
         Self::render_for_split(
             frame,
             area,
-            &buffer_ids,
+            &tab_targets,
             buffers,
             buffer_metadata,
             composite_buffers,
-            active_buffer,
+            TabTarget::Buffer(active_buffer),
             theme,
             true, // Legacy behavior: always treat as active
             0,    // Default tab_scroll_offset for legacy render
             None, // No hover state for legacy render
+            &group_names,
         );
     }
 }
@@ -843,18 +868,19 @@ mod tests {
         let mut layout = TabLayout::new(bar_area);
 
         let buf1 = BufferId(1);
+        let target1 = TabTarget::Buffer(buf1);
 
         layout.tabs.push(TabHitArea {
-            buffer_id: buf1,
+            target: target1,
             tab_area: Rect::new(0, 0, 16, 1),
             close_area: Rect::new(12, 0, 4, 1),
         });
 
         // Hit tab name
-        assert_eq!(layout.hit_test(5, 0), Some(TabHit::TabName(buf1)));
+        assert_eq!(layout.hit_test(5, 0), Some(TabHit::TabName(target1)));
 
         // Hit close button
-        assert_eq!(layout.hit_test(13, 0), Some(TabHit::CloseButton(buf1)));
+        assert_eq!(layout.hit_test(13, 0), Some(TabHit::CloseButton(target1)));
 
         // Hit bar background
         assert_eq!(layout.hit_test(50, 0), Some(TabHit::BarBackground));

@@ -532,10 +532,10 @@ pub enum HoverTarget {
     FileBrowserShowHiddenCheckbox,
     /// Hovering over the file browser "Detect Encoding" checkbox
     FileBrowserDetectEncodingCheckbox,
-    /// Hovering over a tab name (buffer_id, split_id) - for non-active tabs
-    TabName(BufferId, LeafId),
-    /// Hovering over a tab close button (buffer_id, split_id)
-    TabCloseButton(BufferId, LeafId),
+    /// Hovering over a tab name (target, split_id) - for non-active tabs
+    TabName(crate::view::split::TabTarget, LeafId),
+    /// Hovering over a tab close button (target, split_id)
+    TabCloseButton(crate::view::split::TabTarget, LeafId),
     /// Hovering over a close split button (split_id)
     CloseSplitButton(LeafId),
     /// Hovering over a maximize/unmaximize split button (split_id)

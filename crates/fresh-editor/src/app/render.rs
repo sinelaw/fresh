@@ -408,10 +408,8 @@ impl Editor {
 
         // Convert HoverTarget to tab hover info for rendering
         let hovered_tab = match &self.mouse_state.hover_target {
-            Some(HoverTarget::TabName(buffer_id, split_id)) => Some((*buffer_id, *split_id, false)),
-            Some(HoverTarget::TabCloseButton(buffer_id, split_id)) => {
-                Some((*buffer_id, *split_id, true))
-            }
+            Some(HoverTarget::TabName(target, split_id)) => Some((*target, *split_id, false)),
+            Some(HoverTarget::TabCloseButton(target, split_id)) => Some((*target, *split_id, true)),
             _ => None,
         };
 
@@ -4844,23 +4842,32 @@ impl Editor {
         };
 
         let split_buffers = view_state.open_buffers.clone();
+        let group_names = self.split_manager.root().collect_group_names();
 
         // Use the shared function to calculate tab widths (same as render_for_split)
-        let (tab_widths, rendered_buffer_ids) = crate::view::ui::tabs::calculate_tab_widths(
+        let (tab_widths, rendered_targets) = crate::view::ui::tabs::calculate_tab_widths(
             &split_buffers,
             &self.buffers,
             &self.buffer_metadata,
             &self.composite_buffers,
+            &group_names,
         );
 
         let total_tabs_width: usize = tab_widths.iter().sum();
         let max_visible_width = available_width as usize;
 
-        // Find the active tab index among rendered buffers
-        // Note: tab_widths includes separators, so we need to map buffer index to width index
-        let active_tab_index = rendered_buffer_ids
-            .iter()
-            .position(|id| *id == active_buffer);
+        // Determine the active target — if the active leaf is inside a Grouped,
+        // that group is active; otherwise the active buffer.
+        let active_target = self
+            .split_manager
+            .root()
+            .grouped_ancestor_of(split_id.into())
+            .map(crate::view::split::TabTarget::Group)
+            .unwrap_or(crate::view::split::TabTarget::Buffer(active_buffer));
+
+        // Find the active tab index among rendered targets
+        // Note: tab_widths includes separators, so we need to map tab index to width index
+        let active_tab_index = rendered_targets.iter().position(|t| *t == active_target);
 
         // Map buffer index to width index (accounting for separators)
         // Widths are: [sep?, tab0, sep, tab1, sep, tab2, ...]

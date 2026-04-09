@@ -962,7 +962,7 @@ impl SplitRenderer {
         highlight_context_bytes: usize,
         mut split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
         hide_cursor: bool,
-        hovered_tab: Option<(BufferId, LeafId, bool)>, // (buffer_id, split_id, is_close_button)
+        hovered_tab: Option<(crate::view::split::TabTarget, LeafId, bool)>, // (target, split_id, is_close_button)
         hovered_close_split: Option<LeafId>,
         hovered_maximize_split: Option<LeafId>,
         is_maximized: bool,
@@ -1038,6 +1038,15 @@ impl SplitRenderer {
 
             // Only render tabs and split control buttons when tab bar is visible
             if split_tab_bar_visible {
+                // Determine the active target for this split's tab bar.
+                // If the active leaf is inside a Grouped subtree, that group's
+                // tab is "active". Otherwise it's the currently displayed buffer.
+                let active_target = split_manager
+                    .root()
+                    .grouped_ancestor_of(split_id.into())
+                    .map(crate::view::split::TabTarget::Group)
+                    .unwrap_or(crate::view::split::TabTarget::Buffer(buffer_id));
+                let group_names = split_manager.root().collect_group_names();
                 // Render tabs for this split and collect hit areas
                 let tab_layout = TabsRenderer::render_for_split(
                     frame,
@@ -1046,11 +1055,12 @@ impl SplitRenderer {
                     buffers,
                     buffer_metadata,
                     composite_buffers,
-                    buffer_id, // The currently displayed buffer in this split
+                    active_target,
                     theme,
                     is_active,
                     tab_scroll_offset,
                     tab_hover_for_split,
+                    &group_names,
                 );
 
                 // Store the tab layout for this split
@@ -2298,7 +2308,7 @@ impl SplitRenderer {
         split_view_states: Option<&HashMap<LeafId, crate::view::split::SplitViewState>>,
         split_id: LeafId,
         buffer_id: BufferId,
-    ) -> (Vec<BufferId>, usize) {
+    ) -> (Vec<crate::view::split::TabTarget>, usize) {
         if let Some(view_states) = split_view_states {
             if let Some(view_state) = view_states.get(&split_id) {
                 return (
@@ -2307,7 +2317,7 @@ impl SplitRenderer {
                 );
             }
         }
-        (vec![buffer_id], 0)
+        (vec![crate::view::split::TabTarget::Buffer(buffer_id)], 0)
     }
 
     fn sync_viewport_to_content(
