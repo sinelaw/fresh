@@ -449,7 +449,11 @@ const state: ThemeEditorState = {
 // Color Definitions for UI
 // =============================================================================
 
-const colors = {
+/**
+ * Palette tuned for themes with a dark editor background.
+ * Foreground colors are light so they pop against the dark bg.
+ */
+const DARK_COLORS = {
   sectionHeader: [255, 200, 100] as RGB,   // Gold
   fieldName: [200, 200, 255] as RGB,       // Light blue
   defaultValue: [150, 150, 150] as RGB,    // Gray
@@ -467,6 +471,71 @@ const colors = {
   filterText: [200, 200, 100] as RGB,      // Filter input text
   previewBg: [25, 25, 30] as RGB,          // Preview background
 };
+
+/**
+ * Palette tuned for themes with a light editor background.
+ * Foreground colors are dark/saturated so they remain legible on white-ish bg,
+ * and highlight backgrounds are light so dark fg stays readable inside them.
+ */
+const LIGHT_COLORS: typeof DARK_COLORS = {
+  sectionHeader: [160, 90, 0] as RGB,      // Dark amber
+  fieldName: [30, 50, 140] as RGB,         // Dark blue
+  defaultValue: [110, 110, 110] as RGB,    // Medium gray
+  customValue: [0, 120, 0] as RGB,         // Dark green
+  description: [95, 95, 95] as RGB,        // Dim gray
+  modified: [170, 90, 0] as RGB,           // Dark amber (matches sectionHeader family)
+  footer: [90, 90, 90] as RGB,             // Gray
+  colorBlock: [80, 80, 80] as RGB,         // Dark gray for swatch outline
+  selectionBg: [210, 225, 250] as RGB,     // Light blue row highlight
+  divider: [180, 180, 195] as RGB,         // Light gray divider
+  header: [20, 80, 180] as RGB,            // Dark blue header
+  pickerLabel: [70, 70, 90] as RGB,        // Dark picker labels
+  pickerValue: [0, 0, 0] as RGB,           // Black picker value text
+  pickerFocusBg: [200, 220, 255] as RGB,   // Light blue picker focus bg
+  filterText: [140, 90, 0] as RGB,         // Dark gold filter text
+  previewBg: [245, 245, 250] as RGB,       // Very light preview bg
+};
+
+/**
+ * Active UI palette. Picked at render time based on the currently-applied
+ * editor theme's background luminance so the theme editor stays readable
+ * regardless of whether the user has a light or dark theme active.
+ *
+ * This is separate from `state.themeData` (the theme being *edited*) — what
+ * matters for the editor UI's own contrast is the theme the terminal is
+ * actually rendering with, not the theme data the user is mutating.
+ */
+let colors: typeof DARK_COLORS = DARK_COLORS;
+
+/**
+ * Refresh the `colors` palette based on the active editor theme's background.
+ * Safe to call repeatedly; falls back to DARK_COLORS if anything goes wrong.
+ */
+function updateActiveColorsFromConfig(): void {
+  try {
+    const config = editor.getConfig() as Record<string, unknown> | null;
+    const themeKey = (config?.theme as string) || "dark";
+    const themeData = editor.getThemeData(themeKey) as Record<string, unknown> | null;
+    if (!themeData) {
+      colors = DARK_COLORS;
+      return;
+    }
+    const bg = getNestedValue(themeData, "editor.bg");
+    if (Array.isArray(bg) && bg.length === 3) {
+      const r = bg[0] as number;
+      const g = bg[1] as number;
+      const b = bg[2] as number;
+      // Rec. 601 luma; threshold picked so near-white bgs flip to LIGHT
+      const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+      colors = luma > 140 ? LIGHT_COLORS : DARK_COLORS;
+    } else {
+      // Named / Default bg — assume dark (terminal default is typically dark)
+      colors = DARK_COLORS;
+    }
+  } catch {
+    colors = DARK_COLORS;
+  }
+}
 
 // =============================================================================
 // Keyboard Shortcuts (defined once, used in mode and i18n)
@@ -1413,6 +1482,12 @@ function buildFooterPanelEntries(): TextPropertyEntry[] {
 
 function updateDisplay(): void {
   isUpdatingDisplay = true;
+
+  // Pick the right UI palette for the currently-active editor theme so the
+  // theme editor stays readable on both light and dark themes. Done on every
+  // refresh (cheap in-memory lookup) so switching the active theme while the
+  // editor is open takes effect on the next redraw.
+  updateActiveColorsFromConfig();
 
   // Always refresh viewport dimensions
   const viewport = editor.getViewport();
