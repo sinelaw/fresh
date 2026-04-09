@@ -670,7 +670,8 @@ pub struct Editor {
     /// These subtrees are NOT part of the main split tree — they live
     /// here and are dispatched to at render time when the current split's
     /// active target is a `TabTarget::Group`.
-    pub(crate) grouped_subtrees: HashMap<crate::model::event::LeafId, crate::view::split::SplitNode>,
+    pub(crate) grouped_subtrees:
+        HashMap<crate::model::event::LeafId, crate::view::split::SplitNode>,
 
     /// Background process abort handles for cancellation
     /// Maps process_id to abort handle

@@ -217,11 +217,7 @@ impl Editor {
         if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
             let target = TabTarget::Buffer(buffer_id);
             // Find current position of the buffer
-            if let Some(current_idx) = view_state
-                .open_buffers
-                .iter()
-                .position(|t| *t == target)
-            {
+            if let Some(current_idx) = view_state.open_buffers.iter().position(|t| *t == target) {
                 // Remove from current position
                 view_state.open_buffers.remove(current_idx);
 

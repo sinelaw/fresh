@@ -1905,9 +1905,11 @@ impl Editor {
                         crate::view::split::TabTarget::Buffer(buffer_id) => {
                             self.focus_split(split_id, buffer_id);
                             // Start potential tab drag (will only become active after moving threshold)
-                            self.mouse_state.dragging_tab = Some(
-                                super::types::TabDragState::new(buffer_id, split_id, (col, row)),
-                            );
+                            self.mouse_state.dragging_tab = Some(super::types::TabDragState::new(
+                                buffer_id,
+                                split_id,
+                                (col, row),
+                            ));
                         }
                         crate::view::split::TabTarget::Group(group_leaf) => {
                             // Activate the group tab: set the active leaf to the

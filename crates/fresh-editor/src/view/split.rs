@@ -782,8 +782,7 @@ impl SplitNode {
                 let (first_rect, second_rect) =
                     split_rect_ext(rect, *direction, *ratio, *fixed_first, *fixed_second);
                 let mut leaves = first.get_visible_leaves_with_rects(first_rect, is_group_active);
-                leaves
-                    .extend(second.get_visible_leaves_with_rects(second_rect, is_group_active));
+                leaves.extend(second.get_visible_leaves_with_rects(second_rect, is_group_active));
                 leaves
             }
             Self::Grouped {
