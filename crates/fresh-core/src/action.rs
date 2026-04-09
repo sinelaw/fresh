@@ -412,3 +412,81 @@ pub enum Action {
     // No-op
     None,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every variant must round-trip through `to_when_clause` → `from_when_clause`
+    /// as the identity. This is the core contract these two functions implement.
+    #[test]
+    fn when_clause_is_a_roundtrip_for_every_variant() {
+        let variants = [
+            KeyContext::Global,
+            KeyContext::Normal,
+            KeyContext::Prompt,
+            KeyContext::Popup,
+            KeyContext::FileExplorer,
+            KeyContext::Menu,
+            KeyContext::Terminal,
+            KeyContext::Settings,
+            KeyContext::Mode("search-replace-list".into()),
+            KeyContext::Mode(String::new()),
+        ];
+        for ctx in &variants {
+            let clause = ctx.to_when_clause();
+            assert_eq!(
+                KeyContext::from_when_clause(&clause).as_ref(),
+                Some(ctx),
+                "roundtrip failed: {:?} → {:?}",
+                ctx,
+                clause
+            );
+        }
+    }
+
+    /// Non-canonical inputs the parser must also accept, plus invalid inputs
+    /// it must reject. Not covered by the roundtrip, since `to_when_clause`
+    /// only emits canonical forms.
+    #[test]
+    fn from_when_clause_handles_aliases_whitespace_and_rejects_unknown() {
+        // snake_case alias for fileExplorer
+        assert_eq!(
+            KeyContext::from_when_clause("file_explorer"),
+            Some(KeyContext::FileExplorer)
+        );
+        // Surrounding whitespace is trimmed
+        assert_eq!(
+            KeyContext::from_when_clause("  prompt  "),
+            Some(KeyContext::Prompt)
+        );
+        // Unknown / case-mismatched / empty → None
+        assert_eq!(KeyContext::from_when_clause("nonsense"), None);
+        assert_eq!(KeyContext::from_when_clause("GLOBAL"), None);
+        assert_eq!(KeyContext::from_when_clause(""), None);
+    }
+
+    /// `allows_text_input` is true iff the context is `Normal` or `Prompt`.
+    #[test]
+    fn allows_text_input_iff_normal_or_prompt() {
+        for ctx in [
+            KeyContext::Global,
+            KeyContext::Normal,
+            KeyContext::Prompt,
+            KeyContext::Popup,
+            KeyContext::FileExplorer,
+            KeyContext::Menu,
+            KeyContext::Terminal,
+            KeyContext::Settings,
+            KeyContext::Mode("foo".into()),
+        ] {
+            let expected = matches!(ctx, KeyContext::Normal | KeyContext::Prompt);
+            assert_eq!(
+                ctx.allows_text_input(),
+                expected,
+                "{:?} text-input expectation violated",
+                ctx
+            );
+        }
+    }
+}
