@@ -41,3 +41,30 @@ impl PluginConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An empty config `{}` deserializes with `enabled = true` (from the
+    /// `default_true` helper) and no path. An explicit `false` is preserved.
+    #[test]
+    fn enabled_defaults_to_true_when_missing() {
+        let c: PluginConfig = serde_json::from_str("{}").unwrap();
+        assert!(c.enabled);
+        assert!(c.path.is_none());
+
+        let c: PluginConfig = serde_json::from_str(r#"{"enabled": false}"#).unwrap();
+        assert!(!c.enabled);
+    }
+
+    /// `new_with_path` populates the path field, unlike `Default::default()`
+    /// which leaves it `None`.
+    #[test]
+    fn new_with_path_sets_path_and_enabled() {
+        let p = PathBuf::from("/plugins/foo.js");
+        let c = PluginConfig::new_with_path(p.clone());
+        assert!(c.enabled);
+        assert_eq!(c.path.as_ref(), Some(&p));
+    }
+}

@@ -3428,4 +3428,33 @@ mod tests {
             assert_eq!(id.to_string(), raw.to_string());
         }
     }
+
+    /// Serde `default = ...` helpers fire when the field is omitted and are
+    /// overridden by explicit values. One test per struct pins each helper
+    /// to its documented default.
+    #[test]
+    fn serde_defaults_fire_when_fields_are_omitted() {
+        // default_action_count → 1
+        let spec: ActionSpec = serde_json::from_str(r#"{"action": "move_left"}"#).unwrap();
+        assert_eq!(spec.count, 1);
+        let spec: ActionSpec =
+            serde_json::from_str(r#"{"action": "move_left", "count": 5}"#).unwrap();
+        assert_eq!(spec.count, 5);
+
+        // default_true → showSeparator = true
+        let layout: CompositeLayoutConfig =
+            serde_json::from_str(r#"{"type": "side-by-side"}"#).unwrap();
+        assert!(layout.show_separator);
+        let layout: CompositeLayoutConfig =
+            serde_json::from_str(r#"{"type": "side-by-side", "showSeparator": false}"#).unwrap();
+        assert!(!layout.show_separator);
+
+        // default_plugin_provider_priority → 50
+        let reg: TsCompletionProviderRegistration =
+            serde_json::from_str(r#"{"id": "p", "displayName": "P"}"#).unwrap();
+        assert_eq!(reg.priority, 50);
+        let reg: TsCompletionProviderRegistration =
+            serde_json::from_str(r#"{"id": "p", "displayName": "P", "priority": 3}"#).unwrap();
+        assert_eq!(reg.priority, 3);
+    }
 }
