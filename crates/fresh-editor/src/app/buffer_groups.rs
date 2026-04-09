@@ -312,10 +312,19 @@ impl super::Editor {
             if let Some(group_leaf_id) = group.representative_split {
                 // Remove the Grouped subtree from the side map
                 self.grouped_subtrees.remove(&group_leaf_id);
-                // Remove the group tab from all splits' tab bars
+                // Remove the group tab from all splits' tab bars and clear
+                // any active/focused group markers that point at this group.
                 for vs in self.split_view_states.values_mut() {
                     vs.open_buffers
                         .retain(|t| *t != TabTarget::Group(group_leaf_id));
+                    if vs.active_group_tab == Some(group_leaf_id) {
+                        vs.active_group_tab = None;
+                    }
+                    if let Some(focused) = vs.focused_group_leaf {
+                        if group.panel_splits.values().any(|&l| l == focused) {
+                            vs.focused_group_leaf = None;
+                        }
+                    }
                 }
             }
 

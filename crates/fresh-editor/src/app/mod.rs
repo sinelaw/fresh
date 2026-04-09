@@ -1870,6 +1870,10 @@ impl Editor {
     /// context, buffer mode, and other "what is the user looking at" queries
     /// resolve to the panel the user is actually interacting with rather than
     /// the split's background leaf buffer.
+    ///
+    /// The override only takes effect if the inner panel's buffer is still
+    /// live in `self.buffers`; otherwise it falls back to the main split's
+    /// leaf buffer so callers never see a stale/freed buffer id.
     #[inline]
     pub fn active_buffer(&self) -> BufferId {
         let active_split = self.split_manager.active_split();
@@ -1877,7 +1881,10 @@ impl Editor {
             if vs.active_group_tab.is_some() {
                 if let Some(inner_leaf) = vs.focused_group_leaf {
                     if let Some(inner_vs) = self.split_view_states.get(&inner_leaf) {
-                        return inner_vs.active_buffer;
+                        let inner_buf = inner_vs.active_buffer;
+                        if self.buffers.contains_key(&inner_buf) {
+                            return inner_buf;
+                        }
                     }
                 }
             }

@@ -955,14 +955,42 @@ impl Editor {
         }
     }
 
-    /// Handle ShowBuffer command
+    /// Handle ShowBuffer command.
+    ///
+    /// If `buffer_id` belongs to a buffer group (i.e., it's one of the group's
+    /// panel buffers), this activates the group's tab and focuses that panel
+    /// instead of clobbering the current split's leaf with the panel buffer —
+    /// which would bypass the group-tab dispatch path and break rendering.
     pub(super) fn handle_show_buffer(&mut self, buffer_id: BufferId) {
-        if self.buffers.contains_key(&buffer_id) {
-            self.set_active_buffer(buffer_id);
-            tracing::info!("Switched to buffer {:?}", buffer_id);
-        } else {
+        if !self.buffers.contains_key(&buffer_id) {
             tracing::warn!("Buffer {:?} not found", buffer_id);
+            return;
         }
+
+        // If this buffer belongs to a group, route through the group's tab.
+        if let Some(&group_id) = self.buffer_to_group.get(&buffer_id) {
+            // Find the panel name for this buffer in the group, then focus it.
+            let panel_name = self
+                .buffer_groups
+                .get(&group_id)
+                .and_then(|g| {
+                    g.panel_buffers
+                        .iter()
+                        .find_map(|(name, &bid)| (bid == buffer_id).then(|| name.clone()))
+                });
+            if let Some(panel_name) = panel_name {
+                self.focus_panel(group_id.0, panel_name);
+                tracing::info!(
+                    "Switched to group panel buffer {:?} via group {:?}",
+                    buffer_id,
+                    group_id
+                );
+                return;
+            }
+        }
+
+        self.set_active_buffer(buffer_id);
+        tracing::info!("Switched to buffer {:?}", buffer_id);
     }
 
     /// Handle CloseBuffer command
