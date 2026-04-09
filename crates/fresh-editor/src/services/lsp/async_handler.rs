@@ -2572,8 +2572,13 @@ impl LspTask {
             .stderr(std::process::Stdio::from(stderr_file))
             .kill_on_drop(true);
 
-        // Apply resource limits to the process
-        process_limits
+        // Apply resource limits to the process.  The returned `PostSpawnAction`
+        // must be applied by us after `cmd.spawn()` returns — cgroup
+        // assignment happens from the parent using the child's PID, because
+        // doing it in a `pre_exec` closure is not fork-safe (allocation
+        // inside the forked child can deadlock on a malloc lock held by
+        // another thread of the parent at fork time).
+        let post_spawn = process_limits
             .apply_to_command(&mut cmd)
             .map_err(|e| format!("Failed to apply process limits: {}", e))?;
 
@@ -2589,6 +2594,14 @@ impl LspTask {
                 }
             )
         })?;
+
+        // Move the newly-spawned child into its cgroup (if configured).
+        // Best-effort: on failure the child keeps running under the parent's
+        // cgroup, which is fine for correctness even if it means the resource
+        // limit isn't enforced.
+        if let Some(child_pid) = process.id() {
+            post_spawn.apply_to_child(child_pid);
+        }
 
         let stdin = process
             .stdin

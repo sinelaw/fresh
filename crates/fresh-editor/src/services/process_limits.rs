@@ -13,6 +13,48 @@ use std::fs;
 #[cfg(target_os = "linux")]
 use std::path::{Path, PathBuf};
 
+/// Action that must be applied to a spawned child process after `Command::spawn`
+/// returns, from the parent process.
+///
+/// This exists because moving a child into a cgroup used to be done from a
+/// `pre_exec` closure, which runs in the forked child between fork and exec.
+/// That context is effectively single-threaded and inherits locks held by
+/// other threads of the parent at fork time — any allocation (`format!`,
+/// `PathBuf::join`, `fs::write`) can deadlock on a malloc mutex that was held
+/// by another thread at fork time.  Instead, we record what needs to happen
+/// and do the work from the parent once the child has a PID.
+#[derive(Debug, Default)]
+pub struct PostSpawnAction {
+    /// Cgroup directory the child should be moved into (by writing its PID
+    /// to `<dir>/cgroup.procs`).  `None` means no cgroup move is needed.
+    #[cfg(target_os = "linux")]
+    cgroup_dir: Option<PathBuf>,
+}
+
+impl PostSpawnAction {
+    /// Apply the recorded action to a just-spawned child PID.
+    ///
+    /// Safe to call from the parent — unlike the old `pre_exec` variant, this
+    /// runs with the full runtime available (no fork-safety constraints).
+    /// Errors are logged but not returned: best-effort, because the process
+    /// is already running and we don't want to kill it just because cgroup
+    /// assignment failed.
+    pub fn apply_to_child(&self, _child_pid: u32) {
+        #[cfg(target_os = "linux")]
+        if let Some(ref cgroup_dir) = self.cgroup_dir {
+            let procs_file = cgroup_dir.join("cgroup.procs");
+            if let Err(e) = fs::write(&procs_file, format!("{}", _child_pid)) {
+                tracing::warn!(
+                    "Failed to move child {} into cgroup {:?}: {}",
+                    _child_pid,
+                    cgroup_dir,
+                    e
+                );
+            }
+        }
+    }
+}
+
 impl ProcessLimits {
     /// Get the memory limit in bytes, computed from percentage of total system memory
     pub fn memory_limit_bytes(&self) -> Option<u64> {
@@ -27,9 +69,17 @@ impl ProcessLimits {
     ///
     /// On Linux, tries user-delegated cgroups v2, otherwise falls back to setrlimit.
     /// Memory and CPU limits are handled independently.
-    pub fn apply_to_command(&self, _cmd: &mut tokio::process::Command) -> io::Result<()> {
+    ///
+    /// Returns a `PostSpawnAction` that the caller must apply to the child
+    /// process after `cmd.spawn()` returns.  (For cgroups, the actual
+    /// per-child assignment happens from the parent using the child's PID;
+    /// doing it in `pre_exec` is not fork-safe.)
+    pub fn apply_to_command(
+        &self,
+        _cmd: &mut tokio::process::Command,
+    ) -> io::Result<PostSpawnAction> {
         if !self.enabled {
-            return Ok(());
+            return Ok(PostSpawnAction::default());
         }
 
         #[cfg(target_os = "linux")]
@@ -42,12 +92,12 @@ impl ProcessLimits {
             // TODO: Implement for macOS using setrlimit
             // TODO: Implement for Windows using Job Objects
             tracing::info!("Process resource limits are not yet implemented for this platform");
-            Ok(())
+            Ok(PostSpawnAction::default())
         }
     }
 
     #[cfg(target_os = "linux")]
-    fn apply_linux_limits(&self, cmd: &mut tokio::process::Command) -> io::Result<()> {
+    fn apply_linux_limits(&self, cmd: &mut tokio::process::Command) -> io::Result<PostSpawnAction> {
         let max_memory_bytes = self.memory_limit_bytes();
         let _max_cpu_percent = self.max_cpu_percent;
 
@@ -57,82 +107,91 @@ impl ProcessLimits {
         // Track what methods we'll use
         let mut memory_method = "none";
         let mut cpu_method = "none";
+        let mut action = PostSpawnAction::default();
 
-        // Try to set up cgroup limits
+        // Try to set up cgroup limits.  One cgroup per editor process; reused
+        // across all LSP spawns.  All children write their PIDs to the same
+        // `cgroup.procs` after spawn.
         if let Some(ref cgroup_base) = cgroup_path {
             let pid = std::process::id();
             let cgroup_name = format!("editor-lsp-{}", pid);
             let cgroup_full = cgroup_base.join(&cgroup_name);
 
-            // Try to create the cgroup directory
-            if fs::create_dir(&cgroup_full).is_ok() {
-                // Try memory limit (works without full delegation)
-                if let Some(memory_bytes) = max_memory_bytes {
-                    if set_cgroup_memory(&cgroup_full, memory_bytes).is_ok() {
+            // create_dir returns AlreadyExists if another spawn already set it
+            // up in this process; that's fine — we'll reuse it.
+            let cgroup_usable = match fs::create_dir(&cgroup_full) {
+                Ok(()) => {
+                    // Freshly created — set limits on it.
+                    if let Some(memory_bytes) = max_memory_bytes {
+                        if set_cgroup_memory(&cgroup_full, memory_bytes).is_ok() {
+                            memory_method = "cgroup";
+                            tracing::debug!(
+                                "Set memory limit via cgroup: {} MB ({}% of system)",
+                                memory_bytes / 1024 / 1024,
+                                self.max_memory_percent.unwrap_or(0)
+                            );
+                        }
+                    }
+                    if let Some(cpu_pct) = self.max_cpu_percent {
+                        if set_cgroup_cpu(&cgroup_full, cpu_pct).is_ok() {
+                            cpu_method = "cgroup";
+                            tracing::debug!("Set CPU limit via cgroup: {}%", cpu_pct);
+                        }
+                    }
+                    // If no limit took effect, drop the empty cgroup.
+                    if memory_method != "cgroup" && cpu_method != "cgroup" {
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = fs::remove_dir(&cgroup_full);
+                        false
+                    } else {
+                        true
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                    // Already set up by a previous spawn in this process.
+                    // Assume the limits were applied then; reuse the cgroup.
+                    if max_memory_bytes.is_some() {
                         memory_method = "cgroup";
-                        tracing::debug!(
-                            "Set memory limit via cgroup: {} MB ({}% of system)",
-                            memory_bytes / 1024 / 1024,
-                            self.max_memory_percent.unwrap_or(0)
-                        );
                     }
-                }
-
-                // Try CPU limit (requires cpu controller delegation)
-                if let Some(cpu_pct) = self.max_cpu_percent {
-                    if set_cgroup_cpu(&cgroup_full, cpu_pct).is_ok() {
+                    if self.max_cpu_percent.is_some() {
                         cpu_method = "cgroup";
-                        tracing::debug!("Set CPU limit via cgroup: {}%", cpu_pct);
                     }
+                    true
                 }
+                Err(_) => false,
+            };
 
-                // If we successfully set at least one limit via cgroup, use it
-                if memory_method == "cgroup" || cpu_method == "cgroup" {
-                    let cgroup_to_use = cgroup_full.clone();
-
-                    unsafe {
-                        cmd.pre_exec(move || {
-                            // Move process into the cgroup
-                            if let Err(e) = move_to_cgroup(&cgroup_to_use) {
-                                tracing::warn!("Failed to move process to cgroup: {}", e);
-                            }
-                            Ok(())
-                        });
-                    }
-
-                    tracing::info!(
-                        "Using resource limits: memory={} ({}), CPU={} ({})",
-                        self.max_memory_percent
-                            .map(|p| format!("{}%", p))
-                            .unwrap_or("unlimited".to_string()),
-                        memory_method,
-                        self.max_cpu_percent
-                            .map(|c| format!("{}%", c))
-                            .unwrap_or("unlimited".to_string()),
-                        cpu_method
-                    );
-                    return Ok(());
-                } else {
-                    // Best-effort cleanup of unused cgroup directory.
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = fs::remove_dir(&cgroup_full);
-                }
+            if cgroup_usable {
+                action.cgroup_dir = Some(cgroup_full);
+                tracing::info!(
+                    "Using resource limits: memory={} ({}), CPU={} ({})",
+                    self.max_memory_percent
+                        .map(|p| format!("{}%", p))
+                        .unwrap_or("unlimited".to_string()),
+                    memory_method,
+                    self.max_cpu_percent
+                        .map(|c| format!("{}%", c))
+                        .unwrap_or("unlimited".to_string()),
+                    cpu_method
+                );
+                return Ok(action);
             }
         }
 
-        // Fall back to setrlimit for memory if cgroup didn't work
+        // Fall back to setrlimit for memory if cgroup didn't work.
+        //
+        // Note: `pre_exec` runs in the forked child between fork and exec, so
+        // it must only use async-signal-safe operations.  `setrlimit` itself
+        // is safe; we deliberately avoid any logging or allocation inside the
+        // closure to keep it fork-safe.
         if memory_method != "cgroup" && max_memory_bytes.is_some() {
             unsafe {
                 cmd.pre_exec(move || {
                     if let Some(mem_limit) = max_memory_bytes {
-                        if let Err(e) = apply_memory_limit_setrlimit(mem_limit) {
-                            tracing::warn!("Failed to apply memory limit via setrlimit: {}", e);
-                        } else {
-                            tracing::debug!(
-                                "Applied memory limit via setrlimit: {} MB",
-                                mem_limit / 1024 / 1024
-                            );
-                        }
+                        // Ignore errors — we cannot safely log from a
+                        // post-fork / pre-exec context.
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = apply_memory_limit_setrlimit(mem_limit);
                     }
                     Ok(())
                 });
@@ -156,7 +215,7 @@ impl ProcessLimits {
             }
         );
 
-        Ok(())
+        Ok(action)
     }
 }
 
@@ -234,15 +293,6 @@ fn is_writable(path: &Path) -> bool {
     } else {
         false
     }
-}
-
-/// Move the current process into a cgroup
-#[cfg(target_os = "linux")]
-fn move_to_cgroup(cgroup_path: &Path) -> io::Result<()> {
-    let procs_file = cgroup_path.join("cgroup.procs");
-    let pid = std::process::id();
-    fs::write(&procs_file, format!("{}", pid))?;
-    Ok(())
 }
 
 /// Get the current user's UID
