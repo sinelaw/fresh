@@ -1799,8 +1799,14 @@ impl Editor {
                 // Start separator drag
                 self.mouse_state.dragging_separator = Some((*split_id, *direction));
                 self.mouse_state.drag_start_position = Some((col, row));
-                // Store the initial ratio
-                if let Some(ratio) = self.split_manager.get_ratio((*split_id).into()) {
+                // Store the initial ratio. The split may live in the main
+                // tree or inside a stashed Grouped subtree (e.g. theme editor
+                // panels), so try both.
+                let ratio = self
+                    .split_manager
+                    .get_ratio((*split_id).into())
+                    .or_else(|| self.grouped_split_ratio(*split_id));
+                if let Some(ratio) = ratio {
                     self.mouse_state.drag_start_ratio = Some(ratio);
                 }
                 return Ok(());
@@ -2367,8 +2373,15 @@ impl Editor {
             let ratio_delta = delta as f32 / total_size as f32;
             let new_ratio = (start_ratio + ratio_delta).clamp(0.1, 0.9);
 
-            // Update the split ratio
-            self.split_manager.set_ratio(split_id, new_ratio);
+            // Update the split ratio. The container may live in the main
+            // split tree or inside a stashed Grouped subtree (buffer group
+            // panels like the theme editor); try the main tree first and
+            // fall back to the grouped subtrees.
+            if self.split_manager.get_ratio(split_id.into()).is_some() {
+                self.split_manager.set_ratio(split_id, new_ratio);
+            } else {
+                self.set_grouped_split_ratio(split_id, new_ratio);
+            }
         }
 
         Ok(())

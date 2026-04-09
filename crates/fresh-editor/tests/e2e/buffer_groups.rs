@@ -162,3 +162,95 @@ fn test_group_panel_click_routes_to_clicked_panel() {
         "after clicking the LEFT panel, focus should be LEFT"
     );
 }
+
+/// Dragging the vertical separator between two buffer-group panels must
+/// resize them. The group's inner splits live in the `grouped_subtrees`
+/// side-map outside the main split tree, so this exercises the hit-test
+/// wiring that adds grouped separators to `separator_areas` and the
+/// get/set-ratio fallback that reaches into Grouped subtrees.
+#[test]
+fn test_group_panel_separator_drag_resizes_inner_split() {
+    use fresh::model::event::SplitDirection;
+
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    setup_test_buffer_groups_plugin(&project_root);
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+    harness.render().unwrap();
+
+    // Delay to avoid double-click detection
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
+    // Open the 2-panel buffer group (left/right, ratio 0.5, vertical
+    // separator).
+    open_test_bg(&mut harness);
+    harness.render().unwrap();
+
+    // The group's inner vertical separator must now show up in the
+    // hit-test cache. Before the fix this vec was empty for grouped
+    // inner splits.
+    let separators = harness.editor().get_separator_areas().to_vec();
+    let (split_id, direction, sep_x, sep_y, sep_length) = separators
+        .iter()
+        .copied()
+        .find(|(_, dir, _, _, _)| *dir == SplitDirection::Vertical)
+        .expect(
+            "expected a vertical separator between the group's LEFT/RIGHT panels \
+             in separator_areas after opening the buffer group",
+        );
+
+    // Initial ratio is 0.5 (from the plugin layout).
+    let initial_ratio = harness
+        .editor()
+        .get_split_ratio(split_id.into())
+        .expect("grouped inner split ratio must be accessible via get_split_ratio");
+    assert!(
+        (initial_ratio - 0.5).abs() < 0.05,
+        "initial ratio should be near 0.5, got {initial_ratio}"
+    );
+
+    // Drag the separator right to grow the LEFT panel.
+    let start_row = sep_y + sep_length / 2;
+    harness
+        .mouse_drag(sep_x, start_row, sep_x + 15, start_row)
+        .unwrap();
+    let grown = harness
+        .editor()
+        .get_split_ratio(split_id.into())
+        .expect("grouped ratio still accessible after drag");
+    assert!(
+        grown > initial_ratio + 0.05,
+        "dragging the grouped separator right should grow the LEFT panel ratio. \
+         was {initial_ratio}, now {grown}"
+    );
+
+    std::thread::sleep(double_click_delay);
+
+    // Re-query separator position (it moved with the ratio) and drag left.
+    let separators_after = harness.editor().get_separator_areas().to_vec();
+    let (_, _, sep_x2, sep_y2, sep_length2) = separators_after
+        .iter()
+        .copied()
+        .find(|(id, _, _, _, _)| *id == split_id)
+        .expect("grouped separator should still be in separator_areas after drag");
+    let start_row = sep_y2 + sep_length2 / 2;
+    harness
+        .mouse_drag(sep_x2, start_row, sep_x2.saturating_sub(20), start_row)
+        .unwrap();
+    let shrunk = harness
+        .editor()
+        .get_split_ratio(split_id.into())
+        .expect("grouped ratio still accessible after second drag");
+    assert!(
+        shrunk < grown - 0.05,
+        "dragging the grouped separator left should shrink the LEFT panel ratio. \
+         was {grown}, now {shrunk}"
+    );
+}

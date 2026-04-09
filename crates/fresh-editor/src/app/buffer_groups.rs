@@ -419,6 +419,40 @@ impl super::Editor {
         }
     }
 
+    /// Look up the ratio of a split container that lives inside one of the
+    /// stashed Grouped subtrees (i.e. not in the main split tree). Returns
+    /// `None` if no grouped subtree contains this container.
+    pub(crate) fn grouped_split_ratio(
+        &self,
+        container: crate::model::event::ContainerId,
+    ) -> Option<f32> {
+        use crate::view::split::SplitNode;
+        for node in self.grouped_subtrees.values() {
+            if let Some(SplitNode::Split { ratio, .. }) = node.find(container.into()) {
+                return Some(*ratio);
+            }
+        }
+        None
+    }
+
+    /// Set the ratio of a split container that lives inside a stashed
+    /// Grouped subtree. Returns `true` if the container was found and
+    /// updated.
+    pub(crate) fn set_grouped_split_ratio(
+        &mut self,
+        container: crate::model::event::ContainerId,
+        new_ratio: f32,
+    ) -> bool {
+        use crate::view::split::SplitNode;
+        for node in self.grouped_subtrees.values_mut() {
+            if let Some(SplitNode::Split { ratio, .. }) = node.find_mut(container.into()) {
+                *ratio = new_ratio.clamp(0.1, 0.9);
+                return true;
+            }
+        }
+        false
+    }
+
     /// Close a buffer group by its Grouped-node LeafId (used by tab close button).
     pub(crate) fn close_buffer_group_by_leaf(&mut self, group_leaf: LeafId) {
         // Find the BufferGroupId whose stored representative_split matches

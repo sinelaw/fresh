@@ -341,9 +341,14 @@ impl Editor {
         &self.cached_layout.split_areas
     }
 
-    /// Get the ratio of a specific split (for testing)
+    /// Get the ratio of a specific split (for testing).
+    ///
+    /// Looks in the main split tree first, then falls back to splits
+    /// that live inside stashed Grouped subtrees (buffer-group panels).
     pub fn get_split_ratio(&self, split_id: SplitId) -> Option<f32> {
-        self.split_manager.get_ratio(split_id)
+        self.split_manager
+            .get_ratio(split_id)
+            .or_else(|| self.grouped_split_ratio(crate::model::event::ContainerId(split_id)))
     }
 
     /// Get the active split ID (for testing)

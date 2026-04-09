@@ -985,6 +985,13 @@ impl SplitRenderer {
         Vec<(LeafId, u16, u16, u16)>,                      // maximize split button areas
         HashMap<LeafId, Vec<ViewLineMapping>>,             // view line mappings for mouse clicks
         Vec<(LeafId, BufferId, Rect, usize, usize, usize)>, // horizontal scrollbar areas (rect + max_content_width + thumb_start + thumb_end)
+        Vec<(
+            crate::model::event::ContainerId,
+            SplitDirection,
+            u16,
+            u16,
+            u16,
+        )>, // hit areas for separators inside active Grouped subtrees
     ) {
         let _span = tracing::trace_span!("render_content").entered();
 
@@ -1560,6 +1567,15 @@ impl SplitRenderer {
         // Walk base_visible again to render internal separators of active
         // groups (the group's Split nodes live in the side-map, not in the
         // main split tree, so split_manager doesn't know about them).
+        // Collect these separators with their container IDs so the hit-test
+        // path in `app::render` can wire up dragging.
+        let mut grouped_separator_areas: Vec<(
+            crate::model::event::ContainerId,
+            SplitDirection,
+            u16,
+            u16,
+            u16,
+        )> = Vec::new();
         for (main_split_id, _main_buffer_id, split_area) in &base_visible {
             let active_group = split_view_states
                 .as_deref()
@@ -1579,10 +1595,11 @@ impl SplitRenderer {
                         show_horizontal_scrollbar,
                     );
                     if let crate::view::split::SplitNode::Grouped { layout, .. } = grouped {
-                        for (direction, x, y, length) in
-                            layout.get_separators(main_layout.content_rect)
+                        for (id, direction, x, y, length) in
+                            layout.get_separators_with_ids(main_layout.content_rect)
                         {
                             Self::render_separator(frame, direction, x, y, length, theme);
+                            grouped_separator_areas.push((id, direction, x, y, length));
                         }
                     }
                 }
@@ -1596,6 +1613,7 @@ impl SplitRenderer {
             maximize_split_areas,
             view_line_mappings,
             horizontal_scrollbar_areas,
+            grouped_separator_areas,
         )
     }
 

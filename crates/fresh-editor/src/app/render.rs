@@ -435,6 +435,7 @@ impl Editor {
             maximize_split_areas,
             view_line_mappings,
             horizontal_scrollbar_areas,
+            grouped_separator_areas,
         ) = SplitRenderer::render_content(
             frame,
             editor_content_area,
@@ -554,9 +555,15 @@ impl Editor {
         self.cached_layout.close_split_areas = close_split_areas;
         self.cached_layout.maximize_split_areas = maximize_split_areas;
         self.cached_layout.view_line_mappings = view_line_mappings;
-        self.cached_layout.separator_areas = self
+        let mut separator_areas = self
             .split_manager
             .get_separators_with_ids(editor_content_area);
+        // Grouped subtrees live in a side-map outside the main split tree, so
+        // their inner separators are not visited by `get_separators_with_ids`
+        // above. The renderer collected them (using the same content rect it
+        // drew them at) — merge so clicks on those rendered columns register.
+        separator_areas.extend(grouped_separator_areas);
+        self.cached_layout.separator_areas = separator_areas;
         self.cached_layout.editor_content_area = Some(editor_content_area);
 
         // Render hover highlights for separators and scrollbars
