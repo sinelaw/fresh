@@ -1,5 +1,27 @@
 # Release Notes
 
+## 0.2.23
+
+### Improvements
+
+* **Windows-1251 Encoding**: Added support for Windows-1251 (Cyrillic) encoding for loading and saving Cyrillic-script text files (#1453). Available in the encoding selector; auto-detected for text mixing uppercase and lowercase Cyrillic letters.
+
+* **Theme Editor and Package Manager**: Multi-panel plugin UIs now behave like native splits — per-panel mouse-wheel scrolling and scrollbars, draggable panel dividers, clicks routed to the panel under the cursor, the selected row staying visible as you navigate, and "Close Buffer" closing the whole UI in one go.
+
+* **File Finder in Command Palette (Ctrl+P)**: Much faster and more responsive on large local and remote trees — file enumeration runs in the background with results streaming in as they're found, typing a path like `etc/hosts` produces instant filesystem-confirmed matches, and ranking now reliably prefers contiguous matches (`results` finds `results.json` first) including multi-term queries that reconstruct a path or identifier (`etc hosts` → `/etc/hosts`, `save file` → `save_file.rs`).
+
+* **Review Diff**: Brough back features that were dropped in the rewrite in version 0.2.22: stage, unstage, and discard individual hunks; jump between hunks with `n`/`p`; leave line comments (`c`) and overall session notes (`N`), edit or delete them with confirmation, and see notes in the file list panel and export the review to a markdown file. Redesigned toolbar of styled key hints that adapts to the focused panel.
+
+* **Keybinding Editor**: Special keys like Esc, Tab, and Enter can now be bound — press Enter on the key field to enter capture mode, then the next keypress is recorded as-is (#1501). Fixed parent modal to be dimmed while a sub-dialog is open.
+
+### Bug Fixes
+
+* Fixed word wrap producing single-character-per-line output on narrow terminals with deeply indented code — the hanging indent was being double-counted (#1502).
+
+* Fixed LSP completion popup showing duplicate entries when reopened (#1514).
+
+* Fixed LSP `auto_start` being ignored on a per-server basis when multiple servers are configured for one language — opening a file no longer drags in every enabled server, only those individually marked `auto_start`.
+
 ## 0.2.22
 
 ### Features
@@ -27,8 +49,6 @@
 * **Selection Prompts**: Pre-filled text is now selected so typing immediately replaces it.
 
 * **Theme Fixes**: Fixed low contrast in Nord, Solarized Dark, Light, and Dracula themes. Fixed command palette selected row using wrong foreground color. Syntax highlighting colors are now preserved in text selections.
-
-* **Windows-1251 Encoding**: Added support for Windows-1251 (Cyrillic) encoding for loading and saving Russian and other Slavic language files (#1453). Available in the encoding selector; auto-detected for text mixing uppercase and lowercase Cyrillic letters.
 
 ### Bug Fixes
 
