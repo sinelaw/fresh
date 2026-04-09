@@ -75,3 +75,14 @@ pub mod menu;
 pub mod overlay;
 pub mod services;
 pub mod text_property;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_id_display_format() {
+        assert_eq!(TerminalId(0).to_string(), "Terminal-0");
+        assert_eq!(TerminalId(42).to_string(), "Terminal-42");
+    }
+}

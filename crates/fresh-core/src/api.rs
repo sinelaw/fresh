@@ -3415,4 +3415,17 @@ mod tests {
         assert!(json.contains("ScrollToLineCenter"));
         assert!(json.contains("50"));
     }
+
+    /// `JsCallbackId` round-trips through `u64` via `new` / `as_u64` / `From`
+    /// and renders as its underlying integer via `Display`.
+    #[test]
+    fn js_callback_id_conversions_and_display() {
+        for raw in [0u64, 1, 42, u64::MAX] {
+            let id = JsCallbackId::new(raw);
+            assert_eq!(id.as_u64(), raw);
+            assert_eq!(u64::from(id), raw);
+            assert_eq!(JsCallbackId::from(raw), id);
+            assert_eq!(id.to_string(), raw.to_string());
+        }
+    }
 }
