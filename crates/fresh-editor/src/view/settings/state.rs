@@ -1145,7 +1145,21 @@ impl SettingsState {
         // Get info from the current dialog's focused field
         let nested_info = self.entry_dialog().and_then(|dialog| {
             let item = dialog.current_item()?;
-            let path = format!("{}/{}", dialog.map_path, item.path.trim_start_matches('/'));
+            // The nested dialog path must root at the current entry's full
+            // path, not just at `map_path`. Otherwise the entry key segment
+            // (e.g. `quicklsp` under `/universal_lsp`) is dropped and the
+            // nested save records a pending change at `/universal_lsp/`,
+            // which eventually writes an empty-string key into the config.
+            let base = dialog.entry_path();
+            let relative = item.path.trim_start_matches('/');
+            let path = if relative.is_empty() {
+                // `is_single_value` dialogs use an empty item path because
+                // the single non-key item IS the entry's value. In that
+                // case the nested dialog lives at the entry path itself.
+                base
+            } else {
+                format!("{}/{}", base, relative)
+            };
 
             match &item.control {
                 SettingControl::Map(map_state) => {
@@ -1322,17 +1336,20 @@ impl SettingsState {
         let is_nested = !self.entry_dialog_stack.is_empty();
 
         if is_nested {
-            // Nested dialog - update the parent dialog's ObjectArray item
-            // Extract the item path within the parent dialog by removing the parent's
-            // map_path prefix. For example, if array_path is "/lsp/" and the parent's
-            // map_path is "/lsp", the item path should be "" (the root value item).
-            let parent_map_path = self
+            // Nested dialog - update the parent dialog's ObjectArray item.
+            // Extract the item path within the parent dialog by stripping the
+            // parent's full entry path (map_path + "/" + entry_key) from the
+            // nested dialog's array path. For an is_single_value parent (e.g.
+            // a quicklsp entry whose value schema is an array), the inner
+            // ObjectArray item has path "" and the nested dialog lives exactly
+            // at the entry path, so the stripped item path is "".
+            let parent_entry_path = self
                 .entry_dialog_stack
                 .last()
-                .map(|p| p.map_path.as_str())
-                .unwrap_or("");
+                .map(|p| p.entry_path())
+                .unwrap_or_default();
             let item_path = array_path
-                .strip_prefix(parent_map_path)
+                .strip_prefix(parent_entry_path.as_str())
                 .unwrap_or(&array_path)
                 .trim_end_matches('/')
                 .to_string();
@@ -2586,5 +2603,156 @@ mod tests {
         // Switching layers clears pending changes
         state.cycle_target_layer();
         assert!(!state.has_changes());
+    }
+
+    /// Regression test for the quicklsp settings-save bug.
+    ///
+    /// When editing an existing map entry whose value schema is itself an
+    /// array (the `is_single_value` case — e.g. `universal_lsp.quicklsp`
+    /// where the value schema is `LspLanguageConfig` = array of
+    /// `LspServerConfig`), opening a nested ArrayItem dialog used to
+    /// compute its `map_path` from `parent.map_path + item.path` only —
+    /// dropping the entry key segment whenever `item.path` was `""`.
+    /// The nested dialog's save would then record a pending change at
+    /// `/universal_lsp/`, which downstream wrote an empty-string key
+    /// under `universal_lsp` in the saved config file.
+    ///
+    /// This test exercises the real `open_nested_entry_dialog` + save
+    /// path using a schema shaped like `LspLanguageConfig` and asserts:
+    /// 1. The nested dialog's `map_path` is the full entry path.
+    /// 2. The recorded pending-change path is the full entry path, not
+    ///    `/universal_lsp/` and not any `/universal_lsp/*` path with a
+    ///    trailing slash.
+    #[test]
+    fn nested_array_save_records_full_entry_path() {
+        // EntryDialogState is already re-exported via `use super::*;`.
+        // Pull in SettingType from the sibling schema module explicitly.
+        use crate::view::settings::schema::SettingType;
+
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+
+        // LspServerConfig-ish: a single "enabled" boolean field.
+        let item_schema = SettingSchema {
+            path: "/item".to_string(),
+            name: "Server".to_string(),
+            description: None,
+            setting_type: SettingType::Object {
+                properties: vec![SettingSchema {
+                    path: "/enabled".to_string(),
+                    name: "Enabled".to_string(),
+                    description: None,
+                    setting_type: SettingType::Boolean,
+                    default: Some(serde_json::json!(false)),
+                    read_only: false,
+                    section: None,
+                    order: None,
+                    nullable: false,
+                    enum_from: None,
+                }],
+            },
+            default: None,
+            read_only: false,
+            section: None,
+            order: None,
+            nullable: false,
+            enum_from: None,
+        };
+
+        // universal_lsp's value schema: ObjectArray of the item schema above.
+        // Note: path is "" just like the real schema parser produces for
+        // `parse_setting("value", "", ...)` — this is what drives the
+        // `is_single_value` code path in EntryDialogState::from_schema.
+        let value_schema = SettingSchema {
+            path: String::new(),
+            name: "value".to_string(),
+            description: None,
+            setting_type: SettingType::ObjectArray {
+                item_schema: Box::new(item_schema.clone()),
+                display_field: None,
+            },
+            default: None,
+            read_only: false,
+            section: None,
+            order: None,
+            nullable: false,
+            enum_from: None,
+        };
+
+        // Parent dialog: user is editing the existing "quicklsp" entry
+        // under /universal_lsp. This is the MapEntry dialog the real UI
+        // opens via `open_entry_dialog`.
+        let parent = EntryDialogState::from_schema(
+            "quicklsp".to_string(),
+            &serde_json::json!([{ "enabled": true }]),
+            &value_schema,
+            "/universal_lsp",
+            false, // existing entry
+            false,
+        );
+
+        // Precondition: is_single_value triggers and entry_path is correct.
+        assert!(
+            parent.is_single_value,
+            "array value_schema should trigger is_single_value path"
+        );
+        assert_eq!(parent.entry_path(), "/universal_lsp/quicklsp");
+
+        state.entry_dialog_stack.push(parent);
+
+        // Exercise the REAL open_nested_entry_dialog — this is the code
+        // path that used to produce the wrong path. The outer dialog's
+        // ObjectArray item is already focused with its first entry
+        // selected (init_object_array_focus in from_schema).
+        state.open_nested_entry_dialog();
+
+        // A nested dialog should have been pushed.
+        assert_eq!(
+            state.entry_dialog_stack.len(),
+            2,
+            "open_nested_entry_dialog should have pushed a nested dialog"
+        );
+
+        // CRITICAL (part 1): the nested dialog must root at the full
+        // entry path, not at the parent's map_path alone.
+        let nested_map_path = state
+            .entry_dialog_stack
+            .last()
+            .map(|d| d.map_path.clone())
+            .unwrap();
+        assert_eq!(
+            nested_map_path, "/universal_lsp/quicklsp",
+            "BUG: nested dialog's map_path dropped the 'quicklsp' key segment"
+        );
+
+        // Save the nested dialog via the normal dispatch.
+        state.save_entry_dialog();
+
+        // Nested dialog should be popped, parent still on the stack.
+        assert_eq!(state.entry_dialog_stack.len(), 1);
+
+        // CRITICAL (part 2): the pending change must be rooted at the
+        // full entry path, not at `/universal_lsp/` with a trailing slash.
+        assert!(
+            !state.pending_changes.contains_key("/universal_lsp/"),
+            "regression: pending change recorded under empty-key path /universal_lsp/. \
+             All keys: {:?}",
+            state.pending_changes.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            !state
+                .pending_changes
+                .keys()
+                .any(|k| k.starts_with("/universal_lsp") && k.ends_with('/')),
+            "no /universal_lsp/* path should end in a trailing slash; got {:?}",
+            state.pending_changes.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            state
+                .pending_changes
+                .contains_key("/universal_lsp/quicklsp"),
+            "expected pending change at /universal_lsp/quicklsp, got {:?}",
+            state.pending_changes.keys().collect::<Vec<_>>()
+        );
     }
 }

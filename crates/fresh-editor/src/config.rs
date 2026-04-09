@@ -1,4 +1,4 @@
-use crate::types::{context_keys, LspFeature, LspLanguageConfig, LspServerConfig, ProcessLimits};
+use crate::types::{context_keys, LspLanguageConfig, LspServerConfig, ProcessLimits};
 
 use rust_i18n::t;
 use schemars::JsonSchema;
@@ -4532,6 +4532,10 @@ impl Config {
         //
         // Disabled by default — enable via config or command palette after
         // installing: `cargo install --path crates/quicklsp`
+        //
+        // `only_features` is left unset so quicklsp can serve every feature it
+        // advertises via its server capabilities (including go-to-definition).
+        // Users who want to scope it down can set `only_features` explicitly.
         universal.insert(
             "quicklsp".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
@@ -4544,12 +4548,7 @@ impl Config {
                 env: Default::default(),
                 language_id_overrides: Default::default(),
                 name: Some("QuickLSP".to_string()),
-                only_features: Some(vec![
-                    LspFeature::Hover,
-                    LspFeature::SignatureHelp,
-                    LspFeature::DocumentSymbols,
-                    LspFeature::WorkspaceSymbols,
-                ]),
+                only_features: None,
                 except_features: None,
                 root_markers: vec![
                     "Cargo.toml".to_string(),
@@ -6159,6 +6158,14 @@ mod tests {
         assert_eq!(server.command, "quicklsp");
         assert!(!server.enabled, "quicklsp should be disabled by default");
         assert_eq!(server.name.as_deref(), Some("QuickLSP"));
+        // only_features must stay unset so quicklsp can serve every capability
+        // its server advertises — including go-to-definition. A restrictive
+        // whitelist here silently breaks F12 for users on a vanilla install.
+        assert!(
+            server.only_features.is_none(),
+            "quicklsp must not default to a feature whitelist"
+        );
+        assert!(server.except_features.is_none());
     }
 
     #[test]

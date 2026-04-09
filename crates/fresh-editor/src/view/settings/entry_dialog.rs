@@ -256,6 +256,30 @@ impl EntryDialogState {
         self.entry_key.clone()
     }
 
+    /// Full JSON pointer path to the entry this dialog edits.
+    ///
+    /// For an existing map entry under `/universal_lsp` with key `quicklsp`,
+    /// this returns `/universal_lsp/quicklsp`. For array items, `entry_key`
+    /// is the stringified index. For brand-new map entries whose key has
+    /// not been chosen yet, this falls back to `map_path` (the parent
+    /// container) — callers are expected to avoid writing at that path.
+    ///
+    /// Nested dialogs and any pending-change paths derived from this dialog
+    /// must be rooted here — not at `map_path` — otherwise the entry key
+    /// segment is dropped and changes land under `""` in the saved config.
+    pub fn entry_path(&self) -> String {
+        // Use the live key field so new entries pick up whatever the user
+        // has typed before opening a nested dialog. For existing entries
+        // the key field is read-only and equals `entry_key`, so this is
+        // consistent with the on-disk path.
+        let key = self.get_key();
+        if key.is_empty() {
+            self.map_path.clone()
+        } else {
+            format!("{}/{}", self.map_path, key)
+        }
+    }
+
     /// Get button count (3 for existing entries with Delete, 2 for new/no_delete entries)
     pub fn button_count(&self) -> usize {
         if self.is_new || self.no_delete {
@@ -1404,6 +1428,58 @@ mod tests {
 
         dialog.focus_prev();
         assert!(dialog.focus_on_buttons); // Wraps to buttons, not to read-only Key
+    }
+
+    #[test]
+    fn entry_path_joins_map_path_and_entry_key() {
+        let schema = create_test_schema();
+
+        // Existing entry: full path is map_path + "/" + entry_key
+        let existing = EntryDialogState::from_schema(
+            "rust".to_string(),
+            &serde_json::json!({}),
+            &schema,
+            "/lsp",
+            false,
+            false,
+        );
+        assert_eq!(existing.entry_path(), "/lsp/rust");
+
+        // New entry with no key typed yet falls back to the parent map path.
+        // Nested dialogs keyed off this are outside the scope of this test.
+        let new_entry = EntryDialogState::from_schema(
+            String::new(),
+            &serde_json::json!({}),
+            &schema,
+            "/lsp",
+            true,
+            false,
+        );
+        assert_eq!(new_entry.entry_path(), "/lsp");
+    }
+
+    #[test]
+    fn entry_path_tracks_live_key_edits_for_new_entries() {
+        let schema = create_test_schema();
+        let mut dialog = EntryDialogState::from_schema(
+            String::new(),
+            &serde_json::json!({}),
+            &schema,
+            "/universal_lsp",
+            true,
+            false,
+        );
+
+        // User types a key into the editable key field.
+        for item in dialog.items.iter_mut() {
+            if item.path == "__key__" {
+                if let SettingControl::Text(state) = &mut item.control {
+                    state.value = "myserver".to_string();
+                }
+            }
+        }
+
+        assert_eq!(dialog.entry_path(), "/universal_lsp/myserver");
     }
 
     #[test]
