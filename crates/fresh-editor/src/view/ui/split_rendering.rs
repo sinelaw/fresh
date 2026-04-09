@@ -5667,7 +5667,13 @@ impl SplitRenderer {
 
                 if remaining_cols > 0 {
                     // Find the highest priority background color from overlays with extend_to_line_end
-                    // that overlap with this line's byte range
+                    // that overlap with this line's byte range. Overlay ranges
+                    // are half-open `[start, end)`, so an overlay whose end
+                    // equals this line's first byte ends *before* the line
+                    // begins and must NOT match — `range.end > start` (strict),
+                    // not `>=`. With `>=`, an overlay covering the previous
+                    // line's content + trailing newline would bleed its bg
+                    // onto this line's trailing fill.
                     let fill_style: Option<Style> = if let (Some(start), Some(end)) =
                         (first_line_byte_pos, last_line_byte_pos)
                     {
@@ -5676,7 +5682,7 @@ impl SplitRenderer {
                             .filter(|(overlay, range)| {
                                 overlay.extend_to_line_end
                                     && range.start <= end
-                                    && range.end >= start
+                                    && range.end > start
                             })
                             .max_by_key(|(o, _)| o.priority)
                             .and_then(|(overlay, _)| {

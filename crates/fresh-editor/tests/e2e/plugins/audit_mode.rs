@@ -3112,3 +3112,162 @@ fn test_review_diff_panel_viewport_follows_cursor_after_scroll() {
         final_screen
     );
 }
+
+/// Helper for the cursor-line / drill-down tests below: build a repo with
+/// a file that yields a long diff containing several consecutive `-`/`+`
+/// lines per hunk in the review-diff right panel. The consecutive `+`
+/// lines matter for `test_review_diff_cursor_line_highlight_does_not_bleed_…`
+/// because the bug only manifests when the row immediately below the
+/// cursor row also has an entry-level `extendToLineEnd` bg of its own.
+fn setup_many_hunks_repo() -> (GitTestRepo, std::path::PathBuf) {
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+    let file_path = repo.path.join("manyhunks.txt");
+    let mut original = String::new();
+    for i in 1..=300 {
+        original.push_str(&format!("Line {}\n", i));
+    }
+    fs::write(&file_path, &original).expect("write original");
+    repo.git_add_all();
+    repo.git_commit("Initial");
+
+    // Modify lines 10-12, 20-22, 30-32, … so each hunk produces a block
+    // of three `-` lines followed by three `+` lines (six adjacent -/+
+    // rows per hunk, ~30 hunks total).
+    let mut modified = String::new();
+    for i in 1..=300 {
+        if matches!(i % 10, 0 | 1 | 2) && i >= 10 {
+            modified.push_str(&format!("MODIFIED line {}\n", i));
+        } else {
+            modified.push_str(&format!("Line {}\n", i));
+        }
+    }
+    fs::write(&file_path, &modified).expect("write modified");
+    (repo, file_path)
+}
+
+/// Find the screen row containing a substring. Returns the 0-indexed row, or
+/// panics if not found.
+fn find_screen_row(harness: &EditorTestHarness, needle: &str) -> usize {
+    let screen = harness.screen_to_string();
+    screen
+        .lines()
+        .position(|l| l.contains(needle))
+        .unwrap_or_else(|| panic!("Did not find {needle:?} on screen:\n{screen}"))
+}
+
+/// Regression test for the cursor-line highlight bleeding into the next row.
+///
+/// `applyCursorLineOverlay` in `audit_mode.ts` paints a bg overlay covering
+/// `[diffLineByteOffsets[idx], diffLineByteOffsets[idx+1])`. The end offset
+/// is the start of the *next* row, which means the range includes the
+/// trailing newline byte and the renderer extends the bg one cell into the
+/// row below — visible as a tinted leading-whitespace block on the next
+/// content line.
+#[test]
+fn test_review_diff_cursor_line_highlight_does_not_bleed_to_next_row() {
+    init_tracing_from_env();
+    let (repo, file_path) = setup_many_hunks_repo();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("MODIFIED line 10"))
+        .unwrap();
+
+    let _ = open_review_diff(&mut harness);
+
+    // Tab into the diff panel and walk the cursor down so it sits on a
+    // `+` row whose *next* row is also a `+` row. The bug only manifests
+    // when both the cursor row and the row below it carry an entry-level
+    // `extendToLineEnd` bg — the cursor overlay's range inadvertently
+    // includes the trailing newline byte and the renderer's "overlay
+    // overlaps line" filter (`>=` end vs. line.start) considers the
+    // overlay to cover the next row's leading content cell.
+    //
+    // First hunk buffer rows:
+    //   1: "DIFF FOR manyhunks.txt"
+    //   2: "@@ -7,9 +7,9 @@"
+    //   3: " Line 7"
+    //   4: " Line 8"
+    //   5: " Line 9"
+    //   6: "-Line 10"
+    //   7: "-Line 11"
+    //   8: "-Line 12"
+    //   9: "+MODIFIED line 10"
+    //  10: "+MODIFIED line 11"   ← stop here
+    //  11: "+MODIFIED line 12"
+    //  12: " Line 13"
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("n Next"))
+        .unwrap();
+    for _ in 0..9 {
+        harness
+            .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Find the divider column on the panel-header row.
+    let screen = harness.screen_to_string();
+    let header_row = find_screen_row(&harness, "DIFF FOR manyhunks.txt");
+    let header_line: String = screen.lines().nth(header_row).unwrap().to_string();
+    let divider_col = header_line
+        .char_indices()
+        .find(|(_, c)| *c == '│')
+        .map(|(i, _)| i)
+        .expect("divider on header row");
+
+    // Find the row in the diff panel whose visible content cell has a bg
+    // that *differs* from the entry-level `+` ADD bg — that's the cursor
+    // row (where the cursor-line overlay sits on top of the entry style).
+    //
+    // We do this by walking down the rows of the diff panel area and
+    // probing two cells per row: one inside the visible content, one in
+    // the trailing fill. On a normal `+` row both cells have the entry
+    // ADD bg and match. On the cursor row both cells have the cursor
+    // highlight bg (still matching). On the row immediately below the
+    // cursor row WITH THE BUG, the visible content has the entry ADD bg
+    // but the trailing fill has the cursor highlight bg — they DIFFER,
+    // which is the assertion failure.
+    let content_x = (divider_col + 5) as u16; // inside the line text
+    let fill_x = (divider_col + 50) as u16; // well into the trailing fill
+
+    let bg_at = |x: u16, y: u16| -> Option<ratatui::style::Color> {
+        harness.get_cell_style(x, y).and_then(|s| s.bg)
+    };
+
+    // Sanity: probe `+` rows to make sure they have an entry-level bg
+    // (and the test is wired up correctly). We scan the diff panel area
+    // for any row where the content cell looks like a `+` row.
+    let probe_rows: Vec<u16> = ((header_row + 1) as u16..(header_row + 25) as u16).collect();
+    let mut bleed_rows: Vec<(
+        u16,
+        Option<ratatui::style::Color>,
+        Option<ratatui::style::Color>,
+    )> = Vec::new();
+    for &y in &probe_rows {
+        let c = bg_at(content_x, y);
+        let f = bg_at(fill_x, y);
+        if c != f {
+            bleed_rows.push((y, c, f));
+        }
+    }
+
+    assert!(
+        bleed_rows.is_empty(),
+        "Cursor-line highlight bg leaked into the trailing fill of one or \
+         more rows (bug shows the visible content and the trailing fill of \
+         the same row with different bgs). Mismatches: {:?}.\nScreen:\n{}",
+        bleed_rows,
+        screen
+    );
+}
