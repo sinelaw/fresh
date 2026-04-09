@@ -1184,6 +1184,23 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Scroll any split/panel showing `buffer_id` so `line` is visible.
+    /// Unlike `scrollToLineCenter`, this does not require a split id — it
+    /// updates every split's viewport whose active buffer is the given
+    /// buffer, including inner leaves of a buffer group. Use this from
+    /// a panel plugin to keep the user's "selected" row in view after
+    /// arrow-key navigation (the plugin's own selection state isn't
+    /// automatically reflected in the buffer cursor, so the core-driven
+    /// viewport would otherwise stay put).
+    pub fn scroll_buffer_to_line(&self, buffer_id: u32, line: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::ScrollBufferToLine {
+                buffer_id: BufferId(buffer_id as usize),
+                line: line as usize,
+            })
+            .is_ok()
+    }
+
     /// Find buffer by file path, returns buffer ID or 0 if not found
     pub fn find_buffer_by_path(&self, path: String) -> u32 {
         let path_buf = std::path::PathBuf::from(&path);

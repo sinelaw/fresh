@@ -3597,13 +3597,6 @@ fn test_palette_swatch_click_targets_correct_column() {
         found.expect("palette row should contain `██` after the divider")
     };
     let swatch_col_4_x: u16 = swatch_col_0_x + 3 * 4;
-    tracing::error!(
-        "PALETTE TEST palette_row_y={} swatch_col_0_x={} swatch_col_4_x={} pre-click screen:\n{}",
-        palette_row_y,
-        swatch_col_0_x,
-        swatch_col_4_x,
-        harness.screen_to_string()
-    );
 
     let color_at_col0 = harness
         .get_cell_style(swatch_col_0_x, palette_row_y)

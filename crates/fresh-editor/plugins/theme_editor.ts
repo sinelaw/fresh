@@ -1426,6 +1426,27 @@ function updateDisplay(): void {
     editor.setPanelContent(state.groupId, "tree", buildTreePanelEntries());
     editor.setPanelContent(state.groupId, "picker", buildPickerPanelEntries());
     editor.setPanelContent(state.groupId, "footer", buildFooterPanelEntries());
+
+    // Keep the selected tree row in view. The plugin's `selectedIndex`
+    // navigation doesn't move the buffer cursor, so without this the
+    // core-driven panel viewport would stay at the top even after many
+    // Down-arrow presses, causing the `▸` marker to scroll off-screen
+    // for sections with many fields.
+    const treeBufferId = state.panelBuffers["tree"];
+    if (typeof treeBufferId === "number") {
+      const treeLines = buildTreeLines();
+      let selectedLine = -1;
+      for (let i = 0; i < treeLines.length; i++) {
+        if (treeLines[i].index === state.selectedIndex && treeLines[i].selected) {
+          selectedLine = i;
+          break;
+        }
+      }
+      if (selectedLine >= 0) {
+        editor.scrollBufferToLine(treeBufferId, selectedLine);
+      }
+    }
+
     isUpdatingDisplay = false;
     return;
   }

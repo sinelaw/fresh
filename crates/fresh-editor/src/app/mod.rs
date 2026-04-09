@@ -6628,6 +6628,9 @@ impl Editor {
             } => {
                 self.handle_scroll_to_line_center(split_id, buffer_id, line);
             }
+            PluginCommand::ScrollBufferToLine { buffer_id, line } => {
+                self.handle_scroll_buffer_to_line(buffer_id, line);
+            }
             PluginCommand::SetEditorMode { mode } => {
                 self.handle_set_editor_mode(mode);
             }
@@ -7499,6 +7502,68 @@ impl Editor {
                 // Mark to skip ensure_visible on next render so the scroll isn't undone
                 view_state.viewport.set_skip_ensure_visible();
             }
+        }
+    }
+
+    /// Scroll every split whose active buffer is `buffer_id` so that
+    /// `line` is within the viewport. Used by plugin panels (buffer
+    /// groups) whose plugin-side "selected row" doesn't drive the
+    /// buffer cursor — after updating the selection, the plugin calls
+    /// this to bring the selected row into view.
+    ///
+    /// Walks both the main split tree's leaves AND the inner leaves of
+    /// all Grouped subtrees stored in `grouped_subtrees`, because the
+    /// latter are not represented in `split_manager`'s tree.
+    fn handle_scroll_buffer_to_line(&mut self, buffer_id: BufferId, line: usize) {
+        if !self.buffers.contains_key(&buffer_id) {
+            return;
+        }
+
+        // Collect the leaf ids whose active buffer is `buffer_id`.
+        let mut target_leaves: Vec<LeafId> = Vec::new();
+
+        // Main tree: walk its leaves.
+        for leaf_id in self.split_manager.root().leaf_split_ids() {
+            if let Some(vs) = self.split_view_states.get(&leaf_id) {
+                if vs.active_buffer == buffer_id {
+                    target_leaves.push(leaf_id);
+                }
+            }
+        }
+
+        // Grouped subtrees: walk each group's inner leaves.
+        for (_group_leaf_id, node) in self.grouped_subtrees.iter() {
+            if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
+                for inner_leaf in layout.leaf_split_ids() {
+                    if let Some(vs) = self.split_view_states.get(&inner_leaf) {
+                        if vs.active_buffer == buffer_id && !target_leaves.contains(&inner_leaf) {
+                            target_leaves.push(inner_leaf);
+                        }
+                    }
+                }
+            }
+        }
+
+        if target_leaves.is_empty() {
+            return;
+        }
+
+        let state = match self.buffers.get_mut(&buffer_id) {
+            Some(s) => s,
+            None => return,
+        };
+
+        for leaf_id in target_leaves {
+            let Some(view_state) = self.split_view_states.get_mut(&leaf_id) else {
+                continue;
+            };
+            let viewport_height = view_state.viewport.height as usize;
+            // Place `line` roughly a third of the viewport from the top so
+            // the next few navigation steps don't immediately scroll again.
+            let lines_above = viewport_height / 3;
+            let target = line.saturating_sub(lines_above);
+            view_state.viewport.scroll_to(&mut state.buffer, target);
+            view_state.viewport.set_skip_ensure_visible();
         }
     }
 }

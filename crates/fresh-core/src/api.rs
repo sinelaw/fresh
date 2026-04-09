@@ -1598,6 +1598,18 @@ pub enum PluginCommand {
         line: usize,
     },
 
+    /// Scroll any split/panel that displays `buffer_id` so the given
+    /// line is visible in the viewport. Unlike `ScrollToLineCenter` this
+    /// does not require a split id — it walks all splits (including
+    /// inner panels of a buffer group) and updates every viewport that
+    /// shows this buffer. Line is 0-indexed.
+    ScrollBufferToLine {
+        /// Buffer ID to scroll
+        buffer_id: BufferId,
+        /// Line number to bring into view (0-indexed)
+        line: usize,
+    },
+
     /// Set the global editor mode (for modal editing like vi mode)
     /// When set, the mode's keybindings take precedence over normal editing
     SetEditorMode {

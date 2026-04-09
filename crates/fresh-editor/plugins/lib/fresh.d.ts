@@ -947,6 +947,17 @@ interface EditorAPI {
 	*/
 	scrollToLineCenter(splitId: number, bufferId: number, line: number): boolean;
 	/**
+	* Scroll any split/panel showing `buffer_id` so `line` is visible.
+	* Unlike `scrollToLineCenter`, this does not require a split id — it
+	* updates every split's viewport whose active buffer is the given
+	* buffer, including inner leaves of a buffer group. Use this from
+	* a panel plugin to keep the user's "selected" row in view after
+	* arrow-key navigation (the plugin's own selection state isn't
+	* automatically reflected in the buffer cursor, so the core-driven
+	* viewport would otherwise stay put).
+	*/
+	scrollBufferToLine(bufferId: number, line: number): boolean;
+	/**
 	* Find buffer by file path, returns buffer ID or 0 if not found
 	*/
 	findBufferByPath(path: string): number;
@@ -1501,7 +1512,19 @@ interface EditorAPI {
 	*/
 	createVirtualBufferInExistingSplit(opts: CreateVirtualBufferInExistingSplitOptions): Promise<VirtualBufferResult>;
 	/**
-	* Set virtual buffer content (takes array of entry objects, optional options with scrollRegions)
+	* Set the content of a panel within a buffer group
+	*/
+	setPanelContent(groupId: number, panelName: string, entriesArr: Record<string, unknown>[]): boolean;
+	/**
+	* Close a buffer group
+	*/
+	closeBufferGroup(groupId: number): boolean;
+	/**
+	* Focus a specific panel within a buffer group
+	*/
+	focusBufferGroupPanel(groupId: number, panelName: string): boolean;
+	/**
+	* Set virtual buffer content (takes array of entry objects)
 	* 
 	* Note: entries should be TextPropertyEntry[] - uses manual parsing for HashMap support
 	*/
@@ -1510,24 +1533,6 @@ interface EditorAPI {
 	* Get text properties at cursor position (returns JS array)
 	*/
 	getTextPropertiesAtCursor(bufferId: number): TextPropertiesAtCursor;
-	/**
-	* Create a buffer group: multiple panels appearing as one tab.
-	* Each panel is a real buffer with its own scrollbar and viewport.
-	* The plugin writes all content to each panel; the core handles scrolling.
-	*/
-	createBufferGroup(name: string, mode: string, layoutJson: string): Promise<{ groupId: number; panels: Record<string, number> }>;
-	/**
-	* Set the content of a panel within a buffer group.
-	*/
-	setPanelContent(groupId: number, panelName: string, entries: Record<string, unknown>[]): boolean;
-	/**
-	* Close a buffer group (closes all panels and splits).
-	*/
-	closeBufferGroup(groupId: number): boolean;
-	/**
-	* Focus a specific panel within a buffer group.
-	*/
-	focusBufferGroupPanel(groupId: number, panelName: string): boolean;
 	/**
 	* Spawn a process (async, returns request_id)
 	*/
