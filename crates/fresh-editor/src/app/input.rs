@@ -57,8 +57,14 @@ impl Editor {
         }
 
         // Clear skip_ensure_visible flag so cursor becomes visible after key press
-        // (scroll actions will set it again if needed)
-        let active_split = self.split_manager.active_split();
+        // (scroll actions will set it again if needed). Use the *effective*
+        // active split so this clears the flag on a focused buffer-group
+        // panel's own view state, not the group host's — without this, a
+        // scroll action in the panel (mouse scrollbar click, plugin
+        // scrollBufferToLine, etc.) sets `skip_ensure_visible` on the panel
+        // and subsequent key presses never clear it, so cursor motion stops
+        // scrolling the viewport.
+        let active_split = self.effective_active_split();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
             view_state.viewport.clear_skip_ensure_visible();
         }

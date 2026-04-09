@@ -3001,3 +3001,114 @@ fn start_server(config: Config) {
         harness.screen_to_string(),
     );
 }
+
+/// Regression test for: after pressing `n` in the diff panel (which scrolls
+/// the panel viewport via `scrollBufferToLine`, setting `skip_ensure_visible`
+/// on the panel buffer's view state), pressing `k` to move the cursor up
+/// should still scroll the viewport to keep the cursor visible.
+///
+/// The bug: `handle_key` cleared `skip_ensure_visible` on
+/// `split_manager.active_split()` instead of the *effective* active split,
+/// so for a focused buffer-group panel the flag stayed set on the panel and
+/// subsequent cursor motion left the cursor stranded off-screen.
+#[test]
+fn test_review_diff_panel_viewport_follows_cursor_after_scroll() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // 300-line file with a modification every 10 lines so the diff produces
+    // ~30 separate hunks (each hunk is one changed line plus 3 context lines
+    // on each side = 9 buffer rows). Total diff panel content is well over
+    // a viewport height, so jumping forward and walking back actually
+    // exercises the scroll path.
+    let file_path = repo.path.join("manyhunks.txt");
+    let mut original = String::new();
+    for i in 1..=300 {
+        original.push_str(&format!("Line {}\n", i));
+    }
+    fs::write(&file_path, &original).expect("write original");
+    repo.git_add_all();
+    repo.git_commit("Initial");
+
+    let mut modified = String::new();
+    for i in 1..=300 {
+        if i % 10 == 0 {
+            modified.push_str(&format!("MODIFIED line {}\n", i));
+        } else {
+            modified.push_str(&format!("Line {}\n", i));
+        }
+    }
+    fs::write(&file_path, &modified).expect("write modified");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("MODIFIED line 10"))
+        .unwrap();
+
+    let _ = open_review_diff(&mut harness);
+
+    // The diff panel header is visible at the start.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("DIFF FOR manyhunks.txt"))
+        .unwrap();
+
+    // Switch focus to the diff panel. The toolbar's hint set changes to the
+    // diff variant ("n Next  p Prev") when the diff panel has focus.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("n Next"))
+        .unwrap();
+
+    // Jump several hunks forward. Each `n` press calls
+    // `editor.scrollBufferToLine` on the diff panel buffer, which sets
+    // `skip_ensure_visible` on its viewport — exactly the state the bug
+    // depends on.
+    for _ in 0..10 {
+        harness
+            .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Sanity: the panel header has scrolled off-screen.
+    let mid_screen = harness.screen_to_string();
+    assert!(
+        !mid_screen.contains("DIFF FOR manyhunks.txt"),
+        "After 10 `n` presses the diff panel header should be scrolled \
+         off-screen — the test setup isn't producing a long enough diff. \
+         Screen:\n{}",
+        mid_screen
+    );
+
+    // Now walk the cursor back toward the top of the diff buffer with `k`.
+    // 200 presses is generously more than enough to clear any conceivable
+    // viewport offset. With the bug, the cursor will move (status bar updates
+    // to "Ln 1, Col 1") but the viewport stays stranded around the
+    // post-`n` position. With the fix, the viewport follows the cursor and
+    // the panel header comes back into view.
+    for _ in 0..200 {
+        harness
+            .send_key(KeyCode::Char('k'), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let final_screen = harness.screen_to_string();
+    assert!(
+        final_screen.contains("DIFF FOR manyhunks.txt"),
+        "After walking the cursor back to the top of the diff buffer, the \
+         panel viewport should follow it — the panel header is missing. \
+         Screen:\n{}",
+        final_screen
+    );
+}
