@@ -3952,6 +3952,145 @@ fn test_named_color_swatch_uses_native_ansi_color() {
         .unwrap();
 }
 
+/// Bug reproduction (currently failing — `#[ignore]`d so CI stays green).
+///
+/// Switching the active theme via "Select Theme" while a theme-editor
+/// plugin virtual buffer is open leaves the plugin-provided overlay colors
+/// stale. The `theme_editor` plugin builds its UI by calling
+/// `setPanelContent` once with `TextPropertyEntry`s whose styles contain
+/// hardcoded RGB values (e.g. `colors.header = [100, 180, 255]`). These get
+/// baked into `OverlayFace::Style { style }` at
+/// `set_virtual_buffer_content` time and never refresh, so after a theme
+/// switch the plugin buffer still paints text with the old theme's
+/// hardcoded RGB values while the rest of the editor has moved to the new
+/// theme.
+///
+/// Plugin buffers should be re-asked to paint themselves after a theme
+/// change (e.g. via a `theme_changed` plugin hook, or by having plugins
+/// use theme keys like audit_mode does). This test reproduces the missing
+/// behaviour: after switching from dark to light, the theme-editor header
+/// text's fg should change, but it stays at the dark-theme RGB.
+///
+/// TODO: remove `#[ignore]` once the bug is fixed.
+#[test]
+#[ignore = "Reproduces #TODO: plugin buffer overlay colors not refreshed on theme change"]
+fn test_theme_editor_colors_update_on_theme_change() {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    let mut config = fresh::config::Config::default();
+    config.theme = "dark".into();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(140, 40, config, project_root).unwrap();
+
+    harness.render().unwrap();
+
+    // Open the theme editor with "dark" selected.
+    open_theme_editor(&mut harness);
+
+    // The "Theme Editor:" header row carries a hardcoded `colors.header`
+    // fg of [100, 180, 255] (blue) AND the buffer's default editor.bg.
+    // Record both the text-cell and an empty cell on the same row.
+    let header_pos = harness
+        .find_text_on_screen("Theme Editor:")
+        .expect("'Theme Editor:' header should be visible in the theme editor buffer");
+    let dark_header_fg = harness
+        .get_cell_style(header_pos.0, header_pos.1)
+        .expect("header cell should have a style")
+        .fg;
+
+    // Sample a cell well to the right on the same row where there's no text
+    // (so we get the buffer's default bg, not an overlay).
+    let empty_col = header_pos.0.saturating_add(60);
+    let dark_row_empty_bg = harness
+        .get_cell_style(empty_col, header_pos.1)
+        .expect("cell should have a style")
+        .bg;
+    assert_eq!(
+        dark_row_empty_bg,
+        Some(Color::Rgb(30, 30, 30)),
+        "With dark theme, theme editor buffer empty cells should have bg [30,30,30], got {:?}. \
+         Screen:\n{}",
+        dark_row_empty_bg,
+        harness.screen_to_string(),
+    );
+
+    // --- Switch to the light theme via the command palette ---
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Select Theme").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("Select theme").unwrap();
+
+    for _ in 0..20 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("light").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+
+    // After the switch, both the buffer background AND the hardcoded header
+    // fg should reflect the new theme. In particular, the plugin's cached
+    // overlay-styles (baked RGB) should be refreshed so they don't stay as
+    // the dark theme's values against the new light bg.
+    let header_pos = harness
+        .find_text_on_screen("Theme Editor:")
+        .expect("'Theme Editor:' header should still be visible after theme switch");
+    let empty_col = header_pos.0.saturating_add(60);
+    let light_row_empty_bg = harness
+        .get_cell_style(empty_col, header_pos.1)
+        .expect("cell should have a style")
+        .bg;
+    assert_eq!(
+        light_row_empty_bg,
+        Some(Color::Rgb(255, 255, 255)),
+        "After switching to light theme, theme editor buffer empty cells should have \
+         bg [255,255,255], got {:?}. Screen:\n{}",
+        light_row_empty_bg,
+        harness.screen_to_string(),
+    );
+
+    let light_header_fg = harness
+        .get_cell_style(header_pos.0, header_pos.1)
+        .expect("header cell should have a style")
+        .fg;
+
+    // BUG REPRODUCTION: the plugin-provided header highlight fg is baked at
+    // `setVirtualBufferContent` time and does not refresh when the theme
+    // changes. We assert that the fg DOES change — this is the behaviour
+    // the user expects, and it currently fails because the plugin's
+    // hardcoded RGB highlights never get re-applied.
+    assert_ne!(
+        light_header_fg,
+        dark_header_fg,
+        "After switching themes, the theme editor's header-text fg should be refreshed \
+         (expected it to differ from the dark-theme value {:?}). The plugin-provided \
+         overlay colors appear to be baked at creation time and never refreshed on \
+         theme change. Screen:\n{}",
+        dark_header_fg,
+        harness.screen_to_string(),
+    );
+}
+
 /// Find the fg color of the swatch (██) on a given screen row.
 /// Scans the left panel area (columns 0-37) for cells where fg == bg,
 /// which indicates a color swatch.

@@ -2826,3 +2826,178 @@ fn test_review_diff_file_replaced_with_directory() {
         harness.screen_to_string()
     );
 }
+
+/// Regression test: switching the active theme via "Select Theme" while a
+/// Review Diff (audit_mode) virtual buffer is open must update the colors of
+/// the diff hunk backgrounds in that buffer to reflect the new theme.
+///
+/// The audit_mode plugin attaches overlays to its virtual buffer with theme
+/// key references like `"editor.diff_add_bg"` / `"editor.diff_remove_bg"`.
+/// These are stored as `OverlayFace::ThemedStyle` so they resolve at render
+/// time — so when the active theme changes, the next render should pick up
+/// the new theme's values.
+///
+/// Dark theme: `diff_add_bg` = [30, 60, 30], `diff_remove_bg` = [70, 30, 30]
+/// Light theme: `diff_add_bg` = [200, 255, 200], `diff_remove_bg` = [255, 200, 200]
+#[test]
+fn test_review_diff_colors_update_on_theme_change() {
+    use ratatui::style::Color;
+
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    // Commit the initial project, then modify a file so the diff has hunks.
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    let modified_content = r#"fn main() {
+    println!("DIFF_NEW_LINE");
+    let config = load_config();
+    start_server(config);
+}
+
+fn load_config() -> Config {
+    Config::default()
+}
+
+fn start_server(config: Config) {
+    println!("Starting server...");
+}
+"#;
+    fs::write(&main_rs_path, modified_content).expect("Failed to modify file");
+
+    // Start in the dark theme so we have well-known expected colors.
+    let mut config = Config::default();
+    config.theme = "dark".into();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(140, 40, config, repo.path.clone()).unwrap();
+
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("DIFF_NEW_LINE"))
+        .unwrap();
+
+    // Open Review Diff via the command palette.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            !s.contains("Generating Review Diff Stream") && s.contains("DIFF_NEW_LINE")
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    // Find the added line ("+    println!(...DIFF_NEW_LINE..)") inside the diff
+    // panel. Its background should be the dark theme's `diff_add_bg`.
+    let dark_add_bg = Color::Rgb(30, 60, 30);
+    let dark_remove_bg = Color::Rgb(70, 30, 30);
+
+    let add_pos = harness
+        .find_text_on_screen("DIFF_NEW_LINE")
+        .expect("DIFF_NEW_LINE should be visible in the review diff buffer");
+    let add_style = harness
+        .get_cell_style(add_pos.0, add_pos.1)
+        .expect("cell should have a style");
+    assert_eq!(
+        add_style.bg,
+        Some(dark_add_bg),
+        "With dark theme, diff_add_bg should be {:?}, got {:?}. Screen:\n{}",
+        dark_add_bg,
+        add_style.bg,
+        harness.screen_to_string(),
+    );
+
+    // The removed line should carry dark_remove_bg.
+    let rem_pos = harness
+        .find_text_on_screen("Hello, world!")
+        .expect("original 'Hello, world!' should be visible as a removed line");
+    let rem_style = harness
+        .get_cell_style(rem_pos.0, rem_pos.1)
+        .expect("cell should have a style");
+    assert_eq!(
+        rem_style.bg,
+        Some(dark_remove_bg),
+        "With dark theme, diff_remove_bg should be {:?}, got {:?}. Screen:\n{}",
+        dark_remove_bg,
+        rem_style.bg,
+        harness.screen_to_string(),
+    );
+
+    // --- Switch to the light theme ---
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Select Theme").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("Select theme").unwrap();
+
+    // Clear the pre-filled current theme name and type "light".
+    for _ in 0..20 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("light").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+
+    // --- Verify the plugin buffer picked up the new theme's diff colors ---
+    let light_add_bg = Color::Rgb(200, 255, 200);
+    let light_remove_bg = Color::Rgb(255, 200, 200);
+
+    let add_pos = harness
+        .find_text_on_screen("DIFF_NEW_LINE")
+        .expect("DIFF_NEW_LINE should still be visible after theme switch");
+    let add_style = harness
+        .get_cell_style(add_pos.0, add_pos.1)
+        .expect("cell should have a style");
+    assert_eq!(
+        add_style.bg,
+        Some(light_add_bg),
+        "After switching to light theme, diff_add_bg in the Review Diff plugin buffer \
+         should be {:?}, got {:?}. The plugin buffer's overlays were not refreshed for \
+         the new theme. Screen:\n{}",
+        light_add_bg,
+        add_style.bg,
+        harness.screen_to_string(),
+    );
+
+    let rem_pos = harness
+        .find_text_on_screen("Hello, world!")
+        .expect("original 'Hello, world!' should still be visible");
+    let rem_style = harness
+        .get_cell_style(rem_pos.0, rem_pos.1)
+        .expect("cell should have a style");
+    assert_eq!(
+        rem_style.bg,
+        Some(light_remove_bg),
+        "After switching to light theme, diff_remove_bg in the Review Diff plugin buffer \
+         should be {:?}, got {:?}. The plugin buffer's overlays were not refreshed for \
+         the new theme. Screen:\n{}",
+        light_remove_bg,
+        rem_style.bg,
+        harness.screen_to_string(),
+    );
+}
