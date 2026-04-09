@@ -3560,10 +3560,50 @@ fn test_palette_swatch_click_targets_correct_column() {
         lines[palette_row_y as usize]
     );
 
-    // Record the fg color of the 1st swatch (col 0) and 5th swatch (col 4)
-    // Col 0 swatch at screen x=41, Col 4 swatch at screen x=41+3*4=53
-    let swatch_col_0_x: u16 = 41;
-    let swatch_col_4_x: u16 = 41 + 3 * 4;
+    // Locate the first palette swatch (`██`) on the palette row at runtime,
+    // then compute sibling swatch columns. The buffer-group theme editor
+    // renders the palette inside the right panel (picker), so the absolute
+    // screen column of col 0 depends on the tree/picker split ratio and is
+    // not fixed. Each swatch is 2 chars of `██` followed by 1 char of
+    // separator, so col N is col 0 + 3*N. Previously the test hardcoded
+    // x=41 which happened to be the `fg` row's swatch column in the LEFT
+    // (tree) panel — clicking there would move the tree selection instead
+    // of applying a palette color.
+    let swatch_col_0_x: u16 = {
+        // The left panel also contains `██` (field swatches). We must find
+        // the palette swatches in the RIGHT panel — i.e. the first `██`
+        // that appears AFTER the vertical divider `│` in the palette row.
+        let row_cells: Vec<String> = (0..120)
+            .map(|x| {
+                harness
+                    .get_cell(x, palette_row_y)
+                    .unwrap_or_else(|| " ".to_string())
+            })
+            .collect();
+        let divider_col = row_cells
+            .iter()
+            .position(|s| s == "│")
+            .expect("palette row should contain a `│` divider") as u16;
+        // Scan after the divider for two adjacent `█` cells.
+        let mut found = None;
+        let mut x = divider_col + 1;
+        while x + 1 < 120 {
+            if row_cells[x as usize] == "█" && row_cells[(x + 1) as usize] == "█" {
+                found = Some(x);
+                break;
+            }
+            x += 1;
+        }
+        found.expect("palette row should contain `██` after the divider")
+    };
+    let swatch_col_4_x: u16 = swatch_col_0_x + 3 * 4;
+    tracing::error!(
+        "PALETTE TEST palette_row_y={} swatch_col_0_x={} swatch_col_4_x={} pre-click screen:\n{}",
+        palette_row_y,
+        swatch_col_0_x,
+        swatch_col_4_x,
+        harness.screen_to_string()
+    );
 
     let color_at_col0 = harness
         .get_cell_style(swatch_col_0_x, palette_row_y)
@@ -3780,6 +3820,7 @@ fn test_theme_editor_page_up_page_down() {
 /// so it matches what the user actually sees.
 #[test]
 fn test_named_color_swatch_uses_native_ansi_color() {
+    init_tracing_from_env();
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();

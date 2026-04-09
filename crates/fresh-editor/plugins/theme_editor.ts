@@ -1974,7 +1974,17 @@ function onThemeEditorCursorMoved(data: {
   new_position: number;
   text_properties?: Array<Record<string, any>>;
 }): void {
-  if (state.bufferId === null || data.buffer_id !== state.bufferId) return;
+  if (state.bufferId === null) return;
+  // Accept cursor_moved events for any of the buffer group's panels
+  // (tree, picker, footer). With buffer groups each panel is its own
+  // buffer, so clicks in the picker fire cursor_moved for the picker
+  // buffer — not the tree buffer (state.bufferId). We must handle
+  // events for all of them so picker clicks (named colors, palette,
+  // hex) still update selection/colors.
+  const groupBufferIds = Object.values(state.panelBuffers || {});
+  const isGroupBuffer =
+    data.buffer_id === state.bufferId || groupBufferIds.includes(data.buffer_id);
+  if (!isGroupBuffer) return;
   if (isUpdatingDisplay) return;
 
   const props = data.text_properties || [];

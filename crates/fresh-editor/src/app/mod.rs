@@ -1894,6 +1894,27 @@ impl Editor {
             .expect("Editor always has at least one buffer")
     }
 
+    /// The split id whose `SplitViewState` owns the currently-focused
+    /// cursors/viewport/buffer state. For a regular split this is just
+    /// `split_manager.active_split()`. For a split that has a group tab
+    /// active, this returns the focused inner panel's leaf id (which
+    /// lives in `split_view_states` even though it's not in the main
+    /// split tree).
+    #[inline]
+    pub fn effective_active_split(&self) -> crate::model::event::LeafId {
+        let active_split = self.split_manager.active_split();
+        if let Some(vs) = self.split_view_states.get(&active_split) {
+            if vs.active_group_tab.is_some() {
+                if let Some(inner_leaf) = vs.focused_group_leaf {
+                    if self.split_view_states.contains_key(&inner_leaf) {
+                        return inner_leaf;
+                    }
+                }
+            }
+        }
+        active_split
+    }
+
     /// Get the mode name for the active buffer (if it's a virtual buffer)
     pub fn active_buffer_mode(&self) -> Option<&str> {
         self.buffer_metadata
@@ -2501,6 +2522,54 @@ impl Editor {
         let previous_split = self.split_manager.active_split();
         let previous_buffer = self.active_buffer(); // Get BEFORE changing split
         let split_changed = previous_split != split_id;
+
+        // If `split_id` is not in the main split tree, it must be an inner
+        // leaf of a Grouped subtree stashed in `grouped_subtrees`. For those
+        // we don't change `split_manager.active_split` (the group's host
+        // split remains active). Instead, find the host split and update
+        // its `focused_group_leaf` marker so `active_buffer()` routes to
+        // the clicked inner panel buffer.
+        if !self
+            .split_manager
+            .root()
+            .leaf_split_ids()
+            .contains(&split_id)
+        {
+            // Find which group contains this inner leaf.
+            let host_split = self
+                .grouped_subtrees
+                .iter()
+                .find(|(_, node)| {
+                    if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
+                        layout.find(split_id.into()).is_some()
+                    } else {
+                        false
+                    }
+                })
+                .map(|(group_leaf_id, _)| *group_leaf_id)
+                .and_then(|group_leaf_id| {
+                    // Find the split whose open_buffers has this group tab.
+                    self.split_view_states
+                        .iter()
+                        .find(|(_, vs)| vs.has_group(group_leaf_id))
+                        .map(|(sid, _)| (*sid, group_leaf_id))
+                });
+
+            if let Some((host, group_leaf_id)) = host_split {
+                self.split_manager.set_active_split(host);
+                if let Some(vs) = self.split_view_states.get_mut(&host) {
+                    vs.active_group_tab = Some(group_leaf_id);
+                    vs.focused_group_leaf = Some(split_id);
+                }
+                if let Some(inner_vs) = self.split_view_states.get_mut(&split_id) {
+                    inner_vs.switch_buffer(buffer_id);
+                }
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+                return;
+            }
+            // Fall through: we couldn't find the group; the original path
+            // will set_active_split which will fail silently.
+        }
 
         if split_changed {
             // Switching to a different split - exit terminal mode if active
