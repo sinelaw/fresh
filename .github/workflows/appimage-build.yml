@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Download pre-built binary
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: artifacts-${{ matrix.target }}
           path: artifacts/
@@ -108,7 +108,7 @@ jobs:
           fi
 
       - name: Download AppImage
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: artifacts-appimage-x86_64
           path: ./

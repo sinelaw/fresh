@@ -136,7 +136,7 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
     steps:
       - name: Download .deb package
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -210,7 +210,7 @@ jobs:
       image: ${{ matrix.distro }}
     steps:
       - name: Download .rpm package
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -328,7 +328,7 @@ jobs:
 
       - name: Download new .deb package
         if: steps.prev.outputs.skip != 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -418,7 +418,7 @@ jobs:
 
       - name: Download new .rpm package
         if: steps.prev.outputs.skip != 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
