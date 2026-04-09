@@ -2736,9 +2736,15 @@ impl Editor {
         let line_info = self.calculate_event_line_info(event);
 
         // 1. Apply the event to the buffer
-        // Borrow cursors from SplitViewState (sole source of truth) and state from buffers
+        // Borrow cursors from SplitViewState (sole source of truth) and state from buffers.
+        //
+        // Use the *effective* active split so events targeting a focused
+        // buffer-group panel land in the panel's own split view state, not
+        // the group host's. Without this, MoveCursor events for a focused
+        // panel would try to look up the panel buffer's keyed state in the
+        // host split (which doesn't have it) and panic on unwrap.
         {
-            let split_id = self.split_manager.active_split();
+            let split_id = self.effective_active_split();
             let active_buf = self.active_buffer();
             let cursors = &mut self
                 .split_view_states
@@ -5783,6 +5789,13 @@ impl Editor {
                 position,
             } => {
                 self.handle_set_buffer_cursor(buffer_id, position);
+            }
+            PluginCommand::SetBufferShowCursors { buffer_id, show } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    state.show_cursors = show;
+                } else {
+                    tracing::warn!("SetBufferShowCursors: buffer {:?} not found", buffer_id);
+                }
             }
 
             // ==================== View/Layout Commands ====================

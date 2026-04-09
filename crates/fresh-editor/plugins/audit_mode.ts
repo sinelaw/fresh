@@ -63,6 +63,11 @@ interface FileEntry {
 
 /**
  * Review Session State
+ *
+ * Scrolling and cursor tracking inside the panel buffers is handled by the
+ * editor core natively — this state only mirrors what the plugin needs to
+ * know between events (selected file, focused panel, hunk header rows for
+ * `n`/`p` jumps).
  */
 interface ReviewState {
   hunks: Hunk[];
@@ -72,14 +77,29 @@ interface ReviewState {
   // New magit-style state
   files: FileEntry[];
   selectedIndex: number;
-  fileScrollOffset: number;
-  diffScrollOffset: number;
-  diffSelectedLine: number;
   viewportWidth: number;
   viewportHeight: number;
   focusPanel: 'files' | 'diff';
   groupId: number | null;
   panelBuffers: Record<string, number>;
+  // Caches populated each time a panel is rebuilt; used by `n`/`p` hunk
+  // navigation, to translate row numbers into byte positions for
+  // `setBufferCursor`, and to draw the current-line highlight overlay
+  // (panel buffers hide their native cursor — see `applyCursorLineOverlay`).
+  // Each `*ByteOffsets` array has length `(rowCount + 1)`: index `i`
+  // is the byte offset of row `i + 1`, and the final entry is the total
+  // buffer length (sentinel for the end of the last row).
+  hunkHeaderRows: number[];        // 1-indexed row numbers in the diff panel
+  diffLineByteOffsets: number[];
+  fileLineByteOffsets: number[];
+  /** Sorted 1-indexed row numbers in the files panel that correspond to a
+   *  selectable file (i.e. the row carries a `fileIndex` text property).
+   *  Used by the cursor_moved handler to snap the native cursor onto a file
+   *  row when it would otherwise land on a section header / blank / note. */
+  fileRows: number[];
+  diffCursorRow: number;           // 1-indexed, last known cursor row in diff panel
+  filesCursorRow: number;          // 1-indexed, last known cursor row in files panel
+  firstFileRow: number;            // 1-indexed row of the first selectable file
 }
 
 const state: ReviewState = {
@@ -89,15 +109,25 @@ const state: ReviewState = {
   reviewBufferId: null,
   files: [],
   selectedIndex: 0,
-  fileScrollOffset: 0,
-  diffScrollOffset: 0,
-  diffSelectedLine: 0,
   viewportWidth: 80,
   viewportHeight: 24,
   focusPanel: 'files',
   groupId: null,
   panelBuffers: {},
+  hunkHeaderRows: [],
+  diffLineByteOffsets: [],
+  fileLineByteOffsets: [],
+  fileRows: [],
+  diffCursorRow: 1,
+  filesCursorRow: 1,
+  firstFileRow: 1,
 };
+
+// Theme colour for the synthetic "cursor line" highlight in the panel
+// buffers. Reintroduced after the per-line bg overlay was deleted from the
+// builders — `applyCursorLineOverlay` writes it on every cursor_moved event.
+const STYLE_SELECTED_BG: OverlayColorSpec = "editor.selection_bg";
+const CURSOR_LINE_NS = "review-cursor-line";
 
 // --- Refresh State ---
 
@@ -360,7 +390,6 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
 // --- New magit-style rendering (Step 2 of rewrite) ---
 
-const STYLE_SELECTED_BG: OverlayColorSpec = "editor.selection_bg";
 const STYLE_DIVIDER: OverlayColorSpec = "ui.split_separator_fg";
 const STYLE_FOOTER: OverlayColorSpec = "ui.status_bar_fg";
 const STYLE_HUNK_HEADER: OverlayColorSpec = "syntax.keyword";
@@ -412,12 +441,11 @@ function buildFileListLines(leftWidth?: number): ListLine[] {
             });
         }
 
-        // Status icon
+        // Status icon — the editor's native cursor marks selection.
         const statusIcon = f.status === '?' ? 'A' : f.status;
-        const prefix = i === state.selectedIndex ? '>' : ' ';
         const filename = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
         lines.push({
-            text: `${prefix}${statusIcon}  ${filename}`,
+            text: ` ${statusIcon}  ${filename}`,
             type: 'file',
             fileIndex: i,
         });
@@ -703,141 +731,6 @@ function buildToolbar(W: number): TextPropertyEntry {
     };
 }
 
-function buildMagitDisplayEntries(): TextPropertyEntry[] {
-    const entries: TextPropertyEntry[] = [];
-    const H = state.viewportHeight;
-    const W = state.viewportWidth;
-    const leftWidth = Math.max(28, Math.floor(W * 0.3));
-    const rightWidth = W - leftWidth - 1; // 1 for divider
-
-    const allFileLines = buildFileListLines(leftWidth);
-    const diffLines = buildDiffLines(rightWidth);
-
-    const mainRows = H - 2; // rows 2..H-1
-
-    // --- File list scrolling ---
-    let selectedLineIdx = -1;
-    for (let i = 0; i < allFileLines.length; i++) {
-        if (allFileLines[i].type === 'file' && allFileLines[i].fileIndex === state.selectedIndex) {
-            selectedLineIdx = i;
-            break;
-        }
-    }
-    if (selectedLineIdx >= 0) {
-        if (selectedLineIdx < state.fileScrollOffset) {
-            state.fileScrollOffset = selectedLineIdx;
-        }
-        if (selectedLineIdx >= state.fileScrollOffset + mainRows) {
-            state.fileScrollOffset = selectedLineIdx - mainRows + 1;
-        }
-    }
-    const maxFileOffset = Math.max(0, allFileLines.length - mainRows);
-    if (state.fileScrollOffset > maxFileOffset) state.fileScrollOffset = maxFileOffset;
-    if (state.fileScrollOffset < 0) state.fileScrollOffset = 0;
-
-    const visibleFileLines = allFileLines.slice(state.fileScrollOffset, state.fileScrollOffset + mainRows);
-
-    // --- Diff scrolling & selected line clamping ---
-    if (diffLines.length > 0) {
-        if (state.diffSelectedLine >= diffLines.length) state.diffSelectedLine = diffLines.length - 1;
-        if (state.diffSelectedLine < 0) state.diffSelectedLine = 0;
-    } else {
-        state.diffSelectedLine = 0;
-    }
-    const maxDiffOffset = Math.max(0, diffLines.length - mainRows);
-    if (state.diffScrollOffset > maxDiffOffset) state.diffScrollOffset = maxDiffOffset;
-    if (state.diffScrollOffset < 0) state.diffScrollOffset = 0;
-
-    const visibleDiffLines = diffLines.slice(state.diffScrollOffset, state.diffScrollOffset + mainRows);
-
-    // --- Row 0: Toolbar with styled key hints ---
-    const toolbarEntry = buildToolbar(W);
-    entries.push(toolbarEntry);
-
-    // --- Row 1: Header ---
-    const selectedFile = state.files[state.selectedIndex];
-    const focusLeft = state.focusPanel === 'files';
-    const leftHeader = " GIT STATUS";
-    const rightHeader = selectedFile
-        ? ` DIFF FOR ${selectedFile.path}`
-        : " DIFF";
-    const leftHeaderPadded = leftHeader.padEnd(leftWidth).substring(0, leftWidth);
-    const rightHeaderPadded = rightHeader.substring(0, rightWidth);
-
-    const leftHeaderStyle: Partial<OverlayOptions> = focusLeft
-        ? { fg: STYLE_HEADER, bold: true, underline: true }
-        : { fg: STYLE_DIVIDER };
-    const rightHeaderStyle: Partial<OverlayOptions> = focusLeft
-        ? { fg: STYLE_DIVIDER }
-        : { fg: STYLE_HEADER, bold: true, underline: true };
-
-    entries.push({ text: leftHeaderPadded, style: leftHeaderStyle, properties: { type: "header" } });
-    entries.push({ text: "│", style: { fg: STYLE_DIVIDER }, properties: { type: "divider" } });
-    entries.push({ text: rightHeaderPadded, style: rightHeaderStyle, properties: { type: "header" } });
-    entries.push({ text: "\n", properties: { type: "newline" } });
-
-    // --- Rows 2..H-1: Main content ---
-    for (let i = 0; i < mainRows; i++) {
-        const fileItem = visibleFileLines[i];
-        const diffItem = visibleDiffLines[i];
-
-        // Left panel
-        const leftText = fileItem ? (" " + fileItem.text) : "";
-        const leftPadded = leftText.padEnd(leftWidth).substring(0, leftWidth);
-        const isSelected = fileItem?.type === 'file' && fileItem.fileIndex === state.selectedIndex;
-
-        const leftEntry: TextPropertyEntry = {
-            text: leftPadded,
-            properties: {
-                type: fileItem?.type || "blank",
-                fileIndex: fileItem?.fileIndex,
-            },
-            style: fileItem?.style,
-            inlineOverlays: fileItem?.inlineOverlays,
-        };
-        if (isSelected) {
-            leftEntry.style = { ...(leftEntry.style || {}), bg: STYLE_SELECTED_BG, bold: true };
-        }
-        entries.push(leftEntry);
-
-        // Divider
-        entries.push({ text: "│", style: { fg: STYLE_DIVIDER }, properties: { type: "divider" } });
-
-        // Right panel — when diff panel is focused, highlight the selected line
-        const rightText = diffItem ? (" " + diffItem.text) : "";
-        const rightTruncated = rightText.substring(0, rightWidth);
-        const diffLineIndex = state.diffScrollOffset + i;
-        const isDiffCursorLine = !focusLeft && diffLineIndex === state.diffSelectedLine && diffItem != null;
-        const rightStyle = isDiffCursorLine
-            ? { ...(diffItem?.style || {}), bg: STYLE_SELECTED_BG, extendToLineEnd: true }
-            : diffItem?.style;
-        entries.push({
-            text: rightTruncated,
-            properties: { type: diffItem?.type || "blank" },
-            style: rightStyle,
-            inlineOverlays: diffItem?.inlineOverlays,
-        });
-
-        // Newline
-        entries.push({ text: "\n", properties: { type: "newline" } });
-    }
-
-    return entries;
-}
-
-/**
- * Ensure the diff scroll offset keeps the selected line visible.
- */
-function scrollDiffToSelected(): void {
-    const mainRows = state.viewportHeight - 2;
-    if (state.diffSelectedLine < state.diffScrollOffset) {
-        state.diffScrollOffset = state.diffSelectedLine;
-    }
-    if (state.diffSelectedLine >= state.diffScrollOffset + mainRows) {
-        state.diffScrollOffset = state.diffSelectedLine - mainRows + 1;
-    }
-}
-
 // --- Buffer Group panel content builders ---
 
 function buildToolbarPanelEntries(): TextPropertyEntry[] {
@@ -854,7 +747,23 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
     const headerStyle: Partial<OverlayOptions> = focusLeft
         ? { fg: STYLE_HEADER, bold: true, underline: true }
         : { fg: STYLE_DIVIDER };
-    entries.push({
+    // Reset and repopulate the row→byte / file-row caches as we walk the
+    // entries; the cursor_moved handler uses them to (a) draw the current-line
+    // highlight and (b) snap the native cursor onto a file row when motion
+    // would otherwise leave it on a section header.
+    state.fileLineByteOffsets = [];
+    state.fileRows = [];
+    state.firstFileRow = 1; // fallback if no file rows are present
+    let runningByte = 0;
+    let row = 0; // 0-indexed; row + 1 is the 1-indexed line number
+    const pushFileEntry = (entry: TextPropertyEntry) => {
+        state.fileLineByteOffsets.push(runningByte);
+        runningByte += getByteLength(entry.text);
+        entries.push(entry);
+        row++;
+    };
+
+    pushFileEntry({
         text: " GIT STATUS\n",
         style: headerStyle,
         properties: { type: "header" },
@@ -862,18 +771,22 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
 
     const lines = buildFileListLines(leftWidth);
     for (const line of lines) {
-        const isSelected = line.type === 'file' && line.fileIndex === state.selectedIndex;
-        const baseStyle = line.style;
-        const style: Partial<OverlayOptions> | undefined = isSelected
-            ? { ...(baseStyle || {}), bg: STYLE_SELECTED_BG, bold: true, extendToLineEnd: true }
-            : baseStyle;
-        entries.push({
+        if (line.type === 'file') {
+            // row + 1 is the row this entry will occupy after pushFileEntry.
+            const fileRow = row + 1;
+            state.fileRows.push(fileRow);
+            if (state.fileRows.length === 1) state.firstFileRow = fileRow;
+        }
+        pushFileEntry({
             text: (line.text || "") + "\n",
-            style,
+            style: line.style,
             inlineOverlays: line.inlineOverlays,
             properties: { type: line.type, fileIndex: line.fileIndex },
         });
     }
+
+    // Sentinel: total buffer length.
+    state.fileLineByteOffsets.push(runningByte);
     return entries;
 }
 
@@ -881,6 +794,21 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
     const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
     const rightWidth = state.viewportWidth - leftWidth - 1;
+
+    // Reset caches — they get repopulated as we walk lines below. These
+    // back the `n`/`p` hunk navigation and the row→byte translation that
+    // `setBufferCursor` needs.
+    state.hunkHeaderRows = [];
+    state.diffLineByteOffsets = [];
+    let runningByte = 0;
+    let row = 0; // 0-indexed counter; row + 1 is the 1-indexed line number
+
+    const pushEntry = (entry: TextPropertyEntry) => {
+        state.diffLineByteOffsets.push(runningByte);
+        runningByte += getByteLength(entry.text);
+        entries.push(entry);
+        row++;
+    };
 
     // Header row: "DIFF FOR <file>" — emphasized when the diff panel has focus.
     const focusDiffHeader = state.focusPanel === 'diff';
@@ -891,184 +819,117 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     const rightHeaderStyle: Partial<OverlayOptions> = focusDiffHeader
         ? { fg: STYLE_HEADER, bold: true, underline: true }
         : { fg: STYLE_DIVIDER };
-    entries.push({
+    pushEntry({
         text: rightHeader + "\n",
         style: rightHeaderStyle,
         properties: { type: "header" },
     });
 
     const lines = buildDiffLines(rightWidth);
-    const focusDiff = state.focusPanel === 'diff';
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const isCursorLine = focusDiff && i === state.diffSelectedLine;
-        const style: Partial<OverlayOptions> | undefined = isCursorLine
-            ? { ...(line.style || {}), bg: STYLE_SELECTED_BG, extendToLineEnd: true }
-            : line.style;
-        entries.push({
+    for (const line of lines) {
+        // Embed the full DiffLine metadata as text properties so action
+        // handlers (`s`, `u`, `d`, `c`, `x`) can read it back via
+        // getTextPropertiesAtCursor without re-walking state.hunks.
+        const props: Record<string, unknown> = { type: line.type };
+        if (line.hunkId !== undefined) props.hunkId = line.hunkId;
+        if (line.file !== undefined) props.file = line.file;
+        if (line.lineType !== undefined) props.lineType = line.lineType;
+        if (line.oldLine !== undefined) props.oldLine = line.oldLine;
+        if (line.newLine !== undefined) props.newLine = line.newLine;
+        if (line.lineContent !== undefined) props.lineContent = line.lineContent;
+        if (line.commentId !== undefined) props.commentId = line.commentId;
+
+        if (line.type === 'hunk-header') {
+            // 1-indexed row of this hunk header in the diff buffer.
+            state.hunkHeaderRows.push(row + 1);
+        }
+
+        pushEntry({
             text: (line.text || "") + "\n",
-            style,
+            style: line.style,
             inlineOverlays: line.inlineOverlays,
-            properties: { type: line.type },
+            properties: props,
         });
     }
+
+    // Sentinel: total buffer length, used as the end of the last row.
+    state.diffLineByteOffsets.push(runningByte);
     return entries;
 }
 
 /**
- * Refresh the display — rebuild entries and set buffer content.
- * Always re-queries viewport dimensions to handle sidebar toggles and splits.
+ * Full refresh — rebuild all three panels. Called on data changes
+ * (refreshMagitData, comment add/edit, note edit, resize). NOT called on
+ * scroll: scrolling is handled natively by the editor in the panel buffers.
  */
 function updateMagitDisplay(): void {
     refreshViewportDimensions();
+    if (state.groupId === null) return;
+    editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
+    editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+    editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+    // setPanelContent wipes the buffer's overlays — re-paint the current-line
+    // highlight on whichever panel currently has focus.
+    applyCursorLineOverlay(state.focusPanel);
+}
 
-    // Buffer group mode: write to each panel separately
-    if (state.groupId !== null) {
-        editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
-        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
-        editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
-        return;
-    }
+/**
+ * Rebuild only the diff panel. Called when the user moves the cursor onto a
+ * different file in the files panel — the files panel itself is unchanged.
+ */
+function refreshDiffPanelOnly(): void {
+    if (state.groupId === null) return;
+    editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+    if (state.focusPanel === 'diff') applyCursorLineOverlay('diff');
+}
 
-    // Legacy fallback (unused after migration)
-    if (state.reviewBufferId === null) return;
-    const entries = buildMagitDisplayEntries();
-    editor.clearNamespace(state.reviewBufferId, "review-diff");
-    editor.setVirtualBufferContent(state.reviewBufferId, entries);
+/**
+ * Repaint the synthetic "cursor line" highlight in the given panel.
+ *
+ * Panel buffers in a buffer group are created with `show_cursors = false`
+ * (see `crates/fresh-editor/src/app/buffer_groups.rs:228`), so the editor's
+ * native cursor caret is invisible. Drawing a single-line bg overlay on the
+ * cursor row gives the user a visible "you are here" indicator while still
+ * letting the editor own the actual scroll/cursor motion natively.
+ */
+function applyCursorLineOverlay(panel: 'files' | 'diff'): void {
+    const bufId = state.panelBuffers[panel];
+    if (bufId === undefined) return;
+    editor.clearNamespace(bufId, CURSOR_LINE_NS);
+    const offsets = panel === 'files' ? state.fileLineByteOffsets : state.diffLineByteOffsets;
+    if (offsets.length < 2) return;
+    const row = panel === 'diff' ? state.diffCursorRow : state.filesCursorRow;
+    const idx = Math.max(0, Math.min(row - 1, offsets.length - 2));
+    const start = offsets[idx];
+    const end = offsets[idx + 1];
+    if (end <= start) return;
+    editor.addOverlay(bufId, CURSOR_LINE_NS, start, end, {
+        bg: STYLE_SELECTED_BG,
+        extendToLineEnd: true,
+    });
 }
 
 function review_refresh() { refreshMagitData(); }
 registerHandler("review_refresh", review_refresh);
 
-// --- New magit navigation handlers (Step 3) ---
-
-function review_nav_up() {
-    if (state.focusPanel === 'files') {
-        if (state.files.length === 0) return;
-        if (state.selectedIndex > 0) {
-            state.selectedIndex--;
-            state.diffScrollOffset = 0;
-            state.diffSelectedLine = 0;
-            updateMagitDisplay();
-        }
-    } else {
-        if (state.diffSelectedLine > 0) {
-            state.diffSelectedLine--;
-            scrollDiffToSelected();
-        }
-        updateMagitDisplay();
-    }
-}
-registerHandler("review_nav_up", review_nav_up);
-
-function review_nav_down() {
-    if (state.focusPanel === 'files') {
-        if (state.files.length === 0) return;
-        if (state.selectedIndex < state.files.length - 1) {
-            state.selectedIndex++;
-            state.diffScrollOffset = 0;
-            state.diffSelectedLine = 0;
-            updateMagitDisplay();
-        }
-    } else {
-        state.diffSelectedLine++;
-        scrollDiffToSelected();
-        updateMagitDisplay();
-    }
-}
-registerHandler("review_nav_down", review_nav_down);
-
-function review_page_up() {
-    const mainRows = state.viewportHeight - 2;
-    if (state.focusPanel === 'files') {
-        if (state.selectedIndex > 0) {
-            state.selectedIndex = Math.max(0, state.selectedIndex - mainRows);
-            state.diffScrollOffset = 0;
-            state.diffSelectedLine = 0;
-            updateMagitDisplay();
-        }
-    } else {
-        state.diffSelectedLine = Math.max(0, state.diffSelectedLine - mainRows);
-        state.diffScrollOffset = Math.max(0, state.diffScrollOffset - mainRows);
-        updateMagitDisplay();
-    }
-}
-registerHandler("review_page_up", review_page_up);
-
-function review_page_down() {
-    const mainRows = state.viewportHeight - 2;
-    if (state.focusPanel === 'files') {
-        if (state.selectedIndex < state.files.length - 1) {
-            state.selectedIndex = Math.min(state.files.length - 1, state.selectedIndex + mainRows);
-            state.diffScrollOffset = 0;
-            state.diffSelectedLine = 0;
-            updateMagitDisplay();
-        }
-    } else {
-        state.diffSelectedLine += mainRows;
-        state.diffScrollOffset += mainRows;
-        updateMagitDisplay();
-    }
-}
-registerHandler("review_page_down", review_page_down);
+// --- Focus and cursor-driven navigation ---
+//
+// Cursor keys (j/k/Up/Down/PageUp/PageDown/Home/End) are NOT bound by this
+// mode — the editor's native cursor and scrolling machinery moves the cursor
+// inside whichever panel is focused. The plugin only reacts to cursor moves
+// (see `on_review_cursor_moved` below) to keep `state.selectedIndex` in sync
+// with whichever file row the cursor sits on, and to remember the diff cursor
+// row for `n`/`p` hunk navigation.
 
 function review_toggle_focus() {
-    state.focusPanel = state.focusPanel === 'files' ? 'diff' : 'files';
-    updateMagitDisplay();
+    if (state.groupId === null) return;
+    const newPanel: 'files' | 'diff' = state.focusPanel === 'files' ? 'diff' : 'files';
+    state.focusPanel = newPanel;
+    editor.focusBufferGroupPanel(state.groupId, newPanel);
+    // Refresh the toolbar so its hint set matches the new focus.
+    editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
 }
 registerHandler("review_toggle_focus", review_toggle_focus);
-
-function review_focus_files() {
-    if (state.focusPanel !== 'files') {
-        state.focusPanel = 'files';
-        updateMagitDisplay();
-    }
-}
-registerHandler("review_focus_files", review_focus_files);
-
-function review_focus_diff() {
-    if (state.focusPanel !== 'diff') {
-        state.focusPanel = 'diff';
-        updateMagitDisplay();
-    }
-}
-registerHandler("review_focus_diff", review_focus_diff);
-
-function review_nav_home() {
-    if (state.focusPanel === 'files') {
-        if (state.files.length === 0) return;
-        state.selectedIndex = 0;
-        state.diffScrollOffset = 0;
-        state.diffSelectedLine = 0;
-        updateMagitDisplay();
-    } else {
-        state.diffScrollOffset = 0;
-        state.diffSelectedLine = 0;
-        updateMagitDisplay();
-    }
-}
-registerHandler("review_nav_home", review_nav_home);
-
-function review_nav_end() {
-    if (state.focusPanel === 'files') {
-        if (state.files.length === 0) return;
-        state.selectedIndex = state.files.length - 1;
-        state.diffScrollOffset = 0;
-        state.diffSelectedLine = 0;
-        updateMagitDisplay();
-    } else {
-        // Scroll diff to bottom
-        const mainRows = state.viewportHeight - 2;
-        const selectedFile = state.files[state.selectedIndex];
-        if (selectedFile) {
-            const diffLines = buildDiffLines(state.viewportWidth - Math.max(28, Math.floor(state.viewportWidth * 0.3)) - 1);
-            state.diffSelectedLine = Math.max(0, diffLines.length - 1);
-            state.diffScrollOffset = Math.max(0, diffLines.length - mainRows);
-        }
-        updateMagitDisplay();
-    }
-}
-registerHandler("review_nav_end", review_nav_end);
 
 // --- Real git stage/unstage/discard actions (Step 4) ---
 
@@ -1108,22 +969,38 @@ async function applyHunkPatch(patch: string, flags: string[]): Promise<boolean> 
 }
 
 /**
- * Get the hunk at the current diff cursor position, or null.
+ * Merge all text-property records at the cursor of the given panel buffer
+ * into a single object. There's typically only one record covering each
+ * cursor position; merging keeps callers simple.
+ */
+function readPropsAtCursor(panel: 'files' | 'diff'): Record<string, unknown> | null {
+    const bufId = state.panelBuffers[panel];
+    if (bufId === undefined) return null;
+    const records = editor.getTextPropertiesAtCursor(bufId);
+    if (!records || records.length === 0) return null;
+    const merged: Record<string, unknown> = {};
+    for (const r of records) Object.assign(merged, r);
+    return merged;
+}
+
+/**
+ * Get the hunk under the cursor in the diff panel, or null.
+ *
+ * Reads the `hunkId` text property embedded by `buildDiffPanelEntries`. Falls
+ * back to the first hunk of the selected file when the cursor is somewhere
+ * without a hunkId (e.g. the panel header) so commands like `s` still do
+ * something useful.
  */
 function getHunkAtDiffCursor(): Hunk | null {
-    if (state.files.length === 0) return null;
+    const props = readPropsAtCursor('diff');
+    const hunkId = props ? props["hunkId"] : undefined;
+    if (typeof hunkId === 'string') {
+        const found = state.hunks.find(h => h.id === hunkId);
+        if (found) return found;
+    }
+    // Fallback: first hunk for the currently-selected file.
     const selectedFile = state.files[state.selectedIndex];
     if (!selectedFile) return null;
-    const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
-    const rightWidth = state.viewportWidth - leftWidth - 1;
-    const diffLines = buildDiffLines(rightWidth);
-    if (diffLines.length === 0) return null;
-    const idx = Math.min(state.diffSelectedLine, diffLines.length - 1);
-    const line = diffLines[idx];
-    if (line && line.hunkId) {
-        return state.hunks.find(h => h.id === line.hunkId) || null;
-    }
-    // Fallback: first hunk for the file
     return state.hunks.find(
         h => h.file === selectedFile.path && h.gitStatus === selectedFile.category
     ) || null;
@@ -1261,8 +1138,7 @@ async function refreshMagitData() {
     if (state.selectedIndex >= state.files.length) {
         state.selectedIndex = Math.max(0, state.files.length - 1);
     }
-    state.diffScrollOffset = 0;
-    state.diffSelectedLine = 0;
+    state.diffCursorRow = 1;
     updateMagitDisplay();
 }
 
@@ -1849,45 +1725,51 @@ registerHandler("review_drill_down", review_drill_down);
 
 // --- Hunk navigation for side-by-side diff view ---
 
+/**
+ * Move the diff panel's native cursor to the given 1-indexed row, scrolling
+ * the viewport so the row is visible.
+ */
+function jumpDiffCursorToRow(row: number): void {
+    const diffId = state.panelBuffers["diff"];
+    if (diffId === undefined) return;
+    const idx = row - 1;
+    if (idx < 0 || idx >= state.diffLineByteOffsets.length) return;
+    const byteOffset = state.diffLineByteOffsets[idx];
+    editor.setBufferCursor(diffId, byteOffset);
+    editor.scrollBufferToLine(diffId, idx); // scrollBufferToLine takes a 0-indexed line
+    state.diffCursorRow = row;
+}
+
 function review_next_hunk() {
-    // In magit review-mode diff panel: jump to next hunk header
-    if (state.reviewBufferId !== null && state.focusPanel === 'diff') {
-        const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
-        const rightWidth = state.viewportWidth - leftWidth - 1;
-        const diffLines = buildDiffLines(rightWidth);
-        for (let i = state.diffSelectedLine + 1; i < diffLines.length; i++) {
-            if (diffLines[i].type === 'hunk-header') {
-                state.diffSelectedLine = i;
-                scrollDiffToSelected();
-                updateMagitDisplay();
+    // Magit review-mode diff panel: jump to the next hunk header row.
+    if (state.groupId !== null && state.focusPanel === 'diff') {
+        for (const row of state.hunkHeaderRows) {
+            if (row > state.diffCursorRow) {
+                jumpDiffCursorToRow(row);
                 return;
             }
         }
         return;
     }
-    // In composite diff-view: use built-in hunk nav
+    // Composite diff-view: use built-in hunk nav.
     if (!activeCompositeDiffState) return;
     editor.compositeNextHunk(activeCompositeDiffState.compositeBufferId);
 }
 registerHandler("review_next_hunk", review_next_hunk);
 
 function review_prev_hunk() {
-    // In magit review-mode diff panel: jump to prev hunk header
-    if (state.reviewBufferId !== null && state.focusPanel === 'diff') {
-        const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
-        const rightWidth = state.viewportWidth - leftWidth - 1;
-        const diffLines = buildDiffLines(rightWidth);
-        for (let i = state.diffSelectedLine - 1; i >= 0; i--) {
-            if (diffLines[i].type === 'hunk-header') {
-                state.diffSelectedLine = i;
-                scrollDiffToSelected();
-                updateMagitDisplay();
+    // Magit review-mode diff panel: jump to the previous hunk header row.
+    if (state.groupId !== null && state.focusPanel === 'diff') {
+        for (let i = state.hunkHeaderRows.length - 1; i >= 0; i--) {
+            const row = state.hunkHeaderRows[i];
+            if (row < state.diffCursorRow) {
+                jumpDiffCursorToRow(row);
                 return;
             }
         }
         return;
     }
-    // In composite diff-view: use built-in hunk nav
+    // Composite diff-view: use built-in hunk nav.
     if (!activeCompositeDiffState) return;
     editor.compositePrevHunk(activeCompositeDiffState.compositeBufferId);
 }
@@ -1934,21 +1816,14 @@ interface PendingCommentInfo {
 }
 
 function getCurrentLineInfo(): PendingCommentInfo | null {
-    // In magit mode, get line-level info from the selected diff line
     if (state.files.length === 0) return null;
     const selectedFile = state.files[state.selectedIndex];
     if (!selectedFile) return null;
 
-    // Build diff lines and find the one at the current selection
-    const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
-    const rightWidth = state.viewportWidth - leftWidth - 1;
-    const diffLines = buildDiffLines(rightWidth);
-    if (diffLines.length === 0) return null;
-
-    const idx = Math.min(state.diffSelectedLine, diffLines.length - 1);
-    const line = diffLines[idx];
-    if (!line || !line.hunkId) {
-        // Fallback: find first hunk for this file
+    const props = readPropsAtCursor('diff');
+    const hunkId = props ? props["hunkId"] : undefined;
+    if (typeof hunkId !== 'string') {
+        // Fallback: first hunk for the selected file.
         const hunk = state.hunks.find(
             h => h.file === selectedFile.path && h.gitStatus === selectedFile.category
         );
@@ -1956,14 +1831,12 @@ function getCurrentLineInfo(): PendingCommentInfo | null {
         return { hunkId: hunk.id, file: hunk.file };
     }
 
-    return {
-        hunkId: line.hunkId,
-        file: line.file || selectedFile.path,
-        lineType: line.lineType,
-        oldLine: line.oldLine,
-        newLine: line.newLine,
-        lineContent: line.lineContent
-    };
+    const file = typeof props!["file"] === 'string' ? props!["file"] as string : selectedFile.path;
+    const lineType = props!["lineType"] as ('add' | 'remove' | 'context' | undefined);
+    const oldLine = typeof props!["oldLine"] === 'number' ? props!["oldLine"] as number : undefined;
+    const newLine = typeof props!["newLine"] === 'number' ? props!["newLine"] as number : undefined;
+    const lineContent = typeof props!["lineContent"] === 'string' ? props!["lineContent"] as string : undefined;
+    return { hunkId, file, lineType, oldLine, newLine, lineContent };
 }
 
 // Pending prompt state for event-based prompt handling
@@ -1971,35 +1844,33 @@ let pendingCommentInfo: PendingCommentInfo | null = null;
 let editingCommentId: string | null = null; // non-null when editing an existing comment
 
 /**
- * Find an existing comment at the current diff cursor position,
- * either on the comment display line itself or on the diff line above it.
+ * Find an existing comment at the current diff cursor position, either on the
+ * comment display line itself or on the diff line it's attached to.
  */
 function findCommentAtCursor(): ReviewComment | null {
-    if (state.files.length === 0) return null;
-    const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
-    const rightWidth = state.viewportWidth - leftWidth - 1;
-    const diffLines = buildDiffLines(rightWidth);
-    if (diffLines.length === 0) return null;
-    const idx = Math.min(state.diffSelectedLine, diffLines.length - 1);
-    const line = diffLines[idx];
-    if (!line) return null;
+    const props = readPropsAtCursor('diff');
+    if (!props) return null;
 
-    // Cursor is directly on a comment display line
-    if (line.type === 'comment' && line.commentId) {
-        return state.comments.find(c => c.id === line.commentId) || null;
+    // Cursor sits directly on a comment display line.
+    const commentId = props["commentId"];
+    if (typeof commentId === 'string') {
+        return state.comments.find(c => c.id === commentId) || null;
     }
 
-    // Cursor is on a diff line — check if there's a comment for this line
-    if (line.hunkId && (line.lineType === 'add' || line.lineType === 'remove' || line.lineType === 'context')) {
-        return state.comments.find(c =>
-            c.hunk_id === line.hunkId && (
-                (c.line_type === 'add' && c.new_line === line.newLine) ||
-                (c.line_type === 'remove' && c.old_line === line.oldLine) ||
-                (c.line_type === 'context' && c.new_line === line.newLine)
-            )
-        ) || null;
-    }
-    return null;
+    // Cursor sits on a diff line — match by hunk + line type + line number.
+    const hunkId = props["hunkId"];
+    const lineType = props["lineType"];
+    if (typeof hunkId !== 'string') return null;
+    if (lineType !== 'add' && lineType !== 'remove' && lineType !== 'context') return null;
+    const oldLine = typeof props["oldLine"] === 'number' ? props["oldLine"] as number : undefined;
+    const newLine = typeof props["newLine"] === 'number' ? props["newLine"] as number : undefined;
+    return state.comments.find(c =>
+        c.hunk_id === hunkId && (
+            (c.line_type === 'add' && c.new_line === newLine) ||
+            (c.line_type === 'remove' && c.old_line === oldLine) ||
+            (c.line_type === 'context' && c.new_line === newLine)
+        )
+    ) || null;
 }
 
 async function review_add_comment() {
@@ -2300,9 +2171,9 @@ async function start_review_diff() {
     state.comments = [];
     state.note = '';
     state.selectedIndex = 0;
-    state.fileScrollOffset = 0;
-    state.diffScrollOffset = 0;
-    state.diffSelectedLine = 0;
+    state.diffCursorRow = 1;
+    state.hunkHeaderRows = [];
+    state.diffLineByteOffsets = [];
     state.focusPanel = 'files';
 
     // Create buffer group with layout:
@@ -2326,8 +2197,30 @@ async function start_review_diff() {
     state.panelBuffers = groupResult.panels;
     state.reviewBufferId = groupResult.panels["files"];
 
+    // Buffer-group panel buffers default to `show_cursors = false`, which
+    // also blocks native movement actions in `action_to_events`. Flip the
+    // flag for our panels so the editor's built-in motion (Up/Down/j/k/...)
+    // works inside them — we paint our own line highlight on top of the
+    // (now-existent) cursor via `applyCursorLineOverlay`.
+    if (state.panelBuffers["files"] !== undefined) {
+        (editor as any).setBufferShowCursors(state.panelBuffers["files"], true);
+    }
+    if (state.panelBuffers["diff"] !== undefined) {
+        (editor as any).setBufferShowCursors(state.panelBuffers["diff"], true);
+    }
+
     // Set initial content for all panels
     updateMagitDisplay();
+
+    // Position the files-panel cursor on the first selectable file row so the
+    // current-line highlight has somewhere to land before the user touches a key.
+    const filesId = state.panelBuffers["files"];
+    const firstFileIdx = state.firstFileRow - 1;
+    if (filesId !== undefined && firstFileIdx >= 0 && firstFileIdx < state.fileLineByteOffsets.length - 1) {
+        editor.setBufferCursor(filesId, state.fileLineByteOffsets[firstFileIdx]);
+        state.filesCursorRow = state.firstFileRow;
+        applyCursorLineOverlay('files');
+    }
 
     // Register resize handler
     editor.on("resize", "onReviewDiffResize");
@@ -2335,6 +2228,7 @@ async function start_review_diff() {
     editor.setStatus(editor.t("status.review_summary", { count: String(state.hunks.length) }));
     editor.on("buffer_activated", "on_review_buffer_activated");
     editor.on("buffer_closed", "on_review_buffer_closed");
+    editor.on("cursor_moved", "on_review_cursor_moved");
 }
 registerHandler("start_review_diff", start_review_diff);
 
@@ -2349,6 +2243,7 @@ function stop_review_diff() {
     editor.off("resize", "onReviewDiffResize");
     editor.off("buffer_activated", "on_review_buffer_activated");
     editor.off("buffer_closed", "on_review_buffer_closed");
+    editor.off("cursor_moved", "on_review_cursor_moved");
     editor.setStatus(editor.t("status.stopped"));
 }
 registerHandler("stop_review_diff", stop_review_diff);
@@ -2358,6 +2253,91 @@ function on_review_buffer_activated(data: any) {
     if (data.buffer_id === state.reviewBufferId) refreshMagitData();
 }
 registerHandler("on_review_buffer_activated", on_review_buffer_activated);
+
+/**
+ * React to native cursor movement in either review panel.
+ *
+ * - Files panel: if the cursor landed on a file row (i.e. the row's text
+ *   properties carry a `fileIndex`), update `state.selectedIndex` and rebuild
+ *   the diff panel. The diff is rebuilt only when the *selected file* changes,
+ *   never on simple scrolls within either panel.
+ * - Diff panel: remember the cursor row so `n`/`p` can jump from it.
+ * - On focus change: refresh the toolbar so its hint set matches.
+ */
+function on_review_cursor_moved(data: {
+    buffer_id: number;
+    cursor_id: number;
+    old_position: number;
+    new_position: number;
+    line: number;
+    text_properties: Array<Record<string, unknown>>;
+}): void {
+    if (state.groupId === null) return;
+    const filesId = state.panelBuffers["files"];
+    const diffId = state.panelBuffers["diff"];
+    if (data.buffer_id !== filesId && data.buffer_id !== diffId) return;
+
+    const newPanel: 'files' | 'diff' = data.buffer_id === filesId ? 'files' : 'diff';
+    const focusChanged = state.focusPanel !== newPanel;
+    if (focusChanged) {
+        state.focusPanel = newPanel;
+        editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
+    }
+
+    if (newPanel === 'diff') {
+        state.diffCursorRow = data.line;
+        applyCursorLineOverlay('diff');
+        return;
+    }
+
+    // Files panel — look for a fileIndex on the row under the cursor.
+    const oldRow = state.filesCursorRow;
+    const props = data.text_properties || [];
+    let newIndex: number | null = null;
+    for (const p of props) {
+        const v = p["fileIndex"];
+        if (typeof v === 'number') {
+            newIndex = v;
+            break;
+        }
+    }
+    if (newIndex === null && state.fileRows.length > 0) {
+        // Cursor landed on a section header / blank / note. Snap to the
+        // nearest file row in the direction of motion (defaulting to "down"
+        // when there's no previous position to compare against).
+        const movingDown = data.line >= oldRow;
+        let snapTarget: number | null = null;
+        if (movingDown) {
+            for (const r of state.fileRows) {
+                if (r >= data.line) { snapTarget = r; break; }
+            }
+            if (snapTarget === null) snapTarget = state.fileRows[state.fileRows.length - 1];
+        } else {
+            for (let i = state.fileRows.length - 1; i >= 0; i--) {
+                if (state.fileRows[i] <= data.line) { snapTarget = state.fileRows[i]; break; }
+            }
+            if (snapTarget === null) snapTarget = state.fileRows[0];
+        }
+        if (snapTarget !== null && snapTarget !== data.line) {
+            // Move the cursor — this fires another cursor_moved which will
+            // re-enter this handler and find a fileIndex this time.
+            const filesId = state.panelBuffers["files"];
+            const idx = snapTarget - 1;
+            if (filesId !== undefined && idx >= 0 && idx < state.fileLineByteOffsets.length - 1) {
+                editor.setBufferCursor(filesId, state.fileLineByteOffsets[idx]);
+                return;
+            }
+        }
+    }
+    state.filesCursorRow = data.line;
+    if (newIndex !== null && newIndex !== state.selectedIndex) {
+        state.selectedIndex = newIndex;
+        // Rebuild only the diff panel — the files panel itself is unchanged.
+        refreshDiffPanelOnly();
+    }
+    applyCursorLineOverlay('files');
+}
+registerHandler("on_review_cursor_moved", on_review_cursor_moved);
 
 function on_review_buffer_closed(data: any) {
     if (data.buffer_id === state.reviewBufferId) stop_review_diff();
@@ -2652,14 +2632,19 @@ registerHandler("on_buffer_closed", on_buffer_closed);
 editor.on("buffer_closed", "on_buffer_closed");
 
 editor.defineMode("review-mode", [
-    // Navigation (arrow keys, vim keys, page keys)
-    ["Up", "review_nav_up"], ["Down", "review_nav_down"],
-    ["k", "review_nav_up"], ["j", "review_nav_down"],
-    ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
-    ["Home", "review_nav_home"], ["End", "review_nav_end"],
+    // Cursor motion is delegated directly to native editor actions —
+    // `defineMode` resolves these to built-in `Action`s and dispatches them
+    // without going through the JS plugin layer at all (see
+    // `crates/fresh-editor/src/app/plugin_commands.rs:1466`).
+    // The `cursor_moved` hook below reacts to the resulting motion to keep
+    // `state.selectedIndex` and the current-line highlight in sync.
+    ["Up", "move_up"], ["Down", "move_down"],
+    ["k", "move_up"], ["j", "move_down"],
+    ["PageUp", "move_page_up"], ["PageDown", "move_page_down"],
+    ["Home", "smart_home"], ["End", "move_line_end"],
+    // Focus toggle between panels
     ["Tab", "review_toggle_focus"],
-    ["Left", "review_focus_files"], ["Right", "review_focus_diff"],
-    // Hunk navigation (diff panel)
+    // Hunk navigation (diff panel) — jumps the native cursor between hunks.
     ["n", "review_next_hunk"], ["p", "review_prev_hunk"],
     // Drill-down
     ["Enter", "review_drill_down"],

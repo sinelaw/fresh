@@ -600,9 +600,26 @@ impl Editor {
     }
 
     /// Handle SetBufferCursor command
+    ///
+    /// Walks both the main split tree (`split_manager.splits_for_buffer`) AND
+    /// the inner leaves of all grouped subtrees stored in `grouped_subtrees`,
+    /// mirroring `handle_scroll_buffer_to_line` — buffer-group panel buffers
+    /// are not represented in `split_manager`'s tree, so the basic lookup
+    /// returns nothing for them.
     pub(super) fn handle_set_buffer_cursor(&mut self, buffer_id: BufferId, position: usize) {
-        // Find all splits that display this buffer and update their view states
-        let splits = self.split_manager.splits_for_buffer(buffer_id);
+        // Find all splits that display this buffer (main tree + grouped subtrees).
+        let mut splits: Vec<crate::app::LeafId> = self.split_manager.splits_for_buffer(buffer_id);
+        for node in self.grouped_subtrees.values() {
+            if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
+                for inner_leaf in layout.leaf_split_ids() {
+                    if let Some(vs) = self.split_view_states.get(&inner_leaf) {
+                        if vs.active_buffer == buffer_id && !splits.contains(&inner_leaf) {
+                            splits.push(inner_leaf);
+                        }
+                    }
+                }
+            }
+        }
         let active_split = self.split_manager.active_split();
 
         tracing::debug!(

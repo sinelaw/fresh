@@ -1500,6 +1500,15 @@ pub enum PluginCommand {
         position: usize,
     },
 
+    /// Toggle whether the editor draws a native caret for this buffer.
+    ///
+    /// Buffer-group panel buffers default to `show_cursors = false`, which not
+    /// only hides the caret but also blocks all movement actions in
+    /// `action_to_events`. Plugins that want native cursor motion in a panel
+    /// buffer (e.g. for magit-style row navigation) flip this to `true` after
+    /// `createBufferGroup` returns.
+    SetBufferShowCursors { buffer_id: BufferId, show: bool },
+
     /// Send an arbitrary LSP request and return the raw JSON response
     SendLspRequest {
         language: String,

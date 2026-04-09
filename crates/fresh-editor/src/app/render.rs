@@ -2171,8 +2171,13 @@ impl Editor {
         let auto_indent = self.config.editor.auto_indent;
         let estimated_line_length = self.config.editor.estimated_line_length;
 
-        // Get viewport height from SplitViewState (the authoritative source)
-        let active_split = self.split_manager.active_split();
+        // Use the *effective* active split: when the user is focused on an
+        // inner panel of a grouped buffer (e.g. a magit-style review panel),
+        // its leaf id lives in `split_view_states` but is not in the main
+        // split tree. `effective_active_split` returns that inner leaf, so
+        // motion targets the panel's own buffer/cursors instead of the
+        // group host's.
+        let active_split = self.effective_active_split();
         let viewport_height = self
             .split_view_states
             .get(&active_split)
@@ -2266,10 +2271,13 @@ impl Editor {
             _ => return None, // Not a visual line action
         };
 
-        // First, collect cursor data we need (to avoid borrow conflicts)
+        // First, collect cursor data we need (to avoid borrow conflicts).
+        // Use the *effective* active split + buffer so that cursor motion in
+        // a focused buffer-group panel reads the panel's own cursors and
+        // buffer instead of the group host's.
         let cursor_data: Vec<_> = {
-            let active_split = self.split_manager.active_split();
-            let active_buffer = self.split_manager.active_buffer_id().unwrap();
+            let active_split = self.effective_active_split();
+            let active_buffer = self.active_buffer();
             let cursors = &self.split_view_states.get(&active_split).unwrap().cursors;
             let state = self.buffers.get(&active_buffer).unwrap();
             cursors

@@ -2827,6 +2827,22 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Toggle whether the editor draws a native caret in this buffer.
+    ///
+    /// Buffer-group panel buffers default to `show_cursors = false`, which
+    /// also blocks all native movement actions in `action_to_events`. Plugins
+    /// that want native cursor motion in a panel (e.g. magit-style row
+    /// navigation) call this with `true` after `createBufferGroup` returns.
+    #[qjs(rename = "setBufferShowCursors")]
+    pub fn set_buffer_show_cursors(&self, buffer_id: u32, show: bool) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetBufferShowCursors {
+                buffer_id: BufferId(buffer_id as usize),
+                show,
+            })
+            .is_ok()
+    }
+
     // === Line Indicators ===
 
     /// Set a line indicator in the gutter
