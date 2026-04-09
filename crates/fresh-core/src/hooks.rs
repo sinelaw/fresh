@@ -767,3 +767,102 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
 
     Ok(json_value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    fn noop_true() -> HookCallback {
+        Box::new(|_| true)
+    }
+
+    /// Adding, listing, counting, and removing hooks behave consistently:
+    /// counts match the number added, names reflect the keys, and removal
+    /// purges all callbacks for that key.
+    #[test]
+    fn add_count_list_remove_round_trip() {
+        let mut reg = HookRegistry::new();
+        assert_eq!(reg.hook_count("a"), 0);
+        assert!(reg.hook_names().is_empty());
+
+        reg.add_hook("a", noop_true());
+        reg.add_hook("a", noop_true());
+        reg.add_hook("b", noop_true());
+
+        assert_eq!(reg.hook_count("a"), 2);
+        assert_eq!(reg.hook_count("b"), 1);
+        assert_eq!(reg.hook_count("missing"), 0);
+
+        let mut names = reg.hook_names();
+        names.sort();
+        assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
+
+        reg.remove_hooks("a");
+        assert_eq!(reg.hook_count("a"), 0);
+        assert_eq!(reg.hook_count("b"), 1);
+        assert_eq!(reg.hook_names(), vec!["b".to_string()]);
+    }
+
+    /// `run_hooks` returns true iff every callback returned true, short-circuits
+    /// on the first `false`, and returns true for hook names with no callbacks.
+    #[test]
+    fn run_hooks_all_true_and_short_circuits_on_false() {
+        let mut reg = HookRegistry::new();
+        let args = HookArgs::EditorInitialized;
+
+        // Unknown hook: treated as "no callbacks" → true.
+        assert!(reg.run_hooks("unknown", &args));
+
+        // All-true chain returns true and calls every callback.
+        let calls = Arc::new(AtomicUsize::new(0));
+        for _ in 0..3 {
+            let c = calls.clone();
+            reg.add_hook(
+                "all_true",
+                Box::new(move |_| {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    true
+                }),
+            );
+        }
+        assert!(reg.run_hooks("all_true", &args));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+        // Short-circuits on the first `false` — the second callback must not run.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c1 = calls.clone();
+        reg.add_hook(
+            "short",
+            Box::new(move |_| {
+                c1.fetch_add(1, Ordering::SeqCst);
+                false
+            }),
+        );
+        let c2 = calls.clone();
+        reg.add_hook(
+            "short",
+            Box::new(move |_| {
+                c2.fetch_add(1, Ordering::SeqCst);
+                true
+            }),
+        );
+        assert!(!reg.run_hooks("short", &args));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// `hook_args_to_json` produces an object with the expected field for
+    /// a representative variant — ensuring the function actually serializes
+    /// the payload instead of returning a default (null) value.
+    #[test]
+    fn hook_args_to_json_serializes_payload_fields() {
+        let json = hook_args_to_json(&HookArgs::DiagnosticsUpdated {
+            uri: "file:///x.rs".into(),
+            count: 7,
+        })
+        .unwrap();
+        assert_eq!(json["uri"], "file:///x.rs");
+        assert_eq!(json["count"], 7);
+    }
+}
