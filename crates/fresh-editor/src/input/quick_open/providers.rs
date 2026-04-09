@@ -368,9 +368,7 @@ impl FileProvider {
 
     /// Returns `true` if a background file scan is in progress.
     fn is_loading(&self) -> bool {
-        self.cache
-            .lock()
-            .map_or(false, |c| c.loading)
+        self.cache.lock().is_ok_and(|c| c.loading)
     }
 
     /// Record file access for frecency ranking
@@ -524,6 +522,8 @@ impl FileProvider {
                         }
                     })
                     .collect();
+                // Send failure means the receiver has been dropped (editor
+                // shutting down); nothing more to do since we return below.
                 drop(sender.send(
                     crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
                         files: std::sync::Arc::new(entries),
@@ -668,8 +668,12 @@ fn walk_dir_with_updates(
     let base = Path::new(cwd);
     let mut paths: Vec<String> = Vec::new();
     let mut last_send = std::time::Instant::now();
+    let mut receiver_gone = false;
 
-    let _ = fs.walk_files(base, IGNORED_DIRS, cancel, &mut |_path, rel| {
+    // `walk_files` errors (e.g. root doesn't exist, permission denied at the
+    // top level) are treated as "no files found" — any paths already
+    // collected in `paths` are still surfaced via the final send below.
+    if let Err(e) = fs.walk_files(base, IGNORED_DIRS, cancel, &mut |_path, rel| {
         paths.push(rel.to_string());
 
         // Send a partial snapshot at regular intervals.
@@ -685,19 +689,34 @@ fn walk_dir_with_updates(
                     relative_path: p.clone(),
                 })
                 .collect();
-            let _ = sender.send(
-                crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
-                    files: std::sync::Arc::new(entries),
-                    complete: false,
-                },
-            );
+            if sender
+                .send(
+                    crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
+                        files: std::sync::Arc::new(entries),
+                        complete: false,
+                    },
+                )
+                .is_err()
+            {
+                // Receiver dropped (editor shutting down) — stop walking
+                // so we don't waste CPU on results nobody will see.
+                receiver_gone = true;
+                return false;
+            }
             last_send = std::time::Instant::now();
         }
 
         paths.len() < MAX_FILES
-    });
+    }) {
+        tracing::debug!("Quick Open walk_files failed: {}", e);
+    }
 
-    // Send the final complete result.
+    if receiver_gone {
+        return;
+    }
+
+    // Send the final complete result.  If this fails the editor is shutting
+    // down — nothing we can do about that, so the error is ignored.
     let frecency_map = frecency.read().ok();
     let entries: Vec<FileEntry> = paths
         .into_iter()
@@ -712,12 +731,12 @@ fn walk_dir_with_updates(
             }
         })
         .collect();
-    let _ = sender.send(
+    drop(sender.send(
         crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
             files: std::sync::Arc::new(entries),
             complete: true,
         },
-    );
+    ));
 }
 
 /// Compute frecency score for a single entry.
@@ -767,14 +786,16 @@ impl QuickOpenProvider for FileProvider {
 
         // Fast prefix probe: check the filesystem directly for the query
         // treated as a literal path prefix.  This gives instant results even
-        // before the recursive scan reaches the relevant directory.
-        let prefix_entries = if !search_query.is_empty() && (files.is_none() || still_loading) {
+        // before the recursive scan reaches the relevant directory, and is
+        // also valuable after the scan completes since the walk may have
+        // stopped at MAX_FILES before reaching the target file.
+        let prefix_entries = if !search_query.is_empty() {
             self.probe_prefix(&context.cwd, search_query)
         } else {
             vec![]
         };
 
-        let has_files = files.as_ref().map_or(false, |f| !f.is_empty());
+        let has_files = files.as_ref().is_some_and(|f| !f.is_empty());
 
         if !has_files && prefix_entries.is_empty() {
             if still_loading {
