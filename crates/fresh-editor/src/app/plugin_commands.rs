@@ -970,14 +970,11 @@ impl Editor {
         // If this buffer belongs to a group, route through the group's tab.
         if let Some(&group_id) = self.buffer_to_group.get(&buffer_id) {
             // Find the panel name for this buffer in the group, then focus it.
-            let panel_name = self
-                .buffer_groups
-                .get(&group_id)
-                .and_then(|g| {
-                    g.panel_buffers
-                        .iter()
-                        .find_map(|(name, &bid)| (bid == buffer_id).then(|| name.clone()))
-                });
+            let panel_name = self.buffer_groups.get(&group_id).and_then(|g| {
+                g.panel_buffers
+                    .iter()
+                    .find_map(|(name, &bid)| (bid == buffer_id).then(|| name.clone()))
+            });
             if let Some(panel_name) = panel_name {
                 self.focus_panel(group_id.0, panel_name);
                 tracing::info!(
