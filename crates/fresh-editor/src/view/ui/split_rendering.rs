@@ -961,6 +961,7 @@ impl SplitRenderer {
         estimated_line_length: usize,
         highlight_context_bytes: usize,
         mut split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
+        grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
         hide_cursor: bool,
         hovered_tab: Option<(crate::view::split::TabTarget, LeafId, bool)>, // (target, split_id, is_close_button)
         hovered_close_split: Option<LeafId>,
@@ -987,10 +988,82 @@ impl SplitRenderer {
     ) {
         let _span = tracing::trace_span!("render_content").entered();
 
-        // Get all visible splits with their areas
-        let visible_buffers = split_manager.get_visible_buffers(area);
+        // Get all visible splits with their areas.
+        // Each entry is (tab_bar_owner_split, effective_leaf_id, buffer_id, rect).
+        // For regular splits, tab_bar_owner == effective_leaf_id.
+        // For inner group panels, tab_bar_owner is the main split that hosts
+        // the group, and effective_leaf_id is the panel's leaf inside the
+        // Grouped subtree.
+        let base_visible = split_manager.get_visible_buffers(area);
         let active_split_id = split_manager.active_split();
-        let has_multiple_splits = visible_buffers.len() > 1;
+        let has_multiple_splits = base_visible.len() > 1;
+
+        // Expand groups: for each main leaf, if its SplitViewState has an
+        // active group tab, substitute the main leaf with the group's inner
+        // leaves. The tab bar still belongs to the main leaf.
+        let mut visible_buffers: Vec<(LeafId, LeafId, BufferId, Rect)> = Vec::new();
+        for (main_split_id, main_buffer_id, split_area) in &base_visible {
+            let active_group = split_view_states
+                .as_deref()
+                .and_then(|svs| svs.get(main_split_id))
+                .and_then(|vs| vs.active_group_tab);
+
+            if let Some(group_leaf) = active_group {
+                if let Some(grouped) = grouped_subtrees.get(&group_leaf) {
+                    // Compute the content rect for this main split (after tab bar).
+                    let split_tab_bar_visible = tab_bar_visible
+                        && !split_view_states
+                            .as_deref()
+                            .and_then(|svs| svs.get(main_split_id))
+                            .map_or(false, |vs| vs.suppress_chrome);
+                    let main_layout = Self::split_layout(
+                        *split_area,
+                        split_tab_bar_visible,
+                        show_vertical_scrollbar,
+                        show_horizontal_scrollbar,
+                    );
+                    // Walk the group's subtree and collect inner leaves.
+                    let inner_leaves = grouped.get_leaves_with_rects(main_layout.content_rect);
+                    // Push a synthetic entry for the main split so its tab bar
+                    // still gets rendered. We use its own buffer_id as a
+                    // placeholder content that won't actually be drawn
+                    // (suppressed by the `is_group_container` check later).
+                    visible_buffers.push((
+                        *main_split_id,
+                        *main_split_id,
+                        *main_buffer_id,
+                        *split_area,
+                    ));
+                    for (inner_leaf, inner_buffer, _inner_rect) in inner_leaves {
+                        // The inner rect is already in content-space (no tab bar).
+                        // But we pass the FULL split_area here so the main
+                        // rendering loop can compute the layout as usual.
+                        // The inner leaves have `suppress_chrome=true` so they
+                        // don't draw tab bars, and their rects are the full
+                        // split area scaled down by the group layout tree.
+                        //
+                        // Since the group's layout computed rects inside
+                        // main_layout.content_rect, we need to translate those
+                        // back. Simpler: store the already-computed inner rect
+                        // and let the rendering code use it directly.
+                        visible_buffers.push((
+                            *main_split_id,
+                            inner_leaf,
+                            inner_buffer,
+                            _inner_rect,
+                        ));
+                    }
+                    continue;
+                }
+            }
+
+            visible_buffers.push((
+                *main_split_id,
+                *main_split_id,
+                *main_buffer_id,
+                *split_area,
+            ));
+        }
 
         // Collect areas for mouse handling
         let mut split_areas = Vec::new();
@@ -1001,12 +1074,22 @@ impl SplitRenderer {
         let mut maximize_split_areas = Vec::new();
         let mut view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>> = HashMap::new();
 
-        // Render each split
-        for (split_id, buffer_id, split_area) in visible_buffers {
+        // Render each split.
+        //
+        // Each entry is (main_split_id, effective_leaf_id, buffer_id, split_area).
+        // - When they're the same, it's a regular split (render tab bar for
+        //   main_split_id, render buffer in content area).
+        // - When they differ, it's an inner leaf of a group whose tab bar
+        //   lives on main_split_id. The tab bar was already rendered by the
+        //   preceding main-split entry, and split_area is the inner leaf's
+        //   content rect directly.
+        for (main_split_id, split_id, buffer_id, split_area) in visible_buffers {
             let is_active = split_id == active_split_id;
+            let is_inner_group_leaf = main_split_id != split_id;
 
             // Suppress chrome (tab bar) for splits in buffer groups
-            let split_tab_bar_visible = tab_bar_visible
+            let split_tab_bar_visible = !is_inner_group_leaf
+                && tab_bar_visible
                 && !split_view_states
                     .as_deref()
                     .and_then(|svs| svs.get(&split_id))
@@ -1018,14 +1101,41 @@ impl SplitRenderer {
                     .and_then(|svs| svs.get(&split_id))
                     .map_or(false, |vs| vs.hide_tilde);
 
-            let layout = Self::split_layout(
-                split_area,
-                split_tab_bar_visible,
-                show_vertical_scrollbar,
-                show_horizontal_scrollbar,
-            );
-            let (split_buffers, tab_scroll_offset) =
-                Self::split_buffers_for_tabs(split_view_states.as_deref(), split_id, buffer_id);
+            let layout = if is_inner_group_leaf {
+                // Inner leaf: split_area IS the content rect already.
+                SplitLayout {
+                    tabs_rect: Rect::new(split_area.x, split_area.y, 0, 0),
+                    content_rect: Rect::new(
+                        split_area.x,
+                        split_area.y,
+                        split_area.width.saturating_sub(if show_vertical_scrollbar {
+                            1
+                        } else {
+                            0
+                        }),
+                        split_area.height,
+                    ),
+                    scrollbar_rect: Rect::new(
+                        split_area.x + split_area.width.saturating_sub(1),
+                        split_area.y,
+                        if show_vertical_scrollbar { 1 } else { 0 },
+                        split_area.height,
+                    ),
+                    horizontal_scrollbar_rect: Rect::new(0, 0, 0, 0),
+                }
+            } else {
+                Self::split_layout(
+                    split_area,
+                    split_tab_bar_visible,
+                    show_vertical_scrollbar,
+                    show_horizontal_scrollbar,
+                )
+            };
+            let (split_buffers, tab_scroll_offset) = if is_inner_group_leaf {
+                (Vec::new(), 0)
+            } else {
+                Self::split_buffers_for_tabs(split_view_states.as_deref(), split_id, buffer_id)
+            };
 
             // Determine hover state for this split's tabs
             let tab_hover_for_split = hovered_tab.and_then(|(hover_buf, hover_split, is_close)| {
@@ -1039,14 +1149,25 @@ impl SplitRenderer {
             // Only render tabs and split control buttons when tab bar is visible
             if split_tab_bar_visible {
                 // Determine the active target for this split's tab bar.
-                // If the active leaf is inside a Grouped subtree, that group's
-                // tab is "active". Otherwise it's the currently displayed buffer.
-                let active_target = split_manager
-                    .root()
-                    .grouped_ancestor_of(split_id.into())
-                    .map(crate::view::split::TabTarget::Group)
+                // If the split's SplitViewState marks a group tab as active,
+                // that's the active target; otherwise the currently displayed
+                // buffer.
+                let active_target = split_view_states
+                    .as_deref()
+                    .and_then(|svs| svs.get(&split_id))
+                    .map(|vs| vs.active_target())
                     .unwrap_or(crate::view::split::TabTarget::Buffer(buffer_id));
-                let group_names = split_manager.root().collect_group_names();
+                // Collect group names from the stashed Grouped subtrees.
+                let group_names: HashMap<LeafId, String> = grouped_subtrees
+                    .iter()
+                    .filter_map(|(leaf_id, node)| {
+                        if let crate::view::split::SplitNode::Grouped { name, .. } = node {
+                            Some((*leaf_id, name.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
                 // Render tabs for this split and collect hit areas
                 let tab_layout = TabsRenderer::render_for_split(
                     frame,

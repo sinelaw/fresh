@@ -453,6 +453,7 @@ impl Editor {
             self.config.editor.estimated_line_length,
             self.config.editor.highlight_context_bytes,
             Some(&mut self.split_view_states),
+            &self.grouped_subtrees,
             hide_cursor,
             hovered_tab,
             hovered_close_split,
@@ -4842,7 +4843,18 @@ impl Editor {
         };
 
         let split_buffers = view_state.open_buffers.clone();
-        let group_names = self.split_manager.root().collect_group_names();
+        // Collect group names from the stashed Grouped subtrees.
+        let group_names: std::collections::HashMap<LeafId, String> = self
+            .grouped_subtrees
+            .iter()
+            .filter_map(|(leaf_id, node)| {
+                if let crate::view::split::SplitNode::Grouped { name, .. } = node {
+                    Some((*leaf_id, name.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         // Use the shared function to calculate tab widths (same as render_for_split)
         let (tab_widths, rendered_targets) = crate::view::ui::tabs::calculate_tab_widths(
@@ -4856,14 +4868,15 @@ impl Editor {
         let total_tabs_width: usize = tab_widths.iter().sum();
         let max_visible_width = available_width as usize;
 
-        // Determine the active target — if the active leaf is inside a Grouped,
-        // that group is active; otherwise the active buffer.
-        let active_target = self
-            .split_manager
-            .root()
-            .grouped_ancestor_of(split_id.into())
-            .map(crate::view::split::TabTarget::Group)
-            .unwrap_or(crate::view::split::TabTarget::Buffer(active_buffer));
+        // Determine the active target from the SplitViewState marker.
+        let active_target = view_state.active_target();
+        // If the caller passed an explicit buffer_id and the split doesn't
+        // have a group marked active, use that buffer as the target.
+        let active_target = if matches!(active_target, crate::view::split::TabTarget::Buffer(_)) {
+            crate::view::split::TabTarget::Buffer(active_buffer)
+        } else {
+            active_target
+        };
 
         // Find the active tab index among rendered targets
         // Note: tab_widths includes separators, so we need to map tab index to width index

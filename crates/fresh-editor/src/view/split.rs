@@ -314,6 +314,15 @@ pub struct SplitViewState {
     /// When true, hide tilde markers (~) for empty rows in this split.
     /// Used for panels where empty space should be blank, not marked.
     pub hide_tilde: bool,
+
+    /// When `Some(leaf_id)`, the currently "active tab" of this split is the
+    /// buffer group identified by `leaf_id` (i.e., `TabTarget::Group(leaf_id)`).
+    /// When `None`, the active tab is a regular buffer (`TabTarget::Buffer(active_buffer)`).
+    pub active_group_tab: Option<LeafId>,
+
+    /// When a group tab is active, this tracks which inner leaf inside the
+    /// group's subtree has keyboard focus.
+    pub focused_group_leaf: Option<LeafId>,
 }
 
 impl std::ops::Deref for SplitViewState {
@@ -348,6 +357,8 @@ impl SplitViewState {
             composite_view: None,
             suppress_chrome: false,
             hide_tilde: false,
+            active_group_tab: None,
+            focused_group_leaf: None,
         }
     }
 
@@ -511,6 +522,29 @@ impl SplitViewState {
             .iter()
             .filter(|t| matches!(t, TabTarget::Buffer(_)))
             .count()
+    }
+
+    /// Return the effective active tab target for this split.
+    /// If a group tab is marked active, returns `TabTarget::Group`. Otherwise
+    /// returns `TabTarget::Buffer(active_buffer)`.
+    pub fn active_target(&self) -> TabTarget {
+        match self.active_group_tab {
+            Some(leaf_id) => TabTarget::Group(leaf_id),
+            None => TabTarget::Buffer(self.active_buffer),
+        }
+    }
+
+    /// Switch the active tab to a regular buffer target. Clears any
+    /// active group tab marker.
+    pub fn set_active_buffer_tab(&mut self, buffer_id: BufferId) {
+        self.active_group_tab = None;
+        self.focused_group_leaf = None;
+        self.switch_buffer(buffer_id);
+    }
+
+    /// Switch the active tab to a group target.
+    pub fn set_active_group_tab(&mut self, leaf_id: LeafId) {
+        self.active_group_tab = Some(leaf_id);
     }
 
     /// Push a buffer to the focus history (LRU-style)

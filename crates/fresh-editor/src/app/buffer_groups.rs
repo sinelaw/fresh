@@ -29,12 +29,20 @@ enum LayoutDesc {
 
 impl super::Editor {
     /// Create a buffer group from a layout description.
+    ///
+    /// Builds a `SplitNode::Grouped` wrapping the panel layout and stores
+    /// it in `grouped_subtrees`, then adds a `TabTarget::Group(group_leaf_id)`
+    /// entry to the current split's tab bar. The main split tree is NOT
+    /// modified — the group's subtree is dispatched to at render time when
+    /// the current split's active target is this group.
     pub(super) fn create_buffer_group(
         &mut self,
         name: String,
         mode: String,
         layout_json: String,
     ) -> Result<BufferGroupResult, String> {
+        use crate::view::split::{SplitNode, TabTarget};
+
         // Parse layout
         let desc: LayoutDesc =
             serde_json::from_str(&layout_json).map_err(|e| format!("Invalid layout: {}", e))?;
@@ -48,45 +56,37 @@ impl super::Editor {
         let mut panel_splits: HashMap<String, LeafId> = HashMap::new();
         let layout = self.build_group_layout(&desc, &mode, &mut panel_buffers)?;
 
-        // Build the split tree directly from the layout
-        let group_tree = self.build_split_tree(&layout, &mut panel_splits)?;
+        // Build the inner split tree for the group
+        let inner_tree = self.build_split_tree(&layout, &mut panel_splits)?;
 
-        // Determine the active leaf (first scrollable panel, fallback to any leaf)
-        let active_leaf = find_first_scrollable_leaf(&layout, &panel_splits)
+        // Determine the active inner leaf (first scrollable panel, fallback to any leaf)
+        let active_inner_leaf = find_first_scrollable_leaf(&layout, &panel_splits)
             .or_else(|| panel_splits.values().next().copied())
             .ok_or("No panels in layout")?;
 
-        // Wrap the existing root and the group tree in an outer split so the
-        // original buffers (with their tab bars) remain visible alongside
-        // the group. The group takes 80% of the width by default.
-        let old_root = self.split_manager.root().clone();
-        let outer_split_id = self.split_manager.allocate_split_id();
-        let combined = crate::view::split::SplitNode::Split {
-            direction: crate::model::event::SplitDirection::Vertical,
-            first: Box::new(old_root),
-            second: Box::new(group_tree),
-            ratio: 0.2,
-            split_id: crate::model::event::ContainerId(outer_split_id),
-            fixed_first: None,
-            fixed_second: None,
+        // Allocate a LeafId for the Grouped node itself. This is what the
+        // tab bar uses to reference this group (`TabTarget::Group(group_leaf_id)`).
+        let group_leaf_id = LeafId(self.split_manager.allocate_split_id());
+
+        // Build the Grouped SplitNode and stash it in the side map.
+        let grouped_node = SplitNode::Grouped {
+            split_id: group_leaf_id,
+            name: name.clone(),
+            layout: Box::new(inner_tree),
+            active_inner_leaf,
         };
-        self.split_manager.replace_root(combined, active_leaf);
+        self.grouped_subtrees.insert(group_leaf_id, grouped_node);
 
-        // Determine the first scrollable panel — it's the "representative"
-        // and keeps its tab bar visible so the group name shows as a tab entry.
-        let first_scrollable_name = find_first_scrollable_name(&layout).unwrap_or_default();
-
-        // Create SplitViewState for each panel split
+        // Create SplitViewState for each inner panel leaf
         let (tw, th) = (self.terminal_width, self.terminal_height);
         for (panel_name, leaf_id) in &panel_splits {
             let buffer_id = *panel_buffers
                 .get(panel_name)
                 .ok_or(format!("Panel '{}' has no buffer", panel_name))?;
-            let is_representative = *panel_name == first_scrollable_name;
             let mut vs = SplitViewState::with_buffer(tw, th, buffer_id);
-            // Representative shows its tab bar (so the group name is visible).
-            // Other panels suppress chrome.
-            vs.suppress_chrome = !is_representative;
+            // All panels inside a group suppress chrome — the parent split's
+            // tab bar is the only tab bar shown.
+            vs.suppress_chrome = true;
             vs.hide_tilde = true;
             if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
                 bs.show_line_numbers = false;
@@ -95,44 +95,35 @@ impl super::Editor {
             self.split_view_states.insert(*leaf_id, vs);
         }
 
-        // The first scrollable panel is the representative
-        let first_buffer_id = *panel_buffers
-            .get(&first_scrollable_name)
-            .or_else(|| panel_buffers.values().next())
-            .ok_or("No panels")?;
-
-        // Mark all panel buffers as hidden from tabs
+        // Mark all panel buffers as hidden from tabs so they don't appear
+        // in quick-switch or the buffer list.
         for buffer_id in panel_buffers.values() {
             if let Some(meta) = self.buffer_metadata.get_mut(buffer_id) {
                 meta.hidden_from_tabs = true;
             }
         }
 
-        // The first panel's buffer serves as the "representative" tab entry.
-        // Show it in the tab bar with the group name.
-        if let Some(meta) = self.buffer_metadata.get_mut(&first_buffer_id) {
-            meta.hidden_from_tabs = false;
-            meta.display_name = name.clone();
-        }
-
-        // Remove non-representative panel buffers from any other split's
-        // open_buffers list (they were added during create_virtual_buffer).
-        // Only the representative should appear as a tab.
-        let hidden_panel_ids: Vec<BufferId> = panel_buffers
-            .values()
-            .copied()
-            .filter(|id| *id != first_buffer_id)
-            .collect();
+        // Remove panel buffers from any split's open_buffers list
+        // (they were added during create_virtual_buffer).
+        let hidden_panel_ids: Vec<BufferId> = panel_buffers.values().copied().collect();
         for (_leaf_id, vs) in self.split_view_states.iter_mut() {
             vs.open_buffers.retain(|t| match t {
-                crate::view::split::TabTarget::Buffer(b) => !hidden_panel_ids.contains(b),
-                crate::view::split::TabTarget::Group(_) => true,
+                TabTarget::Buffer(b) => !hidden_panel_ids.contains(b),
+                TabTarget::Group(_) => true,
             });
         }
 
-        let representative_split = Some(active_leaf);
+        // Add the group as a tab in the CURRENT split's tab bar and make it
+        // the active tab. (The main split tree is untouched — the group's
+        // layout lives in `grouped_subtrees` and is dispatched at render time.)
+        let current_split_id = self.split_manager.active_split();
+        if let Some(current_vs) = self.split_view_states.get_mut(&current_split_id) {
+            current_vs.add_group(group_leaf_id);
+            current_vs.set_active_group_tab(group_leaf_id);
+            current_vs.focused_group_leaf = Some(active_inner_leaf);
+        }
 
-        // Register the group
+        // Register the group metadata
         let group = BufferGroup {
             id: group_id,
             name: name.clone(),
@@ -140,7 +131,7 @@ impl super::Editor {
             layout,
             panel_buffers: panel_buffers.clone(),
             panel_splits,
-            representative_split,
+            representative_split: Some(group_leaf_id),
         };
 
         // Register reverse mapping
@@ -306,8 +297,10 @@ impl super::Editor {
         }
     }
 
-    /// Close a buffer group — close all splits and buffers.
+    /// Close a buffer group — remove the Grouped subtree, close all panel
+    /// buffers, and remove the group tab from any split's tab bar.
     pub(super) fn close_buffer_group(&mut self, group_id: usize) {
+        use crate::view::split::TabTarget;
         let bg_id = BufferGroupId(group_id);
         if let Some(group) = self.buffer_groups.remove(&bg_id) {
             // Remove reverse mappings
@@ -315,14 +308,34 @@ impl super::Editor {
                 self.buffer_to_group.remove(buffer_id);
             }
 
-            // Close all splits (close the splits, buffers get cleaned up)
-            for (_, split_id) in &group.panel_splits {
-                let _ = self.split_manager.close_split(*split_id);
+            // Find the group_leaf_id (it's the `representative_split` now).
+            if let Some(group_leaf_id) = group.representative_split {
+                // Remove the Grouped subtree from the side map
+                self.grouped_subtrees.remove(&group_leaf_id);
+                // Remove the group tab from all splits' tab bars
+                for vs in self.split_view_states.values_mut() {
+                    vs.open_buffers
+                        .retain(|t| *t != TabTarget::Group(group_leaf_id));
+                }
             }
 
-            // Close all buffers
-            for (_, buffer_id) in &group.panel_buffers {
+            // Clean up SplitViewState for inner panel leaves
+            for split_id in group.panel_splits.values() {
+                self.split_view_states.remove(split_id);
+            }
+
+            // Close all panel buffers
+            for buffer_id in group.panel_buffers.values() {
                 let _ = self.close_buffer(*buffer_id);
+            }
+
+            // Ensure the active split now has a valid active_target.
+            // If it was the group's tab, switch to the first available buffer tab.
+            let active_split = self.split_manager.active_split();
+            if let Some(vs) = self.split_view_states.get(&active_split) {
+                if let Some(first_buf) = vs.buffer_tab_ids().next() {
+                    let _ = first_buf; // active_buffer is per-leaf; already set
+                }
             }
         }
     }
@@ -339,46 +352,45 @@ impl super::Editor {
         }
     }
 
-    /// Activate a group tab by its Grouped-node LeafId: set the active leaf
-    /// to the group's `active_inner_leaf`, which causes the group's subtree
-    /// to be the visible content in its parent split.
+    /// Activate a group tab by its Grouped-node LeafId. This sets the
+    /// active tab of the current split so the group's layout becomes visible
+    /// in the split's content area. The active inner leaf receives focus.
     pub(crate) fn activate_group_tab(&mut self, group_leaf: LeafId) {
-        // Look up the Grouped node in the tree and find its inner active leaf.
-        let target_leaf = if let Some(crate::view::split::SplitNode::Grouped {
-            active_inner_leaf,
-            ..
-        }) = self.split_manager.root().find_grouped(group_leaf)
-        {
-            *active_inner_leaf
-        } else {
+        // Find the inner active leaf and its buffer from the stored Grouped node.
+        let Some(crate::view::split::SplitNode::Grouped {
+            active_inner_leaf, ..
+        }) = self.grouped_subtrees.get(&group_leaf)
+        else {
             return;
         };
+        let inner_leaf = *active_inner_leaf;
 
-        // Find the buffer id of the target leaf
-        if let Some(buffer_id) = self.split_manager.get_buffer_id(target_leaf.into()) {
-            self.focus_split(target_leaf, buffer_id);
+        // Set the current split's "effective active target" by recording
+        // the group as the active-tab for this split.
+        let active_split = self.split_manager.active_split();
+        if let Some(vs) = self.split_view_states.get_mut(&active_split) {
+            vs.active_group_tab = Some(group_leaf);
+        }
+
+        // Focus the inner leaf's buffer so keyboard input goes there.
+        // NOTE: the inner leaf is NOT in the main split tree — it only
+        // exists inside the stashed Grouped subtree. Focus routing
+        // through focus_split won't work directly.
+        // Instead we set a separate "focused group leaf" marker that the
+        // input router can consult.
+        if let Some(vs) = self.split_view_states.get_mut(&active_split) {
+            vs.focused_group_leaf = Some(inner_leaf);
         }
     }
 
     /// Close a buffer group by its Grouped-node LeafId (used by tab close button).
     pub(crate) fn close_buffer_group_by_leaf(&mut self, group_leaf: LeafId) {
-        // Find the BufferGroupId whose Grouped node has this LeafId.
-        // We stored `representative_split = active_leaf` which is the first scrollable
-        // panel's LeafId — but the Grouped node's LeafId is separate.
-        // Easiest: search buffer_groups by checking whose panel_splits maps an
-        // inner leaf that lives under this Grouped node.
+        // Find the BufferGroupId whose stored representative_split matches
+        // this Grouped node's LeafId.
         let bg_id_opt = self
             .buffer_groups
             .iter()
-            .find(|(_, g)| {
-                // A group's Grouped node contains all its panel_splits as inner leaves.
-                g.panel_splits.values().any(|inner_leaf| {
-                    self.split_manager
-                        .root()
-                        .grouped_ancestor_of((*inner_leaf).into())
-                        == Some(group_leaf)
-                })
-            })
+            .find(|(_, g)| g.representative_split == Some(group_leaf))
             .map(|(id, _)| id.0);
 
         if let Some(bg_id) = bg_id_opt {

@@ -663,6 +663,15 @@ pub struct Editor {
     /// Next buffer group ID
     next_buffer_group_id: usize,
 
+    /// Grouped SplitNode subtrees, keyed by their LeafId (which is what
+    /// `TabTarget::Group(leaf_id)` references). Each entry is a
+    /// `SplitNode::Grouped` node holding the layout for one buffer group.
+    ///
+    /// These subtrees are NOT part of the main split tree — they live
+    /// here and are dispatched to at render time when the current split's
+    /// active target is a `TabTarget::Group`.
+    pub(crate) grouped_subtrees: HashMap<crate::model::event::LeafId, crate::view::split::SplitNode>,
+
     /// Background process abort handles for cancellation
     /// Maps process_id to abort handle
     background_process_handles: HashMap<u64, tokio::task::AbortHandle>,
@@ -1594,6 +1603,7 @@ impl Editor {
             buffer_groups: HashMap::new(),
             buffer_to_group: HashMap::new(),
             next_buffer_group_id: 0,
+            grouped_subtrees: HashMap::new(),
             background_process_handles: HashMap::new(),
             prompt_histories: {
                 // Load prompt histories from disk if available
