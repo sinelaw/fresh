@@ -1862,8 +1862,25 @@ impl Editor {
     ///
     /// This is derived from the split manager (single source of truth).
     /// The editor always has at least one buffer, so this never fails.
+    ///
+    /// When the active split has a buffer-group tab as its active target
+    /// (i.e., `active_group_tab.is_some()`), this returns the buffer of the
+    /// currently-focused inner panel — so that input routing, command palette
+    /// context, buffer mode, and other "what is the user looking at" queries
+    /// resolve to the panel the user is actually interacting with rather than
+    /// the split's background leaf buffer.
     #[inline]
     pub fn active_buffer(&self) -> BufferId {
+        let active_split = self.split_manager.active_split();
+        if let Some(vs) = self.split_view_states.get(&active_split) {
+            if vs.active_group_tab.is_some() {
+                if let Some(inner_leaf) = vs.focused_group_leaf {
+                    if let Some(inner_vs) = self.split_view_states.get(&inner_leaf) {
+                        return inner_vs.active_buffer;
+                    }
+                }
+            }
+        }
         self.split_manager
             .active_buffer_id()
             .expect("Editor always has at least one buffer")
