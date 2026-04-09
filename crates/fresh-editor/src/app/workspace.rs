@@ -1671,6 +1671,7 @@ fn serialize_split_node(
             second,
             ratio,
             split_id,
+            ..
         } => {
             let raw_split_id: SplitId = (*split_id).into();
             SerializedSplitNode::Split {

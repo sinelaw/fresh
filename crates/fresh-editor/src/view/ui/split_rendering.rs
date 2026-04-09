@@ -1005,9 +1005,22 @@ impl SplitRenderer {
         for (split_id, buffer_id, split_area) in visible_buffers {
             let is_active = split_id == active_split_id;
 
+            // Suppress chrome (tab bar) for splits in buffer groups
+            let split_tab_bar_visible = tab_bar_visible
+                && !split_view_states
+                    .as_deref()
+                    .and_then(|svs| svs.get(&split_id))
+                    .map_or(false, |vs| vs.suppress_chrome);
+            // Hide tildes per-split (e.g., for buffer group panels)
+            let split_show_tilde = show_tilde
+                && !split_view_states
+                    .as_deref()
+                    .and_then(|svs| svs.get(&split_id))
+                    .map_or(false, |vs| vs.hide_tilde);
+
             let layout = Self::split_layout(
                 split_area,
-                tab_bar_visible,
+                split_tab_bar_visible,
                 show_vertical_scrollbar,
                 show_horizontal_scrollbar,
             );
@@ -1024,7 +1037,7 @@ impl SplitRenderer {
             });
 
             // Only render tabs and split control buttons when tab bar is visible
-            if tab_bar_visible {
+            if split_tab_bar_visible {
                 // Render tabs for this split and collect hit areas
                 let tab_layout = TabsRenderer::render_for_split(
                     frame,
@@ -1164,7 +1177,7 @@ impl SplitRenderer {
                             is_active,
                             view_state,
                             use_terminal_bg,
-                            show_tilde,
+                            split_show_tilde,
                         );
 
                         // Render scrollbar for composite buffer
@@ -1299,7 +1312,7 @@ impl SplitRenderer {
                     view_prefs.show_line_numbers,
                     effective_highlight_current_line,
                     diagnostics_inline_text,
-                    show_tilde,
+                    split_show_tilde,
                     cell_theme_map,
                     screen_width,
                 );
@@ -1450,9 +1463,15 @@ impl SplitRenderer {
         for (split_id, buffer_id, split_area) in visible_buffers {
             let is_active = split_id == active_split_id;
 
+            // Suppress chrome (tab bar) for splits in buffer groups
+            let split_tab_bar_visible = tab_bar_visible
+                && !split_view_states
+                    .get(&split_id)
+                    .map_or(false, |vs| vs.suppress_chrome);
+
             let layout = Self::split_layout(
                 split_area,
-                tab_bar_visible,
+                split_tab_bar_visible,
                 show_vertical_scrollbar,
                 show_horizontal_scrollbar,
             );

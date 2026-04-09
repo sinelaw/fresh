@@ -58,6 +58,12 @@ pub enum SplitNode {
         ratio: f32,
         /// Unique ID for this split container
         split_id: ContainerId,
+        /// If set, first child gets exactly this many rows/cols instead of using ratio
+        #[serde(default)]
+        fixed_first: Option<u16>,
+        /// If set, second child gets exactly this many rows/cols instead of using ratio
+        #[serde(default)]
+        fixed_second: Option<u16>,
     },
 }
 
@@ -254,6 +260,14 @@ pub struct SplitViewState {
     /// the composite layout. This makes the source buffer the "active buffer"
     /// so normal keybindings work directly.
     pub composite_view: Option<BufferId>,
+
+    /// When true, suppress per-split chrome (tab bar, close/maximize buttons).
+    /// Used for splits within a buffer group where the group provides its own tab.
+    pub suppress_chrome: bool,
+
+    /// When true, hide tilde markers (~) for empty rows in this split.
+    /// Used for panels where empty space should be blank, not marked.
+    pub hide_tilde: bool,
 }
 
 impl std::ops::Deref for SplitViewState {
@@ -286,6 +300,8 @@ impl SplitViewState {
             focus_history: Vec::new(),
             sync_group: None,
             composite_view: None,
+            suppress_chrome: false,
+            hide_tilde: false,
         }
     }
 
@@ -460,6 +476,8 @@ impl SplitNode {
             second: Box::new(second),
             ratio: ratio.clamp(0.1, 0.9), // Prevent extreme ratios
             split_id: ContainerId(split_id),
+            fixed_first: None,
+            fixed_second: None,
         }
     }
 
@@ -542,9 +560,12 @@ impl SplitNode {
                 first,
                 second,
                 ratio,
+                fixed_first,
+                fixed_second,
                 ..
             } => {
-                let (first_rect, second_rect) = split_rect(rect, *direction, *ratio);
+                let (first_rect, second_rect) =
+                    split_rect_ext(rect, *direction, *ratio, *fixed_first, *fixed_second);
                 let mut leaves = first.get_leaves_with_rects(first_rect);
                 leaves.extend(second.get_leaves_with_rects(second_rect));
                 leaves
@@ -575,8 +596,11 @@ impl SplitNode {
                 second,
                 ratio,
                 split_id,
+                fixed_first,
+                fixed_second,
             } => {
-                let (first_rect, second_rect) = split_rect(rect, *direction, *ratio);
+                let (first_rect, second_rect) =
+                    split_rect_ext(rect, *direction, *ratio, *fixed_first, *fixed_second);
                 let mut separators = Vec::new();
 
                 // Add separator for this split (in the 1-char gap between first and second)
@@ -649,12 +673,29 @@ impl SplitNode {
 
 /// Split a rectangle into two parts based on direction and ratio
 /// Leaves 1 character space for the separator line between splits
+#[cfg(test)]
 fn split_rect(rect: Rect, direction: SplitDirection, ratio: f32) -> (Rect, Rect) {
+    split_rect_ext(rect, direction, ratio, None, None)
+}
+
+fn split_rect_ext(
+    rect: Rect,
+    direction: SplitDirection,
+    ratio: f32,
+    fixed_first: Option<u16>,
+    fixed_second: Option<u16>,
+) -> (Rect, Rect) {
     match direction {
         SplitDirection::Horizontal => {
             // Split into top and bottom, with 1 line for separator
             let total_height = rect.height.saturating_sub(1); // Reserve 1 line for separator
-            let first_height = (total_height as f32 * ratio).round() as u16;
+            let first_height = if let Some(f) = fixed_first {
+                f.min(total_height)
+            } else if let Some(s) = fixed_second {
+                total_height.saturating_sub(s.min(total_height))
+            } else {
+                (total_height as f32 * ratio).round() as u16
+            };
             let second_height = total_height.saturating_sub(first_height);
 
             let first = Rect {
@@ -676,7 +717,13 @@ fn split_rect(rect: Rect, direction: SplitDirection, ratio: f32) -> (Rect, Rect)
         SplitDirection::Vertical => {
             // Split into left and right, with 1 column for separator
             let total_width = rect.width.saturating_sub(1); // Reserve 1 column for separator
-            let first_width = (total_width as f32 * ratio).round() as u16;
+            let first_width = if let Some(f) = fixed_first {
+                f.min(total_width)
+            } else if let Some(s) = fixed_second {
+                total_width.saturating_sub(s.min(total_width))
+            } else {
+                (total_width as f32 * ratio).round() as u16
+            };
             let second_width = total_width.saturating_sub(first_width);
 
             let first = Rect {
@@ -735,6 +782,21 @@ impl SplitManager {
         &self.root
     }
 
+    /// Allocate a new unique split ID
+    pub fn allocate_split_id(&mut self) -> SplitId {
+        let id = SplitId(self.next_split_id);
+        self.next_split_id += 1;
+        id
+    }
+
+    /// Replace the root split tree. The new tree must have unique IDs
+    /// (allocated via `allocate_split_id`). The caller must also provide
+    /// the new active leaf ID.
+    pub fn replace_root(&mut self, new_root: SplitNode, new_active: LeafId) {
+        self.root = new_root;
+        self.active_split = new_active;
+    }
+
     /// Get the currently active split ID
     pub fn active_split(&self) -> LeafId {
         self.active_split
@@ -789,12 +851,7 @@ impl SplitManager {
         }
     }
 
-    /// Allocate a new split ID
-    fn allocate_split_id(&mut self) -> SplitId {
-        let id = SplitId(self.next_split_id);
-        self.next_split_id += 1;
-        id
-    }
+    // allocate_split_id is defined as pub earlier in this impl block
 
     /// Split the currently active pane
     pub fn split_active(
@@ -1053,6 +1110,27 @@ impl SplitManager {
             None => {
                 unreachable!("ContainerId {:?} not found in split tree", container_id)
             }
+        }
+    }
+
+    /// Set a fixed size on a split container's first or second child.
+    /// When set, the child gets exactly this many rows/cols instead of using the ratio.
+    pub fn set_fixed_size(
+        &mut self,
+        container_id: ContainerId,
+        first: Option<u16>,
+        second: Option<u16>,
+    ) {
+        match self.root.find_mut(container_id.into()) {
+            Some(SplitNode::Split {
+                fixed_first,
+                fixed_second,
+                ..
+            }) => {
+                *fixed_first = first;
+                *fixed_second = second;
+            }
+            _ => {}
         }
     }
 

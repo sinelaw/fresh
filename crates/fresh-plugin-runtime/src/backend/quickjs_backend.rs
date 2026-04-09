@@ -3387,6 +3387,80 @@ impl JsEditorApi {
         Ok(id)
     }
 
+    /// Create a buffer group: multiple panels appearing as one tab
+    #[qjs(rename = "_createBufferGroupStart")]
+    pub fn create_buffer_group_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        name: String,
+        mode: String,
+        layout_json: String,
+    ) -> rquickjs::Result<u64> {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
+        let _ = self.command_sender.send(PluginCommand::CreateBufferGroup {
+            name,
+            mode,
+            layout_json,
+            request_id: Some(id),
+        });
+        Ok(id)
+    }
+
+    /// Set the content of a panel within a buffer group
+    #[qjs(rename = "setPanelContent")]
+    pub fn set_panel_content<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        group_id: u32,
+        panel_name: String,
+        entries_arr: Vec<rquickjs::Object<'js>>,
+    ) -> rquickjs::Result<bool> {
+        let entries: Vec<TextPropertyEntry> = entries_arr
+            .iter()
+            .filter_map(|obj| parse_text_property_entry(&ctx, obj))
+            .collect();
+        Ok(self
+            .command_sender
+            .send(PluginCommand::SetPanelContent {
+                group_id: group_id as usize,
+                panel_name,
+                entries,
+            })
+            .is_ok())
+    }
+
+    /// Close a buffer group
+    #[qjs(rename = "closeBufferGroup")]
+    pub fn close_buffer_group(&self, group_id: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::CloseBufferGroup {
+                group_id: group_id as usize,
+            })
+            .is_ok()
+    }
+
+    /// Focus a specific panel within a buffer group
+    #[qjs(rename = "focusBufferGroupPanel")]
+    pub fn focus_buffer_group_panel(&self, group_id: u32, panel_name: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::FocusPanel {
+                group_id: group_id as usize,
+                panel_name,
+            })
+            .is_ok()
+    }
+
     /// Set virtual buffer content (takes array of entry objects)
     ///
     /// Note: entries should be TextPropertyEntry[] - uses manual parsing for HashMap support
@@ -4391,6 +4465,7 @@ impl QuickJsBackend {
                 editor.createVirtualBuffer = _wrapAsync("_createVirtualBufferStart", "createVirtualBuffer");
                 editor.createVirtualBufferInSplit = _wrapAsync("_createVirtualBufferInSplitStart", "createVirtualBufferInSplit");
                 editor.createVirtualBufferInExistingSplit = _wrapAsync("_createVirtualBufferInExistingSplitStart", "createVirtualBufferInExistingSplit");
+                editor.createBufferGroup = _wrapAsync("_createBufferGroupStart", "createBufferGroup");
                 editor.sendLspRequest = _wrapAsync("_sendLspRequestStart", "sendLspRequest");
                 editor.spawnBackgroundProcess = _wrapAsyncThenable("_spawnBackgroundProcessStart", "spawnBackgroundProcess");
                 editor.spawnProcessWait = _wrapAsync("_spawnProcessWaitStart", "spawnProcessWait");

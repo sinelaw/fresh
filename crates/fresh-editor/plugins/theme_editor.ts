@@ -62,7 +62,8 @@ type ColorValue = RGB | string;
 // =============================================================================
 
 const LEFT_WIDTH = 38;
-const RIGHT_WIDTH = 61;
+const RIGHT_WIDTH_CONST = 61;
+function RIGHT_WIDTH(): number { return RIGHT_WIDTH_CONST; }
 
 type PickerFocusTarget =
   | { type: "hex-input" }
@@ -375,6 +376,10 @@ interface ThemeEditorState {
   viewportHeight: number;
   /** Cached viewport width */
   viewportWidth: number;
+  /** Buffer group ID (when using buffer groups) */
+  groupId: number | null;
+  /** Panel buffer IDs keyed by panel name */
+  panelBuffers: Record<string, number>;
 }
 
 /**
@@ -436,6 +441,8 @@ const state: ThemeEditorState = {
   treeScrollOffset: 0,
   viewportHeight: 40,
   viewportWidth: 120,
+  groupId: null,
+  panelBuffers: {},
 };
 
 // =============================================================================
@@ -816,8 +823,8 @@ function buildTreeLines(): TreeLine[] {
     type: "header",
   });
 
-  // Separator
-  lines.push({ text: "─".repeat(36), type: "separator" });
+  // Separator (adapt to panel width)
+  lines.push({ text: "─".repeat(Math.max(10, LEFT_WIDTH - 2)), type: "separator" });
 
   // Filter
   if (state.filterText) {
@@ -825,7 +832,7 @@ function buildTreeLines(): TreeLine[] {
       text: `Filter: [${state.filterText}]`,
       type: "filter",
     });
-    lines.push({ text: "─".repeat(36), type: "separator" });
+    lines.push({ text: "─".repeat(Math.max(10, LEFT_WIDTH - 2)), type: "separator" });
   }
 
   // Build visible fields
@@ -852,11 +859,15 @@ function buildTreeLines(): TreeLine[] {
       });
     } else {
       const sel = isSelected && state.focusPanel === "tree" ? "▸" : " ";
-      const name = field.def.key.length > 13 ? field.def.key.slice(0, 12) + "…" : field.def.key;
+      // Adapt name/value truncation to panel width
+      // Layout: "  ▸ name.padEnd(nameW) ██ value" = 6 + nameW + 3 + valueW
+      const nameW = Math.max(8, LEFT_WIDTH - 18);
+      const valueW = Math.max(5, LEFT_WIDTH - nameW - 9);
+      const name = field.def.key.length > nameW ? field.def.key.slice(0, nameW - 1) + "…" : field.def.key;
       const colorStr = formatColorValue(field.value);
-      const valueStr = colorStr.length > 9 ? colorStr.slice(0, 8) + "…" : colorStr;
+      const valueStr = colorStr.length > valueW ? colorStr.slice(0, valueW - 1) + "…" : colorStr;
       lines.push({
-        text: `  ${sel} ${name.padEnd(13)} ██ ${valueStr}`,
+        text: `  ${sel} ${name.padEnd(nameW)} ██ ${valueStr}`,
         type: "tree-field",
         index: i,
         path: field.path,
@@ -893,7 +904,7 @@ function buildPickerLines(): PickerLine[] {
     } else {
       lines.push({ text: "No field selected", type: "picker-title" });
     }
-    lines.push({ text: "─".repeat(RIGHT_WIDTH - 2), type: "picker-separator" });
+    lines.push({ text: "─".repeat(RIGHT_WIDTH() - 2), type: "picker-separator" });
     lines.push({ text: "Select a color field to edit", type: "picker-desc" });
     return lines;
   }
@@ -901,7 +912,7 @@ function buildPickerLines(): PickerLine[] {
   // Field title
   lines.push({ text: `${field.path} - ${field.def.displayName}`, type: "picker-title" });
   lines.push({ text: `"${field.def.description}"`, type: "picker-desc" });
-  lines.push({ text: "─".repeat(RIGHT_WIDTH - 2), type: "picker-separator" });
+  lines.push({ text: "─".repeat(RIGHT_WIDTH() - 2), type: "picker-separator" });
 
   // Color value display
   const isNamed = typeof field.value === "string" && NAMED_COLORS[field.value] !== undefined;
@@ -942,7 +953,7 @@ function buildPickerLines(): PickerLine[] {
     lines.push({ text: rowText, type: "picker-palette-row", paletteRow: row });
   }
 
-  lines.push({ text: "─".repeat(RIGHT_WIDTH - 2), type: "picker-separator" });
+  lines.push({ text: "─".repeat(RIGHT_WIDTH() - 2), type: "picker-separator" });
 
   // Preview section
   lines.push({ text: "Preview:", type: "picker-label" });
@@ -1352,9 +1363,77 @@ let isUpdatingDisplay = false;
  * Full display update — rebuilds content and all overlays.
  * Use for structural changes (open, section toggle, color edit, filter).
  */
+// --- Buffer Group panel content builders ---
+
+function buildTreePanelEntries(): TextPropertyEntry[] {
+  const entries: TextPropertyEntry[] = [];
+  const allLeftLines = buildTreeLines();
+  for (const item of allLeftLines) {
+    const leftStyle = styleForLeftEntry(item);
+    entries.push({
+      text: " " + item.text + "\n",
+      properties: {
+        type: item.type,
+        index: item.index,
+        path: item.path,
+        selected: item.selected,
+        colorValue: item.colorValue,
+      },
+      style: leftStyle.style,
+      inlineOverlays: leftStyle.inlineOverlays,
+    });
+  }
+  return entries;
+}
+
+function buildPickerPanelEntries(): TextPropertyEntry[] {
+  const entries: TextPropertyEntry[] = [];
+  const rightLines = buildPickerLines();
+  for (const item of rightLines) {
+    const rightStyle = styleForRightEntry(item);
+    entries.push({
+      text: " " + item.text + "\n",
+      properties: {
+        type: item.type,
+        namedRow: item.namedRow,
+        paletteRow: item.paletteRow,
+        previewLineIdx: item.previewLineIdx,
+      },
+      style: rightStyle.style,
+      inlineOverlays: rightStyle.inlineOverlays,
+    });
+  }
+  return entries;
+}
+
+function buildFooterPanelEntries(): TextPropertyEntry[] {
+  const hintText = " ↑↓ Navigate  Tab Switch Panel  Enter Edit  /Filter  Ctrl+S Save  Esc Close";
+  return [{ text: hintText + "\n", style: { fg: colors.header } }];
+}
+
 function updateDisplay(): void {
-  if (state.bufferId === null) return;
   isUpdatingDisplay = true;
+
+  // Always refresh viewport dimensions
+  const viewport = editor.getViewport();
+  if (viewport) {
+    state.viewportHeight = viewport.height;
+    state.viewportWidth = viewport.width;
+  }
+
+  // Buffer group mode: write to each panel separately
+  if (state.groupId !== null) {
+    editor.setPanelContent(state.groupId, "tree", buildTreePanelEntries());
+    editor.setPanelContent(state.groupId, "picker", buildPickerPanelEntries());
+    editor.setPanelContent(state.groupId, "footer", buildFooterPanelEntries());
+    isUpdatingDisplay = false;
+    return;
+  }
+
+  if (state.bufferId === null) {
+    isUpdatingDisplay = false;
+    return;
+  }
 
   const entries = buildDisplayEntries();
 
@@ -1532,11 +1611,7 @@ function onThemeColorPromptConfirmed(args: {
     setNestedValue(state.themeData, path, result.value);
     state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
 
-    const entries = buildDisplayEntries();
-    if (state.bufferId !== null) {
-      editor.setVirtualBufferContent(state.bufferId, entries);
-      applySelectionHighlighting(entries);
-    }
+    updateDisplay();
     moveCursorToField(path);
     editor.setStatus(editor.t("status.updated", { path }));
   } else {
@@ -1793,11 +1868,7 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
     state.hasChanges = false;
 
     // Update display
-    const entries = buildDisplayEntries();
-    if (state.bufferId !== null) {
-      editor.setVirtualBufferContent(state.bufferId, entries);
-      applySelectionHighlighting(entries);
-    }
+    updateDisplay();
 
     // Restore cursor position if provided
     if (restorePath) {
@@ -1973,20 +2044,6 @@ function onThemeEditorResize(data: { width: number; height: number }): void {
 }
 registerHandler("onThemeEditorResize", onThemeEditorResize);
 editor.on("resize", "onThemeEditorResize");
-
-function onThemeEditorMouseScroll(data: { buffer_id: number; delta: number; col: number; row: number }): void {
-  if (state.bufferId === null || data.buffer_id !== state.bufferId) return;
-
-  // Only scroll the tree when mouse is over the left panel area (col < LEFT_WIDTH)
-  if (data.col >= LEFT_WIDTH) return;
-
-  // delta > 0 = scroll down, delta < 0 = scroll up
-  const scrollAmount = data.delta > 0 ? 3 : -3;
-  state.treeScrollOffset = Math.max(0, state.treeScrollOffset + scrollAmount);
-  updateDisplay();
-}
-registerHandler("onThemeEditorMouseScroll", onThemeEditorMouseScroll);
-editor.on("mouse_scroll", "onThemeEditorMouseScroll");
 
 /**
  * Handle buffer_closed event to reset state when buffer is closed by any means
@@ -2510,38 +2567,30 @@ async function doOpenThemeEditor(): Promise<void> {
   }
   state.treeScrollOffset = 0;
 
-  editor.debug("[theme_editor] doOpenThemeEditor: building display entries");
-  // Build initial entries
-  const entries = buildDisplayEntries();
-  editor.debug(`[theme_editor] doOpenThemeEditor: built ${entries.length} entries`);
-
-  // Create virtual buffer in current split (no new split)
-  editor.debug("[theme_editor] doOpenThemeEditor: calling createVirtualBuffer...");
-  const result = await editor.createVirtualBuffer({
-    name: "*Theme Editor*",
-    mode: "theme-editor",
-    readOnly: true,
-    entries: entries,
-    showLineNumbers: false,
-    showCursors: false,
-    editingDisabled: true,
+  // Create buffer group with layout: horizontal split (tree | picker) + footer
+  const layout = JSON.stringify({
+    type: "split",
+    direction: "v",
+    ratio: 0.95,
+    first: {
+      type: "split",
+      direction: "h",
+      ratio: 0.38,
+      first: { type: "scrollable", id: "tree" },
+      second: { type: "scrollable", id: "picker" },
+    },
+    second: { type: "fixed", id: "footer", height: 1 },
   });
-  const bufferId = result.bufferId;
-  editor.debug(`[theme_editor] doOpenThemeEditor: createVirtualBuffer returned bufferId=${bufferId}`);
-  editor.debug(`[theme_editor] doOpenThemeEditor: checking if bufferId !== null...`);
 
-  if (bufferId !== null) {
-    editor.debug(`[theme_editor] doOpenThemeEditor: bufferId is not null, setting state...`);
-    state.bufferId = bufferId;
-    state.splitId = null;
+  const groupResult = await editor.createBufferGroup("*Theme Editor*", "theme-editor", layout);
+  state.groupId = groupResult.groupId;
+  state.panelBuffers = groupResult.panels;
+  state.bufferId = groupResult.panels["tree"]; // representative buffer
+  state.splitId = null;
 
-    // Disable line wrapping — our layout is fixed-width
-    editor.setLineWrap(bufferId, null, false);
-
-    editor.debug(`[theme_editor] doOpenThemeEditor: calling applySelectionHighlighting...`);
-    applySelectionHighlighting();
-    editor.debug(`[theme_editor] doOpenThemeEditor: applySelectionHighlighting completed`);
-    editor.debug(`[theme_editor] doOpenThemeEditor: calling setStatus...`);
+  if (state.bufferId !== null) {
+    // Set initial content for all panels
+    updateDisplay();
     editor.debug(editor.t("status.ready"));
     editor.debug(`[theme_editor] doOpenThemeEditor: completed successfully`);
   } else {
@@ -2575,8 +2624,12 @@ registerHandler("theme_editor_close", theme_editor_close);
  * Actually close the editor (called after confirmation or when no changes)
  */
 function doCloseEditor(): void {
-  // Close the buffer (this will switch to another buffer in the same split)
-  if (state.bufferId !== null) {
+  // Close the buffer group (or fall back to single buffer close)
+  if (state.groupId !== null) {
+    editor.closeBufferGroup(state.groupId);
+    state.groupId = null;
+    state.panelBuffers = {};
+  } else if (state.bufferId !== null) {
     editor.closeBuffer(state.bufferId);
   }
 

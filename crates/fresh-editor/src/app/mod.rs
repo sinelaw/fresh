@@ -1,4 +1,5 @@
 mod async_messages;
+mod buffer_groups;
 mod buffer_management;
 mod calibration_actions;
 pub mod calibration_wizard;
@@ -654,6 +655,13 @@ pub struct Editor {
     /// Named panel IDs mapping (for idempotent panel operations)
     /// Maps panel ID (e.g., "diagnostics") to buffer ID
     panel_ids: HashMap<String, BufferId>,
+
+    /// Buffer groups: multiple splits/buffers appearing as one tab
+    buffer_groups: HashMap<types::BufferGroupId, types::BufferGroup>,
+    /// Reverse index: buffer ID → group ID (for lookups)
+    buffer_to_group: HashMap<BufferId, types::BufferGroupId>,
+    /// Next buffer group ID
+    next_buffer_group_id: usize,
 
     /// Background process abort handles for cancellation
     /// Maps process_id to abort handle
@@ -1583,6 +1591,9 @@ impl Editor {
             plugin_dev_workspaces: HashMap::new(),
             seen_byte_ranges: HashMap::new(),
             panel_ids: HashMap::new(),
+            buffer_groups: HashMap::new(),
+            buffer_to_group: HashMap::new(),
+            next_buffer_group_id: 0,
             background_process_handles: HashMap::new(),
             prompt_histories: {
                 // Load prompt histories from disk if available
@@ -6730,6 +6741,41 @@ impl Editor {
             PluginCommand::CompositePrevHunk { buffer_id } => {
                 let split_id = self.split_manager.active_split();
                 self.composite_prev_hunk(split_id, buffer_id);
+            }
+
+            // ==================== Buffer Groups ====================
+            PluginCommand::CreateBufferGroup {
+                name,
+                mode,
+                layout_json,
+                request_id,
+            } => match self.create_buffer_group(name, mode, layout_json) {
+                Ok(result) => {
+                    if let Some(req_id) = request_id {
+                        let json = serde_json::to_string(&result).unwrap_or_default();
+                        self.plugin_manager
+                            .resolve_callback(fresh_core::api::JsCallbackId::from(req_id), json);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create buffer group: {}", e);
+                }
+            },
+            PluginCommand::SetPanelContent {
+                group_id,
+                panel_name,
+                entries,
+            } => {
+                self.set_panel_content(group_id, panel_name, entries);
+            }
+            PluginCommand::CloseBufferGroup { group_id } => {
+                self.close_buffer_group(group_id);
+            }
+            PluginCommand::FocusPanel {
+                group_id,
+                panel_name,
+            } => {
+                self.focus_panel(group_id, panel_name);
             }
 
             // ==================== File Operations ====================

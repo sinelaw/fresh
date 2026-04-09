@@ -164,6 +164,19 @@ pub struct VirtualBufferResult {
     pub split_id: Option<u64>,
 }
 
+/// Result of creating a buffer group
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct BufferGroupResult {
+    /// The group ID
+    #[ts(type = "number")]
+    pub group_id: u64,
+    /// Panel buffer IDs, keyed by panel name
+    #[ts(type = "Record<string, number>")]
+    pub panels: HashMap<String, u64>,
+}
+
 /// Response from the editor for async plugin operations
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1323,6 +1336,35 @@ pub enum PluginCommand {
 
     /// Get text properties at the cursor position in a buffer
     GetTextPropertiesAtCursor { buffer_id: BufferId },
+
+    /// Create a buffer group: multiple panels appearing as one tab.
+    /// Each panel is a real buffer with its own scrollbar and viewport.
+    CreateBufferGroup {
+        /// Display name (shown in tab bar)
+        name: String,
+        /// Mode for keybindings
+        mode: String,
+        /// Layout tree as JSON string (parsed by the handler)
+        layout_json: String,
+        /// Optional request ID for async response
+        request_id: Option<u64>,
+    },
+
+    /// Set the content of a panel within a buffer group.
+    SetPanelContent {
+        /// Group ID
+        group_id: usize,
+        /// Panel name (e.g., "tree", "picker")
+        panel_name: String,
+        /// Content entries
+        entries: Vec<TextPropertyEntry>,
+    },
+
+    /// Close a buffer group (closes all panels and splits)
+    CloseBufferGroup { group_id: usize },
+
+    /// Focus a specific panel within a buffer group
+    FocusPanel { group_id: usize, panel_name: String },
 
     /// Define a buffer mode with keybindings
     DefineMode {

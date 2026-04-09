@@ -1501,7 +1501,7 @@ interface EditorAPI {
 	*/
 	createVirtualBufferInExistingSplit(opts: CreateVirtualBufferInExistingSplitOptions): Promise<VirtualBufferResult>;
 	/**
-	* Set virtual buffer content (takes array of entry objects)
+	* Set virtual buffer content (takes array of entry objects, optional options with scrollRegions)
 	* 
 	* Note: entries should be TextPropertyEntry[] - uses manual parsing for HashMap support
 	*/
@@ -1510,6 +1510,24 @@ interface EditorAPI {
 	* Get text properties at cursor position (returns JS array)
 	*/
 	getTextPropertiesAtCursor(bufferId: number): TextPropertiesAtCursor;
+	/**
+	* Create a buffer group: multiple panels appearing as one tab.
+	* Each panel is a real buffer with its own scrollbar and viewport.
+	* The plugin writes all content to each panel; the core handles scrolling.
+	*/
+	createBufferGroup(name: string, mode: string, layoutJson: string): Promise<{ groupId: number; panels: Record<string, number> }>;
+	/**
+	* Set the content of a panel within a buffer group.
+	*/
+	setPanelContent(groupId: number, panelName: string, entries: Record<string, unknown>[]): boolean;
+	/**
+	* Close a buffer group (closes all panels and splits).
+	*/
+	closeBufferGroup(groupId: number): boolean;
+	/**
+	* Focus a specific panel within a buffer group.
+	*/
+	focusBufferGroupPanel(groupId: number, panelName: string): boolean;
 	/**
 	* Spawn a process (async, returns request_id)
 	*/

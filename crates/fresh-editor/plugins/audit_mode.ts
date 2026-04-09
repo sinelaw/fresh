@@ -78,6 +78,8 @@ interface ReviewState {
   viewportWidth: number;
   viewportHeight: number;
   focusPanel: 'files' | 'diff';
+  groupId: number | null;
+  panelBuffers: Record<string, number>;
 }
 
 const state: ReviewState = {
@@ -93,6 +95,8 @@ const state: ReviewState = {
   viewportWidth: 80,
   viewportHeight: 24,
   focusPanel: 'files',
+  groupId: null,
+  panelBuffers: {},
 };
 
 // --- Refresh State ---
@@ -834,13 +838,72 @@ function scrollDiffToSelected(): void {
     }
 }
 
+// --- Buffer Group panel content builders ---
+
+function buildToolbarPanelEntries(): TextPropertyEntry[] {
+    // Reuse buildToolbar — returns one entry with the full toolbar line
+    return [buildToolbar(state.viewportWidth)];
+}
+
+function buildFilesPanelEntries(): TextPropertyEntry[] {
+    const entries: TextPropertyEntry[] = [];
+    const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
+    const lines = buildFileListLines(leftWidth);
+    for (const line of lines) {
+        const isSelected = line.type === 'file' && line.fileIndex === state.selectedIndex;
+        const baseStyle = line.style;
+        const style: Partial<OverlayOptions> | undefined = isSelected
+            ? { ...(baseStyle || {}), bg: STYLE_SELECTED_BG, bold: true, extendToLineEnd: true }
+            : baseStyle;
+        entries.push({
+            text: (line.text || "") + "\n",
+            style,
+            inlineOverlays: line.inlineOverlays,
+            properties: { type: line.type, fileIndex: line.fileIndex },
+        });
+    }
+    return entries;
+}
+
+function buildDiffPanelEntries(): TextPropertyEntry[] {
+    const entries: TextPropertyEntry[] = [];
+    const leftWidth = Math.max(28, Math.floor(state.viewportWidth * 0.3));
+    const rightWidth = state.viewportWidth - leftWidth - 1;
+    const lines = buildDiffLines(rightWidth);
+    const focusDiff = state.focusPanel === 'diff';
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const isCursorLine = focusDiff && i === state.diffSelectedLine;
+        const style: Partial<OverlayOptions> | undefined = isCursorLine
+            ? { ...(line.style || {}), bg: STYLE_SELECTED_BG, extendToLineEnd: true }
+            : line.style;
+        entries.push({
+            text: (line.text || "") + "\n",
+            style,
+            inlineOverlays: line.inlineOverlays,
+            properties: { type: line.type },
+        });
+    }
+    return entries;
+}
+
 /**
  * Refresh the display — rebuild entries and set buffer content.
  * Always re-queries viewport dimensions to handle sidebar toggles and splits.
  */
 function updateMagitDisplay(): void {
-    if (state.reviewBufferId === null) return;
     refreshViewportDimensions();
+
+    // Buffer group mode: write to each panel separately
+    if (state.groupId !== null) {
+        editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
+        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+        editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+        return;
+    }
+
+    // Legacy fallback (unused after migration)
+    if (state.reviewBufferId === null) return;
     const entries = buildMagitDisplayEntries();
     editor.clearNamespace(state.reviewBufferId, "review-diff");
     editor.setVirtualBufferContent(state.reviewBufferId, entries);
@@ -2214,14 +2277,29 @@ async function start_review_diff() {
     state.diffSelectedLine = 0;
     state.focusPanel = 'files';
 
-    // Build initial display
-    const initialEntries = buildMagitDisplayEntries();
-
-    const bufferId = await VirtualBufferFactory.create({
-        name: "*Review Diff*", mode: "review-mode", readOnly: true,
-        entries: initialEntries, showLineNumbers: false, showCursors: false
+    // Create buffer group with layout:
+    // vertical: [toolbar(fixed 1), horizontal: [files, diff]]
+    const layout = JSON.stringify({
+        type: "split",
+        direction: "v",
+        ratio: 0.05,
+        first: { type: "fixed", id: "toolbar", height: 1 },
+        second: {
+            type: "split",
+            direction: "h",
+            ratio: 0.3,
+            first: { type: "scrollable", id: "files" },
+            second: { type: "scrollable", id: "diff" },
+        },
     });
-    state.reviewBufferId = bufferId;
+
+    const groupResult = await editor.createBufferGroup("*Review Diff*", "review-mode", layout);
+    state.groupId = groupResult.groupId;
+    state.panelBuffers = groupResult.panels;
+    state.reviewBufferId = groupResult.panels["files"];
+
+    // Set initial content for all panels
+    updateMagitDisplay();
 
     // Register resize handler
     editor.on("resize", "onReviewDiffResize");
@@ -2233,6 +2311,11 @@ async function start_review_diff() {
 registerHandler("start_review_diff", start_review_diff);
 
 function stop_review_diff() {
+    if (state.groupId !== null) {
+        editor.closeBufferGroup(state.groupId);
+        state.groupId = null;
+        state.panelBuffers = {};
+    }
     state.reviewBufferId = null;
     editor.setContext("review-mode", false);
     editor.off("resize", "onReviewDiffResize");
