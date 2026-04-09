@@ -181,6 +181,200 @@ fn test_theme_editor_tab_bar_persists() {
     );
 }
 
+/// Invoking the "Close Buffer" command from the command palette while a
+/// group panel is the active/focused target should close the entire group,
+/// not just the one panel. Individual panels are internal details that the
+/// user should not be able to close piecemeal via the generic Close Buffer
+/// command — they close together with the group.
+#[test]
+fn test_close_buffer_while_in_group_closes_whole_group() {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+
+    harness.render().unwrap();
+
+    // Open theme editor — the group tab becomes active.
+    open_theme_editor(&mut harness);
+
+    let after_open_screen = harness.screen_to_string();
+    assert!(
+        after_open_screen.contains("*Theme Editor*"),
+        "Theme editor should be open. Screen:\n{}",
+        after_open_screen
+    );
+    assert!(
+        after_open_screen.contains("Theme Editor:"),
+        "Theme editor panel content should be visible. Screen:\n{}",
+        after_open_screen
+    );
+
+    // Run the generic "Close Buffer" command (not the theme-editor-specific
+    // "Theme: Close Editor"). With the theme editor active, this should
+    // close the whole group — NOT just close the currently-focused panel
+    // buffer while leaving the rest of the group's layout visible.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Close Buffer").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // After close, the group tab, the group's panel content, and the group
+    // panels themselves should all be gone.
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("*Theme Editor*"))
+        .unwrap();
+
+    let after_close_screen = harness.screen_to_string();
+    assert!(
+        !after_close_screen.contains("*Theme Editor*"),
+        "Theme editor group tab should be gone after Close Buffer. Screen:\n{}",
+        after_close_screen
+    );
+    assert!(
+        !after_close_screen.contains("Theme Editor:"),
+        "Theme editor panel content should be gone after Close Buffer. Screen:\n{}",
+        after_close_screen
+    );
+    assert!(
+        after_close_screen.contains("[No Name]"),
+        "Original [No Name] buffer tab should still be visible. Screen:\n{}",
+        after_close_screen
+    );
+}
+
+/// Next/Previous Buffer should cycle across both regular buffer tabs and
+/// group tabs (i.e., top-level tabs in the tab bar). Opening a file +
+/// opening the theme editor should give two tabs, and next_buffer should
+/// toggle between them regardless of whether the group is currently active.
+#[test]
+fn test_next_buffer_cycles_across_groups_and_buffers() {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    let test_file = project_root.join("cycle_test.txt");
+    fs::write(&test_file, "UniqueContentMarker\n").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+
+    // Open the source file.
+    harness.open_file(&test_file).unwrap();
+    harness.render().unwrap();
+
+    // File is active; screen should show the file's content.
+    let after_file_screen = harness.screen_to_string();
+    assert!(
+        after_file_screen.contains("UniqueContentMarker"),
+        "Source file should be visible. Screen:\n{}",
+        after_file_screen
+    );
+
+    // Open theme editor — this becomes the active tab; the file tab stays
+    // in the tab bar.
+    open_theme_editor(&mut harness);
+
+    let after_theme_screen = harness.screen_to_string();
+    assert!(
+        after_theme_screen.contains("cycle_test.txt"),
+        "File tab should still be listed. Screen:\n{}",
+        after_theme_screen
+    );
+    assert!(
+        after_theme_screen.contains("*Theme Editor*"),
+        "Theme editor tab should be listed. Screen:\n{}",
+        after_theme_screen
+    );
+    assert!(
+        after_theme_screen.contains("Theme Editor:"),
+        "Theme editor content should be visible. Screen:\n{}",
+        after_theme_screen
+    );
+
+    // Run "Next Buffer" from the command palette. This should cycle from
+    // the group tab back to the file tab.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Next Buffer").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("UniqueContentMarker"))
+        .unwrap();
+
+    let back_to_file_screen = harness.screen_to_string();
+    assert!(
+        back_to_file_screen.contains("UniqueContentMarker"),
+        "Next Buffer should switch back to the source file. Screen:\n{}",
+        back_to_file_screen
+    );
+    // The theme editor tab should still be present in the tab bar (the
+    // group wasn't closed, just inactive).
+    assert!(
+        back_to_file_screen.contains("*Theme Editor*"),
+        "Theme editor tab should still be visible after switching away. Screen:\n{}",
+        back_to_file_screen
+    );
+    // And the theme editor content should NOT be on screen any more.
+    assert!(
+        !back_to_file_screen.contains("Theme Editor:"),
+        "Theme editor panel content should not be visible after switching away. Screen:\n{}",
+        back_to_file_screen
+    );
+
+    // Run "Next Buffer" again — should now switch back to the theme editor.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Next Buffer").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Theme Editor:"))
+        .unwrap();
+
+    let back_to_theme_screen = harness.screen_to_string();
+    assert!(
+        back_to_theme_screen.contains("Theme Editor:"),
+        "Next Buffer should cycle back to the theme editor. Screen:\n{}",
+        back_to_theme_screen
+    );
+}
+
 /// Test that the theme editor opens successfully without crashing
 /// This test catches the pathJoin API bug where passing an array instead of
 /// variadic args causes a serde_v8 error

@@ -1888,9 +1888,26 @@ impl Editor {
     /// Close the current tab in the current split view.
     /// If the tab is the last viewport of the underlying buffer, do the same as close_buffer
     /// (including triggering the save/discard prompt for modified buffers).
+    ///
+    /// When the active tab is a buffer group (its `active_group_tab` is set),
+    /// this closes the entire group rather than the currently-focused inner
+    /// panel buffer. Individual panels are internal details of the group —
+    /// the user closes them all together by closing the group tab.
     pub fn close_tab(&mut self) {
-        let buffer_id = self.active_buffer();
+        // If the active split has a group tab active, close the whole group
+        // rather than just the focused panel buffer.
         let active_split = self.split_manager.active_split();
+        if let Some(group_leaf_id) = self
+            .split_view_states
+            .get(&active_split)
+            .and_then(|vs| vs.active_group_tab)
+        {
+            self.close_buffer_group_by_leaf(group_leaf_id);
+            self.set_status_message(t!("buffer.tab_closed").to_string());
+            return;
+        }
+
+        let buffer_id = self.active_buffer();
 
         // Count how many splits have this buffer in their open_buffers
         let buffer_in_other_splits = self
