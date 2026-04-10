@@ -550,6 +550,20 @@ function buildDiffLines(rightWidth: number): DiffLine[] {
             style: { fg: STYLE_HUNK_HEADER, bold: true },
         });
 
+        // Render hunk-level comments (those with no line_type) right
+        // after the hunk header so they are visible in the diff view.
+        const hunkComments = state.comments.filter(c =>
+            c.hunk_id === hunk.id && !c.line_type
+        );
+        for (const comment of hunkComments) {
+            lines.push({
+                text: `  \u00bb [hunk] ${comment.text}`,
+                type: 'comment',
+                commentId: comment.id,
+                style: { fg: STYLE_COMMENT, italic: true },
+            });
+        }
+
         // Track actual file line numbers as we iterate
         let oldLineNum = hunk.oldRange.start;
         let newLineNum = hunk.range.start;
@@ -2060,6 +2074,7 @@ function on_review_delete_comment_confirm(args: { prompt_type: string; input: st
         } else {
             state.comments = state.comments.filter(c => c.id !== pendingDeleteCommentId);
         }
+        state.diffCache = {}; // comment changed
         updateMagitDisplay();
         editor.setStatus("Deleted");
     } else {
@@ -2083,6 +2098,7 @@ function on_review_prompt_confirm(args: { prompt_type: string; input: string }):
             if (existing) {
                 existing.text = args.input.trim();
                 existing.timestamp = new Date().toISOString();
+                state.diffCache = {}; // comment changed
                 updateMagitDisplay();
                 editor.setStatus("Comment updated");
             }
@@ -2108,6 +2124,7 @@ function on_review_prompt_confirm(args: { prompt_type: string; input: string }):
             line_type: pendingCommentInfo.lineType
         };
         state.comments.push(comment);
+        state.diffCache = {}; // comment changed — invalidate cached diff entries
         updateMagitDisplay();
         let lineRef = 'hunk';
         if (comment.line_type === 'add' && comment.new_line) {
