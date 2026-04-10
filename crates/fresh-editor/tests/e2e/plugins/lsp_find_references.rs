@@ -244,7 +244,7 @@ fn main() {
     // Wait for LSP to initialize using semantic waiting
     harness.wait_until(|h| {
         let screen = h.screen_to_string();
-        screen.contains("LSP [rust: ready]") || screen.contains("rust: ready")
+        screen.contains(" LSP ") || screen.contains("rust: ready")
     })?;
 
     // Move cursor to the function name "helper_function" on line 1

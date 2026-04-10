@@ -765,6 +765,11 @@ pub struct Editor {
     /// When Some, a confirmation popup is shown asking user to approve LSP spawn
     pending_lsp_confirmation: Option<String>,
 
+    /// Pending LSP status popup - when true, the active popup is an LSP status
+    /// details popup with server actions (restart/stop/view log).
+    /// Contains the list of (action_key, label) pairs for the popup items.
+    pending_lsp_status_popup: Option<Vec<(String, String)>>,
+
     /// Pending close buffer - buffer to close after SaveFileAs completes
     /// Used when closing a modified buffer that needs to be saved first
     pending_close_buffer: Option<BufferId>,
@@ -1647,6 +1652,7 @@ impl Editor {
             plugin_render_requested: false,
             chord_state: Vec::new(),
             pending_lsp_confirmation: None,
+            pending_lsp_status_popup: None,
             pending_close_buffer: None,
             auto_revert_enabled: true,
             last_auto_revert_poll: time_source.now(),

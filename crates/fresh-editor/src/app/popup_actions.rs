@@ -21,6 +21,24 @@ impl Editor {
     ///
     /// Returns `PopupConfirmResult` indicating what the caller should do next.
     pub fn handle_popup_confirm(&mut self) -> PopupConfirmResult {
+        // Check if this is an LSP status details popup
+        if self.pending_lsp_status_popup.is_some() {
+            let action_key = self
+                .active_state()
+                .popups
+                .top()
+                .and_then(|p| p.selected_item())
+                .and_then(|item| item.data.clone());
+
+            self.hide_popup();
+            self.pending_lsp_status_popup = None;
+
+            if let Some(key) = action_key {
+                self.handle_lsp_status_action(&key);
+            }
+            return PopupConfirmResult::EarlyReturn;
+        }
+
         // Check if this is an action popup (from plugin showActionPopup)
         if let Some((popup_id, _actions)) = &self.active_action_popup {
             let popup_id = popup_id.clone();
@@ -221,6 +239,12 @@ impl Editor {
             "handle_popup_cancel: active_action_popup={:?}",
             self.active_action_popup.as_ref().map(|(id, _)| id)
         );
+
+        // Check if this is an LSP status details popup
+        if self.pending_lsp_status_popup.take().is_some() {
+            self.hide_popup();
+            return;
+        }
 
         // Check if this is an action popup (from plugin showActionPopup)
         if let Some((popup_id, _actions)) = self.active_action_popup.take() {

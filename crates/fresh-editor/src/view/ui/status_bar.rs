@@ -877,7 +877,7 @@ impl StatusBarRenderer {
                 current_col += language_width as u16;
             }
 
-            // Add LSP indicator with colored background if warning/error
+            // Add LSP indicator (always clickable for details popup)
             if !lsp_indicator.is_empty() {
                 let is_hovering = hover == StatusBarHover::LspIndicator;
                 let (lsp_fg, lsp_bg) = match (warning_level, is_hovering) {
@@ -897,7 +897,11 @@ impl StatusBarRenderer {
                         theme.status_warning_indicator_fg,
                         theme.status_warning_indicator_bg,
                     ),
-                    (WarningLevel::None, _) => (theme.status_bar_fg, theme.status_bar_bg),
+                    (WarningLevel::None, true) => (
+                        theme.menu_hover_fg,
+                        theme.menu_hover_bg,
+                    ),
+                    (WarningLevel::None, false) => (theme.status_bar_fg, theme.status_bar_bg),
                 };
                 // Record LSP indicator position for click detection
                 layout.lsp_indicator = Some((
@@ -907,7 +911,7 @@ impl StatusBarRenderer {
                 ));
                 current_col += lsp_indicator_width as u16;
                 let mut style = Style::default().fg(lsp_fg).bg(lsp_bg);
-                if is_hovering && warning_level != WarningLevel::None {
+                if is_hovering {
                     style = style.add_modifier(Modifier::UNDERLINED);
                 }
                 spans.push(Span::styled(lsp_indicator.clone(), style));

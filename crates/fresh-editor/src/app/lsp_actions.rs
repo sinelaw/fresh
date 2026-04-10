@@ -312,6 +312,74 @@ impl Editor {
         }
     }
 
+    /// Handle an action from the LSP status details popup.
+    ///
+    /// Action keys have the format:
+    /// - `restart:<language>/<server_name>` — restart a specific server
+    /// - `stop:<language>/<server_name>` — stop a specific server
+    /// - `log:<language>` — open the LSP log file for the language
+    pub fn handle_lsp_status_action(&mut self, action_key: &str) {
+        if let Some(target) = action_key.strip_prefix("restart:") {
+            // Parse language/server_name
+            if let Some((language, server_name)) = target.split_once('/') {
+                let file_path = self
+                    .buffer_metadata
+                    .get(&self.active_buffer())
+                    .and_then(|meta| meta.file_path().cloned());
+
+                if let Some(lsp) = self.lsp.as_mut() {
+                    // Shutdown the specific server first, then re-spawn
+                    lsp.shutdown_server_by_name(language, server_name);
+                }
+                // Remove the status entry so it gets re-created on spawn
+                self.lsp_server_statuses
+                    .remove(&(language.to_string(), server_name.to_string()));
+                self.update_lsp_status_from_server_statuses();
+
+                if let Some(lsp) = self.lsp.as_mut() {
+                    let _ = lsp.manual_restart(language, file_path.as_deref());
+                }
+                self.reopen_buffers_for_language(language);
+                self.status_message =
+                    Some(format!("Restarting LSP server: {}/{}", language, server_name));
+            }
+        } else if let Some(target) = action_key.strip_prefix("stop:") {
+            if let Some((language, server_name)) = target.split_once('/') {
+                let stopped = if let Some(lsp) = self.lsp.as_mut() {
+                    lsp.shutdown_server_by_name(language, server_name)
+                } else {
+                    false
+                };
+                if stopped {
+                    self.lsp_server_statuses
+                        .remove(&(language.to_string(), server_name.to_string()));
+                    self.update_lsp_status_from_server_statuses();
+                    self.status_message =
+                        Some(format!("Stopped LSP server: {}/{}", language, server_name));
+                } else {
+                    self.status_message =
+                        Some(format!("LSP server not running: {}/{}", language, server_name));
+                }
+            }
+        } else if let Some(language) = action_key.strip_prefix("log:") {
+            let log_path = crate::services::log_dirs::lsp_log_path(language);
+            if log_path.exists() {
+                match self.open_local_file(&log_path) {
+                    Ok(buffer_id) => {
+                        self.mark_buffer_read_only(buffer_id, true);
+                    }
+                    Err(e) => {
+                        self.status_message =
+                            Some(format!("Failed to open LSP log: {}", e));
+                    }
+                }
+            } else {
+                self.status_message =
+                    Some(format!("No log file found for {}", language));
+            }
+        }
+    }
+
     /// Toggle folding at the current cursor position.
     pub fn toggle_fold_at_cursor(&mut self) {
         let buffer_id = self.active_buffer();

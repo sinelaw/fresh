@@ -582,7 +582,28 @@ impl Editor {
         let status_message = self.status_message.clone();
         let plugin_status_message = self.plugin_status_message.clone();
         let prompt = self.prompt.clone();
-        let lsp_status = self.lsp_status.clone();
+        // Compute a simple buffer-aware LSP indicator: just "LSP" if any LSP
+        // server is active for the current buffer's language, empty otherwise.
+        let current_language = self
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+            .unwrap_or_default();
+        let lsp_status = {
+            use crate::services::async_bridge::LspServerStatus;
+            let has_servers_for_buffer = self
+                .lsp_server_statuses
+                .iter()
+                .any(|((lang, _), status)| {
+                    lang == &current_language
+                        && !matches!(status, LspServerStatus::Shutdown)
+                });
+            if has_servers_for_buffer {
+                "LSP".to_string()
+            } else {
+                String::new()
+            }
+        };
         let theme = self.theme.clone();
         let keybindings_cloned = self.keybindings.read().unwrap().clone(); // Clone the keybindings
         let chord_state_cloned = self.chord_state.clone(); // Clone the chord state
@@ -593,12 +614,32 @@ impl Editor {
         // Render status bar (hidden when toggled off, or when suggestions/file browser popup is shown)
         if self.status_bar_visible && !has_suggestions && !has_file_browser {
             // Get warning level for colored indicator (respects config setting)
+            // LSP warning level is scoped to the current buffer's language
             let (warning_level, general_warning_count) =
                 if self.config.warnings.show_status_indicator {
-                    (
-                        self.get_effective_warning_level(),
-                        self.get_general_warning_count(),
-                    )
+                    let lsp_level = {
+                        use crate::services::async_bridge::LspServerStatus;
+                        let mut level = WarningLevel::None;
+                        for ((lang, _), status) in &self.lsp_server_statuses {
+                            if lang == &current_language {
+                                match status {
+                                    LspServerStatus::Error => {
+                                        level = WarningLevel::Error;
+                                        break;
+                                    }
+                                    LspServerStatus::Starting
+                                    | LspServerStatus::Initializing => {
+                                        if level != WarningLevel::Error {
+                                            level = WarningLevel::Warning;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        level
+                    };
+                    (lsp_level, self.get_general_warning_count())
                 } else {
                     (WarningLevel::None, 0)
                 };

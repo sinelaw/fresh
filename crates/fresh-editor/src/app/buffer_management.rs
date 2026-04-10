@@ -1618,32 +1618,19 @@ impl Editor {
         self.open_warning_log();
     }
 
-    /// Show LSP status - opens the warning log file if there are LSP warnings,
-    /// otherwise shows a brief status message.
+    /// Show LSP status popup with details about servers active for the current buffer.
+    /// Lists each server with its status and provides actions: restart, stop, view log.
     pub fn show_lsp_status_popup(&mut self) {
+        use crate::services::async_bridge::LspServerStatus;
+
         let has_error = self.warning_domains.lsp.level() == crate::app::WarningLevel::Error;
 
-        // Use the language from the LSP error state if available, otherwise detect from buffer.
-        // This ensures clicking the status indicator works regardless of which buffer is focused.
+        // Get the current buffer's language
         let language = self
-            .warning_domains
-            .lsp
-            .language
-            .clone()
-            .unwrap_or_else(|| {
-                // Use buffer's stored language
-                self.buffers
-                    .get(&self.active_buffer())
-                    .map(|s| s.language.clone())
-                    .unwrap_or_else(|| "unknown".to_string())
-            });
-
-        tracing::info!(
-            "show_lsp_status_popup: language={}, has_error={}, has_warnings={}",
-            language,
-            has_error,
-            self.warning_domains.lsp.has_warnings()
-        );
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+            .unwrap_or_else(|| "unknown".to_string());
 
         // Fire the LspStatusClicked hook for plugins
         self.plugin_manager.run_hook(
@@ -1653,29 +1640,110 @@ impl Editor {
                 has_error,
             },
         );
-        tracing::info!("show_lsp_status_popup: hook fired");
 
-        if !self.warning_domains.lsp.has_warnings() {
-            if self.lsp_status.is_empty() {
-                self.status_message = Some(t!("lsp.no_server_active").to_string());
-            } else {
-                self.status_message = Some(t!("lsp.status", status = &self.lsp_status).to_string());
+        // Collect servers for the current buffer's language
+        let mut servers: Vec<(String, LspServerStatus)> = self
+            .lsp_server_statuses
+            .iter()
+            .filter(|((lang, _), _)| lang == &language)
+            .map(|((_, name), status)| (name.clone(), *status))
+            .collect();
+        servers.sort_by(|a, b| a.0.cmp(&b.0));
+
+        if servers.is_empty() {
+            self.status_message = Some(t!("lsp.no_server_active").to_string());
+            return;
+        }
+
+        // Build popup items: for each server, show status + action entries
+        let mut items: Vec<crate::model::event::PopupListItemData> = Vec::new();
+        let mut action_keys: Vec<(String, String)> = Vec::new();
+
+        for (name, status) in &servers {
+            let status_str = match status {
+                LspServerStatus::Starting => "starting",
+                LspServerStatus::Initializing => "initializing",
+                LspServerStatus::Running => "ready",
+                LspServerStatus::Error => "error",
+                LspServerStatus::Shutdown => "shutdown",
+            };
+            let status_icon = match status {
+                LspServerStatus::Running => "●",
+                LspServerStatus::Error => "✗",
+                LspServerStatus::Shutdown => "○",
+                _ => "◌",
+            };
+
+            // Header item showing server name and status (not selectable as an action,
+            // but serves as a visual separator)
+            items.push(crate::model::event::PopupListItemData {
+                text: format!("{} {} ({})", status_icon, name, status_str),
+                detail: None,
+                icon: None,
+                data: None,
+            });
+
+            // Restart action
+            let restart_key = format!("restart:{}/{}", language, name);
+            items.push(crate::model::event::PopupListItemData {
+                text: format!("    Restart {}", name),
+                detail: None,
+                icon: None,
+                data: Some(restart_key.clone()),
+            });
+            action_keys.push((restart_key, format!("Restart {}", name)));
+
+            // Stop action (only if not already shutdown)
+            if !matches!(status, LspServerStatus::Shutdown) {
+                let stop_key = format!("stop:{}/{}", language, name);
+                items.push(crate::model::event::PopupListItemData {
+                    text: format!("    Stop {}", name),
+                    detail: None,
+                    icon: None,
+                    data: Some(stop_key.clone()),
+                });
+                action_keys.push((stop_key, format!("Stop {}", name)));
             }
-            return;
+
+            // View log action (always available, especially useful on errors)
+            let log_key = format!("log:{}", language);
+            if !action_keys.iter().any(|(k, _)| k == &log_key) {
+                items.push(crate::model::event::PopupListItemData {
+                    text: "    View Log".to_string(),
+                    detail: None,
+                    icon: None,
+                    data: Some(log_key.clone()),
+                });
+                action_keys.push((log_key, "View Log".to_string()));
+            }
         }
 
-        // If there's an LSP error AND a plugin is handling the status click, don't open the
-        // warning log which would switch focus and break language detection for subsequent clicks.
-        // Only suppress if a plugin has registered to handle the hook.
-        if has_error && self.plugin_manager.has_hook_handlers("lsp_status_clicked") {
-            tracing::info!(
-                "show_lsp_status_popup: has_error=true and plugin registered, skipping warning log"
-            );
-            return;
-        }
+        // Store action keys for handling confirmation
+        self.pending_lsp_status_popup = Some(action_keys);
 
-        // Open the warning log file directly (same as warnings popup)
-        self.open_warning_log();
+        // Calculate popup width from longest item
+        let max_item_width = items.iter().map(|i| i.text.len()).max().unwrap_or(20);
+        let popup_width = (max_item_width as u16 + 4).clamp(30, 70);
+
+        // Pre-select the first actionable item (skip header items with no data)
+        let first_actionable = items.iter().position(|i| i.data.is_some()).unwrap_or(0);
+
+        let popup = crate::model::event::PopupData {
+            kind: crate::model::event::PopupKindHint::List,
+            title: Some(format!("LSP Servers ({})", language)),
+            description: None,
+            transient: false,
+            content: crate::model::event::PopupContentData::List {
+                items,
+                selected: first_actionable,
+            },
+            position: crate::model::event::PopupPositionData::BottomRight,
+            width: popup_width,
+            max_height: 15,
+            bordered: true,
+        };
+
+        self.show_popup(popup);
     }
 
     /// Show a transient hover popup with the given message text, positioned below the cursor.
