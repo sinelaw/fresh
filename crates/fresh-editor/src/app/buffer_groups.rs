@@ -386,6 +386,9 @@ impl super::Editor {
                 vs.active_group_tab = Some(group_leaf_id);
                 vs.focused_group_leaf = Some(inner_leaf);
             }
+            // Transfer focus away from File Explorer (or any other context)
+            // to the editor, since we're explicitly focusing a panel.
+            self.key_context = crate::input::keybindings::KeyContext::Normal;
         }
     }
 

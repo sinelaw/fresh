@@ -2294,6 +2294,10 @@ async function start_review_diff() {
     // Set initial content for all panels
     updateMagitDisplay();
 
+    // Ensure the files panel has focus (moves focus away from File Explorer
+    // if it was open, so review-mode keybindings work immediately)
+    editor.focusBufferGroupPanel(state.groupId, "files");
+
     // Register resize handler
     editor.on("resize", "onReviewDiffResize");
 
