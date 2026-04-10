@@ -3115,7 +3115,7 @@ fn run_event_loop(
     use fresh::server::input_parser::InputParser;
     use fresh_winterm::{VtInputEvent, VtInputReader};
 
-    let _old_console_mode = fresh_winterm::enable_vt_input()?;
+    let old_console_mode = fresh_winterm::enable_vt_input()?;
     // Use the configured mouse mode: when mouse_hover_enabled is true, use
     // mode 1003 (all motion) for full hover support; otherwise use mode 1002
     // (cell motion) which avoids the high event volume that can cause input
@@ -3194,6 +3194,10 @@ fn run_event_loop(
             Ok(event_buffer.pop_front())
         },
     );
+
+    // Restore mouse tracking and console mode on exit
+    let _ = fresh_winterm::disable_mouse_tracking();
+    let _ = fresh_winterm::restore_console_mode(old_console_mode);
 
     result
 }
