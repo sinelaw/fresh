@@ -1818,10 +1818,26 @@ function jumpDiffCursorToRow(row: number): void {
     if (diffId === undefined) return;
     const idx = row - 1;
     if (idx < 0 || idx >= state.diffLineByteOffsets.length) return;
-    const byteOffset = state.diffLineByteOffsets[idx];
-    editor.setBufferCursor(diffId, byteOffset);
-    editor.scrollBufferToLine(diffId, idx); // scrollBufferToLine takes a 0-indexed line
+
+    // Move cursor by computing the delta from the current row and stepping
+    // with executeAction. This works reliably with buffer group panels
+    // where setBufferCursor may not take effect (the panel buffer lives
+    // in a grouped subtree rather than the main split tree).
+    if (state.focusPanel === 'diff') {
+        const currentRow = state.diffCursorRow; // 1-indexed
+        const delta = row - currentRow;
+        if (delta > 0) {
+            for (let i = 0; i < delta; i++) editor.executeAction("move_down");
+        } else if (delta < 0) {
+            for (let i = 0; i < -delta; i++) editor.executeAction("move_up");
+        }
+    } else {
+        const byteOffset = state.diffLineByteOffsets[idx];
+        editor.setBufferCursor(diffId, byteOffset);
+        editor.scrollBufferToLine(diffId, idx);
+    }
     state.diffCursorRow = row;
+    applyCursorLineOverlay('diff');
 }
 
 function review_next_hunk() {

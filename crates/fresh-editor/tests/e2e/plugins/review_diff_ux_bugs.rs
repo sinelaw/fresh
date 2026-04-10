@@ -448,7 +448,11 @@ fn test_bug4_hunk_navigation_n_does_not_move_cursor() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+
+    // Give async commands time to process
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+    }
 
     let screen_after_n = harness.screen_to_string();
     let ln_after = screen_after_n
