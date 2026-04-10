@@ -518,6 +518,24 @@ pub struct UiColors {
     /// Settings UI selected item foreground (text on selected background)
     #[serde(default = "default_settings_selected_fg")]
     pub settings_selected_fg: ColorDef,
+    /// File status: added file color in file explorer
+    #[serde(default = "default_file_status_added_fg")]
+    pub file_status_added_fg: ColorDef,
+    /// File status: modified file color in file explorer
+    #[serde(default = "default_file_status_modified_fg")]
+    pub file_status_modified_fg: ColorDef,
+    /// File status: deleted file color in file explorer
+    #[serde(default = "default_file_status_deleted_fg")]
+    pub file_status_deleted_fg: ColorDef,
+    /// File status: renamed file color in file explorer
+    #[serde(default = "default_file_status_renamed_fg")]
+    pub file_status_renamed_fg: ColorDef,
+    /// File status: untracked file color in file explorer
+    #[serde(default = "default_file_status_untracked_fg")]
+    pub file_status_untracked_fg: ColorDef,
+    /// File status: conflicted file color in file explorer
+    #[serde(default = "default_file_status_conflicted_fg")]
+    pub file_status_conflicted_fg: ColorDef,
 }
 
 // Default tab close hover color (for backward compatibility with existing themes)
@@ -724,6 +742,25 @@ fn default_settings_selected_bg() -> ColorDef {
 }
 fn default_settings_selected_fg() -> ColorDef {
     ColorDef::Rgb(255, 255, 255) // White text on selected background
+}
+// Default file status colors (git status indicators in file explorer)
+fn default_file_status_added_fg() -> ColorDef {
+    ColorDef::Rgb(80, 250, 123) // Bright green
+}
+fn default_file_status_modified_fg() -> ColorDef {
+    ColorDef::Rgb(255, 184, 108) // Orange
+}
+fn default_file_status_deleted_fg() -> ColorDef {
+    ColorDef::Rgb(255, 85, 85) // Red
+}
+fn default_file_status_renamed_fg() -> ColorDef {
+    ColorDef::Rgb(139, 233, 253) // Cyan
+}
+fn default_file_status_untracked_fg() -> ColorDef {
+    ColorDef::Rgb(241, 250, 140) // Pale yellow
+}
+fn default_file_status_conflicted_fg() -> ColorDef {
+    ColorDef::Rgb(255, 121, 198) // Pink
 }
 
 /// Search result highlighting colors
@@ -987,6 +1024,14 @@ pub struct Theme {
     pub settings_selected_bg: Color,
     pub settings_selected_fg: Color,
 
+    // File status colors (git status indicators in file explorer)
+    pub file_status_added_fg: Color,
+    pub file_status_modified_fg: Color,
+    pub file_status_deleted_fg: Color,
+    pub file_status_renamed_fg: Color,
+    pub file_status_untracked_fg: Color,
+    pub file_status_conflicted_fg: Color,
+
     // Search colors
     pub search_match_bg: Color,
     pub search_match_fg: Color,
@@ -1105,6 +1150,12 @@ impl From<ThemeFile> for Theme {
             tab_drop_zone_border: file.ui.tab_drop_zone_border.into(),
             settings_selected_bg: file.ui.settings_selected_bg.into(),
             settings_selected_fg: file.ui.settings_selected_fg.into(),
+            file_status_added_fg: file.ui.file_status_added_fg.into(),
+            file_status_modified_fg: file.ui.file_status_modified_fg.into(),
+            file_status_deleted_fg: file.ui.file_status_deleted_fg.into(),
+            file_status_renamed_fg: file.ui.file_status_renamed_fg.into(),
+            file_status_untracked_fg: file.ui.file_status_untracked_fg.into(),
+            file_status_conflicted_fg: file.ui.file_status_conflicted_fg.into(),
             search_match_bg: file.search.match_bg.into(),
             search_match_fg: file.search.match_fg.into(),
             diagnostic_error_fg: file.diagnostic.error_fg.into(),
@@ -1214,6 +1265,12 @@ impl From<Theme> for ThemeFile {
                 tab_drop_zone_border: theme.tab_drop_zone_border.into(),
                 settings_selected_bg: theme.settings_selected_bg.into(),
                 settings_selected_fg: theme.settings_selected_fg.into(),
+                file_status_added_fg: theme.file_status_added_fg.into(),
+                file_status_modified_fg: theme.file_status_modified_fg.into(),
+                file_status_deleted_fg: theme.file_status_deleted_fg.into(),
+                file_status_renamed_fg: theme.file_status_renamed_fg.into(),
+                file_status_untracked_fg: theme.file_status_untracked_fg.into(),
+                file_status_conflicted_fg: theme.file_status_conflicted_fg.into(),
             },
             search: SearchColors {
                 match_bg: theme.search_match_bg.into(),
@@ -1341,6 +1398,12 @@ impl Theme {
                 "split_separator_fg" => Some(self.split_separator_fg),
                 "scrollbar_thumb_fg" => Some(self.scrollbar_thumb_fg),
                 "semantic_highlight_bg" => Some(self.semantic_highlight_bg),
+                "file_status_added_fg" => Some(self.file_status_added_fg),
+                "file_status_modified_fg" => Some(self.file_status_modified_fg),
+                "file_status_deleted_fg" => Some(self.file_status_deleted_fg),
+                "file_status_renamed_fg" => Some(self.file_status_renamed_fg),
+                "file_status_untracked_fg" => Some(self.file_status_untracked_fg),
+                "file_status_conflicted_fg" => Some(self.file_status_conflicted_fg),
                 _ => None,
             },
             "syntax" => match field {

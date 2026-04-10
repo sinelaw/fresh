@@ -9,7 +9,17 @@ const editor = getEditor();
 
 const NAMESPACE = "git-explorer";
 
-const COLORS = {
+// Named color approximations for fallback when theme data is unavailable
+const NAMED_COLORS: Record<string, [number, number, number]> = {
+  "Black": [0, 0, 0], "Red": [205, 0, 0], "Green": [0, 205, 0],
+  "Yellow": [205, 205, 0], "Blue": [0, 0, 238], "Magenta": [205, 0, 205],
+  "Cyan": [0, 205, 205], "Gray": [229, 229, 229], "DarkGray": [127, 127, 127],
+  "LightRed": [255, 0, 0], "LightGreen": [0, 255, 0], "LightBlue": [92, 92, 255],
+  "LightYellow": [255, 255, 0], "LightMagenta": [255, 0, 255],
+  "LightCyan": [0, 255, 255], "White": [255, 255, 255],
+};
+
+const DEFAULT_COLORS = {
   added: [80, 250, 123] as [number, number, number],
   modified: [255, 184, 108] as [number, number, number],
   deleted: [255, 85, 85] as [number, number, number],
@@ -17,6 +27,40 @@ const COLORS = {
   untracked: [241, 250, 140] as [number, number, number],
   conflicted: [255, 121, 198] as [number, number, number],
 };
+
+function resolveColor(value: unknown, fallback: [number, number, number]): [number, number, number] {
+  if (Array.isArray(value) && value.length === 3
+      && typeof value[0] === "number" && typeof value[1] === "number" && typeof value[2] === "number") {
+    return value as [number, number, number];
+  }
+  if (typeof value === "string" && NAMED_COLORS[value]) {
+    return NAMED_COLORS[value];
+  }
+  return fallback;
+}
+
+function loadThemeColors(): typeof DEFAULT_COLORS {
+  try {
+    const config = editor.getConfig() as Record<string, unknown> | null;
+    if (!config || !config.theme) return DEFAULT_COLORS;
+    const themeData = editor.getThemeData(config.theme as string) as Record<string, unknown> | null;
+    if (!themeData) return DEFAULT_COLORS;
+    const ui = themeData.ui as Record<string, unknown> | undefined;
+    if (!ui) return DEFAULT_COLORS;
+    return {
+      added:      resolveColor(ui.file_status_added_fg, DEFAULT_COLORS.added),
+      modified:   resolveColor(ui.file_status_modified_fg, DEFAULT_COLORS.modified),
+      deleted:    resolveColor(ui.file_status_deleted_fg, DEFAULT_COLORS.deleted),
+      renamed:    resolveColor(ui.file_status_renamed_fg, DEFAULT_COLORS.renamed),
+      untracked:  resolveColor(ui.file_status_untracked_fg, DEFAULT_COLORS.untracked),
+      conflicted: resolveColor(ui.file_status_conflicted_fg, DEFAULT_COLORS.conflicted),
+    };
+  } catch {
+    return DEFAULT_COLORS;
+  }
+}
+
+let COLORS = loadThemeColors();
 
 const PRIORITY = {
   conflicted: 90,
@@ -104,6 +148,7 @@ async function refreshGitExplorerDecorations() {
     return;
   }
   refreshInFlight = true;
+  COLORS = loadThemeColors();
   try {
     const cwd = editor.getCwd();
     const rootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], cwd);
@@ -161,9 +206,15 @@ function onGitExplorerFocusGained() {
 }
 registerHandler("onGitExplorerFocusGained", onGitExplorerFocusGained);
 
+function onGitExplorerThemesChanged() {
+  refreshGitExplorerDecorations();
+}
+registerHandler("onGitExplorerThemesChanged", onGitExplorerThemesChanged);
+
 editor.on("after_file_open", "onGitExplorerAfterFileOpen");
 editor.on("after_file_save", "onGitExplorerAfterFileSave");
 editor.on("editor_initialized", "onGitExplorerEditorInitialized");
 editor.on("focus_gained", "onGitExplorerFocusGained");
+editor.on("themes_changed", "onGitExplorerThemesChanged");
 
 refreshGitExplorerDecorations();
