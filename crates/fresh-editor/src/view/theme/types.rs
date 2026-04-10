@@ -1499,4 +1499,113 @@ mod tests {
         let color: Color = ColorDef::Named("Reset".to_string()).into();
         assert_eq!(color, Color::Reset);
     }
+
+    #[test]
+    fn test_file_status_colors_fall_back_to_diagnostic_colors() {
+        // A theme with NO file_status_* keys should inherit from diagnostic colors
+        let json = r#"{
+            "name": "test-fallback",
+            "editor": {},
+            "ui": {},
+            "search": {},
+            "diagnostic": {
+                "error_fg": [220, 50, 47],
+                "warning_fg": [181, 137, 0],
+                "info_fg": [38, 139, 210],
+                "hint_fg": [101, 123, 131]
+            },
+            "syntax": {}
+        }"#;
+        let theme = Theme::from_json(json).expect("Should parse theme without file_status keys");
+
+        // Verify fallback: added/renamed -> info_fg
+        assert_eq!(theme.file_status_added_fg, Color::Rgb(38, 139, 210));
+        assert_eq!(theme.file_status_renamed_fg, Color::Rgb(38, 139, 210));
+        // modified -> warning_fg
+        assert_eq!(theme.file_status_modified_fg, Color::Rgb(181, 137, 0));
+        // deleted/conflicted -> error_fg
+        assert_eq!(theme.file_status_deleted_fg, Color::Rgb(220, 50, 47));
+        assert_eq!(theme.file_status_conflicted_fg, Color::Rgb(220, 50, 47));
+        // untracked -> hint_fg
+        assert_eq!(theme.file_status_untracked_fg, Color::Rgb(101, 123, 131));
+    }
+
+    #[test]
+    fn test_file_status_colors_explicit_override() {
+        // A theme WITH explicit file_status keys should use those, not the fallback
+        let json = r#"{
+            "name": "test-override",
+            "editor": {},
+            "ui": {
+                "file_status_added_fg": [80, 250, 123],
+                "file_status_modified_fg": [255, 184, 108]
+            },
+            "search": {},
+            "diagnostic": {
+                "info_fg": [38, 139, 210],
+                "warning_fg": [181, 137, 0]
+            },
+            "syntax": {}
+        }"#;
+        let theme = Theme::from_json(json).expect("Should parse theme with file_status overrides");
+
+        // Explicit overrides should win
+        assert_eq!(theme.file_status_added_fg, Color::Rgb(80, 250, 123));
+        assert_eq!(theme.file_status_modified_fg, Color::Rgb(255, 184, 108));
+        // Non-overridden should still fall back
+        assert_eq!(theme.file_status_renamed_fg, Color::Rgb(38, 139, 210));
+    }
+
+    #[test]
+    fn test_file_status_colors_resolve_via_theme_key() {
+        let json = r#"{
+            "name": "test-resolve",
+            "editor": {},
+            "ui": {
+                "file_status_added_fg": [80, 250, 123]
+            },
+            "search": {},
+            "diagnostic": {
+                "warning_fg": [181, 137, 0]
+            },
+            "syntax": {}
+        }"#;
+        let theme = Theme::from_json(json).expect("Should parse theme");
+
+        // Theme key resolution should work for file_status keys
+        assert_eq!(
+            theme.resolve_theme_key("ui.file_status_added_fg"),
+            Some(Color::Rgb(80, 250, 123))
+        );
+        assert_eq!(
+            theme.resolve_theme_key("ui.file_status_modified_fg"),
+            Some(Color::Rgb(181, 137, 0))
+        );
+    }
+
+    #[test]
+    fn test_all_builtin_themes_have_file_status_colors() {
+        // Every builtin theme must produce valid file_status colors (via fallback or explicit)
+        for builtin in BUILTIN_THEMES {
+            let theme = Theme::from_json(builtin.json)
+                .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
+
+            // All six keys must resolve to Some via resolve_theme_key
+            for key in &[
+                "ui.file_status_added_fg",
+                "ui.file_status_modified_fg",
+                "ui.file_status_deleted_fg",
+                "ui.file_status_renamed_fg",
+                "ui.file_status_untracked_fg",
+                "ui.file_status_conflicted_fg",
+            ] {
+                assert!(
+                    theme.resolve_theme_key(key).is_some(),
+                    "Theme '{}' missing resolution for '{}'",
+                    builtin.name,
+                    key
+                );
+            }
+        }
+    }
 }
