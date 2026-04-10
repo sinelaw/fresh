@@ -3,6 +3,8 @@
 use std::path::Path;
 
 use crate::app::WarningLevel;
+use crate::config::{StatusBarConfig, StatusBarElement};
+use chrono::Timelike;
 use crate::primitives::display_width::{char_width, str_width};
 use crate::state::EditorState;
 use crate::view::prompt::Prompt;
@@ -12,6 +14,39 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use rust_i18n::t;
+
+/// Categorization of how a rendered element should be styled and tracked for click detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ElementKind {
+    /// Normal text using base status bar colors
+    Normal,
+    /// Line ending indicator (clickable)
+    LineEnding,
+    /// Encoding indicator (clickable)
+    Encoding,
+    /// Language indicator (clickable)
+    Language,
+    /// LSP status indicator (colored by warning level, clickable)
+    Lsp,
+    /// Warning badge (colored, clickable)
+    WarningBadge,
+    /// Update available indicator (highlighted)
+    Update,
+    /// Command palette shortcut hint (distinct style)
+    Palette,
+    /// Status message area (clickable to show history)
+    Messages,
+    /// Remote disconnected prefix (error colors)
+    RemoteDisconnected,
+    /// Keybinding hints
+    KeybindHints,
+}
+
+/// A single rendered status bar element with its text and styling info.
+struct RenderedElement {
+    text: String,
+    kind: ElementKind,
+}
 
 /// Layout information returned from status bar rendering for mouse click detection
 #[derive(Debug, Clone, Default)]
@@ -242,26 +277,41 @@ pub fn truncate_path(path: &Path, max_len: usize) -> TruncatedPath {
     }
 }
 
+/// Truncate a string to fit within `max_width` display columns, appending "..." if truncated.
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    let width = str_width(s);
+    if width <= max_width {
+        return s.to_string();
+    }
+    let truncate_at = max_width.saturating_sub(3);
+    if truncate_at == 0 {
+        return if max_width >= 3 {
+            "...".to_string()
+        } else {
+            s.chars().take(max_width).collect()
+        };
+    }
+    let mut w = 0;
+    let truncated: String = s
+        .chars()
+        .take_while(|ch| {
+            let cw = char_width(*ch);
+            if w + cw <= truncate_at {
+                w += cw;
+                true
+            } else {
+                false
+            }
+        })
+        .collect();
+    format!("{}...", truncated)
+}
+
 /// Renders the status bar and prompt/minibuffer
 pub struct StatusBarRenderer;
 
 impl StatusBarRenderer {
     /// Render only the status bar (without prompt)
-    ///
-    /// # Arguments
-    /// * `frame` - The ratatui frame to render to
-    /// * `area` - The rectangular area to render in
-    /// * `state` - The active buffer's editor state
-    /// * `status_message` - Optional status message to display
-    /// * `lsp_status` - LSP status indicator
-    /// * `theme` - The active theme for colors
-    /// * `display_name` - The display name for the file (project-relative path)
-    /// * `chord_state` - Current chord sequence state (for multi-key bindings)
-    /// * `update_available` - Optional new version string if an update is available
-    /// * `warning_level` - LSP warning level (for coloring LSP indicator)
-    /// * `general_warning_count` - Number of general warnings (for badge display)
-    /// * `remote_connection` - Optional remote connection info (e.g., "user@host")
-    /// * `session_name` - Optional session name (for session persistence mode)
     ///
     /// # Returns
     /// Layout information with positions of clickable indicators
@@ -285,6 +335,8 @@ impl StatusBarRenderer {
         remote_connection: Option<&str>,
         session_name: Option<&str>,
         read_only: bool,
+        status_bar_config: &StatusBarConfig,
+        clock_blink_on: bool,
     ) -> StatusBarLayout {
         Self::render_status(
             frame,
@@ -305,6 +357,8 @@ impl StatusBarRenderer {
             remote_connection,
             session_name,
             read_only,
+            status_bar_config,
+            clock_blink_on,
         )
     }
 
@@ -470,7 +524,351 @@ impl StatusBarRenderer {
         }
     }
 
-    /// Render the normal status bar
+    /// Render a single element to its text representation.
+    /// Returns None if the element has nothing to display.
+    #[allow(clippy::too_many_arguments)]
+    fn render_element(
+        element: &StatusBarElement,
+        state: &mut EditorState,
+        cursors: &crate::model::cursor::Cursors,
+        status_message: &Option<String>,
+        plugin_status_message: &Option<String>,
+        lsp_status: &str,
+        display_name: &str,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+        chord_state: &[(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
+        update_available: Option<&str>,
+        general_warning_count: usize,
+        remote_connection: Option<&str>,
+        session_name: Option<&str>,
+        read_only: bool,
+        clock_blink_on: bool,
+    ) -> Option<RenderedElement> {
+        match element {
+            StatusBarElement::Filename => {
+                let modified = if state.buffer.is_modified() { " [+]" } else { "" };
+                let read_only_indicator = if read_only { " [RO]" } else { "" };
+                let remote_disconnected = remote_connection
+                    .map(|conn| conn.contains("(Disconnected)"))
+                    .unwrap_or(false);
+                let remote_prefix = remote_connection
+                    .map(|conn| format!("[SSH:{}] ", conn))
+                    .unwrap_or_default();
+                let session_prefix = session_name
+                    .map(|name| format!("[{}] ", name))
+                    .unwrap_or_default();
+                let text = format!(
+                    "{session_prefix}{remote_prefix}{display_name}{modified}{read_only_indicator}"
+                );
+                let kind = if remote_disconnected {
+                    ElementKind::RemoteDisconnected
+                } else {
+                    ElementKind::Normal
+                };
+                Some(RenderedElement { text, kind })
+            }
+            StatusBarElement::Cursor => {
+                if !state.show_cursors {
+                    return None;
+                }
+                let cursor = *cursors.primary();
+                let byte_offset_mode = state.buffer.line_count().is_none();
+                let text = if byte_offset_mode {
+                    format!("Byte {}", cursor.position)
+                } else {
+                    let cursor_iter = state.buffer.line_iterator(cursor.position, 80);
+                    let line_start = cursor_iter.current_position();
+                    let col = cursor.position.saturating_sub(line_start);
+                    let line = state.primary_cursor_line_number.value();
+                    format!("Ln {}, Col {}", line + 1, col + 1)
+                };
+                Some(RenderedElement { text, kind: ElementKind::Normal })
+            }
+            StatusBarElement::CursorCompact => {
+                if !state.show_cursors {
+                    return None;
+                }
+                let cursor = *cursors.primary();
+                let byte_offset_mode = state.buffer.line_count().is_none();
+                let text = if byte_offset_mode {
+                    format!("{}", cursor.position)
+                } else {
+                    let cursor_iter = state.buffer.line_iterator(cursor.position, 80);
+                    let line_start = cursor_iter.current_position();
+                    let col = cursor.position.saturating_sub(line_start);
+                    let line = state.primary_cursor_line_number.value();
+                    format!("{}:{}", line + 1, col + 1)
+                };
+                Some(RenderedElement { text, kind: ElementKind::Normal })
+            }
+            StatusBarElement::Diagnostics => {
+                let diagnostics = state.overlays.all();
+                let mut error_count = 0usize;
+                let mut warning_count = 0usize;
+                let mut info_count = 0usize;
+                let diagnostic_ns =
+                    crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
+                for overlay in diagnostics {
+                    if overlay.namespace.as_ref() == Some(&diagnostic_ns) {
+                        match overlay.priority {
+                            100 => error_count += 1,
+                            50 => warning_count += 1,
+                            _ => info_count += 1,
+                        }
+                    }
+                }
+                if error_count + warning_count + info_count == 0 {
+                    return None;
+                }
+                let mut parts = Vec::new();
+                if error_count > 0 { parts.push(format!("E:{}", error_count)); }
+                if warning_count > 0 { parts.push(format!("W:{}", warning_count)); }
+                if info_count > 0 { parts.push(format!("I:{}", info_count)); }
+                Some(RenderedElement { text: parts.join(" "), kind: ElementKind::Normal })
+            }
+            StatusBarElement::CursorCount => {
+                if cursors.count() <= 1 { return None; }
+                Some(RenderedElement {
+                    text: t!("status.cursors", count = cursors.count()).to_string(),
+                    kind: ElementKind::Normal,
+                })
+            }
+            StatusBarElement::Messages => {
+                let mut parts: Vec<&str> = Vec::new();
+                if let Some(msg) = status_message {
+                    if !msg.is_empty() { parts.push(msg); }
+                }
+                if let Some(msg) = plugin_status_message {
+                    if !msg.is_empty() { parts.push(msg); }
+                }
+                if parts.is_empty() { return None; }
+                Some(RenderedElement {
+                    text: parts.join(" | "),
+                    kind: ElementKind::Messages,
+                })
+            }
+            StatusBarElement::Chord => {
+                if chord_state.is_empty() { return None; }
+                let chord_str = chord_state
+                    .iter()
+                    .map(|(code, modifiers)| {
+                        crate::input::keybindings::format_keybinding(code, modifiers)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                Some(RenderedElement {
+                    text: format!("[{}]", chord_str),
+                    kind: ElementKind::Normal,
+                })
+            }
+            StatusBarElement::LineEnding => Some(RenderedElement {
+                text: format!(" {} ", state.buffer.line_ending().display_name()),
+                kind: ElementKind::LineEnding,
+            }),
+            StatusBarElement::Encoding => Some(RenderedElement {
+                text: format!(" {} ", state.buffer.encoding().display_name()),
+                kind: ElementKind::Encoding,
+            }),
+            StatusBarElement::Language => {
+                let text = if state.language == "text"
+                    && state.display_name != "Text"
+                    && state.display_name != "Plain Text"
+                    && state.display_name != "text"
+                {
+                    format!(" {} [syntax only] ", &state.display_name)
+                } else {
+                    format!(" {} ", &state.display_name)
+                };
+                Some(RenderedElement { text, kind: ElementKind::Language })
+            }
+            StatusBarElement::Lsp => {
+                if lsp_status.is_empty() { return None; }
+                Some(RenderedElement {
+                    text: format!(" {} ", lsp_status),
+                    kind: ElementKind::Lsp,
+                })
+            }
+            StatusBarElement::Warnings => {
+                if general_warning_count == 0 { return None; }
+                Some(RenderedElement {
+                    text: format!(" [\u{26a0} {}] ", general_warning_count),
+                    kind: ElementKind::WarningBadge,
+                })
+            }
+            StatusBarElement::Update => {
+                let version = update_available?;
+                Some(RenderedElement {
+                    text: format!(" {} ", t!("status.update_available", version = version)),
+                    kind: ElementKind::Update,
+                })
+            }
+            StatusBarElement::Palette => {
+                let shortcut = keybindings
+                    .get_keybinding_for_action(
+                        &crate::input::keybindings::Action::QuickOpen,
+                        crate::input::keybindings::KeyContext::Global,
+                    )
+                    .unwrap_or_else(|| "?".to_string());
+                Some(RenderedElement {
+                    text: format!(" {} ", t!("status.palette", shortcut = shortcut)),
+                    kind: ElementKind::Palette,
+                })
+            }
+            StatusBarElement::KeybindHints => {
+                let hints = Self::build_keybind_hints(keybindings);
+                if hints.is_empty() { return None; }
+                Some(RenderedElement { text: hints, kind: ElementKind::KeybindHints })
+            }
+            StatusBarElement::Clock => {
+                let now = chrono::Local::now();
+                let sep = if clock_blink_on { ':' } else { ' ' };
+                let text = format!("{:02}{}{:02}", now.hour(), sep, now.minute());
+                Some(RenderedElement { text, kind: ElementKind::Normal })
+            }
+        }
+    }
+
+    /// Build nano-style keybinding hints string
+    fn build_keybind_hints(
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+    ) -> String {
+        use crate::input::keybindings::{Action, KeyContext};
+        let hint_actions = [
+            (Action::Save, "Save"),
+            (Action::Quit, "Exit"),
+            (Action::Search, "Search"),
+            (Action::Undo, "Undo"),
+            (Action::Redo, "Redo"),
+            (Action::Copy, "Copy"),
+            (Action::Paste, "Paste"),
+            (Action::Cut, "Cut"),
+        ];
+        let mut parts = Vec::new();
+        for (action, label) in &hint_actions {
+            if let Some(key) = keybindings
+                .get_keybinding_for_action(action, KeyContext::Normal)
+                .or_else(|| keybindings.get_keybinding_for_action(action, KeyContext::Global))
+            {
+                parts.push(format!("{} {}", key, label));
+            }
+        }
+        parts.join("  ")
+    }
+
+    /// Get the style for a rendered element based on its kind, theme, and hover state.
+    fn element_style(
+        kind: ElementKind,
+        theme: &crate::view::theme::Theme,
+        hover: StatusBarHover,
+        warning_level: WarningLevel,
+    ) -> Style {
+        match kind {
+            ElementKind::Normal | ElementKind::KeybindHints | ElementKind::Messages => {
+                Style::default().fg(theme.status_bar_fg).bg(theme.status_bar_bg)
+            }
+            ElementKind::RemoteDisconnected => Style::default()
+                .fg(theme.status_error_indicator_fg)
+                .bg(theme.status_error_indicator_bg),
+            ElementKind::LineEnding => {
+                let is_hovering = hover == StatusBarHover::LineEndingIndicator;
+                let (fg, bg) = if is_hovering {
+                    (theme.menu_hover_fg, theme.menu_hover_bg)
+                } else {
+                    (theme.status_bar_fg, theme.status_bar_bg)
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering { style = style.add_modifier(Modifier::UNDERLINED); }
+                style
+            }
+            ElementKind::Encoding => {
+                let is_hovering = hover == StatusBarHover::EncodingIndicator;
+                let (fg, bg) = if is_hovering {
+                    (theme.menu_hover_fg, theme.menu_hover_bg)
+                } else {
+                    (theme.status_bar_fg, theme.status_bar_bg)
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering { style = style.add_modifier(Modifier::UNDERLINED); }
+                style
+            }
+            ElementKind::Language => {
+                let is_hovering = hover == StatusBarHover::LanguageIndicator;
+                let (fg, bg) = if is_hovering {
+                    (theme.menu_hover_fg, theme.menu_hover_bg)
+                } else {
+                    (theme.status_bar_fg, theme.status_bar_bg)
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering { style = style.add_modifier(Modifier::UNDERLINED); }
+                style
+            }
+            ElementKind::Lsp => {
+                let is_hovering = hover == StatusBarHover::LspIndicator;
+                let (fg, bg) = match (warning_level, is_hovering) {
+                    (WarningLevel::Error, true) => (
+                        theme.status_error_indicator_hover_fg,
+                        theme.status_error_indicator_hover_bg,
+                    ),
+                    (WarningLevel::Error, false) => (
+                        theme.status_error_indicator_fg,
+                        theme.status_error_indicator_bg,
+                    ),
+                    (WarningLevel::Warning, true) => (
+                        theme.status_warning_indicator_hover_fg,
+                        theme.status_warning_indicator_hover_bg,
+                    ),
+                    (WarningLevel::Warning, false) => (
+                        theme.status_warning_indicator_fg,
+                        theme.status_warning_indicator_bg,
+                    ),
+                    (WarningLevel::None, _) => (theme.status_bar_fg, theme.status_bar_bg),
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering && warning_level != WarningLevel::None {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                style
+            }
+            ElementKind::WarningBadge => {
+                let is_hovering = hover == StatusBarHover::WarningBadge;
+                let (fg, bg) = if is_hovering {
+                    (theme.status_warning_indicator_hover_fg, theme.status_warning_indicator_hover_bg)
+                } else {
+                    (theme.status_warning_indicator_fg, theme.status_warning_indicator_bg)
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering { style = style.add_modifier(Modifier::UNDERLINED); }
+                style
+            }
+            ElementKind::Update => Style::default()
+                .fg(theme.menu_highlight_fg)
+                .bg(theme.menu_dropdown_bg),
+            ElementKind::Palette => Style::default()
+                .fg(theme.help_indicator_fg)
+                .bg(theme.help_indicator_bg),
+        }
+    }
+
+    /// Map an ElementKind to the layout field it should populate.
+    fn update_layout_for_element(
+        layout: &mut StatusBarLayout,
+        kind: ElementKind,
+        row: u16,
+        start_col: u16,
+        end_col: u16,
+    ) {
+        match kind {
+            ElementKind::LineEnding => layout.line_ending_indicator = Some((row, start_col, end_col)),
+            ElementKind::Encoding => layout.encoding_indicator = Some((row, start_col, end_col)),
+            ElementKind::Language => layout.language_indicator = Some((row, start_col, end_col)),
+            ElementKind::Lsp => layout.lsp_indicator = Some((row, start_col, end_col)),
+            ElementKind::WarningBadge => layout.warning_badge = Some((row, start_col, end_col)),
+            ElementKind::Messages => layout.message_area = Some((row, start_col, end_col)),
+            _ => {}
+        }
+    }
+
+    /// Render the normal status bar (config-driven)
     #[allow(clippy::too_many_arguments)]
     fn render_status(
         frame: &mut Frame,
@@ -491,554 +889,251 @@ impl StatusBarRenderer {
         remote_connection: Option<&str>,
         session_name: Option<&str>,
         read_only: bool,
+        config: &StatusBarConfig,
+        clock_blink_on: bool,
     ) -> StatusBarLayout {
-        // Initialize layout tracking
         let mut layout = StatusBarLayout::default();
-        // Use the pre-computed display name from buffer metadata
-        let filename = display_name;
+        let base_style = Style::default()
+            .fg(theme.status_bar_fg)
+            .bg(theme.status_bar_bg);
 
-        let modified = if state.buffer.is_modified() {
-            " [+]"
-        } else {
-            ""
-        };
+        let lines = config.lines.max(1);
+        let rows_available = area.height as usize;
 
-        let read_only_indicator = if read_only { " [RO]" } else { "" };
+        // Render each row of the status bar
+        for row_idx in 0..lines.min(rows_available) {
+            let row_area = Rect {
+                x: area.x,
+                y: area.y + row_idx as u16,
+                width: area.width,
+                height: 1,
+            };
 
-        // Format chord state if present
-        let chord_display = if !chord_state.is_empty() {
-            let chord_str = chord_state
-                .iter()
-                .map(|(code, modifiers)| {
-                    crate::input::keybindings::format_keybinding(code, modifiers)
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!(" [{}]", chord_str)
-        } else {
-            String::new()
-        };
-
-        // View mode indicator (view_mode now lives in SplitViewState/BufferViewState)
-        // Not available here — status bar shows only buffer-level info.
-
-        let cursor = *cursors.primary();
-
-        // Get line number and column efficiently using cached values
-        let (line, col) = {
-            // Find the start of the line containing the cursor
-            let cursor_iter = state.buffer.line_iterator(cursor.position, 80);
-            let line_start = cursor_iter.current_position();
-            let col = cursor.position.saturating_sub(line_start);
-
-            // Use cached line number from state
-            let line_num = state.primary_cursor_line_number.value();
-            (line_num, col)
-        };
-
-        // Count diagnostics by severity
-        let diagnostics = state.overlays.all();
-        let mut error_count = 0;
-        let mut warning_count = 0;
-        let mut info_count = 0;
-
-        // Use the lsp-diagnostic namespace to identify diagnostic overlays
-        let diagnostic_ns = crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
-        for overlay in diagnostics {
-            if overlay.namespace.as_ref() == Some(&diagnostic_ns) {
-                // Check priority to determine severity
-                // Based on lsp_diagnostics.rs: Error=100, Warning=50, Info=30, Hint=10
-                match overlay.priority {
-                    100 => error_count += 1,
-                    50 => warning_count += 1,
-                    _ => info_count += 1,
+            if row_idx == 0 {
+                Self::render_status_row(
+                    frame, row_area, &mut layout, &config.left, &config.right,
+                    state, cursors, status_message, plugin_status_message,
+                    lsp_status, theme, display_name, keybindings, chord_state,
+                    update_available, warning_level, general_warning_count,
+                    hover, remote_connection, session_name, read_only,
+                    clock_blink_on,
+                );
+            } else if config.show_keybind_hints && row_idx == 1 {
+                let hints = Self::build_keybind_hints(keybindings);
+                let available = row_area.width as usize;
+                let displayed = truncate_to_width(&hints, available);
+                let displayed_width = str_width(&displayed);
+                let mut spans = vec![Span::styled(displayed, base_style)];
+                if displayed_width < available {
+                    spans.push(Span::styled(
+                        " ".repeat(available - displayed_width),
+                        base_style,
+                    ));
                 }
-            }
-        }
-
-        // Build diagnostics summary if there are any
-        let diagnostics_summary = if error_count + warning_count + info_count > 0 {
-            let mut parts = Vec::new();
-            if error_count > 0 {
-                parts.push(format!("E:{}", error_count));
-            }
-            if warning_count > 0 {
-                parts.push(format!("W:{}", warning_count));
-            }
-            if info_count > 0 {
-                parts.push(format!("I:{}", info_count));
-            }
-            format!(" | {}", parts.join(" "))
-        } else {
-            String::new()
-        };
-
-        // Build cursor count indicator (only show if multiple cursors)
-        let cursor_count_indicator = if cursors.count() > 1 {
-            format!(" | {}", t!("status.cursors", count = cursors.count()))
-        } else {
-            String::new()
-        };
-
-        // Build status message parts
-        let mut message_parts: Vec<&str> = Vec::new();
-        if let Some(msg) = status_message {
-            if !msg.is_empty() {
-                message_parts.push(msg);
-            }
-        }
-        if let Some(msg) = plugin_status_message {
-            if !msg.is_empty() {
-                message_parts.push(msg);
-            }
-        }
-
-        let message_suffix = if message_parts.is_empty() {
-            String::new()
-        } else {
-            format!(" | {}", message_parts.join(" | "))
-        };
-
-        // Build left status (file info, position, diagnostics, messages)
-        // Session/Remote indicator comes first (if present), then filename
-        // Line and column are 0-indexed internally, but displayed as 1-indexed (standard editor convention)
-        // For virtual buffers with hidden cursors, don't show line/column info
-        let remote_disconnected = remote_connection
-            .map(|conn| conn.contains("(Disconnected)"))
-            .unwrap_or(false);
-        let remote_prefix = remote_connection
-            .map(|conn| format!("[SSH:{}] ", conn))
-            .unwrap_or_default();
-        let session_prefix = session_name
-            .map(|name| format!("[{}] ", name))
-            .unwrap_or_default();
-        let byte_offset_mode = state.buffer.line_count().is_none();
-        let base_status = if state.show_cursors {
-            if byte_offset_mode {
-                format!(
-                    "{session_prefix}{remote_prefix}{filename}{modified}{read_only_indicator} | Byte {}{diagnostics_summary}{cursor_count_indicator}",
-                    cursor.position
-                )
+                frame.render_widget(Paragraph::new(Line::from(spans)), row_area);
             } else {
-                format!(
-                    "{session_prefix}{remote_prefix}{filename}{modified}{read_only_indicator} | Ln {}, Col {}{diagnostics_summary}{cursor_count_indicator}",
-                    line + 1,
-                    col + 1
-                )
+                let spans = vec![Span::styled(
+                    " ".repeat(row_area.width as usize),
+                    base_style,
+                )];
+                frame.render_widget(Paragraph::new(Line::from(spans)), row_area);
             }
-        } else {
-            // Virtual buffer - just show filename and modified indicator
-            format!("{session_prefix}{remote_prefix}{filename}{modified}{read_only_indicator}{diagnostics_summary}")
-        };
+        }
 
-        // Track where the message starts for click detection
-        let base_and_chord_width = str_width(&base_status) + str_width(&chord_display);
-        let message_width = str_width(&message_suffix);
+        layout
+    }
 
-        let left_status = format!("{base_status}{chord_display}{message_suffix}");
-
-        // Build right-side indicators (these stay fixed on the right)
-        // Order: [Line ending] [Language] [LSP indicator] [warning badge] [update] [Palette]
-        // Note: Remote indicator is now on the left side, before the filename
-
-        // Line ending indicator (clickable to change format)
-        let line_ending_text = format!(" {} ", state.buffer.line_ending().display_name());
-        let line_ending_width = str_width(&line_ending_text);
-
-        // Encoding indicator (clickable to change encoding)
-        let encoding = state.buffer.encoding();
-        let encoding_text = format!(" {} ", encoding.display_name());
-        let encoding_width = str_width(&encoding_text);
-
-        // Language indicator (clickable to change language)
-        // Show a warning suffix when grammar detected a language but no language config
-        // entry exists (language is "text" while display_name is something else).
-        // This means LSP won't work because detect_language() can't map the file extension.
-        let language_text = if state.language == "text"
-            && state.display_name != "Text"
-            && state.display_name != "Plain Text"
-            && state.display_name != "text"
-        {
-            format!(" {} [syntax only] ", &state.display_name)
-        } else {
-            format!(" {} ", &state.display_name)
-        };
-        let language_width = str_width(&language_text);
-
-        // LSP indicator (right-aligned, with colored background if warning/error)
-        let lsp_indicator = if !lsp_status.is_empty() {
-            format!(" {} ", lsp_status)
-        } else {
-            String::new()
-        };
-        let lsp_indicator_width = str_width(&lsp_indicator);
-
-        // General warning badge (right-aligned)
-        let warning_badge = if general_warning_count > 0 {
-            format!(" [⚠ {}] ", general_warning_count)
-        } else {
-            String::new()
-        };
-        let warning_badge_width = str_width(&warning_badge);
-
-        // Build update indicator for right side (if update available)
-        let update_indicator = update_available
-            .map(|version| format!(" {} ", t!("status.update_available", version = version)));
-        let update_width = update_indicator.as_ref().map(|s| s.len()).unwrap_or(0);
-
-        // Build Quick Open / Command Palette indicator for right side
-        // Always show the indicator on the right side
-        let cmd_palette_shortcut = keybindings
-            .get_keybinding_for_action(
-                &crate::input::keybindings::Action::QuickOpen,
-                crate::input::keybindings::KeyContext::Global,
-            )
-            .unwrap_or_else(|| "?".to_string());
-        let cmd_palette_indicator = t!("status.palette", shortcut = cmd_palette_shortcut);
-        let padded_cmd_palette = format!(" {} ", cmd_palette_indicator);
-
-        // Calculate available width and right side width
-        // Right side: [Line ending] [Encoding] [Language] [LSP indicator] [warning badge] [update] [Palette]
+    /// Render a single status bar row with left and right element containers.
+    #[allow(clippy::too_many_arguments)]
+    fn render_status_row(
+        frame: &mut Frame,
+        area: Rect,
+        layout: &mut StatusBarLayout,
+        left_elements: &[StatusBarElement],
+        right_elements: &[StatusBarElement],
+        state: &mut EditorState,
+        cursors: &crate::model::cursor::Cursors,
+        status_message: &Option<String>,
+        plugin_status_message: &Option<String>,
+        lsp_status: &str,
+        theme: &crate::view::theme::Theme,
+        display_name: &str,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+        chord_state: &[(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
+        update_available: Option<&str>,
+        warning_level: WarningLevel,
+        general_warning_count: usize,
+        hover: StatusBarHover,
+        remote_connection: Option<&str>,
+        session_name: Option<&str>,
+        read_only: bool,
+        clock_blink_on: bool,
+    ) {
+        let base_style = Style::default()
+            .fg(theme.status_bar_fg)
+            .bg(theme.status_bar_bg);
         let available_width = area.width as usize;
-        let cmd_palette_width = str_width(&padded_cmd_palette);
-        let right_side_width = line_ending_width
-            + encoding_width
-            + language_width
-            + lsp_indicator_width
-            + warning_badge_width
-            + update_width
-            + cmd_palette_width;
 
-        // Only show command palette indicator if there's enough space (at least 15 chars for minimal display)
-        let spans = if available_width >= 15 {
-            // Reserve space for right side indicators
-            let left_max_width = if available_width > right_side_width + 1 {
-                available_width - right_side_width - 1 // -1 for at least one space separator
-            } else {
-                1 // Minimal space
-            };
+        if available_width == 0 {
+            return;
+        }
 
-            let mut spans = vec![];
+        // Render all left elements
+        let left_rendered: Vec<RenderedElement> = left_elements
+            .iter()
+            .filter_map(|elem| Self::render_element(
+                elem, state, cursors, status_message, plugin_status_message,
+                lsp_status, display_name, keybindings, chord_state,
+                update_available, general_warning_count, remote_connection,
+                session_name, read_only, clock_blink_on,
+            ))
+            .collect();
 
-            // Truncate left status if it's too long (use visual width, not char count)
-            let left_visual_width = str_width(&left_status);
-            let displayed_left = if left_visual_width > left_max_width {
-                let truncate_at = left_max_width.saturating_sub(3); // -3 for "..."
-                if truncate_at > 0 {
-                    // Take characters up to visual width limit
-                    let mut width = 0;
-                    let truncated: String = left_status
-                        .chars()
-                        .take_while(|ch| {
-                            let w = char_width(*ch);
-                            if width + w <= truncate_at {
-                                width += w;
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .collect();
-                    format!("{}...", truncated)
-                } else {
-                    String::from("...")
-                }
-            } else {
-                left_status.clone()
-            };
+        // Render all right elements
+        let right_rendered: Vec<RenderedElement> = right_elements
+            .iter()
+            .filter_map(|elem| Self::render_element(
+                elem, state, cursors, status_message, plugin_status_message,
+                lsp_status, display_name, keybindings, chord_state,
+                update_available, general_warning_count, remote_connection,
+                session_name, read_only, clock_blink_on,
+            ))
+            .collect();
 
-            let displayed_left_len = str_width(&displayed_left);
+        // Build left text with " | " separators
+        let left_text = Self::join_left_elements(&left_rendered);
 
-            // Track message area for click detection (if there's a message)
-            if message_width > 0 {
-                // The message starts after base_and_chord, but might be truncated
-                let msg_start = base_and_chord_width.min(displayed_left_len);
-                let msg_end = displayed_left_len;
-                if msg_end > msg_start {
-                    layout.message_area =
-                        Some((area.y, area.x + msg_start as u16, area.x + msg_end as u16));
-                }
-            }
+        // Calculate right side total width
+        let right_width: usize = right_rendered.iter().map(|e| str_width(&e.text)).sum();
 
-            // If remote is disconnected, render the [SSH:...] prefix with
-            // warning colors so the user notices the connection is lost.
-            if remote_disconnected && displayed_left.starts_with("[SSH:") {
-                if let Some(prefix_end) = displayed_left.find("] ") {
-                    let prefix = &displayed_left[..prefix_end + 2];
-                    let rest = &displayed_left[prefix_end + 2..];
-                    spans.push(Span::styled(
-                        prefix.to_string(),
-                        Style::default()
-                            .fg(theme.status_error_indicator_fg)
-                            .bg(theme.status_error_indicator_bg),
-                    ));
-                    spans.push(Span::styled(
-                        rest.to_string(),
-                        Style::default()
-                            .fg(theme.status_bar_fg)
-                            .bg(theme.status_bar_bg),
-                    ));
-                } else {
-                    spans.push(Span::styled(
-                        displayed_left.clone(),
-                        Style::default()
-                            .fg(theme.status_error_indicator_fg)
-                            .bg(theme.status_error_indicator_bg),
-                    ));
-                }
-            } else {
+        // If terminal is too narrow, just show truncated left text
+        if available_width < 15 {
+            let displayed = truncate_to_width(&left_text, available_width);
+            let displayed_width = str_width(&displayed);
+            let mut spans = vec![Span::styled(displayed, base_style)];
+            if displayed_width < available_width {
                 spans.push(Span::styled(
-                    displayed_left.clone(),
-                    Style::default()
-                        .fg(theme.status_bar_fg)
-                        .bg(theme.status_bar_bg),
+                    " ".repeat(available_width - displayed_width),
+                    base_style,
                 ));
             }
+            frame.render_widget(Paragraph::new(Line::from(spans)), area);
+            return;
+        }
 
-            // Add spacing to push right side indicators to the right
-            if displayed_left_len + right_side_width < available_width {
-                let padding_len = available_width - displayed_left_len - right_side_width;
-                spans.push(Span::styled(
-                    " ".repeat(padding_len),
-                    Style::default()
-                        .fg(theme.status_bar_fg)
-                        .bg(theme.status_bar_bg),
-                ));
-            } else if displayed_left_len < available_width {
-                // Add minimal space
-                spans.push(Span::styled(
-                    " ",
-                    Style::default()
-                        .fg(theme.status_bar_fg)
-                        .bg(theme.status_bar_bg),
-                ));
-            }
-
-            // Track current column for layout positions
-            let mut current_col = area.x + displayed_left_len as u16;
-            if displayed_left_len + right_side_width < available_width {
-                current_col = area.x + (available_width - right_side_width) as u16;
-            }
-
-            // Add line ending indicator (clickable to change format)
-            {
-                let is_hovering = hover == StatusBarHover::LineEndingIndicator;
-                // Record position for click detection
-                layout.line_ending_indicator =
-                    Some((area.y, current_col, current_col + line_ending_width as u16));
-                let (fg, bg) = if is_hovering {
-                    (theme.menu_hover_fg, theme.menu_hover_bg)
-                } else {
-                    (theme.status_bar_fg, theme.status_bar_bg)
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                spans.push(Span::styled(line_ending_text.clone(), style));
-                current_col += line_ending_width as u16;
-            }
-
-            // Add encoding indicator (clickable to change encoding)
-            {
-                let is_hovering = hover == StatusBarHover::EncodingIndicator;
-                // Record position for click detection
-                layout.encoding_indicator =
-                    Some((area.y, current_col, current_col + encoding_width as u16));
-                let (fg, bg) = if is_hovering {
-                    (theme.menu_hover_fg, theme.menu_hover_bg)
-                } else {
-                    (theme.status_bar_fg, theme.status_bar_bg)
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                spans.push(Span::styled(encoding_text.clone(), style));
-                current_col += encoding_width as u16;
-            }
-
-            // Add language indicator (clickable to change language)
-            {
-                let is_hovering = hover == StatusBarHover::LanguageIndicator;
-                // Record position for click detection
-                layout.language_indicator =
-                    Some((area.y, current_col, current_col + language_width as u16));
-                let (fg, bg) = if is_hovering {
-                    (theme.menu_hover_fg, theme.menu_hover_bg)
-                } else {
-                    (theme.status_bar_fg, theme.status_bar_bg)
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                spans.push(Span::styled(language_text.clone(), style));
-                current_col += language_width as u16;
-            }
-
-            // Add LSP indicator (always clickable for details popup)
-            if !lsp_indicator.is_empty() {
-                let is_hovering = hover == StatusBarHover::LspIndicator;
-                let (lsp_fg, lsp_bg) = match (warning_level, is_hovering) {
-                    (WarningLevel::Error, true) => (
-                        theme.status_error_indicator_hover_fg,
-                        theme.status_error_indicator_hover_bg,
-                    ),
-                    (WarningLevel::Error, false) => (
-                        theme.status_error_indicator_fg,
-                        theme.status_error_indicator_bg,
-                    ),
-                    (WarningLevel::Warning, true) => (
-                        theme.status_warning_indicator_hover_fg,
-                        theme.status_warning_indicator_hover_bg,
-                    ),
-                    (WarningLevel::Warning, false) => (
-                        theme.status_warning_indicator_fg,
-                        theme.status_warning_indicator_bg,
-                    ),
-                    (WarningLevel::None, true) => (theme.menu_hover_fg, theme.menu_hover_bg),
-                    (WarningLevel::None, false) => (theme.status_bar_fg, theme.status_bar_bg),
-                };
-                // Record LSP indicator position for click detection
-                layout.lsp_indicator = Some((
-                    area.y,
-                    current_col,
-                    current_col + lsp_indicator_width as u16,
-                ));
-                current_col += lsp_indicator_width as u16;
-                let mut style = Style::default().fg(lsp_fg).bg(lsp_bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                spans.push(Span::styled(lsp_indicator.clone(), style));
-            }
-
-            // Add general warning badge if there are warnings
-            if !warning_badge.is_empty() {
-                let is_hovering = hover == StatusBarHover::WarningBadge;
-                // Record warning badge position for click detection
-                layout.warning_badge = Some((
-                    area.y,
-                    current_col,
-                    current_col + warning_badge_width as u16,
-                ));
-                current_col += warning_badge_width as u16;
-                let (fg, bg) = if is_hovering {
-                    (
-                        theme.status_warning_indicator_hover_fg,
-                        theme.status_warning_indicator_hover_bg,
-                    )
-                } else {
-                    (
-                        theme.status_warning_indicator_fg,
-                        theme.status_warning_indicator_bg,
-                    )
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                spans.push(Span::styled(warning_badge.clone(), style));
-            }
-            // Keep current_col in scope to avoid unused warning
-            let _ = current_col;
-
-            // Add update indicator if available (with highlighted styling)
-            if let Some(ref update_text) = update_indicator {
-                spans.push(Span::styled(
-                    update_text.clone(),
-                    Style::default()
-                        .fg(theme.menu_highlight_fg)
-                        .bg(theme.menu_dropdown_bg),
-                ));
-            }
-
-            // Add command palette indicator with distinct styling and padding
-            spans.push(Span::styled(
-                padded_cmd_palette.clone(),
-                Style::default()
-                    .fg(theme.help_indicator_fg)
-                    .bg(theme.help_indicator_bg),
-            ));
-
-            spans
+        // Reserve space for right side
+        let left_max_width = if available_width > right_width + 1 {
+            available_width - right_width - 1
         } else {
-            // Terminal too narrow or no command palette indicator - fill entire width with left status
-            let mut spans = vec![];
-            let left_visual_width = str_width(&left_status);
-            let displayed_left = if left_visual_width > available_width {
-                let truncate_at = available_width.saturating_sub(3);
-                if truncate_at > 0 {
-                    // Take characters up to visual width limit
-                    let mut width = 0;
-                    let truncated: String = left_status
-                        .chars()
-                        .take_while(|ch| {
-                            let w = char_width(*ch);
-                            if width + w <= truncate_at {
-                                width += w;
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .collect();
-                    format!("{}...", truncated)
-                } else {
-                    // Take characters up to available width
-                    let mut width = 0;
-                    left_status
-                        .chars()
-                        .take_while(|ch| {
-                            let w = char_width(*ch);
-                            if width + w <= available_width {
-                                width += w;
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .collect()
-                }
-            } else {
-                left_status.clone()
-            };
+            1
+        };
 
-            if remote_disconnected && displayed_left.starts_with("[SSH:") {
+        // Truncate left text if needed
+        let displayed_left = truncate_to_width(&left_text, left_max_width);
+        let displayed_left_width = str_width(&displayed_left);
+
+        // Build spans for left side, with special handling for disconnected remote
+        let mut spans = Vec::new();
+        let has_disconnected_remote = left_rendered
+            .first()
+            .map(|e| e.kind == ElementKind::RemoteDisconnected)
+            .unwrap_or(false);
+
+        if has_disconnected_remote && displayed_left.starts_with("[SSH:") {
+            if let Some(prefix_end) = displayed_left.find("] ") {
+                let prefix = &displayed_left[..prefix_end + 2];
+                let rest = &displayed_left[prefix_end + 2..];
+                spans.push(Span::styled(
+                    prefix.to_string(),
+                    Style::default()
+                        .fg(theme.status_error_indicator_fg)
+                        .bg(theme.status_error_indicator_bg),
+                ));
+                spans.push(Span::styled(rest.to_string(), base_style));
+            } else {
                 spans.push(Span::styled(
                     displayed_left.clone(),
                     Style::default()
                         .fg(theme.status_error_indicator_fg)
                         .bg(theme.status_error_indicator_bg),
                 ));
-            } else {
-                spans.push(Span::styled(
-                    displayed_left.clone(),
-                    Style::default()
-                        .fg(theme.status_bar_fg)
-                        .bg(theme.status_bar_bg),
-                ));
             }
+        } else {
+            spans.push(Span::styled(displayed_left.clone(), base_style));
+        }
 
-            // Fill remaining width
-            if displayed_left.len() < available_width {
-                spans.push(Span::styled(
-                    " ".repeat(available_width - displayed_left.len()),
-                    Style::default()
-                        .fg(theme.status_bar_fg)
-                        .bg(theme.status_bar_bg),
-                ));
+        // Track message area for click detection
+        Self::track_left_message_area(layout, &left_rendered, &displayed_left, area);
+
+        // Add padding between left and right
+        let mut col_offset = displayed_left_width;
+        if col_offset + right_width < available_width {
+            let padding = available_width - col_offset - right_width;
+            spans.push(Span::styled(" ".repeat(padding), base_style));
+            col_offset = available_width - right_width;
+        } else if col_offset < available_width {
+            spans.push(Span::styled(" ", base_style));
+            col_offset += 1;
+        }
+
+        // Add right side elements with proper styling and layout tracking
+        let mut current_col = area.x + col_offset as u16;
+        for rendered in &right_rendered {
+            let elem_width = str_width(&rendered.text) as u16;
+            let style = Self::element_style(rendered.kind, theme, hover, warning_level);
+            Self::update_layout_for_element(
+                layout, rendered.kind, area.y, current_col, current_col + elem_width,
+            );
+            spans.push(Span::styled(rendered.text.clone(), style));
+            current_col += elem_width;
+        }
+
+        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    }
+
+    /// Join left-side elements with " | " separators.
+    fn join_left_elements(elements: &[RenderedElement]) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        for rendered in elements {
+            if !rendered.text.is_empty() {
+                parts.push(&rendered.text);
             }
+        }
+        parts.join(" | ")
+    }
 
-            spans
-        };
-
-        let status_line = Paragraph::new(Line::from(spans));
-
-        frame.render_widget(status_line, area);
-
-        layout
+    /// Track the message area position within the displayed left text for click detection.
+    fn track_left_message_area(
+        layout: &mut StatusBarLayout,
+        left_rendered: &[RenderedElement],
+        displayed_left: &str,
+        area: Rect,
+    ) {
+        let mut offset: usize = 0;
+        let mut has_prev = false;
+        for rendered in left_rendered {
+            if rendered.text.is_empty() {
+                continue;
+            }
+            if has_prev {
+                offset += 3; // " | "
+            }
+            if rendered.kind == ElementKind::Messages {
+                let displayed_width = str_width(displayed_left);
+                let msg_start = offset.min(displayed_width);
+                let msg_end = (offset + str_width(&rendered.text)).min(displayed_width);
+                if msg_end > msg_start {
+                    layout.message_area = Some((
+                        area.y,
+                        area.x + msg_start as u16,
+                        area.x + msg_end as u16,
+                    ));
+                }
+                return;
+            }
+            offset += str_width(&rendered.text);
+            has_prev = true;
+        }
     }
 
     /// Render the search options bar (shown when search prompt is active)

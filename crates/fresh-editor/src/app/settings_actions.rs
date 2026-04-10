@@ -426,6 +426,7 @@ impl Editor {
                     SettingControl::Dropdown(_) => "dropdown",
                     SettingControl::Text(_) => "text",
                     SettingControl::TextList(_) => "textlist",
+                    SettingControl::DualList(_) => "duallist",
                     SettingControl::Map(_) => "map",
                     SettingControl::ObjectArray(_) => "objectarray",
                     SettingControl::Json(_) => "json",

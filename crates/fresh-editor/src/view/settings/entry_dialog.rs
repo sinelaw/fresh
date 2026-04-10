@@ -85,6 +85,7 @@ impl EntryDialogState {
             section: None,
             is_section_start: false,
             layout_width: 0,
+            dual_list_sibling: None,
         };
         items.push(key_item);
 
@@ -649,6 +650,7 @@ impl EntryDialogState {
                 SettingControl::Dropdown(s) => s.focus = state,
                 SettingControl::Text(s) => s.focus = state,
                 SettingControl::TextList(s) => s.focus = state,
+                SettingControl::DualList(s) => s.focus = state,
                 SettingControl::Map(s) => s.focus = state,
                 SettingControl::ObjectArray(s) => s.focus = state,
                 SettingControl::Json(s) => s.focus = state,
@@ -1301,6 +1303,7 @@ mod tests {
                         order: None,
                         nullable: false,
                         enum_from: None,
+                        dual_list_sibling: None,
                     },
                     SettingSchema {
                         path: "/command".to_string(),
@@ -1313,6 +1316,7 @@ mod tests {
                         order: None,
                         nullable: false,
                         enum_from: None,
+                        dual_list_sibling: None,
                     },
                 ],
             },
@@ -1322,6 +1326,7 @@ mod tests {
             order: None,
             nullable: false,
             enum_from: None,
+            dual_list_sibling: None,
         }
     }
 

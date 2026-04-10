@@ -273,6 +273,31 @@ impl SettingsLayout {
                             }
                         }
                     }
+                    ControlLayoutInfo::DualList(dual_layout) => {
+                        use crate::view::controls::DualListHit;
+                        if let Some(hit) = dual_layout.hit_test(x, y) {
+                            return Some(match hit {
+                                DualListHit::AvailableRow(row) => {
+                                    SettingsHit::ControlDualListAvailable(item.index, row)
+                                }
+                                DualListHit::IncludedRow(row) => {
+                                    SettingsHit::ControlDualListIncluded(item.index, row)
+                                }
+                                DualListHit::AddButton => {
+                                    SettingsHit::ControlDualListAdd(item.index)
+                                }
+                                DualListHit::RemoveButton => {
+                                    SettingsHit::ControlDualListRemove(item.index)
+                                }
+                                DualListHit::MoveUpButton => {
+                                    SettingsHit::ControlDualListMoveUp(item.index)
+                                }
+                                DualListHit::MoveDownButton => {
+                                    SettingsHit::ControlDualListMoveDown(item.index)
+                                }
+                            });
+                        }
+                    }
                     ControlLayoutInfo::Json { edit_area } => {
                         if point_in_rect(*edit_area, x, y) {
                             return Some(SettingsHit::ControlText(item.index));
@@ -336,6 +361,18 @@ pub enum SettingsHit {
     ControlMapAddNew(usize),
     /// Click on inherit button (item_idx) - unset a nullable value
     ControlInherit(usize),
+    /// Click on dual-list available row (item_idx, row_idx)
+    ControlDualListAvailable(usize, usize),
+    /// Click on dual-list included row (item_idx, row_idx)
+    ControlDualListIncluded(usize, usize),
+    /// Click on dual-list add button (item_idx)
+    ControlDualListAdd(usize),
+    /// Click on dual-list remove button (item_idx)
+    ControlDualListRemove(usize),
+    /// Click on dual-list move-up button (item_idx)
+    ControlDualListMoveUp(usize),
+    /// Click on dual-list move-down button (item_idx)
+    ControlDualListMoveDown(usize),
     /// Click on layer button
     LayerButton,
     /// Click on edit config file button

@@ -9,6 +9,7 @@ use rust_i18n::t;
 
 use super::items::SettingControl;
 use super::{FocusPanel, SettingsHit, SettingsLayout};
+use crate::view::controls::DualListColumn;
 
 /// Computed layout for entry dialog hit testing
 struct EntryDialogLayout {
@@ -338,6 +339,62 @@ impl Editor {
                 }
                 // Single click on add-new activates immediately
                 self.settings_activate_current();
+            }
+            SettingsHit::ControlDualListAvailable(idx, row) => {
+                if let Some(ref mut state) = self.settings_state {
+                    state.focus.set(FocusPanel::Settings);
+                    state.selected_item = idx;
+                    state.with_dual_list_mut(idx, |dl| {
+                        dl.active_column = DualListColumn::Available;
+                        dl.available_cursor = row;
+                    });
+                    state.start_editing();
+                }
+            }
+            SettingsHit::ControlDualListIncluded(idx, row) => {
+                if let Some(ref mut state) = self.settings_state {
+                    state.focus.set(FocusPanel::Settings);
+                    state.selected_item = idx;
+                    state.with_dual_list_mut(idx, |dl| {
+                        dl.active_column = DualListColumn::Included;
+                        dl.included_cursor = row;
+                    });
+                    state.start_editing();
+                }
+            }
+            SettingsHit::ControlDualListAdd(idx) => {
+                if let Some(ref mut state) = self.settings_state {
+                    state.focus.set(FocusPanel::Settings);
+                    state.selected_item = idx;
+                    state.with_dual_list_mut(idx, |dl| dl.add_selected());
+                    state.on_value_changed();
+                    state.refresh_dual_list_sibling();
+                }
+            }
+            SettingsHit::ControlDualListRemove(idx) => {
+                if let Some(ref mut state) = self.settings_state {
+                    state.focus.set(FocusPanel::Settings);
+                    state.selected_item = idx;
+                    state.with_dual_list_mut(idx, |dl| dl.remove_selected());
+                    state.on_value_changed();
+                    state.refresh_dual_list_sibling();
+                }
+            }
+            SettingsHit::ControlDualListMoveUp(idx) => {
+                if let Some(ref mut state) = self.settings_state {
+                    state.focus.set(FocusPanel::Settings);
+                    state.selected_item = idx;
+                    state.with_dual_list_mut(idx, |dl| dl.move_up());
+                    state.on_value_changed();
+                }
+            }
+            SettingsHit::ControlDualListMoveDown(idx) => {
+                if let Some(ref mut state) = self.settings_state {
+                    state.focus.set(FocusPanel::Settings);
+                    state.selected_item = idx;
+                    state.with_dual_list_mut(idx, |dl| dl.move_down());
+                    state.on_value_changed();
+                }
             }
             SettingsHit::ControlInherit(idx) => {
                 // Click on [Inherit] button - set value to null (inherited)

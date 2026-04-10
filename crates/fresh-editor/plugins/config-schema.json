@@ -42,6 +42,26 @@
         "menu_bar_mnemonics": true,
         "show_tab_bar": true,
         "show_status_bar": true,
+        "status_bar": {
+          "lines": 1,
+          "left": [
+            "{filename}",
+            "{cursor}",
+            "{diagnostics}",
+            "{cursor_count}",
+            "{messages}"
+          ],
+          "right": [
+            "{line_ending}",
+            "{encoding}",
+            "{language}",
+            "{lsp}",
+            "{warnings}",
+            "{update}",
+            "{palette}"
+          ],
+          "show_keybind_hints": false
+        },
         "show_prompt_line": true,
         "show_vertical_scrollbar": true,
         "show_horizontal_scrollbar": false,
@@ -326,6 +346,31 @@
           "type": "boolean",
           "default": true,
           "x-section": "Display"
+        },
+        "status_bar": {
+          "description": "Status bar layout and element configuration.\nControls which elements appear in the status bar and how they are arranged.",
+          "$ref": "#/$defs/StatusBarConfig",
+          "default": {
+            "lines": 1,
+            "left": [
+              "{filename}",
+              "{cursor}",
+              "{diagnostics}",
+              "{cursor_count}",
+              "{messages}"
+            ],
+            "right": [
+              "{line_ending}",
+              "{encoding}",
+              "{language}",
+              "{lsp}",
+              "{warnings}",
+              "{update}",
+              "{palette}"
+            ],
+            "show_keybind_hints": false
+          },
+          "x-section": "Status Bar"
         },
         "show_prompt_line": {
           "description": "Whether the prompt line is visible by default.\nThe prompt line is the bottom-most line used for command input, search, file open, etc.\nWhen hidden, the prompt line only appears when a prompt is active.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
@@ -675,6 +720,129 @@
           "x-section": "Performance"
         }
       }
+    },
+    "StatusBarConfig": {
+      "description": "Status bar layout and element configuration.\n\nControls which elements appear in the status bar and how they are arranged.\nElements are placed in left and right containers and can be freely reordered.\n\nExample config:\n```json\n{\n  \"status_bar\": {\n    \"lines\": 1,\n    \"left\": [\"{filename}\", \"{cursor:compact}\"],\n    \"right\": [\"{language}\", \"{encoding}\", \"{line_ending}\"],\n    \"show_keybind_hints\": false\n  }\n}\n```",
+      "type": "object",
+      "properties": {
+        "lines": {
+          "description": "Number of lines the status bar occupies.\nUse 2+ lines to show more information or keybind hints without losing editor space.\nDefault: 1",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 1,
+          "x-section": "Status Bar"
+        },
+        "left": {
+          "description": "Elements shown on the left side of the status bar.\nDefault: [\"{filename}\", \"{cursor}\", \"{diagnostics}\", \"{cursor_count}\", \"{messages}\"]",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StatusBarElement"
+          },
+          "default": [
+            "{filename}",
+            "{cursor}",
+            "{diagnostics}",
+            "{cursor_count}",
+            "{messages}"
+          ],
+          "x-section": "Status Bar",
+          "x-dual-list-sibling": "/editor/status_bar/right"
+        },
+        "right": {
+          "description": "Elements shown on the right side of the status bar.\nDefault: [\"{line_ending}\", \"{encoding}\", \"{language}\", \"{lsp}\", \"{warnings}\", \"{update}\", \"{palette}\"]",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StatusBarElement"
+          },
+          "default": [
+            "{line_ending}",
+            "{encoding}",
+            "{language}",
+            "{lsp}",
+            "{warnings}",
+            "{update}",
+            "{palette}"
+          ],
+          "x-section": "Status Bar",
+          "x-dual-list-sibling": "/editor/status_bar/left"
+        },
+        "show_keybind_hints": {
+          "description": "Show nano-style keybinding hints in the status bar area.\nWhen enabled, adds a row of common keybinding hints.\nRequires `lines` >= 2 to have room, or add `{keybind_hints}` to left/right elements.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Status Bar"
+        }
+      }
+    },
+    "StatusBarElement": {
+      "type": "string",
+      "x-dual-list-options": [
+        {
+          "value": "{filename}",
+          "name": "Filename"
+        },
+        {
+          "value": "{cursor}",
+          "name": "Cursor"
+        },
+        {
+          "value": "{cursor:compact}",
+          "name": "Cursor (compact)"
+        },
+        {
+          "value": "{diagnostics}",
+          "name": "Diagnostics"
+        },
+        {
+          "value": "{cursor_count}",
+          "name": "Cursor Count"
+        },
+        {
+          "value": "{messages}",
+          "name": "Messages"
+        },
+        {
+          "value": "{chord}",
+          "name": "Chord"
+        },
+        {
+          "value": "{line_ending}",
+          "name": "Line Ending"
+        },
+        {
+          "value": "{encoding}",
+          "name": "Encoding"
+        },
+        {
+          "value": "{language}",
+          "name": "Language"
+        },
+        {
+          "value": "{lsp}",
+          "name": "LSP"
+        },
+        {
+          "value": "{warnings}",
+          "name": "Warnings"
+        },
+        {
+          "value": "{update}",
+          "name": "Update"
+        },
+        {
+          "value": "{palette}",
+          "name": "Palette"
+        },
+        {
+          "value": "{keybind_hints}",
+          "name": "Keybind Hints"
+        },
+        {
+          "value": "{clock}",
+          "name": "Clock"
+        }
+      ]
     },
     "CursorStyle": {
       "description": "Terminal cursor style",

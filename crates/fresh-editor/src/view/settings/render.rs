@@ -11,9 +11,9 @@ use super::layout::{SettingsHit, SettingsLayout};
 use super::search::{DeepMatch, SearchResult};
 use super::state::SettingsState;
 use crate::view::controls::{
-    render_dropdown_aligned, render_number_input_aligned, render_text_input_aligned,
-    render_toggle_aligned, DropdownColors, MapColors, NumberInputColors, TextInputColors,
-    TextListColors, ToggleColors,
+    render_dropdown_aligned, render_dual_list_partial, render_number_input_aligned,
+    render_text_input_aligned, render_toggle_aligned, DualListColors, DropdownColors, MapColors,
+    NumberInputColors, TextInputColors, TextListColors, ToggleColors,
 };
 use crate::view::theme::Theme;
 use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
@@ -1152,6 +1152,12 @@ fn render_control(
             }
         }
 
+        SettingControl::DualList(state) => {
+            let colors = DualListColors::from_theme(theme);
+            let dual_layout = render_dual_list_partial(frame, area, state, &colors, skip_rows);
+            ControlLayoutInfo::DualList(dual_layout)
+        }
+
         SettingControl::Map(state) => {
             let colors = MapColors::from_theme(theme);
             let map_layout = render_map_partial(frame, area, state, &colors, 20, skip_rows);
@@ -1925,6 +1931,7 @@ pub enum ControlLayoutInfo {
         /// (data_index, screen_area) - None index means "add new" row
         rows: Vec<(Option<usize>, Rect)>,
     },
+    DualList(crate::view::controls::DualListLayout),
     Map {
         /// (data_index, screen_area)
         entry_rows: Vec<(usize, Rect)>,

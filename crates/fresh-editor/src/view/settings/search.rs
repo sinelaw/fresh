@@ -384,6 +384,7 @@ mod tests {
             section: None,
             is_section_start: false,
             layout_width: 0,
+            dual_list_sibling: None,
         }
     }
 
@@ -546,6 +547,7 @@ mod tests {
             section: None,
             is_section_start: false,
             layout_width: 0,
+            dual_list_sibling: None,
         }
     }
 
@@ -568,6 +570,7 @@ mod tests {
             section: None,
             is_section_start: false,
             layout_width: 0,
+            dual_list_sibling: None,
         }
     }
 

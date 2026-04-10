@@ -396,6 +396,7 @@ impl SettingsState {
                                 SettingControl::Dropdown(_) => Some(ControlAction::ToggleDropdown),
                                 SettingControl::Text(_)
                                 | SettingControl::TextList(_)
+                                | SettingControl::DualList(_)
                                 | SettingControl::Number(_)
                                 | SettingControl::Json(_) => Some(ControlAction::StartEditing),
                                 SettingControl::Map(_) | SettingControl::ObjectArray(_) => {
@@ -823,6 +824,11 @@ impl SettingsState {
             return self.handle_json_editing_input(event, ctx);
         }
 
+        // DualList has its own keyboard handling (no text input)
+        if self.is_editing_dual_list() {
+            return self.handle_dual_list_editing_input(event);
+        }
+
         match event.code {
             KeyCode::Esc => {
                 // Check if current text field requires JSON validation
@@ -872,6 +878,65 @@ impl SettingsState {
             }
             _ => InputResult::Consumed, // Consume all during text edit
         }
+    }
+
+    /// Handle input when editing a DualList control
+    fn handle_dual_list_editing_input(&mut self, event: &KeyEvent) -> InputResult {
+        use crate::view::controls::DualListColumn;
+        match event.code {
+            KeyCode::Esc => {
+                self.stop_editing();
+            }
+            KeyCode::Tab => {
+                self.with_current_dual_list_mut(|dl| dl.switch_column());
+            }
+            KeyCode::Up => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.with_current_dual_list_mut(|dl| dl.move_up());
+                    self.on_value_changed();
+                } else {
+                    self.with_current_dual_list_mut(|dl| dl.cursor_up());
+                }
+            }
+            KeyCode::Down => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.with_current_dual_list_mut(|dl| dl.move_down());
+                    self.on_value_changed();
+                } else {
+                    self.with_current_dual_list_mut(|dl| dl.cursor_down());
+                }
+            }
+            KeyCode::Enter => {
+                let changed = self
+                    .with_current_dual_list_mut(|dl| match dl.active_column {
+                        DualListColumn::Available => dl.add_selected(),
+                        DualListColumn::Included => dl.remove_selected(),
+                    })
+                    .is_some();
+                if changed {
+                    self.on_value_changed();
+                    self.refresh_dual_list_sibling();
+                }
+            }
+            KeyCode::Delete => {
+                let changed = self
+                    .with_current_dual_list_mut(|dl| {
+                        if dl.active_column == DualListColumn::Included {
+                            dl.remove_selected();
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+                if changed {
+                    self.on_value_changed();
+                    self.refresh_dual_list_sibling();
+                }
+            }
+            _ => {}
+        }
+        InputResult::Consumed
     }
 
     /// Handle input when editing a JSON control (multiline editor)
@@ -1086,7 +1151,7 @@ impl SettingsState {
                 SettingControl::Text(_) => {
                     self.start_editing();
                 }
-                SettingControl::TextList(_) => {
+                SettingControl::TextList(_) | SettingControl::DualList(_) => {
                     self.start_editing();
                 }
                 SettingControl::Map(ref mut state) => {

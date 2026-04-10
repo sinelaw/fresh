@@ -135,7 +135,7 @@ impl Editor {
                 if !self.status_bar_visible || has_suggestions || has_file_browser {
                     0
                 } else {
-                    1
+                    self.config.editor.status_bar.lines.max(1) as u16
                 },
             ), // Status bar (hidden when toggled off or with popups)
             Constraint::Length(if show_search_options { 1 } else { 0 }),   // Search options bar
@@ -697,6 +697,7 @@ impl Editor {
                 .get(&active_buf)
                 .map(|m| m.read_only)
                 .unwrap_or(false);
+            let clock_blink_on = self.clock_blink_on();
             let status_bar_layout = StatusBarRenderer::render_status_bar(
                 frame,
                 main_chunks[status_bar_idx],
@@ -716,6 +717,8 @@ impl Editor {
                 remote_connection.as_deref(), // Pass remote connection info
                 session_name.as_deref(),      // Pass session name for status bar display
                 is_read_only,                 // Pass read-only flag from metadata
+                &self.config.editor.status_bar, // Pass status bar config
+                clock_blink_on,               // Current clock blink phase
             );
 
             // Store status bar layout for click detection
@@ -4503,7 +4506,11 @@ impl Editor {
         let constraints = vec![
             Constraint::Length(if self.menu_bar_visible { 1 } else { 0 }),
             Constraint::Min(0),
-            Constraint::Length(if self.status_bar_visible { 1 } else { 0 }), // status bar
+            Constraint::Length(if self.status_bar_visible {
+                self.config.editor.status_bar.lines.max(1) as u16
+            } else {
+                0
+            }), // status bar
             Constraint::Length(0), // search options (doesn't matter for layout)
             Constraint::Length(if self.prompt_line_visible { 1 } else { 0 }), // prompt line
         ];

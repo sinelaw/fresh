@@ -526,6 +526,227 @@ impl WhitespaceVisibility {
     }
 }
 
+/// A status bar element that can be placed in the left or right container.
+///
+/// Elements are specified as strings in the config:
+/// - `"{filename}"` — file path with session/remote prefix, modified and read-only indicators
+/// - `"{cursor}"` — cursor position as `Ln 1, Col 1`
+/// - `"{cursor:compact}"` — cursor position as `1:1`
+/// - `"{diagnostics}"` — error/warning/info counts (e.g. `E:1 W:2`)
+/// - `"{cursor_count}"` — number of active cursors (hidden when only 1)
+/// - `"{messages}"` — editor and plugin status messages
+/// - `"{chord}"` — in-progress chord key sequence
+/// - `"{line_ending}"` — line ending format (LF, CRLF, Auto)
+/// - `"{encoding}"` — file encoding (e.g. UTF-8)
+/// - `"{language}"` — detected language name
+/// - `"{lsp}"` — LSP server status indicator
+/// - `"{warnings}"` — general warning badge
+/// - `"{update}"` — update available indicator
+/// - `"{palette}"` — command palette shortcut hint
+/// - `"{keybind_hints}"` — nano-style keybinding hints
+/// - `"{clock}"` — current time (HH:MM) with blinking colon separator
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum StatusBarElement {
+    /// File path with session/remote prefix, modified/read-only indicators
+    Filename,
+    /// Cursor position (default format: `Ln 1, Col 1`)
+    Cursor,
+    /// Cursor position (compact format: `1:1`)
+    CursorCompact,
+    /// Diagnostic counts (errors, warnings, info)
+    Diagnostics,
+    /// Active cursor count (hidden when 1)
+    CursorCount,
+    /// Status messages from editor and plugins
+    Messages,
+    /// In-progress chord key sequence
+    Chord,
+    /// Line ending indicator (LF/CRLF/Auto)
+    LineEnding,
+    /// File encoding (e.g. UTF-8)
+    Encoding,
+    /// Detected language name
+    Language,
+    /// LSP server status
+    Lsp,
+    /// General warning badge
+    Warnings,
+    /// Update available indicator
+    Update,
+    /// Command palette shortcut hint
+    Palette,
+    /// Nano-style keybinding hints
+    KeybindHints,
+    /// Current time (HH:MM) with blinking colon separator
+    Clock,
+}
+
+impl TryFrom<String> for StatusBarElement {
+    type Error = String;
+    fn try_from(s: String) -> Result<Self, String> {
+        // Strip surrounding braces if present: "{foo}" -> "foo"
+        let inner = s
+            .strip_prefix('{')
+            .and_then(|s| s.strip_suffix('}'))
+            .unwrap_or(&s);
+        match inner {
+            "filename" => Ok(Self::Filename),
+            "cursor" => Ok(Self::Cursor),
+            "cursor:compact" => Ok(Self::CursorCompact),
+            "diagnostics" => Ok(Self::Diagnostics),
+            "cursor_count" => Ok(Self::CursorCount),
+            "messages" => Ok(Self::Messages),
+            "chord" => Ok(Self::Chord),
+            "line_ending" => Ok(Self::LineEnding),
+            "encoding" => Ok(Self::Encoding),
+            "language" => Ok(Self::Language),
+            "lsp" => Ok(Self::Lsp),
+            "warnings" => Ok(Self::Warnings),
+            "update" => Ok(Self::Update),
+            "palette" => Ok(Self::Palette),
+            "keybind_hints" => Ok(Self::KeybindHints),
+            "clock" => Ok(Self::Clock),
+            _ => Err(format!("Unknown status bar element: {}", s)),
+        }
+    }
+}
+
+impl From<StatusBarElement> for String {
+    fn from(e: StatusBarElement) -> String {
+        match e {
+            StatusBarElement::Filename => "{filename}".to_string(),
+            StatusBarElement::Cursor => "{cursor}".to_string(),
+            StatusBarElement::CursorCompact => "{cursor:compact}".to_string(),
+            StatusBarElement::Diagnostics => "{diagnostics}".to_string(),
+            StatusBarElement::CursorCount => "{cursor_count}".to_string(),
+            StatusBarElement::Messages => "{messages}".to_string(),
+            StatusBarElement::Chord => "{chord}".to_string(),
+            StatusBarElement::LineEnding => "{line_ending}".to_string(),
+            StatusBarElement::Encoding => "{encoding}".to_string(),
+            StatusBarElement::Language => "{language}".to_string(),
+            StatusBarElement::Lsp => "{lsp}".to_string(),
+            StatusBarElement::Warnings => "{warnings}".to_string(),
+            StatusBarElement::Update => "{update}".to_string(),
+            StatusBarElement::Palette => "{palette}".to_string(),
+            StatusBarElement::KeybindHints => "{keybind_hints}".to_string(),
+            StatusBarElement::Clock => "{clock}".to_string(),
+        }
+    }
+}
+
+impl schemars::JsonSchema for StatusBarElement {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("StatusBarElement")
+    }
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "x-dual-list-options": [
+                {"value": "{filename}", "name": "Filename"},
+                {"value": "{cursor}", "name": "Cursor"},
+                {"value": "{cursor:compact}", "name": "Cursor (compact)"},
+                {"value": "{diagnostics}", "name": "Diagnostics"},
+                {"value": "{cursor_count}", "name": "Cursor Count"},
+                {"value": "{messages}", "name": "Messages"},
+                {"value": "{chord}", "name": "Chord"},
+                {"value": "{line_ending}", "name": "Line Ending"},
+                {"value": "{encoding}", "name": "Encoding"},
+                {"value": "{language}", "name": "Language"},
+                {"value": "{lsp}", "name": "LSP"},
+                {"value": "{warnings}", "name": "Warnings"},
+                {"value": "{update}", "name": "Update"},
+                {"value": "{palette}", "name": "Palette"},
+                {"value": "{keybind_hints}", "name": "Keybind Hints"},
+                {"value": "{clock}", "name": "Clock"}
+            ]
+        })
+    }
+}
+
+fn default_status_bar_left() -> Vec<StatusBarElement> {
+    vec![
+        StatusBarElement::Filename,
+        StatusBarElement::Cursor,
+        StatusBarElement::Diagnostics,
+        StatusBarElement::CursorCount,
+        StatusBarElement::Messages,
+    ]
+}
+
+fn default_status_bar_right() -> Vec<StatusBarElement> {
+    vec![
+        StatusBarElement::LineEnding,
+        StatusBarElement::Encoding,
+        StatusBarElement::Language,
+        StatusBarElement::Lsp,
+        StatusBarElement::Warnings,
+        StatusBarElement::Update,
+        StatusBarElement::Palette,
+    ]
+}
+
+fn default_status_bar_lines() -> usize {
+    1
+}
+
+/// Status bar layout and element configuration.
+///
+/// Controls which elements appear in the status bar and how they are arranged.
+/// Elements are placed in left and right containers and can be freely reordered.
+///
+/// Example config:
+/// ```json
+/// {
+///   "status_bar": {
+///     "lines": 1,
+///     "left": ["{filename}", "{cursor:compact}"],
+///     "right": ["{language}", "{encoding}", "{line_ending}"],
+///     "show_keybind_hints": false
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct StatusBarConfig {
+    /// Number of lines the status bar occupies.
+    /// Use 2+ lines to show more information or keybind hints without losing editor space.
+    /// Default: 1
+    #[serde(default = "default_status_bar_lines")]
+    #[schemars(extend("x-section" = "Status Bar"))]
+    pub lines: usize,
+
+    /// Elements shown on the left side of the status bar.
+    /// Default: ["{filename}", "{cursor}", "{diagnostics}", "{cursor_count}", "{messages}"]
+    #[serde(default = "default_status_bar_left")]
+    #[schemars(extend("x-section" = "Status Bar", "x-dual-list-sibling" = "/editor/status_bar/right"))]
+    pub left: Vec<StatusBarElement>,
+
+    /// Elements shown on the right side of the status bar.
+    /// Default: ["{line_ending}", "{encoding}", "{language}", "{lsp}", "{warnings}", "{update}", "{palette}"]
+    #[serde(default = "default_status_bar_right")]
+    #[schemars(extend("x-section" = "Status Bar", "x-dual-list-sibling" = "/editor/status_bar/left"))]
+    pub right: Vec<StatusBarElement>,
+
+    /// Show nano-style keybinding hints in the status bar area.
+    /// When enabled, adds a row of common keybinding hints.
+    /// Requires `lines` >= 2 to have room, or add `{keybind_hints}` to left/right elements.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Status Bar"))]
+    pub show_keybind_hints: bool,
+}
+
+impl Default for StatusBarConfig {
+    fn default() -> Self {
+        Self {
+            lines: 1,
+            left: default_status_bar_left(),
+            right: default_status_bar_right(),
+            show_keybind_hints: false,
+        }
+    }
+}
+
 /// Editor behavior configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EditorConfig {
@@ -606,6 +827,12 @@ pub struct EditorConfig {
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub show_status_bar: bool,
+
+    /// Status bar layout and element configuration.
+    /// Controls which elements appear in the status bar and how they are arranged.
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Status Bar"))]
+    pub status_bar: StatusBarConfig,
 
     /// Whether the prompt line is visible by default.
     /// The prompt line is the bottom-most line used for command input, search, file open, etc.
@@ -1152,6 +1379,7 @@ impl Default for EditorConfig {
             menu_bar_mnemonics: true,
             show_tab_bar: true,
             show_status_bar: true,
+            status_bar: StatusBarConfig::default(),
             show_prompt_line: true,
             show_vertical_scrollbar: true,
             show_horizontal_scrollbar: false,

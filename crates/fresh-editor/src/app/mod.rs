@@ -92,6 +92,9 @@ pub fn editor_tick(
     if editor.check_mouse_hover_timer() {
         needs_render = true;
     }
+    if editor.check_clock_blink_tick() {
+        needs_render = true;
+    }
     if editor.check_semantic_highlight_timer() {
         needs_render = true;
     }
@@ -601,6 +604,11 @@ pub struct Editor {
     /// Mouse hover screen position for popup placement
     /// Set when a mouse-triggered hover request is sent
     mouse_hover_screen_position: Option<(u16, u16)>,
+
+    /// Current clock blink phase (true = colon visible, false = space).
+    /// Recomputed twice per second by `check_clock_blink_tick` when the
+    /// status bar clock element is configured; read by the status bar renderer.
+    clock_blink_on: bool,
 
     /// Search state (if search is active)
     search_state: Option<SearchState>,
@@ -1582,6 +1590,7 @@ impl Editor {
             hover_symbol_range: None,
             hover_symbol_overlay: None,
             mouse_hover_screen_position: None,
+            clock_blink_on: true,
             search_state: None,
             search_namespace: crate::view::overlay::OverlayNamespace::from_string(
                 "search".to_string(),
@@ -2238,6 +2247,39 @@ impl Editor {
         self.warning_domains
             .lsp
             .update_from_statuses(&self.lsp_server_statuses);
+    }
+
+    /// Update `clock_blink_on` and report whether a re-render is needed.
+    ///
+    /// Returns `true` when the blink phase flips (twice per second) while the
+    /// `{clock}` element is configured, and `false` otherwise. The cached phase
+    /// is read by the status bar renderer so both share a single source of truth.
+    pub fn check_clock_blink_tick(&mut self) -> bool {
+        use crate::config::StatusBarElement;
+        let has_clock = self
+            .config
+            .editor
+            .status_bar
+            .left
+            .iter()
+            .chain(self.config.editor.status_bar.right.iter())
+            .any(|e| matches!(e, StatusBarElement::Clock));
+        if !has_clock {
+            return false;
+        }
+
+        let phase = chrono::Local::now().timestamp_subsec_millis() < 500;
+        if self.clock_blink_on != phase {
+            self.clock_blink_on = phase;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Current clock blink phase (true = colon, false = space).
+    pub fn clock_blink_on(&self) -> bool {
+        self.clock_blink_on
     }
 
     /// Check if mouse hover timer has expired and trigger LSP hover request
@@ -9473,5 +9515,45 @@ mod tests {
             })
             .sum();
         assert!(view_state.tab_scroll_offset <= total_width);
+    }
+
+    #[test]
+    fn test_check_clock_blink_tick_without_clock_element() {
+        use crate::config::StatusBarElement;
+        let mut config = Config::default();
+        // Default config has no Clock element anywhere
+        assert!(!config
+            .editor
+            .status_bar
+            .left
+            .iter()
+            .chain(config.editor.status_bar.right.iter())
+            .any(|e| matches!(e, StatusBarElement::Clock)));
+
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config.clone(),
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+
+        // Without a clock element, check_clock_blink_tick should always return false
+        for _ in 0..5 {
+            assert!(!editor.check_clock_blink_tick());
+        }
+
+        // Adding a clock element should make subsequent ticks potentially return true
+        config.editor.status_bar.left.push(StatusBarElement::Clock);
+        editor.config = config;
+
+        // First call will flip the phase if current phase differs from default (true)
+        // Second call in the same half-second should return false (no phase change)
+        let _first = editor.check_clock_blink_tick();
+        let second = editor.check_clock_blink_tick();
+        assert!(!second, "back-to-back calls in the same half-second should not re-trigger");
     }
 }

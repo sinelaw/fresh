@@ -82,6 +82,8 @@ pub struct SettingSchema {
     /// Dynamic enum source path: derive dropdown options from the keys of
     /// another config property at runtime (e.g., "/languages").
     pub enum_from: Option<String>,
+    /// Path to the sibling dual-list setting (for cross-exclusion)
+    pub dual_list_sibling: Option<String>,
 }
 
 /// Type of a setting, determines which control to render
@@ -122,6 +124,11 @@ pub enum SettingType {
         display_field: Option<String>,
         /// Whether to disallow adding new entries (entries are auto-managed)
         no_add: bool,
+    },
+    /// Dual-list: ordered subset of a fixed set of options with sibling cross-exclusion
+    DualList {
+        options: Vec<EnumOption>,
+        sibling_path: Option<String>,
     },
     /// Complex type we can't edit directly
     Complex,
@@ -203,6 +210,12 @@ struct RawSchema {
     /// the dropdown with keys from the `languages` HashMap).
     #[serde(rename = "x-enum-from")]
     enum_from: Option<String>,
+    /// Dual-list options defined on the item schema (array of {value, name})
+    #[serde(rename = "x-dual-list-options", default)]
+    dual_list_options: Vec<DualListOptionEntry>,
+    /// Path to the sibling dual-list setting (for cross-exclusion)
+    #[serde(rename = "x-dual-list-sibling")]
+    dual_list_sibling: Option<String>,
 }
 
 /// An entry in the x-enum-values array
@@ -215,6 +228,15 @@ struct EnumValueEntry {
     name: Option<String>,
     /// The actual value (must match the referenced type)
     value: serde_json::Value,
+}
+
+/// An option entry in x-dual-list-options
+#[derive(Debug, Deserialize)]
+struct DualListOptionEntry {
+    /// The actual value (e.g., "{filename}")
+    value: String,
+    /// Human-friendly display name
+    name: Option<String>,
 }
 
 /// additionalProperties can be a boolean or a schema object
@@ -386,6 +408,26 @@ fn parse_properties(
     for (name, prop) in properties {
         let path = format!("{}/{}", parent_path, name);
         let setting = parse_setting(name, &path, prop, defs, enum_values_map);
+
+        // Flatten sectioned nested objects (e.g. StatusBarConfig inside EditorConfig)
+        // so their fields appear as individual settings under a section header in the
+        // parent category, rather than collapsing into a single JSON editor control.
+        //
+        // Trigger: the field has `x-section` AND its resolved type is a struct with
+        // properties. Each child's own `x-section` is preserved, so the flattening is
+        // transparent to the UI's section-grouping logic. Any nested struct intentionally
+        // annotated with `x-section` opts into this behavior.
+        if matches!(setting.setting_type, SettingType::Object { .. }) {
+            let resolved = resolve_ref(prop, defs);
+            let has_section = prop.section.is_some() || resolved.section.is_some();
+            if has_section {
+                if let Some(ref inner_props) = resolved.properties {
+                    settings.extend(parse_properties(inner_props, &path, defs, enum_values_map));
+                    continue;
+                }
+            }
+        }
+
         settings.push(setting);
     }
 
@@ -433,7 +475,7 @@ fn parse_setting(
         .as_ref()
         .map(|t| t.contains_null())
         .unwrap_or(false)
-        || schema.any_of.as_ref().map_or(false, |variants| {
+        || schema.any_of.as_ref().is_some_and(|variants| {
             variants.iter().any(|v| {
                 v.schema_type
                     .as_ref()
@@ -456,6 +498,10 @@ fn parse_setting(
             .enum_from
             .clone()
             .or_else(|| resolved.enum_from.clone()),
+        dual_list_sibling: schema
+            .dual_list_sibling
+            .clone()
+            .or_else(|| resolved.dual_list_sibling.clone()),
     }
 }
 
@@ -525,6 +571,24 @@ fn determine_type(
             // Check if it's an array of strings, integers, or objects
             if let Some(ref items) = resolved.items {
                 let item_resolved = resolve_ref(items, defs);
+                // Check for dual-list options on the item schema
+                if !item_resolved.dual_list_options.is_empty() {
+                    let options = item_resolved
+                        .dual_list_options
+                        .iter()
+                        .map(|entry| EnumOption {
+                            name: entry.name.clone().unwrap_or_else(|| entry.value.clone()),
+                            value: entry.value.clone(),
+                        })
+                        .collect();
+                    return SettingType::DualList {
+                        options,
+                        sibling_path: schema
+                            .dual_list_sibling
+                            .clone()
+                            .or_else(|| resolved.dual_list_sibling.clone()),
+                    };
+                }
                 let item_type = item_resolved.schema_type.as_ref().and_then(|t| t.primary());
                 if item_type == Some("string") {
                     return SettingType::StringArray;
@@ -875,5 +939,126 @@ mod tests {
             .find(|s| s.name == "Theme")
             .expect("should have Theme setting");
         assert!(theme.enum_from.is_none());
+    }
+
+    #[test]
+    fn test_dual_list_parsed_from_schema() {
+        let schema_json = r##"{
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "x-dual-list-options": [
+                            {"value": "red", "name": "Red"},
+                            {"value": "green", "name": "Green"},
+                            {"value": "blue", "name": "Blue"}
+                        ]
+                    },
+                    "x-dual-list-sibling": "/other_tags"
+                }
+            }
+        }"##;
+        let categories = parse_schema(schema_json).unwrap();
+        let general = &categories[0];
+        let tags = general
+            .settings
+            .iter()
+            .find(|s| s.path == "/tags")
+            .expect("tags setting");
+
+        match &tags.setting_type {
+            SettingType::DualList { options, sibling_path } => {
+                assert_eq!(options.len(), 3);
+                assert_eq!(options[0].value, "red");
+                assert_eq!(options[0].name, "Red");
+                assert_eq!(sibling_path.as_deref(), Some("/other_tags"));
+            }
+            other => panic!("expected DualList, got {:?}", other),
+        }
+        assert_eq!(tags.dual_list_sibling.as_deref(), Some("/other_tags"));
+    }
+
+    #[test]
+    fn test_sectioned_nested_object_is_flattened() {
+        // A nested object with x-section should have its properties inlined into the
+        // parent category so they render as individual settings grouped by section.
+        let schema_json = r##"{
+            "type": "object",
+            "properties": {
+                "editor": {
+                    "type": "object",
+                    "properties": {
+                        "tab_size": { "type": "integer", "default": 4 },
+                        "toolbar": {
+                            "type": "object",
+                            "x-section": "Toolbar",
+                            "properties": {
+                                "position": { "type": "string", "x-section": "Toolbar" },
+                                "visible": { "type": "boolean", "x-section": "Toolbar" }
+                            }
+                        }
+                    }
+                }
+            }
+        }"##;
+        let categories = parse_schema(schema_json).unwrap();
+        let editor = categories
+            .iter()
+            .find(|c| c.path == "/editor")
+            .expect("editor category");
+
+        // The "toolbar" object should NOT appear as an Object setting
+        assert!(
+            !editor.settings.iter().any(|s| s.path == "/editor/toolbar"),
+            "toolbar wrapper should be flattened away"
+        );
+        // Its inner fields should appear at /editor/toolbar/position and /editor/toolbar/visible
+        let position = editor
+            .settings
+            .iter()
+            .find(|s| s.path == "/editor/toolbar/position")
+            .expect("position should be flattened in");
+        assert!(matches!(position.setting_type, SettingType::String));
+        assert_eq!(position.section.as_deref(), Some("Toolbar"));
+        assert!(editor
+            .settings
+            .iter()
+            .any(|s| s.path == "/editor/toolbar/visible"));
+    }
+
+    #[test]
+    fn test_unsectioned_nested_object_is_not_flattened() {
+        // Nested objects WITHOUT x-section should remain as a single Object/Json setting.
+        let schema_json = r##"{
+            "type": "object",
+            "properties": {
+                "editor": {
+                    "type": "object",
+                    "properties": {
+                        "ignore": {
+                            "type": "object",
+                            "properties": {
+                                "foo": { "type": "string" }
+                            }
+                        }
+                    }
+                }
+            }
+        }"##;
+        let categories = parse_schema(schema_json).unwrap();
+        let editor = categories.iter().find(|c| c.path == "/editor").unwrap();
+        let ignore = editor
+            .settings
+            .iter()
+            .find(|s| s.path == "/editor/ignore")
+            .expect("ignore should remain as a single setting");
+        assert!(matches!(ignore.setting_type, SettingType::Object { .. }));
+        // And the inner 'foo' should NOT be hoisted into the parent
+        assert!(!editor
+            .settings
+            .iter()
+            .any(|s| s.path == "/editor/ignore/foo"));
     }
 }

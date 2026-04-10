@@ -190,6 +190,7 @@ pub struct PartialEditorConfig {
     pub menu_bar_mnemonics: Option<bool>,
     pub show_tab_bar: Option<bool>,
     pub show_status_bar: Option<bool>,
+    pub status_bar: Option<crate::config::StatusBarConfig>,
     pub show_prompt_line: Option<bool>,
     pub show_vertical_scrollbar: Option<bool>,
     pub show_horizontal_scrollbar: Option<bool>,
@@ -285,6 +286,9 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.menu_bar_mnemonics);
         self.show_tab_bar.merge_from(&other.show_tab_bar);
         self.show_status_bar.merge_from(&other.show_status_bar);
+        if other.status_bar.is_some() {
+            self.status_bar = other.status_bar.clone();
+        }
         self.show_prompt_line.merge_from(&other.show_prompt_line);
         self.show_vertical_scrollbar
             .merge_from(&other.show_vertical_scrollbar);
@@ -526,6 +530,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             menu_bar_mnemonics: Some(cfg.menu_bar_mnemonics),
             show_tab_bar: Some(cfg.show_tab_bar),
             show_status_bar: Some(cfg.show_status_bar),
+            status_bar: Some(cfg.status_bar.clone()),
             show_prompt_line: Some(cfg.show_prompt_line),
             show_vertical_scrollbar: Some(cfg.show_vertical_scrollbar),
             show_horizontal_scrollbar: Some(cfg.show_horizontal_scrollbar),
@@ -656,6 +661,7 @@ impl PartialEditorConfig {
                 .unwrap_or(defaults.menu_bar_mnemonics),
             show_tab_bar: self.show_tab_bar.unwrap_or(defaults.show_tab_bar),
             show_status_bar: self.show_status_bar.unwrap_or(defaults.show_status_bar),
+            status_bar: self.status_bar.unwrap_or_else(|| defaults.status_bar.clone()),
             show_prompt_line: self.show_prompt_line.unwrap_or(defaults.show_prompt_line),
             show_vertical_scrollbar: self
                 .show_vertical_scrollbar

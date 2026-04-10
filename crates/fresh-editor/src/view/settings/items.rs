@@ -5,8 +5,8 @@
 use super::schema::{SettingCategory, SettingSchema, SettingType};
 use crate::config_io::ConfigLayer;
 use crate::view::controls::{
-    DropdownState, FocusState, KeybindingListState, MapState, NumberInputState, TextInputState,
-    TextListState, ToggleState,
+    DropdownState, DualListState, FocusState, KeybindingListState, MapState, NumberInputState,
+    TextInputState, TextListState, ToggleState,
 };
 use crate::view::ui::{FocusRegion, ScrollItem, TextEdit};
 use std::collections::{HashMap, HashSet};
@@ -215,6 +215,38 @@ fn json_control(
     SettingControl::Json(JsonEditState::new(name, value))
 }
 
+/// Extract a JSON array of strings from a value (or fall back to a default).
+fn value_as_string_array(
+    current: Option<&serde_json::Value>,
+    default: Option<&serde_json::Value>,
+) -> Vec<String> {
+    let from = |v: &serde_json::Value| -> Option<Vec<String>> {
+        v.as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+    };
+    current
+        .and_then(from)
+        .or_else(|| default.and_then(from))
+        .unwrap_or_default()
+}
+
+/// Build a DualListState from schema options, current value, and optional sibling excluded set.
+fn build_dual_list_state(
+    schema: &SettingSchema,
+    options: &[crate::view::settings::schema::EnumOption],
+    current_value: Option<&serde_json::Value>,
+    excluded: Vec<String>,
+) -> DualListState {
+    let all_options: Vec<(String, String)> = options
+        .iter()
+        .map(|o| (o.value.clone(), o.name.clone()))
+        .collect();
+    let included = value_as_string_array(current_value, schema.default.as_ref());
+    DualListState::new(&schema.name, all_options)
+        .with_included(included)
+        .with_excluded(excluded)
+}
+
 /// A renderable setting item
 #[derive(Debug, Clone)]
 pub struct SettingItem {
@@ -249,6 +281,8 @@ pub struct SettingItem {
     pub is_section_start: bool,
     /// Layout width for description wrapping (set during render)
     pub layout_width: u16,
+    /// Path to sibling dual-list setting (for cross-exclusion refresh)
+    pub dual_list_sibling: Option<String>,
 }
 
 /// The type of control to render for a setting
@@ -259,6 +293,8 @@ pub enum SettingControl {
     Dropdown(DropdownState),
     Text(TextInputState),
     TextList(TextListState),
+    /// Dual-list picker for ordered subset selection (e.g., status bar elements)
+    DualList(DualListState),
     /// Map/dictionary control for key-value pairs
     Map(MapState),
     /// Array of objects control (for keybindings, etc.)
@@ -279,6 +315,10 @@ impl SettingControl {
             Self::TextList(state) => {
                 // 1 for label + items count + 1 for add-new row
                 (state.items.len() + 2) as u16
+            }
+            // DualList needs: 1 label + 1 header + body rows
+            Self::DualList(state) => {
+                2 + state.body_rows() as u16
             }
             // Map needs: 1 label + 1 header (if display_field) + entries + expanded content + 1 add-new row (if allowed)
             Self::Map(state) => {
@@ -330,7 +370,7 @@ impl SettingControl {
     pub fn is_composite(&self) -> bool {
         matches!(
             self,
-            Self::TextList(_) | Self::Map(_) | Self::ObjectArray(_)
+            Self::TextList(_) | Self::DualList(_) | Self::Map(_) | Self::ObjectArray(_)
         )
     }
 
@@ -345,6 +385,15 @@ impl SettingControl {
                     Some(idx) => 1 + idx as u16,          // item rows start at offset 1
                     None => 1 + state.items.len() as u16, // add-new row
                 }
+            }
+            Self::DualList(state) => {
+                // Row 0 = label, Row 1 = headers, Rows 2+ = body
+                use crate::view::controls::DualListColumn;
+                let row = match state.active_column {
+                    DualListColumn::Available => state.available_cursor,
+                    DualListColumn::Included => state.included_cursor,
+                };
+                2 + row as u16
             }
             Self::ObjectArray(state) => {
                 // Row 0 = label, rows 1..N = bindings, row N+1 = add-new
@@ -486,6 +535,27 @@ impl ScrollItem for SettingItem {
                     y_offset: 1 + state.items.len() as u16,
                     height: 1,
                 });
+                regions
+            }
+            // DualList: label + header + body rows
+            SettingControl::DualList(state) => {
+                let mut regions = Vec::new();
+                // Label row
+                regions.push(FocusRegion {
+                    id: 0,
+                    y_offset: 0,
+                    height: 1,
+                });
+                // Header row (not selectable, but takes space)
+                // Body rows (id = 1 + row_index)
+                let body = state.body_rows();
+                for i in 0..body {
+                    regions.push(FocusRegion {
+                        id: 1 + i,
+                        y_offset: 2 + i as u16, // after label + header
+                        height: 1,
+                    });
+                }
                 regions
             }
             // Map: each entry row is a focus region
@@ -782,25 +852,25 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
             SettingControl::Dropdown(state)
         }
 
-        SettingType::StringArray => {
-            let items: Vec<String> = current_value
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .or_else(|| {
-                    schema.default.as_ref().and_then(|d| {
-                        d.as_array().map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                    })
-                })
+        SettingType::DualList {
+            options,
+            sibling_path,
+        } => {
+            let excluded = sibling_path
+                .as_ref()
+                .and_then(|path| ctx.config_value.pointer(path))
+                .map(|v| value_as_string_array(Some(v), None))
                 .unwrap_or_default();
+            SettingControl::DualList(build_dual_list_state(
+                schema,
+                options,
+                current_value,
+                excluded,
+            ))
+        }
 
+        SettingType::StringArray => {
+            let items = value_as_string_array(current_value, schema.default.as_ref());
             let state = TextListState::new(&schema.name).with_items(items);
             SettingControl::TextList(state)
         }
@@ -920,6 +990,7 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
         section: schema.section.clone(),
         is_section_start: false, // Set later in build_page after sorting
         layout_width: 0,
+        dual_list_sibling: schema.dual_list_sibling.clone(),
     }
 }
 
@@ -1005,6 +1076,11 @@ pub fn build_item_from_value(
             let state = DropdownState::with_values(display_names, values, &schema.name)
                 .with_selected(selected);
             SettingControl::Dropdown(state)
+        }
+
+        SettingType::DualList { options, .. } => {
+            // Dialog context has no sibling to cross-exclude against
+            SettingControl::DualList(build_dual_list_state(schema, options, current_value, vec![]))
         }
 
         SettingType::StringArray => {
@@ -1142,6 +1218,7 @@ pub fn build_item_from_value(
         section: schema.section.clone(),
         is_section_start: false, // Not used in dialogs
         layout_width: 0,
+        dual_list_sibling: schema.dual_list_sibling.clone(),
     }
 }
 
@@ -1189,6 +1266,15 @@ pub fn control_to_value(control: &SettingControl) -> serde_json::Value {
                         Some(serde_json::Value::String(s.clone()))
                     }
                 })
+                .collect();
+            serde_json::Value::Array(arr)
+        }
+
+        SettingControl::DualList(state) => {
+            let arr: Vec<serde_json::Value> = state
+                .included
+                .iter()
+                .map(|s| serde_json::Value::String(s.clone()))
                 .collect();
             serde_json::Value::Array(arr)
         }
@@ -1259,6 +1345,7 @@ mod tests {
             order: None,
             nullable: false,
             enum_from: None,
+            dual_list_sibling: None,
         };
 
         let config = sample_config();
@@ -1291,6 +1378,7 @@ mod tests {
             order: None,
             nullable: false,
             enum_from: None,
+            dual_list_sibling: None,
         };
 
         let config = sample_config();
@@ -1321,6 +1409,7 @@ mod tests {
             order: None,
             nullable: false,
             enum_from: None,
+            dual_list_sibling: None,
         };
 
         let config = sample_config();
@@ -1352,6 +1441,7 @@ mod tests {
             order: None,
             nullable: false,
             enum_from: None,
+            dual_list_sibling: None,
         };
 
         let config = sample_config();

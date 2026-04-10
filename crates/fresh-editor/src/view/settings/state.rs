@@ -294,6 +294,7 @@ impl SettingsState {
             match &mut item.control {
                 SettingControl::Map(ref mut state) => state.focus = focus_state,
                 SettingControl::TextList(ref mut state) => state.focus = focus_state,
+                SettingControl::DualList(ref mut state) => state.focus = focus_state,
                 SettingControl::ObjectArray(ref mut state) => state.focus = focus_state,
                 SettingControl::Toggle(ref mut state) => state.focus = focus_state,
                 SettingControl::Number(ref mut state) => state.focus = focus_state,
@@ -788,6 +789,7 @@ impl SettingsState {
                     SettingControl::Dropdown(state) => state.focus = focus,
                     SettingControl::Text(state) => state.focus = focus,
                     SettingControl::TextList(state) => state.focus = focus,
+                    SettingControl::DualList(state) => state.focus = focus,
                     SettingControl::Map(state) => state.focus = focus,
                     SettingControl::ObjectArray(state) => state.focus = focus,
                     SettingControl::Json(state) => state.focus = focus,
@@ -1495,6 +1497,7 @@ impl SettingsState {
             if matches!(
                 item.control,
                 SettingControl::TextList(_)
+                    | SettingControl::DualList(_)
                     | SettingControl::Text(_)
                     | SettingControl::Map(_)
                     | SettingControl::Json(_)
@@ -1509,12 +1512,13 @@ impl SettingsState {
         self.editing_text = false;
     }
 
-    /// Check if the current item is editable (TextList, Text, Map, or Json)
+    /// Check if the current item is editable (TextList, DualList, Text, Map, or Json)
     pub fn is_editable_control(&self) -> bool {
         self.current_item().is_some_and(|item| {
             matches!(
                 item.control,
                 SettingControl::TextList(_)
+                    | SettingControl::DualList(_)
                     | SettingControl::Text(_)
                     | SettingControl::Map(_)
                     | SettingControl::Json(_)
@@ -1701,6 +1705,81 @@ impl SettingsState {
         }
         // Record the change
         self.on_value_changed();
+    }
+
+    /// Check if currently editing a DualList control
+    pub fn is_editing_dual_list(&self) -> bool {
+        if !self.editing_text {
+            return false;
+        }
+        self.current_item()
+            .map(|item| matches!(&item.control, SettingControl::DualList(_)))
+            .unwrap_or(false)
+    }
+
+    // =========== DualList methods ===========
+
+    /// Access the DualList at `item_idx` in the current page and run `f` on it.
+    /// Returns `None` if the item isn't a DualList or the index is out of bounds.
+    pub fn with_dual_list_mut<R>(
+        &mut self,
+        item_idx: usize,
+        f: impl FnOnce(&mut crate::view::controls::DualListState) -> R,
+    ) -> Option<R> {
+        let page = self.pages.get_mut(self.selected_category)?;
+        let item = page.items.get_mut(item_idx)?;
+        if let SettingControl::DualList(ref mut state) = item.control {
+            Some(f(state))
+        } else {
+            None
+        }
+    }
+
+    /// Access the currently selected DualList and run `f` on it.
+    /// Returns `None` if the current item isn't a DualList.
+    pub fn with_current_dual_list_mut<R>(
+        &mut self,
+        f: impl FnOnce(&mut crate::view::controls::DualListState) -> R,
+    ) -> Option<R> {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::DualList(ref mut state) = item.control {
+                return Some(f(state));
+            }
+        }
+        None
+    }
+
+    /// After changing a DualList, refresh the sibling's excluded set.
+    ///
+    /// Assumes the sibling setting lives on the same page as the current item.
+    /// This holds for the current use case (`status_bar.left` and `.right` are both
+    /// flattened into the Editor page under the "Status Bar" section). Cross-category
+    /// siblings would silently no-op until the next `build_pages()`.
+    pub fn refresh_dual_list_sibling(&mut self) {
+        let (new_included, sibling_path) = {
+            let Some(item) = self.current_item() else {
+                return;
+            };
+            let SettingControl::DualList(state) = &item.control else {
+                return;
+            };
+            let Some(ref sib_path) = item.dual_list_sibling else {
+                return;
+            };
+            (state.included.clone(), sib_path.clone())
+        };
+
+        // Find sibling item in same page and update its excluded
+        if let Some(page) = self.pages.get_mut(self.selected_category) {
+            for other in page.items.iter_mut() {
+                if other.path == sibling_path {
+                    if let SettingControl::DualList(ref mut sib_state) = other.control {
+                        sib_state.excluded = new_included;
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     // =========== JSON editing methods ===========
@@ -2230,6 +2309,14 @@ fn update_control_from_value(control: &mut SettingControl, value: &serde_json::V
                     .collect();
             }
         }
+        SettingControl::DualList(state) => {
+            if let Some(arr) = value.as_array() {
+                state.included = arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect();
+            }
+        }
         SettingControl::Map(state) => {
             if let Some(obj) = value.as_object() {
                 state.entries = obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
@@ -2649,6 +2736,7 @@ mod tests {
                     order: None,
                     nullable: false,
                     enum_from: None,
+                    dual_list_sibling: None,
                 }],
             },
             default: None,
@@ -2657,6 +2745,7 @@ mod tests {
             order: None,
             nullable: false,
             enum_from: None,
+            dual_list_sibling: None,
         };
 
         // universal_lsp's value schema: ObjectArray of the item schema above.
@@ -2677,6 +2766,7 @@ mod tests {
             order: None,
             nullable: false,
             enum_from: None,
+            dual_list_sibling: None,
         };
 
         // Parent dialog: user is editing the existing "quicklsp" entry
@@ -2754,5 +2844,95 @@ mod tests {
             "expected pending change at /universal_lsp/quicklsp, got {:?}",
             state.pending_changes.keys().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn test_refresh_dual_list_sibling_updates_excluded() {
+        use crate::view::controls::DualListState;
+
+        // Uses the real config schema (which has /editor/status_bar/left and /right
+        // as DualList siblings).
+        let schema = include_str!("../../../plugins/config-schema.json");
+        let config = test_config();
+        let mut state = SettingsState::new(schema, &config).unwrap();
+
+        // Find the Editor page and the status bar left/right items
+        let editor_page_idx = state
+            .pages
+            .iter()
+            .position(|p| p.path == "/editor")
+            .expect("editor page");
+        state.selected_category = editor_page_idx;
+
+        let (left_idx, right_idx) = {
+            let page = &state.pages[editor_page_idx];
+            let l = page
+                .items
+                .iter()
+                .position(|i| i.path == "/editor/status_bar/left")
+                .expect("left item");
+            let r = page
+                .items
+                .iter()
+                .position(|i| i.path == "/editor/status_bar/right")
+                .expect("right item");
+            (l, r)
+        };
+
+        // Sanity: both should be DualList controls
+        assert!(matches!(
+            &state.pages[editor_page_idx].items[left_idx].control,
+            SettingControl::DualList(_)
+        ));
+
+        // Capture the initial left.excluded — should match right's default values.
+        let default_right_items: Vec<String> =
+            match &state.pages[editor_page_idx].items[right_idx].control {
+                SettingControl::DualList(dl) => dl.included.clone(),
+                _ => panic!("right should be DualList"),
+            };
+        let initial_left_excluded: Vec<String> =
+            match &state.pages[editor_page_idx].items[left_idx].control {
+                SettingControl::DualList(dl) => dl.excluded.clone(),
+                _ => panic!("left should be DualList"),
+            };
+        assert_eq!(
+            initial_left_excluded, default_right_items,
+            "left.excluded should mirror right's included on initial build"
+        );
+
+        // Mutate left: add a new element that's not in right
+        let new_element = "{chord}".to_string();
+        state.selected_item = left_idx;
+        state
+            .with_current_dual_list_mut(|dl: &mut DualListState| {
+                if !dl.included.contains(&new_element) {
+                    dl.included.push(new_element.clone());
+                }
+            })
+            .expect("current item is a DualList");
+
+        // Refresh the sibling: right.excluded should now contain the new element
+        state.refresh_dual_list_sibling();
+
+        match &state.pages[editor_page_idx].items[right_idx].control {
+            SettingControl::DualList(dl) => {
+                assert!(
+                    dl.excluded.contains(&new_element),
+                    "right.excluded should be updated to reflect left's new inclusion"
+                );
+            }
+            _ => panic!("right should be DualList"),
+        }
+    }
+
+    #[test]
+    fn test_with_dual_list_mut_returns_none_for_non_dual_list() {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+
+        // TEST_SCHEMA has no DualList items, so all calls should return None
+        let result = state.with_dual_list_mut(0, |_| ());
+        assert!(result.is_none());
     }
 }
