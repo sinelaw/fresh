@@ -135,7 +135,7 @@ impl Editor {
                 if !self.status_bar_visible || has_suggestions || has_file_browser {
                     0
                 } else {
-                    self.config.editor.status_bar.lines.max(1) as u16
+                    1
                 },
             ), // Status bar (hidden when toggled off or with popups)
             Constraint::Length(if show_search_options { 1 } else { 0 }),   // Search options bar
@@ -698,27 +698,30 @@ impl Editor {
                 .map(|m| m.read_only)
                 .unwrap_or(false);
             let clock_blink_on = self.clock_blink_on();
+            let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
+                state: self.buffers.get_mut(&active_buf).unwrap(),
+                cursors: status_cursors,
+                status_message: &status_message,
+                plugin_status_message: &plugin_status_message,
+                lsp_status: &lsp_status,
+                theme: &theme,
+                display_name: &display_name,
+                keybindings: &keybindings_cloned,
+                chord_state: &chord_state_cloned,
+                update_available: update_available.as_deref(),
+                warning_level,
+                general_warning_count,
+                hover: status_bar_hover,
+                remote_connection: remote_connection.as_deref(),
+                session_name: session_name.as_deref(),
+                read_only: is_read_only,
+                clock_blink_on,
+            };
             let status_bar_layout = StatusBarRenderer::render_status_bar(
                 frame,
                 main_chunks[status_bar_idx],
-                self.buffers.get_mut(&active_buf).unwrap(),
-                status_cursors,
-                &status_message,
-                &plugin_status_message,
-                &lsp_status,
-                &theme,
-                &display_name,
-                &keybindings_cloned,          // Pass the cloned keybindings
-                &chord_state_cloned,          // Pass the cloned chord state
-                update_available.as_deref(),  // Pass update availability
-                warning_level,                // Pass warning level for colored indicator
-                general_warning_count,        // Pass general warning count for badge
-                status_bar_hover,             // Pass hover state for indicator styling
-                remote_connection.as_deref(), // Pass remote connection info
-                session_name.as_deref(),      // Pass session name for status bar display
-                is_read_only,                 // Pass read-only flag from metadata
-                &self.config.editor.status_bar, // Pass status bar config
-                clock_blink_on,               // Current clock blink phase
+                &mut status_ctx,
+                &self.config.editor.status_bar,
             );
 
             // Store status bar layout for click detection
@@ -4506,11 +4509,7 @@ impl Editor {
         let constraints = vec![
             Constraint::Length(if self.menu_bar_visible { 1 } else { 0 }),
             Constraint::Min(0),
-            Constraint::Length(if self.status_bar_visible {
-                self.config.editor.status_bar.lines.max(1) as u16
-            } else {
-                0
-            }), // status bar
+            Constraint::Length(if self.status_bar_visible { 1 } else { 0 }), // status bar
             Constraint::Length(0), // search options (doesn't matter for layout)
             Constraint::Length(if self.prompt_line_visible { 1 } else { 0 }), // prompt line
         ];

@@ -9554,6 +9554,9 @@ mod tests {
         // Second call in the same half-second should return false (no phase change)
         let _first = editor.check_clock_blink_tick();
         let second = editor.check_clock_blink_tick();
-        assert!(!second, "back-to-back calls in the same half-second should not re-trigger");
+        assert!(
+            !second,
+            "back-to-back calls in the same half-second should not re-trigger"
+        );
     }
 }

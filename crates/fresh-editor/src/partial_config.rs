@@ -661,7 +661,9 @@ impl PartialEditorConfig {
                 .unwrap_or(defaults.menu_bar_mnemonics),
             show_tab_bar: self.show_tab_bar.unwrap_or(defaults.show_tab_bar),
             show_status_bar: self.show_status_bar.unwrap_or(defaults.show_status_bar),
-            status_bar: self.status_bar.unwrap_or_else(|| defaults.status_bar.clone()),
+            status_bar: self
+                .status_bar
+                .unwrap_or_else(|| defaults.status_bar.clone()),
             show_prompt_line: self.show_prompt_line.unwrap_or(defaults.show_prompt_line),
             show_vertical_scrollbar: self
                 .show_vertical_scrollbar

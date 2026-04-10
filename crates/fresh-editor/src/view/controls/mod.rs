@@ -31,13 +31,13 @@ pub mod toggle;
 pub use button::{
     render_button, render_button_row, ButtonColors, ButtonEvent, ButtonLayout, ButtonState,
 };
-pub use dual_list::{
-    render_dual_list_partial, DualListColors, DualListColumn, DualListHit, DualListLayout,
-    DualListState,
-};
 pub use dropdown::{
     render_dropdown, render_dropdown_aligned, DropdownColors, DropdownEvent, DropdownLayout,
     DropdownState,
+};
+pub use dual_list::{
+    render_dual_list_partial, DualListColors, DualListColumn, DualListHit, DualListLayout,
+    DualListState,
 };
 pub use keybinding_list::{
     render_keybinding_list, KeybindingListColors, KeybindingListEvent, KeybindingListLayout,

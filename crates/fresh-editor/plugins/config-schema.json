@@ -43,7 +43,6 @@
         "show_tab_bar": true,
         "show_status_bar": true,
         "status_bar": {
-          "lines": 1,
           "left": [
             "{filename}",
             "{cursor}",
@@ -59,8 +58,7 @@
             "{warnings}",
             "{update}",
             "{palette}"
-          ],
-          "show_keybind_hints": false
+          ]
         },
         "show_prompt_line": true,
         "show_vertical_scrollbar": true,
@@ -351,7 +349,6 @@
           "description": "Status bar layout and element configuration.\nControls which elements appear in the status bar and how they are arranged.",
           "$ref": "#/$defs/StatusBarConfig",
           "default": {
-            "lines": 1,
             "left": [
               "{filename}",
               "{cursor}",
@@ -367,8 +364,7 @@
               "{warnings}",
               "{update}",
               "{palette}"
-            ],
-            "show_keybind_hints": false
+            ]
           },
           "x-section": "Status Bar"
         },
@@ -722,17 +718,9 @@
       }
     },
     "StatusBarConfig": {
-      "description": "Status bar layout and element configuration.\n\nControls which elements appear in the status bar and how they are arranged.\nElements are placed in left and right containers and can be freely reordered.\n\nExample config:\n```json\n{\n  \"status_bar\": {\n    \"lines\": 1,\n    \"left\": [\"{filename}\", \"{cursor:compact}\"],\n    \"right\": [\"{language}\", \"{encoding}\", \"{line_ending}\"],\n    \"show_keybind_hints\": false\n  }\n}\n```",
+      "description": "Status bar layout and element configuration.\n\nControls which elements appear in the status bar and how they are arranged.\nElements are placed in left and right containers and can be freely reordered.\n\nExample config:\n```json\n{\n  \"status_bar\": {\n    \"left\": [\"{filename}\", \"{cursor:compact}\"],\n    \"right\": [\"{language}\", \"{encoding}\", \"{line_ending}\"]\n  }\n}\n```",
       "type": "object",
       "properties": {
-        "lines": {
-          "description": "Number of lines the status bar occupies.\nUse 2+ lines to show more information or keybind hints without losing editor space.\nDefault: 1",
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0,
-          "default": 1,
-          "x-section": "Status Bar"
-        },
         "left": {
           "description": "Elements shown on the left side of the status bar.\nDefault: [\"{filename}\", \"{cursor}\", \"{diagnostics}\", \"{cursor_count}\", \"{messages}\"]",
           "type": "array",
@@ -766,12 +754,6 @@
           ],
           "x-section": "Status Bar",
           "x-dual-list-sibling": "/editor/status_bar/left"
-        },
-        "show_keybind_hints": {
-          "description": "Show nano-style keybinding hints in the status bar area.\nWhen enabled, adds a row of common keybinding hints.\nRequires `lines` >= 2 to have room, or add `{keybind_hints}` to left/right elements.\nDefault: false",
-          "type": "boolean",
-          "default": false,
-          "x-section": "Status Bar"
         }
       }
     },
@@ -833,10 +815,6 @@
         {
           "value": "{palette}",
           "name": "Palette"
-        },
-        {
-          "value": "{keybind_hints}",
-          "name": "Keybind Hints"
         },
         {
           "value": "{clock}",

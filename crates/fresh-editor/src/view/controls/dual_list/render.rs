@@ -56,7 +56,10 @@ pub fn render_dual_list_partial(
             Span::styled(&state.label, Style::default().fg(label_color)),
             Span::raw(":"),
         ]);
-        frame.render_widget(Paragraph::new(label_line), Rect::new(area.x, y, area.width, 1));
+        frame.render_widget(
+            Paragraph::new(label_line),
+            Rect::new(area.x, y, area.width, 1),
+        );
         y += 1;
     }
     content_row += 1;
@@ -122,34 +125,22 @@ pub fn render_dual_list_partial(
         match row_idx {
             0 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(
-                    Paragraph::new(Span::styled("[>]", btn_style)),
-                    btn_area,
-                );
+                frame.render_widget(Paragraph::new(Span::styled("[>]", btn_style)), btn_area);
                 layout.add_button = Some(btn_area);
             }
             1 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(
-                    Paragraph::new(Span::styled("[<]", btn_style)),
-                    btn_area,
-                );
+                frame.render_widget(Paragraph::new(Span::styled("[<]", btn_style)), btn_area);
                 layout.remove_button = Some(btn_area);
             }
             2 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(
-                    Paragraph::new(Span::styled("[^]", btn_style)),
-                    btn_area,
-                );
+                frame.render_widget(Paragraph::new(Span::styled("[^]", btn_style)), btn_area);
                 layout.move_up_button = Some(btn_area);
             }
             3 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(
-                    Paragraph::new(Span::styled("[v]", btn_style)),
-                    btn_area,
-                );
+                frame.render_widget(Paragraph::new(Span::styled("[v]", btn_style)), btn_area);
                 layout.move_down_button = Some(btn_area);
             }
             _ => {}

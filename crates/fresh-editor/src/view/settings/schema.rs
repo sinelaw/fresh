@@ -969,7 +969,10 @@ mod tests {
             .expect("tags setting");
 
         match &tags.setting_type {
-            SettingType::DualList { options, sibling_path } => {
+            SettingType::DualList {
+                options,
+                sibling_path,
+            } => {
                 assert_eq!(options.len(), 3);
                 assert_eq!(options[0].value, "red");
                 assert_eq!(options[0].name, "Red");

@@ -6,7 +6,7 @@
 //!   Available        Included
 //!   cursor:compact [>] filename
 //!   chord          [<] cursor
-//!   keybind_hints  [▲] diagnostics
+//!   clock          [▲] diagnostics
 //!                  [▼] cursor_count
 //! ```
 
@@ -79,9 +79,7 @@ impl DualListState {
     pub fn available_items(&self) -> Vec<&(String, String)> {
         self.all_options
             .iter()
-            .filter(|(value, _)| {
-                !self.included.contains(value) && !self.excluded.contains(value)
-            })
+            .filter(|(value, _)| !self.included.contains(value) && !self.excluded.contains(value))
             .collect()
     }
 
@@ -124,7 +122,8 @@ impl DualListState {
     /// Move the selected included item up
     pub fn move_up(&mut self) {
         if self.included_cursor > 0 && self.included_cursor < self.included.len() {
-            self.included.swap(self.included_cursor, self.included_cursor - 1);
+            self.included
+                .swap(self.included_cursor, self.included_cursor - 1);
             self.included_cursor -= 1;
         }
     }
@@ -132,7 +131,8 @@ impl DualListState {
     /// Move the selected included item down
     pub fn move_down(&mut self) {
         if self.included_cursor + 1 < self.included.len() {
-            self.included.swap(self.included_cursor, self.included_cursor + 1);
+            self.included
+                .swap(self.included_cursor, self.included_cursor + 1);
             self.included_cursor += 1;
         }
     }
@@ -342,7 +342,9 @@ mod tests {
 
         let available = state.available_items();
         assert_eq!(available.len(), 4); // 7 - 2 included - 1 excluded
-        assert!(available.iter().all(|(v, _)| v != "filename" && v != "cursor" && v != "chord"));
+        assert!(available
+            .iter()
+            .all(|(v, _)| v != "filename" && v != "cursor" && v != "chord"));
     }
 
     #[test]
@@ -367,8 +369,11 @@ mod tests {
 
     #[test]
     fn test_move_up_down() {
-        let mut state = DualListState::new("Test", test_options())
-            .with_included(vec!["filename".into(), "cursor".into(), "diagnostics".into()]);
+        let mut state = DualListState::new("Test", test_options()).with_included(vec![
+            "filename".into(),
+            "cursor".into(),
+            "diagnostics".into(),
+        ]);
 
         state.included_cursor = 2;
         state.move_up();

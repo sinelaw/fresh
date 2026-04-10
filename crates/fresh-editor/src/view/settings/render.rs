@@ -12,7 +12,7 @@ use super::search::{DeepMatch, SearchResult};
 use super::state::SettingsState;
 use crate::view::controls::{
     render_dropdown_aligned, render_dual_list_partial, render_number_input_aligned,
-    render_text_input_aligned, render_toggle_aligned, DualListColors, DropdownColors, MapColors,
+    render_text_input_aligned, render_toggle_aligned, DropdownColors, DualListColors, MapColors,
     NumberInputColors, TextInputColors, TextListColors, ToggleColors,
 };
 use crate::view::theme::Theme;

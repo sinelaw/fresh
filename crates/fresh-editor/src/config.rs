@@ -543,7 +543,6 @@ impl WhitespaceVisibility {
 /// - `"{warnings}"` — general warning badge
 /// - `"{update}"` — update available indicator
 /// - `"{palette}"` — command palette shortcut hint
-/// - `"{keybind_hints}"` — nano-style keybinding hints
 /// - `"{clock}"` — current time (HH:MM) with blinking colon separator
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -576,8 +575,6 @@ pub enum StatusBarElement {
     Update,
     /// Command palette shortcut hint
     Palette,
-    /// Nano-style keybinding hints
-    KeybindHints,
     /// Current time (HH:MM) with blinking colon separator
     Clock,
 }
@@ -605,7 +602,6 @@ impl TryFrom<String> for StatusBarElement {
             "warnings" => Ok(Self::Warnings),
             "update" => Ok(Self::Update),
             "palette" => Ok(Self::Palette),
-            "keybind_hints" => Ok(Self::KeybindHints),
             "clock" => Ok(Self::Clock),
             _ => Err(format!("Unknown status bar element: {}", s)),
         }
@@ -629,7 +625,6 @@ impl From<StatusBarElement> for String {
             StatusBarElement::Warnings => "{warnings}".to_string(),
             StatusBarElement::Update => "{update}".to_string(),
             StatusBarElement::Palette => "{palette}".to_string(),
-            StatusBarElement::KeybindHints => "{keybind_hints}".to_string(),
             StatusBarElement::Clock => "{clock}".to_string(),
         }
     }
@@ -657,7 +652,6 @@ impl schemars::JsonSchema for StatusBarElement {
                 {"value": "{warnings}", "name": "Warnings"},
                 {"value": "{update}", "name": "Update"},
                 {"value": "{palette}", "name": "Palette"},
-                {"value": "{keybind_hints}", "name": "Keybind Hints"},
                 {"value": "{clock}", "name": "Clock"}
             ]
         })
@@ -686,10 +680,6 @@ fn default_status_bar_right() -> Vec<StatusBarElement> {
     ]
 }
 
-fn default_status_bar_lines() -> usize {
-    1
-}
-
 /// Status bar layout and element configuration.
 ///
 /// Controls which elements appear in the status bar and how they are arranged.
@@ -699,22 +689,13 @@ fn default_status_bar_lines() -> usize {
 /// ```json
 /// {
 ///   "status_bar": {
-///     "lines": 1,
 ///     "left": ["{filename}", "{cursor:compact}"],
-///     "right": ["{language}", "{encoding}", "{line_ending}"],
-///     "show_keybind_hints": false
+///     "right": ["{language}", "{encoding}", "{line_ending}"]
 ///   }
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StatusBarConfig {
-    /// Number of lines the status bar occupies.
-    /// Use 2+ lines to show more information or keybind hints without losing editor space.
-    /// Default: 1
-    #[serde(default = "default_status_bar_lines")]
-    #[schemars(extend("x-section" = "Status Bar"))]
-    pub lines: usize,
-
     /// Elements shown on the left side of the status bar.
     /// Default: ["{filename}", "{cursor}", "{diagnostics}", "{cursor_count}", "{messages}"]
     #[serde(default = "default_status_bar_left")]
@@ -726,23 +707,13 @@ pub struct StatusBarConfig {
     #[serde(default = "default_status_bar_right")]
     #[schemars(extend("x-section" = "Status Bar", "x-dual-list-sibling" = "/editor/status_bar/left"))]
     pub right: Vec<StatusBarElement>,
-
-    /// Show nano-style keybinding hints in the status bar area.
-    /// When enabled, adds a row of common keybinding hints.
-    /// Requires `lines` >= 2 to have room, or add `{keybind_hints}` to left/right elements.
-    /// Default: false
-    #[serde(default = "default_false")]
-    #[schemars(extend("x-section" = "Status Bar"))]
-    pub show_keybind_hints: bool,
 }
 
 impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
-            lines: 1,
             left: default_status_bar_left(),
             right: default_status_bar_right(),
-            show_keybind_hints: false,
         }
     }
 }

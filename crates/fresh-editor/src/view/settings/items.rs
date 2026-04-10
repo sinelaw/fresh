@@ -221,8 +221,11 @@ fn value_as_string_array(
     default: Option<&serde_json::Value>,
 ) -> Vec<String> {
     let from = |v: &serde_json::Value| -> Option<Vec<String>> {
-        v.as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        v.as_array().map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
     };
     current
         .and_then(from)
@@ -317,9 +320,7 @@ impl SettingControl {
                 (state.items.len() + 2) as u16
             }
             // DualList needs: 1 label + 1 header + body rows
-            Self::DualList(state) => {
-                2 + state.body_rows() as u16
-            }
+            Self::DualList(state) => 2 + state.body_rows() as u16,
             // Map needs: 1 label + 1 header (if display_field) + entries + expanded content + 1 add-new row (if allowed)
             Self::Map(state) => {
                 let header_row = if state.display_field.is_some() { 1 } else { 0 };
@@ -1080,7 +1081,12 @@ pub fn build_item_from_value(
 
         SettingType::DualList { options, .. } => {
             // Dialog context has no sibling to cross-exclude against
-            SettingControl::DualList(build_dual_list_state(schema, options, current_value, vec![]))
+            SettingControl::DualList(build_dual_list_state(
+                schema,
+                options,
+                current_value,
+                vec![],
+            ))
         }
 
         SettingType::StringArray => {
