@@ -14,6 +14,41 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+/// Which languages an LSP server handles.
+///
+/// - `All` — universal server, accepts documents of any language.
+/// - `Only(langs)` — per-language server, accepts only listed languages.
+#[derive(Debug, Clone)]
+pub enum LanguageScope {
+    /// Serves all languages (universal LSP server).
+    All,
+    /// Serves only the listed languages.
+    Only(Vec<String>),
+}
+
+impl LanguageScope {
+    /// Create a scope for a single language.
+    pub fn single(language: impl Into<String>) -> Self {
+        Self::Only(vec![language.into()])
+    }
+
+    /// Whether this scope accepts documents of the given language.
+    pub fn accepts(&self, language: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(langs) => langs.iter().any(|l| l == language),
+        }
+    }
+
+    /// A display label for logging and status messages.
+    pub fn label(&self) -> &str {
+        match self {
+            Self::All => "universal",
+            Self::Only(langs) => langs.first().map(|s| s.as_str()).unwrap_or("unknown"),
+        }
+    }
+}
+
 /// Result of attempting to spawn an LSP server
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LspSpawnResult {
@@ -301,7 +336,7 @@ impl LspManager {
             }
         }
 
-        // Check universal handles (they use "__universal__" as language)
+        // Check universal handles
         if let Some(sh) = self
             .universal_handles
             .iter_mut()
@@ -640,6 +675,13 @@ impl LspManager {
         (lang, &mut self.universal_handles)
     }
 
+    /// Check if a server name belongs to a universal handle.
+    pub fn is_universal_server(&self, server_name: &str) -> bool {
+        self.universal_handles
+            .iter()
+            .any(|sh| sh.name == server_name)
+    }
+
     /// Check if any handles (per-language or universal) exist for a language.
     pub fn has_handles(&self, language: &str) -> bool {
         self.handles.get(language).is_some_and(|v| !v.is_empty())
@@ -847,7 +889,7 @@ impl LspManager {
                 &config.command,
                 &config.args,
                 config.env.clone(),
-                language.to_string(),
+                LanguageScope::single(language),
                 server_name.clone(),
                 &async_bridge,
                 config.process_limits.clone(),
@@ -938,14 +980,14 @@ impl LspManager {
                 &config.command,
                 &config.args,
                 config.env.clone(),
-                "__universal__".to_string(),
+                LanguageScope::All,
                 server_name.clone(),
                 &async_bridge,
                 config.process_limits.clone(),
                 config.language_id_overrides.clone(),
             ) {
                 Ok(handle) => {
-                    let effective_root = self.resolve_root_uri("__universal__", file_path);
+                    let effective_root = self.resolve_root_uri("universal", file_path);
                     if let Err(e) =
                         handle.initialize(effective_root, config.initialization_options.clone())
                     {
@@ -984,9 +1026,13 @@ impl LspManager {
     ///
     /// Returns a message describing the action taken (for UI notification)
     #[allow(clippy::let_underscore_must_use)] // shutdown() is best-effort cleanup of a crashed server
-    pub fn handle_server_crash(&mut self, language: &str) -> String {
-        // Universal servers use "__universal__" as their language key
-        if language == "__universal__" {
+    pub fn handle_server_crash(&mut self, language: &str, server_name: &str) -> String {
+        // Check if the crashed server is a universal handle
+        if self
+            .universal_handles
+            .iter()
+            .any(|sh| sh.name == server_name)
+        {
             for sh in self.universal_handles.drain(..) {
                 let _ = sh.handle.shutdown();
             }
@@ -1225,7 +1271,7 @@ impl LspManager {
             &config.command,
             &config.args,
             config.env.clone(),
-            language.to_string(),
+            LanguageScope::single(language),
             server_name.to_string(),
             &async_bridge,
             config.process_limits.clone(),

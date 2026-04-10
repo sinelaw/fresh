@@ -3973,8 +3973,8 @@ pub struct LspHandle {
     /// Unique identifier for this handle instance
     id: u64,
 
-    /// Language this handle serves
-    language: String,
+    /// Which languages this handle serves.
+    scope: crate::services::lsp::manager::LanguageScope,
 
     /// Channel for sending commands to the task
     command_tx: mpsc::Sender<LspCommand>,
@@ -4002,7 +4002,7 @@ impl LspHandle {
         command: &str,
         args: &[String],
         env: std::collections::HashMap<String, String>,
-        language: String,
+        scope: crate::services::lsp::manager::LanguageScope,
         server_name: String,
         async_bridge: &AsyncBridge,
         process_limits: ProcessLimits,
@@ -4010,18 +4010,19 @@ impl LspHandle {
     ) -> Result<Self, String> {
         let (command_tx, command_rx) = mpsc::channel(100); // Buffer up to 100 commands
         let async_tx = async_bridge.sender();
-        let language_clone = language.clone();
+        let language_label = scope.label().to_string();
+        let language_clone = language_label.clone();
         let server_name_clone = server_name.clone();
         let command = command.to_string();
         let args = args.to_vec();
         let state = Arc::new(Mutex::new(LspClientState::Starting));
 
         // Create stderr log path in XDG state directory
-        let stderr_log_path = crate::services::log_dirs::lsp_log_path(&language);
+        let stderr_log_path = crate::services::log_dirs::lsp_log_path(&language_label);
 
         // Send starting status
         let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
-            language: language.clone(),
+            language: language_label.clone(),
             server_name: server_name_clone.clone(),
             status: LspServerStatus::Starting,
             message: None,
@@ -4081,7 +4082,7 @@ impl LspHandle {
 
         Ok(Self {
             id,
-            language,
+            scope,
             command_tx,
             state,
             runtime: runtime.clone(),
@@ -4094,9 +4095,9 @@ impl LspHandle {
         self.id
     }
 
-    /// Get the language this handle serves
-    pub fn language(&self) -> &str {
-        &self.language
+    /// Get the language scope this handle serves.
+    pub fn scope(&self) -> &crate::services::lsp::manager::LanguageScope {
+        &self.scope
     }
 
     /// Get the document version for a file path, as last sent via didOpen/didChange.
@@ -4198,18 +4199,17 @@ impl LspHandle {
     /// a warning is logged but the notification is still sent (the server
     /// will receive it with the specified language_id).
     pub fn did_open(&self, uri: Uri, text: String, language_id: String) -> Result<(), String> {
-        // Verify the document language matches this handle's language
-        if language_id != self.language {
+        // Verify the document language is accepted by this handle.
+        if !self.scope.accepts(&language_id) {
             tracing::warn!(
-                "did_open: document language '{}' does not match LSP handle language '{}' for {}",
+                "did_open: document language '{}' not accepted by LSP handle (serves {:?}) for {}",
                 language_id,
-                self.language,
+                self.scope,
                 uri.as_str()
             );
-            // Return early - don't send to wrong LSP
             return Err(format!(
-                "Language mismatch: document is '{}' but LSP handles '{}'",
-                language_id, self.language
+                "Language mismatch: document is '{}' but LSP serves {:?}",
+                language_id, self.scope
             ));
         }
 
@@ -4681,6 +4681,7 @@ impl Drop for LspHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::lsp::manager::LanguageScope;
 
     #[test]
     fn test_json_rpc_request_serialization() {
@@ -4830,7 +4831,7 @@ mod tests {
             "cat",
             &[],
             Default::default(),
-            "test".to_string(),
+            LanguageScope::single("test"),
             "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -4859,7 +4860,7 @@ mod tests {
             "cat",
             &[],
             Default::default(),
-            "test".to_string(),
+            LanguageScope::single("test"),
             "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -4888,7 +4889,7 @@ mod tests {
             "cat",
             &[],
             Default::default(),
-            "test".to_string(),
+            LanguageScope::single("test"),
             "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -4923,7 +4924,7 @@ mod tests {
             "cat",
             &[],
             Default::default(),
-            "test".to_string(),
+            LanguageScope::single("test"),
             "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -4959,7 +4960,7 @@ mod tests {
             "this-command-does-not-exist-12345",
             &[],
             Default::default(),
-            "test".to_string(),
+            LanguageScope::single("test"),
             "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -4999,7 +5000,7 @@ mod tests {
                     "cat",
                     &[],
                     Default::default(),
-                    "test".to_string(),
+                    LanguageScope::single("test"),
                     "test-server".to_string(),
                     &async_bridge,
                     ProcessLimits::unlimited(),
@@ -5071,7 +5072,7 @@ mod tests {
             "cat", // Simple command that will exit immediately
             &[],
             Default::default(),
-            "test".to_string(),
+            LanguageScope::single("test"),
             "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
@@ -5123,7 +5124,7 @@ mod tests {
             "bash",
             &["-c".to_string(), fake_lsp_script.to_string()],
             Default::default(),
-            "fake".to_string(),
+            LanguageScope::single("fake"),
             "test-server".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),

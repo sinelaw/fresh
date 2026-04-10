@@ -901,7 +901,12 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|s| matches!(s, LspServerStatus::Running));
             if !was_already_running {
-                if language == "__universal__" {
+                let is_universal = self
+                    .lsp
+                    .as_ref()
+                    .map(|lsp| lsp.is_universal_server(&server_name_ref))
+                    .unwrap_or(false);
+                if is_universal {
                     // Universal server just started — send didOpen for all open buffers
                     let all_languages: Vec<String> = self
                         .buffers
@@ -932,7 +937,7 @@ impl Editor {
                 self.clear_diagnostics_for_server(&server_name_ref);
 
                 if let Some(lsp) = self.lsp.as_mut() {
-                    let message = lsp.handle_server_crash(&language);
+                    let message = lsp.handle_server_crash(&language, &server_name_ref);
                     self.status_message = Some(message);
                 }
             }

@@ -1980,10 +1980,21 @@ impl Editor {
     /// Check if any LSP server for a given language is running (ready)
     pub fn is_lsp_server_ready(&self, language: &str) -> bool {
         use crate::services::async_bridge::LspServerStatus;
-        self.lsp_server_statuses.iter().any(|((lang, _), status)| {
-            (lang == language || lang == "__universal__")
-                && matches!(status, LspServerStatus::Running)
-        })
+        self.lsp_server_statuses
+            .iter()
+            .any(|((lang, server_name), status)| {
+                if !matches!(status, LspServerStatus::Running) {
+                    return false;
+                }
+                if lang == language {
+                    return true;
+                }
+                // Check if this is a universal server that serves all languages
+                self.lsp
+                    .as_ref()
+                    .map(|lsp| lsp.is_universal_server(server_name))
+                    .unwrap_or(false)
+            })
     }
 
     /// Get the LSP status string (displayed in status bar)
