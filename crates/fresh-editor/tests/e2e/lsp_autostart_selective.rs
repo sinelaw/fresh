@@ -531,3 +531,71 @@ fn test_universal_lsp_spawned_once_across_languages() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// A universal LSP server must receive didOpen notifications for files
+/// of any language, not just the language it was spawned under.
+///
+/// Regression: universal handles are created with language "__universal__"
+/// but the did_open method validates that the document language matches
+/// the handle language. This causes all didOpen notifications to be
+/// rejected with "Language mismatch".
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_universal_lsp_receives_did_open_for_all_languages() -> anyhow::Result<()> {
+    crate::common::tracing::init_tracing_from_env();
+
+    let temp_dir = tempfile::tempdir()?;
+    let script = create_diagnostic_server_script(temp_dir.path(), "fake_universal_didopen.sh");
+    let log_universal = temp_dir.path().join("universal_didopen.log");
+
+    let rust_file = temp_dir.path().join("test.rs");
+    std::fs::write(&rust_file, "fn main() {}\n")?;
+
+    let mut config = fresh::config::Config::default();
+
+    // Disable per-language rust server
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: "rust-analyzer".to_string(),
+            enabled: false,
+            ..Default::default()
+        }]),
+    );
+
+    // Universal server: publishes error diagnostic on didOpen
+    config.universal_lsp.insert(
+        "test-universal".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![build_server_config(
+            "test-universal",
+            &script,
+            &log_universal,
+            SEV_ERROR,
+            true,
+            true,
+        )]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        200,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&rust_file)?;
+    harness.render()?;
+
+    // The universal server publishes an error diagnostic on didOpen.
+    // If didOpen was rejected due to language mismatch, E:1 will never appear.
+    harness.wait_until(|h| h.screen_to_string().contains("E:1"))?;
+
+    let log = std::fs::read_to_string(&log_universal)?;
+    assert!(
+        log.contains("ACTION: didOpen"),
+        "Universal LSP must receive didOpen for rust files. Log:\n{}",
+        log
+    );
+
+    Ok(())
+}
