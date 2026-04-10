@@ -2405,24 +2405,38 @@ impl JsEditorApi {
             .map(|obj| {
                 let path: String = obj.get("path")?;
                 let symbol: String = obj.get("symbol")?;
-                let color: Vec<u8> = obj.get("color")?;
                 let priority: i32 = obj.get("priority").unwrap_or(0);
 
-                if color.len() < 3 {
+                // Color can be an RGB array [r, g, b] or a theme key string
+                let color_val: rquickjs::Value = obj.get("color")?;
+                let color = if color_val.is_string() {
+                    let key: String = color_val.get()?;
+                    fresh_core::api::OverlayColorSpec::ThemeKey(key)
+                } else if color_val.is_array() {
+                    let arr: Vec<u8> = color_val.get()?;
+                    if arr.len() < 3 {
+                        return Err(rquickjs::Error::FromJs {
+                            from: "array",
+                            to: "color",
+                            message: Some(format!(
+                                "color array must have at least 3 elements, got {}",
+                                arr.len()
+                            )),
+                        });
+                    }
+                    fresh_core::api::OverlayColorSpec::Rgb(arr[0], arr[1], arr[2])
+                } else {
                     return Err(rquickjs::Error::FromJs {
-                        from: "array",
+                        from: "value",
                         to: "color",
-                        message: Some(format!(
-                            "color array must have at least 3 elements, got {}",
-                            color.len()
-                        )),
+                        message: Some("color must be an RGB array or theme key string".to_string()),
                     });
-                }
+                };
 
                 Ok(FileExplorerDecoration {
                     path: std::path::PathBuf::from(path),
                     symbol,
-                    color: [color[0], color[1], color[2]],
+                    color,
                     priority,
                 })
             })

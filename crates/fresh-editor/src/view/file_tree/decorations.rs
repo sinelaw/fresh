@@ -42,7 +42,7 @@ impl FileExplorerDecorationCache {
                         FileExplorerDecoration {
                             path: aliased_path,
                             symbol: decoration.symbol.clone(),
-                            color: decoration.color,
+                            color: decoration.color.clone(),
                             priority: decoration.priority,
                         },
                     );
@@ -61,7 +61,7 @@ impl FileExplorerDecorationCache {
                     FileExplorerDecoration {
                         path: ancestor.to_path_buf(),
                         symbol: decoration.symbol.clone(),
-                        color: decoration.color,
+                        color: decoration.color.clone(),
                         priority: decoration.priority,
                     },
                 );

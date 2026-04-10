@@ -399,9 +399,9 @@ type FileExplorerDecoration = {
 	*/
 	symbol: string;
 	/**
-	* Color as RGB array (rquickjs_serde requires array, not tuple)
+	* Color as RGB array or theme key string (e.g., "ui.file_status_added_fg")
 	*/
-	color: [number, number, number];
+	color: OverlayColorSpec;
 	/**
 	* Priority for display when multiple decorations exist (higher wins)
 	*/

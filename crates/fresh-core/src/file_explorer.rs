@@ -1,3 +1,4 @@
+use crate::api::OverlayColorSpec;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use ts_rs::TS;
@@ -12,9 +13,8 @@ pub struct FileExplorerDecoration {
     pub path: PathBuf,
     /// Symbol to display (e.g., "●", "M", "A")
     pub symbol: String,
-    /// Color as RGB array (rquickjs_serde requires array, not tuple)
-    #[ts(type = "[number, number, number]")]
-    pub color: [u8; 3],
+    /// Color as RGB array or theme key string (e.g., "ui.file_status_added_fg")
+    pub color: OverlayColorSpec,
     /// Priority for display when multiple decorations exist (higher wins)
     #[serde(default)]
     pub priority: i32,
