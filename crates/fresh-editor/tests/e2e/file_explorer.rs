@@ -2650,7 +2650,8 @@ fn test_file_explorer_escape_clears_search() {
         "Should still be in FileExplorer context after Escape"
     );
 
-    // Press Escape again - should still stay in file explorer (no focus change)
+    // Press Escape again - should now exit file explorer focus to the editor
+    // (Escape with no active search transfers focus)
     harness
         .send_key(KeyCode::Esc, KeyModifiers::empty())
         .unwrap();
@@ -2659,9 +2660,9 @@ fn test_file_explorer_escape_clears_search() {
     assert!(
         matches!(
             harness.editor().get_key_context(),
-            fresh::input::keybindings::KeyContext::FileExplorer
+            fresh::input::keybindings::KeyContext::Normal
         ),
-        "Should remain in FileExplorer context after second Escape"
+        "Should exit FileExplorer context on second Escape (no search to clear)"
     );
 }
 

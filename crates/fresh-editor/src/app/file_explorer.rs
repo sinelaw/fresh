@@ -826,7 +826,12 @@ impl Editor {
     /// Clear the file explorer search
     pub fn file_explorer_search_clear(&mut self) {
         if let Some(explorer) = &mut self.file_explorer {
-            explorer.search_clear();
+            if explorer.is_search_active() {
+                explorer.search_clear();
+            } else {
+                // No active search — Escape transfers focus to the editor
+                self.focus_editor();
+            }
         }
     }
 

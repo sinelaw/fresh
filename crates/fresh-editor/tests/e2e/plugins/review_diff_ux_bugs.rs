@@ -626,7 +626,6 @@ fn test_bug6_comment_from_files_panel_not_visible_in_diff() {
 /// BUG-7: When the File Explorer has focus, pressing Escape should
 /// transfer focus back to the editor/review diff, but it has no effect.
 #[test]
-#[ignore = "BUG-7: Escape keybinding added but not yet effective in FileExplorer context"]
 fn test_bug7_escape_does_not_exit_file_explorer_focus() {
     init_tracing_from_env();
     let (repo, main_rs) = repo_with_one_modification();

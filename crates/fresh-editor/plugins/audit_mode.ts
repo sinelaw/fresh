@@ -1833,18 +1833,17 @@ function jumpDiffCursorToRow(row: number): void {
     const idx = row - 1;
     if (idx < 0 || idx >= state.diffLineByteOffsets.length) return;
 
-    // Move cursor by computing the delta from the current row and stepping
-    // with executeAction. This works reliably with buffer group panels
-    // where setBufferCursor may not take effect (the panel buffer lives
-    // in a grouped subtree rather than the main split tree).
+    // Move cursor via executeAction to the target row. We compute a delta
+    // from the current position and step with move_up/move_down. This is
+    // O(delta) but is necessary because setBufferCursor updates the inner
+    // panel's view state while the status bar and cursor events reference
+    // the effective active split — a fundamental mismatch in the buffer
+    // group architecture. executeAction correctly routes through the
+    // focused panel's action dispatch.
     if (state.focusPanel === 'diff') {
-        const currentRow = state.diffCursorRow; // 1-indexed
-        const delta = row - currentRow;
-        if (delta > 0) {
-            for (let i = 0; i < delta; i++) editor.executeAction("move_down");
-        } else if (delta < 0) {
-            for (let i = 0; i < -delta; i++) editor.executeAction("move_up");
-        }
+        const delta = row - state.diffCursorRow;
+        const action = delta > 0 ? "move_down" : "move_up";
+        for (let i = 0, n = Math.abs(delta); i < n; i++) editor.executeAction(action);
     } else {
         const byteOffset = state.diffLineByteOffsets[idx];
         editor.setBufferCursor(diffId, byteOffset);
