@@ -106,6 +106,85 @@ fn test_show_lsp_status_no_lsp() {
     harness.assert_screen_contains("No LSP server active");
 }
 
+/// Test that the LSP indicator shows simplified "LSP" text (not the old detailed format)
+/// and that clicking it opens a popup with server details and actions.
+#[test]
+fn test_lsp_indicator_simplified_with_popup() {
+    use fresh::services::async_bridge::LspServerStatus;
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+
+    // Inject a fake LSP server status for the buffer's language ("text" by default)
+    harness
+        .editor_mut()
+        .inject_lsp_server_status("text", "test-server", LspServerStatus::Running);
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // The status bar should show just "LSP" — not the old format "LSP [text: ready]"
+    assert!(
+        screen.contains(" LSP "),
+        "Status bar should contain simplified ' LSP ' indicator. Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("LSP ["),
+        "Status bar should NOT contain old detailed format 'LSP ['. Screen:\n{}",
+        screen
+    );
+
+    // Now trigger "Show LSP Status" to open the popup
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Show LSP Status").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // The popup should show server details
+    assert!(
+        screen.contains("LSP Servers"),
+        "Popup should have 'LSP Servers' title. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("test-server"),
+        "Popup should list the server name. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("Restart"),
+        "Popup should offer Restart action. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("Stop"),
+        "Popup should offer Stop action. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("View Log"),
+        "Popup should offer View Log action. Screen:\n{}",
+        screen
+    );
+
+    // Dismiss the popup
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("LSP Servers"),
+        "Popup should be dismissed after Esc. Screen:\n{}",
+        screen
+    );
+}
+
 /// Test that status log buffer stays read-only after revert
 ///
 /// Reproduces the bug where opening a log file via the status bar sets

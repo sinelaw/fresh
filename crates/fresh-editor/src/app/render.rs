@@ -591,12 +591,9 @@ impl Editor {
             .unwrap_or_default();
         let lsp_status = {
             use crate::services::async_bridge::LspServerStatus;
-            let has_servers_for_buffer = self
-                .lsp_server_statuses
-                .iter()
-                .any(|((lang, _), status)| {
-                    lang == &current_language
-                        && !matches!(status, LspServerStatus::Shutdown)
+            let has_servers_for_buffer =
+                self.lsp_server_statuses.iter().any(|((lang, _), status)| {
+                    lang == &current_language && !matches!(status, LspServerStatus::Shutdown)
                 });
             if has_servers_for_buffer {
                 "LSP".to_string()
@@ -627,8 +624,7 @@ impl Editor {
                                         level = WarningLevel::Error;
                                         break;
                                     }
-                                    LspServerStatus::Starting
-                                    | LspServerStatus::Initializing => {
+                                    LspServerStatus::Starting | LspServerStatus::Initializing => {
                                         if level != WarningLevel::Error {
                                             level = WarningLevel::Warning;
                                         }

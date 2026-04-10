@@ -340,8 +340,10 @@ impl Editor {
                     let _ = lsp.manual_restart(language, file_path.as_deref());
                 }
                 self.reopen_buffers_for_language(language);
-                self.status_message =
-                    Some(format!("Restarting LSP server: {}/{}", language, server_name));
+                self.status_message = Some(format!(
+                    "Restarting LSP server: {}/{}",
+                    language, server_name
+                ));
             }
         } else if let Some(target) = action_key.strip_prefix("stop:") {
             if let Some((language, server_name)) = target.split_once('/') {
@@ -357,8 +359,10 @@ impl Editor {
                     self.status_message =
                         Some(format!("Stopped LSP server: {}/{}", language, server_name));
                 } else {
-                    self.status_message =
-                        Some(format!("LSP server not running: {}/{}", language, server_name));
+                    self.status_message = Some(format!(
+                        "LSP server not running: {}/{}",
+                        language, server_name
+                    ));
                 }
             }
         } else if let Some(language) = action_key.strip_prefix("log:") {
@@ -369,13 +373,11 @@ impl Editor {
                         self.mark_buffer_read_only(buffer_id, true);
                     }
                     Err(e) => {
-                        self.status_message =
-                            Some(format!("Failed to open LSP log: {}", e));
+                        self.status_message = Some(format!("Failed to open LSP log: {}", e));
                     }
                 }
             } else {
-                self.status_message =
-                    Some(format!("No log file found for {}", language));
+                self.status_message = Some(format!("No log file found for {}", language));
             }
         }
     }

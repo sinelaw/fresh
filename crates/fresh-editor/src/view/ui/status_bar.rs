@@ -897,10 +897,7 @@ impl StatusBarRenderer {
                         theme.status_warning_indicator_fg,
                         theme.status_warning_indicator_bg,
                     ),
-                    (WarningLevel::None, true) => (
-                        theme.menu_hover_fg,
-                        theme.menu_hover_bg,
-                    ),
+                    (WarningLevel::None, true) => (theme.menu_hover_fg, theme.menu_hover_bg),
                     (WarningLevel::None, false) => (theme.status_bar_fg, theme.status_bar_bg),
                 };
                 // Record LSP indicator position for click detection
