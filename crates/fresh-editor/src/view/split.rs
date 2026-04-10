@@ -293,9 +293,10 @@ pub struct SplitViewState {
     /// Whether the layout needs to be rebuilt (buffer changed, transform changed, etc.)
     pub layout_dirty: bool,
 
-    /// Focus history stack for this split (most recent at end)
-    /// Used for "Switch to Previous Tab" and for returning to previous buffer when closing
-    pub focus_history: Vec<BufferId>,
+    /// Focus history stack for this split (most recent at end).
+    /// Tracks both buffer tabs and group tabs so that "Switch to Previous
+    /// Tab" and close-buffer replacement both work across tab types.
+    pub focus_history: Vec<TabTarget>,
 
     /// Sync group ID for synchronized scrolling
     /// Splits with the same sync_group will scroll together
@@ -543,31 +544,31 @@ impl SplitViewState {
         self.active_group_tab = Some(leaf_id);
     }
 
-    /// Push a buffer to the focus history (LRU-style)
-    /// If the buffer is already in history, it's moved to the end
-    pub fn push_focus(&mut self, buffer_id: BufferId) {
-        // Remove if already in history (LRU-style)
-        self.focus_history.retain(|&id| id != buffer_id);
-        self.focus_history.push(buffer_id);
-        // Limit to 50 entries
+    /// Push a tab target to the focus history (LRU-style).
+    /// If the target is already in history, it's moved to the end.
+    pub fn push_focus(&mut self, target: TabTarget) {
+        self.focus_history.retain(|t| *t != target);
+        self.focus_history.push(target);
         if self.focus_history.len() > 50 {
             self.focus_history.remove(0);
         }
     }
 
-    /// Get the most recently focused buffer (without removing it)
-    pub fn previous_buffer(&self) -> Option<BufferId> {
+    /// Get the most recently focused tab target (without removing it)
+    pub fn previous_tab(&self) -> Option<TabTarget> {
         self.focus_history.last().copied()
-    }
-
-    /// Pop the most recent buffer from focus history
-    pub fn pop_focus(&mut self) -> Option<BufferId> {
-        self.focus_history.pop()
     }
 
     /// Remove a buffer from the focus history (called when buffer is closed)
     pub fn remove_from_history(&mut self, buffer_id: BufferId) {
-        self.focus_history.retain(|&id| id != buffer_id);
+        self.focus_history
+            .retain(|t| *t != TabTarget::Buffer(buffer_id));
+    }
+
+    /// Remove a group from the focus history (called when group is closed)
+    pub fn remove_group_from_history(&mut self, leaf_id: LeafId) {
+        self.focus_history
+            .retain(|t| *t != TabTarget::Group(leaf_id));
     }
 }
 

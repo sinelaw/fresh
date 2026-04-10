@@ -2470,14 +2470,14 @@ impl Editor {
         // Switch per-buffer view state in the active split
         let active_split = self.split_manager.active_split();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            // Capture what the user was looking at (buffer tab or group tab)
+            // BEFORE clearing the group marker, so the LRU records the right thing.
+            let previous_target = view_state.active_target();
             view_state.switch_buffer(buffer_id);
             view_state.add_buffer(buffer_id);
-            // Clear any active group tab marker — we're switching to a buffer
-            // tab, so the group is no longer the active target.
             view_state.active_group_tab = None;
             view_state.focused_group_leaf = None;
-            // Update the focus history (push the previous buffer we're leaving)
-            view_state.push_focus(previous);
+            view_state.push_focus(previous_target);
         }
 
         // If switching to a terminal buffer that should resume terminal mode, re-enter it
@@ -2605,7 +2605,7 @@ impl Editor {
                 self.position_history.commit_pending_movement();
                 if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
                     view_state.add_buffer(buffer_id);
-                    view_state.push_focus(previous_buffer);
+                    view_state.push_focus(crate::view::split::TabTarget::Buffer(previous_buffer));
                 }
                 // Note: We don't sync file explorer here to avoid flicker during split focus changes.
                 // File explorer syncs when explicitly focused via focus_file_explorer().

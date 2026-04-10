@@ -3711,38 +3711,46 @@ impl Editor {
         }
     }
 
-    /// Switch to the previously active tab in the current split
+    /// Switch to the previously active tab in the current split.
+    /// Handles both buffer tabs and group tabs via the focus-history LRU.
     fn switch_to_previous_tab(&mut self) {
+        use crate::view::split::TabTarget;
         let active_split = self.split_manager.active_split();
-        let previous_buffer = self
+        let previous_tab = self
             .split_view_states
             .get(&active_split)
-            .and_then(|vs| vs.previous_buffer());
+            .and_then(|vs| vs.previous_tab());
 
-        if let Some(prev_id) = previous_buffer {
-            // Verify the buffer is still open in this split
-            let is_valid = self
-                .split_view_states
-                .get(&active_split)
-                .is_some_and(|vs| vs.has_buffer(prev_id));
+        match previous_tab {
+            Some(TabTarget::Buffer(prev_id)) => {
+                let is_valid = self
+                    .split_view_states
+                    .get(&active_split)
+                    .is_some_and(|vs| vs.has_buffer(prev_id));
 
-            if is_valid && prev_id != self.active_buffer() {
-                // Save current position before switching
-                self.position_history.commit_pending_movement();
-
-                let cursors = self.active_cursors();
-                let position = cursors.primary().position;
-                let anchor = cursors.primary().anchor;
-                self.position_history
-                    .record_movement(self.active_buffer(), position, anchor);
-                self.position_history.commit_pending_movement();
-
-                self.set_active_buffer(prev_id);
-            } else if !is_valid {
-                self.set_status_message(t!("status.previous_tab_closed").to_string());
+                if is_valid && prev_id != self.active_buffer() {
+                    self.position_history.commit_pending_movement();
+                    let cursors = self.active_cursors();
+                    let position = cursors.primary().position;
+                    let anchor = cursors.primary().anchor;
+                    self.position_history
+                        .record_movement(self.active_buffer(), position, anchor);
+                    self.position_history.commit_pending_movement();
+                    self.set_active_buffer(prev_id);
+                } else if !is_valid {
+                    self.set_status_message(t!("status.previous_tab_closed").to_string());
+                }
             }
-        } else {
-            self.set_status_message(t!("status.no_previous_tab").to_string());
+            Some(TabTarget::Group(leaf_id)) => {
+                if self.grouped_subtrees.contains_key(&leaf_id) {
+                    self.activate_group_tab(leaf_id);
+                } else {
+                    self.set_status_message(t!("status.previous_tab_closed").to_string());
+                }
+            }
+            None => {
+                self.set_status_message(t!("status.no_previous_tab").to_string());
+            }
         }
     }
 

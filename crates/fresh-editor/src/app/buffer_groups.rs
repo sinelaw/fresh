@@ -317,6 +317,7 @@ impl super::Editor {
                 for vs in self.split_view_states.values_mut() {
                     vs.open_buffers
                         .retain(|t| *t != TabTarget::Group(group_leaf_id));
+                    vs.remove_group_from_history(group_leaf_id);
                     if vs.active_group_tab == Some(group_leaf_id) {
                         vs.active_group_tab = None;
                     }

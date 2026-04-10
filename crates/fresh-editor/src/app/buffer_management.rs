@@ -1777,28 +1777,42 @@ impl Editor {
             }
         }
 
-        // Find a replacement buffer, preferring the most recently focused one
-        // First try focus history, then fall back to any visible buffer
+        // Walk the focus-history LRU (most recent first) to find the tab
+        // the user should land on. This naturally handles both buffer and
+        // group tabs — whichever the user was looking at most recently wins.
         let active_split = self.split_manager.active_split();
-        let replacement_from_history = self.split_view_states.get(&active_split).and_then(|vs| {
-            // Find the most recently focused buffer that's still open and visible
-            vs.focus_history
-                .iter()
-                .rev()
-                .find(|&&bid| {
-                    bid != id
-                        && self.buffers.contains_key(&bid)
-                        && !self
-                            .buffer_metadata
-                            .get(&bid)
-                            .map(|m| m.hidden_from_tabs)
-                            .unwrap_or(false)
-                })
-                .copied()
-        });
 
-        // Fall back to any visible buffer if no history match
-        let visible_replacement = replacement_from_history.or_else(|| {
+        let replacement_target: Option<crate::view::split::TabTarget> =
+            self.split_view_states.get(&active_split).and_then(|vs| {
+                use crate::view::split::TabTarget;
+                vs.focus_history.iter().rev().find_map(|t| match t {
+                    TabTarget::Buffer(bid) if *bid == id => None, // skip the closing buffer
+                    TabTarget::Buffer(bid) => {
+                        // Skip hidden-from-tabs buffers (panel helpers etc.)
+                        let hidden = self
+                            .buffer_metadata
+                            .get(bid)
+                            .map(|m| m.hidden_from_tabs)
+                            .unwrap_or(false);
+                        if hidden || !self.buffers.contains_key(bid) {
+                            None
+                        } else {
+                            Some(*t)
+                        }
+                    }
+                    TabTarget::Group(leaf) => {
+                        // Only if the group still exists
+                        if self.grouped_subtrees.contains_key(leaf) {
+                            Some(*t)
+                        } else {
+                            None
+                        }
+                    }
+                })
+            });
+
+        // Fall back: any visible buffer in the split, then any visible buffer at all.
+        let fallback_buffer: Option<BufferId> = if replacement_target.is_none() {
             self.buffers
                 .keys()
                 .find(|&&bid| {
@@ -1810,21 +1824,65 @@ impl Editor {
                             .unwrap_or(false)
                 })
                 .copied()
-        });
-
-        let is_last_visible_buffer = visible_replacement.is_none();
-        let replacement_buffer = if is_last_visible_buffer {
-            self.new_buffer()
         } else {
-            visible_replacement.unwrap()
+            None
         };
 
+        // Capture before the replacement computation — new_buffer() has the
+        // side effect of calling set_active_buffer which changes active_buffer().
+        let closing_active = self.active_buffer() == id;
+
+        // Determine what to do: activate a group, switch to a buffer, or
+        // create a new empty buffer as last resort.
+        let return_to_group = match replacement_target {
+            Some(crate::view::split::TabTarget::Group(leaf)) => Some(leaf),
+            _ => None,
+        };
+        let replacement_buffer = match replacement_target {
+            Some(crate::view::split::TabTarget::Buffer(bid)) => bid,
+            Some(crate::view::split::TabTarget::Group(group_leaf)) => {
+                // The group's inner panel buffer serves as the split leaf's
+                // underlying buffer. The group takes over the active target
+                // via activate_group_tab below, so this isn't user-visible.
+                self.grouped_subtrees
+                    .get(&group_leaf)
+                    .and_then(|node| {
+                        if let crate::view::split::SplitNode::Grouped {
+                            active_inner_leaf, ..
+                        } = node
+                        {
+                            self.split_view_states
+                                .get(active_inner_leaf)
+                                .map(|vs| vs.active_buffer)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| fallback_buffer.unwrap_or_else(|| self.new_buffer()))
+            }
+            None => fallback_buffer.unwrap_or_else(|| self.new_buffer()),
+        };
+
+        let created_empty_buffer = replacement_target.is_none() && fallback_buffer.is_none();
+
         // Switch to replacement buffer BEFORE updating splits.
-        // This is important because set_active_buffer returns early if the buffer
-        // is already active, and updating splits changes what active_buffer() returns.
-        // We need set_active_buffer to run its terminal_mode_resume logic.
-        if self.active_buffer() == id {
+        // Only needed when the closing buffer is the one the user is
+        // looking at — otherwise the current active buffer stays.
+        if closing_active {
             self.set_active_buffer(replacement_buffer);
+
+            // When the replacement is a group's hidden inner panel buffer,
+            // undo the side effects of set_active_buffer adding it to the
+            // host split's tab list and focus history.
+            if return_to_group.is_some() {
+                if let Some(vs) = self.split_view_states.get_mut(&active_split) {
+                    use crate::view::split::TabTarget;
+                    vs.open_buffers
+                        .retain(|t| *t != TabTarget::Buffer(replacement_buffer));
+                    vs.focus_history
+                        .retain(|t| *t != TabTarget::Buffer(replacement_buffer));
+                }
+            }
         }
 
         // Update all splits that are showing this buffer to show the replacement
@@ -1859,9 +1917,13 @@ impl Editor {
             view_state.remove_from_history(id);
         }
 
-        // If this was the last visible buffer, focus file explorer
-        if is_last_visible_buffer {
-            self.focus_file_explorer();
+        if closing_active {
+            if created_empty_buffer {
+                self.focus_file_explorer();
+            }
+            if let Some(group_leaf) = return_to_group {
+                self.activate_group_tab(group_leaf);
+            }
         }
 
         Ok(())

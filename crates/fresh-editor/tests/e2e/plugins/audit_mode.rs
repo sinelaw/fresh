@@ -3271,3 +3271,265 @@ fn test_review_diff_cursor_line_highlight_does_not_bleed_to_next_row() {
         screen
     );
 }
+
+/// Regression test for the drill-down close behavior: pressing `q` in the
+/// composite side-by-side diff should return focus to the review-diff
+/// buffer group, not pick some unrelated buffer or open `[No Name]`.
+#[test]
+fn test_review_diff_drill_down_close_returns_to_group() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Modify a file so the review diff has something to drill into.
+    let main_rs_path = repo.path.join("src/main.rs");
+    fs::write(&main_rs_path, "fn main() { /* changed */ }\n").expect("modify file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("changed"))
+        .unwrap();
+
+    let _ = open_review_diff(&mut harness);
+
+    // Wait until the file list shows the modified file and the diff panel
+    // header shows the per-file path — both are buffer content (not status
+    // bar) and indicate review diff has finished fetching git state.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("main.rs") && s.contains("DIFF FOR")
+        })
+        .unwrap();
+
+    // Drill down on the selected file. Enter triggers `review_drill_down`,
+    // which builds a composite side-by-side diff buffer and switches to it.
+    //
+    // IMPORTANT: wait for content that only appears when the composite is
+    // the ACTIVE buffer (rendered in the content area), not just present
+    // as a tab. `create_composite_buffer` adds the composite to the tab
+    // bar one tick before `showBuffer` makes it active. If we matched the
+    // tab title (`*Diff:`), the wait could exit while the active buffer is
+    // still the hidden `*NEW:*` helper (mode "normal"), and the subsequent
+    // `q` press would be silently ignored instead of triggering `close`
+    // from the `diff-view` mode.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            if s.contains("TypeError") {
+                panic!("TypeError during drill-down. Screen:\n{}", s);
+            }
+            // "OLD (HEAD)" is rendered by the composite buffer's content
+            // area — it proves the composite is active, not just tabbed.
+            s.contains("OLD (HEAD)")
+        })
+        .unwrap();
+
+    // Close the composite via `q` (bound by the diff-view mode).
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+
+    // After closing the composite the review-diff group should be active
+    // again — the GIT STATUS / DIFF FOR layout reappears.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("GIT STATUS") && s.contains("DIFF FOR")
+        })
+        .unwrap();
+
+    // And critically — the active buffer should NOT be a fresh [No Name]
+    // buffer. The composite was closed; the editor must NOT have created
+    // an empty replacement.
+    let final_screen = harness.screen_to_string();
+    assert!(
+        !final_screen.contains("[No Name]"),
+        "Closing the drill-down composite should return to the review-diff \
+         group, not create a [No Name] buffer. Screen:\n{}",
+        final_screen
+    );
+}
+
+/// Variant of the drill-down close test with no other visible buffers.
+///
+/// When the user has closed every other file before drilling down, closing
+/// the composite must still return focus to the review-diff group — and
+/// crucially, must NOT spawn a new `[No Name]` buffer as a fallback
+/// "replacement" for the now-removed composite. The group's active inner
+/// panel is the natural target to land on.
+#[test]
+fn test_review_diff_drill_down_close_without_other_buffers() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    fs::write(&main_rs_path, "fn main() { /* changed */ }\n").expect("modify file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    // Remember main.rs's buffer id *before* any group setup runs. After
+    // `open_file`, the active buffer is main.rs, so `active_buffer()`
+    // gives us its id.
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("changed"))
+        .unwrap();
+    let main_buffer_id = harness.editor().active_buffer();
+
+    let _ = open_review_diff(&mut harness);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("main.rs") && s.contains("DIFF FOR")
+        })
+        .unwrap();
+
+    // Drill down — wait for composite CONTENT (see comment in variant 1).
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            if s.contains("TypeError") {
+                panic!("TypeError during drill-down. Screen:\n{}", s);
+            }
+            s.contains("OLD (HEAD)")
+        })
+        .unwrap();
+
+    // Close the only other visible buffer (main.rs) while the composite
+    // is active. The composite is a valid replacement for main.rs's leaf,
+    // so no [No Name] fallback is created at this step. The subsequent
+    // close of the composite is what exercises the "no other visible
+    // buffers" branch in close_buffer_internal.
+    harness
+        .editor_mut()
+        .close_buffer(main_buffer_id)
+        .expect("closing main.rs while composite is active");
+    harness.render().unwrap();
+
+    // Close the composite via `q` (bound by the diff-view mode).
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+
+    // The review-diff group should reappear as the active target.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("GIT STATUS") && s.contains("DIFF FOR")
+        })
+        .unwrap();
+
+    // No fresh [No Name] buffer should have been created as a fallback.
+    let final_screen = harness.screen_to_string();
+    assert!(
+        !final_screen.contains("[No Name]"),
+        "Closing the drill-down composite with no other visible buffers \
+         should return to the review-diff group, not create a [No Name] \
+         fallback buffer. Screen:\n{}",
+        final_screen
+    );
+}
+
+/// Closing the last regular buffer when a group tab exists in the same
+/// split should activate the group — not create a new `[No Name]` buffer
+/// and not focus the file explorer sidebar.
+///
+/// Scenario: editor opens a file, user opens Review Diff (adds a group
+/// tab after the file tab), switches back to the file tab, then closes
+/// it. The group tab is *after* the closing buffer in `open_buffers`, so
+/// a backward-only search wouldn't find it.
+#[test]
+fn test_close_last_buffer_activates_group_tab() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Modify a file so Review Diff has content.
+    let main_rs_path = repo.path.join("src/main.rs");
+    fs::write(&main_rs_path, "fn main() { /* changed */ }\n").expect("modify file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("changed"))
+        .unwrap();
+
+    let _ = open_review_diff(&mut harness);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("main.rs") && s.contains("DIFF FOR")
+        })
+        .unwrap();
+
+    // Switch back to the file tab via Ctrl+PageUp (prev buffer).
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // The file content is visible (not the group panels).
+            s.contains("changed") && !s.contains("GIT STATUS")
+        })
+        .unwrap();
+
+    // Close it via Alt+W (close_tab).
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+
+    // The review-diff group should become active — no [No Name] fallback.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("GIT STATUS") && s.contains("DIFF FOR")
+        })
+        .unwrap();
+
+    let final_screen = harness.screen_to_string();
+    assert!(
+        !final_screen.contains("[No Name]"),
+        "Closing the last buffer when a group tab exists should activate \
+         the group, not create a [No Name] fallback. Screen:\n{}",
+        final_screen
+    );
+}
