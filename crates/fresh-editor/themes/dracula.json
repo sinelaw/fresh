@@ -60,13 +60,7 @@
     "scrollbar_thumb_hover_fg": [139, 233, 253],
     "settings_selected_bg": [80, 83, 110],
     "settings_selected_fg": [248, 248, 242],
-    "popup_selection_fg": [248, 248, 242],
-    "file_status_added_fg": [80, 250, 123],
-    "file_status_modified_fg": [255, 184, 108],
-    "file_status_deleted_fg": [255, 85, 85],
-    "file_status_renamed_fg": [139, 233, 253],
-    "file_status_untracked_fg": [241, 250, 140],
-    "file_status_conflicted_fg": [255, 121, 198]
+    "popup_selection_fg": [248, 248, 242]
   },
   "search": {
     "match_bg": [241, 250, 140],

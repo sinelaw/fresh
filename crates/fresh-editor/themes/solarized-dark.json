@@ -37,13 +37,7 @@
     "help_indicator_bg": [0, 43, 54],
     "split_separator_fg": [101, 123, 131],
     "settings_selected_bg": [38, 139, 210],
-    "settings_selected_fg": [253, 246, 227],
-    "file_status_added_fg": [133, 153, 0],
-    "file_status_modified_fg": [181, 137, 0],
-    "file_status_deleted_fg": [220, 50, 47],
-    "file_status_renamed_fg": [38, 139, 210],
-    "file_status_untracked_fg": [42, 161, 152],
-    "file_status_conflicted_fg": [211, 54, 130]
+    "settings_selected_fg": [253, 246, 227]
   },
   "search": {
     "match_bg": [181, 137, 0],

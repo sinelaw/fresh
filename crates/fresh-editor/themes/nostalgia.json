@@ -74,13 +74,7 @@
     "status_error_indicator_hover_bg": [200, 30, 30],
     "status_error_indicator_hover_fg": [255, 255, 255],
     "tab_drop_zone_bg": [0, 170, 170],
-    "tab_drop_zone_border": [255, 255, 255],
-    "file_status_added_fg": [0, 255, 0],
-    "file_status_modified_fg": [255, 255, 85],
-    "file_status_deleted_fg": [255, 85, 85],
-    "file_status_renamed_fg": [85, 255, 255],
-    "file_status_untracked_fg": [170, 170, 170],
-    "file_status_conflicted_fg": [255, 85, 255]
+    "tab_drop_zone_border": [255, 255, 255]
   },
   "search": {
     "match_bg": [170, 85, 0],
