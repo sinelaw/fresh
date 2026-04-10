@@ -1454,6 +1454,14 @@
       "when": "file_explorer"
     },
     {
+      "comment": "Escape -> Focus editor (return to editor from explorer)",
+      "key": "Escape",
+      "modifiers": [],
+      "action": "focus_editor",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
       "comment": "Alt+] -> Focus last focused editor split",
       "key": "]",
       "modifiers": ["alt"],
