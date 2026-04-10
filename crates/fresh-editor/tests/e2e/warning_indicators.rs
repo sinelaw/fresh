@@ -106,14 +106,14 @@ fn test_show_lsp_status_no_lsp() {
     harness.assert_screen_contains("No LSP server active");
 }
 
-/// Test that LSP indicator shows "LSP off" when configured but not started,
-/// and that the popup shows the server with a "Start" action.
+/// Test that the LSP status popup shows configured-but-not-running servers
+/// with a "Start" action when LSP hasn't been started yet.
 #[test]
 #[cfg_attr(
     target_os = "windows",
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
-fn test_lsp_indicator_off_shows_start_action() -> anyhow::Result<()> {
+fn test_lsp_popup_shows_start_for_stopped_server() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     let temp_dir = tempfile::tempdir()?;
@@ -122,7 +122,7 @@ fn test_lsp_indicator_off_shows_start_action() -> anyhow::Result<()> {
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {}\n")?;
 
-    // Configure LSP but with auto_start=false so it doesn't start automatically
+    // Configure LSP with auto_start=false so it doesn't start automatically
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
@@ -154,14 +154,6 @@ fn test_lsp_indicator_off_shows_start_action() -> anyhow::Result<()> {
 
     harness.open_file(&test_file)?;
     harness.render()?;
-
-    // Status bar should show "LSP off" since LSP is configured but not running
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("LSP off"),
-        "Status bar should show 'LSP off' when configured but not started. Screen:\n{}",
-        screen
-    );
 
     // Open the LSP status popup via command palette
     harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;

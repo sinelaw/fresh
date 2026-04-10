@@ -584,8 +584,8 @@ impl Editor {
         let prompt = self.prompt.clone();
         // Compute a simple buffer-aware LSP indicator.
         // Shows "LSP" when servers are running for this buffer's language,
-        // "LSP off" when LSP is configured but not running, or nothing if
-        // no LSP config exists for the language.
+        // "LSP off" when LSP is configured and the manager is active but no
+        // server is running, or nothing otherwise.
         let current_language = self
             .buffers
             .get(&self.active_buffer())
@@ -599,18 +599,21 @@ impl Editor {
             if has_running_servers {
                 "LSP".to_string()
             } else {
-                // Check if LSP is configured for this language (even if not started)
-                let has_lsp_config = self
+                // Show "LSP off" only when at least one configured server has
+                // auto_start enabled (meaning LSP *should* be running but isn't).
+                // Default configs with auto_start=false don't show an indicator
+                // to avoid cluttering the status bar for every language.
+                let has_auto_start_config = self
                     .config
                     .lsp
                     .get(&current_language)
                     .map(|cfg| {
                         cfg.as_slice()
                             .iter()
-                            .any(|c| c.enabled && !c.command.is_empty())
+                            .any(|c| c.enabled && c.auto_start && !c.command.is_empty())
                     })
                     .unwrap_or(false);
-                if has_lsp_config {
+                if has_auto_start_config {
                     "LSP off".to_string()
                 } else {
                     String::new()
