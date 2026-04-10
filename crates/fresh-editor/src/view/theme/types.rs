@@ -1130,22 +1130,34 @@ impl From<ThemeFile> for Theme {
             tab_drop_zone_border: file.ui.tab_drop_zone_border.into(),
             settings_selected_bg: file.ui.settings_selected_bg.into(),
             settings_selected_fg: file.ui.settings_selected_fg.into(),
-            file_status_added_fg: file.ui.file_status_added_fg
+            file_status_added_fg: file
+                .ui
+                .file_status_added_fg
                 .map(|c| c.into())
                 .unwrap_or_else(|| file.diagnostic.info_fg.clone().into()),
-            file_status_modified_fg: file.ui.file_status_modified_fg
+            file_status_modified_fg: file
+                .ui
+                .file_status_modified_fg
                 .map(|c| c.into())
                 .unwrap_or_else(|| file.diagnostic.warning_fg.clone().into()),
-            file_status_deleted_fg: file.ui.file_status_deleted_fg
+            file_status_deleted_fg: file
+                .ui
+                .file_status_deleted_fg
                 .map(|c| c.into())
                 .unwrap_or_else(|| file.diagnostic.error_fg.clone().into()),
-            file_status_renamed_fg: file.ui.file_status_renamed_fg
+            file_status_renamed_fg: file
+                .ui
+                .file_status_renamed_fg
                 .map(|c| c.into())
                 .unwrap_or_else(|| file.diagnostic.info_fg.clone().into()),
-            file_status_untracked_fg: file.ui.file_status_untracked_fg
+            file_status_untracked_fg: file
+                .ui
+                .file_status_untracked_fg
                 .map(|c| c.into())
                 .unwrap_or_else(|| file.diagnostic.hint_fg.clone().into()),
-            file_status_conflicted_fg: file.ui.file_status_conflicted_fg
+            file_status_conflicted_fg: file
+                .ui
+                .file_status_conflicted_fg
                 .map(|c| c.into())
                 .unwrap_or_else(|| file.diagnostic.error_fg.clone().into()),
             search_match_bg: file.search.match_bg.into(),
