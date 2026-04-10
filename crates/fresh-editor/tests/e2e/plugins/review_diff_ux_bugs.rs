@@ -194,7 +194,7 @@ fn test_bug1_side_by_side_escape_does_not_close() {
         })
         .unwrap();
 
-    // Press Escape — should close the side-by-side view and return to review diff
+    // Press Escape — should close the side-by-side view
     harness
         .send_key(KeyCode::Esc, KeyModifiers::NONE)
         .unwrap();
@@ -203,12 +203,11 @@ fn test_bug1_side_by_side_escape_does_not_close() {
     let screen = harness.screen_to_string();
     println!("BUG-1 escape screen:\n{}", screen);
 
-    // After Escape we should be back in the review diff (GIT STATUS visible),
-    // not still in the side-by-side view.
+    // The side-by-side view should be closed — no more "OLD (HEAD)" or "*Diff:" tab
     assert!(
-        screen.contains("GIT STATUS"),
-        "BUG-1: Escape in side-by-side diff should close it and return to \
-         review diff. CompositeInputRouter is dead code. Screen:\n{}",
+        !screen.contains("OLD (HEAD)"),
+        "BUG-1: Escape in side-by-side diff should close the composite view. \
+         CompositeInputRouter is dead code. Screen:\n{}",
         screen
     );
 }

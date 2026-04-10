@@ -163,6 +163,22 @@ impl Editor {
                 }
             }
 
+            // --- Composite buffer input routing ---
+            // If the active buffer is a composite buffer (side-by-side diff),
+            // route unbound keys through CompositeInputRouter before falling
+            // through to mode text-input or global bindings.
+            {
+                let active_buf = self.active_buffer();
+                let active_split = self.effective_active_split();
+                if self.is_composite_buffer(active_buf) {
+                    if let Some(handled) =
+                        self.try_route_composite_key(active_split, active_buf, &key_event)
+                    {
+                        return handled;
+                    }
+                }
+            }
+
             // Handle unbound keys for modes that want to capture input.
             //
             // Buffer-local modes with allow_text_input (e.g. search-replace-list)
@@ -4010,6 +4026,113 @@ impl Editor {
         {
             self.position_history
                 .record_movement(self.active_buffer(), *new_position, *new_anchor);
+        }
+    }
+
+    /// Route a key event through the CompositeInputRouter for a composite
+    /// buffer.  Returns `Some(Ok(()))` if the event was handled (or blocked),
+    /// `None` if the router returned `Unhandled` (let fallthrough continue).
+    fn try_route_composite_key(
+        &mut self,
+        split_id: crate::model::event::LeafId,
+        buffer_id: crate::model::event::BufferId,
+        key_event: &crossterm::event::KeyEvent,
+    ) -> Option<AnyhowResult<()>> {
+        use crate::input::composite_router::{
+            CompositeInputRouter, Direction, RoutedEvent, ScrollAction,
+        };
+
+        // We need the composite buffer and its view state to route.
+        let composite = self.composite_buffers.get(&buffer_id)?;
+        let view_state = self.composite_view_states.get(&(split_id, buffer_id))?;
+
+        let routed = CompositeInputRouter::route_key_event(composite, view_state, key_event);
+
+        match routed {
+            RoutedEvent::Unhandled => None, // let normal dispatch continue
+
+            RoutedEvent::CompositeScroll(action) => {
+                let delta = match action {
+                    ScrollAction::Up(n) => -(n as isize),
+                    ScrollAction::Down(n) => n as isize,
+                    ScrollAction::PageUp => {
+                        let h = self
+                            .split_view_states
+                            .get(&split_id)
+                            .map(|vs| vs.viewport.height as isize)
+                            .unwrap_or(20);
+                        -h.max(1)
+                    }
+                    ScrollAction::PageDown => {
+                        let h = self
+                            .split_view_states
+                            .get(&split_id)
+                            .map(|vs| vs.viewport.height as isize)
+                            .unwrap_or(20);
+                        h.max(1)
+                    }
+                    ScrollAction::ToTop => {
+                        self.composite_scroll_to(split_id, buffer_id, 0);
+                        return Some(Ok(()));
+                    }
+                    ScrollAction::ToBottom => {
+                        let rows = self
+                            .composite_buffers
+                            .get(&buffer_id)
+                            .map(|c| c.alignment.rows.len().saturating_sub(1))
+                            .unwrap_or(0);
+                        self.composite_scroll_to(split_id, buffer_id, rows);
+                        return Some(Ok(()));
+                    }
+                    ScrollAction::ToRow(row) => {
+                        self.composite_scroll_to(split_id, buffer_id, row);
+                        return Some(Ok(()));
+                    }
+                };
+                self.composite_scroll(split_id, buffer_id, delta);
+                Some(Ok(()))
+            }
+
+            RoutedEvent::SwitchPane(dir) => {
+                match dir {
+                    Direction::Next => self.composite_focus_next(split_id, buffer_id),
+                    Direction::Prev => self.composite_focus_prev(split_id, buffer_id),
+                }
+                Some(Ok(()))
+            }
+
+            RoutedEvent::NavigateHunk(dir) => {
+                match dir {
+                    Direction::Next => {
+                        self.composite_next_hunk(split_id, buffer_id);
+                    }
+                    Direction::Prev => {
+                        self.composite_prev_hunk(split_id, buffer_id);
+                    }
+                }
+                Some(Ok(()))
+            }
+
+            RoutedEvent::Close => {
+                self.close_composite_buffer(buffer_id);
+                Some(Ok(()))
+            }
+
+            RoutedEvent::Blocked(msg) => {
+                self.handle_set_status(msg.to_string());
+                Some(Ok(()))
+            }
+
+            RoutedEvent::Selection(_) | RoutedEvent::Yank => {
+                // TODO: implement visual selection and yank for composite buffers
+                Some(Ok(()))
+            }
+
+            RoutedEvent::PaneCursor(_) | RoutedEvent::ToSourceBuffer { .. } => {
+                // Cursor movement and source buffer editing are not yet
+                // dispatched here — let normal handling continue.
+                None
+            }
         }
     }
 }
