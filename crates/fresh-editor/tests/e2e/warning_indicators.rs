@@ -106,83 +106,192 @@ fn test_show_lsp_status_no_lsp() {
     harness.assert_screen_contains("No LSP server active");
 }
 
-/// Test that the LSP indicator shows simplified "LSP" text (not the old detailed format)
-/// and that clicking it opens a popup with server details and actions.
+/// Test that LSP indicator shows "LSP off" when configured but not started,
+/// and that the popup shows the server with a "Start" action.
 #[test]
-fn test_lsp_indicator_simplified_with_popup() {
-    use fresh::services::async_bridge::LspServerStatus;
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_lsp_indicator_off_shows_start_action() -> anyhow::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
 
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
 
-    // Inject a fake LSP server status for the buffer's language ("text" by default)
-    harness
-        .editor_mut()
-        .inject_lsp_server_status("text", "test-server", LspServerStatus::Running);
-    harness.render().unwrap();
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {}\n")?;
+
+    // Configure LSP but with auto_start=false so it doesn't start automatically
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: false,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::create(
+        100,
+        24,
+        crate::common::harness::HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(temp_dir.path().to_path_buf()),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Status bar should show "LSP off" since LSP is configured but not running
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("LSP off"),
+        "Status bar should show 'LSP off' when configured but not started. Screen:\n{}",
+        screen
+    );
+
+    // Open the LSP status popup via command palette
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.type_text("Show LSP Status")?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
 
     let screen = harness.screen_to_string();
 
-    // The status bar should show just "LSP" — not the old format "LSP [text: ready]"
-    assert!(
-        screen.contains(" LSP "),
-        "Status bar should contain simplified ' LSP ' indicator. Screen:\n{}",
-        screen
-    );
-    assert!(
-        !screen.contains("LSP ["),
-        "Status bar should NOT contain old detailed format 'LSP ['. Screen:\n{}",
-        screen
-    );
-
-    // Now trigger "Show LSP Status" to open the popup
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.type_text("Show LSP Status").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    let screen = harness.screen_to_string();
-
-    // The popup should show server details
+    // Popup should show the server as "not running" with a Start action
     assert!(
         screen.contains("LSP Servers"),
-        "Popup should have 'LSP Servers' title. Screen:\n{}",
+        "Popup should have title. Screen:\n{}",
         screen
     );
     assert!(
-        screen.contains("test-server"),
-        "Popup should list the server name. Screen:\n{}",
+        screen.contains("not running"),
+        "Popup should show server as not running. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("Start"),
+        "Popup should offer Start action. Screen:\n{}",
+        screen
+    );
+
+    // Dismiss and verify cleanup
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    harness.render()?;
+    harness.assert_screen_not_contains("LSP Servers");
+
+    Ok(())
+}
+
+/// Test that LSP indicator shows simplified "LSP" when running, and that
+/// the popup shows server details with Restart/Stop/View Log actions.
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_lsp_indicator_on_shows_server_actions() -> anyhow::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {}\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::create(
+        100,
+        24,
+        crate::common::harness::HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(temp_dir.path().to_path_buf()),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to be ready (fake server sends status notification)
+    harness.wait_for_screen_contains(" LSP ")?;
+
+    let screen = harness.screen_to_string();
+
+    // Should show just "LSP" — not the old "LSP [rust: ready]" format
+    assert!(
+        !screen.contains("LSP ["),
+        "Should NOT show old detailed format. Screen:\n{}",
+        screen
+    );
+
+    // Open the LSP status popup
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.type_text("Show LSP Status")?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    let screen = harness.screen_to_string();
+
+    // Popup should show the running server with management actions
+    assert!(
+        screen.contains("LSP Servers"),
+        "Popup should have title. Screen:\n{}",
         screen
     );
     assert!(
         screen.contains("Restart"),
-        "Popup should offer Restart action. Screen:\n{}",
+        "Popup should offer Restart. Screen:\n{}",
         screen
     );
     assert!(
         screen.contains("Stop"),
-        "Popup should offer Stop action. Screen:\n{}",
+        "Popup should offer Stop. Screen:\n{}",
         screen
     );
     assert!(
         screen.contains("View Log"),
-        "Popup should offer View Log action. Screen:\n{}",
+        "Popup should offer View Log. Screen:\n{}",
         screen
     );
 
-    // Dismiss the popup
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    // Dismiss
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    harness.render()?;
+    harness.assert_screen_not_contains("LSP Servers");
 
-    let screen = harness.screen_to_string();
-    assert!(
-        !screen.contains("LSP Servers"),
-        "Popup should be dismissed after Esc. Screen:\n{}",
-        screen
-    );
+    Ok(())
 }
 
 /// Test that status log buffer stays read-only after revert

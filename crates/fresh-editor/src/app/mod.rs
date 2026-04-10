@@ -2085,18 +2085,6 @@ impl Editor {
         }
     }
 
-    /// Inject an LSP server status (for testing).
-    pub fn inject_lsp_server_status(
-        &mut self,
-        language: &str,
-        server_name: &str,
-        status: crate::services::async_bridge::LspServerStatus,
-    ) {
-        self.lsp_server_statuses
-            .insert((language.to_string(), server_name.to_string()), status);
-        self.update_lsp_status_from_server_statuses();
-    }
-
     /// Enable event log streaming to a file
     pub fn enable_event_streaming<P: AsRef<Path>>(&mut self, path: P) -> AnyhowResult<()> {
         // Enable streaming for all existing event logs

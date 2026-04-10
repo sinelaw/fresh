@@ -1641,48 +1641,89 @@ impl Editor {
             },
         );
 
-        // Collect servers for the current buffer's language
-        let mut servers: Vec<(String, LspServerStatus)> = self
+        // Build a unified list of all configured servers for this language,
+        // merged with their runtime status (if running).
+        let running_statuses: std::collections::HashMap<String, LspServerStatus> = self
             .lsp_server_statuses
             .iter()
             .filter(|((lang, _), _)| lang == &language)
             .map(|((_, name), status)| (name.clone(), *status))
             .collect();
-        servers.sort_by(|a, b| a.0.cmp(&b.0));
 
-        // Build popup items
+        let configured_servers: Vec<String> = self
+            .config
+            .lsp
+            .get(&language)
+            .map(|cfg| {
+                cfg.as_slice()
+                    .iter()
+                    .filter(|c| !c.command.is_empty())
+                    .map(|c| c.display_name())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if configured_servers.is_empty() && running_statuses.is_empty() {
+            self.status_message = Some(t!("lsp.no_server_active").to_string());
+            return;
+        }
+
+        // Merge: start with configured servers, then add any running servers
+        // not in the config (shouldn't happen, but be safe).
+        let mut all_servers: Vec<String> = configured_servers;
+        for name in running_statuses.keys() {
+            if !all_servers.contains(name) {
+                all_servers.push(name.clone());
+            }
+        }
+        all_servers.sort();
+
         let mut items: Vec<crate::model::event::PopupListItemData> = Vec::new();
         let mut action_keys: Vec<(String, String)> = Vec::new();
 
-        if servers.is_empty() {
-            // No servers running — check if LSP is configured for this language
-            let configured_servers: Vec<String> = self
-                .config
-                .lsp
-                .get(&language)
-                .map(|cfg| {
-                    cfg.as_slice()
-                        .iter()
-                        .filter(|c| !c.command.is_empty())
-                        .map(|c| c.display_name())
-                        .collect()
-                })
-                .unwrap_or_default();
+        for name in &all_servers {
+            let status = running_statuses.get(name).copied();
+            let is_active = status
+                .map(|s| !matches!(s, LspServerStatus::Shutdown))
+                .unwrap_or(false);
 
-            if configured_servers.is_empty() {
-                self.status_message = Some(t!("lsp.no_server_active").to_string());
-                return;
-            }
+            // Header: server name + status
+            let (icon, label) = match status {
+                Some(LspServerStatus::Running) => ("●", "ready"),
+                Some(LspServerStatus::Error) => ("✗", "error"),
+                Some(LspServerStatus::Starting) => ("◌", "starting"),
+                Some(LspServerStatus::Initializing) => ("◌", "initializing"),
+                Some(LspServerStatus::Shutdown) | None => ("○", "not running"),
+            };
+            items.push(crate::model::event::PopupListItemData {
+                text: format!("{} {} ({})", icon, name, label),
+                detail: None,
+                icon: None,
+                data: None,
+            });
 
-            // Show configured (but not running) servers with a Start action
-            for name in &configured_servers {
+            if is_active {
+                // Restart
+                let restart_key = format!("restart:{}/{}", language, name);
                 items.push(crate::model::event::PopupListItemData {
-                    text: format!("○ {} (not running)", name),
+                    text: format!("    Restart {}", name),
                     detail: None,
                     icon: None,
-                    data: None,
+                    data: Some(restart_key.clone()),
                 });
+                action_keys.push((restart_key, format!("Restart {}", name)));
 
+                // Stop
+                let stop_key = format!("stop:{}/{}", language, name);
+                items.push(crate::model::event::PopupListItemData {
+                    text: format!("    Stop {}", name),
+                    detail: None,
+                    icon: None,
+                    data: Some(stop_key.clone()),
+                });
+                action_keys.push((stop_key, format!("Stop {}", name)));
+            } else {
+                // Start
                 let start_key = format!("start:{}", language);
                 if !action_keys.iter().any(|(k, _)| k == &start_key) {
                     items.push(crate::model::event::PopupListItemData {
@@ -1694,66 +1735,17 @@ impl Editor {
                     action_keys.push((start_key, format!("Start {}", name)));
                 }
             }
-        } else {
-            // Show running servers with their status and actions
-            for (name, status) in &servers {
-                let status_str = match status {
-                    LspServerStatus::Starting => "starting",
-                    LspServerStatus::Initializing => "initializing",
-                    LspServerStatus::Running => "ready",
-                    LspServerStatus::Error => "error",
-                    LspServerStatus::Shutdown => "shutdown",
-                };
-                let status_icon = match status {
-                    LspServerStatus::Running => "●",
-                    LspServerStatus::Error => "✗",
-                    LspServerStatus::Shutdown => "○",
-                    _ => "◌",
-                };
-
-                // Header item showing server name and status
-                items.push(crate::model::event::PopupListItemData {
-                    text: format!("{} {} ({})", status_icon, name, status_str),
-                    detail: None,
-                    icon: None,
-                    data: None,
-                });
-
-                // Restart action
-                let restart_key = format!("restart:{}/{}", language, name);
-                items.push(crate::model::event::PopupListItemData {
-                    text: format!("    Restart {}", name),
-                    detail: None,
-                    icon: None,
-                    data: Some(restart_key.clone()),
-                });
-                action_keys.push((restart_key, format!("Restart {}", name)));
-
-                // Stop action (only if not already shutdown)
-                if !matches!(status, LspServerStatus::Shutdown) {
-                    let stop_key = format!("stop:{}/{}", language, name);
-                    items.push(crate::model::event::PopupListItemData {
-                        text: format!("    Stop {}", name),
-                        detail: None,
-                        icon: None,
-                        data: Some(stop_key.clone()),
-                    });
-                    action_keys.push((stop_key, format!("Stop {}", name)));
-                }
-
-                // View log action (always available, especially useful on errors)
-                let log_key = format!("log:{}", language);
-                if !action_keys.iter().any(|(k, _)| k == &log_key) {
-                    items.push(crate::model::event::PopupListItemData {
-                        text: "    View Log".to_string(),
-                        detail: None,
-                        icon: None,
-                        data: Some(log_key.clone()),
-                    });
-                    action_keys.push((log_key, "View Log".to_string()));
-                }
-            }
         }
+
+        // View log action (always, at the end)
+        let log_key = format!("log:{}", language);
+        items.push(crate::model::event::PopupListItemData {
+            text: "    View Log".to_string(),
+            detail: None,
+            icon: None,
+            data: Some(log_key.clone()),
+        });
+        action_keys.push((log_key, "View Log".to_string()));
 
         // Store action keys for handling confirmation
         self.pending_lsp_status_popup = Some(action_keys);
