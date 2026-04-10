@@ -110,13 +110,16 @@ impl CompositeInputRouter {
         let focused_pane = composite.sources.get(view_state.focused_pane);
 
         match (event.modifiers, event.code) {
-            // Scroll navigation
-            (KeyModifiers::NONE, KeyCode::Up) | (KeyModifiers::NONE, KeyCode::Char('k')) => {
+            // Vim-style scroll navigation (j/k scroll the composite view)
+            (KeyModifiers::NONE, KeyCode::Char('k')) => {
                 RoutedEvent::CompositeScroll(ScrollAction::Up(1))
             }
-            (KeyModifiers::NONE, KeyCode::Down) | (KeyModifiers::NONE, KeyCode::Char('j')) => {
+            (KeyModifiers::NONE, KeyCode::Char('j')) => {
                 RoutedEvent::CompositeScroll(ScrollAction::Down(1))
             }
+            // Arrow keys are NOT intercepted — they fall through to the
+            // editor's native cursor movement so that cursor wrapping,
+            // horizontal scroll, and other standard behaviors continue to work.
             (KeyModifiers::CONTROL, KeyCode::Char('u')) => {
                 RoutedEvent::CompositeScroll(ScrollAction::PageUp)
             }
@@ -129,10 +132,13 @@ impl CompositeInputRouter {
             (KeyModifiers::NONE, KeyCode::PageDown) => {
                 RoutedEvent::CompositeScroll(ScrollAction::PageDown)
             }
-            (KeyModifiers::NONE, KeyCode::Home) | (KeyModifiers::NONE, KeyCode::Char('g')) => {
+            // Vim-style scroll to top/bottom (g / G)
+            // Home/End are NOT intercepted — they fall through to native
+            // cursor movement (go to line start/end).
+            (KeyModifiers::NONE, KeyCode::Char('g')) => {
                 RoutedEvent::CompositeScroll(ScrollAction::ToTop)
             }
-            (KeyModifiers::SHIFT, KeyCode::Char('G')) | (KeyModifiers::NONE, KeyCode::End) => {
+            (KeyModifiers::SHIFT, KeyCode::Char('G')) => {
                 RoutedEvent::CompositeScroll(ScrollAction::ToBottom)
             }
 
