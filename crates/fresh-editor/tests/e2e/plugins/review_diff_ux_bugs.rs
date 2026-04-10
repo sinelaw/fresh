@@ -681,52 +681,6 @@ fn test_bug7_escape_does_not_exit_file_explorer_focus() {
 }
 
 // ---------------------------------------------------------------------------
-// BUG-8: Escape not mapped to close Review Diff
-// ---------------------------------------------------------------------------
-
-/// BUG-8: Pressing Escape in Review Diff mode should close it (matching
-/// the design spec: "q/Esc | Close review diff"), but only `q` works.
-#[test]
-fn test_bug8_escape_does_not_close_review_diff() {
-    init_tracing_from_env();
-    let (repo, main_rs) = repo_with_one_modification();
-
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        120,
-        40,
-        Config::default(),
-        repo.path.clone(),
-    )
-    .unwrap();
-
-    harness.open_file(&main_rs).unwrap();
-    harness.render().unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("CHANGED"))
-        .unwrap();
-
-    let screen = open_review_diff(&mut harness);
-    assert!(screen.contains("GIT STATUS"), "Review diff should be open");
-
-    // Press Escape — should close the review diff
-    harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    let screen_after = harness.screen_to_string();
-    println!("BUG-8 screen after Escape:\n{}", screen_after);
-
-    // Review Diff should have closed — GIT STATUS should no longer be visible
-    assert!(
-        !screen_after.contains("GIT STATUS"),
-        "BUG-8: Escape should close review diff (per design spec), but \
-         the review diff is still open. Only `q` is bound. Screen:\n{}",
-        screen_after
-    );
-}
-
-// ---------------------------------------------------------------------------
 // BUG-9: Down arrow doesn't scroll viewport in side-by-side view
 // ---------------------------------------------------------------------------
 

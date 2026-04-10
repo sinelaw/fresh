@@ -1,8 +1,8 @@
 # Review Diff Mode -- Combined UX Report
 
 **Sources:**
-- `claude/audit-review-diff-mode-nGTV4` — UX Audit & Bug Report (REVIEW_DIFF_AUDIT_REPORT.md)
-- `claude/test-review-diff-mode-7xnTV` — Manual Testing Bug Report (REVIEW_DIFF_BUG_REPORT.md)
+- `claude/audit-review-diff-mode-nGTV4` -- UX Audit & Bug Report
+- `claude/test-review-diff-mode-7xnTV` -- Manual Testing Bug Report
 
 **Date:** 2026-04-10
 **Editor version:** Fresh 0.2.22 (debug build, commit 9ab13b3)
@@ -13,166 +13,185 @@
 ## Executive Summary
 
 Two independent UX testing sessions were conducted on Review Diff mode. After
-cross-referencing and deduplicating, **10 distinct bugs** were identified.
-Of these, **1 is an architectural blocker** (dead code preventing an entire
-feature surface from working), **1 is a high-severity rendering regression**
-(terminal resize), and the rest range from medium to cosmetic.
-
-The single highest-impact fix is wiring `CompositeInputRouter` into the key
-dispatch pipeline -- this one change resolves 3 of the 10 bugs simultaneously.
+cross-referencing and deduplicating, **9 distinct bugs** were identified, sorted
+below from most dangerous to least.
 
 ---
 
-## Consolidated Bug List
+## Bugs by Criticality
 
-### BUG-1: CompositeInputRouter Is Dead Code -- Side-by-Side Keyboard Navigation Completely Broken
+### Tier 1 -- Hangs / Unrecoverable State
+
+#### BUG-5: Side-by-Side Drill-Down Hangs for Deleted Files
 
 | Field | Value |
 |-------|-------|
-| **Severity** | **CRITICAL (Architectural Blocker)** |
+| **Criticality** | **HANG** |
+| **Reported in** | Bug Report #3 |
+| **E2E test** | `test_bug5_deleted_file_drill_down_hangs` |
+
+Pressing `Enter` on a deleted file shows "Loading side-by-side diff..."
+**indefinitely**. The user is stuck -- no timeout, no error, no way out except
+closing the tab. This is the only bug that produces a UI hang.
+
+**Root Cause:** `review_drill_down()` calls `editor.readFile(path)` for the
+new version. For a deleted file the file doesn't exist, `readFile` returns
+null, the function exits early but the "Loading..." status persists and the
+view is never created nor cleaned up.
+
+**Fix:** Detect deleted-file status before calling `readFile`. Show OLD content
+on the left and an empty pane on the right. Clear the loading status on error.
+
+---
+
+#### BUG-2: Terminal Resize Destroys Review Diff Layout (Unrecoverable)
+
+| Field | Value |
+|-------|-------|
+| **Criticality** | **UNRECOVERABLE CORRUPTION** |
+| **Reported in** | Bug Report #2 |
+| **E2E test** | `test_bug2_resize_destroys_review_diff_layout` |
+
+Resizing the terminal while in Review Diff mode causes the toolbar, header,
+separator, and content to disappear. The layout does **not recover** even after
+resizing back. Neither `r` (refresh) nor navigation keys restore it. Pressing
+`Home` causes diff content to render *below* the status bar.
+
+**Fix:** The resize event handler must trigger a full re-layout of all Review
+Diff panels. The design doc specifies listening to the `resize` event but this
+path is broken.
+
+---
+
+### Tier 2 -- Entire Feature Surface Broken
+
+#### BUG-1: CompositeInputRouter Is Dead Code -- Side-by-Side Keyboard Nav Broken
+
+| Field | Value |
+|-------|-------|
+| **Criticality** | **FEATURE INOPERABLE** |
 | **Reported in** | Audit #3, Audit #4, Bug Report #6 |
-| **Impact** | All vim-style keys (`j`/`k`/`Tab`/`n`/`p`/`Escape`) in side-by-side diff view are non-functional. Down arrow moves cursor but viewport doesn't scroll. Only `q` and arrow keys partially work. |
+| **E2E tests** | `test_bug1_side_by_side_vim_keys_produce_editing_disabled`, `test_bug1_side_by_side_escape_does_not_close`, `test_bug1_side_by_side_tab_does_not_switch_pane` |
 
-**Root Cause:** `CompositeInputRouter` (`crates/fresh-editor/src/input/composite_router.rs`) implements full keyboard routing for composite buffers -- vim scrolling, pane switching, hunk navigation, visual selection, yank -- but is **never called** from the application's key dispatch pipeline (`app/input.rs`). The router and all its action methods (`composite_scroll`, `composite_focus_next`, `composite_next_hunk`, etc.) are only referenced in their own module and unit tests.
+All vim-style keys (`j`/`k`/`Tab`/`n`/`p`/`Escape`) in the side-by-side diff
+view produce "Editing disabled in this buffer". Only `q` and arrow keys
+partially work.
 
-**Key events are instead routed through the standard text-editing path**, producing "Editing disabled in this buffer" errors for `j`/`k`/`Tab`/`n`/etc.
+**Root Cause:** `CompositeInputRouter` (`crates/fresh-editor/src/input/composite_router.rs`)
+implements the full routing but is **never called** from `app/input.rs`. Key
+events fall through to the standard text-editing path, which rejects them.
 
-**Fix:** In `app/input.rs`, after mode binding resolution (~line 164), check if the active buffer is a composite buffer. If so, route key events through `CompositeInputRouter::route_key_event()` and dispatch the resulting `RoutedEvent` to the appropriate `composite_*` methods.
+**Fix:** In `app/input.rs`, after mode binding resolution, check if the active
+buffer is composite. If so, route through `CompositeInputRouter::route_key_event()`
+and dispatch the `RoutedEvent`. The code is already written and unit-tested --
+it just needs to be connected.
 
-**Resolves:** BUG-1 (this bug), and contributes to fixing viewport scroll (Bug Report #6) and side-by-side hunk navigation.
-
----
-
-### BUG-2: Terminal Resize Destroys Review Diff Layout
-
-| Field | Value |
-|-------|-------|
-| **Severity** | **HIGH** |
-| **Reported in** | Bug Report #2 (unique finding) |
-| **Impact** | Resizing the terminal while in Review Diff mode causes catastrophic rendering corruption. Toolbar, header, separator, and content disappear. Layout does not recover even after resizing back. Neither `r` (refresh) nor navigation keys restore it. |
-
-**Reproduction:**
-1. Open Review Diff
-2. Resize terminal (e.g., `tmux resize-window -x 80 -y 24`)
-3. Resize back to original size
-4. Observe: menu bar, toolbar, header, separator, and diff content are all missing
-
-**Evidence:** After resize-back, only a partial file list remains visible with 22 empty lines. Pressing `Home` causes diff content to render *below* the status bar.
-
-**Fix:** The resize event handler must trigger a full re-layout of the Review Diff panels (file list, separator, diff panel, toolbar). The design doc specifies listening to the `resize` event to update `viewportWidth`/`viewportHeight` and re-render, but this is not working correctly.
+**Also resolves:** BUG-9 (viewport scroll).
 
 ---
 
-### BUG-3: File Explorer Steals Focus from Review Diff on Launch
+### Tier 3 -- Silent Failures (Features Don't Work, No Error)
+
+#### BUG-3: File Explorer Steals Focus from Review Diff on Launch
 
 | Field | Value |
 |-------|-------|
-| **Severity** | **MEDIUM** (downgraded from initial HIGH -- workaround exists) |
+| **Criticality** | **SILENT FAILURE** |
 | **Reported in** | Audit #1, Bug Report #1 |
-| **Impact** | When File Explorer is open (default state), opening Review Diff does not transfer focus. All review-mode keybindings silently fail. |
+| **E2E test** | `test_bug3_file_explorer_steals_review_diff_keys` |
 
-**Workaround:** Press `Ctrl+E` to toggle focus from File Explorer to the editor area. After this, all review-mode keys work correctly.
+When File Explorer is open (default state), opening Review Diff does not
+transfer focus. All review-mode keybindings silently fail -- `j` triggers
+the File Explorer's quick-search instead.
 
-**UX Problem:** The workaround is not discoverable. The `(Ctrl+E)` hint only appears in the explorer header *after* focus has already been manually switched away.
+**Workaround:** `Ctrl+E` toggles focus, but this is not discoverable.
 
-**Fix:** In `start_review_diff()`, after creating the buffer group, explicitly move focus to the review diff files panel. Consider calling `editor.focusBufferGroupPanel(state.groupId, 'files')` and setting `key_context` to `Normal`.
+**Fix:** In `start_review_diff()`, explicitly move focus to the review diff
+files panel after creating the buffer group.
 
 ---
 
-### BUG-4: Hunk Navigation (`n`/`p`) Non-Functional in Review Diff's Diff Panel
+#### BUG-4: Hunk Navigation (`n`/`p`) Non-Functional in Diff Panel
 
 | Field | Value |
 |-------|-------|
-| **Severity** | **MEDIUM** |
+| **Criticality** | **SILENT FAILURE** |
 | **Reported in** | Audit #5, Bug Report #4 |
-| **Impact** | Pressing `n`/`p` in the diff panel does not move the cursor to hunk headers. No error message, no visible change. |
+| **E2E test** | `test_bug4_hunk_navigation_n_does_not_move_cursor` |
 
-**Evidence:** Cursor stays at its current position after pressing `n` or `p`, even in multi-hunk files. Other review-mode keys (`c`, `s`, `u`, `d`) work from the same panel, confirming mode bindings resolve correctly.
+Pressing `n`/`p` in the diff panel does nothing. No error, no movement. Other
+review-mode keys (`c`, `s`, `u`, `d`) work from the same panel, so the mode
+bindings are resolving -- the handler logic itself is broken.
 
-**Root Cause Candidates (from both reports):**
-1. `state.hunkHeaderRows` may be empty (not populated for the current file)
-2. `state.diffCursorRow` may not update via the `cursor_moved` event when cursor is moved programmatically by `editor.setBufferCursor()`
-3. Byte offsets in `state.diffLineByteOffsets` may be stale, causing `jumpDiffCursorToRow()` to silently fail at bounds check (line 1811)
-
-**Fix:** Add debug logging to `review_next_hunk()` to trace `state.hunkHeaderRows` and `state.diffCursorRow`. Most likely requires ensuring `hunkHeaderRows` is populated during `buildDiffPanelEntries()` and that `cursor_moved` fires for plugin-driven cursor movements.
-
----
-
-### BUG-5: Side-by-Side Drill-Down Fails for Deleted Files
-
-| Field | Value |
-|-------|-------|
-| **Severity** | **MEDIUM** |
-| **Reported in** | Bug Report #3 (unique finding) |
-| **Impact** | Pressing `Enter` on a deleted file shows "Loading side-by-side diff..." indefinitely. The view never opens. |
-
-**Root Cause:** In `review_drill_down()` (~line 1666), the code calls `editor.readFile(absoluteFilePath)` for the new version. For a deleted file, the file doesn't exist on disk, so `readFile` returns `null`. The function exits early but the loading status message persists.
-
-**Fix:** Handle deleted files specially -- show OLD content on the left pane and an empty pane on the right. Also ensure the loading status is cleared on error.
+**Root Cause candidates:**
+1. `state.hunkHeaderRows` empty (not populated for current file)
+2. `state.diffCursorRow` not updated by programmatic cursor moves
+3. Stale byte offsets causing `jumpDiffCursorToRow()` to silently bail
 
 ---
 
-### BUG-6: Comments Added from Files Panel Never Display Inline
+#### BUG-6: Comments from Files Panel Never Display Inline
 
 | Field | Value |
 |-------|-------|
-| **Severity** | **MEDIUM** |
-| **Reported in** | Bug Report #5 (unique finding) |
-| **Impact** | Comments added while the files panel is focused (or on hunk header lines) are stored with no line-level info. They never render inline in the diff view, making them invisible. |
+| **Criticality** | **SILENT DATA LOSS (visual)** |
+| **Reported in** | Bug Report #5 |
+| **E2E test** | `test_bug6_comment_from_files_panel_not_visible_in_diff` |
 
-**Root Cause:** `getCurrentLineInfo()` reads text properties from the diff buffer's native cursor position. When the files panel is focused, the diff cursor is not on a line with `hunkId`/`lineType`/`oldLine`/`newLine` properties. The `pushLineComments()` function only matches comments with specific `line_type` AND matching `old_line`/`new_line`, so hunk-level comments are skipped.
+Comments added from the files panel are stored but **never rendered** inline in
+the diff view. The user thinks the comment was saved (status bar says "Comment
+added") but it's invisible. Comments ARE stored in the session file, so no
+actual data loss, but the user cannot see or interact with them in the UI.
 
-**Fix:** Either (a) render hunk-level comments in the diff panel at the hunk header position, or (b) when adding a comment from the files panel, prompt for a line reference or attach to the first hunk of the selected file.
+**Root Cause:** `getCurrentLineInfo()` returns no line-level info when the
+files panel is focused. `pushLineComments()` skips comments without
+`line_type`/`old_line`/`new_line`.
 
 ---
 
-### BUG-7: Escape Key Does Not Exit File Explorer Focus
+#### BUG-9: Down Arrow Doesn't Scroll Viewport in Side-by-Side View
 
 | Field | Value |
 |-------|-------|
-| **Severity** | **LOW** |
-| **Reported in** | Audit #2 |
-| **Impact** | Users trapped in File Explorer focus cannot escape back to Review Diff using `Escape`. |
-
-**Fix:** Add an `Escape` binding in the File Explorer context that transfers focus back to the active editor/buffer group.
-
----
-
-### BUG-8: Escape Key Not Mapped to Close Review Diff
-
-| Field | Value |
-|-------|-------|
-| **Severity** | **LOW** |
-| **Reported in** | Bug Report #7 (unique finding) |
-| **Impact** | `Escape` does nothing in review-mode. Design spec says both `q` and `Esc` should close. Only `q` is bound. |
-
-**Design Reference:** `docs/internal/review-diff-feature-restoration-plan.md` line 95: `q/Esc | Close review diff`
-
-**Fix:** Add `["Escape", "close"]` binding alongside the existing `["q", "close"]` in review-mode (audit_mode.ts ~line 2675).
-
----
-
-### BUG-9: Side-by-Side View -- Down Arrow Doesn't Scroll Viewport
-
-| Field | Value |
-|-------|-------|
-| **Severity** | **LOW** |
+| **Criticality** | **SILENT FAILURE** |
 | **Reported in** | Bug Report #6 |
-| **Impact** | In side-by-side diff, pressing `Down` updates the status bar line number but the viewport stays frozen at the top. |
+| **E2E test** | `test_bug9_side_by_side_down_arrow_no_viewport_scroll` |
 
-**Note:** This is a *symptom* of BUG-1 (CompositeInputRouter dead code). Once the router is wired in, `j`/`k` will handle scrolling. Arrow key viewport following may need a separate scroll-into-view call if not handled by the router.
+In side-by-side diff, pressing `Down` updates the status bar line number but
+the viewport stays frozen at the top.
+
+**Note:** Symptom of BUG-1. Likely resolved once CompositeInputRouter is wired.
 
 ---
 
-### BUG-10: Toolbar "Export" Label Truncated with File Explorer Open
+### Tier 4 -- UX Annoyances / Missing Keybindings
+
+#### BUG-7: Escape Does Not Exit File Explorer Focus
 
 | Field | Value |
 |-------|-------|
-| **Severity** | **COSMETIC** |
-| **Reported in** | Bug Report #8 (unique finding) |
-| **Impact** | With the File Explorer sidebar open, the toolbar's `e Export` hint is truncated to `e E` or missing. |
+| **Criticality** | **UX GAP** |
+| **Reported in** | Audit #2 |
+| **E2E test** | `test_bug7_escape_does_not_exit_file_explorer_focus` |
 
-**Fix:** Adjust toolbar rendering to either truncate labels gracefully (e.g., show abbreviated hints) or wrap to a second line, or prioritize the most important hints.
+When the File Explorer has focus, pressing Escape does nothing. Users must know
+`Ctrl+E` to escape. Minor, but compounds with BUG-3 to make the first-use
+experience confusing.
+
+---
+
+### Tier 5 -- Cosmetic
+
+#### BUG-10: Toolbar "Export" Label Truncated with File Explorer Open
+
+| Field | Value |
+|-------|-------|
+| **Criticality** | **COSMETIC** |
+| **Reported in** | Bug Report #8 |
+| **E2E test** | `test_bug10_toolbar_export_label_truncated` |
+
+With the File Explorer sidebar open, the toolbar's `e Export` hint is truncated
+to `e E` or missing entirely.
 
 ---
 
@@ -201,76 +220,16 @@ dispatch pipeline -- this one change resolves 3 of the 10 bugs simultaneously.
 
 ---
 
-## Prioritized Action Plan
+## Prioritized Fix Order
 
-### Phase 1: Architectural Blocker (Unlocks Entire Feature Surface)
-
-| Priority | Bug | Effort | Rationale |
-|----------|-----|--------|-----------|
-| **P0** | BUG-1: Wire CompositeInputRouter into key dispatch | Medium | **Highest ROI fix.** One change enables all side-by-side keyboard navigation (vim keys, pane switching, hunk nav, visual selection, yank). Also partially resolves BUG-9. The code is already written and tested -- it just needs to be connected. |
-
-**Suggested approach:**
-1. In `app/input.rs`, after mode binding resolution (~line 164), add a check: if `is_composite_buffer(active_buffer_id)`, call `CompositeInputRouter::route_key_event(key_event)`.
-2. Dispatch the returned `RoutedEvent` to the appropriate `composite_*` action method.
-3. Verify unit tests still pass and manually test `j`/`k`/`Tab`/`n`/`p`/`Escape`/`q` in side-by-side view.
-
----
-
-### Phase 2: High-Severity Rendering Bug
-
-| Priority | Bug | Effort | Rationale |
-|----------|-----|--------|-----------|
-| **P1** | BUG-2: Terminal resize destroys layout | Medium-High | Users commonly resize terminals. Unrecoverable corruption forces closing and reopening Review Diff. This is the only bug that *destroys user state* rather than just blocking a feature. |
-
-**Suggested approach:**
-1. Audit the resize event handler for the review diff buffer group.
-2. Ensure `viewportWidth`/`viewportHeight` are recalculated and a full re-layout is triggered (toolbar, header, separator, panels, status bar).
-3. Add a resize integration test that validates panel dimensions post-resize.
-
----
-
-### Phase 3: Focus & Discoverability (Quick Wins)
-
-| Priority | Bug | Effort | Rationale |
-|----------|-----|--------|-----------|
-| **P2** | BUG-3: Auto-focus on Review Diff launch | Low | One-line fix in `start_review_diff()` to call focus. Eliminates the most common first-impression frustration. |
-| **P2** | BUG-8: Add Escape binding to close Review Diff | Trivial | One-line config change. Matches design spec and user expectations. |
-| **P2** | BUG-7: Escape exits File Explorer focus | Low | Small keybinding addition. Improves focus navigation. |
-
-**These three fixes together take ~1 hour and dramatically improve first-use experience.**
-
----
-
-### Phase 4: Functional Gaps
-
-| Priority | Bug | Effort | Rationale |
-|----------|-----|--------|-----------|
-| **P3** | BUG-4: Hunk navigation (`n`/`p`) in diff panel | Medium | Core navigation feature. Requires debugging state synchronization between `hunkHeaderRows`, `diffCursorRow`, and `diffLineByteOffsets`. |
-| **P3** | BUG-5: Deleted file drill-down | Low-Medium | Edge case but important for completeness. Needs special handling for deleted-file status in `review_drill_down()`. |
-| **P3** | BUG-6: Inline comment display | Medium | Comments are stored but invisible. Fix `pushLineComments()` to render hunk-level comments, or improve `getCurrentLineInfo()` to resolve line context from the files panel. |
-
----
-
-### Phase 5: Polish
-
-| Priority | Bug | Effort | Rationale |
-|----------|-----|--------|-----------|
-| **P4** | BUG-9: Arrow key viewport scroll in side-by-side | Low | Likely resolved by BUG-1 fix. Verify and add scroll-into-view if needed. |
-| **P4** | BUG-10: Toolbar label truncation | Low | Cosmetic. Improve width calculation or add responsive label shortening. |
-
----
-
-## Recommended Execution Order
-
-```
-Week 1:  BUG-1 (P0) + BUG-3, BUG-7, BUG-8 (P2 quick wins)
-         -> Ship: side-by-side keyboard nav works, focus issues resolved
-
-Week 2:  BUG-2 (P1) + BUG-4 (P3)
-         -> Ship: resize handling fixed, hunk navigation works
-
-Week 3:  BUG-5, BUG-6 (P3) + BUG-9, BUG-10 (P4)
-         -> Ship: edge cases and polish complete
-```
-
-**Total estimated bugs: 10 | Already-working features: 17+ | Overall assessment: Review Diff is functionally solid for the happy path. The critical gap is that side-by-side keyboard navigation is entirely broken due to dead code, and resize handling is destructive. Fixing these two issues brings the feature to a shippable state.**
+| Order | Bug | Criticality | Effort | Rationale |
+|-------|-----|-------------|--------|-----------|
+| 1 | BUG-5 | Hang | Low-Med | Only hang in the feature. Deleted file drill-down traps the user. |
+| 2 | BUG-2 | Unrecoverable | Med-High | Terminal resize destroys UI with no recovery path. |
+| 3 | BUG-1 | Feature inoperable | Medium | Highest ROI: one wiring change unlocks all side-by-side keyboard nav. Also fixes BUG-9. |
+| 4 | BUG-3 | Silent failure | Low | Auto-focus on launch. One-line fix, eliminates first-use confusion. |
+| 5 | BUG-4 | Silent failure | Medium | Hunk nav is a core workflow feature. |
+| 6 | BUG-6 | Silent data loss | Medium | Comments are stored but invisible. |
+| 7 | BUG-9 | Silent failure | Low | Likely fixed by BUG-1. Verify only. |
+| 8 | BUG-7 | UX gap | Low | Escape to leave File Explorer. |
+| 9 | BUG-10 | Cosmetic | Low | Toolbar label truncation. |
