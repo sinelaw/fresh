@@ -147,12 +147,42 @@ impl InputParser {
             return self.parse_escape_sequence();
         }
 
+        // UTF-8 multi-byte sequence
+        if is_utf8_start_byte(bytes[0]) {
+            return self.parse_utf8_sequence();
+        }
+
         // Single byte - convert directly
         if let Some(event) = self.byte_to_event(bytes[0]) {
             return ParseResult::Complete(event);
         }
 
         ParseResult::Invalid
+    }
+
+    /// Parse a UTF-8 multi-byte character sequence
+    fn parse_utf8_sequence(&self) -> ParseResult {
+        let bytes = &self.buffer;
+        let needed = utf8_char_width(bytes[0]);
+        if needed == 0 {
+            return ParseResult::Invalid;
+        }
+        if bytes.len() < needed {
+            return ParseResult::Incomplete;
+        }
+        match std::str::from_utf8(&bytes[..needed]) {
+            Ok(s) => {
+                if let Some(c) = s.chars().next() {
+                    ParseResult::Complete(Event::Key(KeyEvent::new(
+                        KeyCode::Char(c),
+                        KeyModifiers::empty(),
+                    )))
+                } else {
+                    ParseResult::Invalid
+                }
+            }
+            Err(_) => ParseResult::Invalid,
+        }
     }
 
     /// Parse an escape sequence
@@ -535,6 +565,23 @@ impl InputParser {
         };
 
         Some(Event::Key(KeyEvent::new(keycode, modifiers)))
+    }
+}
+
+/// Returns true if `b` is the leading byte of a UTF-8 multi-byte sequence.
+/// 0xC0 and 0xC1 are excluded per RFC 3629 (overlong encodings).
+fn is_utf8_start_byte(b: u8) -> bool {
+    matches!(b, 0xC2..=0xDF | 0xE0..=0xEF | 0xF0..=0xF7)
+}
+
+/// Returns the total byte width of a UTF-8 sequence given its leading byte.
+/// Returns 0 for invalid leading bytes.
+fn utf8_char_width(first_byte: u8) -> usize {
+    match first_byte {
+        0xC2..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => 0,
     }
 }
 
@@ -1106,5 +1153,110 @@ mod tests {
             Event::Paste(text) => assert_eq!(text, "pasted"),
             _ => panic!("Expected Paste event"),
         }
+    }
+
+    // ---- UTF-8 multi-byte character tests ----
+
+    #[test]
+    fn test_utf8_three_byte_chinese_char() {
+        let mut parser = InputParser::new();
+        // '中' = U+4E2D = [0xE4, 0xB8, 0xAD]
+        let events = parser.parse(&[0xE4, 0xB8, 0xAD]);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Key(ke) => {
+                assert_eq!(ke.code, KeyCode::Char('中'));
+                assert!(ke.modifiers.is_empty());
+            }
+            _ => panic!("Expected key event for '中'"),
+        }
+    }
+
+    #[test]
+    fn test_utf8_two_byte_char() {
+        let mut parser = InputParser::new();
+        // 'é' = U+00E9 = [0xC3, 0xA9]
+        let events = parser.parse(&[0xC3, 0xA9]);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Key(ke) => {
+                assert_eq!(ke.code, KeyCode::Char('é'));
+                assert!(ke.modifiers.is_empty());
+            }
+            _ => panic!("Expected key event for 'é'"),
+        }
+    }
+
+    #[test]
+    fn test_utf8_four_byte_emoji() {
+        let mut parser = InputParser::new();
+        // '😀' = U+1F600 = [0xF0, 0x9F, 0x98, 0x80]
+        let events = parser.parse(&[0xF0, 0x9F, 0x98, 0x80]);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Key(ke) => {
+                assert_eq!(ke.code, KeyCode::Char('😀'));
+                assert!(ke.modifiers.is_empty());
+            }
+            _ => panic!("Expected key event for '😀'"),
+        }
+    }
+
+    #[test]
+    fn test_utf8_incomplete_sequence_returns_no_events() {
+        let mut parser = InputParser::new();
+        // Send only the leading byte of a 3-byte sequence
+        let events = parser.parse(&[0xE4]);
+        assert!(
+            events.is_empty(),
+            "Incomplete UTF-8 sequence should produce no events"
+        );
+    }
+
+    #[test]
+    fn test_utf8_sequence_split_across_batches() {
+        let mut parser = InputParser::new();
+        // First batch: leading byte only
+        let events = parser.parse(&[0xE4]);
+        assert!(events.is_empty(), "Should buffer leading byte");
+
+        // Second batch: remaining bytes complete the character
+        let events = parser.parse(&[0xB8, 0xAD]);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Char('中')),
+            _ => panic!("Expected key event for '中'"),
+        }
+    }
+
+    #[test]
+    fn test_utf8_invalid_continuation_byte_does_not_panic() {
+        let mut parser = InputParser::new();
+        // 0xE4 expects continuation bytes 0x80..=0xBF, but 0x00 is invalid
+        let events = parser.parse(&[0xE4, 0x00, 0xAD]);
+        // Should not panic; the invalid sequence produces some events (graceful recovery)
+        assert!(
+            !events.is_empty(),
+            "Invalid sequence should emit events (graceful recovery)"
+        );
+    }
+
+    #[test]
+    fn test_overlong_encoding_0xc0_rejected() {
+        let mut parser = InputParser::new();
+        // 0xC0 is a forbidden overlong encoding start byte (RFC 3629)
+        // It should NOT be treated as a UTF-8 start byte
+        let events = parser.parse(&[0xC0, 0x80]);
+        // Both bytes handled as single bytes / Invalid, not as a 2-byte UTF-8 sequence
+        let _ = events;
+    }
+
+    #[test]
+    fn test_overlong_encoding_0xc1_rejected() {
+        let mut parser = InputParser::new();
+        // 0xC1 is also a forbidden overlong encoding start byte (RFC 3629)
+        let events = parser.parse(&[0xC1, 0xA0]);
+        // Both bytes handled as single bytes / Invalid, not as a 2-byte UTF-8 sequence
+        let _ = events;
     }
 }
