@@ -1097,13 +1097,21 @@ impl Popup {
                             spans.push(Span::raw(format!("{} ", icon)));
                         }
 
-                        // Add main text with underline for clickable items
+                        // Add main text with underline for clickable items.
+                        // Split leading whitespace from the text so the underline
+                        // only appears under the visible characters.
+                        let text = &item.text;
+                        let trimmed = text.trim_start();
+                        let indent_len = text.len() - trimmed.len();
+                        if indent_len > 0 {
+                            spans.push(Span::raw(&text[..indent_len]));
+                        }
                         let text_style = if is_selected {
                             Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
                         } else {
                             Style::default().add_modifier(Modifier::UNDERLINED)
                         };
-                        spans.push(Span::styled(&item.text, text_style));
+                        spans.push(Span::styled(trimmed, text_style));
 
                         // Add detail if present
                         if let Some(detail) = &item.detail {
@@ -1112,6 +1120,10 @@ impl Popup {
                                 Style::default().fg(theme.help_separator_fg),
                             ));
                         }
+
+                        // Add an empty span without underline so ratatui doesn't
+                        // extend the underline across the remaining row padding.
+                        spans.push(Span::raw(""));
 
                         // Add right-aligned accept key hint on the selected item
                         if is_selected {

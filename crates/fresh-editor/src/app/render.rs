@@ -582,8 +582,10 @@ impl Editor {
         let status_message = self.status_message.clone();
         let plugin_status_message = self.plugin_status_message.clone();
         let prompt = self.prompt.clone();
-        // Compute a simple buffer-aware LSP indicator: just "LSP" if any LSP
-        // server is active for the current buffer's language, empty otherwise.
+        // Compute a simple buffer-aware LSP indicator.
+        // Shows "LSP" when servers are running for this buffer's language,
+        // "LSP off" when LSP is configured but not running, or nothing if
+        // no LSP config exists for the language.
         let current_language = self
             .buffers
             .get(&self.active_buffer())
@@ -591,14 +593,28 @@ impl Editor {
             .unwrap_or_default();
         let lsp_status = {
             use crate::services::async_bridge::LspServerStatus;
-            let has_servers_for_buffer =
-                self.lsp_server_statuses.iter().any(|((lang, _), status)| {
-                    lang == &current_language && !matches!(status, LspServerStatus::Shutdown)
-                });
-            if has_servers_for_buffer {
+            let has_running_servers = self.lsp_server_statuses.iter().any(|((lang, _), status)| {
+                lang == &current_language && !matches!(status, LspServerStatus::Shutdown)
+            });
+            if has_running_servers {
                 "LSP".to_string()
             } else {
-                String::new()
+                // Check if LSP is configured for this language (even if not started)
+                let has_lsp_config = self
+                    .config
+                    .lsp
+                    .get(&current_language)
+                    .map(|cfg| {
+                        cfg.as_slice()
+                            .iter()
+                            .any(|c| c.enabled && !c.command.is_empty())
+                    })
+                    .unwrap_or(false);
+                if has_lsp_config {
+                    "LSP off".to_string()
+                } else {
+                    String::new()
+                }
             }
         };
         let theme = self.theme.clone();

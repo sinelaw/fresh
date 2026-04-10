@@ -316,10 +316,25 @@ impl Editor {
     ///
     /// Action keys have the format:
     /// - `restart:<language>/<server_name>` — restart a specific server
+    /// - `start:<language>` — start LSP server(s) for a language
     /// - `stop:<language>/<server_name>` — stop a specific server
     /// - `log:<language>` — open the LSP log file for the language
     pub fn handle_lsp_status_action(&mut self, action_key: &str) {
-        if let Some(target) = action_key.strip_prefix("restart:") {
+        if let Some(language) = action_key.strip_prefix("start:") {
+            // Start/restart LSP for this language (same as the "Start/Restart LSP" command)
+            let file_path = self
+                .buffer_metadata
+                .get(&self.active_buffer())
+                .and_then(|meta| meta.file_path().cloned());
+
+            if let Some(lsp) = self.lsp.as_mut() {
+                let (_, message) = lsp.manual_restart(language, file_path.as_deref());
+                self.status_message = Some(message);
+            } else {
+                self.status_message = Some("No LSP manager available".to_string());
+            }
+            self.reopen_buffers_for_language(language);
+        } else if let Some(target) = action_key.strip_prefix("restart:") {
             // Parse language/server_name
             if let Some((language, server_name)) = target.split_once('/') {
                 let file_path = self
