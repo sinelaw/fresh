@@ -299,11 +299,25 @@ fn test_bug2_resize_destroys_review_diff_layout() {
 
     // Resize down
     harness.resize(80, 24).unwrap();
-    harness.render().unwrap();
+
+    // Process async plugin commands from the resize handler
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("GIT STATUS") || s.contains("DIFF")
+        })
+        .unwrap();
 
     // Resize back to original
     harness.resize(120, 40).unwrap();
-    harness.render().unwrap();
+
+    // Wait for the layout to be rebuilt after resize-back
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("GIT STATUS") && s.contains("DIFF")
+        })
+        .unwrap();
 
     let screen_after = harness.screen_to_string();
     println!("BUG-2 screen after resize cycle:\n{}", screen_after);

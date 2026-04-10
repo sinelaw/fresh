@@ -1238,6 +1238,8 @@ function refreshViewportDimensions(): boolean {
 function onReviewDiffResize(_data: { width: number; height: number }): void {
     if (state.reviewBufferId === null) return;
     refreshViewportDimensions();
+    // Invalidate cached diff entries — they were built for the old viewport width
+    state.diffCache = {};
     updateMagitDisplay();
 }
 registerHandler("onReviewDiffResize", onReviewDiffResize);
@@ -1663,10 +1665,17 @@ async function review_drill_down() {
     }
 
     // Read new file content (use absolute path for readFile)
-    const newContent = await editor.readFile(absoluteFilePath);
-    if (newContent === null) {
-        editor.setStatus(editor.t("status.failed_new_version"));
-        return;
+    // For deleted files the path no longer exists — use empty content
+    let newContent: string;
+    if (selectedFile.status === 'D') {
+        newContent = "";
+    } else {
+        const readResult = await editor.readFile(absoluteFilePath);
+        if (readResult === null) {
+            editor.setStatus(editor.t("status.failed_new_version"));
+            return;
+        }
+        newContent = readResult;
     }
 
     // Close any existing side-by-side views (old split-based approach)
