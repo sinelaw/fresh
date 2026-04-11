@@ -943,3 +943,316 @@ fn test_bug10_toolbar_export_label_truncated() {
         screen
     );
 }
+
+// ---------------------------------------------------------------------------
+// Additional UX tests
+// ---------------------------------------------------------------------------
+
+/// After opening an embedded terminal, opening Review Diff should still work:
+/// cursor movement and Tab panel switching should function correctly.
+#[test]
+fn test_review_diff_works_after_terminal_opened() {
+    init_tracing_from_env();
+
+    // Check PTY availability — skip test if not available
+    if portable_pty::native_pty_system()
+        .openpty(portable_pty::PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping test: PTY not available");
+        return;
+    }
+
+    let (repo, main_rs) = repo_with_one_modification();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+
+    // Open an embedded terminal via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Open Terminal").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Give terminal time to start
+    for _ in 0..20 {
+        harness.tick_and_render().unwrap();
+    }
+
+    // Now open Review Diff
+    let screen = open_review_diff(&mut harness);
+    assert!(
+        screen.contains("GIT STATUS"),
+        "Review Diff should open successfully after terminal. Screen:\n{}",
+        screen
+    );
+
+    // Tab should switch focus between file list and diff panels
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    for _ in 0..5 {
+        harness.tick_and_render().unwrap();
+    }
+    let screen_after_tab = harness.screen_to_string();
+    // After Tab, either the files or diff panel should be focused.
+    // Verify we're still in Review Diff (not switched to terminal tab).
+    assert!(
+        screen_after_tab.contains("Review Diff") || screen_after_tab.contains("GIT STATUS"),
+        "Tab in Review Diff mode should toggle panels, not switch tabs. Screen:\n{}",
+        screen_after_tab
+    );
+
+    // Down arrow should work for navigation (file list selection)
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    // Verify the screen didn't produce an error
+    let screen_after_move = harness.screen_to_string();
+    assert!(
+        !screen_after_move.contains("TypeError") && !screen_after_move.contains("Error:"),
+        "Cursor movement should not produce errors after terminal was opened. Screen:\n{}",
+        screen_after_move
+    );
+}
+
+/// When the file list in Review Diff has more files than the visible height,
+/// moving down/up beyond the view should auto-scroll.
+#[test]
+fn test_review_diff_file_list_auto_scrolls() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Create many modified files to exceed the viewport
+    for i in 0..20 {
+        let path = repo.path.join(format!("src/mod_{}.rs", i));
+        fs::write(&path, format!("fn func_{}() {{}}\n", i)).unwrap();
+    }
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        20, // Short viewport to force scrolling
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let first_file = repo.path.join("src/mod_0.rs");
+    harness.open_file(&first_file).unwrap();
+    harness.render().unwrap();
+
+    let _screen = open_review_diff(&mut harness);
+
+    // Record the initial file list content
+    let screen_initial = harness.screen_to_string();
+    println!("File list scroll test: initial screen (20 files, 20 rows)");
+
+    // Move down many times to go past the visible area in the files panel
+    for _ in 0..15 {
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    let screen_after = harness.screen_to_string();
+    println!("File list scroll test: after 15x Down");
+
+    // The visible file list content should have changed (scrolled)
+    // Compare a few content lines — if auto-scroll works, we should see
+    // different file names than initially.
+    let initial_lines: Vec<&str> = screen_initial.lines().take(15).collect();
+    let after_lines: Vec<&str> = screen_after.lines().take(15).collect();
+
+    assert_ne!(
+        initial_lines, after_lines,
+        "File list should auto-scroll when moving cursor past visible area. \
+         The visible content didn't change after 15 Down presses."
+    );
+}
+
+/// In side-by-side diff view, next hunk (n) / prev hunk (p) should work
+/// even after the user has moved the cursor with arrow keys.
+#[test]
+#[ignore = "n/p hunk navigation not yet wired for composite buffer (side-by-side) view"]
+fn test_side_by_side_hunk_nav_after_cursor_movement() {
+    init_tracing_from_env();
+    let (repo, main_rs) = repo_with_multi_hunk_file();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        45,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("HUNK_ONE"))
+        .unwrap();
+
+    let _screen = open_review_diff(&mut harness);
+
+    // Drill down into side-by-side view
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("*Diff:") && !s.contains("Loading side-by-side diff")
+        })
+        .unwrap();
+
+    // Move cursor around with arrow keys
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    // Record position after arrow movement
+    let screen_after_arrows = harness.screen_to_string();
+
+    // Press 'n' for next hunk — should still work after cursor movement
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+    }
+
+    let screen_after_n = harness.screen_to_string();
+
+    // Press 'p' for previous hunk
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+    }
+
+    let screen_after_p = harness.screen_to_string();
+
+    // Verify that n and p didn't produce errors and the screen changed
+    assert!(
+        !screen_after_n.contains("Error"),
+        "Next hunk should not produce errors after cursor movement"
+    );
+    assert!(
+        !screen_after_p.contains("Error"),
+        "Prev hunk should not produce errors after cursor movement"
+    );
+    // Either the status bar line number changed or the visible content shifted
+    assert!(
+        screen_after_n != screen_after_arrows || screen_after_p != screen_after_n,
+        "Hunk navigation should produce visible changes in the side-by-side view"
+    );
+}
+
+/// Next/prev hunk should work immediately after opening the side-by-side view
+/// (which initially jumps to some hunk via initialFocusHunk).
+#[test]
+#[ignore = "n/p hunk navigation not yet wired for composite buffer (side-by-side) view"]
+fn test_side_by_side_hunk_nav_immediately_after_open() {
+    init_tracing_from_env();
+    let (repo, main_rs) = repo_with_multi_hunk_file();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        45,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("HUNK_ONE"))
+        .unwrap();
+
+    let _screen = open_review_diff(&mut harness);
+
+    // Drill down into side-by-side view
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("*Diff:") && !s.contains("Loading side-by-side diff")
+        })
+        .unwrap();
+
+    let screen_initial = harness.screen_to_string();
+
+    // Press 'n' immediately (no cursor movement first)
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+    }
+
+    let screen_after_n = harness.screen_to_string();
+    assert!(
+        !screen_after_n.contains("Error"),
+        "Pressing 'n' immediately after opening side-by-side view should not error. Screen:\n{}",
+        screen_after_n
+    );
+
+    // Press 'p' to go back
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+    }
+
+    let screen_after_p = harness.screen_to_string();
+    assert!(
+        !screen_after_p.contains("Error"),
+        "Pressing 'p' after 'n' in side-by-side view should not error. Screen:\n{}",
+        screen_after_p
+    );
+
+    // At least one of n/p should have changed the visible content
+    // (proving the navigation is functional, not just silently ignored)
+    let initial_lines: Vec<&str> = screen_initial.lines().take(30).collect();
+    let after_n_lines: Vec<&str> = screen_after_n.lines().take(30).collect();
+    let after_p_lines: Vec<&str> = screen_after_p.lines().take(30).collect();
+
+    let n_changed = initial_lines != after_n_lines;
+    let p_changed = after_n_lines != after_p_lines;
+    assert!(
+        n_changed || p_changed,
+        "Hunk navigation should produce visible changes. \
+         Neither 'n' nor 'p' changed the screen content."
+    );
+}
