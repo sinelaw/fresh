@@ -887,8 +887,40 @@ impl SettingsState {
             KeyCode::Esc => {
                 self.stop_editing();
             }
+            KeyCode::BackTab => {
+                // Reverse cycle: Included → Available → exit editing
+                let should_exit = self
+                    .with_current_dual_list_mut(|dl| {
+                        if dl.active_column == DualListColumn::Included {
+                            dl.active_column = DualListColumn::Available;
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .unwrap_or(false);
+                if should_exit {
+                    self.stop_editing();
+                    return InputResult::Consumed;
+                }
+            }
             KeyCode::Tab => {
-                self.with_current_dual_list_mut(|dl| dl.switch_column());
+                // Forward cycle: Available → Included → exit editing
+                let should_exit = self
+                    .with_current_dual_list_mut(|dl| {
+                        if dl.active_column == DualListColumn::Available {
+                            dl.active_column = DualListColumn::Included;
+                            false
+                        } else {
+                            dl.active_column = DualListColumn::Available;
+                            true
+                        }
+                    })
+                    .unwrap_or(false);
+                if should_exit {
+                    self.stop_editing();
+                    return InputResult::Consumed;
+                }
             }
             KeyCode::Up => {
                 if event.modifiers.contains(KeyModifiers::CONTROL) {
@@ -906,19 +938,25 @@ impl SettingsState {
                     self.with_current_dual_list_mut(|dl| dl.cursor_down());
                 }
             }
-            KeyCode::Enter => {
+            KeyCode::Right => {
+                // Add selected available item to included
                 let changed = self
-                    .with_current_dual_list_mut(|dl| match dl.active_column {
-                        DualListColumn::Available => dl.add_selected(),
-                        DualListColumn::Included => dl.remove_selected(),
+                    .with_current_dual_list_mut(|dl| {
+                        if dl.active_column == DualListColumn::Available {
+                            dl.add_selected();
+                            true
+                        } else {
+                            false
+                        }
                     })
-                    .is_some();
+                    .unwrap_or(false);
                 if changed {
                     self.on_value_changed();
                     self.refresh_dual_list_sibling();
                 }
             }
-            KeyCode::Delete => {
+            KeyCode::Left => {
+                // Remove selected included item back to available
                 let changed = self
                     .with_current_dual_list_mut(|dl| {
                         if dl.active_column == DualListColumn::Included {
@@ -929,6 +967,19 @@ impl SettingsState {
                         }
                     })
                     .unwrap_or(false);
+                if changed {
+                    self.on_value_changed();
+                    self.refresh_dual_list_sibling();
+                }
+            }
+            KeyCode::Enter => {
+                // Enter also adds/removes based on active column
+                let changed = self
+                    .with_current_dual_list_mut(|dl| match dl.active_column {
+                        DualListColumn::Available => dl.add_selected(),
+                        DualListColumn::Included => dl.remove_selected(),
+                    })
+                    .is_some();
                 if changed {
                     self.on_value_changed();
                     self.refresh_dual_list_sibling();

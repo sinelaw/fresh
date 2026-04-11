@@ -34,10 +34,11 @@ pub fn render_dual_list_partial(
 
     let indent = 2u16;
     // Layout: indent | col1 | gap | buttons | gap | col2
-    let btn_width = 3u16; // [>] etc
-    let gap = 1u16;
+    let btn_width = 3u16;
+    let gap = 2u16;
     let usable = area.width.saturating_sub(indent + btn_width + gap * 2);
-    let col_width = usable / 2;
+    // Cap column width so the two lists stay compact and visually balanced
+    let col_width = (usable / 2).min(28);
 
     let available_items = state.available_items();
     let included_items = state.included_items();
@@ -47,6 +48,7 @@ pub fn render_dual_list_partial(
         ..Default::default()
     };
 
+    let is_focused = state.focus == FocusState::Focused;
     let mut y = area.y;
     let mut content_row = 0u16;
 
@@ -66,14 +68,29 @@ pub fn render_dual_list_partial(
 
     if content_row >= skip_rows && y < area.y + area.height {
         let header_style = Style::default().fg(colors.header);
+        // Underline the active column header to indicate which column has focus
+        let avail_style = if is_focused && state.active_column == DualListColumn::Available {
+            Style::default()
+                .fg(colors.focused_fg)
+                .add_modifier(ratatui::style::Modifier::UNDERLINED)
+        } else {
+            header_style
+        };
+        let incl_style = if is_focused && state.active_column == DualListColumn::Included {
+            Style::default()
+                .fg(colors.focused_fg)
+                .add_modifier(ratatui::style::Modifier::UNDERLINED)
+        } else {
+            header_style
+        };
         let avail_header = format!("{:width$}", "Available", width = col_width as usize);
         let incl_header = format!("{:width$}", "Included", width = col_width as usize);
 
         let line = Line::from(vec![
             Span::raw(" ".repeat(indent as usize)),
-            Span::styled(avail_header, header_style),
+            Span::styled(avail_header, avail_style),
             Span::raw(" ".repeat((gap + btn_width + gap) as usize)),
-            Span::styled(incl_header, header_style),
+            Span::styled(incl_header, incl_style),
         ]);
         frame.render_widget(Paragraph::new(line), Rect::new(area.x, y, area.width, 1));
         y += 1;
@@ -81,7 +98,6 @@ pub fn render_dual_list_partial(
     content_row += 1;
 
     let body_rows = state.body_rows();
-    let is_focused = state.focus == FocusState::Focused;
 
     for row_idx in 0..body_rows {
         if y >= area.y + area.height {
@@ -120,27 +136,33 @@ pub fn render_dual_list_partial(
             });
         }
 
-        // Fixed-position action buttons: up to 4 vertically-stacked buttons between the columns
+        // Action buttons between columns: add/remove transfer items, up/down reorder
         let btn_style = Style::default().fg(colors.button);
+        let dim_style = Style::default().fg(colors.disabled);
         match row_idx {
             0 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(Paragraph::new(Span::styled("[>]", btn_style)), btn_area);
+                frame.render_widget(Paragraph::new(Span::styled(" → ", btn_style)), btn_area);
                 layout.add_button = Some(btn_area);
             }
             1 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(Paragraph::new(Span::styled("[<]", btn_style)), btn_area);
+                frame.render_widget(Paragraph::new(Span::styled(" ← ", btn_style)), btn_area);
                 layout.remove_button = Some(btn_area);
             }
+            // Separator row between transfer and reorder buttons
             2 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(Paragraph::new(Span::styled("[^]", btn_style)), btn_area);
-                layout.move_up_button = Some(btn_area);
+                frame.render_widget(Paragraph::new(Span::styled("───", dim_style)), btn_area);
             }
             3 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(Paragraph::new(Span::styled("[v]", btn_style)), btn_area);
+                frame.render_widget(Paragraph::new(Span::styled(" ↑ ", btn_style)), btn_area);
+                layout.move_up_button = Some(btn_area);
+            }
+            4 => {
+                let btn_area = Rect::new(btn_x, y, btn_width, 1);
+                frame.render_widget(Paragraph::new(Span::styled(" ↓ ", btn_style)), btn_area);
                 layout.move_down_button = Some(btn_area);
             }
             _ => {}

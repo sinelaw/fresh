@@ -873,7 +873,10 @@ fn render_setting_item_pure(
         // the label row — per-entry highlighting is handled by the control itself
         let is_multi_row_control = matches!(
             item.control,
-            SettingControl::Map(_) | SettingControl::ObjectArray(_) | SettingControl::TextList(_)
+            SettingControl::Map(_)
+                | SettingControl::ObjectArray(_)
+                | SettingControl::TextList(_)
+                | SettingControl::DualList(_)
         );
         let highlight_rows = if is_multi_row_control && skip_top == 0 {
             1 // Only the label/name row

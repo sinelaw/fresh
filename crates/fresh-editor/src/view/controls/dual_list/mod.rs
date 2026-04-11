@@ -178,11 +178,13 @@ impl DualListState {
         };
     }
 
-    /// Number of visible body rows (max of available and included, min 1)
+    /// Number of visible body rows (max of available, included, and button
+    /// count so all action buttons are always reachable)
     pub fn body_rows(&self) -> usize {
         let avail = self.available_items().len();
         let incl = self.included.len();
-        avail.max(incl).max(1)
+        // 5 = add + remove + separator + up + down
+        avail.max(incl).max(5)
     }
 }
 
