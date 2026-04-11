@@ -959,6 +959,26 @@ function refreshFilesPanelOnly(): void {
     editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
 }
 
+/**
+ * Compute the 0-indexed line in the files panel buffer that corresponds to
+ * `state.selectedIndex`. The panel starts with one header line ("GIT STATUS")
+ * followed by the lines from `buildFileListLines()` (section headers + files).
+ */
+function selectedFilePanelLine(): number {
+    let line = 1; // skip the "GIT STATUS" header
+    let lastCategory: string | undefined;
+    for (let i = 0; i < state.files.length; i++) {
+        const f = state.files[i];
+        if (f.category !== lastCategory) {
+            lastCategory = f.category;
+            line++; // section header line
+        }
+        if (i === state.selectedIndex) return line;
+        line++;
+    }
+    return line;
+}
+
 function selectFile(newIndex: number) {
     if (newIndex < 0 || newIndex >= state.files.length) return;
     if (newIndex === state.selectedIndex) return;
@@ -966,6 +986,12 @@ function selectFile(newIndex: number) {
     state.diffCursorRow = 1; // diff panel cursor returns to the top of the new file
     refreshFilesPanelOnly();
     refreshDiffPanelOnly();
+
+    // Scroll the files panel so the selected entry stays visible.
+    const filesId = state.panelBuffers["files"];
+    if (filesId !== undefined) {
+        editor.scrollBufferToLine(filesId, selectedFilePanelLine());
+    }
 }
 
 function review_nav_up() {
@@ -2396,10 +2422,16 @@ function on_review_buffer_activated(data: { buffer_id: number }): void {
 registerHandler("on_review_buffer_activated", on_review_buffer_activated);
 
 /**
- * React to native cursor movement inside the diff panel — the only panel
- * that has a visible native cursor. The handler keeps `state.diffCursorRow`
- * in sync (used by `n`/`p` hunk navigation) and re-paints the cursor-line
- * highlight overlay.
+ * React to native cursor movement inside review panels.
+ *
+ * Diff panel: keeps `state.diffCursorRow` in sync and re-paints the
+ * cursor-line highlight overlay.
+ *
+ * Files panel: when the cursor moves (e.g. via mouse click), read the
+ * `fileIndex` text property at the new position and select that file.
+ * This makes click-to-select work even though the files panel hides its
+ * native cursor (`show_cursors = false` blocks keyboard-driven movement
+ * but mouse clicks still move the cursor).
  */
 function on_review_cursor_moved(data: {
     buffer_id: number;
@@ -2410,6 +2442,19 @@ function on_review_cursor_moved(data: {
     text_properties: Array<Record<string, unknown>>;
 }): void {
     if (state.groupId === null) return;
+
+    // --- Files panel: click-to-select ---
+    if (data.buffer_id === state.panelBuffers["files"]) {
+        for (const props of data.text_properties) {
+            if (props["type"] === "file" && typeof props["fileIndex"] === "number") {
+                selectFile(props["fileIndex"] as number);
+                return;
+            }
+        }
+        return;
+    }
+
+    // --- Diff panel: track cursor row ---
     if (data.buffer_id !== state.panelBuffers["diff"]) return;
     state.diffCursorRow = data.line;
     applyCursorLineOverlay('diff');
