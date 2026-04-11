@@ -3347,6 +3347,9 @@ where
                 }
             }
             CrosstermEvent::Resize(w, h) => {
+                // Resize the ratatui terminal's internal buffers so the
+                // next draw() frame uses the correct dimensions.
+                let _ = terminal.resize(ratatui::layout::Rect::new(0, 0, w, h));
                 editor.resize(w, h);
                 needs_render = true;
             }
