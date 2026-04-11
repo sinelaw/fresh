@@ -1485,24 +1485,11 @@ impl Editor {
         // Ensure cursor is at a valid UTF-8 character boundary (without moving if already valid)
         let new_cursor_pos = state.buffer.snap_to_char_boundary(clamped_pos);
 
-        // Update cursor AND viewport in the split view state that has this buffer.
-        // We must update both `keyed_states` (per-buffer saved cursor) AND the
-        // split-level `cursors` (used by the rendering pipeline and status bar).
-        // We also clamp the viewport's top_byte so it doesn't point past the
-        // new buffer content — a stale top_byte causes the panel to render blank.
+        // Update cursor in the split view state that has this buffer
         for view_state in self.split_view_states.values_mut() {
             if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
                 buf_state.cursors.primary_mut().position = new_cursor_pos;
                 buf_state.cursors.primary_mut().anchor = None;
-            }
-            // Also update the split-level cursor if this buffer is active
-            if view_state.active_buffer == buffer_id {
-                view_state.cursors.primary_mut().position = new_cursor_pos;
-                view_state.cursors.primary_mut().anchor = None;
-                // Clamp viewport top_byte to buffer length
-                if view_state.viewport.top_byte > new_len {
-                    view_state.viewport.top_byte = 0;
-                }
             }
         }
 

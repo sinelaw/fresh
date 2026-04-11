@@ -464,7 +464,9 @@ fn test_bug4_hunk_navigation_n_does_not_move_cursor() {
         ln_after > ln_before,
         "BUG-4: Pressing `n` should move cursor forward to next hunk. \
          Ln before={}, Ln after={}. Screen:\n{}",
-        ln_before, ln_after, screen_after_n
+        ln_before,
+        ln_after,
+        screen_after_n
     );
 
     // Press n again to reach the second hunk, then p to go back
@@ -475,7 +477,8 @@ fn test_bug4_hunk_navigation_n_does_not_move_cursor() {
         harness.tick_and_render().unwrap();
     }
     let screen_at_second = harness.screen_to_string();
-    let ln_second = extract_ln(&screen_at_second).expect("status bar should show Ln at second hunk");
+    let ln_second =
+        extract_ln(&screen_at_second).expect("status bar should show Ln at second hunk");
 
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::NONE)
@@ -489,7 +492,8 @@ fn test_bug4_hunk_navigation_n_does_not_move_cursor() {
         ln_after_p < ln_second,
         "BUG-4: Pressing `p` should move cursor back to previous hunk. \
          Ln at_second={}, Ln after_p={}",
-        ln_second, ln_after_p
+        ln_second,
+        ln_after_p
     );
 }
 
@@ -575,7 +579,8 @@ fn test_set_buffer_cursor_updates_status_bar_for_panel_buffer() {
         ln_after > ln_at_home,
         "Hunk navigation should move the cursor forward. \
          Ln at_home={}, Ln after_2n={}",
-        ln_at_home, ln_after
+        ln_at_home,
+        ln_after
     );
 }
 
@@ -1021,9 +1026,7 @@ fn test_review_diff_works_after_terminal_opened() {
     );
 
     // Down arrow should work for navigation (file list selection)
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     // Verify the screen didn't produce an error
     let screen_after_move = harness.screen_to_string();
@@ -1071,9 +1074,7 @@ fn test_review_diff_file_list_auto_scrolls() {
 
     // Move down many times to go past the visible area in the files panel
     for _ in 0..15 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
     }
 
@@ -1093,166 +1094,3 @@ fn test_review_diff_file_list_auto_scrolls() {
     );
 }
 
-/// In side-by-side diff view, next hunk (n) / prev hunk (p) should work
-/// even after the user has moved the cursor with arrow keys.
-#[test]
-#[ignore = "n/p hunk navigation not yet wired for composite buffer (side-by-side) view"]
-fn test_side_by_side_hunk_nav_after_cursor_movement() {
-    init_tracing_from_env();
-    let (repo, main_rs) = repo_with_multi_hunk_file();
-
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        160,
-        45,
-        Config::default(),
-        repo.path.clone(),
-    )
-    .unwrap();
-
-    harness.open_file(&main_rs).unwrap();
-    harness.render().unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("HUNK_ONE"))
-        .unwrap();
-
-    let _screen = open_review_diff(&mut harness);
-
-    // Drill down into side-by-side view
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("*Diff:") && !s.contains("Loading side-by-side diff")
-        })
-        .unwrap();
-
-    // Move cursor around with arrow keys
-    for _ in 0..3 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
-        harness.render().unwrap();
-    }
-
-    // Record position after arrow movement
-    let screen_after_arrows = harness.screen_to_string();
-
-    // Press 'n' for next hunk — should still work after cursor movement
-    harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
-        .unwrap();
-    for _ in 0..10 {
-        harness.tick_and_render().unwrap();
-    }
-
-    let screen_after_n = harness.screen_to_string();
-
-    // Press 'p' for previous hunk
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::NONE)
-        .unwrap();
-    for _ in 0..10 {
-        harness.tick_and_render().unwrap();
-    }
-
-    let screen_after_p = harness.screen_to_string();
-
-    // Verify that n and p didn't produce errors and the screen changed
-    assert!(
-        !screen_after_n.contains("Error"),
-        "Next hunk should not produce errors after cursor movement"
-    );
-    assert!(
-        !screen_after_p.contains("Error"),
-        "Prev hunk should not produce errors after cursor movement"
-    );
-    // Either the status bar line number changed or the visible content shifted
-    assert!(
-        screen_after_n != screen_after_arrows || screen_after_p != screen_after_n,
-        "Hunk navigation should produce visible changes in the side-by-side view"
-    );
-}
-
-/// Next/prev hunk should work immediately after opening the side-by-side view
-/// (which initially jumps to some hunk via initialFocusHunk).
-#[test]
-#[ignore = "n/p hunk navigation not yet wired for composite buffer (side-by-side) view"]
-fn test_side_by_side_hunk_nav_immediately_after_open() {
-    init_tracing_from_env();
-    let (repo, main_rs) = repo_with_multi_hunk_file();
-
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        160,
-        45,
-        Config::default(),
-        repo.path.clone(),
-    )
-    .unwrap();
-
-    harness.open_file(&main_rs).unwrap();
-    harness.render().unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("HUNK_ONE"))
-        .unwrap();
-
-    let _screen = open_review_diff(&mut harness);
-
-    // Drill down into side-by-side view
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("*Diff:") && !s.contains("Loading side-by-side diff")
-        })
-        .unwrap();
-
-    let screen_initial = harness.screen_to_string();
-
-    // Press 'n' immediately (no cursor movement first)
-    harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
-        .unwrap();
-    for _ in 0..10 {
-        harness.tick_and_render().unwrap();
-    }
-
-    let screen_after_n = harness.screen_to_string();
-    assert!(
-        !screen_after_n.contains("Error"),
-        "Pressing 'n' immediately after opening side-by-side view should not error. Screen:\n{}",
-        screen_after_n
-    );
-
-    // Press 'p' to go back
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::NONE)
-        .unwrap();
-    for _ in 0..10 {
-        harness.tick_and_render().unwrap();
-    }
-
-    let screen_after_p = harness.screen_to_string();
-    assert!(
-        !screen_after_p.contains("Error"),
-        "Pressing 'p' after 'n' in side-by-side view should not error. Screen:\n{}",
-        screen_after_p
-    );
-
-    // At least one of n/p should have changed the visible content
-    // (proving the navigation is functional, not just silently ignored)
-    let initial_lines: Vec<&str> = screen_initial.lines().take(30).collect();
-    let after_n_lines: Vec<&str> = screen_after_n.lines().take(30).collect();
-    let after_p_lines: Vec<&str> = screen_after_p.lines().take(30).collect();
-
-    let n_changed = initial_lines != after_n_lines;
-    let p_changed = after_n_lines != after_p_lines;
-    assert!(
-        n_changed || p_changed,
-        "Hunk navigation should produce visible changes. \
-         Neither 'n' nor 'p' changed the screen content."
-    );
-}

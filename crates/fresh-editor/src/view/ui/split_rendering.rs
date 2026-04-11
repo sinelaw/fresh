@@ -1059,22 +1059,7 @@ impl SplitRenderer {
                         // updated synchronously during rendering.
                         if let Some(svs) = split_view_states.as_deref_mut() {
                             if let Some(vs) = svs.get_mut(inner_leaf) {
-                                let size_changed = vs.viewport.width != inner_rect.width
-                                    || vs.viewport.height != inner_rect.height;
                                 vs.viewport.resize(inner_rect.width, inner_rect.height);
-                                // After a terminal resize, the panel content may
-                                // have been built for the old viewport width. If
-                                // top_byte points past the (possibly shorter) new
-                                // content, the panel renders blank. Reset to the
-                                // top so at least something is visible until the
-                                // plugin sends fresh content.
-                                if size_changed && vs.viewport.top_byte > 0 {
-                                    if let Some(buf) = buffers.get(inner_buffer) {
-                                        if vs.viewport.top_byte >= buf.buffer.len() {
-                                            vs.viewport.top_byte = 0;
-                                        }
-                                    }
-                                }
                             }
                         }
                         visible_buffers.push((
