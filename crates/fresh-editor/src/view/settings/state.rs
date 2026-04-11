@@ -1505,11 +1505,21 @@ impl SettingsState {
                 self.editing_text = true;
             }
         }
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::DualList(ref mut dl) = item.control {
+                dl.editing = true;
+            }
+        }
     }
 
     /// Stop text editing mode
     pub fn stop_editing(&mut self) {
         self.editing_text = false;
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::DualList(ref mut dl) = item.control {
+                dl.editing = false;
+            }
+        }
     }
 
     /// Check if the current item is editable (TextList, DualList, Text, Map, or Json)

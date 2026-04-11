@@ -46,6 +46,8 @@ pub struct DualListState {
     pub label: String,
     /// Focus state
     pub focus: FocusState,
+    /// Whether the control is in active editing mode (Enter was pressed)
+    pub editing: bool,
 }
 
 impl DualListState {
@@ -60,6 +62,7 @@ impl DualListState {
             included_cursor: 0,
             label: label.into(),
             focus: FocusState::Normal,
+            editing: false,
         }
     }
 

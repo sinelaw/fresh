@@ -883,67 +883,40 @@ impl SettingsState {
     /// Handle input when editing a DualList control
     fn handle_dual_list_editing_input(&mut self, event: &KeyEvent) -> InputResult {
         use crate::view::controls::DualListColumn;
+        let shift = event.modifiers.contains(KeyModifiers::SHIFT);
         match event.code {
             KeyCode::Esc => {
                 self.stop_editing();
             }
-            KeyCode::BackTab => {
-                // Reverse cycle: Included → Available → exit editing
-                let should_exit = self
-                    .with_current_dual_list_mut(|dl| {
-                        if dl.active_column == DualListColumn::Included {
-                            dl.active_column = DualListColumn::Available;
-                            false
-                        } else {
-                            true
-                        }
-                    })
-                    .unwrap_or(false);
-                if should_exit {
-                    self.stop_editing();
-                    return InputResult::Consumed;
-                }
+            // Tab/BackTab propagate to the settings panel (exit editing)
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.stop_editing();
+                // Return Ignored so the settings panel handles Tab/BackTab
+                return InputResult::Ignored;
             }
-            KeyCode::Tab => {
-                // Forward cycle: Available → Included → exit editing
-                let should_exit = self
-                    .with_current_dual_list_mut(|dl| {
-                        if dl.active_column == DualListColumn::Available {
-                            dl.active_column = DualListColumn::Included;
-                            false
-                        } else {
-                            dl.active_column = DualListColumn::Available;
-                            true
-                        }
-                    })
-                    .unwrap_or(false);
-                if should_exit {
-                    self.stop_editing();
-                    return InputResult::Consumed;
-                }
+            KeyCode::Up if shift => {
+                self.with_current_dual_list_mut(|dl| dl.move_up());
+                self.on_value_changed();
+            }
+            KeyCode::Down if shift => {
+                self.with_current_dual_list_mut(|dl| dl.move_down());
+                self.on_value_changed();
             }
             KeyCode::Up => {
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.with_current_dual_list_mut(|dl| dl.move_up());
-                    self.on_value_changed();
-                } else {
-                    self.with_current_dual_list_mut(|dl| dl.cursor_up());
-                }
+                self.with_current_dual_list_mut(|dl| dl.cursor_up());
             }
             KeyCode::Down => {
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.with_current_dual_list_mut(|dl| dl.move_down());
-                    self.on_value_changed();
-                } else {
-                    self.with_current_dual_list_mut(|dl| dl.cursor_down());
-                }
+                self.with_current_dual_list_mut(|dl| dl.cursor_down());
             }
-            KeyCode::Right => {
-                // Add selected available item to included
+            KeyCode::Right if shift => {
+                // Shift+Right: add selected available item to included, follow it
                 let changed = self
                     .with_current_dual_list_mut(|dl| {
                         if dl.active_column == DualListColumn::Available {
                             dl.add_selected();
+                            // Move focus to the Included column, cursor on the newly added item (last)
+                            dl.active_column = DualListColumn::Included;
+                            dl.included_cursor = dl.included.len().saturating_sub(1);
                             true
                         } else {
                             false
@@ -955,12 +928,21 @@ impl SettingsState {
                     self.refresh_dual_list_sibling();
                 }
             }
-            KeyCode::Left => {
-                // Remove selected included item back to available
+            KeyCode::Left if shift => {
+                // Shift+Left: remove selected included item back to available, follow it
                 let changed = self
                     .with_current_dual_list_mut(|dl| {
                         if dl.active_column == DualListColumn::Included {
+                            let value = dl.included.get(dl.included_cursor).cloned();
                             dl.remove_selected();
+                            // Move focus to Available column, find the removed item
+                            dl.active_column = DualListColumn::Available;
+                            if let Some(val) = value {
+                                let avail = dl.available_items();
+                                if let Some(pos) = avail.iter().position(|(v, _)| *v == val) {
+                                    dl.available_cursor = pos;
+                                }
+                            }
                             true
                         } else {
                             false
@@ -972,8 +954,20 @@ impl SettingsState {
                     self.refresh_dual_list_sibling();
                 }
             }
+            KeyCode::Right => {
+                // Plain Right: switch to Included column
+                self.with_current_dual_list_mut(|dl| {
+                    dl.active_column = DualListColumn::Included;
+                });
+            }
+            KeyCode::Left => {
+                // Plain Left: switch to Available column
+                self.with_current_dual_list_mut(|dl| {
+                    dl.active_column = DualListColumn::Available;
+                });
+            }
             KeyCode::Enter => {
-                // Enter also adds/removes based on active column
+                // Enter adds/removes based on active column
                 let changed = self
                     .with_current_dual_list_mut(|dl| match dl.active_column {
                         DualListColumn::Available => dl.add_selected(),

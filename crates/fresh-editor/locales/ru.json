@@ -1151,6 +1151,7 @@
   "settings.failed_to_open": "Не удалось открыть настройки: %{error}",
   "settings.failed_to_save": "Не удалось сохранить настройки: %{error}",
   "settings.help_default": "↑↓:Навигация  Tab:Далее  Enter:Редактировать  /:Поиск  Esc:Закрыть",
+  "settings.dual_list_enter_hint": "Enter для редактирования",
   "settings.field.editor.whitespace_show": "Показать пробелы",
   "settings.field.editor.whitespace_spaces_leading": "Начальные пробелы",
   "settings.field.editor.whitespace_spaces_inner": "Внутренние пробелы",

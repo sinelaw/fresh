@@ -1151,6 +1151,7 @@
   "settings.failed_to_open": "Mở cài đặt thất bại: %{error}",
   "settings.failed_to_save": "Lưu cài đặt thất bại: %{error}",
   "settings.help_default": "↑↓:Điều hướng  Tab:Tiếp theo  Enter:Chỉnh sửa  /:Tìm kiếm  Esc:Đóng",
+  "settings.dual_list_enter_hint": "Enter để chỉnh sửa",
   "settings.field.editor.whitespace_show": "Hiển thị khoảng trắng",
   "settings.field.editor.whitespace_spaces_leading": "Khoảng trắng đầu dòng",
   "settings.field.editor.whitespace_spaces_inner": "Khoảng trắng bên trong",

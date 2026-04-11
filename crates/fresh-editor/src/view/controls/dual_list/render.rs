@@ -54,10 +54,17 @@ pub fn render_dual_list_partial(
 
     // Row layout: 0=label, 1=column headers, 2..=body rows (paired Available/Included cells)
     if skip_rows == 0 && y < area.y + area.height {
-        let label_line = Line::from(vec![
+        let mut label_spans = vec![
             Span::styled(&state.label, Style::default().fg(label_color)),
             Span::raw(":"),
-        ]);
+        ];
+        if is_focused && !state.editing {
+            label_spans.push(Span::styled(
+                format!("  [{}]", rust_i18n::t!("settings.dual_list_enter_hint")),
+                Style::default().fg(colors.disabled),
+            ));
+        }
+        let label_line = Line::from(label_spans);
         frame.render_widget(
             Paragraph::new(label_line),
             Rect::new(area.x, y, area.width, 1),
@@ -68,15 +75,15 @@ pub fn render_dual_list_partial(
 
     if content_row >= skip_rows && y < area.y + area.height {
         let header_style = Style::default().fg(colors.header);
-        // Underline the active column header to indicate which column has focus
-        let avail_style = if is_focused && state.active_column == DualListColumn::Available {
+        // Underline the active column header only when in editing mode
+        let avail_style = if state.editing && state.active_column == DualListColumn::Available {
             Style::default()
                 .fg(colors.focused_fg)
                 .add_modifier(ratatui::style::Modifier::UNDERLINED)
         } else {
             header_style
         };
-        let incl_style = if is_focused && state.active_column == DualListColumn::Included {
+        let incl_style = if state.editing && state.active_column == DualListColumn::Included {
             Style::default()
                 .fg(colors.focused_fg)
                 .add_modifier(ratatui::style::Modifier::UNDERLINED)
@@ -114,7 +121,7 @@ pub fn render_dual_list_partial(
 
         if row_idx < available_items.len() {
             let (_, name) = available_items[row_idx];
-            let is_active = is_focused
+            let is_active = state.editing
                 && state.active_column == DualListColumn::Available
                 && state.available_cursor == row_idx;
 
@@ -170,7 +177,7 @@ pub fn render_dual_list_partial(
 
         if row_idx < included_items.len() {
             let (_, name) = included_items[row_idx];
-            let is_active = is_focused
+            let is_active = state.editing
                 && state.active_column == DualListColumn::Included
                 && state.included_cursor == row_idx;
 
