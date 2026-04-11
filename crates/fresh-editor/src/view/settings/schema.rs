@@ -409,25 +409,6 @@ fn parse_properties(
         let path = format!("{}/{}", parent_path, name);
         let setting = parse_setting(name, &path, prop, defs, enum_values_map);
 
-        // Flatten sectioned nested objects (e.g. StatusBarConfig inside EditorConfig)
-        // so their fields appear as individual settings under a section header in the
-        // parent category, rather than collapsing into a single JSON editor control.
-        //
-        // Trigger: the field has `x-section` AND its resolved type is a struct with
-        // properties. Each child's own `x-section` is preserved, so the flattening is
-        // transparent to the UI's section-grouping logic. Any nested struct intentionally
-        // annotated with `x-section` opts into this behavior.
-        if matches!(setting.setting_type, SettingType::Object { .. }) {
-            let resolved = resolve_ref(prop, defs);
-            let has_section = prop.section.is_some() || resolved.section.is_some();
-            if has_section {
-                if let Some(ref inner_props) = resolved.properties {
-                    settings.extend(parse_properties(inner_props, &path, defs, enum_values_map));
-                    continue;
-                }
-            }
-        }
-
         settings.push(setting);
     }
 
@@ -981,87 +962,5 @@ mod tests {
             other => panic!("expected DualList, got {:?}", other),
         }
         assert_eq!(tags.dual_list_sibling.as_deref(), Some("/other_tags"));
-    }
-
-    #[test]
-    fn test_sectioned_nested_object_is_flattened() {
-        // A nested object with x-section should have its properties inlined into the
-        // parent category so they render as individual settings grouped by section.
-        let schema_json = r##"{
-            "type": "object",
-            "properties": {
-                "editor": {
-                    "type": "object",
-                    "properties": {
-                        "tab_size": { "type": "integer", "default": 4 },
-                        "toolbar": {
-                            "type": "object",
-                            "x-section": "Toolbar",
-                            "properties": {
-                                "position": { "type": "string", "x-section": "Toolbar" },
-                                "visible": { "type": "boolean", "x-section": "Toolbar" }
-                            }
-                        }
-                    }
-                }
-            }
-        }"##;
-        let categories = parse_schema(schema_json).unwrap();
-        let editor = categories
-            .iter()
-            .find(|c| c.path == "/editor")
-            .expect("editor category");
-
-        // The "toolbar" object should NOT appear as an Object setting
-        assert!(
-            !editor.settings.iter().any(|s| s.path == "/editor/toolbar"),
-            "toolbar wrapper should be flattened away"
-        );
-        // Its inner fields should appear at /editor/toolbar/position and /editor/toolbar/visible
-        let position = editor
-            .settings
-            .iter()
-            .find(|s| s.path == "/editor/toolbar/position")
-            .expect("position should be flattened in");
-        assert!(matches!(position.setting_type, SettingType::String));
-        assert_eq!(position.section.as_deref(), Some("Toolbar"));
-        assert!(editor
-            .settings
-            .iter()
-            .any(|s| s.path == "/editor/toolbar/visible"));
-    }
-
-    #[test]
-    fn test_unsectioned_nested_object_is_not_flattened() {
-        // Nested objects WITHOUT x-section should remain as a single Object/Json setting.
-        let schema_json = r##"{
-            "type": "object",
-            "properties": {
-                "editor": {
-                    "type": "object",
-                    "properties": {
-                        "ignore": {
-                            "type": "object",
-                            "properties": {
-                                "foo": { "type": "string" }
-                            }
-                        }
-                    }
-                }
-            }
-        }"##;
-        let categories = parse_schema(schema_json).unwrap();
-        let editor = categories.iter().find(|c| c.path == "/editor").unwrap();
-        let ignore = editor
-            .settings
-            .iter()
-            .find(|s| s.path == "/editor/ignore")
-            .expect("ignore should remain as a single setting");
-        assert!(matches!(ignore.setting_type, SettingType::Object { .. }));
-        // And the inner 'foo' should NOT be hoisted into the parent
-        assert!(!editor
-            .settings
-            .iter()
-            .any(|s| s.path == "/editor/ignore/foo"));
     }
 }

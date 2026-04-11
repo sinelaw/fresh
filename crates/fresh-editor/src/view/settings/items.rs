@@ -689,7 +689,7 @@ fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
     let mut items: Vec<SettingItem> = category
         .settings
         .iter()
-        .map(|s| build_item(s, ctx))
+        .flat_map(|s| expand_or_build(s, ctx))
         .collect();
 
     // Sort items: by section first (None comes last), then alphabetically by name
@@ -727,6 +727,44 @@ fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
         items,
         subpages,
     }
+}
+
+/// Expand an Object schema into its children when every child has a native
+/// (non-JSON) control, otherwise build it as a single item. This lets compound
+/// config structs like `StatusBarConfig` surface their children as individual
+/// settings with proper DualList / toggle / etc. controls, while objects whose
+/// children would all fall through to JSON editors stay collapsed.
+fn expand_or_build(schema: &SettingSchema, ctx: &BuildContext) -> Vec<SettingItem> {
+    if let SettingType::Object { properties } = &schema.setting_type {
+        let all_native = !properties.is_empty()
+            && properties.iter().all(|child| {
+                !matches!(
+                    child.setting_type,
+                    SettingType::Object { .. } | SettingType::Complex
+                )
+            });
+        if all_native {
+            // Children parsed inside determine_type have paths relative to ""
+            // (e.g. "/left"); prefix with the parent's path to get absolute
+            // paths (e.g. "/editor/status_bar/left").
+            return properties
+                .iter()
+                .map(|child| {
+                    let mut child = child.clone();
+                    if !child.path.starts_with(&schema.path) {
+                        child.path = format!("{}{}", schema.path, child.path);
+                    }
+                    if let Some(ref mut sib) = child.dual_list_sibling {
+                        if !sib.starts_with(&schema.path) {
+                            *sib = format!("{}{}", schema.path, sib);
+                        }
+                    }
+                    build_item(&child, ctx)
+                })
+                .collect();
+        }
+    }
+    vec![build_item(schema, ctx)]
 }
 
 /// Build a setting item with its control state initialized from current config
