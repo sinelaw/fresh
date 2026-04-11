@@ -5450,11 +5450,11 @@ impl Editor {
                 }
             }
 
-            // Update cursor information for active buffer.
-            // Use effective_active_split() so that when a buffer group panel
-            // is focused, the snapshot reflects the inner panel's cursor and
-            // viewport — not the outer split's.
-            if let Some(active_vs) = self.split_view_states.get(&self.effective_active_split()) {
+            // Update cursor information for active buffer
+            if let Some(active_vs) = self
+                .split_view_states
+                .get(&self.split_manager.active_split())
+            {
                 // Primary cursor (from SplitViewState)
                 let active_cursors = &active_vs.cursors;
                 let primary = active_cursors.primary();

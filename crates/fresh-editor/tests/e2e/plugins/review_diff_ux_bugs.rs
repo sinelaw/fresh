@@ -1093,3 +1093,177 @@ fn test_review_diff_file_list_auto_scrolls() {
          The visible content didn't change after 15 Down presses."
     );
 }
+
+// ---------------------------------------------------------------------------
+// Toolbar rendering after refresh ('r')
+// ---------------------------------------------------------------------------
+
+/// Helper: assert that the toolbar contains the expected key hints.
+/// The toolbar is the line containing "Stage" (always present in review mode).
+fn assert_toolbar_rendered(screen: &str, context: &str) {
+    assert!(
+        screen.contains("s Stage"),
+        "{context}: toolbar should contain 's Stage'. Screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("q Close"),
+        "{context}: toolbar should contain 'q Close'. Screen:\n{screen}"
+    );
+}
+
+/// Pressing 'r' (refresh) in Review Diff with modified files should
+/// re-render the toolbar, file list, and diff panels correctly.
+#[test]
+fn test_refresh_preserves_toolbar_with_modifications() {
+    init_tracing_from_env();
+    let (repo, main_rs) = repo_with_one_modification();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert_toolbar_rendered(&screen, "Before refresh (modified files)");
+    assert!(
+        screen.contains("src/main.rs"),
+        "File list should show the modified file before refresh"
+    );
+
+    // Press 'r' to refresh
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("GIT STATUS") && s.contains("DIFF")
+        })
+        .unwrap();
+
+    let screen_after = harness.screen_to_string();
+    assert_toolbar_rendered(&screen_after, "After refresh (modified files)");
+    assert!(
+        screen_after.contains("src/main.rs"),
+        "File list should still show the modified file after refresh"
+    );
+}
+
+/// Open Review Diff when the working tree is clean (no modifications),
+/// then modify a file externally and press 'r' — the toolbar must render
+/// correctly both before and after refresh.
+#[test]
+fn test_refresh_toolbar_empty_then_modified() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Working tree is clean — no modifications
+    let main_rs = repo.path.join("src/main.rs");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert_toolbar_rendered(&screen, "Clean working tree");
+
+    // Now modify a file externally (outside the editor)
+    fs::write(&main_rs, "fn main() {\n    println!(\"MODIFIED\");\n}\n").unwrap();
+
+    // Press 'r' to refresh — should pick up the new modification
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::NONE)
+        .unwrap();
+    // Wait for all three panels (toolbar + file list + diff) to be populated.
+    // The toolbar contains "s Stage"; the file list contains the modified file.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("src/main.rs") && s.contains("s Stage")
+        })
+        .unwrap();
+
+    let screen_after = harness.screen_to_string();
+    assert_toolbar_rendered(&screen_after, "After refresh (new modification)");
+    assert!(
+        screen_after.contains("src/main.rs"),
+        "File list should show newly modified file after refresh. Screen:\n{}",
+        screen_after
+    );
+}
+
+/// Open Review Diff with a staged file, press 'r' — toolbar and file list
+/// should render correctly for staged content.
+#[test]
+fn test_refresh_toolbar_with_staged_file() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Modify and stage a file
+    let main_rs = repo.path.join("src/main.rs");
+    fs::write(
+        &main_rs,
+        "fn main() {\n    println!(\"STAGED_CHANGE\");\n}\n",
+    )
+    .unwrap();
+    repo.git_add(&["src/main.rs"]);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert_toolbar_rendered(&screen, "Before refresh (staged file)");
+    // Staged files should appear in the file list
+    assert!(
+        screen.contains("src/main.rs"),
+        "File list should show staged file. Screen:\n{}",
+        screen
+    );
+
+    // Press 'r' to refresh
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("GIT STATUS") && s.contains("DIFF")
+        })
+        .unwrap();
+
+    let screen_after = harness.screen_to_string();
+    assert_toolbar_rendered(&screen_after, "After refresh (staged file)");
+    assert!(
+        screen_after.contains("src/main.rs"),
+        "File list should still show staged file after refresh. Screen:\n{}",
+        screen_after
+    );
+}
