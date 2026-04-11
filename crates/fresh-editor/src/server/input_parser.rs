@@ -147,60 +147,12 @@ impl InputParser {
             return self.parse_escape_sequence();
         }
 
-        // Check for multi-byte UTF-8 sequences (lead byte >= 0x80).
-        // On Windows, the VtInputReader encodes composed characters (IME,
-        // accented, emoji) as UTF-8 bytes. On Unix, terminals also deliver
-        // non-ASCII characters as UTF-8.
-        if bytes[0] >= 0x80 {
-            return self.parse_utf8();
-        }
-
-        // Single ASCII byte - convert directly
+        // Single byte - convert directly
         if let Some(event) = self.byte_to_event(bytes[0]) {
             return ParseResult::Complete(event);
         }
 
         ParseResult::Invalid
-    }
-
-    /// Parse a multi-byte UTF-8 sequence from the buffer.
-    fn parse_utf8(&self) -> ParseResult {
-        let bytes = &self.buffer;
-        let lead = bytes[0];
-
-        // Determine expected sequence length from lead byte
-        let expected_len = if lead & 0xE0 == 0xC0 {
-            2 // 110xxxxx → 2-byte sequence
-        } else if lead & 0xF0 == 0xE0 {
-            3 // 1110xxxx → 3-byte sequence
-        } else if lead & 0xF8 == 0xF0 {
-            4 // 11110xxx → 4-byte sequence
-        } else {
-            // Bare continuation byte (10xxxxxx) or invalid lead byte (11111xxx)
-            return ParseResult::Invalid;
-        };
-
-        if bytes.len() < expected_len {
-            // Validate continuation bytes received so far (must be 10xxxxxx)
-            for &b in &bytes[1..] {
-                if b & 0xC0 != 0x80 {
-                    return ParseResult::Invalid;
-                }
-            }
-            return ParseResult::Incomplete;
-        }
-
-        // We have enough bytes — try to decode
-        match std::str::from_utf8(&bytes[..expected_len]) {
-            Ok(s) => {
-                let c = s.chars().next().unwrap();
-                ParseResult::Complete(Event::Key(KeyEvent::new(
-                    KeyCode::Char(c),
-                    KeyModifiers::empty(),
-                )))
-            }
-            Err(_) => ParseResult::Invalid,
-        }
     }
 
     /// Parse an escape sequence
@@ -1153,128 +1105,6 @@ mod tests {
         match &events[1] {
             Event::Paste(text) => assert_eq!(text, "pasted"),
             _ => panic!("Expected Paste event"),
-        }
-    }
-
-    // ---- Multi-byte UTF-8 tests (issue #1538) ----
-    //
-    // On Windows, the VtInputReader encodes composed characters (from IME
-    // or regular non-ASCII input) as UTF-8 bytes. The parser must decode
-    // multi-byte sequences into proper KeyCode::Char events.
-
-    #[test]
-    fn test_utf8_chinese_character() {
-        let mut parser = InputParser::new();
-        // '你' = U+4F60 = UTF-8 [0xE4, 0xBD, 0xA0]
-        let events = parser.parse("你".as_bytes());
-        assert_eq!(
-            events.len(),
-            1,
-            "Expected 1 event for '你', got: {:?}",
-            events
-        );
-        match &events[0] {
-            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Char('你')),
-            _ => panic!("Expected key event for '你', got {:?}", events[0]),
-        }
-    }
-
-    #[test]
-    fn test_utf8_multiple_chinese_characters() {
-        let mut parser = InputParser::new();
-        // '你好' = two 3-byte UTF-8 characters
-        let events = parser.parse("你好".as_bytes());
-        assert_eq!(
-            events.len(),
-            2,
-            "Expected 2 events for '你好', got: {:?}",
-            events
-        );
-        match &events[0] {
-            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Char('你')),
-            _ => panic!("Expected '你'"),
-        }
-        match &events[1] {
-            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Char('好')),
-            _ => panic!("Expected '好'"),
-        }
-    }
-
-    #[test]
-    fn test_utf8_mixed_with_ascii() {
-        let mut parser = InputParser::new();
-        // "a你b" = [0x61, 0xE4, 0xBD, 0xA0, 0x62]
-        let events = parser.parse("a你b".as_bytes());
-        assert_eq!(
-            events.len(),
-            3,
-            "Expected 3 events for 'a你b', got: {:?}",
-            events
-        );
-        match &events[0] {
-            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Char('a')),
-            _ => panic!("Expected 'a'"),
-        }
-        match &events[1] {
-            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Char('你')),
-            _ => panic!("Expected '你'"),
-        }
-        match &events[2] {
-            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Char('b')),
-            _ => panic!("Expected 'b'"),
-        }
-    }
-
-    #[test]
-    fn test_utf8_4_byte_emoji() {
-        let mut parser = InputParser::new();
-        // '😀' = U+1F600 = UTF-8 [0xF0, 0x9F, 0x98, 0x80]
-        let events = parser.parse("😀".as_bytes());
-        assert_eq!(
-            events.len(),
-            1,
-            "Expected 1 event for '😀', got: {:?}",
-            events
-        );
-        match &events[0] {
-            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Char('😀')),
-            _ => panic!("Expected '😀'"),
-        }
-    }
-
-    #[test]
-    fn test_utf8_split_across_parse_calls() {
-        let mut parser = InputParser::new();
-        // '你' = UTF-8 [0xE4, 0xBD, 0xA0] — split across two parse calls
-        let events = parser.parse(&[0xE4]);
-        assert!(events.is_empty(), "Incomplete UTF-8 should buffer");
-        let events = parser.parse(&[0xBD, 0xA0]);
-        assert_eq!(
-            events.len(),
-            1,
-            "Expected 1 event after UTF-8 completed, got: {:?}",
-            events
-        );
-        match &events[0] {
-            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Char('你')),
-            _ => panic!("Expected '你'"),
-        }
-    }
-
-    #[test]
-    fn test_utf8_2_byte_accented_character() {
-        let mut parser = InputParser::new();
-        // 'é' = U+00E9 = UTF-8 [0xC3, 0xA9]
-        let events = parser.parse("é".as_bytes());
-        assert_eq!(
-            events.len(),
-            1,
-            "Expected 1 event for 'é', got: {:?}",
-            events
-        );
-        match &events[0] {
-            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Char('é')),
-            _ => panic!("Expected 'é'"),
         }
     }
 }
