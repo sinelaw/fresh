@@ -122,8 +122,11 @@ impl DualListState {
         }
     }
 
-    /// Move the selected included item up
+    /// Move the selected included item up (only when Included column is active)
     pub fn move_up(&mut self) {
+        if self.active_column != DualListColumn::Included {
+            return;
+        }
         if self.included_cursor > 0 && self.included_cursor < self.included.len() {
             self.included
                 .swap(self.included_cursor, self.included_cursor - 1);
@@ -131,8 +134,11 @@ impl DualListState {
         }
     }
 
-    /// Move the selected included item down
+    /// Move the selected included item down (only when Included column is active)
     pub fn move_down(&mut self) {
+        if self.active_column != DualListColumn::Included {
+            return;
+        }
         if self.included_cursor + 1 < self.included.len() {
             self.included
                 .swap(self.included_cursor, self.included_cursor + 1);
@@ -380,6 +386,7 @@ mod tests {
             "diagnostics".into(),
         ]);
 
+        state.active_column = DualListColumn::Included;
         state.included_cursor = 2;
         state.move_up();
         assert_eq!(state.included, vec!["filename", "diagnostics", "cursor"]);
@@ -400,6 +407,151 @@ mod tests {
 
         state.switch_column();
         assert_eq!(state.active_column, DualListColumn::Available);
+    }
+
+    /// Helper: simulate Shift+Right (add item, focus follows to Included)
+    fn shift_right(state: &mut DualListState) {
+        assert_eq!(state.active_column, DualListColumn::Available);
+        state.add_selected();
+        state.active_column = DualListColumn::Included;
+        state.included_cursor = state.included.len().saturating_sub(1);
+    }
+
+    /// Helper: simulate Shift+Left (remove item, focus follows to Available)
+    fn shift_left(state: &mut DualListState) {
+        assert_eq!(state.active_column, DualListColumn::Included);
+        let value = state.included[state.included_cursor].clone();
+        state.remove_selected();
+        state.active_column = DualListColumn::Available;
+        let avail = state.available_items();
+        if let Some(pos) = avail.iter().position(|(v, _)| *v == value) {
+            state.available_cursor = pos;
+        }
+    }
+
+    /// Comprehensive test: Shift+arrows in both columns, back and forth
+    #[test]
+    fn test_shift_arrows_focus_follows_item() {
+        let mut state = DualListState::new("Test", test_options());
+        // Available: [filename, cursor, cursor:compact, diagnostics, cursor_count, messages, chord]
+        // Included: []
+
+        // --- Shift+Right from Available: add "cursor" (index 1) ---
+        state.active_column = DualListColumn::Available;
+        state.available_cursor = 1; // "cursor"
+        shift_right(&mut state);
+        assert_eq!(state.included, vec!["cursor"]);
+        assert_eq!(state.active_column, DualListColumn::Included);
+        assert_eq!(state.included_cursor, 0);
+
+        // --- Shift+Right: add "filename" (now index 0 in Available) ---
+        state.active_column = DualListColumn::Available;
+        state.available_cursor = 0; // "filename"
+        shift_right(&mut state);
+        assert_eq!(state.included, vec!["cursor", "filename"]);
+        assert_eq!(state.active_column, DualListColumn::Included);
+        assert_eq!(state.included_cursor, 1); // appended at end
+
+        // --- Shift+Up in Included: move "filename" up ---
+        state.move_up();
+        assert_eq!(state.included, vec!["filename", "cursor"]);
+        assert_eq!(state.included_cursor, 0);
+
+        // --- Shift+Up at top: no-op ---
+        state.move_up();
+        assert_eq!(state.included, vec!["filename", "cursor"]);
+        assert_eq!(state.included_cursor, 0);
+
+        // --- Shift+Down: move "filename" back down ---
+        state.move_down();
+        assert_eq!(state.included, vec!["cursor", "filename"]);
+        assert_eq!(state.included_cursor, 1);
+
+        // --- Shift+Down at bottom: no-op ---
+        state.move_down();
+        assert_eq!(state.included, vec!["cursor", "filename"]);
+        assert_eq!(state.included_cursor, 1);
+
+        // --- Shift+Left from Included: remove "filename", focus follows to Available ---
+        shift_left(&mut state);
+        assert_eq!(state.included, vec!["cursor"]);
+        assert_eq!(state.active_column, DualListColumn::Available);
+        // "filename" should be back in Available at its natural position (index 0)
+        let avail = state.available_items();
+        assert_eq!(avail[state.available_cursor].0, "filename");
+
+        // --- Shift+Right again: add "filename" back ---
+        shift_right(&mut state);
+        assert_eq!(state.included, vec!["cursor", "filename"]);
+        assert_eq!(state.active_column, DualListColumn::Included);
+        assert_eq!(state.included_cursor, 1);
+
+        // --- Shift+Left on first item: remove "cursor" ---
+        state.included_cursor = 0;
+        shift_left(&mut state);
+        assert_eq!(state.included, vec!["filename"]);
+        assert_eq!(state.active_column, DualListColumn::Available);
+        let avail = state.available_items();
+        assert_eq!(avail[state.available_cursor].0, "cursor");
+
+        // --- Add more items to test reorder after round-trip ---
+        // Currently: Included=[filename], Available has cursor back
+        // Add "diagnostics" and "cursor" to Included
+        state.available_cursor = 0; // "cursor" (back in Available)
+        shift_right(&mut state);
+        state.active_column = DualListColumn::Available;
+        state.available_cursor = 1; // "diagnostics" (shifted after cursor was removed)
+        shift_right(&mut state);
+        assert_eq!(state.included, vec!["filename", "cursor", "diagnostics"]);
+        assert_eq!(state.included_cursor, 2); // on "diagnostics"
+
+        // --- Shift+Up twice: move "diagnostics" to top ---
+        state.move_up();
+        assert_eq!(state.included, vec!["filename", "diagnostics", "cursor"]);
+        assert_eq!(state.included_cursor, 1);
+        state.move_up();
+        assert_eq!(state.included, vec!["diagnostics", "filename", "cursor"]);
+        assert_eq!(state.included_cursor, 0);
+
+        // --- Shift+Down to middle ---
+        state.move_down();
+        assert_eq!(state.included, vec!["filename", "diagnostics", "cursor"]);
+        assert_eq!(state.included_cursor, 1);
+
+        // --- Shift+Left from middle of Included: remove "diagnostics" ---
+        shift_left(&mut state);
+        assert_eq!(state.included, vec!["filename", "cursor"]);
+        assert_eq!(state.active_column, DualListColumn::Available);
+        let avail = state.available_items();
+        assert_eq!(avail[state.available_cursor].0, "diagnostics");
+
+        // --- Shift+Up/Down in Available column: no-op on both columns ---
+        let avail_before: Vec<String> = state
+            .available_items()
+            .iter()
+            .map(|(v, _)| v.clone())
+            .collect();
+        let included_before = state.included.clone();
+        state.move_up();
+        // Check after each operation, not just the pair (catches round-trip coincidence)
+        assert_eq!(
+            included_before, state.included,
+            "Included should not change after move_up in Available column"
+        );
+        state.move_down();
+        assert_eq!(
+            included_before, state.included,
+            "Included should not change after move_down in Available column"
+        );
+        let avail_after: Vec<String> = state
+            .available_items()
+            .iter()
+            .map(|(v, _)| v.clone())
+            .collect();
+        assert_eq!(
+            avail_before, avail_after,
+            "Available order should not change"
+        );
     }
 
     #[test]
