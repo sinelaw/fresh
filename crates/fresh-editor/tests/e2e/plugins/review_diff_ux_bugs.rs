@@ -1093,4 +1093,3 @@ fn test_review_diff_file_list_auto_scrolls() {
          The visible content didn't change after 15 Down presses."
     );
 }
-
