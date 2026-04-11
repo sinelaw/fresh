@@ -4078,11 +4078,6 @@ impl Editor {
                 Some(Ok(()))
             }
 
-            RoutedEvent::Close => {
-                self.close_composite_buffer(buffer_id);
-                Some(Ok(()))
-            }
-
             // Anything else the router might return — let normal dispatch handle it
             _ => None,
         }

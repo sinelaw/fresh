@@ -1594,6 +1594,22 @@
       "when": "terminal"
     },
     {
+      "comment": "Composite buffer context - Close view (q)",
+      "key": "q",
+      "modifiers": [],
+      "action": "close",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "comment": "Composite buffer context - Close view (Esc)",
+      "key": "Escape",
+      "modifiers": [],
+      "action": "close",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
       "comment": "Composite buffer context - Next hunk (n)",
       "key": "n",
       "modifiers": [],
