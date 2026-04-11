@@ -697,7 +697,6 @@ impl Editor {
                 .get(&active_buf)
                 .map(|m| m.read_only)
                 .unwrap_or(false);
-            let clock_blink_on = self.clock_blink_on();
             let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
                 state: self.buffers.get_mut(&active_buf).unwrap(),
                 cursors: status_cursors,
@@ -715,7 +714,6 @@ impl Editor {
                 remote_connection: remote_connection.as_deref(),
                 session_name: session_name.as_deref(),
                 read_only: is_read_only,
-                clock_blink_on,
             };
             let status_bar_layout = StatusBarRenderer::render_status_bar(
                 frame,

@@ -73,22 +73,21 @@ fn test_clock_element_renders() {
     harness.render().unwrap();
 
     let status = harness.get_status_bar();
-    // Clock renders as HH:MM or HH MM (blink phase). Match either separator.
-    let has_time = status.chars().any(|c| c.is_ascii_digit())
-        && (status.contains(':') || {
-            // Look for pattern DD DD (digits-space-digits) for blink-off phase
-            let bytes = status.as_bytes();
-            bytes.windows(5).any(|w| {
-                w[0].is_ascii_digit()
-                    && w[1].is_ascii_digit()
-                    && w[2] == b' '
-                    && w[3].is_ascii_digit()
-                    && w[4].is_ascii_digit()
-            })
-        });
+    // Clock renders as HH:MM with hardware blink on the colon.
+    // Match DD:DD pattern anywhere in the status bar.
+    let has_time = {
+        let bytes = status.as_bytes();
+        bytes.windows(5).any(|w| {
+            w[0].is_ascii_digit()
+                && w[1].is_ascii_digit()
+                && w[2] == b':'
+                && w[3].is_ascii_digit()
+                && w[4].is_ascii_digit()
+        })
+    };
     assert!(
         has_time,
-        "Clock element should render a time.\nStatus bar: {status}"
+        "Clock element should render a time as HH:MM.\nStatus bar: {status}"
     );
 }
 

@@ -44,6 +44,8 @@ enum ElementKind {
     Messages,
     /// Remote disconnected prefix (error colors)
     RemoteDisconnected,
+    /// Clock element — colon rendered with hardware blink
+    Clock,
 }
 
 /// A single rendered status bar element with its text and styling info.
@@ -70,7 +72,6 @@ pub struct StatusBarContext<'a> {
     pub remote_connection: Option<&'a str>,
     pub session_name: Option<&'a str>,
     pub read_only: bool,
-    pub clock_blink_on: bool,
 }
 
 /// Layout information returned from status bar rendering for mouse click detection
@@ -729,11 +730,10 @@ impl StatusBarRenderer {
             }
             StatusBarElement::Clock => {
                 let now = chrono::Local::now();
-                let sep = if ctx.clock_blink_on { ':' } else { ' ' };
-                let text = format!("{:02}{}{:02}", now.hour(), sep, now.minute());
+                let text = format!("{:02}:{:02}", now.hour(), now.minute());
                 Some(RenderedElement {
                     text,
-                    kind: ElementKind::Normal,
+                    kind: ElementKind::Clock,
                 })
             }
         }
@@ -747,7 +747,7 @@ impl StatusBarRenderer {
         warning_level: WarningLevel,
     ) -> Style {
         match kind {
-            ElementKind::Normal | ElementKind::Messages => Style::default()
+            ElementKind::Normal | ElementKind::Messages | ElementKind::Clock => Style::default()
                 .fg(theme.status_bar_fg)
                 .bg(theme.status_bar_bg),
             ElementKind::RemoteDisconnected => Style::default()
@@ -907,7 +907,20 @@ impl StatusBarRenderer {
         }
 
         let style = Self::element_style(rendered.kind, theme, hover, warning_level);
-        (vec![Span::styled(rendered.text.clone(), style)], width)
+        let spans = if rendered.kind == ElementKind::Clock {
+            // "HH:MM" — blink the colon via terminal hardware (SGR 5)
+            vec![
+                Span::styled(rendered.text[..2].to_string(), style),
+                Span::styled(
+                    ":".to_string(),
+                    style.add_modifier(Modifier::SLOW_BLINK),
+                ),
+                Span::styled(rendered.text[3..].to_string(), style),
+            ]
+        } else {
+            vec![Span::styled(rendered.text.clone(), style)]
+        };
+        (spans, width)
     }
 
     /// Render a configured side (left/right) into styled per-element groups.
