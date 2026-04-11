@@ -1879,9 +1879,9 @@ function review_next_hunk() {
         }
         return;
     }
-    // Composite diff-view: use built-in hunk nav.
-    if (!activeCompositeDiffState) return;
-    editor.compositeNextHunk(activeCompositeDiffState.compositeBufferId);
+    // Composite diff-view hunk navigation is handled by the Action system
+    // (CompositeNextHunk) via CompositeBuffer context keybindings, so no
+    // plugin fallback is needed here.
 }
 registerHandler("review_next_hunk", review_next_hunk);
 
@@ -1897,9 +1897,9 @@ function review_prev_hunk() {
         }
         return;
     }
-    // Composite diff-view: use built-in hunk nav.
-    if (!activeCompositeDiffState) return;
-    editor.compositePrevHunk(activeCompositeDiffState.compositeBufferId);
+    // Composite diff-view hunk navigation is handled by the Action system
+    // (CompositePrevHunk) via CompositeBuffer context keybindings, so no
+    // plugin fallback is needed here.
 }
 registerHandler("review_prev_hunk", review_prev_hunk);
 

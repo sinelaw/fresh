@@ -35,6 +35,8 @@
   "action.duplicate_line": "Дублювати рядок",
   "action.ensure_final_newline": "Переконатися, що файл закінчується новим рядком",
   "action.event_debug": "Відлагодження клавіатурних подій",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "Розширити виділення",
   "action.file_browser_toggle_detect_encoding": "Toggle encoding auto-detection",
   "action.file_browser_toggle_hidden": "Перемкнути видимість прихованих файлів",

@@ -35,6 +35,8 @@
   "action.duplicate_line": "Duplica riga",
   "action.ensure_final_newline": "Assicura che il file termini con una nuova riga",
   "action.event_debug": "Debug eventi tastiera",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "Espandi selezione",
   "action.file_browser_toggle_detect_encoding": "Toggle encoding auto-detection",
   "action.file_browser_toggle_hidden": "Alterna visibilità file nascosti",

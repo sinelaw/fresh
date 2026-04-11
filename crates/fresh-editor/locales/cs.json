@@ -35,6 +35,8 @@
   "action.duplicate_line": "Duplikovat řádek",
   "action.ensure_final_newline": "Zajistit, že soubor končí novým řádkem",
   "action.event_debug": "Ladění událostí klávesnice",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "Rozšířit výběr",
   "action.file_browser_toggle_detect_encoding": "Přepnout automatickou detekci kódování",
   "action.file_browser_toggle_hidden": "Přepnout viditelnost skrytých souborů",

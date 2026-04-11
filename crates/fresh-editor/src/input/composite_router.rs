@@ -127,11 +127,9 @@ impl CompositeInputRouter {
             (KeyModifiers::NONE, KeyCode::Tab) => RoutedEvent::SwitchPane(Direction::Next),
             (KeyModifiers::SHIFT, KeyCode::BackTab) => RoutedEvent::SwitchPane(Direction::Prev),
 
-            // Hunk navigation
-            (KeyModifiers::NONE, KeyCode::Char('n')) => RoutedEvent::NavigateHunk(Direction::Next),
-            (KeyModifiers::NONE, KeyCode::Char('p')) => RoutedEvent::NavigateHunk(Direction::Prev),
-            (KeyModifiers::NONE, KeyCode::Char(']')) => RoutedEvent::NavigateHunk(Direction::Next),
-            (KeyModifiers::NONE, KeyCode::Char('[')) => RoutedEvent::NavigateHunk(Direction::Prev),
+            // Hunk navigation is handled by the Action system via CompositeBuffer
+            // context keybindings (n/p/]/[), making them rebindable through the
+            // keybinding editor.
 
             // Close composite view
             (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::NONE, KeyCode::Esc) => {

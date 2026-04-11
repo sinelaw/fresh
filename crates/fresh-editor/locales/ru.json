@@ -35,6 +35,8 @@
   "action.duplicate_line": "Дублировать строку",
   "action.ensure_final_newline": "Убедиться, что файл заканчивается новой строкой",
   "action.event_debug": "Отладка клавиатурных событий",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "Расширить выделение",
   "action.file_browser_toggle_detect_encoding": "Toggle encoding auto-detection",
   "action.file_browser_toggle_hidden": "Переключить видимость скрытых файлов",

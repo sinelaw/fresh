@@ -35,6 +35,8 @@
   "action.duplicate_line": "Zeile duplizieren",
   "action.ensure_final_newline": "Datei mit Zeilenumbruch beenden",
   "action.event_debug": "Tastaturereignisse debuggen",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "Auswahl erweitern",
   "action.file_browser_toggle_detect_encoding": "Kodierungserkennung umschalten",
   "action.file_browser_toggle_hidden": "Sichtbarkeit versteckter Dateien umschalten",

@@ -35,6 +35,8 @@
   "action.duplicate_line": "줄 복제",
   "action.ensure_final_newline": "파일이 줄바꿈으로 끝나도록 보장",
   "action.event_debug": "키보드 이벤트 디버그",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "선택 영역 확장",
   "action.file_browser_toggle_detect_encoding": "Toggle encoding auto-detection",
   "action.file_browser_toggle_hidden": "숨김 파일 표시 전환",

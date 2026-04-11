@@ -544,3 +544,113 @@ fn test_flush_layout_jump_to_third_hunk_before_render() {
         screen
     );
 }
+
+// =============================================================================
+// Keybinding-driven hunk navigation tests
+// =============================================================================
+
+/// Test that pressing `n` in a composite buffer view navigates to the next hunk
+/// via the Action-based keybinding system (not the hardcoded router).
+#[test]
+fn test_keybinding_n_navigates_to_next_hunk() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let (old_content, new_content, hunks) = generate_multi_hunk_content();
+    let _composite_id = setup_diff(&mut harness, &old_content, &new_content, &hunks);
+
+    // Initially at the top — Line 1 should be visible
+    let initial = harness.screen_to_string();
+    assert!(
+        initial.contains("Line 1 original"),
+        "Initial view should show Line 1. Screen:\n{}",
+        initial
+    );
+
+    // Press 'n' to navigate to the next hunk (hunk 1, around line 20)
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    let after_first_n = harness.screen_to_string();
+    assert!(
+        after_first_n.contains("MODIFIED in hunk 1"),
+        "After pressing 'n', hunk 1 content should be visible. Screen:\n{}",
+        after_first_n
+    );
+
+    // Press 'n' again to navigate to hunk 2 (around line 60)
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    let after_second_n = harness.screen_to_string();
+    assert!(
+        after_second_n.contains("MODIFIED in hunk 2"),
+        "After pressing 'n' twice, hunk 2 content should be visible. Screen:\n{}",
+        after_second_n
+    );
+}
+
+/// Test that pressing `p` in a composite buffer view navigates to the previous hunk
+/// and `]`/`[` work as aliases.
+#[test]
+fn test_keybinding_p_and_brackets_navigate_hunks() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let (old_content, new_content, hunks) = generate_multi_hunk_content();
+    let _composite_id = setup_diff(&mut harness, &old_content, &new_content, &hunks);
+
+    // Use ']' to navigate forward to hunk 1
+    harness
+        .send_key(KeyCode::Char(']'), KeyModifiers::NONE)
+        .unwrap();
+    let after_bracket = harness.screen_to_string();
+    assert!(
+        after_bracket.contains("MODIFIED in hunk 1"),
+        "After pressing ']', hunk 1 content should be visible. Screen:\n{}",
+        after_bracket
+    );
+
+    // Use ']' again to go to hunk 2
+    harness
+        .send_key(KeyCode::Char(']'), KeyModifiers::NONE)
+        .unwrap();
+    let at_hunk2 = harness.screen_to_string();
+    assert!(
+        at_hunk2.contains("MODIFIED in hunk 2"),
+        "After pressing ']' twice, hunk 2 content should be visible. Screen:\n{}",
+        at_hunk2
+    );
+
+    // Use '[' to go back to hunk 1
+    harness
+        .send_key(KeyCode::Char('['), KeyModifiers::NONE)
+        .unwrap();
+    let back_to_hunk1 = harness.screen_to_string();
+    assert!(
+        back_to_hunk1.contains("MODIFIED in hunk 1"),
+        "After pressing '[', hunk 1 content should be visible. Screen:\n{}",
+        back_to_hunk1
+    );
+
+    // Navigate forward past hunk 1 again with 'n', then back with 'p'
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    let at_hunk3 = harness.screen_to_string();
+    assert!(
+        at_hunk3.contains("MODIFIED in hunk 3"),
+        "After 'n' twice from hunk 1, should be at hunk 3. Screen:\n{}",
+        at_hunk3
+    );
+
+    // Press 'p' to go back to hunk 2
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::NONE)
+        .unwrap();
+    let back_to_hunk2 = harness.screen_to_string();
+    assert!(
+        back_to_hunk2.contains("MODIFIED in hunk 2"),
+        "After pressing 'p', hunk 2 content should be visible. Screen:\n{}",
+        back_to_hunk2
+    );
+}

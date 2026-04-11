@@ -35,6 +35,8 @@
   "action.duplicate_line": "ทำซ้ำบรรทัด",
   "action.ensure_final_newline": "ให้แน่ใจว่าไฟล์ลงท้ายด้วยบรรทัดใหม่",
   "action.event_debug": "ดีบักอีเวนต์แป้นพิมพ์",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "ขยายส่วนที่เลือก",
   "action.file_browser_toggle_detect_encoding": "Toggle encoding auto-detection",
   "action.file_browser_toggle_hidden": "สลับการแสดงไฟล์ที่ซ่อน",

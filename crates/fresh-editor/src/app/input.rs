@@ -8,7 +8,7 @@ impl Editor {
     pub fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
         use crate::input::keybindings::KeyContext;
 
-        // Priority order: Settings > Menu > Prompt > Popup > Rename > Current context (FileExplorer or Normal)
+        // Priority order: Settings > Menu > Prompt > Popup > CompositeBuffer > Current context (FileExplorer or Normal)
         if self.settings_state.as_ref().is_some_and(|s| s.visible) {
             KeyContext::Settings
         } else if self.menu_state.active_menu.is_some() {
@@ -17,6 +17,8 @@ impl Editor {
             KeyContext::Prompt
         } else if self.active_state().popups.is_visible() {
             KeyContext::Popup
+        } else if self.is_composite_buffer(self.active_buffer()) {
+            KeyContext::CompositeBuffer
         } else {
             // Use the current context (can be FileExplorer or Normal)
             self.key_context.clone()
@@ -163,22 +165,6 @@ impl Editor {
                 }
             }
 
-            // --- Composite buffer input routing ---
-            // If the active buffer is a composite buffer (side-by-side diff),
-            // route unbound keys through CompositeInputRouter before falling
-            // through to mode text-input or global bindings.
-            {
-                let active_buf = self.active_buffer();
-                let active_split = self.effective_active_split();
-                if self.is_composite_buffer(active_buf) {
-                    if let Some(handled) =
-                        self.try_route_composite_key(active_split, active_buf, &key_event)
-                    {
-                        return handled;
-                    }
-                }
-            }
-
             // Handle unbound keys for modes that want to capture input.
             //
             // Buffer-local modes with allow_text_input (e.g. search-replace-list)
@@ -216,6 +202,24 @@ impl Editor {
                     "Mode '{}' is not read-only, allowing key through",
                     mode_name
                 );
+            }
+        }
+
+        // --- Composite buffer input routing ---
+        // If the active buffer is a composite buffer (side-by-side diff),
+        // route remaining composite-specific keys (scroll, pane switch, close)
+        // through CompositeInputRouter before falling through to regular
+        // keybinding resolution. Hunk navigation (n/p/]/[) is handled by the
+        // Action system via CompositeBuffer context bindings.
+        {
+            let active_buf = self.active_buffer();
+            let active_split = self.effective_active_split();
+            if self.is_composite_buffer(active_buf) {
+                if let Some(handled) =
+                    self.try_route_composite_key(active_split, active_buf, &key_event)
+                {
+                    return handled;
+                }
             }
         }
 
@@ -1108,6 +1112,14 @@ impl Editor {
                     "Jump to bookmark (0-9): ".to_string(),
                     PromptType::JumpToBookmark,
                 );
+            }
+            Action::CompositeNextHunk => {
+                let buf = self.active_buffer();
+                self.composite_next_hunk_active(buf);
+            }
+            Action::CompositePrevHunk => {
+                let buf = self.active_buffer();
+                self.composite_prev_hunk_active(buf);
             }
             Action::None => {}
             Action::DeleteBackward => {
@@ -4062,18 +4074,6 @@ impl Editor {
                 match dir {
                     Direction::Next => self.composite_focus_next(split_id, buffer_id),
                     Direction::Prev => self.composite_focus_prev(split_id, buffer_id),
-                }
-                Some(Ok(()))
-            }
-
-            RoutedEvent::NavigateHunk(dir) => {
-                match dir {
-                    Direction::Next => {
-                        self.composite_next_hunk(split_id, buffer_id);
-                    }
-                    Direction::Prev => {
-                        self.composite_prev_hunk(split_id, buffer_id);
-                    }
                 }
                 Some(Ok(()))
             }

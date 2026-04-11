@@ -375,6 +375,8 @@
   "event_debug.no_events": "No events recorded yet. Press any key...",
   "event_debug.recent_events": "Recent Events",
   "action.event_debug": "Debug keyboard events",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "cmd.add_cursor_above": "Add Cursor Above",
   "cmd.add_cursor_above_desc": "Add a cursor on the line above",
   "cmd.add_cursor_below": "Add Cursor Below",

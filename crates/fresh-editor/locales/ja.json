@@ -35,6 +35,8 @@
   "action.duplicate_line": "行を複製",
   "action.ensure_final_newline": "ファイルが改行で終わるようにする",
   "action.event_debug": "キーボードイベントのデバッグ",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "選択範囲を拡張",
   "action.file_browser_toggle_detect_encoding": "Toggle encoding auto-detection",
   "action.file_browser_toggle_hidden": "隠しファイルの表示を切り替え",

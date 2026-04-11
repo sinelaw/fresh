@@ -35,6 +35,8 @@
   "action.duplicate_line": "Dupliquer la ligne",
   "action.ensure_final_newline": "S'assurer que le fichier se termine par un saut de ligne",
   "action.event_debug": "Déboguer les événements clavier",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "Étendre la sélection",
   "action.file_browser_toggle_detect_encoding": "Basculer la détection automatique de l'encodage",
   "action.file_browser_toggle_hidden": "Basculer la visibilité des fichiers cachés",

@@ -230,11 +230,23 @@ pub enum KeyContext {
     Terminal,
     /// Settings modal is active
     Settings,
+    /// Composite buffer (side-by-side diff) has focus
+    CompositeBuffer,
     /// Buffer-local mode context (e.g. "search-replace-list")
     Mode(String),
 }
 
 impl KeyContext {
+    /// Whether this context should allow all Normal-context bindings as fallbacks.
+    ///
+    /// CompositeBuffer is a specialized Normal view with extra context-specific
+    /// bindings layered on top. All standard navigation bindings (arrows,
+    /// PageUp/Down, etc.) should still work, so it falls through fully to
+    /// Normal rather than restricting to application-wide actions only.
+    pub fn allows_normal_fallthrough(&self) -> bool {
+        matches!(self, Self::CompositeBuffer)
+    }
+
     /// Check if a context should allow input
     pub fn allows_text_input(&self) -> bool {
         matches!(self, Self::Normal | Self::Prompt | Self::FileExplorer)
@@ -255,6 +267,7 @@ impl KeyContext {
             "menu" => Self::Menu,
             "terminal" => Self::Terminal,
             "settings" => Self::Settings,
+            "compositeBuffer" | "composite_buffer" => Self::CompositeBuffer,
             _ => return None,
         })
     }
@@ -270,6 +283,7 @@ impl KeyContext {
             Self::Menu => "menu".to_string(),
             Self::Terminal => "terminal".to_string(),
             Self::Settings => "settings".to_string(),
+            Self::CompositeBuffer => "compositeBuffer".to_string(),
             Self::Mode(name) => format!("mode:{}", name),
         }
     }
@@ -663,6 +677,10 @@ pub enum Action {
     // Plugin development
     LoadPluginFromBuffer, // Load current buffer as a plugin
 
+    // Composite buffer (side-by-side diff) hunk navigation
+    CompositeNextHunk, // Navigate to the next hunk in a composite diff view
+    CompositePrevHunk, // Navigate to the previous hunk in a composite diff view
+
     // No-op
     None,
 }
@@ -1039,6 +1057,9 @@ impl Action {
             "event_debug" => EventDebug,
             "load_plugin_from_buffer" => LoadPluginFromBuffer,
             "open_keybinding_editor" => OpenKeybindingEditor,
+
+            "composite_next_hunk" => CompositeNextHunk,
+            "composite_prev_hunk" => CompositePrevHunk,
 
             "noop" => None,
 
@@ -1617,14 +1638,17 @@ impl KeybindingResolver {
             }
         }
 
-        // Fall back to normal context ONLY for application-wide actions
-        // This prevents keys from leaking through to the editor when in special contexts
+        // Fall back to Normal context bindings.
+        // Contexts with allows_normal_fallthrough (e.g. CompositeBuffer) get ALL
+        // Normal bindings; other contexts only get application-wide actions.
         if context != KeyContext::Normal {
+            let full_fallthrough = context.allows_normal_fallthrough();
+
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
                 if let Some(action) = normal_bindings.get(norm) {
-                    if Self::is_application_wide_action(action) {
+                    if full_fallthrough || Self::is_application_wide_action(action) {
                         tracing::trace!(
-                            "  -> Found application-wide action in custom normal bindings: {:?}",
+                            "  -> Found action in custom normal bindings (fallthrough): {:?}",
                             action
                         );
                         return action.clone();
@@ -1634,9 +1658,9 @@ impl KeybindingResolver {
 
             if let Some(normal_bindings) = self.default_bindings.get(&KeyContext::Normal) {
                 if let Some(action) = normal_bindings.get(norm) {
-                    if Self::is_application_wide_action(action) {
+                    if full_fallthrough || Self::is_application_wide_action(action) {
                         tracing::trace!(
-                            "  -> Found application-wide action in default normal bindings: {:?}",
+                            "  -> Found action in default normal bindings (fallthrough): {:?}",
                             action
                         );
                         return action.clone();
@@ -1895,6 +1919,7 @@ impl KeybindingResolver {
             KeyContext::Popup,
             KeyContext::FileExplorer,
             KeyContext::Menu,
+            KeyContext::CompositeBuffer,
         ] {
             let mut all_keys: HashMap<(KeyCode, KeyModifiers), Action> = HashMap::new();
 
@@ -2235,6 +2260,8 @@ impl KeybindingResolver {
             Action::EventDebug => t!("action.event_debug"),
             Action::LoadPluginFromBuffer => "Load Plugin from Buffer".into(),
             Action::OpenKeybindingEditor => "Keybinding Editor".into(),
+            Action::CompositeNextHunk => t!("action.composite_next_hunk"),
+            Action::CompositePrevHunk => t!("action.composite_prev_hunk"),
             Action::None => t!("action.none"),
         }
         .to_string()
@@ -2343,8 +2370,10 @@ impl KeybindingResolver {
             }
         }
 
-        // For certain contexts, also check Normal context for application-wide actions
-        if context != KeyContext::Normal && Self::is_application_wide_action(action) {
+        // For certain contexts, also check Normal context for fallthrough actions
+        if context != KeyContext::Normal
+            && (context.allows_normal_fallthrough() || Self::is_application_wide_action(action))
+        {
             // Check custom normal bindings
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
                 if let Some((keycode, modifiers)) = find_best_keybinding(normal_bindings, action) {

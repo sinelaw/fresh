@@ -35,6 +35,8 @@
   "action.duplicate_line": "复制行",
   "action.ensure_final_newline": "确保文件以换行符结尾",
   "action.event_debug": "调试键盘事件",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "扩展选择",
   "action.file_browser_toggle_detect_encoding": "Toggle encoding auto-detection",
   "action.file_browser_toggle_hidden": "切换隐藏文件可见性",

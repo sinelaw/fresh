@@ -35,6 +35,8 @@
   "action.duplicate_line": "Nhân đôi dòng",
   "action.ensure_final_newline": "Đảm bảo tệp kết thúc bằng dòng mới",
   "action.event_debug": "Gỡ lỗi sự kiện bàn phím",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "Mở rộng vùng chọn",
   "action.file_browser_toggle_detect_encoding": "Bật/tắt tự động phát hiện mã hóa",
   "action.file_browser_toggle_hidden": "Hiện/ẩn tệp ẩn",

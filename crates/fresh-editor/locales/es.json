@@ -35,6 +35,8 @@
   "action.duplicate_line": "Duplicar línea",
   "action.ensure_final_newline": "Asegurar que el archivo termine con nueva línea",
   "action.event_debug": "Depurar eventos de teclado",
+  "action.composite_next_hunk": "Next Hunk (Side-by-Side Diff)",
+  "action.composite_prev_hunk": "Previous Hunk (Side-by-Side Diff)",
   "action.expand_selection": "Expandir selección",
   "action.file_browser_toggle_detect_encoding": "Alternar detección automática de codificación",
   "action.file_browser_toggle_hidden": "Alternar visibilidad de archivos ocultos",

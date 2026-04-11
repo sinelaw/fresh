@@ -734,6 +734,38 @@
       "action": "play_last_macro",
       "args": {},
       "when": "normal"
+    },
+    {
+      "comment": "Composite buffer context - Next hunk (n)",
+      "key": "n",
+      "modifiers": [],
+      "action": "composite_next_hunk",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "comment": "Composite buffer context - Previous hunk (p)",
+      "key": "p",
+      "modifiers": [],
+      "action": "composite_prev_hunk",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "comment": "Composite buffer context - Next hunk (])",
+      "key": "]",
+      "modifiers": [],
+      "action": "composite_next_hunk",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "comment": "Composite buffer context - Previous hunk ([)",
+      "key": "[",
+      "modifiers": [],
+      "action": "composite_prev_hunk",
+      "args": {},
+      "when": "compositeBuffer"
     }
   ]
 }

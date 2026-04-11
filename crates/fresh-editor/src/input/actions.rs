@@ -3056,7 +3056,9 @@ pub fn action_to_events(
         | Action::LoadPluginFromBuffer
         | Action::OpenKeybindingEditor
         | Action::AddRuler
-        | Action::RemoveRuler => return None,
+        | Action::RemoveRuler
+        | Action::CompositeNextHunk
+        | Action::CompositePrevHunk => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {
