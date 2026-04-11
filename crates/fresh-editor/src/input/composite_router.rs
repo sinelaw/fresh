@@ -95,58 +95,37 @@ pub enum CursorAction {
     LineEnd,
     WordLeft,
     WordRight,
+    Top,
+    Bottom,
 }
 
 /// Routes input events for a composite buffer
 pub struct CompositeInputRouter;
 
 impl CompositeInputRouter {
-    /// Route a key event to the appropriate action
+    /// Route a key event to the appropriate action.
+    ///
+    /// Only intercepts keys that need composite-specific handling (pane
+    /// switching, hunk navigation, close). Everything else — arrows,
+    /// Home/End, PageUp/PageDown, typing — returns `Unhandled` so the
+    /// editor's normal key dispatch handles it natively.
     pub fn route_key_event(
-        composite: &CompositeBuffer,
-        view_state: &CompositeViewState,
+        _composite: &CompositeBuffer,
+        _view_state: &CompositeViewState,
         event: &KeyEvent,
     ) -> RoutedEvent {
-        let focused_pane = composite.sources.get(view_state.focused_pane);
-
         match (event.modifiers, event.code) {
-            // Vim-style scroll navigation (j/k scroll the composite view)
-            (KeyModifiers::NONE, KeyCode::Char('k')) => {
-                RoutedEvent::CompositeScroll(ScrollAction::Up(1))
-            }
+            // Scroll (j/k act as line-by-line scroll in the composite view)
             (KeyModifiers::NONE, KeyCode::Char('j')) => {
                 RoutedEvent::CompositeScroll(ScrollAction::Down(1))
             }
-            // Arrow keys are NOT intercepted — they fall through to the
-            // editor's native cursor movement so that cursor wrapping,
-            // horizontal scroll, and other standard behaviors continue to work.
-            (KeyModifiers::CONTROL, KeyCode::Char('u')) => {
-                RoutedEvent::CompositeScroll(ScrollAction::PageUp)
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
-                RoutedEvent::CompositeScroll(ScrollAction::PageDown)
-            }
-            (KeyModifiers::NONE, KeyCode::PageUp) => {
-                RoutedEvent::CompositeScroll(ScrollAction::PageUp)
-            }
-            (KeyModifiers::NONE, KeyCode::PageDown) => {
-                RoutedEvent::CompositeScroll(ScrollAction::PageDown)
-            }
-            // Vim-style scroll to top/bottom (g / G)
-            // Home/End are NOT intercepted — they fall through to native
-            // cursor movement (go to line start/end).
-            (KeyModifiers::NONE, KeyCode::Char('g')) => {
-                RoutedEvent::CompositeScroll(ScrollAction::ToTop)
-            }
-            (KeyModifiers::SHIFT, KeyCode::Char('G')) => {
-                RoutedEvent::CompositeScroll(ScrollAction::ToBottom)
+            (KeyModifiers::NONE, KeyCode::Char('k')) => {
+                RoutedEvent::CompositeScroll(ScrollAction::Up(1))
             }
 
             // Pane switching
             (KeyModifiers::NONE, KeyCode::Tab) => RoutedEvent::SwitchPane(Direction::Next),
             (KeyModifiers::SHIFT, KeyCode::BackTab) => RoutedEvent::SwitchPane(Direction::Prev),
-            (KeyModifiers::NONE, KeyCode::Char('h')) => RoutedEvent::SwitchPane(Direction::Prev),
-            (KeyModifiers::NONE, KeyCode::Char('l')) => RoutedEvent::SwitchPane(Direction::Next),
 
             // Hunk navigation
             (KeyModifiers::NONE, KeyCode::Char('n')) => RoutedEvent::NavigateHunk(Direction::Next),
@@ -154,88 +133,9 @@ impl CompositeInputRouter {
             (KeyModifiers::NONE, KeyCode::Char(']')) => RoutedEvent::NavigateHunk(Direction::Next),
             (KeyModifiers::NONE, KeyCode::Char('[')) => RoutedEvent::NavigateHunk(Direction::Prev),
 
-            // Close
+            // Close composite view
             (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::NONE, KeyCode::Esc) => {
                 RoutedEvent::Close
-            }
-
-            // Visual selection
-            (KeyModifiers::NONE, KeyCode::Char('v')) => {
-                RoutedEvent::Selection(SelectionAction::StartVisual)
-            }
-            (KeyModifiers::SHIFT, KeyCode::Char('V')) => {
-                RoutedEvent::Selection(SelectionAction::StartVisualLine)
-            }
-
-            // Yank (copy) selected text
-            (KeyModifiers::NONE, KeyCode::Char('y')) => RoutedEvent::Yank,
-
-            // Editing (if pane is editable)
-            (KeyModifiers::NONE, KeyCode::Char(c)) => {
-                if let Some(pane) = focused_pane {
-                    if pane.editable {
-                        RoutedEvent::ToSourceBuffer {
-                            buffer_id: pane.buffer_id,
-                            action: BufferAction::Insert(c),
-                        }
-                    } else {
-                        RoutedEvent::Blocked("Pane is read-only")
-                    }
-                } else {
-                    RoutedEvent::Unhandled
-                }
-            }
-            (KeyModifiers::NONE, KeyCode::Backspace) => {
-                if let Some(pane) = focused_pane {
-                    if pane.editable {
-                        RoutedEvent::ToSourceBuffer {
-                            buffer_id: pane.buffer_id,
-                            action: BufferAction::Backspace,
-                        }
-                    } else {
-                        RoutedEvent::Blocked("Pane is read-only")
-                    }
-                } else {
-                    RoutedEvent::Unhandled
-                }
-            }
-            (KeyModifiers::NONE, KeyCode::Delete) => {
-                if let Some(pane) = focused_pane {
-                    if pane.editable {
-                        RoutedEvent::ToSourceBuffer {
-                            buffer_id: pane.buffer_id,
-                            action: BufferAction::Delete,
-                        }
-                    } else {
-                        RoutedEvent::Blocked("Pane is read-only")
-                    }
-                } else {
-                    RoutedEvent::Unhandled
-                }
-            }
-            (KeyModifiers::NONE, KeyCode::Enter) => {
-                if let Some(pane) = focused_pane {
-                    if pane.editable {
-                        RoutedEvent::ToSourceBuffer {
-                            buffer_id: pane.buffer_id,
-                            action: BufferAction::NewLine,
-                        }
-                    } else {
-                        RoutedEvent::Blocked("Pane is read-only")
-                    }
-                } else {
-                    RoutedEvent::Unhandled
-                }
-            }
-
-            // Cursor movement in focused pane
-            (KeyModifiers::NONE, KeyCode::Left) => RoutedEvent::PaneCursor(CursorAction::Left),
-            (KeyModifiers::NONE, KeyCode::Right) => RoutedEvent::PaneCursor(CursorAction::Right),
-            (KeyModifiers::CONTROL, KeyCode::Left) => {
-                RoutedEvent::PaneCursor(CursorAction::WordLeft)
-            }
-            (KeyModifiers::CONTROL, KeyCode::Right) => {
-                RoutedEvent::PaneCursor(CursorAction::WordRight)
             }
 
             _ => RoutedEvent::Unhandled,

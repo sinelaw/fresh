@@ -4042,52 +4042,17 @@ impl Editor {
             CompositeInputRouter, Direction, RoutedEvent, ScrollAction,
         };
 
-        // We need the composite buffer and its view state to route.
         let composite = self.composite_buffers.get(&buffer_id)?;
         let view_state = self.composite_view_states.get(&(split_id, buffer_id))?;
 
-        let routed = CompositeInputRouter::route_key_event(composite, view_state, key_event);
-
-        match routed {
-            RoutedEvent::Unhandled => None, // let normal dispatch continue
+        match CompositeInputRouter::route_key_event(composite, view_state, key_event) {
+            RoutedEvent::Unhandled => None,
 
             RoutedEvent::CompositeScroll(action) => {
                 let delta = match action {
                     ScrollAction::Up(n) => -(n as isize),
                     ScrollAction::Down(n) => n as isize,
-                    ScrollAction::PageUp => {
-                        let h = self
-                            .split_view_states
-                            .get(&split_id)
-                            .map(|vs| vs.viewport.height as isize)
-                            .unwrap_or(20);
-                        -h.max(1)
-                    }
-                    ScrollAction::PageDown => {
-                        let h = self
-                            .split_view_states
-                            .get(&split_id)
-                            .map(|vs| vs.viewport.height as isize)
-                            .unwrap_or(20);
-                        h.max(1)
-                    }
-                    ScrollAction::ToTop => {
-                        self.composite_scroll_to(split_id, buffer_id, 0);
-                        return Some(Ok(()));
-                    }
-                    ScrollAction::ToBottom => {
-                        let rows = self
-                            .composite_buffers
-                            .get(&buffer_id)
-                            .map(|c| c.alignment.rows.len().saturating_sub(1))
-                            .unwrap_or(0);
-                        self.composite_scroll_to(split_id, buffer_id, rows);
-                        return Some(Ok(()));
-                    }
-                    ScrollAction::ToRow(row) => {
-                        self.composite_scroll_to(split_id, buffer_id, row);
-                        return Some(Ok(()));
-                    }
+                    _ => return Some(Ok(())),
                 };
                 self.composite_scroll(split_id, buffer_id, delta);
                 Some(Ok(()))
@@ -4118,21 +4083,8 @@ impl Editor {
                 Some(Ok(()))
             }
 
-            RoutedEvent::Blocked(msg) => {
-                self.handle_set_status(msg.to_string());
-                Some(Ok(()))
-            }
-
-            RoutedEvent::Selection(_) | RoutedEvent::Yank => {
-                // TODO: implement visual selection and yank for composite buffers
-                Some(Ok(()))
-            }
-
-            RoutedEvent::PaneCursor(_) | RoutedEvent::ToSourceBuffer { .. } => {
-                // Cursor movement and source buffer editing are not yet
-                // dispatched here — let normal handling continue.
-                None
-            }
+            // Anything else the router might return — let normal dispatch handle it
+            _ => None,
         }
     }
 }
