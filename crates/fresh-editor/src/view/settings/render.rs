@@ -788,10 +788,10 @@ fn render_setting_item_pure(
                 let header_y = area.y;
                 let _header_area_height = header_visible_height.min(area.height);
 
-                // First row: section title (bold, slightly dimmed)
+                // First row: section title (bold)
                 if header_visible_start == 0 {
                     let header_style = Style::default()
-                        .fg(theme.menu_active_fg)
+                        .fg(theme.editor_fg)
                         .add_modifier(Modifier::BOLD);
                     // Render section name with underline characters
                     let header_text = format!("── {} ", section_name);
