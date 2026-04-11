@@ -1989,10 +1989,11 @@ impl Editor {
                 if lang == language {
                     return true;
                 }
-                // Check if this is a universal server that serves all languages
+                // Check if this server's scope accepts the queried language
                 self.lsp
                     .as_ref()
-                    .map(|lsp| lsp.is_universal_server(server_name))
+                    .and_then(|lsp| lsp.server_scope(server_name))
+                    .map(|scope| scope.accepts(language))
                     .unwrap_or(false)
             })
     }

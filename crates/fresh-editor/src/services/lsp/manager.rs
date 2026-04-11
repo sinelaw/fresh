@@ -16,36 +16,40 @@ use std::time::{Duration, Instant};
 
 /// Which languages an LSP server handles.
 ///
-/// - `All` — universal server, accepts documents of any language.
-/// - `Only(langs)` — per-language server, accepts only listed languages.
+/// Empty means the server is universal (accepts all languages).
+/// Non-empty lists only the accepted languages.
 #[derive(Debug, Clone)]
-pub enum LanguageScope {
-    /// Serves all languages (universal LSP server).
-    All,
-    /// Serves only the listed languages.
-    Only(Vec<String>),
-}
+pub struct LanguageScope(Vec<String>);
 
 impl LanguageScope {
-    /// Create a scope for a single language.
+    /// Universal scope — accepts all languages.
+    pub fn all() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Scope for a single language.
     pub fn single(language: impl Into<String>) -> Self {
-        Self::Only(vec![language.into()])
+        Self(vec![language.into()])
     }
 
     /// Whether this scope accepts documents of the given language.
     pub fn accepts(&self, language: &str) -> bool {
-        match self {
-            Self::All => true,
-            Self::Only(langs) => langs.iter().any(|l| l == language),
-        }
+        self.0.is_empty() || self.0.iter().any(|l| l == language)
+    }
+
+    /// Whether this is a universal scope (accepts all languages).
+    pub fn is_universal(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The language list. Empty means all.
+    pub fn languages(&self) -> &[String] {
+        &self.0
     }
 
     /// A display label for logging and status messages.
     pub fn label(&self) -> &str {
-        match self {
-            Self::All => "universal",
-            Self::Only(langs) => langs.first().map(|s| s.as_str()).unwrap_or("unknown"),
-        }
+        self.0.first().map(|s| s.as_str()).unwrap_or("universal")
     }
 }
 
@@ -675,11 +679,21 @@ impl LspManager {
         (lang, &mut self.universal_handles)
     }
 
-    /// Check if a server name belongs to a universal handle.
-    pub fn is_universal_server(&self, server_name: &str) -> bool {
+    /// Get the language scope for a server by name.
+    ///
+    /// Checks universal handles first, then per-language handles.
+    /// Returns `None` if the server is not found.
+    pub fn server_scope(&self, server_name: &str) -> Option<&LanguageScope> {
         self.universal_handles
             .iter()
-            .any(|sh| sh.name == server_name)
+            .find(|sh| sh.name == server_name)
+            .or_else(|| {
+                self.handles
+                    .values()
+                    .flat_map(|v| v.iter())
+                    .find(|sh| sh.name == server_name)
+            })
+            .map(|sh| sh.handle.scope())
     }
 
     /// Check if any handles (per-language or universal) exist for a language.
@@ -980,7 +994,7 @@ impl LspManager {
                 &config.command,
                 &config.args,
                 config.env.clone(),
-                LanguageScope::All,
+                LanguageScope::all(),
                 server_name.clone(),
                 &async_bridge,
                 config.process_limits.clone(),

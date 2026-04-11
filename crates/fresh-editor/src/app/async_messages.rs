@@ -901,24 +901,30 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|s| matches!(s, LspServerStatus::Running));
             if !was_already_running {
-                let is_universal = self
+                let scope = self
                     .lsp
                     .as_ref()
-                    .map(|lsp| lsp.is_universal_server(&server_name_ref))
-                    .unwrap_or(false);
-                if is_universal {
-                    // Universal server just started — send didOpen for all open buffers
-                    let all_languages: Vec<String> = self
-                        .buffers
-                        .values()
-                        .map(|s| s.language.clone())
-                        .collect::<std::collections::HashSet<_>>()
-                        .into_iter()
-                        .collect();
-                    for lang in all_languages {
-                        self.reopen_buffers_for_language(&lang);
+                    .and_then(|lsp| lsp.server_scope(&server_name_ref).cloned());
+                if let Some(scope) = scope {
+                    if scope.is_universal() {
+                        // Universal server — send didOpen for all open buffers
+                        let languages: Vec<String> = self
+                            .buffers
+                            .values()
+                            .map(|s| s.language.clone())
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        for lang in languages {
+                            self.reopen_buffers_for_language(&lang);
+                        }
+                    } else {
+                        for lang in scope.languages() {
+                            self.reopen_buffers_for_language(lang);
+                        }
                     }
                 } else {
+                    // Fallback: use the language from the status message
                     self.reopen_buffers_for_language(&language);
                 }
             }
