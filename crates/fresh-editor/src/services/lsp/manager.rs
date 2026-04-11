@@ -15,6 +15,16 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+/// Consume and discard a `Result` from a fire-and-forget operation.
+///
+/// Use for best-effort cleanup where failure is expected and non-actionable,
+/// e.g. shutting down an LSP server that may have already exited.
+fn fire_and_forget<E: std::fmt::Debug>(result: Result<(), E>) {
+    if let Err(e) = result {
+        tracing::trace!(error = ?e, "fire-and-forget operation failed");
+    }
+}
+
 /// Which languages an LSP server handles.
 ///
 /// Empty means the server is universal (accepts all languages).
@@ -1013,7 +1023,7 @@ impl LspManager {
                 drained
             };
             for sh in universals {
-                let _ = sh.handle.shutdown();
+                fire_and_forget(sh.handle.shutdown());
             }
             // Universal servers will be re-spawned on next try_spawn call
             return "Universal LSP server crashed. It will restart on next file open.".to_string();
@@ -1027,7 +1037,7 @@ impl LspManager {
                     && self.handles[i].handle.scope().accepts(language)
                 {
                     let sh = self.handles.remove(i);
-                    let _ = sh.handle.shutdown(); // Best-effort cleanup
+                    fire_and_forget(sh.handle.shutdown());
                 } else {
                     i += 1;
                 }
@@ -1184,7 +1194,7 @@ impl LspManager {
                     && self.handles[i].handle.scope().accepts(language)
                 {
                     let sh = self.handles.remove(i);
-                    let _ = sh.handle.shutdown();
+                    fire_and_forget(sh.handle.shutdown());
                 } else {
                     i += 1;
                 }
@@ -1220,7 +1230,7 @@ impl LspManager {
         // Find and shut down just the named server
         if let Some(idx) = self.handles.iter().position(|sh| sh.name == server_name) {
             let sh = self.handles.remove(idx);
-            let _ = sh.handle.shutdown();
+            fire_and_forget(sh.handle.shutdown());
         }
 
         // Find the matching config (check per-language first, then universal)
@@ -1395,7 +1405,7 @@ impl LspManager {
             sh.name,
             language
         );
-        let _ = sh.handle.shutdown();
+        fire_and_forget(sh.handle.shutdown());
 
         // If no more non-universal handles remain for this language, mark it disabled
         let has_remaining = self
@@ -1429,7 +1439,7 @@ impl LspManager {
                     sh.name,
                     language
                 );
-                let _ = sh.handle.shutdown();
+                fire_and_forget(sh.handle.shutdown());
                 found = true;
             } else {
                 i += 1;
@@ -1456,7 +1466,7 @@ impl LspManager {
                 sh.name,
                 sh.handle.scope().label()
             );
-            let _ = sh.handle.shutdown();
+            fire_and_forget(sh.handle.shutdown());
         }
         self.handles.clear();
     }

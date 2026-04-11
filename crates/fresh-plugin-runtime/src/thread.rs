@@ -25,6 +25,16 @@ use std::time::Duration;
 // Re-export PluginConfig from fresh-core
 pub use fresh_core::config::PluginConfig;
 
+/// Consume and discard a `Result` from a fire-and-forget channel send.
+///
+/// Use when the receiver may have been dropped (e.g. during shutdown) and
+/// failure is expected and non-actionable.
+fn fire_and_forget<T, E: std::fmt::Debug>(result: std::result::Result<T, E>) {
+    if let Err(e) = result {
+        tracing::trace!(error = ?e, "fire-and-forget send failed");
+    }
+}
+
 /// Request messages sent to the plugin thread
 #[derive(Debug)]
 pub enum PluginRequest {
@@ -454,10 +464,10 @@ impl PluginThreadHandle {
             .and_then(|mut owners| owners.remove(&request_id));
         if let Some(plugin_name) = plugin_name {
             if let Some(sender) = self.request_sender.as_ref() {
-                let _ = sender.send(PluginRequest::TrackAsyncResource {
+                fire_and_forget(sender.send(PluginRequest::TrackAsyncResource {
                     plugin_name,
                     resource,
-                });
+                }));
             }
         }
     }
@@ -609,10 +619,10 @@ impl PluginThreadHandle {
     /// any results will come back via the PluginCommand channel.
     pub fn run_hook(&self, hook_name: &str, args: HookArgs) {
         if let Some(sender) = self.request_sender.as_ref() {
-            let _ = sender.send(PluginRequest::RunHook {
+            fire_and_forget(sender.send(PluginRequest::RunHook {
                 hook_name: hook_name.to_string(),
                 args,
-            });
+            }));
         }
     }
 
@@ -746,7 +756,7 @@ impl PluginThreadHandle {
         // First send a Shutdown request to allow clean processing of pending work
         if let Some(sender) = self.request_sender.as_ref() {
             tracing::debug!("PluginThreadHandle::shutdown: sending Shutdown request");
-            let _ = sender.send(PluginRequest::Shutdown);
+            fire_and_forget(sender.send(PluginRequest::Shutdown));
         }
 
         // Then drop the sender to close the channel - this reliably wakes the receiver
@@ -756,7 +766,9 @@ impl PluginThreadHandle {
 
         if let Some(handle) = self.thread_handle.take() {
             tracing::debug!("PluginThreadHandle::shutdown: joining plugin thread");
-            let _ = handle.join();
+            if handle.join().is_err() {
+                tracing::trace!("plugin thread panicked during join");
+            }
             tracing::debug!("PluginThreadHandle::shutdown: plugin thread joined");
         }
 
@@ -771,10 +783,10 @@ impl PluginThreadHandle {
         result_json: String,
     ) {
         if let Some(sender) = self.request_sender.as_ref() {
-            let _ = sender.send(PluginRequest::ResolveCallback {
+            fire_and_forget(sender.send(PluginRequest::ResolveCallback {
                 callback_id,
                 result_json,
-            });
+            }));
         }
     }
 
@@ -782,7 +794,7 @@ impl PluginThreadHandle {
     /// Called by the app when async operations fail
     pub fn reject_callback(&self, callback_id: fresh_core::api::JsCallbackId, error: String) {
         if let Some(sender) = self.request_sender.as_ref() {
-            let _ = sender.send(PluginRequest::RejectCallback { callback_id, error });
+            fire_and_forget(sender.send(PluginRequest::RejectCallback { callback_id, error }));
         }
     }
 
@@ -795,11 +807,11 @@ impl PluginThreadHandle {
         done: bool,
     ) {
         if let Some(sender) = self.request_sender.as_ref() {
-            let _ = sender.send(PluginRequest::CallStreamingCallback {
+            fire_and_forget(sender.send(PluginRequest::CallStreamingCallback {
                 callback_id,
                 result_json,
                 done,
-            });
+            }));
         }
     }
 }
@@ -833,7 +845,7 @@ fn respond_to_pending(
     };
 
     if let Some(tx) = sender {
-        let _ = tx.send(response);
+        fire_and_forget(tx.send(response));
         true
     } else {
         false
@@ -943,7 +955,7 @@ async fn plugin_thread_loop(
                         // Start the action without blocking - this allows us to process
                         // ResolveCallback requests that the action may be waiting for.
                         let result = runtime.borrow_mut().start_action(&action_name);
-                        let _ = response.send(result);
+                        fire_and_forget(response.send(result));
                         has_pending_work = true; // Action may have started async work
                     }
                     Some(request) => {
@@ -1016,12 +1028,12 @@ async fn handle_request(
     match request {
         PluginRequest::LoadPlugin { path, response } => {
             let result = load_plugin_internal(Rc::clone(&runtime), plugins, &path).await;
-            let _ = response.send(result);
+            fire_and_forget(response.send(result));
         }
 
         PluginRequest::LoadPluginsFromDir { dir, response } => {
             let errors = load_plugins_from_dir_internal(Rc::clone(&runtime), plugins, &dir).await;
-            let _ = response.send(errors);
+            fire_and_forget(response.send(errors));
         }
 
         PluginRequest::LoadPluginsFromDirWithConfig {
@@ -1036,7 +1048,7 @@ async fn handle_request(
                 &plugin_configs,
             )
             .await;
-            let _ = response.send((errors, discovered));
+            fire_and_forget(response.send((errors, discovered)));
         }
 
         PluginRequest::LoadPluginFromSource {
@@ -1052,17 +1064,17 @@ async fn handle_request(
                 &name,
                 is_typescript,
             );
-            let _ = response.send(result);
+            fire_and_forget(response.send(result));
         }
 
         PluginRequest::UnloadPlugin { name, response } => {
             let result = unload_plugin_internal(Rc::clone(&runtime), plugins, &name);
-            let _ = response.send(result);
+            fire_and_forget(response.send(result));
         }
 
         PluginRequest::ReloadPlugin { name, response } => {
             let result = reload_plugin_internal(Rc::clone(&runtime), plugins, &name).await;
-            let _ = response.send(result);
+            fire_and_forget(response.send(result));
         }
 
         PluginRequest::ExecuteAction {
@@ -1075,9 +1087,9 @@ async fn handle_request(
                 "ExecuteAction should be handled in main loop, not here: {}",
                 action_name
             );
-            let _ = response.send(Err(anyhow::anyhow!(
+            fire_and_forget(response.send(Err(anyhow::anyhow!(
                 "Internal error: ExecuteAction in wrong handler"
-            )));
+            ))));
         }
 
         PluginRequest::RunHook { hook_name, args } => {
@@ -1118,12 +1130,12 @@ async fn handle_request(
             response,
         } => {
             let has_handlers = runtime.borrow().has_handlers(&hook_name);
-            let _ = response.send(has_handlers);
+            fire_and_forget(response.send(has_handlers));
         }
 
         PluginRequest::ListPlugins { response } => {
             let plugin_list: Vec<TsPluginInfo> = plugins.values().cloned().collect();
-            let _ = response.send(plugin_list);
+            fire_and_forget(response.send(plugin_list));
         }
 
         PluginRequest::ResolveCallback {
