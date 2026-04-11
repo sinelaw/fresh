@@ -1629,24 +1629,17 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Step 6: Wait for package manager UI to finish loading
-    eprintln!("[TEST] Step 6: Waiting for package manager to load");
+    // Step 6: Wait for package manager UI to finish loading and show the plugin
+    eprintln!("[TEST] Step 6: Waiting for package manager to load with plugin visible");
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("*Packages*") && !screen.contains("Loading...")
+            screen.contains("*Packages*") && screen.contains("uninstall-test")
         })
         .unwrap();
     eprintln!(
         "[TEST] Step 6: Package manager loaded. Screen:\n{}",
         harness.screen_to_string()
-    );
-
-    let screen_after_load = harness.screen_to_string();
-    assert!(
-        screen_after_load.contains("uninstall-test"),
-        "Plugin should be visible in package manager. Screen: {}",
-        screen_after_load
     );
 
     // Step 7: Wait for the Uninstall button to appear in the detail pane
