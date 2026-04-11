@@ -3894,7 +3894,17 @@ fn test_named_color_swatch_uses_native_ansi_color() {
         }
         let before = selected_line(&harness);
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.wait_until(|h| selected_line(h) != before).unwrap();
+        // Wait until ▸ is visible AND on a different line. Without the
+        // is_some() guard, a transient scroll-lag frame (where ▸ is
+        // off-viewport) would satisfy `None != Some(old)`, letting the
+        // loop capture `before = None` on the next iteration and then
+        // block forever on `None != None`.
+        harness
+            .wait_until(|h| {
+                let cur = selected_line(h);
+                cur.is_some() && cur != before
+            })
+            .unwrap();
     }
 
     // Expand the UI section and wait semantically for the selected line
@@ -3924,7 +3934,12 @@ fn test_named_color_swatch_uses_native_ansi_color() {
         }
         let before = selected_line(&harness);
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.wait_until(|h| selected_line(h) != before).unwrap();
+        harness
+            .wait_until(|h| {
+                let cur = selected_line(h);
+                cur.is_some() && cur != before
+            })
+            .unwrap();
     }
 
     // Move selection away so the tab_active_fg row renders without the
@@ -3932,7 +3947,12 @@ fn test_named_color_swatch_uses_native_ansi_color() {
     // fg==bg swatch detection).
     let before = selected_line(&harness);
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.wait_until(|h| selected_line(h) != before).unwrap();
+    harness
+        .wait_until(|h| {
+            let cur = selected_line(h);
+            cur.is_some() && cur != before
+        })
+        .unwrap();
 
     // Wait for the tab_active_fg swatch to render with the correct native
     // ANSI Yellow color. On slow CI the plugin may not have finished
