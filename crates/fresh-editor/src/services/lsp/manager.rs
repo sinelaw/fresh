@@ -1001,7 +1001,13 @@ impl LspManager {
                 config.language_id_overrides.clone(),
             ) {
                 Ok(handle) => {
-                    let effective_root = self.resolve_root_uri("universal", file_path);
+                    let effective_root = file_path
+                        .map(|p| {
+                            let root = detect_workspace_root(p, &config.root_markers);
+                            path_to_uri(&root)
+                        })
+                        .flatten()
+                        .or_else(|| self.root_uri.clone());
                     if let Err(e) =
                         handle.initialize(effective_root, config.initialization_options.clone())
                     {
@@ -1039,7 +1045,6 @@ impl LspManager {
     /// Handle a server crash by scheduling a restart with exponential backoff
     ///
     /// Returns a message describing the action taken (for UI notification)
-    #[allow(clippy::let_underscore_must_use)] // shutdown() is best-effort cleanup of a crashed server
     pub fn handle_server_crash(&mut self, language: &str, server_name: &str) -> String {
         // Check if the crashed server is a universal handle
         if self
@@ -1193,7 +1198,6 @@ impl LspManager {
     /// that has auto_start=false in its configuration.
     ///
     /// Returns (success, message) tuple
-    #[allow(clippy::let_underscore_must_use)] // shutdown() is best-effort cleanup before restart
     pub fn manual_restart(&mut self, language: &str, file_path: Option<&Path>) -> (bool, String) {
         // Clear any existing state
         self.clear_cooldown(language);
@@ -1227,7 +1231,6 @@ impl LspManager {
     ///
     /// Shuts down just that server and re-spawns it from config.
     /// Returns (success, message) tuple.
-    #[allow(clippy::let_underscore_must_use)]
     pub fn manual_restart_server(
         &mut self,
         language: &str,
@@ -1238,20 +1241,37 @@ impl LspManager {
         self.disabled_languages.remove(language);
         self.allowed_languages.insert(language.to_string());
 
-        // Find and shut down just the named server
-        if let Some(handles) = self.handles.get_mut(language) {
+        // Find and shut down just the named server (check universal handles too)
+        if let Some(idx) = self
+            .universal_handles
+            .iter()
+            .position(|sh| sh.name == server_name)
+        {
+            let sh = self.universal_handles.remove(idx);
+            let _ = sh.handle.shutdown();
+        } else if let Some(handles) = self.handles.get_mut(language) {
             if let Some(idx) = handles.iter().position(|sh| sh.name == server_name) {
                 let sh = handles.remove(idx);
                 let _ = sh.handle.shutdown();
             }
         }
 
-        // Find the matching config and spawn just that server
-        let config = self
-            .config
-            .get(language)
-            .and_then(|configs| configs.iter().find(|c| c.display_name() == server_name))
-            .cloned();
+        // Find the matching config (check per-language first, then universal)
+        let is_universal = self
+            .universal_configs
+            .iter()
+            .any(|c| c.display_name() == server_name);
+        let config = if is_universal {
+            self.universal_configs
+                .iter()
+                .find(|c| c.display_name() == server_name)
+                .cloned()
+        } else {
+            self.config
+                .get(language)
+                .and_then(|configs| configs.iter().find(|c| c.display_name() == server_name))
+                .cloned()
+        };
 
         let Some(config) = config else {
             let message = format!(
@@ -1280,19 +1300,35 @@ impl LspManager {
             None => return (false, "No async bridge available".to_string()),
         };
 
+        let scope = if is_universal {
+            LanguageScope::all()
+        } else {
+            LanguageScope::single(language)
+        };
+
         match LspHandle::spawn(
             &runtime,
             &config.command,
             &config.args,
             config.env.clone(),
-            LanguageScope::single(language),
+            scope,
             server_name.to_string(),
             &async_bridge,
             config.process_limits.clone(),
             config.language_id_overrides.clone(),
         ) {
             Ok(handle) => {
-                let effective_root = self.resolve_root_uri(language, file_path);
+                let effective_root = if is_universal {
+                    file_path
+                        .map(|p| {
+                            let root = detect_workspace_root(p, &config.root_markers);
+                            path_to_uri(&root)
+                        })
+                        .flatten()
+                        .or_else(|| self.root_uri.clone())
+                } else {
+                    self.resolve_root_uri(language, file_path)
+                };
                 if let Err(e) =
                     handle.initialize(effective_root, config.initialization_options.clone())
                 {
@@ -1311,10 +1347,14 @@ impl LspManager {
                     capabilities: ServerCapabilitySummary::default(),
                 };
 
-                self.handles
-                    .entry(language.to_string())
-                    .or_default()
-                    .push(sh);
+                if is_universal {
+                    self.universal_handles.push(sh);
+                } else {
+                    self.handles
+                        .entry(language.to_string())
+                        .or_default()
+                        .push(sh);
+                }
 
                 let message = format!("LSP server '{}' for {} started", server_name, language);
                 tracing::info!("{}", message);
@@ -1382,8 +1422,19 @@ impl LspManager {
     ///
     /// Returns true if the server was found and shut down.
     /// If this was the last server for the language, marks the language as disabled.
-    #[allow(clippy::let_underscore_must_use)]
     pub fn shutdown_server_by_name(&mut self, language: &str, server_name: &str) -> bool {
+        // Check universal handles first
+        if let Some(idx) = self
+            .universal_handles
+            .iter()
+            .position(|sh| sh.name == server_name)
+        {
+            let sh = self.universal_handles.remove(idx);
+            tracing::info!("Shutting down universal LSP server '{}'", sh.name,);
+            let _ = sh.handle.shutdown();
+            return true;
+        }
+
         let Some(handles) = self.handles.get_mut(language) else {
             tracing::warn!("No running LSP servers found for {}", language);
             return false;
@@ -1423,7 +1474,6 @@ impl LspManager {
     ///
     /// This marks the language as disabled, preventing auto-restart until the user
     /// explicitly restarts it using the restart command.
-    #[allow(clippy::let_underscore_must_use)]
     pub fn shutdown_server(&mut self, language: &str) -> bool {
         if let Some(handles) = self.handles.remove(language) {
             for sh in &handles {
@@ -1446,7 +1496,6 @@ impl LspManager {
     }
 
     /// Shutdown all language servers (including universal servers)
-    #[allow(clippy::let_underscore_must_use)]
     pub fn shutdown_all(&mut self) {
         for (language, handles) in self.handles.iter() {
             for sh in handles {

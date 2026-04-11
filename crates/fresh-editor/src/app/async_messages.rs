@@ -905,9 +905,8 @@ impl Editor {
                     .lsp
                     .as_ref()
                     .and_then(|lsp| lsp.server_scope(&server_name_ref).cloned());
-                if let Some(scope) = scope {
-                    if scope.is_universal() {
-                        // Universal server — send didOpen for all open buffers
+                match scope {
+                    Some(scope) if scope.is_universal() => {
                         let languages: Vec<String> = self
                             .buffers
                             .values()
@@ -918,14 +917,16 @@ impl Editor {
                         for lang in languages {
                             self.reopen_buffers_for_language(&lang);
                         }
-                    } else {
+                    }
+                    Some(scope) => {
                         for lang in scope.languages() {
                             self.reopen_buffers_for_language(lang);
                         }
                     }
-                } else {
-                    // Fallback: use the language from the status message
-                    self.reopen_buffers_for_language(&language);
+                    None => {
+                        // Per-language server — language comes from the status message
+                        self.reopen_buffers_for_language(&language);
+                    }
                 }
             }
         }
