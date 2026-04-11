@@ -130,7 +130,6 @@ impl CompositeInputRouter {
             // Hunk navigation (n/p/]/[) and close (q/Esc) are handled by the
             // Action system via CompositeBuffer context keybindings, making
             // them rebindable through the keybinding editor.
-
             _ => RoutedEvent::Unhandled,
         }
     }
