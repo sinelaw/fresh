@@ -3785,9 +3785,25 @@ impl Editor {
         self.terminal_width = width;
         self.terminal_height = height;
 
+        // Collect inner panel leaf IDs from buffer groups — these should NOT
+        // be resized to the terminal dimensions. Their viewports are kept at
+        // their panel-relative sizes (updated synchronously during rendering)
+        // so that plugins see correct dimensions even before the async resize
+        // hook is processed.
+        let mut inner_panel_leaves = std::collections::HashSet::new();
+        for node in self.grouped_subtrees.values() {
+            if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
+                for inner_leaf in layout.leaf_split_ids() {
+                    inner_panel_leaves.insert(inner_leaf);
+                }
+            }
+        }
+
         // Resize all SplitViewState viewports (viewport is now owned by SplitViewState)
-        for view_state in self.split_view_states.values_mut() {
-            view_state.viewport.resize(width, height);
+        for (leaf_id, view_state) in self.split_view_states.iter_mut() {
+            if !inner_panel_leaves.contains(leaf_id) {
+                view_state.viewport.resize(width, height);
+            }
         }
 
         // Resize visible terminal PTYs to match new dimensions
@@ -5450,10 +5466,13 @@ impl Editor {
                 }
             }
 
-            // Update cursor information for active buffer
+            // Update cursor information for active buffer.
+            // Use effective_active_split() so that when a buffer group panel
+            // is focused, the snapshot reflects the inner panel's cursor and
+            // viewport — not the outer split's.
             if let Some(active_vs) = self
                 .split_view_states
-                .get(&self.split_manager.active_split())
+                .get(&self.effective_active_split())
             {
                 // Primary cursor (from SplitViewState)
                 let active_cursors = &active_vs.cursors;

@@ -684,7 +684,7 @@ impl Editor {
             // Get session name for display (only in session mode)
             let session_name = self.session_name().map(|s| s.to_string());
 
-            let active_split = self.split_manager.active_split();
+            let active_split = self.effective_active_split();
             let active_buf = self.active_buffer();
             let default_cursors = crate::model::cursor::Cursors::new();
             let status_cursors = self

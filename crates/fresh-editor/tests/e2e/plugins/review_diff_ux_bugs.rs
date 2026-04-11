@@ -424,15 +424,24 @@ fn test_bug4_hunk_navigation_n_does_not_move_cursor() {
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Extract cursor line from status bar (format: "Ln X, Col Y")
-    let screen_at_home = harness.screen_to_string();
-    let ln_before = screen_at_home
-        .lines()
-        .find(|l| l.contains("Ln "))
-        .unwrap_or("")
-        .to_string();
+    // Helper to extract the line number from the status bar ("Ln X, Col Y")
+    fn extract_ln(screen: &str) -> Option<usize> {
+        screen.lines().find_map(|l| {
+            if let Some(idx) = l.find("Ln ") {
+                let rest = &l[idx + 3..];
+                let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                num_str.parse().ok()
+            } else {
+                None
+            }
+        })
+    }
 
-    // Press n to jump to next hunk
+    let screen_at_home = harness.screen_to_string();
+    let ln_before = extract_ln(&screen_at_home).expect("status bar should show Ln");
+
+    // Press n to jump to next hunk — uses setBufferCursor (O(1)) to move
+    // the cursor directly to the hunk header byte offset.
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
@@ -443,21 +452,130 @@ fn test_bug4_hunk_navigation_n_does_not_move_cursor() {
     }
 
     let screen_after_n = harness.screen_to_string();
-    let ln_after = screen_after_n
-        .lines()
-        .find(|l| l.contains("Ln "))
-        .unwrap_or("")
-        .to_string();
+    let ln_after = extract_ln(&screen_after_n).expect("status bar should show Ln after n");
 
-    println!("BUG-4 before n: {}", ln_before);
-    println!("BUG-4 after n:  {}", ln_after);
+    println!("BUG-4 before n: Ln {}", ln_before);
+    println!("BUG-4 after n:  Ln {}", ln_after);
 
-    // The cursor line should have changed after pressing n
-    assert_ne!(
-        ln_before, ln_after,
-        "BUG-4: Pressing `n` in the diff panel should jump to the next hunk, \
-         but the cursor line did not change. Before:\n{}\nAfter:\n{}",
-        screen_at_home, screen_after_n
+    // The cursor line should have jumped forward to the next hunk header
+    // (the multi-hunk file has two separate @@ regions, so Ln should
+    // increase by more than 1).
+    assert!(
+        ln_after > ln_before,
+        "BUG-4: Pressing `n` should move cursor forward to next hunk. \
+         Ln before={}, Ln after={}. Screen:\n{}",
+        ln_before, ln_after, screen_after_n
+    );
+
+    // Press n again to reach the second hunk, then p to go back
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+    }
+    let screen_at_second = harness.screen_to_string();
+    let ln_second = extract_ln(&screen_at_second).expect("status bar should show Ln at second hunk");
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+    }
+    let screen_after_p = harness.screen_to_string();
+    let ln_after_p = extract_ln(&screen_after_p).expect("status bar should show Ln after p");
+    assert!(
+        ln_after_p < ln_second,
+        "BUG-4: Pressing `p` should move cursor back to previous hunk. \
+         Ln at_second={}, Ln after_p={}",
+        ln_second, ln_after_p
+    );
+}
+
+/// Verify that the status bar reads cursor position from the inner panel leaf
+/// (via effective_active_split) rather than the outer split. After the fix,
+/// the status bar correctly shows "*diff*" as the buffer name and the cursor
+/// line number from the diff panel's view state.
+#[test]
+fn test_set_buffer_cursor_updates_status_bar_for_panel_buffer() {
+    init_tracing_from_env();
+    let (repo, main_rs) = repo_with_multi_hunk_file();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("HUNK_ONE"))
+        .unwrap();
+
+    let _screen = open_review_diff(&mut harness);
+
+    // Switch focus to the diff panel with Tab
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // The status bar should show "*diff*" (the inner panel buffer name),
+    // NOT the outer split's buffer name.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("*diff*"),
+        "Status bar should display the inner panel buffer name '*diff*' \
+         when a buffer group panel is focused. Screen:\n{}",
+        screen
+    );
+
+    // Pressing 'n' should jump to the next hunk and update the status bar
+    // line number — this verifies both the cursor movement and the status
+    // bar reading from effective_active_split().
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    fn extract_ln(screen: &str) -> Option<usize> {
+        screen.lines().find_map(|l| {
+            if let Some(idx) = l.find("Ln ") {
+                let rest = &l[idx + 3..];
+                let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                num_str.parse().ok()
+            } else {
+                None
+            }
+        })
+    }
+
+    let screen_at_home = harness.screen_to_string();
+    let ln_at_home = extract_ln(&screen_at_home).expect("status bar should show Ln");
+
+    // Press n twice to navigate through hunks (first n → first hunk,
+    // second n → second hunk)
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+            .unwrap();
+        for _ in 0..10 {
+            harness.tick_and_render().unwrap();
+        }
+    }
+
+    let screen_after = harness.screen_to_string();
+    let ln_after = extract_ln(&screen_after).expect("status bar should show Ln");
+
+    println!(
+        "Panel cursor test: Ln at_home={}, Ln after_2n={}",
+        ln_at_home, ln_after
+    );
+    assert!(
+        ln_after > ln_at_home,
+        "Hunk navigation should move the cursor forward. \
+         Ln at_home={}, Ln after_2n={}",
+        ln_at_home, ln_after
     );
 }
 
@@ -768,7 +886,6 @@ fn test_bug9_side_by_side_down_arrow_no_viewport_scroll() {
 /// BUG-10: With the File Explorer sidebar open (narrower viewport), the
 /// toolbar's `e Export` hint is truncated.
 #[test]
-#[ignore = "BUG-10: Cosmetic — toolbar label truncation not yet fixed"]
 fn test_bug10_toolbar_export_label_truncated() {
     init_tracing_from_env();
     let (repo, main_rs) = repo_with_one_modification();

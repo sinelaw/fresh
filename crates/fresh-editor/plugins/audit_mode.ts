@@ -687,53 +687,68 @@ interface HintItem {
  * Keys get bold + keyword color; labels get dim text; groups separated by │.
  */
 function buildToolbar(W: number): TextPropertyEntry {
+    // Items within each group are ordered by importance so that when the
+    // viewport is narrow, the most useful hints get full labels while
+    // less discoverable ones are truncated to key-only or dropped.
     const groups: HintItem[][] = state.focusPanel === 'files'
         ? [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
             [{ key: "c", label: "Comment" }, { key: "N", label: "Note" }, { key: "x", label: "Del" }],
-            [{ key: "↵", label: "Open" }, { key: "Tab", label: "Switch" }, { key: "e", label: "Export" }, { key: "r", label: "Refresh" }, { key: "q", label: "Close" }],
+            [{ key: "e", label: "Export" }, { key: "q", label: "Close" }, { key: "↵", label: "Open" }, { key: "Tab", label: "Switch" }, { key: "r", label: "Refresh" }],
           ]
         : [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
             [{ key: "c", label: "Comment" }, { key: "N", label: "Note" }, { key: "x", label: "Del" }],
-            [{ key: "n", label: "Next" }, { key: "p", label: "Prev" }, { key: "Tab", label: "Switch" }, { key: "e", label: "Export" }, { key: "q", label: "Close" }],
+            [{ key: "n", label: "Next" }, { key: "p", label: "Prev" }, { key: "e", label: "Export" }, { key: "q", label: "Close" }, { key: "Tab", label: "Switch" }],
           ];
 
-    // Build text and collect overlay ranges
+    // Build text and collect overlay ranges, gracefully dropping labels
+    // when the viewport is too narrow to fit everything.
     const overlays: InlineOverlay[] = [];
     let text = " ";
     let bytePos = getByteLength(" ");
+    let done = false;
 
-    for (let g = 0; g < groups.length; g++) {
+    for (let g = 0; g < groups.length && !done; g++) {
         if (g > 0) {
             const sep = " │ ";
+            if (text.length + sep.length > W) { done = true; break; }
             overlays.push({ start: bytePos, end: bytePos + getByteLength(sep), style: { fg: STYLE_TOOLBAR_SEP } });
             text += sep;
             bytePos += getByteLength(sep);
         }
-        for (let h = 0; h < groups[g].length; h++) {
+        for (let h = 0; h < groups[g].length && !done; h++) {
             const item = groups[g][h];
-            if (h > 0) {
-                text += "  ";
-                bytePos += getByteLength("  ");
-            }
-            // Key: bold with highlight
-            const keyText = item.key;
-            const keyLen = getByteLength(keyText);
-            overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bg: STYLE_KEY_BG, bold: true } });
-            text += keyText;
-            bytePos += keyLen;
+            const gap = h > 0 ? "  " : "";
+            const fullLen = gap.length + item.key.length + 1 + item.label.length;
+            const keyOnlyLen = gap.length + item.key.length;
 
-            // Space + label: dim
-            const labelText = " " + item.label;
-            const labelLen = getByteLength(labelText);
-            overlays.push({ start: bytePos, end: bytePos + labelLen, style: { fg: STYLE_HINT_FG } });
-            text += labelText;
-            bytePos += labelLen;
+            if (text.length + fullLen <= W) {
+                // Full item: gap + key + " " + label
+                if (gap) { text += gap; bytePos += getByteLength(gap); }
+                const keyLen = getByteLength(item.key);
+                overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bg: STYLE_KEY_BG, bold: true } });
+                text += item.key;
+                bytePos += keyLen;
+                const labelText = " " + item.label;
+                const labelLen = getByteLength(labelText);
+                overlays.push({ start: bytePos, end: bytePos + labelLen, style: { fg: STYLE_HINT_FG } });
+                text += labelText;
+                bytePos += labelLen;
+            } else if (text.length + keyOnlyLen <= W) {
+                // Key only (no label) when space is tight
+                if (gap) { text += gap; bytePos += getByteLength(gap); }
+                const keyLen = getByteLength(item.key);
+                overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bg: STYLE_KEY_BG, bold: true } });
+                text += item.key;
+                bytePos += keyLen;
+            } else {
+                done = true;
+            }
         }
     }
 
-    const padded = text.substring(0, W).padEnd(W) + "\n";
+    const padded = text.padEnd(W) + "\n";
     return {
         text: padded,
         properties: { type: "toolbar" },
@@ -1833,18 +1848,18 @@ function jumpDiffCursorToRow(row: number): void {
     const idx = row - 1;
     if (idx < 0 || idx >= state.diffLineByteOffsets.length) return;
 
-    // Move cursor via executeAction to the target row. We compute a delta
-    // from the current position and step with move_up/move_down. This is
-    // O(delta) but is necessary because setBufferCursor updates the inner
-    // panel's view state while the status bar and cursor events reference
-    // the effective active split — a fundamental mismatch in the buffer
-    // group architecture. executeAction correctly routes through the
-    // focused panel's action dispatch.
     if (state.focusPanel === 'diff') {
+        // When the diff panel is focused, use executeAction so that the
+        // normal cursor event flow fires and the status bar line number
+        // updates correctly. This is O(delta) but necessary because
+        // setBufferCursor doesn't trigger line-index refresh in the
+        // virtual buffer's piece tree.
         const delta = row - state.diffCursorRow;
         const action = delta > 0 ? "move_down" : "move_up";
         for (let i = 0, n = Math.abs(delta); i < n; i++) editor.executeAction(action);
     } else {
+        // When unfocused, setBufferCursor is safe since the cursor
+        // position isn't displayed in the status bar.
         const byteOffset = state.diffLineByteOffsets[idx];
         editor.setBufferCursor(diffId, byteOffset);
         editor.scrollBufferToLine(diffId, idx);

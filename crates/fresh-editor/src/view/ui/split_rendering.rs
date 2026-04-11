@@ -1051,12 +1051,22 @@ impl SplitRenderer {
                         *split_area,
                         RenderKind::GroupTabBarOnly,
                     ));
-                    for (inner_leaf, inner_buffer, inner_rect) in inner_leaves {
+                    for (inner_leaf, inner_buffer, inner_rect) in &inner_leaves {
+                        // Keep inner panel viewports in sync with their actual
+                        // rendered dimensions. This ensures editor.getViewport()
+                        // returns the correct panel size (not the terminal size)
+                        // and fixes resize-timing issues since the viewport is
+                        // updated synchronously during rendering.
+                        if let Some(svs) = split_view_states.as_deref_mut() {
+                            if let Some(vs) = svs.get_mut(inner_leaf) {
+                                vs.viewport.resize(inner_rect.width, inner_rect.height);
+                            }
+                        }
                         visible_buffers.push((
                             *main_split_id,
-                            inner_leaf,
-                            inner_buffer,
-                            inner_rect,
+                            *inner_leaf,
+                            *inner_buffer,
+                            *inner_rect,
                             RenderKind::InnerLeaf,
                         ));
                     }
