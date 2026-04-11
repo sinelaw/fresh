@@ -1152,6 +1152,7 @@
   "settings.failed_to_save": "Не вдалося зберегти налаштування: %{error}",
   "settings.help_default": "↑↓:Навігація  Tab:Далі  Enter:Редагувати  /:Пошук  Esc:Закрити",
   "settings.dual_list_enter_hint": "Enter для редагування",
+  "settings.dual_list_shift_hint": "Shift+←→ перемістити  Shift+↑↓ порядок",
   "settings.field.editor.whitespace_show": "Показати пробіли",
   "settings.field.editor.whitespace_spaces_leading": "Початкові пробіли",
   "settings.field.editor.whitespace_spaces_inner": "Внутрішні пробіли",

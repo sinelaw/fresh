@@ -1163,6 +1163,7 @@
   "settings.help_footer": "Tab:Next button  Enter:Activate  Esc:Close",
   "settings.help_default": "↑↓:Navigate  Tab:Next  Enter:Edit  /:Search  Esc:Close",
   "settings.dual_list_enter_hint": "Enter to edit",
+  "settings.dual_list_shift_hint": "Shift+←→ move  Shift+↑↓ reorder",
   "settings.field.editor.whitespace_show": "Show Whitespace",
   "settings.field.editor.whitespace_spaces_leading": "Leading Spaces",
   "settings.field.editor.whitespace_spaces_inner": "Inner Spaces",

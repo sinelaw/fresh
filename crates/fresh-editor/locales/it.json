@@ -1152,6 +1152,7 @@
   "settings.failed_to_save": "Impossibile salvare le impostazioni: %{error}",
   "settings.help_default": "↑↓:Naviga  Tab:Successivo  Invio:Modifica  /:Cerca  Esc:Chiudi",
   "settings.dual_list_enter_hint": "Invio per modificare",
+  "settings.dual_list_shift_hint": "Shift+←→ sposta  Shift+↑↓ riordina",
   "settings.field.editor.whitespace_show": "Mostra spazi bianchi",
   "settings.field.editor.whitespace_spaces_leading": "Spazi iniziali",
   "settings.field.editor.whitespace_spaces_inner": "Spazi interni",

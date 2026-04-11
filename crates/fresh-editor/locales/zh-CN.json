@@ -1152,6 +1152,7 @@
   "settings.failed_to_save": "保存设置失败：%{error}",
   "settings.help_default": "↑↓:导航  Tab:下一个  Enter:编辑  /:搜索  Esc:关闭",
   "settings.dual_list_enter_hint": "Enter编辑",
+  "settings.dual_list_shift_hint": "Shift+←→ 移动  Shift+↑↓ 排序",
   "settings.field.editor.whitespace_show": "显示空白字符",
   "settings.field.editor.whitespace_spaces_leading": "行首空格",
   "settings.field.editor.whitespace_spaces_inner": "行内空格",

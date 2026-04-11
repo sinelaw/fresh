@@ -1152,6 +1152,7 @@
   "settings.failed_to_save": "บันทึกการตั้งค่าไม่สำเร็จ: %{error}",
   "settings.help_default": "↑↓:นำทาง  Tab:ถัดไป  Enter:แก้ไข  /:ค้นหา  Esc:ปิด",
   "settings.dual_list_enter_hint": "Enter เพื่อแก้ไข",
+  "settings.dual_list_shift_hint": "Shift+←→ ย้าย  Shift+↑↓ เรียงลำดับ",
   "settings.field.editor.whitespace_show": "แสดงช่องว่าง",
   "settings.field.editor.whitespace_spaces_leading": "ช่องว่างนำหน้า",
   "settings.field.editor.whitespace_spaces_inner": "ช่องว่างภายใน",

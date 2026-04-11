@@ -1152,6 +1152,7 @@
   "settings.failed_to_save": "Échec de l'enregistrement des paramètres : %{error}",
   "settings.help_default": "↑↓:Naviguer  Tab:Suivant  Entrée:Modifier  /:Rechercher  Échap:Fermer",
   "settings.dual_list_enter_hint": "Entrée pour modifier",
+  "settings.dual_list_shift_hint": "Shift+←→ déplacer  Shift+↑↓ réordonner",
   "settings.field.editor.whitespace_show": "Afficher les espaces",
   "settings.field.editor.whitespace_spaces_leading": "Espaces en début",
   "settings.field.editor.whitespace_spaces_inner": "Espaces intérieurs",

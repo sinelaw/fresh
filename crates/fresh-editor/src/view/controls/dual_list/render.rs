@@ -63,6 +63,11 @@ pub fn render_dual_list_partial(
                 format!("  [{}]", rust_i18n::t!("settings.dual_list_enter_hint")),
                 Style::default().fg(colors.disabled),
             ));
+        } else if state.editing {
+            label_spans.push(Span::styled(
+                format!("  {}", rust_i18n::t!("settings.dual_list_shift_hint")),
+                Style::default().fg(colors.disabled),
+            ));
         }
         let label_line = Line::from(label_spans);
         frame.render_widget(

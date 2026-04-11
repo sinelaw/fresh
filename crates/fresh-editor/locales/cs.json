@@ -1152,6 +1152,7 @@
   "settings.failed_to_save": "Uložení nastavení selhalo: %{error}",
   "settings.help_default": "↑↓:Navigace  Tab:Další  Enter:Upravit  /:Hledat  Esc:Zavřít",
   "settings.dual_list_enter_hint": "Enter pro úpravu",
+  "settings.dual_list_shift_hint": "Shift+←→ přesun  Shift+↑↓ pořadí",
   "settings.field.editor.whitespace_show": "Zobrazit bílé znaky",
   "settings.field.editor.whitespace_spaces_leading": "Úvodní mezery",
   "settings.field.editor.whitespace_spaces_inner": "Vnitřní mezery",

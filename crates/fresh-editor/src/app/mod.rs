@@ -9474,5 +9474,4 @@ mod tests {
             .sum();
         assert!(view_state.tab_scroll_offset <= total_width);
     }
-
 }

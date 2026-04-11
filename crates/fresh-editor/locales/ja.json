@@ -1152,6 +1152,7 @@
   "settings.failed_to_save": "設定の保存に失敗: %{error}",
   "settings.help_default": "↑↓:移動  Tab:次へ  Enter:編集  /:検索  Esc:閉じる",
   "settings.dual_list_enter_hint": "Enterで編集",
+  "settings.dual_list_shift_hint": "Shift+←→ 移動  Shift+↑↓ 並べ替え",
   "settings.field.editor.whitespace_show": "空白文字を表示",
   "settings.field.editor.whitespace_spaces_leading": "先頭のスペース",
   "settings.field.editor.whitespace_spaces_inner": "内部のスペース",

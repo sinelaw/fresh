@@ -1152,6 +1152,7 @@
   "settings.failed_to_save": "Falha ao salvar configurações: %{error}",
   "settings.help_default": "↑↓:Navegar  Tab:Próximo  Enter:Editar  /:Buscar  Esc:Fechar",
   "settings.dual_list_enter_hint": "Enter para editar",
+  "settings.dual_list_shift_hint": "Shift+←→ mover  Shift+↑↓ reordenar",
   "settings.field.editor.whitespace_show": "Mostrar espaços em branco",
   "settings.field.editor.whitespace_spaces_leading": "Espaços iniciais",
   "settings.field.editor.whitespace_spaces_inner": "Espaços internos",

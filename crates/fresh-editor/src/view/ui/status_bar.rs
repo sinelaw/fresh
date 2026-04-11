@@ -911,10 +911,7 @@ impl StatusBarRenderer {
             // "HH:MM" — blink the colon via terminal hardware (SGR 5)
             vec![
                 Span::styled(rendered.text[..2].to_string(), style),
-                Span::styled(
-                    ":".to_string(),
-                    style.add_modifier(Modifier::SLOW_BLINK),
-                ),
+                Span::styled(":".to_string(), style.add_modifier(Modifier::SLOW_BLINK)),
                 Span::styled(rendered.text[3..].to_string(), style),
             ]
         } else {
