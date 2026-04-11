@@ -24,8 +24,6 @@ use windows_sys::Win32::System::Console::{
 };
 use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
-use crate::key_event_processing;
-
 /// Enable VT input mode on the console input handle.
 ///
 /// Sets `ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_WINDOW_INPUT`.
@@ -264,11 +262,7 @@ impl VtInputReader {
                     KEY_EVENT => {
                         let key_event = unsafe { rec.Event.KeyEvent };
                         let ch = unsafe { key_event.uChar.UnicodeChar };
-                        if key_event_processing::should_process_key_event(
-                            key_event.bKeyDown != 0,
-                            ch,
-                            key_event.wVirtualKeyCode,
-                        ) {
+                        if key_event.bKeyDown != 0 && ch != 0 {
                             let repeat = (key_event.wRepeatCount as usize).max(1);
                             if (0xD800..=0xDBFF).contains(&ch) {
                                 surrogate_high = Some(ch);

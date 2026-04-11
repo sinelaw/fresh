@@ -8,9 +8,6 @@
 //!
 //! On non-Windows platforms, this crate compiles as empty.
 
-// Platform-independent key event processing logic (testable on all platforms).
-mod key_event_processing;
-
 #[cfg(windows)]
 mod relay;
 #[cfg(windows)]
