@@ -34,6 +34,15 @@ impl Editor {
 
         // Handle terminal mode input
         if self.terminal_mode {
+            // If the user navigated away from the terminal buffer (e.g. opened
+            // Review Diff via the command palette), the active buffer is no
+            // longer a terminal. Exit terminal mode so the new buffer's
+            // keybindings work.
+            if !self.is_terminal_buffer(self.active_buffer()) {
+                self.terminal_mode = false;
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+                return None; // fall through to normal input dispatch
+            }
             let mut ctx = InputContext::new();
             let keybindings = self.keybindings.read().unwrap();
             let mut handler = TerminalModeInputHandler::new(self.keyboard_capture, &keybindings);
