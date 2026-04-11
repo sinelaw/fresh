@@ -786,8 +786,7 @@ impl Editor {
                 // not just the first one.  With multiple servers configured
                 // (e.g. error-server + warning-server) each needs to know
                 // about the open document.
-                let (lang_handles, universal_handles) = lsp.get_handles_split_mut(&language);
-                for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+                for sh in lsp.get_handles_mut(&language) {
                     tracing::info!("Sending didOpen to LSP '{}' for: {}", sh.name, uri.as_str());
                     if let Err(e) = sh
                         .handle
@@ -916,8 +915,7 @@ impl Editor {
                 .unwrap_or_default();
 
             if let Some(lsp) = self.lsp.as_mut() {
-                let (lang_handles, universal_handles) = lsp.get_handles_split_mut(&language);
-                for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+                for sh in lsp.get_handles_mut(&language) {
                     if opened_with.contains(&sh.handle.id()) {
                         continue;
                     }
@@ -943,8 +941,7 @@ impl Editor {
             // Mark all handles as opened
             if let Some(lsp) = self.lsp.as_ref() {
                 if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                    let (lang_handles, universal_handles) = lsp.get_handles_split(&language);
-                    for sh in lang_handles.iter().chain(universal_handles.iter()) {
+                    for sh in lsp.get_handles(&language) {
                         metadata.lsp_opened_with.insert(sh.handle.id());
                     }
                 }
@@ -958,8 +955,7 @@ impl Editor {
                 range_length: None,
                 text: content,
             };
-            let (lang_handles, universal_handles) = lsp.get_handles_split_mut(&language);
-            for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+            for sh in lsp.get_handles_mut(&language) {
                 if let Err(e) = sh
                     .handle
                     .did_change(lsp_uri.clone(), vec![content_change.clone()])

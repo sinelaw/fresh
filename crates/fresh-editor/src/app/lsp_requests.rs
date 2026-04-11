@@ -487,10 +487,9 @@ impl Editor {
         language: &str,
     ) -> Option<()> {
         let lsp = self.lsp.as_mut()?;
-        let (lang_handles, universal_handles) = lsp.get_handles_split(language);
-        let handle_ids: Vec<u64> = lang_handles
+        let handle_ids: Vec<u64> = lsp
+            .get_handles(language)
             .iter()
-            .chain(universal_handles.iter())
             .map(|sh| sh.handle.id())
             .collect();
 
@@ -506,8 +505,7 @@ impl Editor {
         if !needs_open.is_empty() {
             let text = self.buffers.get(&buffer_id)?.buffer.to_string()?;
             let lsp = self.lsp.as_mut()?;
-            let (lang_handles, universal_handles) = lsp.get_handles_split_mut(language);
-            for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+            for sh in lsp.get_handles_mut(language) {
                 if needs_open.contains(&sh.handle.id()) {
                     if let Err(e) =
                         sh.handle
@@ -1592,8 +1590,7 @@ impl Editor {
         };
 
         if let Some(lsp) = &mut self.lsp {
-            let (lang_handles, universal_handles) = lsp.get_handles_split_mut(&language);
-            for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+            for sh in lsp.get_handles_mut(&language) {
                 if let Err(e) = sh
                     .handle
                     .execute_command(cmd.command.clone(), cmd.arguments.clone())
@@ -1619,8 +1616,7 @@ impl Editor {
         let request_id = self.next_lsp_request_id;
 
         if let Some(lsp) = &mut self.lsp {
-            let (lang_handles, universal_handles) = lsp.get_handles_split_mut(&language);
-            for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+            for sh in lsp.get_handles_mut(&language) {
                 if let Err(e) = sh.handle.code_action_resolve(request_id, action.clone()) {
                     tracing::warn!("Failed to send codeAction/resolve to '{}': {}", sh.name, e);
                 }
@@ -1640,8 +1636,7 @@ impl Editor {
         };
 
         if let Some(lsp) = &self.lsp {
-            let (lang_handles, universal_handles) = lsp.get_handles_split(&language);
-            for sh in lang_handles.iter().chain(universal_handles.iter()) {
+            for sh in lsp.get_handles(&language) {
                 if sh.capabilities.code_action_resolve {
                     return true;
                 }
@@ -1662,8 +1657,7 @@ impl Editor {
         };
 
         if let Some(lsp) = &self.lsp {
-            let (lang_handles, universal_handles) = lsp.get_handles_split(&language);
-            for sh in lang_handles.iter().chain(universal_handles.iter()) {
+            for sh in lsp.get_handles(&language) {
                 if sh.capabilities.completion_resolve {
                     return true;
                 }
@@ -1687,8 +1681,7 @@ impl Editor {
         let request_id = self.next_lsp_request_id;
 
         if let Some(lsp) = &mut self.lsp {
-            let (lang_handles, universal_handles) = lsp.get_handles_split_mut(&language);
-            for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+            for sh in lsp.get_handles_mut(&language) {
                 if sh.capabilities.completion_resolve {
                     if let Err(e) = sh.handle.completion_resolve(request_id, item.clone()) {
                         tracing::warn!(
@@ -1980,8 +1973,7 @@ impl Editor {
                         .get(&self.active_buffer())
                         .map(|s| s.language.clone())
                         .unwrap_or_default();
-                    let (lang_handles, universal_handles) = lsp.get_handles_split(&language);
-                    for sh in lang_handles.iter().chain(universal_handles.iter()) {
+                    for sh in lsp.get_handles(&language) {
                         if let Some(current_version) = sh.handle.document_version(&path) {
                             if (expected_version as i64) != current_version {
                                 tracing::warn!(
@@ -2527,10 +2519,8 @@ impl Editor {
             let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
                 return;
             };
-            let (lang_handles, universal_handles) = lsp.get_handles_split(&language);
-            lang_handles
-                .iter()
-                .chain(universal_handles.iter())
+            lsp.get_handles(&language)
+                .into_iter()
                 .filter(|sh| !metadata.lsp_opened_with.contains(&sh.handle.id()))
                 .map(|sh| (sh.name.clone(), sh.handle.id()))
                 .collect()
@@ -2554,8 +2544,7 @@ impl Editor {
 
             // Send didOpen to all handles that haven't been opened yet
             let Some(lsp) = self.lsp.as_mut() else { return };
-            let (lang_handles, universal_handles) = lsp.get_handles_split_mut(&language);
-            for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+            for sh in lsp.get_handles_mut(&language) {
                 if handles_needing_open
                     .iter()
                     .any(|(_, id)| *id == sh.handle.id())
@@ -2595,8 +2584,7 @@ impl Editor {
         // Now send didChange to all handles for this language
         let Some(lsp) = self.lsp.as_mut() else { return };
         let mut any_sent = false;
-        let (lang_handles, universal_handles) = lsp.get_handles_split_mut(&language);
-        for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+        for sh in lsp.get_handles_mut(&language) {
             if let Err(e) = sh.handle.did_change(uri.clone(), changes.clone()) {
                 tracing::warn!("Failed to send didChange to '{}': {}", sh.name, e);
             } else {
@@ -2668,8 +2656,7 @@ impl Editor {
         };
 
         if let Some(lsp) = &self.lsp {
-            let (lang_handles, universal_handles) = lsp.get_handles_split(&language);
-            for sh in lang_handles.iter().chain(universal_handles.iter()) {
+            for sh in lsp.get_handles(&language) {
                 if sh.capabilities.rename {
                     // prepareRename is advertised via prepare_support in client caps
                     // and supported if server has rename capability

@@ -1885,8 +1885,7 @@ impl Editor {
             if lsp.force_spawn(language, file_path.as_deref()).is_some() {
                 tracing::info!("Sending didOpen to LSP servers for: {}", uri.as_str());
                 let mut any_opened = false;
-                let (lang_handles, universal_handles) = lsp.get_handles_split_mut(language);
-                for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+                for sh in lsp.get_handles_mut(language) {
                     if let Err(e) =
                         sh.handle
                             .did_open(uri.clone(), text.clone(), file_language.clone())
@@ -2205,8 +2204,7 @@ impl Editor {
             }
             // Broadcast didSave to all handles for this language
             let mut any_sent = false;
-            let (lang_handles, universal_handles) = lsp.get_handles_split_mut(&language);
-            for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+            for sh in lsp.get_handles_mut(&language) {
                 if let Err(e) = sh.handle.did_save(uri.clone(), Some(full_text.clone())) {
                     tracing::warn!("Failed to send didSave to '{}': {}", sh.name, e);
                 } else {

@@ -1358,8 +1358,7 @@ impl Editor {
                     if let Some(lsp) = self.lsp.as_mut() {
                         // Send didOpen to ALL handles for this language, not just the first.
                         // Each server needs its own didOpen notification.
-                        let (lang_handles, universal_handles) = lsp.get_handles_split_mut(&lang_id);
-                        for sh in lang_handles.iter_mut().chain(universal_handles.iter_mut()) {
+                        for sh in lsp.get_handles_mut(&lang_id) {
                             let handle_id = sh.handle.id();
                             if let Err(e) =
                                 sh.handle

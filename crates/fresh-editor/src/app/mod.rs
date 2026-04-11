@@ -2075,10 +2075,8 @@ impl Editor {
         self.lsp
             .as_ref()
             .map(|lsp| {
-                let (lang_handles, universal_handles) = lsp.get_handles_split(language);
-                lang_handles
+                lsp.get_handles(language)
                     .iter()
-                    .chain(universal_handles.iter())
                     .filter(|sh| sh.capabilities.initialized)
                     .count()
             })
