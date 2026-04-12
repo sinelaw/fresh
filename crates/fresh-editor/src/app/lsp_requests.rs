@@ -876,11 +876,11 @@ impl Editor {
         // they can be fused into the top of the hover card. Without this the
         // user has to leave hover and go chase the error elsewhere in the UI
         // even though the cursor is already on the offending symbol.
-        let diagnostic_prefix = hover_lsp_position
-            .and_then(|pos| self.compose_hover_diagnostic_prefix(pos))
+        let diagnostic_lines = hover_lsp_position
+            .map(|pos| self.compose_hover_diagnostic_lines(pos))
             .unwrap_or_default();
 
-        if contents.is_empty() && diagnostic_prefix.is_empty() {
+        if contents.is_empty() && diagnostic_lines.is_empty() {
             self.set_status_message(t!("lsp.no_hover").to_string());
             self.hover_symbol_range = None;
             return;
@@ -958,53 +958,89 @@ impl Editor {
             }
         }
 
-        // Create a popup with the hover contents
-        use crate::view::popup::{Popup, PopupPosition};
+        // Create a popup with the hover contents.
+        //
+        // When a diagnostic overlaps the hover position, we pre-style its
+        // lines (severity-colored header + plain message) and concatenate
+        // with the parsed hover body into a single `PopupContent::Markdown`
+        // vector. This avoids the previous approach of injecting a
+        // `**bold**` heading and a `---` horizontal rule into the markdown
+        // input — which rendered as uncolored bold text + a thick 40-cell
+        // divider with blank-line padding, wasting vertical space and
+        // losing the "this is an error" visual signal.
+        use crate::view::markdown::{parse_markdown, StyledLine};
+        use crate::view::popup::{Popup, PopupContent, PopupPosition};
         use ratatui::style::Style;
+        use unicode_width::UnicodeWidthStr;
 
-        // If we have a diagnostic prefix, render the whole card as markdown so
-        // the severity heading and the existing hover body share one renderer.
-        let has_diagnostic = !diagnostic_prefix.is_empty();
-        let mut popup = if has_diagnostic {
-            let mut fused = diagnostic_prefix;
-            if !contents.is_empty() {
-                fused.push_str("\n---\n\n");
-                if is_markdown {
-                    fused.push_str(&contents);
-                } else {
-                    // Escape-free plain text: wrap in a fenced block so
-                    // markdown doesn't reinterpret it.
-                    fused.push_str("```\n");
-                    fused.push_str(&contents);
-                    if !contents.ends_with('\n') {
-                        fused.push('\n');
-                    }
-                    fused.push_str("```\n");
-                }
-            }
-            Popup::markdown(&fused, &self.theme, Some(&self.grammar_registry))
+        let hover_lines: Vec<StyledLine> = if contents.is_empty() {
+            Vec::new()
         } else if is_markdown {
-            Popup::markdown(&contents, &self.theme, Some(&self.grammar_registry))
+            parse_markdown(&contents, &self.theme, Some(&self.grammar_registry))
         } else {
-            // Plain text - split by lines
-            let lines: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
-            Popup::text(lines, &self.theme)
+            contents
+                .lines()
+                .map(|s| {
+                    let mut sl = StyledLine::new();
+                    sl.push(s.to_string(), Style::default().fg(self.theme.popup_text_fg));
+                    sl
+                })
+                .collect()
         };
 
-        // Configure popup properties
+        let has_diagnostic = !diagnostic_lines.is_empty();
+        let mut all_lines: Vec<StyledLine> = Vec::new();
+        all_lines.extend(diagnostic_lines);
+        if has_diagnostic && !hover_lines.is_empty() {
+            // Compact single-line separator — no blank padding, no 40-cell
+            // dash run. One row of dashes the width of the content, in the
+            // popup border color so it reads as "same card, new section."
+            let mut sep = StyledLine::new();
+            sep.push(
+                "─".repeat(12),
+                Style::default().fg(self.theme.popup_border_fg),
+            );
+            all_lines.push(sep);
+        }
+        all_lines.extend(hover_lines);
+
+        // Drop trailing empty lines that some markdown payloads carry.
+        while all_lines
+            .last()
+            .map(|l| l.spans.iter().all(|s| s.text.trim().is_empty()))
+            .unwrap_or(false)
+        {
+            all_lines.pop();
+        }
+
+        // Fit width to content so short hovers stop rendering in an 80-col
+        // card with half the width empty. Measured as the widest styled
+        // line (display cells, not bytes), plus 4 for borders + padding,
+        // clamped to [30, 80]. Height stays dynamic on terminal size.
+        let content_width: usize = all_lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| UnicodeWidthStr::width(s.text.as_str()))
+                    .sum::<usize>()
+            })
+            .max()
+            .unwrap_or(0);
+        let popup_width = (content_width as u16 + 4).clamp(30, 80);
+        let dynamic_height = (self.terminal_height * 60 / 100).clamp(15, 40);
+
+        // Construct the popup with the fused content.
+        let mut popup = Popup::text(Vec::new(), &self.theme);
+        popup.content = PopupContent::Markdown(all_lines);
         popup.title = Some(t!("lsp.popup_hover").to_string());
         popup.transient = true;
-        // Use mouse position if this was a mouse-triggered hover, otherwise use cursor position
         popup.position = if let Some((x, y)) = self.mouse_hover_screen_position.take() {
-            // Position below the mouse, offset by 1 row
             PopupPosition::Fixed { x, y: y + 1 }
         } else {
             PopupPosition::BelowCursor
         };
-        popup.width = 80;
-        // Use dynamic max_height based on terminal size (60% of height, min 15, max 40)
-        // This allows hover popups to show more documentation on larger terminals
-        let dynamic_height = (self.terminal_height * 60 / 100).clamp(15, 40);
+        popup.width = popup_width;
         popup.max_height = dynamic_height;
         popup.border_style = Style::default().fg(self.theme.popup_border_fg);
         popup.background_style = Style::default().bg(self.theme.popup_bg);
@@ -1020,17 +1056,34 @@ impl Editor {
         self.mouse_state.lsp_hover_request_sent = true;
     }
 
-    /// Build the markdown prefix that lists any diagnostics overlapping the
-    /// hover position. Returns `None` if no buffer/URI resolves, or an empty
-    /// string if there are no overlapping diagnostics — the caller treats an
-    /// empty string and `None` the same way.
-    fn compose_hover_diagnostic_prefix(&self, lsp_pos: (u32, u32)) -> Option<String> {
+    /// Pre-style any diagnostics overlapping the hover position into lines
+    /// ready to stack into the hover popup. Each diagnostic yields two or
+    /// more styled lines:
+    ///   1. severity marker + label in `diagnostic_*_fg`, followed by
+    ///      `  (source)` dimmed — italic on theme-default foreground,
+    ///   2. one styled line per message line, in `popup_text_fg`.
+    ///
+    /// Multiple overlapping diagnostics are separated by a blank line.
+    /// Returns an empty vec when there are no overlapping diagnostics,
+    /// or no buffer/URI resolves.
+    fn compose_hover_diagnostic_lines(
+        &self,
+        lsp_pos: (u32, u32),
+    ) -> Vec<crate::view::markdown::StyledLine> {
+        use crate::view::markdown::StyledLine;
         use lsp_types::DiagnosticSeverity;
+        use ratatui::style::{Modifier, Style};
 
         let buffer_id = self.active_buffer();
-        let metadata = self.buffer_metadata.get(&buffer_id)?;
-        let uri = metadata.file_uri()?.as_str().to_string();
-        let diagnostics = self.get_stored_diagnostics().get(&uri)?;
+        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+            return Vec::new();
+        };
+        let Some(uri) = metadata.file_uri() else {
+            return Vec::new();
+        };
+        let Some(diagnostics) = self.get_stored_diagnostics().get(uri.as_str()) else {
+            return Vec::new();
+        };
 
         let (hover_line, hover_char) = lsp_pos;
         let overlapping: Vec<&lsp_types::Diagnostic> = diagnostics
@@ -1039,31 +1092,57 @@ impl Editor {
             .collect();
 
         if overlapping.is_empty() {
-            return Some(String::new());
+            return Vec::new();
         }
 
-        let mut out = String::new();
-        for diag in overlapping {
-            let (label, marker) = match diag.severity {
-                Some(DiagnosticSeverity::ERROR) => ("Error", "❌"),
-                Some(DiagnosticSeverity::WARNING) => ("Warning", "⚠"),
-                Some(DiagnosticSeverity::INFORMATION) => ("Info", "ℹ"),
-                Some(DiagnosticSeverity::HINT) => ("Hint", "💡"),
-                _ => ("Diagnostic", "•"),
+        let mut out: Vec<StyledLine> = Vec::new();
+        for (idx, diag) in overlapping.iter().enumerate() {
+            if idx > 0 {
+                out.push(StyledLine::new());
+            }
+
+            let (label, marker, severity_color) = match diag.severity {
+                Some(DiagnosticSeverity::ERROR) => ("Error", "✖", self.theme.diagnostic_error_fg),
+                Some(DiagnosticSeverity::WARNING) => {
+                    ("Warning", "⚠", self.theme.diagnostic_warning_fg)
+                }
+                Some(DiagnosticSeverity::INFORMATION) => {
+                    ("Info", "ℹ", self.theme.diagnostic_info_fg)
+                }
+                Some(DiagnosticSeverity::HINT) => ("Hint", "ℹ", self.theme.diagnostic_hint_fg),
+                _ => ("Diagnostic", "•", self.theme.popup_text_fg),
             };
-            let source = diag
-                .source
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .map(|s| format!(" ({})", s))
-                .unwrap_or_default();
-            out.push_str(&format!("**{} {}**{}\n\n", marker, label, source));
-            // Message verbatim, preserving line breaks by inserting blank
-            // lines so markdown renders each message line as its own paragraph.
-            out.push_str(&space_doc_paragraphs(&diag.message));
-            out.push_str("\n\n");
+
+            let header_style = Style::default()
+                .fg(severity_color)
+                .add_modifier(Modifier::BOLD);
+            let mut header = StyledLine::new();
+            header.push(format!("{} {}", marker, label), header_style);
+            if let Some(source) = diag.source.as_deref().filter(|s| !s.is_empty()) {
+                // Dim italic source tag — reads as metadata, not as part
+                // of the diagnostic text.
+                header.push(
+                    format!("  ({})", source),
+                    Style::default()
+                        .fg(self.theme.tab_inactive_fg)
+                        .add_modifier(Modifier::ITALIC),
+                );
+            }
+            out.push(header);
+
+            // Message verbatim: one styled line per message line. Using
+            // `popup_text_fg` lets themes override the body color; the
+            // severity information is already conveyed by the header.
+            for message_line in diag.message.lines() {
+                let mut line = StyledLine::new();
+                line.push(
+                    message_line.to_string(),
+                    Style::default().fg(self.theme.popup_text_fg),
+                );
+                out.push(line);
+            }
         }
-        Some(out)
+        out
     }
 
     /// Apply inlay hints to editor state as virtual text
