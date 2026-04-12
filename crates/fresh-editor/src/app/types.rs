@@ -189,6 +189,14 @@ pub struct BufferMetadata {
     /// Whether this buffer should be hidden from tabs (used for composite source buffers)
     pub hidden_from_tabs: bool,
 
+    /// Whether this buffer is opened in "preview" mode (ephemeral).
+    /// A preview buffer is one opened by a single-click in the file explorer
+    /// (or a similar soft-open gesture). Its tab is rendered in italic and
+    /// it is replaced the next time another file is opened the same way.
+    /// The flag is cleared ("promoted") when the user edits the buffer,
+    /// double-clicks the file, or otherwise signals commitment to the file.
+    pub is_preview: bool,
+
     /// Stable recovery ID for unnamed buffers.
     /// For file-backed buffers, recovery ID is computed from the path hash.
     /// For unnamed buffers, this is generated once and reused across auto-saves.
@@ -247,6 +255,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            is_preview: false,
             recovery_id: None,
         }
     }
@@ -266,6 +275,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            is_preview: false,
             recovery_id: None,
         }
     }
@@ -308,6 +318,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            is_preview: false,
             recovery_id: None,
         }
     }
@@ -443,6 +454,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            is_preview: false,
             recovery_id: None,
         }
     }
@@ -460,6 +472,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: true,
+            is_preview: false,
             recovery_id: None,
         }
     }

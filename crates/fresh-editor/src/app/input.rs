@@ -2829,11 +2829,13 @@ impl Editor {
                         // Toggle expand/collapse using the existing method
                         self.file_explorer_toggle_expand();
                     } else if node.is_file() {
-                        // Open the file but keep focus on file explorer (single click)
-                        // Double-click or Enter will focus the editor
+                        // Open the file but keep focus on file explorer (single click).
+                        // Double-click or Enter will focus the editor and promote to
+                        // a permanent tab. Single-click opens in "preview" mode so a
+                        // string of exploratory clicks doesn't accumulate tabs.
                         let path = node.entry.path.clone();
                         let name = node.entry.name.clone();
-                        match self.open_file(&path) {
+                        match self.open_file_preview(&path) {
                             Ok(_) => {
                                 self.set_status_message(
                                     rust_i18n::t!("explorer.opened_file", name = &name).to_string(),

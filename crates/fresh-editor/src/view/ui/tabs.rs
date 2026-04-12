@@ -429,6 +429,16 @@ impl TabsRenderer {
                 TabTarget::Group(_) => "",
             };
 
+            // Preview (ephemeral) tabs are rendered in italic so the user
+            // has a visible cue that this tab will be replaced by the next
+            // single-click open. Mirrors VSCode / Zed convention.
+            let is_preview = match t {
+                TabTarget::Buffer(id) => {
+                    buffer_metadata.get(id).map(|m| m.is_preview).unwrap_or(false)
+                }
+                TabTarget::Group(_) => false,
+            };
+
             let is_active = *t == active_target;
 
             // Check hover state for this tab
@@ -438,7 +448,7 @@ impl TabsRenderer {
             };
 
             // Determine base style
-            let base_style = if is_active {
+            let mut base_style = if is_active {
                 if is_active_split {
                     Style::default()
                         .fg(theme.tab_active_fg)
@@ -460,6 +470,9 @@ impl TabsRenderer {
                     .fg(theme.tab_inactive_fg)
                     .bg(theme.tab_inactive_bg)
             };
+            if is_preview {
+                base_style = base_style.add_modifier(Modifier::ITALIC);
+            }
 
             // Style for the close button
             let close_style = if is_hovered_close {

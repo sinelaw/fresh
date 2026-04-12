@@ -367,7 +367,11 @@ impl Editor {
             } else {
                 tracing::info!("[SYNTAX DEBUG] file_explorer opening file: {:?}", path);
                 match self.open_file(&path) {
-                    Ok(_) => {
+                    Ok(id) => {
+                        // Double-click / Enter is the "I mean it" gesture — always
+                        // promote the tab out of preview mode so subsequent clicks
+                        // on *other* files don't replace this one.
+                        self.promote_buffer_from_preview(id);
                         self.set_status_message(
                             t!("explorer.opened_file", name = &name).to_string(),
                         );

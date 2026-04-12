@@ -1910,6 +1910,11 @@ impl Editor {
                     match target {
                         crate::view::split::TabTarget::Buffer(buffer_id) => {
                             self.focus_split(split_id, buffer_id);
+                            // Clicking a tab is a commitment gesture — the user
+                            // has chosen to work with this tab. Promote it out
+                            // of preview mode so subsequent explorer clicks on
+                            // other files don't replace it.
+                            self.promote_buffer_from_preview(buffer_id);
                             // Start potential tab drag (will only become active after moving threshold)
                             self.mouse_state.dragging_tab = Some(super::types::TabDragState::new(
                                 buffer_id,

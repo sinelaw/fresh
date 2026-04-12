@@ -425,6 +425,13 @@ pub struct Editor {
     /// File explorer view (optional, only when open)
     file_explorer: Option<FileTreeView>,
 
+    /// Buffer currently opened in "preview" (ephemeral) mode from the file
+    /// explorer single-click. At most one preview buffer exists at a time.
+    /// When another file is single-clicked in the explorer, this buffer is
+    /// closed and replaced. The flag is cleared when the user commits to the
+    /// buffer by editing it, double-clicking its source, or dragging its tab.
+    preview_buffer_id: Option<BufferId>,
+
     /// Filesystem manager for file explorer
     fs_manager: Arc<FsManager>,
 
@@ -1527,6 +1534,7 @@ impl Editor {
             previous_viewports: HashMap::new(),
             scroll_sync_manager: ScrollSyncManager::new(),
             file_explorer: None,
+            preview_buffer_id: None,
             fs_manager,
             filesystem,
             local_filesystem: Arc::new(crate::model::filesystem::StdFileSystem),
@@ -2709,6 +2717,15 @@ impl Editor {
     /// For Delete events, captures displaced marker positions before applying
     /// so undo can restore them to their exact original positions.
     pub fn log_and_apply_event(&mut self, event: &Event) {
+        // Any buffer-modifying event commits the user to this file, so promote
+        // it out of preview mode. Cursor moves, scrolls, and view-only events
+        // don't count — only real edits (including bulk edits for e.g. code
+        // actions) flip the bit. A nested Batch of view-only events will be
+        // skipped by `modifies_buffer()` returning false.
+        if event.modifies_buffer() {
+            self.promote_active_buffer_from_preview();
+        }
+
         // Capture displaced markers before the event is applied
         if let Event::Delete { range, .. } = event {
             let displaced = self.active_state().capture_displaced_markers(range);

@@ -1390,6 +1390,15 @@ pub struct FileExplorerConfig {
     /// Width of file explorer as percentage (0.0 to 1.0)
     #[serde(default = "default_explorer_width")]
     pub width: f32,
+
+    /// Open files in a "preview" (ephemeral) tab on single-click in the
+    /// file explorer. The preview tab is replaced by the next single-click
+    /// instead of accumulating tabs. Editing the file, double-clicking
+    /// (or pressing Enter) on it in the explorer, or dragging its tab
+    /// promotes the tab to a permanent tab.
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub preview_tabs: bool,
 }
 
 fn default_explorer_width() -> f32 {
@@ -1494,6 +1503,7 @@ impl Default for FileExplorerConfig {
             show_gitignored: false,
             custom_ignore_patterns: Vec::new(),
             width: default_explorer_width(),
+            preview_tabs: true,
         }
     }
 }

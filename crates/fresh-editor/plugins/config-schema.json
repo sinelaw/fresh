@@ -122,7 +122,8 @@
         "show_hidden": false,
         "show_gitignored": false,
         "custom_ignore_patterns": [],
-        "width": 0.30000001192092896
+        "width": 0.30000001192092896,
+        "preview_tabs": true
       }
     },
     "file_browser": {
@@ -877,6 +878,11 @@
           "type": "number",
           "format": "float",
           "default": 0.30000001192092896
+        },
+        "preview_tabs": {
+          "description": "Open files in a \"preview\" (ephemeral) tab on single-click in the\nfile explorer. The preview tab is replaced by the next single-click\ninstead of accumulating tabs. Editing the file, double-clicking\n(or pressing Enter) on it in the explorer, or dragging its tab\npromotes the tab to a permanent tab.\nDefault: true",
+          "type": "boolean",
+          "default": true
         }
       }
     },

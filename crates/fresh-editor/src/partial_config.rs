@@ -322,6 +322,7 @@ pub struct PartialFileExplorerConfig {
     pub show_gitignored: Option<bool>,
     pub custom_ignore_patterns: Option<Vec<String>>,
     pub width: Option<f32>,
+    pub preview_tabs: Option<bool>,
 }
 
 impl Merge for PartialFileExplorerConfig {
@@ -332,6 +333,7 @@ impl Merge for PartialFileExplorerConfig {
         self.custom_ignore_patterns
             .merge_from(&other.custom_ignore_patterns);
         self.width.merge_from(&other.width);
+        self.preview_tabs.merge_from(&other.preview_tabs);
     }
 }
 
@@ -705,6 +707,7 @@ impl From<&FileExplorerConfig> for PartialFileExplorerConfig {
             show_gitignored: Some(cfg.show_gitignored),
             custom_ignore_patterns: Some(cfg.custom_ignore_patterns.clone()),
             width: Some(cfg.width),
+            preview_tabs: Some(cfg.preview_tabs),
         }
     }
 }
@@ -719,6 +722,7 @@ impl PartialFileExplorerConfig {
                 .custom_ignore_patterns
                 .unwrap_or_else(|| defaults.custom_ignore_patterns.clone()),
             width: self.width.unwrap_or(defaults.width),
+            preview_tabs: self.preview_tabs.unwrap_or(defaults.preview_tabs),
         }
     }
 }
