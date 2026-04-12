@@ -2034,10 +2034,13 @@ fn test_review_diff_scrolling_many_files() {
     let scrolled_screen = harness.screen_to_string();
     println!("After scrolling down:\n{}", scrolled_screen);
 
-    // The screen should still have the GIT STATUS header
+    // After scrolling down past the viewport, the files panel should have
+    // auto-scrolled to keep the selected entry visible. The GIT STATUS
+    // header may scroll out of view, but the currently selected file
+    // (marked with ">") must remain visible.
     assert!(
-        scrolled_screen.contains("GIT STATUS"),
-        "Should still show GIT STATUS header after scrolling. Screen:\n{}",
+        scrolled_screen.contains(">"),
+        "Should still show selection indicator after scrolling. Screen:\n{}",
         scrolled_screen
     );
 

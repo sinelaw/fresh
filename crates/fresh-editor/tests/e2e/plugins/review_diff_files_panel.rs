@@ -57,7 +57,11 @@ fn repo_with_many_modifications(count: usize) -> GitTestRepo {
     fs::create_dir_all(&src).unwrap();
     for i in 1..=count {
         let path = src.join(format!("file_{}.txt", i));
-        fs::write(&path, format!("original content of file {}\nline 2\nline 3\n", i)).unwrap();
+        fs::write(
+            &path,
+            format!("original content of file {}\nline 2\nline 3\n", i),
+        )
+        .unwrap();
     }
     repo.git_add_all();
     repo.git_commit("Initial commit");
@@ -228,9 +232,7 @@ fn test_keyboard_down_scrolls_files_panel_into_view() {
     // With 20 files and ~14 content rows, after 19 presses the selected file
     // would be off-screen without scrolling.
     for _ in 0..19 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
 
     harness
@@ -274,9 +276,7 @@ fn test_keyboard_up_scrolls_files_panel_into_view() {
     let _ = open_review_diff(&mut harness);
 
     // Navigate to the end first.
-    harness
-        .send_key(KeyCode::End, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
 
     harness
         .wait_until(|h| {
@@ -288,9 +288,7 @@ fn test_keyboard_up_scrolls_files_panel_into_view() {
         .unwrap();
 
     // Now navigate back to the top.
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     harness
         .wait_until(|h| {
