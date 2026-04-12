@@ -36,6 +36,37 @@ fn compose_lsp_status(
     use crate::services::async_bridge::LspServerStatus;
     use crate::view::ui::status_bar::LspIndicatorState;
 
+    // Width of "LSP (error)" — the widest non-empty value we ever render.
+    // Every other non-empty state is padded out to this width (with the
+    // text centered) so the indicator never changes size between states.
+    // That in turn keeps every other element on the status bar from
+    // shifting sideways when the LSP comes up, goes into progress, or
+    // errors out.
+    const INDICATOR_WIDTH: usize = 11; // "LSP (error)"
+
+    /// Pad `s` to exactly `INDICATOR_WIDTH` display cells, splitting the
+    /// slack evenly on both sides (extra cell goes on the right when the
+    /// remainder is odd, matching the usual "visual center" of a fixed
+    /// pill).
+    fn centered(s: &str) -> String {
+        let w = unicode_width::UnicodeWidthStr::width(s);
+        if w >= INDICATOR_WIDTH {
+            return s.to_string();
+        }
+        let slack = INDICATOR_WIDTH - w;
+        let left = slack / 2;
+        let right = slack - left;
+        let mut out = String::with_capacity(INDICATOR_WIDTH);
+        for _ in 0..left {
+            out.push(' ');
+        }
+        out.push_str(s);
+        for _ in 0..right {
+            out.push(' ');
+        }
+        out
+    }
+
     // 1. Progress for this language takes precedence.  We intentionally
     //    do NOT render the progress title/message/percent inline on the
     //    status bar: those strings grow and shrink wildly during indexing
@@ -59,8 +90,8 @@ fn compose_lsp_status(
             .unwrap_or(0)
             % SPINNER.len();
         return (
-            format!("LSP {}", SPINNER[idx]),
-            crate::view::ui::status_bar::LspIndicatorState::On,
+            centered(&format!("LSP {}", SPINNER[idx])),
+            LspIndicatorState::On,
         );
     }
 
@@ -70,7 +101,7 @@ fn compose_lsp_status(
         .iter()
         .any(|((lang, _), status)| lang == current_language && *status == LspServerStatus::Error);
     if has_error {
-        return ("LSP (error)".to_string(), LspIndicatorState::Error);
+        return (centered("LSP (error)"), LspIndicatorState::Error);
     }
 
     // 3. At least one running (non-Shutdown) server for this language.
@@ -80,7 +111,7 @@ fn compose_lsp_status(
         lang == current_language && !matches!(status, LspServerStatus::Shutdown)
     });
     if has_running {
-        return ("LSP (on)".to_string(), LspIndicatorState::On);
+        return (centered("LSP (on)"), LspIndicatorState::On);
     }
 
     // 4. No running server — surface any configured server (auto_start or
@@ -96,7 +127,7 @@ fn compose_lsp_status(
         })
         .unwrap_or(0);
     if configured_count > 0 {
-        return ("LSP (off)".to_string(), LspIndicatorState::Off);
+        return (centered("LSP (off)"), LspIndicatorState::Off);
     }
 
     // 5. Nothing configured and nothing running — no indicator.

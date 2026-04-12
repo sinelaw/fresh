@@ -1726,51 +1726,30 @@ impl Editor {
         let mut items: Vec<crate::view::popup::PopupListItem> = Vec::new();
         let mut action_keys: Vec<(String, String)> = Vec::new();
 
-        // If there's an active `$/progress` notification for this language,
-        // surface the text at the top of the popup.  The status-bar
-        // indicator only shows a spinner to keep its width stable; this is
-        // where the user reads "what is the server actually doing right now?"
-        //
-        // Title and message are individually truncated to 25 display cells
-        // so a runaway file path (rust-analyzer likes to echo the absolute
-        // path to the crate currently being indexed) doesn't blow past the
-        // popup's 70-col width cap.
-        if let Some(info) = self
-            .lsp_progress
-            .values()
-            .find(|info| info.language == language)
-        {
-            fn truncate(s: &str, max_cells: usize) -> String {
-                use unicode_width::UnicodeWidthChar;
-                let w = unicode_width::UnicodeWidthStr::width(s);
-                if w <= max_cells {
-                    return s.to_string();
+        /// Truncate `s` to at most `max_cells` display cells, appending an
+        /// ellipsis if truncation happened (the ellipsis is included in the
+        /// budget, so the result is ≤ `max_cells` wide regardless of input).
+        fn truncate(s: &str, max_cells: usize) -> String {
+            use unicode_width::UnicodeWidthChar;
+            let w = unicode_width::UnicodeWidthStr::width(s);
+            if w <= max_cells {
+                return s.to_string();
+            }
+            let budget = max_cells.saturating_sub(1);
+            let mut used = 0;
+            let mut out = String::new();
+            for ch in s.chars() {
+                let cw = ch.width().unwrap_or(0);
+                if used + cw > budget {
+                    break;
                 }
-                // Reserve 1 cell for the ellipsis so the result is at most
-                // `max_cells` wide in total.
-                let budget = max_cells.saturating_sub(1);
-                let mut used = 0;
-                let mut out = String::new();
-                for ch in s.chars() {
-                    let cw = ch.width().unwrap_or(0);
-                    if used + cw > budget {
-                        break;
-                    }
-                    used += cw;
-                    out.push(ch);
-                }
-                out.push('…');
-                out
+                used += cw;
+                out.push(ch);
             }
-            let mut line = format!("⏳ {}", truncate(&info.title, 25));
-            if let Some(ref msg) = info.message {
-                line.push_str(&format!(" · {}", truncate(msg, 25)));
-            }
-            if let Some(pct) = info.percentage {
-                line.push_str(&format!(" ({}%)", pct));
-            }
-            items.push(crate::view::popup::PopupListItem::new(line));
+            out.push('…');
+            out
         }
+        const PROGRESS_FIELD_MAX: usize = 25;
 
         for name in &all_servers {
             let status = running_statuses.get(name).copied();
@@ -1791,6 +1770,28 @@ impl Editor {
                 "{} {} ({})",
                 icon, name, label
             )));
+
+            // Progress row immediately UNDER the server's name row, if
+            // there's an active `$/progress` notification for this
+            // language.  Indented to match the action rows below, and the
+            // title + message fields are individually truncated so a
+            // runaway progress path can't stretch the popup.  The popup
+            // width is pinned in advance (see below) so the row's content
+            // changing never reshapes the popup.
+            if let Some(info) = self
+                .lsp_progress
+                .values()
+                .find(|info| info.language == language)
+            {
+                let mut line = format!("    ⏳ {}", truncate(&info.title, PROGRESS_FIELD_MAX));
+                if let Some(ref msg) = info.message {
+                    line.push_str(&format!(" · {}", truncate(msg, PROGRESS_FIELD_MAX)));
+                }
+                if let Some(pct) = info.percentage {
+                    line.push_str(&format!(" ({}%)", pct));
+                }
+                items.push(crate::view::popup::PopupListItem::new(line));
+            }
 
             if is_active {
                 // Restart
@@ -1839,14 +1840,26 @@ impl Editor {
         // Store action keys for handling confirmation
         self.pending_lsp_status_popup = Some(action_keys);
 
-        // Calculate popup width from longest item (bounded so a very long
-        // progress message doesn't stretch the popup past 70 columns).
-        let max_item_width = items
+        // Pin the popup width up-front, using the *worst-case* widths for
+        // any row that varies at runtime (the progress line).  This keeps
+        // the popup from jittering when progress messages come and go or
+        // change length — the whole point of the spinner + live-refresh
+        // pair is that the UI should look stable while the LSP churns.
+        //
+        //   worst-case progress line =
+        //     "    ⏳ " (3 cells + leading 4-space indent)
+        //     + PROGRESS_FIELD_MAX   (title)
+        //     + " · "                (3 cells)
+        //     + PROGRESS_FIELD_MAX   (message)
+        //     + " (100%)"            (7 cells)
+        //   = 4 + 3 + 25 + 3 + 25 + 7 = 67 cells
+        const PROGRESS_LINE_MAX: usize = 4 + 3 + PROGRESS_FIELD_MAX + 3 + PROGRESS_FIELD_MAX + 7;
+        let max_static_item_width = items
             .iter()
             .map(|i| unicode_width::UnicodeWidthStr::width(i.text.as_str()))
             .max()
             .unwrap_or(20);
-        let popup_width = (max_item_width as u16 + 4).clamp(30, 70);
+        let popup_width = (max_static_item_width.max(PROGRESS_LINE_MAX) as u16 + 4).clamp(30, 70);
 
         // Pre-select the first actionable item (skip header items with no
         // data and disabled items like a non-existent View Log).
