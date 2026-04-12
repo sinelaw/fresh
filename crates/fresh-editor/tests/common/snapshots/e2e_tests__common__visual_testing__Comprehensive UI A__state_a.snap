@@ -31,4 +31,4 @@ expression: "&screen_text"
 │                            │   24 │                                                               
 │                            │~                                                                     
 └────────────────────────────┘~                                                                     
-src/main.rs | Ln 6, Col 12 | E:1 | 3 cursors | Added cursor at...  LF  ASCII  rust  Palette: Ctrl+P
+src/main.rs | Ln 6, Col 12 | E:1 | 3 cursors | A...  LF  ASCII  rust  LSP: off (1)  Palette: Ctrl+P

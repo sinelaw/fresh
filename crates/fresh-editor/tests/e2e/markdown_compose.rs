@@ -3870,8 +3870,14 @@ fn test_toggle_compose_all_affects_all_buffers() {
     let md_two = project_root.join("two.md");
     std::fs::write(&md_two, "# File Two\n\nContent two.\n").unwrap();
 
+    // Width 120 (not 100) because the status bar's right side now includes
+    // the "LSP: off (N)" dormant-indicator for any language with a default
+    // LSP config (markdown has marksman), which truncates the
+    // "Markdown Compose (All Files): ON/OFF" status message at 100 cols and
+    // causes the `wait_until_stable` substring polls below to spin until
+    // test timeout.
     let mut harness =
-        EditorTestHarness::with_config_and_working_dir(100, 30, Default::default(), project_root)
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
             .unwrap();
 
     // Open both files (two.md will be active)

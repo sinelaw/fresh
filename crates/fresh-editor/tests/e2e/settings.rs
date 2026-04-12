@@ -2754,7 +2754,11 @@ fn test_settings_edit_button_keyboard_navigation() {
 /// 3. Show a status message indicating which file was opened
 #[test]
 fn test_settings_edit_button_opens_config_file() {
-    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    // Width 120 (not 100) because the status bar's right side now includes
+    // the "LSP: off (N)" dormant-indicator for any language with a default
+    // LSP config (json has one), which truncates the "Editing User config"
+    // status message to "Editing User ..." at 100 cols.
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Open settings
     harness.open_settings().unwrap();
