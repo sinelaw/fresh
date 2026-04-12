@@ -36,6 +36,28 @@ fn space_doc_paragraphs(text: &str) -> String {
     text.replace("\n\n", "\x00").replace(['\n', '\x00'], "\n\n")
 }
 
+/// Whether an LSP range (half-open end, like `[start, end)`) contains the given
+/// `(line, character)` LSP position. Zero-length ranges (start == end) are
+/// treated as containing their single anchor point so point-style diagnostics
+/// still match a hover that lands exactly on them.
+fn lsp_range_contains(range: &lsp_types::Range, line: u32, character: u32) -> bool {
+    let start = range.start;
+    let end = range.end;
+    // Before start?
+    if line < start.line || (line == start.line && character < start.character) {
+        return false;
+    }
+    // Zero-length range: accept exact anchor match.
+    if start.line == end.line && start.character == end.character {
+        return line == start.line && character == start.character;
+    }
+    // After end? (half-open)
+    if line > end.line || (line == end.line && character >= end.character) {
+        return false;
+    }
+    true
+}
+
 const SEMANTIC_TOKENS_FULL_DEBOUNCE_MS: u64 = 500;
 const SEMANTIC_TOKENS_RANGE_DEBOUNCE_MS: u64 = 50;
 const SEMANTIC_TOKENS_RANGE_PADDING_LINES: usize = 10;
@@ -734,7 +756,7 @@ impl Editor {
     }
 
     /// Request LSP hover documentation at current cursor position
-    pub(crate) fn request_hover(&mut self) -> AnyhowResult<()> {
+    pub fn request_hover(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
         let cursor_pos = self.active_cursors().primary().position;
         let state = self.active_state();
@@ -776,6 +798,7 @@ impl Editor {
         if sent {
             self.next_lsp_request_id += 1;
             self.pending_hover_request = Some(request_id);
+            self.pending_hover_position = Some((line as u32, character as u32));
         }
 
         Ok(())
@@ -826,6 +849,7 @@ impl Editor {
         if sent {
             self.next_lsp_request_id += 1;
             self.pending_hover_request = Some(request_id);
+            self.pending_hover_position = Some((line as u32, character as u32));
         }
 
         Ok(sent)
@@ -846,7 +870,17 @@ impl Editor {
         }
 
         self.pending_hover_request = None;
-        if contents.is_empty() {
+        let hover_lsp_position = self.pending_hover_position.take();
+
+        // Gather any diagnostics whose range overlaps the hover position so
+        // they can be fused into the top of the hover card. Without this the
+        // user has to leave hover and go chase the error elsewhere in the UI
+        // even though the cursor is already on the offending symbol.
+        let diagnostic_prefix = hover_lsp_position
+            .and_then(|pos| self.compose_hover_diagnostic_prefix(pos))
+            .unwrap_or_default();
+
+        if contents.is_empty() && diagnostic_prefix.is_empty() {
             self.set_status_message(t!("lsp.no_hover").to_string());
             self.hover_symbol_range = None;
             return;
@@ -928,8 +962,28 @@ impl Editor {
         use crate::view::popup::{Popup, PopupPosition};
         use ratatui::style::Style;
 
-        // Use markdown rendering if the content is markdown
-        let mut popup = if is_markdown {
+        // If we have a diagnostic prefix, render the whole card as markdown so
+        // the severity heading and the existing hover body share one renderer.
+        let has_diagnostic = !diagnostic_prefix.is_empty();
+        let mut popup = if has_diagnostic {
+            let mut fused = diagnostic_prefix;
+            if !contents.is_empty() {
+                fused.push_str("\n---\n\n");
+                if is_markdown {
+                    fused.push_str(&contents);
+                } else {
+                    // Escape-free plain text: wrap in a fenced block so
+                    // markdown doesn't reinterpret it.
+                    fused.push_str("```\n");
+                    fused.push_str(&contents);
+                    if !contents.ends_with('\n') {
+                        fused.push('\n');
+                    }
+                    fused.push_str("```\n");
+                }
+            }
+            Popup::markdown(&fused, &self.theme, Some(&self.grammar_registry))
+        } else if is_markdown {
             Popup::markdown(&contents, &self.theme, Some(&self.grammar_registry))
         } else {
             // Plain text - split by lines
@@ -964,6 +1018,52 @@ impl Editor {
         // Mark hover request as sent to prevent duplicate popups during race conditions
         // (e.g., when mouse moves while a hover response is pending)
         self.mouse_state.lsp_hover_request_sent = true;
+    }
+
+    /// Build the markdown prefix that lists any diagnostics overlapping the
+    /// hover position. Returns `None` if no buffer/URI resolves, or an empty
+    /// string if there are no overlapping diagnostics — the caller treats an
+    /// empty string and `None` the same way.
+    fn compose_hover_diagnostic_prefix(&self, lsp_pos: (u32, u32)) -> Option<String> {
+        use lsp_types::DiagnosticSeverity;
+
+        let buffer_id = self.active_buffer();
+        let metadata = self.buffer_metadata.get(&buffer_id)?;
+        let uri = metadata.file_uri()?.as_str().to_string();
+        let diagnostics = self.get_stored_diagnostics().get(&uri)?;
+
+        let (hover_line, hover_char) = lsp_pos;
+        let overlapping: Vec<&lsp_types::Diagnostic> = diagnostics
+            .iter()
+            .filter(|d| lsp_range_contains(&d.range, hover_line, hover_char))
+            .collect();
+
+        if overlapping.is_empty() {
+            return Some(String::new());
+        }
+
+        let mut out = String::new();
+        for diag in overlapping {
+            let (label, marker) = match diag.severity {
+                Some(DiagnosticSeverity::ERROR) => ("Error", "❌"),
+                Some(DiagnosticSeverity::WARNING) => ("Warning", "⚠"),
+                Some(DiagnosticSeverity::INFORMATION) => ("Info", "ℹ"),
+                Some(DiagnosticSeverity::HINT) => ("Hint", "💡"),
+                _ => ("Diagnostic", "•"),
+            };
+            let source = diag
+                .source
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(|s| format!(" ({})", s))
+                .unwrap_or_default();
+            out.push_str(&format!("**{} {}**{}\n\n", marker, label, source));
+            // Message verbatim, preserving line breaks by inserting blank
+            // lines so markdown renders each message line as its own paragraph.
+            out.push_str(&space_doc_paragraphs(&diag.message));
+            out.push_str("\n\n");
+        }
+        Some(out)
     }
 
     /// Apply inlay hints to editor state as virtual text
@@ -3241,7 +3341,70 @@ mod tests {
     fn test_fs() -> Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> {
         Arc::new(StdFileSystem)
     }
-    use super::Editor;
+    use super::{lsp_range_contains, Editor};
+
+    fn range(sl: u32, sc: u32, el: u32, ec: u32) -> lsp_types::Range {
+        lsp_types::Range {
+            start: lsp_types::Position {
+                line: sl,
+                character: sc,
+            },
+            end: lsp_types::Position {
+                line: el,
+                character: ec,
+            },
+        }
+    }
+
+    #[test]
+    fn test_lsp_range_contains_inclusive_start_exclusive_end() {
+        let r = range(3, 10, 3, 20);
+        // Before start
+        assert!(!lsp_range_contains(&r, 3, 9));
+        assert!(!lsp_range_contains(&r, 2, 50));
+        // At start (inclusive)
+        assert!(lsp_range_contains(&r, 3, 10));
+        // Inside
+        assert!(lsp_range_contains(&r, 3, 15));
+        // Just before end (inclusive)
+        assert!(lsp_range_contains(&r, 3, 19));
+        // At end (exclusive)
+        assert!(!lsp_range_contains(&r, 3, 20));
+        // After end
+        assert!(!lsp_range_contains(&r, 3, 21));
+        assert!(!lsp_range_contains(&r, 4, 0));
+    }
+
+    #[test]
+    fn test_lsp_range_contains_multiline() {
+        let r = range(2, 5, 4, 3);
+        // Line before start
+        assert!(!lsp_range_contains(&r, 1, 100));
+        // On start line, before start character
+        assert!(!lsp_range_contains(&r, 2, 4));
+        // On start line, at start character (inclusive)
+        assert!(lsp_range_contains(&r, 2, 5));
+        // Interior line — any character is inside.
+        assert!(lsp_range_contains(&r, 3, 0));
+        assert!(lsp_range_contains(&r, 3, 9999));
+        // End line, before end character (inclusive)
+        assert!(lsp_range_contains(&r, 4, 2));
+        // End line, at end character (exclusive)
+        assert!(!lsp_range_contains(&r, 4, 3));
+        // Line after end
+        assert!(!lsp_range_contains(&r, 5, 0));
+    }
+
+    #[test]
+    fn test_lsp_range_contains_zero_length_matches_anchor_only() {
+        // Point diagnostic: start == end.
+        let r = range(7, 4, 7, 4);
+        assert!(lsp_range_contains(&r, 7, 4));
+        assert!(!lsp_range_contains(&r, 7, 3));
+        assert!(!lsp_range_contains(&r, 7, 5));
+        assert!(!lsp_range_contains(&r, 6, 4));
+        assert!(!lsp_range_contains(&r, 8, 4));
+    }
     use crate::model::buffer::Buffer;
     use crate::state::EditorState;
     use crate::view::virtual_text::VirtualTextPosition;

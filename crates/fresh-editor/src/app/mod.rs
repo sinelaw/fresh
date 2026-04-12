@@ -538,6 +538,11 @@ pub struct Editor {
     /// Pending LSP hover request ID (if any)
     pending_hover_request: Option<u64>,
 
+    /// LSP position (line, UTF-16 character) of the pending hover request.
+    /// Retained so `handle_hover_response` can look up diagnostics whose
+    /// range overlaps this position and fuse them into the hover card.
+    pending_hover_position: Option<(u32, u32)>,
+
     /// Pending LSP find references request ID (if any)
     pending_references_request: Option<u64>,
 
@@ -1559,6 +1564,7 @@ impl Editor {
             dabbrev_state: None,
             pending_goto_definition_request: None,
             pending_hover_request: None,
+            pending_hover_position: None,
             pending_references_request: None,
             pending_references_symbol: String::new(),
             pending_signature_help_request: None,

@@ -1782,6 +1782,7 @@ impl Editor {
         self.mouse_state.lsp_hover_state = None;
         self.mouse_state.lsp_hover_request_sent = false;
         self.pending_hover_request = None;
+        self.pending_hover_position = None;
 
         // Clear hover symbol highlight if present
         if let Some(handle) = self.hover_symbol_overlay.take() {

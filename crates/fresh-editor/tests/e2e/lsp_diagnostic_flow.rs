@@ -991,3 +991,347 @@ fn test_stale_diagnostics_dropped_during_rapid_typing() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Fake LSP server that both publishes a diagnostic and answers hover requests.
+///
+/// Used by the hover+diagnostic fusion test: when the user hovers a symbol
+/// that also carries an error, the hover popup should show the diagnostic
+/// message *and* the hover body together.
+///
+/// The diagnostic is placed at line 1, characters 17–24 — matching the RA
+/// replay script's error range — so the same test file layout works.
+fn create_hover_plus_diagnostic_server_script(dir: &std::path::Path) -> std::path::PathBuf {
+    let script = r##"#!/bin/bash
+LOG_FILE="${1:-/tmp/fake_hover_diag_log.txt}"
+> "$LOG_FILE"
+DID_OPEN_URI=""
+VERSION=0
+
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: $length\r\n\r\n%s" "$message"
+}
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then
+        break
+    fi
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+    echo "RECV: method=$method id=$msg_id" >> "$LOG_FILE"
+
+    case "$method" in
+        "initialize")
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"capabilities":{"positionEncoding":"utf-16","textDocumentSync":{"openClose":true,"change":2,"save":{}},"hoverProvider":true,"definitionProvider":true}}}'
+            ;;
+        "initialized")
+            ;;
+        "textDocument/didOpen")
+            DID_OPEN_URI=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+            VERSION=1
+            echo "ACTION: didOpen uri=$DID_OPEN_URI" >> "$LOG_FILE"
+            # Error at line 1, characters 17-24 (the "hello" string in `let x: i32 = "hello";`).
+            send_message '{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"'"$DID_OPEN_URI"'","diagnostics":[{"range":{"start":{"line":1,"character":17},"end":{"line":1,"character":24}},"severity":1,"source":"rustc","message":"mismatched types\nexpected `i32`, found `&str`"}],"version":'"$VERSION"'}}'
+            echo "SENT: publishDiagnostics" >> "$LOG_FILE"
+            ;;
+        "textDocument/hover")
+            # Respond regardless of position — the client sends hover at a
+            # single position and that's the only one we care about here.
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"contents":{"kind":"markdown","value":"```rust\nlet x: i32\n```\n\nA bound integer variable."},"range":{"start":{"line":1,"character":8},"end":{"line":1,"character":9}}}}'
+            echo "SENT: hover" >> "$LOG_FILE"
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
+            break
+            ;;
+        *)
+            if [ -n "$method" ] && [ -n "$msg_id" ]; then
+                send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
+            fi
+            ;;
+    esac
+done
+"##;
+
+    let script_path = dir.join("fake_hover_diag_server.sh");
+    std::fs::write(&script_path, script).expect("Failed to write hover+diag server script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("Failed to get script metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).expect("Failed to set script permissions");
+    }
+
+    script_path
+}
+
+/// Hover+diagnostic fusion: when the cursor sits on a symbol carrying an
+/// error, the hover popup should show the diagnostic message in addition to
+/// the LSP hover body. Previously the two lived in separate UIs, so users
+/// hovering an offending symbol saw type info only and had to leave hover
+/// to find the error.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
+fn test_hover_popup_fuses_overlapping_diagnostic() -> anyhow::Result<()> {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("fresh=debug")
+        .try_init();
+
+    let temp_dir = tempfile::tempdir()?;
+    let script_path = create_hover_plus_diagnostic_server_script(temp_dir.path());
+    let log_file = temp_dir.path().join("hover_diag_log.txt");
+    let test_file = temp_dir.path().join("test.rs");
+    // `let x: i32 = "hello";` on line 1 — the diagnostic covers chars 17-24
+    // (the literal string) and the hover request lands inside that range.
+    std::fs::write(
+        &test_file,
+        "fn main() {\n    let x: i32 = \"hello\";\n    println!(\"{}\", x);\n}\n",
+    )?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![log_file.to_string_lossy().to_string()],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for the diagnostic round-trip so stored_diagnostics is populated.
+    harness.wait_until(|_| {
+        let log = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log.contains("SENT: publishDiagnostics")
+    })?;
+    harness.wait_until(|h| h.screen_to_string().contains("E:1"))?;
+
+    // Position the cursor inside the diagnostic range: line 1 (0-indexed),
+    // character 18 (inside the "hello" literal at 17..24).
+    // Move down once from line 0, then across 18 chars.
+    use crossterm::event::{KeyCode, KeyModifiers};
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    for _ in 0..18 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    }
+
+    harness.editor_mut().request_hover()?;
+
+    // Wait for the hover popup to materialize.
+    harness.wait_until(|h| h.editor().active_state().popups.is_visible())?;
+    harness.render()?;
+
+    let screen = harness.screen_to_string();
+
+    // Fused popup should contain BOTH the diagnostic prefix and the hover body.
+    assert!(
+        screen.contains("mismatched types"),
+        "Hover popup must show the overlapping diagnostic message.\nScreen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("Error"),
+        "Hover popup must label the diagnostic severity.\nScreen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("bound integer variable"),
+        "Hover popup must also show the hover body (not just the diagnostic).\nScreen:\n{}",
+        screen
+    );
+
+    Ok(())
+}
+
+/// When there's no hover content but the cursor does sit on a diagnostic,
+/// the popup should still appear — showing the diagnostic — instead of
+/// silently saying "No hover information available" via the status bar.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_hover_shows_diagnostic_even_when_hover_is_empty() -> anyhow::Result<()> {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("fresh=debug")
+        .try_init();
+
+    // Server that returns diagnostic but empty hover.
+    let script = r##"#!/bin/bash
+LOG_FILE="${1:-/tmp/fake_empty_hover_log.txt}"
+> "$LOG_FILE"
+DID_OPEN_URI=""
+
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: $length\r\n\r\n%s" "$message"
+}
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then
+        break
+    fi
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+    case "$method" in
+        "initialize")
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"capabilities":{"positionEncoding":"utf-16","textDocumentSync":{"openClose":true,"change":2,"save":{}},"hoverProvider":true}}}'
+            ;;
+        "textDocument/didOpen")
+            DID_OPEN_URI=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+            send_message '{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"'"$DID_OPEN_URI"'","diagnostics":[{"range":{"start":{"line":1,"character":17},"end":{"line":1,"character":24}},"severity":2,"source":"clippy","message":"consider using a named constant"}],"version":1}}'
+            echo "SENT: publishDiagnostics" >> "$LOG_FILE"
+            ;;
+        "textDocument/hover")
+            # Empty hover — server has nothing to say about this symbol.
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
+            break
+            ;;
+        *)
+            if [ -n "$method" ] && [ -n "$msg_id" ]; then
+                send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
+            fi
+            ;;
+    esac
+done
+"##;
+    let temp_dir = tempfile::tempdir()?;
+    let script_path = temp_dir.path().join("fake_empty_hover_server.sh");
+    std::fs::write(&script_path, script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms)?;
+    }
+
+    let log_file = temp_dir.path().join("empty_hover_log.txt");
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(
+        &test_file,
+        "fn main() {\n    let x: i32 = \"hello\";\n    println!(\"{}\", x);\n}\n",
+    )?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![log_file.to_string_lossy().to_string()],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    harness.wait_until(|_| {
+        let log = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log.contains("SENT: publishDiagnostics")
+    })?;
+    harness.wait_until(|h| h.screen_to_string().contains("W:1"))?;
+
+    // Cursor inside diagnostic range (line 1, char 18).
+    use crossterm::event::{KeyCode, KeyModifiers};
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    for _ in 0..18 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    }
+    harness.editor_mut().request_hover()?;
+
+    // Popup must appear (even though LSP hover is empty) because we have a
+    // diagnostic to show.
+    harness.wait_until(|h| h.editor().active_state().popups.is_visible())?;
+    harness.render()?;
+    let screen = harness.screen_to_string();
+
+    assert!(
+        screen.contains("named constant"),
+        "Empty hover + diagnostic should still render a popup with the diagnostic.\nScreen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("Warning"),
+        "Popup should label warning severity.\nScreen:\n{}",
+        screen
+    );
+
+    Ok(())
+}

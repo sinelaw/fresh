@@ -109,7 +109,7 @@ Update `docs/internal/LSP_HEURISTIC_EVAL_CLANGD.md` H-2 to describe the observat
 | Finding | Suggested fix | Scope |
 |---|---|---|
 | **H-3** (dual counters) | Relabel the general badge as `[plugin: N]` or merge its contribution into `W:`. One-line change in `status_bar.rs:702-710`. | S |
-| **H-8** (`.h` → C) | When a `.h` is opened inside a tree with a sibling `.cc/.cpp/.cxx` or a `compile_commands.json`, promote the detected language to `cpp`. Edit `config.rs` detection plus a fallback check. | S-M |
+| **H-8** (`.h` → C) | ✅ Done. `detect_language` now promotes `.h` to `cpp` whenever the header sits in a directory with C++ siblings (`.cc/.cpp/.cxx/.C/.hpp/.hh/.hxx`) or under an ancestor containing `compile_commands.json`. Tests in `services::lsp::manager::tests::test_detect_language_h_*` cover sibling-source, sibling-hpp, ancestor compile_commands, pure-C tree (no promotion), `.c` source (never promoted), and `cpp`-absent config (no promotion). |
 | **H-11** (transient in status strip) | Introduce a short-lived toast line above the status bar with an auto-dismiss timer. Reuse `status_message` as the data source; route only persistent metadata through `StatusBarElement::Messages`. | M |
 | **H-12** (`--no-restore` leak) | Gate hot-exit content re-application on the same `!no_restore` predicate used for workspace restore. `main.rs:804`. | S |
 | **H-13** (SIGTSTP / orphan clangd) | Register a SIGTSTP handler that runs the terminal-teardown routine before `raise(SIGSTOP)`; register a `SIGTERM` → clangd shutdown path in `services/signal_handler.rs`. | M |
@@ -127,7 +127,8 @@ Update `docs/internal/LSP_HEURISTIC_EVAL_CLANGD.md` H-2 to describe the observat
 | Finding | Why |
 |---|---|
 | **H-4** (panel counter/title mismatch) | No source file matching "Diagnostics Panel" was found in this pass. Either cite the panel implementation explicitly (with a source link) or withdraw the finding. |
-| **H-5 / H-6 / H-7** (hover informativeness) | Real, but the fix is a product decision: fuse hover + diagnostic in the editor (`lsp_requests.rs:842-975`), or rely on clangd's configuration. Both have trade-offs — latency, vertical space, double-render of the same error. Decide before coding. |
+| **H-5** (hover does not surface diagnostic text) | ✅ Done. `handle_hover_response` in `app/lsp_requests.rs` now calls `compose_hover_diagnostic_prefix`, which inspects `stored_diagnostics` for the active buffer's URI, selects any diagnostic whose LSP range overlaps the hover position (tracked as `pending_hover_position`), and renders a markdown prefix (severity emoji + label + source + message) above a horizontal rule before the hover body. The popup is forced into markdown mode when a diagnostic is injected so plain-text hovers wrap into a fenced code block and the severity heading renders correctly. An empty hover is no longer suppressed when a diagnostic is present — the popup still opens with the diagnostic alone. E2E coverage: `test_hover_popup_fuses_overlapping_diagnostic` and `test_hover_shows_diagnostic_even_when_hover_is_empty` in `lsp_diagnostic_flow.rs`; unit coverage for `lsp_range_contains` (inclusive start / exclusive end, multiline, zero-length anchor). |
+| **H-6 / H-7** (hover informativeness, missing compile DB) | H-6 partially resolved as a consequence of H-5 — when clangd emits a `not in compile DB` diagnostic it now appears in the hover. H-7 (explicit one-time banner) remains open. |
 
 ### 3.4 Already fine
 
