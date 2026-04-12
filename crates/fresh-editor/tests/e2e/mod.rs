@@ -72,6 +72,7 @@ pub mod lsp_no_config;
 pub mod lsp_order;
 pub mod lsp_publish_diagnostics_capability;
 pub mod lsp_server_lifecycle_cleanup;
+pub mod lsp_stop_stale_indicator;
 pub mod lsp_toggle_desync;
 pub mod lsp_unified_code_actions;
 pub mod macros;
