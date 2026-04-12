@@ -328,8 +328,19 @@ pub fn calculate_tab_widths(
             TabTarget::Group(_) => "",
         };
 
-        // Same format as render_for_split: " {name}{modified}{binary_indicator} " + "× "
-        let tab_name_text = format!(" {name}{modified}{binary_indicator} ");
+        let preview_indicator = match t {
+            TabTarget::Buffer(id) => {
+                if buffer_metadata.get(id).map(|m| m.is_preview).unwrap_or(false) {
+                    " (preview)"
+                } else {
+                    ""
+                }
+            }
+            TabTarget::Group(_) => "",
+        };
+
+        // Same format as render_for_split: " {name}{modified}{preview_indicator}{binary_indicator} " + "× "
+        let tab_name_text = format!(" {name}{modified}{preview_indicator}{binary_indicator} ");
         let close_text = "× ";
         let tab_width = str_width(&tab_name_text) + str_width(close_text);
 
@@ -429,15 +440,16 @@ impl TabsRenderer {
                 TabTarget::Group(_) => "",
             };
 
-            // Preview (ephemeral) tabs are rendered in italic so the user
-            // has a visible cue that this tab will be replaced by the next
-            // single-click open. Mirrors VSCode / Zed convention.
+            // Preview (ephemeral) tabs are rendered in italic AND carry a
+            // " (preview)" suffix so the user has an unambiguous cue that
+            // this tab will be replaced by the next single-click open.
             let is_preview = match t {
                 TabTarget::Buffer(id) => {
                     buffer_metadata.get(id).map(|m| m.is_preview).unwrap_or(false)
                 }
                 TabTarget::Group(_) => false,
             };
+            let preview_indicator = if is_preview { " (preview)" } else { "" };
 
             let is_active = *t == active_target;
 
@@ -482,8 +494,9 @@ impl TabsRenderer {
                 base_style
             };
 
-            // Build tab content: " {name}{modified}{binary_indicator} "
-            let tab_name_text = format!(" {name}{modified}{binary_indicator} ");
+            // Build tab content: " {name}{modified}{preview_indicator}{binary_indicator} "
+            let tab_name_text =
+                format!(" {name}{modified}{preview_indicator}{binary_indicator} ");
             let tab_name_width = str_width(&tab_name_text);
 
             // Close button: "× "
