@@ -1749,7 +1749,8 @@ impl Editor {
             out.push('…');
             out
         }
-        const PROGRESS_FIELD_MAX: usize = 25;
+        const PROGRESS_FIELD_MAX: usize = 14;
+        const POPUP_WIDTH_MAX: u16 = 50;
 
         for name in &all_servers {
             let status = running_statuses.get(name).copied();
@@ -1847,19 +1848,20 @@ impl Editor {
         // pair is that the UI should look stable while the LSP churns.
         //
         //   worst-case progress line =
-        //     "    ⏳ " (3 cells + leading 4-space indent)
+        //     "    ⏳ " (4-space indent + ⏳ (2 cells) + space = 7 cells)
         //     + PROGRESS_FIELD_MAX   (title)
         //     + " · "                (3 cells)
         //     + PROGRESS_FIELD_MAX   (message)
         //     + " (100%)"            (7 cells)
-        //   = 4 + 3 + 25 + 3 + 25 + 7 = 67 cells
-        const PROGRESS_LINE_MAX: usize = 4 + 3 + PROGRESS_FIELD_MAX + 3 + PROGRESS_FIELD_MAX + 7;
+        //   = 7 + 14 + 3 + 14 + 7 = 45 cells
+        const PROGRESS_LINE_MAX: usize = 7 + PROGRESS_FIELD_MAX + 3 + PROGRESS_FIELD_MAX + 7;
         let max_static_item_width = items
             .iter()
             .map(|i| unicode_width::UnicodeWidthStr::width(i.text.as_str()))
             .max()
             .unwrap_or(20);
-        let popup_width = (max_static_item_width.max(PROGRESS_LINE_MAX) as u16 + 4).clamp(30, 70);
+        let popup_width =
+            (max_static_item_width.max(PROGRESS_LINE_MAX) as u16 + 4).clamp(30, POPUP_WIDTH_MAX);
 
         // Pre-select the first actionable item (skip header items with no
         // data and disabled items like a non-existent View Log).
