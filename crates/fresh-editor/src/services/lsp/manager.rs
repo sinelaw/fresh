@@ -1563,20 +1563,31 @@ fn detect_language_by_config(
 /// a C++ project? Two signals, both conservative:
 ///
 ///   * The file's own directory contains any C++ source or C++-specific
-///     header (`.cc`, `.cpp`, `.cxx`, `.C`, `.hpp`, `.hh`, `.hxx`). This is
-///     the decisive case — if the siblings are C++, the header is too.
-///   * Any ancestor up to 10 levels deep contains a `compile_commands.json`.
-///     CMake builds drop this file; clangd reads it to learn the language
-///     mode per source, so its mere presence in the tree is a strong
-///     "C/C++ build" marker. Callers only reach this check when the config
-///     already routes `.h` to C, so a false positive promotes to C++ — the
-///     right answer for the fmt / Chromium / LLVM / Qt-style trees the
-///     remediation doc calls out.
+///     header (`.cc`, `.cpp`, `.cxx`, `.C`, `.c++`, `.hpp`, `.hh`, `.hxx`).
+///     Decisive — if the siblings are C++, the header is too.
+///   * An ancestor up to 10 levels deep contains a `compile_commands.json`
+///     whose content carries a C++ marker. The mere presence of the file
+///     is not enough: CMake emits `compile_commands.json` for pure-C
+///     builds as well, so we peek inside and only promote when the
+///     payload mentions a C++-specific compiler, flag, or source
+///     extension (`c++`, `.cpp`, `.cc`, `.cxx`, `.C` ). This still covers
+///     the fmt / Chromium / LLVM / Qt-style layouts where the header
+///     lives deep under `include/` while sources sit in `src/` at the
+///     project root.
 ///
-/// Bounded by depth (10) and by a single shallow `read_dir` at the start,
-/// so the cost is a handful of `stat`s on file open. Silent on any I/O
-/// error — if we can't see the filesystem, we fall back to the default
-/// config answer (C), which is the pre-fix behavior.
+/// Bounded by depth (10), by a single shallow `read_dir` at the start,
+/// and by a capped 1 MiB read of `compile_commands.json`, so the cost is
+/// a handful of `stat`s plus at most one bounded read on file open.
+/// Silent on any I/O error — if we can't see the filesystem we fall back
+/// to the default config answer (C), which is the pre-fix behavior.
+///
+/// NOTE(remote-fs): Uses `std::fs` directly, matching the pre-existing
+/// `detect_workspace_root` in this module. On SSH sessions the probe
+/// sees the local filesystem, so the promotion silently becomes a no-op
+/// (returns `false`, falls back to `c`). Fixing this requires threading
+/// `&dyn FileSystem` through `detect_language` and
+/// `DetectedLanguage::from_path` — a cross-cutting refactor that should
+/// be done alongside the same fix for `detect_workspace_root`.
 fn header_in_cpp_tree(path: &std::path::Path) -> bool {
     let Some(start_dir) = path.parent() else {
         return false;
@@ -1598,11 +1609,14 @@ fn header_in_cpp_tree(path: &std::path::Path) -> bool {
         }
     }
 
-    // 2. Walk ancestors for compile_commands.json.
+    // 2. Walk ancestors for compile_commands.json, and only promote if
+    //    the file actually carries a C++ marker — CMake emits it for
+    //    pure-C builds too.
     let mut current = Some(start_dir);
     let mut depth = 0u32;
     while let Some(dir) = current {
-        if dir.join("compile_commands.json").is_file() {
+        let cc = dir.join("compile_commands.json");
+        if cc.is_file() && compile_commands_has_cpp_marker(&cc) {
             return true;
         }
         if depth >= 10 {
@@ -1613,6 +1627,39 @@ fn header_in_cpp_tree(path: &std::path::Path) -> bool {
     }
 
     false
+}
+
+/// Returns true when `compile_commands.json` contains a C++ marker —
+/// either the literal substring `c++` (covers `-std=c++17`, `clang++`,
+/// `g++`, the `c++` compiler name) or a C++ source extension in a
+/// context where it cannot be confused with an adjacent header path
+/// (`.cpp`, `.cc`, `.cxx`). Reads at most 1 MiB so multi-megabyte
+/// compile DBs from large monorepos don't block file open; a valid CMake
+/// entry fits comfortably in that window.
+fn compile_commands_has_cpp_marker(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    const MAX_READ: u64 = 1_048_576;
+
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = Vec::with_capacity(64 * 1024);
+    if file.take(MAX_READ).read_to_end(&mut buf).is_err() {
+        return false;
+    }
+    let Ok(text) = std::str::from_utf8(&buf) else {
+        return false;
+    };
+
+    // Strongest single marker: literal "c++" appears in -std=c++NN,
+    // clang++, g++, and the "c++" compiler name — never in a pure-C
+    // compilation invocation.
+    if text.contains("c++") {
+        return true;
+    }
+    // Secondary markers: any mention of a C++ source extension in the
+    // compile DB implies at least one C++ translation unit in the tree.
+    text.contains(".cpp") || text.contains(".cxx") || text.contains(".cc\"")
 }
 
 #[cfg(test)]
@@ -2043,7 +2090,10 @@ mod tests {
         std::fs::write(project.join("widget.cpp"), "").unwrap();
 
         let languages = c_cpp_languages();
-        assert_eq!(detect_language(&header, &languages), Some("cpp".to_string()));
+        assert_eq!(
+            detect_language(&header, &languages),
+            Some("cpp".to_string())
+        );
     }
 
     #[test]
@@ -2057,7 +2107,10 @@ mod tests {
         std::fs::write(project.join("b.hpp"), "").unwrap();
 
         let languages = c_cpp_languages();
-        assert_eq!(detect_language(&header, &languages), Some("cpp".to_string()));
+        assert_eq!(
+            detect_language(&header, &languages),
+            Some("cpp".to_string())
+        );
     }
 
     #[test]
@@ -2067,12 +2120,40 @@ mod tests {
         let include = project.join("include").join("fmt");
         std::fs::create_dir_all(&include).unwrap();
         // Compile DB two levels above the header — the fmt-style layout.
-        std::fs::write(project.join("compile_commands.json"), "[]").unwrap();
+        // Realistic CMake output: the compile command references clang++
+        // and a C++ source, which is the C++ marker we key on.
+        std::fs::write(
+            project.join("compile_commands.json"),
+            r#"[{"directory":"/proj","command":"/usr/bin/clang++ -std=c++17 -c src/format.cc","file":"src/format.cc"}]"#,
+        ).unwrap();
         let header = include.join("format.h");
         std::fs::write(&header, "").unwrap();
 
         let languages = c_cpp_languages();
-        assert_eq!(detect_language(&header, &languages), Some("cpp".to_string()));
+        assert_eq!(
+            detect_language(&header, &languages),
+            Some("cpp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_language_h_stays_c_with_pure_c_compile_commands() {
+        // A compile_commands.json generated for a pure-C project (gcc,
+        // -std=c11, .c sources only) must NOT promote .h to cpp.
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("cproj");
+        let include = project.join("include");
+        std::fs::create_dir_all(&include).unwrap();
+        std::fs::write(
+            project.join("compile_commands.json"),
+            r#"[{"directory":"/cproj","command":"/usr/bin/gcc -std=c11 -c src/lib.c","file":"src/lib.c"}]"#,
+        )
+        .unwrap();
+        let header = include.join("lib.h");
+        std::fs::write(&header, "").unwrap();
+
+        let languages = c_cpp_languages();
+        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
     }
 
     #[test]
@@ -2087,6 +2168,46 @@ mod tests {
 
         let languages = c_cpp_languages();
         assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_h_stays_c_with_empty_compile_commands() {
+        // Empty / minimal compile_commands.json carries no C++ marker,
+        // so we stay conservative and leave the header as C.
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("compile_commands.json"), "[]").unwrap();
+        let header = project.join("foo.h");
+        std::fs::write(&header, "").unwrap();
+
+        let languages = c_cpp_languages();
+        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_h_promotes_on_cpp_std_flag_alone() {
+        // `-std=c++20` with no other C++ extension is still conclusive.
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let include = project.join("include");
+        std::fs::create_dir_all(&include).unwrap();
+        std::fs::write(
+            project.join("compile_commands.json"),
+            // A contrived entry using the `.C` (capital) source extension
+            // with the c++20 flag — tests that the "c++" substring alone
+            // is sufficient even when our `.cpp/.cc/.cxx` scan would miss.
+            r#"[{"directory":"/proj","command":"/usr/bin/clang -std=c++20 -c src/x.C","file":"src/x.C"}]"#,
+        )
+        .unwrap();
+        let header = include.join("x.h");
+        std::fs::write(&header, "").unwrap();
+
+        let languages = c_cpp_languages();
+        assert_eq!(
+            detect_language(&header, &languages),
+            Some("cpp".to_string())
+        );
     }
 
     #[test]
