@@ -230,10 +230,22 @@ fn test_code_action_undo_sends_did_change() -> anyhow::Result<()> {
     let last_change_idx = final_log.rfind("METHOD:textDocument/didChange").unwrap();
     let last_change_body = &final_log[last_change_idx..];
 
-    // The undo sends a full-document replacement with the reverted content
+    // The undo sends a full-document replacement with the reverted content.
+    // Check for the specific code-action string "let x = 42" rather than a
+    // bare "42" — the JSON body includes the file URI, which embeds the
+    // random tempfile directory name (e.g. ".tmpU42klJ"), and that name can
+    // occasionally contain the substring "42", making a bare contains("42")
+    // check flaky.
     assert!(
-        !last_change_body.contains("42"),
-        "After undo, the last didChange should NOT contain '42' (the code action value).\n\
+        !last_change_body.contains("let x = 42"),
+        "After undo, the last didChange should NOT contain the code-action value 'let x = 42'.\n\
+         Last didChange: {}",
+        last_change_body
+    );
+    // Positive check: the reverted original content should be present.
+    assert!(
+        last_change_body.contains("let x = 5"),
+        "After undo, the last didChange should contain the reverted 'let x = 5'.\n\
          Last didChange: {}",
         last_change_body
     );
