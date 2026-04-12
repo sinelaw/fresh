@@ -2733,18 +2733,20 @@ edition = "2021"
             break;
         }
 
-        // Also print status periodically
+        // Also print the rendered status bar periodically
         if i % 50 == 0 && i > 0 {
-            let lsp_status = harness.editor().get_lsp_status();
-            eprintln!("  [{}ms] LSP status: {}", i * 100, lsp_status);
+            eprintln!(
+                "  [{}ms] status bar: {}",
+                i * 100,
+                harness.get_status_bar().trim_end()
+            );
         }
     }
 
     if !lsp_ready {
-        let lsp_status = harness.editor().get_lsp_status();
         eprintln!(
-            "⚠ Warning: LSP may not have initialized fully. Status: {}",
-            lsp_status
+            "⚠ Warning: LSP may not have initialized fully. Status bar: {}",
+            harness.get_status_bar().trim_end()
         );
         eprintln!("Continuing test anyway...");
     }

@@ -617,9 +617,6 @@ pub struct Editor {
     /// Interactive replace state (if interactive replace is active)
     interactive_replace_state: Option<InteractiveReplaceState>,
 
-    /// LSP status indicator for status bar
-    lsp_status: String,
-
     /// Mouse state for scrollbar dragging
     mouse_state: MouseState,
 
@@ -1591,7 +1588,6 @@ impl Editor {
             ),
             pending_search_range: None,
             interactive_replace_state: None,
-            lsp_status: String::new(),
             mouse_state: MouseState::default(),
             tab_context_menu: None,
             theme_info_popup: None,
@@ -1996,11 +1992,6 @@ impl Editor {
                     .map(|scope| scope.accepts(language))
                     .unwrap_or(false)
             })
-    }
-
-    /// Get the LSP status string (displayed in status bar)
-    pub fn get_lsp_status(&self) -> &str {
-        &self.lsp_status
     }
 
     /// Get stored LSP diagnostics (for testing and external access)
@@ -5284,76 +5275,6 @@ impl Editor {
 
         // Trigger render if any async messages, plugin commands were processed, or plugin requested render
         needs_render || processed_any_commands || plugin_render || file_changes || tree_changes
-    }
-
-    /// Update LSP status bar string from active progress operations
-    fn update_lsp_status_from_progress(&mut self) {
-        if self.lsp_progress.is_empty() {
-            // No active progress, update from server statuses
-            self.update_lsp_status_from_server_statuses();
-            return;
-        }
-
-        // Show the first active progress operation
-        if let Some((_, info)) = self.lsp_progress.iter().next() {
-            let mut status = format!("LSP ({}): {}", info.language, info.title);
-            if let Some(ref msg) = info.message {
-                status.push_str(&format!(" - {}", msg));
-            }
-            if let Some(pct) = info.percentage {
-                status.push_str(&format!(" ({}%)", pct));
-            }
-            self.lsp_status = status;
-        }
-    }
-
-    /// Update LSP status bar string from server statuses
-    fn update_lsp_status_from_server_statuses(&mut self) {
-        use crate::services::async_bridge::LspServerStatus;
-
-        // Collect all server statuses
-        let mut statuses: Vec<((String, String), LspServerStatus)> = self
-            .lsp_server_statuses
-            .iter()
-            .map(|((lang, name), status)| ((lang.clone(), name.clone()), *status))
-            .collect();
-
-        if statuses.is_empty() {
-            self.lsp_status = String::new();
-            return;
-        }
-
-        // Sort by language then server name for consistent display
-        statuses.sort_by(|a, b| a.0.cmp(&b.0));
-
-        // Group by language to decide display format
-        let mut lang_counts: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
-        for ((lang, _), _) in &statuses {
-            *lang_counts.entry(lang.as_str()).or_default() += 1;
-        }
-
-        // Build status string
-        let status_parts: Vec<String> = statuses
-            .iter()
-            .map(|((lang, name), status)| {
-                let status_str = match status {
-                    LspServerStatus::Starting => "starting",
-                    LspServerStatus::Initializing => "initializing",
-                    LspServerStatus::Running => "ready",
-                    LspServerStatus::Error => "error",
-                    LspServerStatus::Shutdown => "shutdown",
-                };
-                // Show server name when multiple servers exist for a language
-                if lang_counts.get(lang.as_str()).copied().unwrap_or(0) > 1 {
-                    format!("{}/{}: {}", lang, name, status_str)
-                } else {
-                    format!("{}: {}", lang, status_str)
-                }
-            })
-            .collect();
-
-        self.lsp_status = format!("LSP [{}]", status_parts.join(", "));
     }
 
     /// Update the plugin state snapshot with current editor state

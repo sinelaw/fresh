@@ -801,7 +801,6 @@ impl Editor {
                         percentage,
                     },
                 );
-                self.update_lsp_status_from_progress();
             }
             LspProgressValue::Report {
                 message,
@@ -810,12 +809,10 @@ impl Editor {
                 if let Some(info) = self.lsp_progress.get_mut(&token) {
                     info.message = message;
                     info.percentage = percentage;
-                    self.update_lsp_status_from_progress();
                 }
             }
             LspProgressValue::End { .. } => {
                 self.lsp_progress.remove(&token);
-                self.update_lsp_status_from_progress();
             }
         }
     }
@@ -888,7 +885,6 @@ impl Editor {
 
         // Update server status
         self.lsp_server_statuses.insert(key, status);
-        self.update_lsp_status_from_server_statuses();
 
         // Update warning domain for LSP status indicator
         self.update_lsp_warning_domain();

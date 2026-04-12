@@ -1,10 +1,74 @@
 use super::*;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
+use std::collections::HashMap;
 
 enum SearchDirection {
     Forward,
     Backward,
+}
+
+/// Compose the LSP segment of the status bar for a given buffer language.
+///
+/// See `Editor::render` for the priority order (progress → running →
+/// auto_start-dormant → opt-in-dormant → empty) and heuristic-eval H-1
+/// context. Pure function so it can be unit-tested without a harness.
+fn compose_lsp_status(
+    current_language: &str,
+    lsp_progress: &HashMap<String, LspProgressInfo>,
+    lsp_server_statuses: &HashMap<(String, String), crate::services::async_bridge::LspServerStatus>,
+    lsp_config: &HashMap<String, crate::types::LspLanguageConfig>,
+) -> String {
+    use crate::services::async_bridge::LspServerStatus;
+
+    // 1. Progress for this language takes precedence. Progress info
+    //    carries its own language tag from the server that emitted it.
+    if let Some(info) = lsp_progress
+        .values()
+        .find(|info| info.language == current_language)
+    {
+        let mut s = format!("LSP ({}): {}", info.language, info.title);
+        if let Some(ref msg) = info.message {
+            s.push_str(&format!(" - {}", msg));
+        }
+        if let Some(pct) = info.percentage {
+            s.push_str(&format!(" ({}%)", pct));
+        }
+        return s;
+    }
+
+    // 2. At least one running (non-Shutdown) server for this language.
+    let has_running = lsp_server_statuses.iter().any(|((lang, _), status)| {
+        lang == current_language && !matches!(status, LspServerStatus::Shutdown)
+    });
+    if has_running {
+        return "LSP".to_string();
+    }
+
+    // 3/4. No running server — distinguish configured-but-dormant kinds.
+    let (auto_start_count, dormant_count) = lsp_config
+        .get(current_language)
+        .map(|cfg| {
+            let auto = cfg
+                .as_slice()
+                .iter()
+                .filter(|c| c.enabled && c.auto_start && !c.command.is_empty())
+                .count();
+            let dormant = cfg
+                .as_slice()
+                .iter()
+                .filter(|c| c.enabled && !c.auto_start && !c.command.is_empty())
+                .count();
+            (auto, dormant)
+        })
+        .unwrap_or((0, 0));
+    if auto_start_count > 0 {
+        "LSP off".to_string()
+    } else if dormant_count > 0 {
+        format!("LSP: off ({})", dormant_count)
+    } else {
+        String::new()
+    }
 }
 
 impl Editor {
@@ -583,59 +647,38 @@ impl Editor {
         let plugin_status_message = self.plugin_status_message.clone();
         let prompt = self.prompt.clone();
         // Compute a simple buffer-aware LSP indicator.
-        // Shows "LSP" when servers are running for this buffer's language,
-        // "LSP off" when LSP is configured and the manager is active but no
-        // server is running, or nothing otherwise.
+        // Compose the LSP status-bar segment for the active buffer. This
+        // runs every render — the editor has no precomputed LSP-status
+        // string cached anywhere else, so there is a single source of
+        // truth for what the user sees.
+        //
+        // Priority order (first non-empty wins):
+        //
+        //   1. Active `$/progress` work for this language — e.g.
+        //      "LSP (cpp): indexing (42%)". Conveys the transient
+        //      startup/indexing phase.
+        //   2. A running server — "LSP". Short because detail belongs
+        //      in LSP-specific UI, not the compact status bar pill.
+        //   3. Configured `auto_start=true` servers that haven't started
+        //      (error / crashed / pending) — "LSP off".
+        //   4. Configured `enabled && !auto_start` servers that the user
+        //      has to opt into — "LSP: off (N)".
+        //   5. Nothing.
+        //
+        // Rules 3 and 4 address heuristic eval H-1: without them, a
+        // configured-but-dormant server is indistinguishable from "no
+        // LSP at all."
         let current_language = self
             .buffers
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
             .unwrap_or_default();
-        let lsp_status = {
-            use crate::services::async_bridge::LspServerStatus;
-            let has_running_servers = self.lsp_server_statuses.iter().any(|((lang, _), status)| {
-                lang == &current_language && !matches!(status, LspServerStatus::Shutdown)
-            });
-            if has_running_servers {
-                "LSP".to_string()
-            } else {
-                // No running server for this buffer's language. Distinguish
-                // three dormant cases so the user can tell whether an LSP
-                // is configured at all (heuristic eval H-1):
-                //
-                //   - `enabled && auto_start` (should be running but isn't):
-                //       `"LSP off"` — original behavior, preserved.
-                //   - `enabled && !auto_start` (configured but won't start
-                //     until the user asks): `"LSP: off (N)"` with count.
-                //     This is the case H-1 is about.
-                //   - anything else (no config / all disabled): empty.
-                let (auto_start_count, dormant_count) = self
-                    .config
-                    .lsp
-                    .get(&current_language)
-                    .map(|cfg| {
-                        let auto = cfg
-                            .as_slice()
-                            .iter()
-                            .filter(|c| c.enabled && c.auto_start && !c.command.is_empty())
-                            .count();
-                        let dormant = cfg
-                            .as_slice()
-                            .iter()
-                            .filter(|c| c.enabled && !c.auto_start && !c.command.is_empty())
-                            .count();
-                        (auto, dormant)
-                    })
-                    .unwrap_or((0, 0));
-                if auto_start_count > 0 {
-                    "LSP off".to_string()
-                } else if dormant_count > 0 {
-                    format!("LSP: off ({})", dormant_count)
-                } else {
-                    String::new()
-                }
-            }
-        };
+        let lsp_status = compose_lsp_status(
+            &current_language,
+            &self.lsp_progress,
+            &self.lsp_server_statuses,
+            &self.config.lsp,
+        );
         let theme = self.theme.clone();
         let keybindings_cloned = self.keybindings.read().unwrap().clone(); // Clone the keybindings
         let chord_state_cloned = self.chord_state.clone(); // Clone the chord state

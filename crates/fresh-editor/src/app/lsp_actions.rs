@@ -349,8 +349,6 @@ impl Editor {
                 // Remove the status entry so it gets re-created on spawn
                 self.lsp_server_statuses
                     .remove(&(language.to_string(), server_name.to_string()));
-                self.update_lsp_status_from_server_statuses();
-
                 if let Some(lsp) = self.lsp.as_mut() {
                     let _ = lsp.manual_restart(language, file_path.as_deref());
                 }
@@ -370,7 +368,6 @@ impl Editor {
                 if stopped {
                     self.lsp_server_statuses
                         .remove(&(language.to_string(), server_name.to_string()));
-                    self.update_lsp_status_from_server_statuses();
                     self.status_message =
                         Some(format!("Stopped LSP server: {}/{}", language, server_name));
                 } else {

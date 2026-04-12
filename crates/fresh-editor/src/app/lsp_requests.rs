@@ -60,9 +60,7 @@ impl Editor {
         }
 
         // Update status when all completion responses have arrived
-        if self.pending_completion_requests.is_empty() {
-            self.update_lsp_status_from_server_statuses();
-        }
+        if self.pending_completion_requests.is_empty() {}
 
         if items.is_empty() {
             tracing::debug!("No completion items received");
@@ -296,7 +294,6 @@ impl Editor {
                 tracing::debug!("Canceling pending LSP completion request {}", request_id);
                 self.send_lsp_cancel_request(request_id);
             }
-            self.update_lsp_status_from_server_statuses();
         }
         if let Some(request_id) = self.pending_goto_definition_request.take() {
             tracing::debug!(
@@ -305,7 +302,6 @@ impl Editor {
             );
             // Send cancellation to the LSP server
             self.send_lsp_cancel_request(request_id);
-            self.update_lsp_status_from_server_statuses();
         }
     }
 
@@ -602,7 +598,6 @@ impl Editor {
 
         if !sent_ids.is_empty() {
             self.pending_completion_requests.extend(sent_ids);
-            self.lsp_status = "LSP: completion...".to_string();
         } else {
             // No LSP servers available — show buffer-word completions as popup.
             self.show_buffer_word_completion_popup();
@@ -781,7 +776,6 @@ impl Editor {
         if sent {
             self.next_lsp_request_id += 1;
             self.pending_hover_request = Some(request_id);
-            self.lsp_status = "LSP: hover...".to_string();
         }
 
         Ok(())
@@ -832,7 +826,6 @@ impl Editor {
         if sent {
             self.next_lsp_request_id += 1;
             self.pending_hover_request = Some(request_id);
-            self.lsp_status = "LSP: hover...".to_string();
         }
 
         Ok(sent)
@@ -853,8 +846,6 @@ impl Editor {
         }
 
         self.pending_hover_request = None;
-        self.update_lsp_status_from_server_statuses();
-
         if contents.is_empty() {
             self.set_status_message(t!("lsp.no_hover").to_string());
             self.hover_symbol_range = None;
@@ -1140,7 +1131,6 @@ impl Editor {
             self.next_lsp_request_id += 1;
             self.pending_references_request = Some(request_id);
             self.pending_references_symbol = symbol;
-            self.lsp_status = "LSP: finding references...".to_string();
         }
 
         Ok(())
@@ -1186,7 +1176,6 @@ impl Editor {
         if sent {
             self.next_lsp_request_id += 1;
             self.pending_signature_help_request = Some(request_id);
-            self.lsp_status = "LSP: signature help...".to_string();
         }
     }
 
@@ -1203,8 +1192,6 @@ impl Editor {
         }
 
         self.pending_signature_help_request = None;
-        self.update_lsp_status_from_server_statuses();
-
         let signature_help = match signature_help {
             Some(help) if !help.signatures.is_empty() => help,
             _ => {
@@ -1381,7 +1368,6 @@ impl Editor {
             // Clear any previously accumulated actions for a fresh merge
             self.pending_code_actions = None;
             self.pending_code_actions_requests.extend(sent_ids);
-            self.lsp_status = "LSP: code actions...".to_string();
         }
 
         Ok(())
@@ -1402,9 +1388,7 @@ impl Editor {
         }
 
         // Update status when all code action responses have arrived
-        if self.pending_code_actions_requests.is_empty() {
-            self.update_lsp_status_from_server_statuses();
-        }
+        if self.pending_code_actions_requests.is_empty() {}
 
         // Look up the server name for this request
         let server_name = self
@@ -1795,8 +1779,6 @@ impl Editor {
         }
 
         self.pending_references_request = None;
-        self.update_lsp_status_from_server_statuses();
-
         if locations.is_empty() {
             self.set_status_message(t!("lsp.no_references").to_string());
             return Ok(());
@@ -2223,8 +2205,6 @@ impl Editor {
         _request_id: u64,
         result: Result<lsp_types::WorkspaceEdit, String>,
     ) -> AnyhowResult<()> {
-        self.update_lsp_status_from_server_statuses();
-
         match result {
             Ok(workspace_edit) => {
                 let total_changes = self.apply_workspace_edit(workspace_edit)?;
@@ -2816,7 +2796,6 @@ impl Editor {
 
         if sent {
             self.next_lsp_request_id += 1;
-            self.lsp_status = "LSP: rename...".to_string();
         } else if self
             .buffer_metadata
             .get(&buffer_id)
