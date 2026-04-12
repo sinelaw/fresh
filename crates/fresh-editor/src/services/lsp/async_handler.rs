@@ -3523,30 +3523,41 @@ async fn handle_message_dispatch(
                         || error.code == LSP_ERROR_SERVER_CANCELLED
                     {
                         tracing::debug!(
-                            "LSP response: {} (code {}), discarding",
+                            "LSP response from '{}' ({}): {} (code {}), discarding",
+                            server_name,
+                            language,
                             error.message,
                             error.code
                         );
                     } else {
                         tracing::warn!(
-                            "LSP response error: {} (code {})",
+                            "LSP response error from '{}' ({}): {} (code {})",
+                            server_name,
+                            language,
                             error.message,
                             error.code
                         );
                     }
                     Err(format!(
-                        "LSP error: {} (code {})",
-                        error.message, error.code
+                        "LSP error from '{}' ({}): {} (code {})",
+                        server_name, language, error.message, error.code
                     ))
                 } else {
-                    tracing::trace!("LSP response success for request id={}", response.id);
+                    tracing::trace!(
+                        "LSP response success from '{}' ({}) for request id={}",
+                        server_name,
+                        language,
+                        response.id
+                    );
                     // null is a valid result for many LSP methods (e.g., inlay hints with no hints)
                     Ok(response.result.unwrap_or(serde_json::Value::Null))
                 };
                 let _ = tx.send(result);
             } else {
                 tracing::warn!(
-                    "Received LSP response for unknown request id={}",
+                    "Received LSP response from '{}' ({}) for unknown request id={}",
+                    server_name,
+                    language,
                     response.id
                 );
             }
