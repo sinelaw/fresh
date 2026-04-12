@@ -16,7 +16,9 @@ use fresh::model::event::{CursorId, Event};
 use std::fs;
 
 /// Helper: set up a temp project with three files, all readable.
-fn three_file_project(harness: &mut EditorTestHarness) -> (std::path::PathBuf, [std::path::PathBuf; 3]) {
+fn three_file_project(
+    harness: &mut EditorTestHarness,
+) -> (std::path::PathBuf, [std::path::PathBuf; 3]) {
     let project_root = harness.project_dir().unwrap();
     let files = [
         project_root.join("a.txt"),
@@ -83,13 +85,11 @@ fn editing_preview_promotes_it_to_permanent() {
     assert!(harness.editor().is_buffer_preview(id));
 
     // Any buffer mutation must promote. Use a minimal Insert event.
-    harness
-        .editor_mut()
-        .log_and_apply_event(&Event::Insert {
-            position: 0,
-            text: "x".to_string(),
-            cursor_id: CursorId(0),
-        });
+    harness.editor_mut().log_and_apply_event(&Event::Insert {
+        position: 0,
+        text: "x".to_string(),
+        cursor_id: CursorId(0),
+    });
 
     assert!(
         !harness.editor().is_buffer_preview(id),
@@ -153,10 +153,7 @@ fn closing_preview_clears_tracking() {
     let (_, files) = three_file_project(&mut harness);
 
     let id = harness.editor_mut().open_file_preview(&files[0]).unwrap();
-    assert_eq!(
-        harness.editor().current_preview().map(|(_, b)| b),
-        Some(id)
-    );
+    assert_eq!(harness.editor().current_preview().map(|(_, b)| b), Some(id));
 
     harness.editor_mut().close_buffer(id).unwrap();
     assert!(

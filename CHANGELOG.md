@@ -1,10 +1,14 @@
 # Release Notes
 
-## 0.2.23
+## Unreleased
 
 ### Improvements
 
 * **Preview Tabs in File Explorer**: Single-clicking a file in the explorer now opens it in an ephemeral "preview" tab that is replaced by the next single-click instead of accumulating tabs (#1403). The preview tab is rendered in italic with a translated `(preview)` suffix. It is promoted to a permanent tab automatically when the user edits the buffer, double-clicks or presses Enter on the file in the explorer, clicks the tab itself, or performs a layout action (split, move tab, close split, focus a different pane). At most one preview tab exists editor-wide, and it's anchored to the split it was opened in — moving focus to another pane commits the previous preview. Enabled by default; disable via `"file_explorer": {"preview_tabs": false}` if you prefer the old behavior.
+
+## 0.2.23
+
+### Improvements
 
 * **Windows-1251 Encoding**: Added support for Windows-1251 (Cyrillic) encoding for loading and saving Cyrillic-script text files (#1453). Available in the encoding selector; auto-detected for text mixing uppercase and lowercase Cyrillic letters.
 

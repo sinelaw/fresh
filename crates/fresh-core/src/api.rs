@@ -3223,7 +3223,7 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
-                is_preview: false,
+                    is_preview: false,
                 },
             );
             snapshot.buffers.insert(
@@ -3238,7 +3238,7 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
-                is_preview: false,
+                    is_preview: false,
                 },
             );
             snapshot.buffers.insert(
@@ -3253,7 +3253,7 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
-                is_preview: false,
+                    is_preview: false,
                 },
             );
         }

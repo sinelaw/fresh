@@ -18,7 +18,10 @@ use std::collections::HashMap;
 /// Groups are never previews.
 fn is_preview_tab(t: &TabTarget, buffer_metadata: &HashMap<BufferId, BufferMetadata>) -> bool {
     match t {
-        TabTarget::Buffer(id) => buffer_metadata.get(id).map(|m| m.is_preview).unwrap_or(false),
+        TabTarget::Buffer(id) => buffer_metadata
+            .get(id)
+            .map(|m| m.is_preview)
+            .unwrap_or(false),
         TabTarget::Group(_) => false,
     }
 }
@@ -502,8 +505,7 @@ impl TabsRenderer {
             };
 
             // Build tab content: " {name}{modified}{preview_indicator}{binary_indicator} "
-            let tab_name_text =
-                format!(" {name}{modified}{preview_indicator}{binary_indicator} ");
+            let tab_name_text = format!(" {name}{modified}{preview_indicator}{binary_indicator} ");
             let tab_name_width = str_width(&tab_name_text);
 
             // Close button: "× "
