@@ -599,22 +599,38 @@ impl Editor {
             if has_running_servers {
                 "LSP".to_string()
             } else {
-                // Show "LSP off" only when at least one configured server has
-                // auto_start enabled (meaning LSP *should* be running but isn't).
-                // Default configs with auto_start=false don't show an indicator
-                // to avoid cluttering the status bar for every language.
-                let has_auto_start_config = self
+                // No running server for this buffer's language. Distinguish
+                // three dormant cases so the user can tell whether an LSP
+                // is configured at all (heuristic eval H-1):
+                //
+                //   - `enabled && auto_start` (should be running but isn't):
+                //       `"LSP off"` — original behavior, preserved.
+                //   - `enabled && !auto_start` (configured but won't start
+                //     until the user asks): `"LSP: off (N)"` with count.
+                //     This is the case H-1 is about.
+                //   - anything else (no config / all disabled): empty.
+                let (auto_start_count, dormant_count) = self
                     .config
                     .lsp
                     .get(&current_language)
                     .map(|cfg| {
-                        cfg.as_slice()
+                        let auto = cfg
+                            .as_slice()
                             .iter()
-                            .any(|c| c.enabled && c.auto_start && !c.command.is_empty())
+                            .filter(|c| c.enabled && c.auto_start && !c.command.is_empty())
+                            .count();
+                        let dormant = cfg
+                            .as_slice()
+                            .iter()
+                            .filter(|c| c.enabled && !c.auto_start && !c.command.is_empty())
+                            .count();
+                        (auto, dormant)
                     })
-                    .unwrap_or(false);
-                if has_auto_start_config {
+                    .unwrap_or((0, 0));
+                if auto_start_count > 0 {
                     "LSP off".to_string()
+                } else if dormant_count > 0 {
+                    format!("LSP: off ({})", dormant_count)
                 } else {
                     String::new()
                 }

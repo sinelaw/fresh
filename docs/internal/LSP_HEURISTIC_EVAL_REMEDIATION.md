@@ -57,30 +57,30 @@ There are really **two** lifecycle-visibility failures, currently conflated in t
 
 ### 2.3 Remediation Plan
 
-Design choice, up front: **no new status-bar element.** `StatusBarElement::Lsp` is already a pure function of `App::lsp_status: String`. The fix is to widen what that string represents — from "statuses of servers that have spawned" to "the full LSP situation for the active buffer, including configured-but-dormant servers." One element, one string, one place composes it. The existing empty-string → `None` path still handles "no LSP configured at all."
+Design choice, up front: **no new status-bar element.** `StatusBarElement::Lsp` is already a pure function of a single string. The fix is to widen what that string describes — from "statuses of servers that have spawned" to "the full LSP situation for the active buffer, including configured-but-dormant servers." One element, one string.
+
+**Implementation note:** on inspection of the code, the rendered LSP string is *not* read from `App::lsp_status` — it is recomputed at render time in `app/render.rs` from `lsp_server_statuses` + `config.lsp` scoped to the active buffer's language (the field `App::lsp_status` is used only by `get_lsp_status()` and some ad-hoc transient messages in `app/lsp_requests.rs`). So the fix ultimately lands in `render.rs`, and widens its three-case branch (running → `"LSP"`, dormant-with-auto-start → `"LSP off"`, otherwise → `""`) to four cases, adding the `enabled && !auto_start` case as `"LSP: off (N)"`. The two LSP-status composition paths are an existing duplication worth unifying as a follow-up — see `docs/internal/multi-lsp-design.md:671` for the already-planned refactor.
 
 Work is ordered by dependency and impact. Each item cites the specific code site that will be touched.
 
-**Step 1 — Teach `update_lsp_status_from_server_statuses` about dormant servers.**
-In `mod.rs:5311-5357`, before returning, also consult the loaded config for the active buffer's language and count servers with `enabled=true, auto_start=false` whose name is not already in `lsp_server_statuses`. Compose the final `lsp_status` string from the combined view:
+**Step 1 — Widen the render-time LSP-status composition in `render.rs`.** ✅ Done.
+`app/render.rs:594-640` used to branch on two cases: a running server for the active buffer's language → `"LSP"`, else (if an `auto_start=true` config existed) → `"LSP off"`, else → `""`. The third, H-1 case — an `enabled && !auto_start` config — was intentionally suppressed ("don't show an indicator to avoid cluttering the status bar for every language"). Replaced that branch with a count of dormant servers and appended a fourth case: `"LSP: off (N)"`.
 
-| Running | Dormant | Resulting `lsp_status`                          |
-|---------|---------|--------------------------------------------------|
-| 0       | 0       | `""` (element draws nothing — current behavior)  |
-| 0       | N > 0   | `"LSP: off (N)"`                                 |
-| M > 0   | 0       | `"LSP [rust: ready]"` (current behavior)         |
-| M > 0   | N > 0   | `"LSP [rust: ready] · off (N)"`                  |
+| Running servers | `enabled && auto_start` count | `enabled && !auto_start` count | Rendered segment |
+|---|---|---|---|
+| ≥ 1 | —               | —               | `LSP`            |
+| 0   | ≥ 1             | —               | `LSP off`        |
+| 0   | 0               | N > 0           | `LSP: off (N)`   |
+| 0   | 0               | 0               | *(empty)*        |
 
-`update_lsp_status_from_progress` (`mod.rs:5290-5308`) already overrides with the progress string when active; unchanged.
+**Step 2 — Muted styling.**
+Not done. The current fix reuses `ElementKind::Lsp`'s existing color. A follow-up should desaturate the dormant variant so it does not read as a state/error indicator.
 
-**Step 2 — Keep the indicator muted.**
-Styling lives on `ElementKind::Lsp` (`view/ui/status_bar.rs`). The dormant case should not use the same foreground as a running server — either add a muted sub-style or have the string include a marker the renderer can recognize. Either way, no new `ElementKind` and no new element enum variant.
+**Step 3 — Click / keybinding on the indicator.**
+Not done. The existing `start_restart_lsp` command is already reachable via the command palette; wiring a click on the indicator is nice-to-have but not urgent.
 
-**Step 3 — Wire a click / keybinding.**
-Existing command `start_restart_lsp` (`input/commands.rs:948`) opens a picker. Make the `Lsp` element's cell range clickable when the string contains `off` and route to that command.
-
-**Step 4 — Flip the characterization test.**
-Update `lsp_lifecycle_visibility.rs`: change the byte-equality assertion to a *difference* assertion, and positively assert the status bar contains `LSP: off`. The current negative-cue list becomes the anti-regression check against future regressions in the muted styling.
+**Step 4 — Flip the characterization test.** ✅ Done.
+`tests/e2e/lsp_lifecycle_visibility.rs` now positively asserts that configured-but-dormant servers render as `LSP: off (N)`, that the count reflects multiple dormant servers, that the control case (no LSP configured for the language) renders no indicator, and that the indicator updates correctly on buffer switch.
 
 **Step 5 — Diagnose the progress-not-rendered bug (H-2).**
 This is a bug in an existing feature, not net-new work. Add a fake-LSP test that:
