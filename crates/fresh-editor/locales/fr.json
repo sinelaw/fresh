@@ -303,6 +303,7 @@
   "buffer.no_tabs_to_close": "Aucun onglet à fermer",
   "buffer.opened": "%{name} ouvert",
   "buffer.opened_binary": "%{name} ouvert [fichier binaire, lecture seule]",
+  "buffer.preview_indicator": "(aperçu)",
   "buffer.create_directory_confirm": "Le répertoire '%{name}' n'existe pas. (c)réer, (A)nnuler ? ",
   "buffer.overwrite_confirm": "'%{name}' existe. (é)craser, (A)nnuler ? ",
   "buffer.revert_cancelled": "Restauration annulée",

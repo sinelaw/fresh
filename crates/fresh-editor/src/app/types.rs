@@ -195,6 +195,11 @@ pub struct BufferMetadata {
     /// it is replaced the next time another file is opened the same way.
     /// The flag is cleared ("promoted") when the user edits the buffer,
     /// double-clicks the file, or otherwise signals commitment to the file.
+    ///
+    /// Intentionally ephemeral — never serialized into workspace or
+    /// recovery state. Restarting the editor always brings buffers back
+    /// as permanent tabs; preview status belongs to the current session's
+    /// exploration flow only.
     pub is_preview: bool,
 
     /// Stable recovery ID for unnamed buffers.

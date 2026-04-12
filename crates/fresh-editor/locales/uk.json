@@ -303,6 +303,7 @@
   "buffer.no_tabs_to_close": "Немає вкладок для закриття",
   "buffer.opened": "Відкрито %{name}",
   "buffer.opened_binary": "Відкрито %{name} [двійковий файл, лише читання]",
+  "buffer.preview_indicator": "(попередній перегляд)",
   "buffer.create_directory_confirm": "Каталог '%{name}' не існує. (с)творити, (С)касувати? ",
   "buffer.overwrite_confirm": "'%{name}' існує. (п)ерезаписати, (С)касувати? ",
   "buffer.revert_cancelled": "Відновлення скасовано",

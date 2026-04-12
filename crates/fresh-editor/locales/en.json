@@ -301,6 +301,7 @@
   "buffer.no_tabs_to_close": "No tabs to close",
   "buffer.opened": "Opened %{name}",
   "buffer.opened_binary": "Opened %{name} [binary file, read-only]",
+  "buffer.preview_indicator": "(preview)",
   "buffer.create_directory_confirm": "Directory '%{name}' does not exist. (c)reate, (A)bort? ",
   "buffer.overwrite_confirm": "'%{name}' exists. (o)verwrite, (C)ancel? ",
   "buffer.revert_cancelled": "Revert cancelled",

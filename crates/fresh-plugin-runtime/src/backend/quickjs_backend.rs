@@ -6981,6 +6981,7 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
+                    is_preview: false,
                 },
             );
             state.buffers.insert(
@@ -6995,6 +6996,7 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
+                    is_preview: false,
                 },
             );
         }

@@ -153,6 +153,12 @@ impl Editor {
         source_split_id: LeafId,
         drop_zone: TabDropZone,
     ) {
+        // Dropping a tab (reorder, move to another split, or create a new
+        // split from it) is an unambiguous commitment gesture — promote any
+        // preview first so a drag never leaves behind stale preview state
+        // anchored to a split that has changed underneath it.
+        self.promote_current_preview();
+
         match drop_zone {
             TabDropZone::TabBar(target_split_id, insert_idx) => {
                 if target_split_id == source_split_id {

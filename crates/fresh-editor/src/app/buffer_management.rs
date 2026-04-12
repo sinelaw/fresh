@@ -10,6 +10,7 @@
 
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -85,93 +86,178 @@ impl Editor {
     /// `file_explorer.preview_tabs` setting is disabled, this is equivalent to
     /// `open_file`.
     ///
-    /// Behavior:
-    /// - If the file is already open in any buffer, switch to it without
-    ///   changing its preview state (an already-permanent tab stays permanent;
-    ///   an already-preview tab stays in preview).
-    /// - Otherwise, close the current preview buffer (if any) and open the
-    ///   new file, marking it as preview. Skipped if the new path equals the
-    ///   existing preview buffer's path (no-op — just refocus).
+    /// Semantics (see `Editor::preview` for the full invariants):
+    /// - Preview is anchored to a specific split. At most one preview exists
+    ///   editor-wide.
+    /// - If the file is already open (deduped by canonical path, including
+    ///   symlinks and relative paths, by delegating to `open_file_no_focus`),
+    ///   just switch to it. No preview-state changes in either direction.
+    /// - Otherwise, if there's an existing preview in the **same** target
+    ///   split, close it and replace it. If it's in a **different** split,
+    ///   promote it (walking away is commitment) and start a fresh preview
+    ///   in the target split.
+    /// - Skips writing to position history, so a string of exploratory
+    ///   clicks doesn't flood back/forward navigation with stale entries.
     ///
-    /// Editing the buffer, double-clicking its source in the explorer, or
-    /// dragging its tab all promote it to a permanent tab via
-    /// `promote_active_buffer_from_preview` / `promote_buffer_from_preview`.
+    /// TODO(perf): Each preview swap today triggers LSP didClose + didOpen.
+    /// For heavy language servers (rust-analyzer, tsserver) that's wasteful
+    /// on rapid browsing. A future optimization is to keep the LSP session
+    /// for the outgoing buffer until the user commits to the new one.
     pub fn open_file_preview(&mut self, path: &Path) -> anyhow::Result<BufferId> {
         // Feature gate — fall back to normal open when preview tabs are off.
         if !self.config.file_explorer.preview_tabs {
             return self.open_file(path);
         }
 
-        // If the file is already open, just switch to it. Do NOT flip its
-        // preview state in either direction — clicking a previously-committed
-        // file shouldn't demote it, and clicking the existing preview file
-        // shouldn't promote it either.
-        let already_open = self
+        // Decide target split up-front. `open_file_no_focus` will target
+        // the same one (it calls `preferred_split_for_file` internally),
+        // so this mirrors its logic. If that invariant ever drifts we'd
+        // open the preview in one split and track it in another.
+        let target_split = self.preferred_split_for_file();
+
+        // Snapshot the buffer IDs that already back a real file, so we can
+        // tell "opened a previously-unknown file" from "switched to one
+        // that was already open". We delegate the symlink/relative-path
+        // dedup to `open_file_no_focus` (which canonicalizes) — any buffer
+        // with a non-empty file path is a candidate match. Note: the
+        // initial empty buffer has a `BufferKind::File` with an empty
+        // `PathBuf`, and we deliberately exclude it here because
+        // `open_file_no_focus` may *repurpose* that buffer (same ID, new
+        // content) for the newly-opened file.
+        let previously_file_backed: HashSet<BufferId> = self
             .buffers
             .iter()
-            .find(|(_, state)| state.buffer.file_path() == Some(path))
-            .map(|(id, _)| *id);
-        if let Some(id) = already_open {
-            self.set_active_buffer(id);
-            return Ok(id);
+            .filter_map(|(id, state)| {
+                state.buffer.file_path().and_then(|p| {
+                    if p.as_os_str().is_empty() {
+                        None
+                    } else {
+                        Some(*id)
+                    }
+                })
+            })
+            .collect();
+
+        // Route through `open_file` with position-history suppression.
+        // Using the regular `open_file` path keeps all cross-cutting concerns
+        // (LSP, language detection, split targeting, status message, plugin
+        // hooks) consistent with a normal open.
+        self.suppress_position_history_once = true;
+        let open_result = self.open_file(path);
+        self.suppress_position_history_once = false;
+        let buffer_id = open_result?;
+        let is_new = !previously_file_backed.contains(&buffer_id);
+
+        // Already-open buffer: leave preview state untouched. A previously-
+        // committed tab must not be demoted back to preview, and the existing
+        // preview (if any, in whichever split) is still valid.
+        if !is_new {
+            return Ok(buffer_id);
         }
 
-        // Close the existing preview buffer, if any. We do this BEFORE opening
-        // the new file so stale preview tabs don't accumulate. If closing
-        // fails (e.g. the buffer was modified and somehow still flagged as
-        // preview — shouldn't happen because edits clear the flag, but be
-        // defensive), keep the old buffer and just open the new one alongside.
-        if let Some(old_preview) = self.preview_buffer_id.take() {
-            // Only close if still recognized as a preview buffer.
-            let still_preview = self
-                .buffer_metadata
-                .get(&old_preview)
-                .map(|m| m.is_preview)
-                .unwrap_or(false);
-            if still_preview {
-                if let Err(e) = self.close_buffer(old_preview) {
-                    tracing::debug!(
-                        "preview: could not close stale preview buffer {:?}: {}",
-                        old_preview,
+        // New buffer. Resolve the existing preview (if any) relative to the
+        // target split.
+        match self.preview.take() {
+            Some((prev_split, old_id)) if prev_split == target_split => {
+                // Same split: close the old preview so the new one takes its
+                // place. If close fails (modified buffer — shouldn't happen
+                // because edits promote, but defend in depth), demote the
+                // orphan to a permanent tab rather than leaving behind an
+                // italic "(preview)" tab that will never be replaced.
+                if let Err(e) = self.close_buffer(old_id) {
+                    tracing::warn!(
+                        "preview: could not replace stale preview buffer {:?}, demoting to permanent: {}",
+                        old_id,
                         e
                     );
+                    if let Some(m) = self.buffer_metadata.get_mut(&old_id) {
+                        m.is_preview = false;
+                    }
                 }
             }
+            Some((_other_split, old_id)) => {
+                // Different split: user walked away from the old preview
+                // before this click. Promote it to permanent — their focus
+                // moving to another split was the commitment signal.
+                if let Some(m) = self.buffer_metadata.get_mut(&old_id) {
+                    m.is_preview = false;
+                }
+            }
+            None => {}
         }
 
-        // Open the new file through the usual path (handles LSP, language
-        // detection, split targeting, etc.), then mark it as preview.
-        let buffer_id = self.open_file(path)?;
+        // Mark the new buffer as the preview, anchored to its split.
         if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
             meta.is_preview = true;
         }
-        self.preview_buffer_id = Some(buffer_id);
+        self.preview = Some((target_split, buffer_id));
+
         Ok(buffer_id)
     }
 
     /// Promote a specific buffer from preview to permanent, if it was in
     /// preview mode. No-op if the buffer is not currently a preview.
     pub(crate) fn promote_buffer_from_preview(&mut self, buffer_id: BufferId) {
-        let was_preview = self
-            .buffer_metadata
-            .get_mut(&buffer_id)
-            .map(|m| {
-                let was = m.is_preview;
-                m.is_preview = false;
-                was
-            })
-            .unwrap_or(false);
-        if was_preview && self.preview_buffer_id == Some(buffer_id) {
-            self.preview_buffer_id = None;
+        if let Some(m) = self.buffer_metadata.get_mut(&buffer_id) {
+            m.is_preview = false;
+        }
+        if let Some((_, id)) = self.preview {
+            if id == buffer_id {
+                self.preview = None;
+            }
         }
     }
 
     /// Promote the active buffer from preview to permanent, if applicable.
-    /// This is called on any mutation (insert/delete/bulk-edit) so that
-    /// touching the buffer commits it to a permanent tab.
+    /// Called on any buffer mutation so that touching a preview buffer
+    /// commits it to a permanent tab.
     pub(crate) fn promote_active_buffer_from_preview(&mut self) {
         let id = self.active_buffer();
         self.promote_buffer_from_preview(id);
+    }
+
+    /// Promote the current preview, regardless of which buffer it points at.
+    /// Used before layout changes (split, close-split, move-tab) where the
+    /// preview invariant ("anchored to a specific split") would otherwise
+    /// be broken by the operation itself.
+    pub(crate) fn promote_current_preview(&mut self) {
+        if let Some((_, id)) = self.preview.take() {
+            if let Some(m) = self.buffer_metadata.get_mut(&id) {
+                m.is_preview = false;
+            }
+        }
+    }
+
+    /// Promote the current preview if it belongs to a split other than
+    /// `new_split`. Called from split-focus-change paths so that moving
+    /// focus away from the preview's pane commits it.
+    pub(crate) fn promote_preview_if_not_in_split(&mut self, new_split: LeafId) {
+        if let Some((preview_split, _)) = self.preview {
+            if preview_split != new_split {
+                self.promote_current_preview();
+            }
+        }
+    }
+
+    /// Whether the given buffer is currently in preview (ephemeral) mode.
+    /// Primarily for tests; production code should use `self.preview`.
+    pub fn is_buffer_preview(&self, buffer_id: BufferId) -> bool {
+        self.buffer_metadata
+            .get(&buffer_id)
+            .map(|m| m.is_preview)
+            .unwrap_or(false)
+    }
+
+    /// Number of open buffers (including hidden/virtual buffers).
+    /// Intended for tests that verify preview tabs don't accumulate.
+    pub fn open_buffer_count(&self) -> usize {
+        self.buffers.len()
+    }
+
+    /// The (split, buffer) tuple of the current preview tab, if any.
+    /// Intended for tests that verify preview anchoring semantics.
+    pub fn current_preview(&self) -> Option<(LeafId, BufferId)> {
+        self.preview
     }
 
     /// Open a file and return its buffer ID
@@ -195,7 +281,7 @@ impl Editor {
         // For new buffers, record position history before switching
         let is_new_buffer = self.active_buffer() != buffer_id;
 
-        if is_new_buffer {
+        if is_new_buffer && !self.suppress_position_history_once {
             // Save current position before switching to new buffer
             self.position_history.commit_pending_movement();
 
@@ -1926,9 +2012,11 @@ impl Editor {
     /// Internal helper to close a buffer (shared by close_buffer and force_close_buffer)
     fn close_buffer_internal(&mut self, id: BufferId) -> anyhow::Result<()> {
         // Clear preview tracking if we're closing the current preview buffer.
-        // This keeps preview_buffer_id from pointing at a freed buffer id.
-        if self.preview_buffer_id == Some(id) {
-            self.preview_buffer_id = None;
+        // This keeps `preview` from pointing at a freed buffer id.
+        if let Some((_, preview_id)) = self.preview {
+            if preview_id == id {
+                self.preview = None;
+            }
         }
 
         // Complete any --wait tracking for this buffer

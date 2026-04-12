@@ -303,6 +303,7 @@
   "buffer.no_tabs_to_close": "Không có thẻ để đóng",
   "buffer.opened": "Đã mở %{name}",
   "buffer.opened_binary": "Đã mở %{name} [tệp nhị phân, chỉ đọc]",
+  "buffer.preview_indicator": "(xem trước)",
   "buffer.create_directory_confirm": "Thư mục '%{name}' không tồn tại. (c) Tạo, (H) Hủy? ",
   "buffer.overwrite_confirm": "'%{name}' đã tồn tại. (o) Ghi đè, (C) Hủy? ",
   "buffer.revert_cancelled": "Đã hủy hoàn nguyên",

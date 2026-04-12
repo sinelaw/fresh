@@ -28,6 +28,12 @@ impl Editor {
 
     /// Common split creation logic
     fn split_pane_impl(&mut self, direction: crate::model::event::SplitDirection) {
+        // Splitting the layout is a commitment gesture for any preview tab:
+        // the user is setting up their working environment around it. Promote
+        // before touching the split tree so the invariant "preview is anchored
+        // to a single split" stays consistent across the operation.
+        self.promote_current_preview();
+
         let current_buffer_id = self.active_buffer();
         let active_split = self.split_manager.active_split();
 
@@ -121,6 +127,12 @@ impl Editor {
 
     /// Close the active split
     pub fn close_active_split(&mut self) {
+        // Closing a split rearranges tab ownership (remaining tabs migrate
+        // to the new active split). Promote any preview first so it doesn't
+        // end up orphaned in a split that no longer exists, or silently
+        // migrated to an unrelated pane.
+        self.promote_current_preview();
+
         let closing_split = self.split_manager.active_split();
 
         // Get the tabs from the split we're closing before we close it
@@ -182,6 +194,9 @@ impl Editor {
 
         // Ensure the active tab is visible in the newly active split
         let split_id = self.split_manager.active_split();
+        // Moving focus to a different split commits the preview — walking
+        // away is commitment. Matches the rule applied in `focus_split`.
+        self.promote_preview_if_not_in_split(split_id);
         self.ensure_active_tab_visible(split_id, self.active_buffer(), self.effective_tabs_width());
 
         let buffer_id = self.active_buffer();

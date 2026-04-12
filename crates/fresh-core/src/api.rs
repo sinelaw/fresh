@@ -359,6 +359,14 @@ pub struct BufferInfo {
     pub compose_width: Option<u16>,
     /// The detected language for this buffer (e.g., "rust", "markdown", "text")
     pub language: String,
+    /// Whether this tab was opened in "preview" (ephemeral) mode — true when
+    /// opened via single-click in the file explorer and not yet committed
+    /// (no edit, no double-click, no tab-click, no layout change). Plugins
+    /// that react to buffer lifecycle events should generally treat preview
+    /// buffers as transient; e.g. a diagnostics panel may want to skip
+    /// refreshing itself for a preview tab.
+    #[serde(default)]
+    pub is_preview: bool,
 }
 
 fn serialize_path<S: serde::Serializer>(path: &Option<PathBuf>, s: S) -> Result<S::Ok, S::Error> {
@@ -3170,6 +3178,7 @@ mod tests {
                 is_composing_in_any_split: false,
                 compose_width: None,
                 language: "text".to_string(),
+                is_preview: false,
             };
             snapshot.buffers.insert(BufferId(1), buffer_info);
         }
@@ -3214,6 +3223,7 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
+                is_preview: false,
                 },
             );
             snapshot.buffers.insert(
@@ -3228,6 +3238,7 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
+                is_preview: false,
                 },
             );
             snapshot.buffers.insert(
@@ -3242,6 +3253,7 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
+                is_preview: false,
                 },
             );
         }

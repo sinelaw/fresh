@@ -425,12 +425,26 @@ pub struct Editor {
     /// File explorer view (optional, only when open)
     file_explorer: Option<FileTreeView>,
 
-    /// Buffer currently opened in "preview" (ephemeral) mode from the file
-    /// explorer single-click. At most one preview buffer exists at a time.
-    /// When another file is single-clicked in the explorer, this buffer is
-    /// closed and replaced. The flag is cleared when the user commits to the
-    /// buffer by editing it, double-clicking its source, or dragging its tab.
-    preview_buffer_id: Option<BufferId>,
+    /// Buffer currently opened in "preview" (ephemeral) mode, together with
+    /// the split (pane) it lives in. At most one preview exists editor-wide.
+    ///
+    /// Invariants:
+    /// - The `is_preview` flag on the referenced buffer's metadata is true
+    ///   iff this tuple is `Some` and points at that buffer.
+    /// - The preview is **anchored to the split it was opened in**. Moving
+    ///   focus to a different split, splitting the layout, or closing the
+    ///   hosting split promotes the preview to a permanent tab first, so
+    ///   layout manipulations never silently destroy the tab the user was
+    ///   reading.
+    /// - Cleared when the buffer is closed or promoted (edit / double-click
+    ///   / tab-click / explicit Enter in the explorer).
+    preview: Option<(LeafId, BufferId)>,
+
+    /// One-shot flag: when true, the next `open_file` call skips writing to
+    /// the back/forward position history. Set by `open_file_preview` so a
+    /// string of exploratory single-clicks doesn't flood the history stack
+    /// with entries pointing at tabs that are about to be closed.
+    suppress_position_history_once: bool,
 
     /// Filesystem manager for file explorer
     fs_manager: Arc<FsManager>,
@@ -1534,7 +1548,8 @@ impl Editor {
             previous_viewports: HashMap::new(),
             scroll_sync_manager: ScrollSyncManager::new(),
             file_explorer: None,
-            preview_buffer_id: None,
+            preview: None,
+            suppress_position_history_once: false,
             fs_manager,
             filesystem,
             local_filesystem: Arc::new(crate::model::filesystem::StdFileSystem),
@@ -1793,6 +1808,14 @@ impl Editor {
     /// Get a reference to the config
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// Get a mutable reference to the config.
+    /// Intended for tests and in-process settings UIs that update the
+    /// live editor configuration. Not all config fields take effect
+    /// immediately — some are read only at startup or on buffer open.
+    pub fn config_mut(&mut self) -> &mut Config {
+        &mut self.config
     }
 
     /// Get a reference to the key translator (for input calibration)
@@ -2545,6 +2568,12 @@ impl Editor {
         let previous_split = self.split_manager.active_split();
         let previous_buffer = self.active_buffer(); // Get BEFORE changing split
         let split_changed = previous_split != split_id;
+
+        // Preview is anchored to the split it was opened in. Moving focus to
+        // a different split commits the preview — walking away is commitment.
+        if split_changed {
+            self.promote_preview_if_not_in_split(split_id);
+        }
 
         // If `split_id` is not in the main split tree, it must be an inner
         // leaf of a Grouped subtree stashed in `grouped_subtrees`. For those
@@ -5436,6 +5465,11 @@ impl Editor {
                         .map(|bs| matches!(bs.view_mode, crate::state::ViewMode::PageView))
                         .unwrap_or(false)
                 });
+                let is_preview = self
+                    .buffer_metadata
+                    .get(buffer_id)
+                    .map(|m| m.is_preview)
+                    .unwrap_or(false);
                 let buffer_info = BufferInfo {
                     id: *buffer_id,
                     path: state.buffer.file_path().map(|p| p.to_path_buf()),
@@ -5446,6 +5480,7 @@ impl Editor {
                     is_composing_in_any_split,
                     compose_width,
                     language: state.language.clone(),
+                    is_preview,
                 };
                 snapshot.buffers.insert(*buffer_id, buffer_info);
 

@@ -11,7 +11,27 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
+use rust_i18n::t;
 use std::collections::HashMap;
+
+/// Returns true iff `t` refers to a buffer flagged as a preview tab.
+/// Groups are never previews.
+fn is_preview_tab(t: &TabTarget, buffer_metadata: &HashMap<BufferId, BufferMetadata>) -> bool {
+    match t {
+        TabTarget::Buffer(id) => buffer_metadata.get(id).map(|m| m.is_preview).unwrap_or(false),
+        TabTarget::Group(_) => false,
+    }
+}
+
+/// Returns the preview-suffix string (leading space included) to append
+/// to a preview tab's label, or an empty string if the tab is not a preview.
+fn preview_suffix(t: &TabTarget, buffer_metadata: &HashMap<BufferId, BufferMetadata>) -> String {
+    if is_preview_tab(t, buffer_metadata) {
+        format!(" {}", t!("buffer.preview_indicator"))
+    } else {
+        String::new()
+    }
+}
 
 /// Hit area for a single tab
 #[derive(Debug, Clone)]
@@ -328,16 +348,7 @@ pub fn calculate_tab_widths(
             TabTarget::Group(_) => "",
         };
 
-        let preview_indicator = match t {
-            TabTarget::Buffer(id) => {
-                if buffer_metadata.get(id).map(|m| m.is_preview).unwrap_or(false) {
-                    " (preview)"
-                } else {
-                    ""
-                }
-            }
-            TabTarget::Group(_) => "",
-        };
+        let preview_indicator = preview_suffix(t, buffer_metadata);
 
         // Same format as render_for_split: " {name}{modified}{preview_indicator}{binary_indicator} " + "× "
         let tab_name_text = format!(" {name}{modified}{preview_indicator}{binary_indicator} ");
@@ -441,15 +452,11 @@ impl TabsRenderer {
             };
 
             // Preview (ephemeral) tabs are rendered in italic AND carry a
-            // " (preview)" suffix so the user has an unambiguous cue that
-            // this tab will be replaced by the next single-click open.
-            let is_preview = match t {
-                TabTarget::Buffer(id) => {
-                    buffer_metadata.get(id).map(|m| m.is_preview).unwrap_or(false)
-                }
-                TabTarget::Group(_) => false,
-            };
-            let preview_indicator = if is_preview { " (preview)" } else { "" };
+            // translated suffix (e.g. " (preview)") so the user has an
+            // unambiguous cue that this tab will be replaced by the next
+            // single-click open.
+            let is_preview = is_preview_tab(t, buffer_metadata);
+            let preview_indicator = preview_suffix(t, buffer_metadata);
 
             let is_active = *t == active_target;
 

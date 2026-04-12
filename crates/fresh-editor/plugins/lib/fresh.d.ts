@@ -308,6 +308,15 @@ type BufferInfo = {
 	* The detected language for this buffer (e.g., "rust", "markdown", "text")
 	*/
 	language: string;
+	/**
+	* Whether this tab was opened in "preview" (ephemeral) mode — true when
+	* opened via single-click in the file explorer and not yet committed
+	* (no edit, no double-click, no tab-click, no layout change). Plugins
+	* that react to buffer lifecycle events should generally treat preview
+	* buffers as transient; e.g. a diagnostics panel may want to skip
+	* refreshing itself for a preview tab.
+	*/
+	is_preview: boolean;
 };
 type JsDiagnostic = {
 	/**
@@ -1410,6 +1419,15 @@ interface EditorAPI {
 	* Set cursor position in a buffer
 	*/
 	setBufferCursor(bufferId: number, position: number): boolean;
+	/**
+	* Toggle whether the editor draws a native caret in this buffer.
+	* 
+	* Buffer-group panel buffers default to `show_cursors = false`, which
+	* also blocks all native movement actions in `action_to_events`. Plugins
+	* that want native cursor motion in a panel (e.g. magit-style row
+	* navigation) call this with `true` after `createBufferGroup` returns.
+	*/
+	setBufferShowCursors(bufferId: number, show: boolean): boolean;
 	/**
 	* Set a line indicator in the gutter
 	*/
