@@ -57,7 +57,7 @@ fn test_code_action_number_key_selects_and_applies() -> anyhow::Result<()> {
     harness.render()?;
 
     // Wait for LSP to be ready
-    harness.wait_for_screen_contains("ready")?;
+    harness.wait_for_screen_contains("LSP (on)")?;
 
     // Position cursor on "let x = 5;" (line 2)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
@@ -137,7 +137,7 @@ fn test_code_action_arrow_enter_applies() -> anyhow::Result<()> {
     harness.render()?;
 
     // Wait for LSP to be ready
-    harness.wait_for_screen_contains("ready")?;
+    harness.wait_for_screen_contains("LSP (on)")?;
 
     // Position cursor
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;

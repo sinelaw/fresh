@@ -166,7 +166,7 @@ fn test_code_action_undo_sends_did_change() -> anyhow::Result<()> {
     // Open file, wait for LSP ready
     harness.open_file(&test_file)?;
     harness.render()?;
-    harness.wait_for_screen_contains("ready")?;
+    harness.wait_for_screen_contains("LSP (on)")?;
 
     // Wait for didOpen
     harness.wait_until(|_| {

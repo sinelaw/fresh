@@ -76,7 +76,7 @@ fn test_code_actions_merged_from_two_servers() -> anyhow::Result<()> {
     harness.render()?;
 
     // Wait for both LSP servers to be ready
-    harness.wait_for_screen_contains("ready")?;
+    harness.wait_for_screen_contains("LSP (on)")?;
 
     // Position cursor on "let x = 5;" (line 2)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;

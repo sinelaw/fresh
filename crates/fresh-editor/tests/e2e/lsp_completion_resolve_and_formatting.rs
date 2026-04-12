@@ -228,8 +228,8 @@ fn test_format_buffer_via_lsp() -> anyhow::Result<()> {
         "lua",
     )?;
 
-    // Wait for LSP to report capabilities (status shows "ready")
-    harness.wait_for_screen_contains("ready")?;
+    // Wait for LSP to report capabilities (status bar shows "LSP (on)")
+    harness.wait_for_screen_contains("LSP (on)")?;
 
     // Open command palette with Ctrl+P and run "Format Buffer"
     harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
