@@ -2746,15 +2746,6 @@ impl Editor {
     /// For Delete events, captures displaced marker positions before applying
     /// so undo can restore them to their exact original positions.
     pub fn log_and_apply_event(&mut self, event: &Event) {
-        // Any buffer-modifying event commits the user to this file, so promote
-        // it out of preview mode. Cursor moves, scrolls, and view-only events
-        // don't count — only real edits (including bulk edits for e.g. code
-        // actions) flip the bit. A nested Batch of view-only events will be
-        // skipped by `modifies_buffer()` returning false.
-        if event.modifies_buffer() {
-            self.promote_active_buffer_from_preview();
-        }
-
         // Capture displaced markers before the event is applied
         if let Event::Delete { range, .. } = event {
             let displaced = self.active_state().capture_displaced_markers(range);
@@ -2786,6 +2777,17 @@ impl Editor {
                 return;
             }
             _ => {}
+        }
+
+        // Any buffer-modifying event commits the user to this file, so promote
+        // it out of preview mode. Cursor moves and view-only events don't
+        // count — only real edits (Insert / Delete / BulkEdit, or a Batch
+        // containing any of those) flip the bit. Placed here (rather than
+        // in `log_and_apply_event`) because several edit paths bypass
+        // logging and call `apply_event_to_active_buffer` directly — notably
+        // `InsertChar` (single-character typing).
+        if event.modifies_buffer() {
+            self.promote_active_buffer_from_preview();
         }
 
         // IMPORTANT: Calculate LSP changes and line info BEFORE applying to buffer!
@@ -2906,6 +2908,12 @@ impl Editor {
             // No buffer modifications - use regular Batch
             return None;
         }
+
+        // Multi-cursor edits and code-action rewrites go through this path
+        // (not `apply_event_to_active_buffer`). Promote any preview tab
+        // here too so the invariant "edited buffer is never preview"
+        // holds regardless of which edit path runs.
+        self.promote_active_buffer_from_preview();
 
         let active_buf = self.active_buffer();
         let split_id = self.split_manager.active_split();

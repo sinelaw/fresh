@@ -1303,8 +1303,10 @@ fn test_settings_percentage_value_saves_correctly() {
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Navigate down to find the Width setting
-    // File Explorer settings: Custom Ignore Patterns, Respect Gitignore, Show Gitignored, Show Hidden, Width
+    // Navigate down to find the Width setting.
+    // File Explorer settings (alphabetical): Custom Ignore Patterns,
+    // Preview Tabs, Respect Gitignore, Show Gitignored, Show Hidden, Width.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Preview Tabs
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Respect Gitignore
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Show Gitignored
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Show Hidden
