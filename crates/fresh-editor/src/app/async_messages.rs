@@ -742,11 +742,23 @@ impl Editor {
 
     /// Re-pull diagnostics for all open buffers associated with the given language.
     fn pull_diagnostics_for_language(&mut self, language: &str) {
-        // Collect URIs and their previous result IDs
+        // Only re-pull for buffers whose language matches. The previous
+        // implementation collected URIs from every open buffer regardless
+        // of language, which routed `textDocument/diagnostic` requests
+        // for e.g. `.json` / `.nix` URIs through the rust handle on a
+        // `workspace/diagnostic/refresh` from rust-analyzer, producing
+        // spurious "file not found (-32603)" responses.
         let uris: Vec<_> = self
-            .buffer_metadata
-            .values()
-            .filter_map(|metadata| metadata.file_uri().cloned())
+            .buffers
+            .iter()
+            .filter_map(|(buffer_id, state)| {
+                if state.language != language {
+                    return None;
+                }
+                self.buffer_metadata
+                    .get(buffer_id)
+                    .and_then(|m| m.file_uri().cloned())
+            })
             .collect();
 
         if uris.is_empty() {
