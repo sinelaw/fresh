@@ -36,20 +36,32 @@ fn compose_lsp_status(
     use crate::services::async_bridge::LspServerStatus;
     use crate::view::ui::status_bar::LspIndicatorState;
 
-    // 1. Progress for this language takes precedence. Progress info
-    //    carries its own language tag from the server that emitted it.
-    if let Some(info) = lsp_progress
+    // 1. Progress for this language takes precedence.  We intentionally
+    //    do NOT render the progress title/message/percent inline on the
+    //    status bar: those strings grow and shrink wildly during indexing
+    //    (e.g. rust-analyzer alternates between a 5-char "Roots" message
+    //    and a 60-char file path) and the indicator width would twitch
+    //    every few hundred milliseconds.  Instead, show a stable "LSP "
+    //    plus a 1-cell Braille spinner advanced by wall-clock time.  The
+    //    popup surfaces the live progress text (see `show_lsp_status_popup`).
+    if lsp_progress
         .values()
-        .find(|info| info.language == current_language)
+        .any(|info| info.language == current_language)
     {
-        let mut s = format!("LSP ({}): {}", info.language, info.title);
-        if let Some(ref msg) = info.message {
-            s.push_str(&format!(" - {}", msg));
-        }
-        if let Some(pct) = info.percentage {
-            s.push_str(&format!(" ({}%)", pct));
-        }
-        return (s, LspIndicatorState::On);
+        const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        // ~100ms per frame.  Using SystemTime (not Instant) keeps this a
+        // pure function of "now" — tests that control wall-clock time can
+        // drive it deterministically if ever needed, and we don't need a
+        // tick counter threaded through the app.
+        let idx = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| (d.as_millis() / 100) as usize)
+            .unwrap_or(0)
+            % SPINNER.len();
+        return (
+            format!("LSP {}", SPINNER[idx]),
+            crate::view::ui::status_bar::LspIndicatorState::On,
+        );
     }
 
     // 2. Any server in Error state for this language wins over "running",

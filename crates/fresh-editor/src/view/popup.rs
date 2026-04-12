@@ -854,12 +854,18 @@ impl Popup {
                 } else {
                     x
                 };
-                // Sit directly above the status bar (1 row tall), so popup
-                // bottom ends one row above `terminal_height - 1`.
+                // Leave one empty row between the popup's bottom border
+                // and the status bar.  Without this gap, the popup's
+                // bottom border visually touches the LSP indicator it was
+                // opened from, making the indicator harder to read and
+                // obscuring the spinner while progress is in flight.
+                //   - terminal_height - 1 = status bar row
+                //   - terminal_height - 2 = gap row
+                //   - popup bottom ends at terminal_height - 3
                 let y = terminal_area
                     .height
                     .saturating_sub(height)
-                    .saturating_sub(1);
+                    .saturating_sub(2);
                 Rect {
                     x,
                     y,
@@ -912,6 +918,21 @@ impl Popup {
 
         let inner_area = block.inner(area);
         frame.render_widget(block, area);
+
+        // Close-button overlay on the top border ("[×]", bracketed so the
+        // click target is 3 cells wide and obviously a UI affordance rather
+        // than stray content).  Rendered only for bordered popups that are
+        // big enough to accommodate it without colliding with the title.
+        if self.bordered && area.width >= 5 {
+            let close_x = area.x + area.width - 4;
+            let close_area = Rect {
+                x: close_x,
+                y: area.y,
+                width: 3,
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new("[×]").style(self.border_style), close_area);
+        }
 
         // Render description if present, and adjust content area
         let content_start_y;

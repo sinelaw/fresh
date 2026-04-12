@@ -1621,8 +1621,6 @@ impl Editor {
     /// Show LSP status popup with details about servers active for the current buffer.
     /// Lists each server with its status and provides actions: restart, stop, view log.
     pub fn show_lsp_status_popup(&mut self) {
-        use crate::services::async_bridge::LspServerStatus;
-
         // Toggle behavior: if the LSP popup is already showing, close it
         // instead of rebuilding and re-showing it.  This lets clicking the
         // status-bar LSP indicator a second time dismiss the popup, matching
@@ -1634,8 +1632,6 @@ impl Editor {
         }
 
         let has_error = self.warning_domains.lsp.level() == crate::app::WarningLevel::Error;
-
-        // Get the current buffer's language
         let language = self
             .buffers
             .get(&self.active_buffer())
@@ -1651,19 +1647,52 @@ impl Editor {
             },
         );
 
+        self.build_and_show_lsp_status_popup(&language);
+    }
+
+    /// Rebuild the LSP-status popup in place if it's currently open.
+    ///
+    /// Used when an async event (progress update, server state change) might
+    /// change the popup's contents — notably while rust-analyzer is indexing
+    /// and emits `$/progress` every few hundred ms.  Without this, the popup
+    /// would freeze on the snapshot taken at open time while the status-bar
+    /// spinner keeps moving, making them look disconnected.
+    pub fn refresh_lsp_status_popup_if_open(&mut self) {
+        if self.pending_lsp_status_popup.is_none() {
+            return;
+        }
+        let language = self
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        // Replace contents: hide then rebuild.  hide_popup() clears
+        // pending_lsp_status_popup via handle_popup_cancel pathways, but
+        // here we're calling it directly without routing through a cancel,
+        // so stash and restore the marker so the rebuild sees "already
+        // open" and doesn't fall through the toggle branch.
+        let was_pending = self.pending_lsp_status_popup.take();
+        self.hide_popup();
+        drop(was_pending);
+        self.build_and_show_lsp_status_popup(&language);
+    }
+
+    fn build_and_show_lsp_status_popup(&mut self, language: &str) {
+        use crate::services::async_bridge::LspServerStatus;
+
         // Build a unified list of all configured servers for this language,
         // merged with their runtime status (if running).
         let running_statuses: std::collections::HashMap<String, LspServerStatus> = self
             .lsp_server_statuses
             .iter()
-            .filter(|((lang, _), _)| lang == &language)
+            .filter(|((lang, _), _)| lang == language)
             .map(|((_, name), status)| (name.clone(), *status))
             .collect();
 
         let configured_servers: Vec<String> = self
             .config
             .lsp
-            .get(&language)
+            .get(language)
             .map(|cfg| {
                 cfg.as_slice()
                     .iter()
@@ -1696,6 +1725,52 @@ impl Editor {
         // suite.
         let mut items: Vec<crate::view::popup::PopupListItem> = Vec::new();
         let mut action_keys: Vec<(String, String)> = Vec::new();
+
+        // If there's an active `$/progress` notification for this language,
+        // surface the text at the top of the popup.  The status-bar
+        // indicator only shows a spinner to keep its width stable; this is
+        // where the user reads "what is the server actually doing right now?"
+        //
+        // Title and message are individually truncated to 25 display cells
+        // so a runaway file path (rust-analyzer likes to echo the absolute
+        // path to the crate currently being indexed) doesn't blow past the
+        // popup's 70-col width cap.
+        if let Some(info) = self
+            .lsp_progress
+            .values()
+            .find(|info| info.language == language)
+        {
+            fn truncate(s: &str, max_cells: usize) -> String {
+                use unicode_width::UnicodeWidthChar;
+                let w = unicode_width::UnicodeWidthStr::width(s);
+                if w <= max_cells {
+                    return s.to_string();
+                }
+                // Reserve 1 cell for the ellipsis so the result is at most
+                // `max_cells` wide in total.
+                let budget = max_cells.saturating_sub(1);
+                let mut used = 0;
+                let mut out = String::new();
+                for ch in s.chars() {
+                    let cw = ch.width().unwrap_or(0);
+                    if used + cw > budget {
+                        break;
+                    }
+                    used += cw;
+                    out.push(ch);
+                }
+                out.push('…');
+                out
+            }
+            let mut line = format!("⏳ {}", truncate(&info.title, 25));
+            if let Some(ref msg) = info.message {
+                line.push_str(&format!(" · {}", truncate(msg, 25)));
+            }
+            if let Some(pct) = info.percentage {
+                line.push_str(&format!(" ({}%)", pct));
+            }
+            items.push(crate::view::popup::PopupListItem::new(line));
+        }
 
         for name in &all_servers {
             let status = running_statuses.get(name).copied();
@@ -1749,7 +1824,7 @@ impl Editor {
         // View log action (always, at the end) — grayed out and
         // non-actionable when no log file exists yet for this language
         // (e.g. the server was never started, or has been rotated away).
-        let log_path = crate::services::log_dirs::lsp_log_path(&language);
+        let log_path = crate::services::log_dirs::lsp_log_path(language);
         let log_exists = log_path.exists();
         let log_key = format!("log:{}", language);
         let mut log_item = crate::view::popup::PopupListItem::new("    View Log".to_string());
@@ -1764,8 +1839,13 @@ impl Editor {
         // Store action keys for handling confirmation
         self.pending_lsp_status_popup = Some(action_keys);
 
-        // Calculate popup width from longest item
-        let max_item_width = items.iter().map(|i| i.text.len()).max().unwrap_or(20);
+        // Calculate popup width from longest item (bounded so a very long
+        // progress message doesn't stretch the popup past 70 columns).
+        let max_item_width = items
+            .iter()
+            .map(|i| unicode_width::UnicodeWidthStr::width(i.text.as_str()))
+            .max()
+            .unwrap_or(20);
         let popup_width = (max_item_width as u16 + 4).clamp(30, 70);
 
         // Pre-select the first actionable item (skip header items with no

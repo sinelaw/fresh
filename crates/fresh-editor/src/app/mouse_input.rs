@@ -1423,6 +1423,23 @@ impl Editor {
             return Ok(());
         }
 
+        // Check if click is on the popup's close-button overlay ("[×]")
+        // before dispatching to content-area handling.  The overlay sits
+        // on the top border at `popup_rect.x + popup_rect.width - 4 .. -1`
+        // (see `Popup::render_with_hover`).  We iterate top-of-stack first
+        // so nested popups work.
+        for (_popup_idx, popup_rect, _inner, _scroll, _n, _sb, _tl) in
+            self.cached_layout.popup_areas.iter().rev()
+        {
+            if popup_rect.width < 5 {
+                continue;
+            }
+            let cb_x = popup_rect.x + popup_rect.width - 4;
+            if row == popup_rect.y && col >= cb_x && col < cb_x + 3 {
+                return self.handle_action(Action::PopupCancel);
+            }
+        }
+
         // Check if click is on a popup content area (they're rendered on top)
         for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
             self.cached_layout.popup_areas.iter().rev()

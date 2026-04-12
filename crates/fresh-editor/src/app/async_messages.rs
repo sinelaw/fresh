@@ -815,6 +815,11 @@ impl Editor {
                 self.lsp_progress.remove(&token);
             }
         }
+        // If the LSP status popup is open, rebuild it so the progress line
+        // inside reflects the new title / message / percentage.  The
+        // status-bar indicator itself only shows a spinner, so the popup
+        // is the user's only window into the live progress text.
+        self.refresh_lsp_status_popup_if_open();
     }
 
     /// Handle LSP window message (window/showMessage)
