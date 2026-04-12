@@ -1488,6 +1488,29 @@ pub fn detect_language(
     path: &std::path::Path,
     languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
 ) -> Option<String> {
+    let detected = detect_language_by_config(path, languages);
+
+    // `.h` headers: the default config maps the extension to C, but in C++
+    // projects the header is still C++ and must route to clangd in C++ mode.
+    // If the detected language is `c`, the file is `.h`, and the surrounding
+    // tree smells like C++ (sibling C++ sources or an ancestor
+    // `compile_commands.json`), promote to `cpp` so the LSP binding is right.
+    if detected.as_deref() == Some("c")
+        && path.extension().and_then(|e| e.to_str()) == Some("h")
+        && languages.contains_key("cpp")
+        && header_in_cpp_tree(path)
+    {
+        return Some("cpp".to_string());
+    }
+
+    detected
+}
+
+/// Pure config/path-based language detection without filesystem probing.
+fn detect_language_by_config(
+    path: &std::path::Path,
+    languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
+) -> Option<String> {
     use crate::primitives::glob_match::{
         filename_glob_matches, is_glob_pattern, is_path_pattern, path_glob_matches,
     };
@@ -1534,6 +1557,62 @@ pub fn detect_language(
     }
 
     None
+}
+
+/// Filesystem probe: does this header sit inside something that looks like
+/// a C++ project? Two signals, both conservative:
+///
+///   * The file's own directory contains any C++ source or C++-specific
+///     header (`.cc`, `.cpp`, `.cxx`, `.C`, `.hpp`, `.hh`, `.hxx`). This is
+///     the decisive case — if the siblings are C++, the header is too.
+///   * Any ancestor up to 10 levels deep contains a `compile_commands.json`.
+///     CMake builds drop this file; clangd reads it to learn the language
+///     mode per source, so its mere presence in the tree is a strong
+///     "C/C++ build" marker. Callers only reach this check when the config
+///     already routes `.h` to C, so a false positive promotes to C++ — the
+///     right answer for the fmt / Chromium / LLVM / Qt-style trees the
+///     remediation doc calls out.
+///
+/// Bounded by depth (10) and by a single shallow `read_dir` at the start,
+/// so the cost is a handful of `stat`s on file open. Silent on any I/O
+/// error — if we can't see the filesystem, we fall back to the default
+/// config answer (C), which is the pre-fix behavior.
+fn header_in_cpp_tree(path: &std::path::Path) -> bool {
+    let Some(start_dir) = path.parent() else {
+        return false;
+    };
+
+    // 1. Sibling scan in the header's own directory.
+    if let Ok(entries) = std::fs::read_dir(start_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let Some(ext) = p.extension().and_then(|e| e.to_str()) else {
+                continue;
+            };
+            if matches!(
+                ext,
+                "cc" | "cpp" | "cxx" | "C" | "c++" | "hpp" | "hh" | "hxx"
+            ) {
+                return true;
+            }
+        }
+    }
+
+    // 2. Walk ancestors for compile_commands.json.
+    let mut current = Some(start_dir);
+    let mut depth = 0u32;
+    while let Some(dir) = current {
+        if dir.join("compile_commands.json").is_file() {
+            return true;
+        }
+        if depth >= 10 {
+            break;
+        }
+        depth += 1;
+        current = dir.parent();
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -1885,6 +1964,159 @@ mod tests {
 
         let root = detect_workspace_root(&file, &[".git".to_string()]);
         assert_eq!(root, project);
+    }
+
+    /// Returns a languages map mirroring the default config's `c` + `cpp`
+    /// entries: `.h` maps to `c`, and `.cpp/.cc/.cxx/.hpp/.hh/.hxx` map to
+    /// `cpp`. Matches `config.rs:3010` and `:3040-3047` so the promotion
+    /// logic is exercised under realistic config.
+    fn c_cpp_languages() -> std::collections::HashMap<String, crate::config::LanguageConfig> {
+        use crate::config::LanguageConfig;
+        let mut languages = std::collections::HashMap::new();
+        let base = LanguageConfig {
+            extensions: vec![],
+            filenames: vec![],
+            grammar: String::new(),
+            comment_prefix: Some("//".to_string()),
+            auto_indent: true,
+            auto_close: None,
+            auto_surround: None,
+            textmate_grammar: None,
+            show_whitespace_tabs: false,
+            line_wrap: None,
+            wrap_column: None,
+            page_view: None,
+            page_width: None,
+            use_tabs: None,
+            tab_size: None,
+            formatter: None,
+            format_on_save: false,
+            on_save: vec![],
+            word_characters: None,
+        };
+        languages.insert(
+            "c".to_string(),
+            LanguageConfig {
+                extensions: vec!["c".to_string(), "h".to_string()],
+                grammar: "c".to_string(),
+                ..base.clone()
+            },
+        );
+        languages.insert(
+            "cpp".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "cpp".to_string(),
+                    "cc".to_string(),
+                    "cxx".to_string(),
+                    "hpp".to_string(),
+                    "hh".to_string(),
+                    "hxx".to_string(),
+                ],
+                grammar: "cpp".to_string(),
+                ..base
+            },
+        );
+        languages
+    }
+
+    #[test]
+    fn test_detect_language_h_stays_c_without_cpp_signals() {
+        // No filesystem context — plain `Path::new("foo.h")` doesn't exist,
+        // so sibling scan + compile_commands walk both return false and the
+        // default-config answer (`c`) survives.
+        let languages = c_cpp_languages();
+        assert_eq!(
+            detect_language(Path::new("foo.h"), &languages),
+            Some("c".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_language_h_promotes_to_cpp_with_sibling_cpp_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let header = project.join("widget.h");
+        std::fs::write(&header, "").unwrap();
+        // Sibling .cpp source — the decisive C++ signal.
+        std::fs::write(project.join("widget.cpp"), "").unwrap();
+
+        let languages = c_cpp_languages();
+        assert_eq!(detect_language(&header, &languages), Some("cpp".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_h_promotes_to_cpp_with_sibling_hpp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let header = project.join("a.h");
+        std::fs::write(&header, "").unwrap();
+        // A `.hpp` sibling is also a C++-specific signal.
+        std::fs::write(project.join("b.hpp"), "").unwrap();
+
+        let languages = c_cpp_languages();
+        assert_eq!(detect_language(&header, &languages), Some("cpp".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_h_promotes_to_cpp_with_ancestor_compile_commands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let include = project.join("include").join("fmt");
+        std::fs::create_dir_all(&include).unwrap();
+        // Compile DB two levels above the header — the fmt-style layout.
+        std::fs::write(project.join("compile_commands.json"), "[]").unwrap();
+        let header = include.join("format.h");
+        std::fs::write(&header, "").unwrap();
+
+        let languages = c_cpp_languages();
+        assert_eq!(detect_language(&header, &languages), Some("cpp".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_h_stays_c_in_pure_c_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("cproj");
+        std::fs::create_dir_all(&project).unwrap();
+        let header = project.join("lib.h");
+        std::fs::write(&header, "").unwrap();
+        // Only `.c` siblings — no C++ signal, no compile_commands.json.
+        std::fs::write(project.join("lib.c"), "").unwrap();
+
+        let languages = c_cpp_languages();
+        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_c_source_never_promoted() {
+        // `.c` files should stay `c` even in a C++ tree.
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let source = project.join("legacy.c");
+        std::fs::write(&source, "").unwrap();
+        std::fs::write(project.join("main.cpp"), "").unwrap();
+
+        let languages = c_cpp_languages();
+        assert_eq!(detect_language(&source, &languages), Some("c".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_h_no_promotion_without_cpp_config() {
+        // If the user hasn't configured `cpp`, we have nowhere to promote to
+        // — stay with the base detection rather than inventing a language.
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let header = project.join("widget.h");
+        std::fs::write(&header, "").unwrap();
+        std::fs::write(project.join("widget.cpp"), "").unwrap();
+
+        let mut languages = c_cpp_languages();
+        languages.remove("cpp");
+        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
     }
 
     #[test]
