@@ -43,6 +43,35 @@ impl Editor {
             .map(|(buffer_id, _)| *buffer_id)
     }
 
+    /// Collect `(buffer_id, uri)` pairs for every open buffer whose stored
+    /// language matches `language`.
+    ///
+    /// This is the single correct way to enumerate buffers for sending a
+    /// per-URI LSP request (pull diagnostics, inlay hints, semantic tokens,
+    /// folding ranges, …) to a language-scoped server. Without the language
+    /// filter, a server configured only for e.g. "rust" ends up receiving
+    /// requests for every open URI regardless of type, and a responsible
+    /// server rejects unknown URIs with `file not found (code -32603)` —
+    /// polluting logs and wasting a round-trip per unrelated buffer.
+    ///
+    /// Callers that need richer per-buffer info (line counts, content, file
+    /// paths) can still iterate themselves, but should use the same
+    /// `state.language == language` predicate this helper encodes.
+    pub(crate) fn buffers_for_language(&self, language: &str) -> Vec<(BufferId, lsp_types::Uri)> {
+        self.buffers
+            .iter()
+            .filter_map(|(buffer_id, state)| {
+                if state.language != language {
+                    return None;
+                }
+                self.buffer_metadata
+                    .get(buffer_id)
+                    .and_then(|m| m.file_uri().cloned())
+                    .map(|uri| (*buffer_id, uri))
+            })
+            .collect()
+    }
+
     /// Apply diagnostics to a buffer identified by URI.
     /// Returns `(buffer_id, actually_updated)` if buffer was found, None otherwise.
     /// `actually_updated` is false when the DIAG CACHE determined no overlay changes were needed.
@@ -677,6 +706,24 @@ impl Editor {
             return;
         }
 
+        // Collect only buffers whose language matches this server's
+        // scope, before mutably borrowing `self.lsp`. Previously this
+        // iterated every open buffer regardless of language, so the
+        // rust handle was asked for inlay hints on `.json` / `.nix`
+        // URIs and replied `file not found (-32603)`.
+        let buffer_infos: Vec<_> = self
+            .buffers_for_language(&language)
+            .into_iter()
+            .map(|(buffer_id, uri)| {
+                let line_count = self
+                    .buffers
+                    .get(&buffer_id)
+                    .and_then(|s| s.buffer.line_count())
+                    .unwrap_or(1000);
+                (uri, line_count)
+            })
+            .collect();
+
         let Some(lsp) = self.lsp.as_mut() else {
             return;
         };
@@ -687,22 +734,6 @@ impl Editor {
             return;
         };
         let client = &mut sh.handle;
-
-        // Collect buffer info first to avoid borrow issues
-        let buffer_infos: Vec<_> = self
-            .buffer_metadata
-            .iter()
-            .filter_map(|(buffer_id, metadata)| {
-                metadata.file_uri().map(|uri| {
-                    let line_count = self
-                        .buffers
-                        .get(buffer_id)
-                        .and_then(|s| s.buffer.line_count())
-                        .unwrap_or(1000);
-                    (uri.clone(), line_count)
-                })
-            })
-            .collect();
 
         // Request inlay hints for each buffer
         for (uri, line_count) in buffer_infos {
@@ -742,23 +773,12 @@ impl Editor {
 
     /// Re-pull diagnostics for all open buffers associated with the given language.
     fn pull_diagnostics_for_language(&mut self, language: &str) {
-        // Only re-pull for buffers whose language matches. The previous
-        // implementation collected URIs from every open buffer regardless
-        // of language, which routed `textDocument/diagnostic` requests
-        // for e.g. `.json` / `.nix` URIs through the rust handle on a
-        // `workspace/diagnostic/refresh` from rust-analyzer, producing
-        // spurious "file not found (-32603)" responses.
+        // Use the shared language-filtered buffer enumeration so requests
+        // never leak out to a server with a different scope.
         let uris: Vec<_> = self
-            .buffers
-            .iter()
-            .filter_map(|(buffer_id, state)| {
-                if state.language != language {
-                    return None;
-                }
-                self.buffer_metadata
-                    .get(buffer_id)
-                    .and_then(|m| m.file_uri().cloned())
-            })
+            .buffers_for_language(language)
+            .into_iter()
+            .map(|(_, uri)| uri)
             .collect();
 
         if uris.is_empty() {
@@ -1398,19 +1418,11 @@ impl Editor {
 
     /// Request semantic tokens for all open buffers matching a language.
     pub(super) fn request_semantic_tokens_for_language(&mut self, language: &str) {
-        // Use stored buffer language instead of detecting from path
         let buffer_ids: Vec<_> = self
-            .buffers
-            .iter()
-            .filter_map(|(buffer_id, state)| {
-                if state.language == language {
-                    Some(*buffer_id)
-                } else {
-                    None
-                }
-            })
+            .buffers_for_language(language)
+            .into_iter()
+            .map(|(id, _)| id)
             .collect();
-
         for buffer_id in buffer_ids {
             self.schedule_semantic_tokens_full_refresh(buffer_id);
         }
@@ -1419,17 +1431,10 @@ impl Editor {
     /// Request folding ranges for all open buffers matching a language.
     pub(super) fn request_folding_ranges_for_language(&mut self, language: &str) {
         let buffer_ids: Vec<_> = self
-            .buffers
-            .iter()
-            .filter_map(|(buffer_id, state)| {
-                if state.language == language {
-                    Some(*buffer_id)
-                } else {
-                    None
-                }
-            })
+            .buffers_for_language(language)
+            .into_iter()
+            .map(|(id, _)| id)
             .collect();
-
         for buffer_id in buffer_ids {
             self.schedule_folding_ranges_refresh(buffer_id);
         }
