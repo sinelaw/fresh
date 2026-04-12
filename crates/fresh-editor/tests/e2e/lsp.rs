@@ -1722,9 +1722,13 @@ edition = "2021"
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
-        // Check if LSP is ready by looking at the screen output (status bar)
+        // Check if LSP is ready by looking at the screen output (status bar).
+        // The running-state indicator is "LSP (on)" — it previously showed
+        // "[rust: ready]" inline, but the status bar was simplified to a
+        // three-state badge (on/off/error) with per-server detail moved to
+        // the clickable status popup.
         let screen = harness.screen_to_string();
-        if screen.contains("LSP") && screen.contains("ready") {
+        if screen.contains("LSP (on)") {
             lsp_ready = true;
             println!("LSP initialized and ready");
             break;

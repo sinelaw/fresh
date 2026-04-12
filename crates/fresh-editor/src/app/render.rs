@@ -10,16 +10,31 @@ enum SearchDirection {
 
 /// Compose the LSP segment of the status bar for a given buffer language.
 ///
-/// See `Editor::render` for the priority order (progress → running →
-/// auto_start-dormant → opt-in-dormant → empty) and heuristic-eval H-1
-/// context. Pure function so it can be unit-tested without a harness.
+/// Returns (text, indicator-state).  The state drives the indicator's color
+/// in `status_bar::element_style`; the text is what's rendered inside the
+/// segment.  Priority:
+///
+///   1. Progress       — detailed progress string, state = On
+///   2. Error          — "LSP (error)",           state = Error
+///   3. Running        — "LSP (on)",              state = On
+///   4. Configured-but-not-running (either auto_start or opt-in dormant)
+///                     — "LSP (off)",             state = Off
+///   5. Nothing        — empty,                   state = None
+///
+/// The indicator was previously "LSP" / "LSP off" / "LSP: off (N)" colored
+/// only on warning / error.  The three-bucket form communicates the same
+/// info without needing a count (the popup lists per-server detail) and
+/// lets the indicator carry a distinct color in every non-empty state.
+///
+/// Pure function so it can be unit-tested without a harness.
 fn compose_lsp_status(
     current_language: &str,
     lsp_progress: &HashMap<String, LspProgressInfo>,
     lsp_server_statuses: &HashMap<(String, String), crate::services::async_bridge::LspServerStatus>,
     lsp_config: &HashMap<String, crate::types::LspLanguageConfig>,
-) -> String {
+) -> (String, crate::view::ui::status_bar::LspIndicatorState) {
     use crate::services::async_bridge::LspServerStatus;
+    use crate::view::ui::status_bar::LspIndicatorState;
 
     // 1. Progress for this language takes precedence. Progress info
     //    carries its own language tag from the server that emitted it.
@@ -34,41 +49,46 @@ fn compose_lsp_status(
         if let Some(pct) = info.percentage {
             s.push_str(&format!(" ({}%)", pct));
         }
-        return s;
+        return (s, LspIndicatorState::On);
     }
 
-    // 2. At least one running (non-Shutdown) server for this language.
+    // 2. Any server in Error state for this language wins over "running",
+    //    so the indicator surfaces trouble even when another server is fine.
+    let has_error = lsp_server_statuses
+        .iter()
+        .any(|((lang, _), status)| lang == current_language && *status == LspServerStatus::Error);
+    if has_error {
+        return ("LSP (error)".to_string(), LspIndicatorState::Error);
+    }
+
+    // 3. At least one running (non-Shutdown) server for this language.
+    //    Starting/Initializing also counts as "on" — the user has opted in
+    //    and it's making progress.
     let has_running = lsp_server_statuses.iter().any(|((lang, _), status)| {
         lang == current_language && !matches!(status, LspServerStatus::Shutdown)
     });
     if has_running {
-        return "LSP".to_string();
+        return ("LSP (on)".to_string(), LspIndicatorState::On);
     }
 
-    // 3/4. No running server — distinguish configured-but-dormant kinds.
-    let (auto_start_count, dormant_count) = lsp_config
+    // 4. No running server — surface any configured server (auto_start or
+    //    opt-in, doesn't matter for the indicator) so the user can see an
+    //    LSP is available and open the popup to start it.
+    let configured_count = lsp_config
         .get(current_language)
         .map(|cfg| {
-            let auto = cfg
-                .as_slice()
+            cfg.as_slice()
                 .iter()
-                .filter(|c| c.enabled && c.auto_start && !c.command.is_empty())
-                .count();
-            let dormant = cfg
-                .as_slice()
-                .iter()
-                .filter(|c| c.enabled && !c.auto_start && !c.command.is_empty())
-                .count();
-            (auto, dormant)
+                .filter(|c| c.enabled && !c.command.is_empty())
+                .count()
         })
-        .unwrap_or((0, 0));
-    if auto_start_count > 0 {
-        "LSP off".to_string()
-    } else if dormant_count > 0 {
-        format!("LSP: off ({})", dormant_count)
-    } else {
-        String::new()
+        .unwrap_or(0);
+    if configured_count > 0 {
+        return ("LSP (off)".to_string(), LspIndicatorState::Off);
     }
+
+    // 5. Nothing configured and nothing running — no indicator.
+    (String::new(), LspIndicatorState::None)
 }
 
 impl Editor {
@@ -673,7 +693,7 @@ impl Editor {
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
             .unwrap_or_default();
-        let lsp_status = compose_lsp_status(
+        let (lsp_status, lsp_indicator_state) = compose_lsp_status(
             &current_language,
             &self.lsp_progress,
             &self.lsp_server_statuses,
@@ -762,6 +782,7 @@ impl Editor {
                 status_message: &status_message,
                 plugin_status_message: &plugin_status_message,
                 lsp_status: &lsp_status,
+                lsp_indicator_state,
                 theme: &theme,
                 display_name: &display_name,
                 keybindings: &keybindings_cloned,

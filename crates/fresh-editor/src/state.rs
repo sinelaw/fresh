@@ -1030,6 +1030,7 @@ pub(crate) fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
                     detail: item.detail.clone(),
                     icon: item.icon.clone(),
                     data: item.data.clone(),
+                    disabled: false,
                 })
                 .collect(),
             selected: *selected,
@@ -1043,6 +1044,7 @@ pub(crate) fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
         PopupPositionData::Fixed { x, y } => PopupPosition::Fixed { x, y },
         PopupPositionData::Centered => PopupPosition::Centered,
         PopupPositionData::BottomRight => PopupPosition::BottomRight,
+        PopupPositionData::AboveStatusBarAt { x } => PopupPosition::AboveStatusBarAt { x },
     };
 
     // Map the explicit kind hint to PopupKind for input handling

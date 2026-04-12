@@ -1467,6 +1467,7 @@ impl Editor {
                     detail,
                     icon: None,
                     data: Some(i.to_string()),
+                    disabled: false,
                 }
             })
             .collect();

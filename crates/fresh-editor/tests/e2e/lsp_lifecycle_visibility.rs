@@ -5,19 +5,19 @@
 //! LSP *configured* but with `auto_start = false` has no way to tell the
 //! LSP exists — the status bar is indistinguishable from "no LSP at all."
 //!
-//! The fix widens `App::lsp_status` to describe the full LSP situation
-//! for the active buffer, not just the servers that have already spawned:
+//! The fix widens the LSP status bar segment to describe the full LSP
+//! situation for the active buffer, not just the servers that have
+//! already spawned:
 //!
-//! | Running | Dormant | `lsp_status`                            |
-//! | ------- | ------- | --------------------------------------- |
-//! | 0       | 0       | `""`                                    |
-//! | 0       | N > 0   | `"LSP: off (N)"`                        |
-//! | M > 0   | 0       | `"LSP [rust: ready]"`                   |
-//! | M > 0   | N > 0   | `"LSP [rust: ready] · off (N)"`         |
+//! | Running | Configured | status-bar text | indicator state |
+//! | ------- | ---------- | --------------- | --------------- |
+//! | 0       | 0          | `""`            | None            |
+//! | 0       | N > 0      | `"LSP (off)"`   | Off             |
+//! | M > 0   | any        | `"LSP (on)"`    | On              |
+//! | any err | any        | `"LSP (error)"` | Error           |
 //!
-//! These tests cover the first three rows. (The mixed row requires a
-//! second running server alongside a dormant one — covered adequately by
-//! the two edge rows.)
+//! These tests cover the dormant (row 2) and empty (row 1) cases; the
+//! running/error rows are covered by the broader LSP e2e suite.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 
@@ -99,7 +99,7 @@ done
 }
 
 /// Opening a buffer whose language has a single configured-but-dormant
-/// server must surface the dormant state on the status bar ("LSP: off").
+/// server must surface the dormant state on the status bar ("LSP (off)").
 /// The server must not actually spawn, and no diagnostic may leak through.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
@@ -146,7 +146,7 @@ fn test_dormant_lsp_renders_off_indicator_on_status_bar() -> anyhow::Result<()> 
     // Wait for the dormant indicator to show up. Semantic wait — keeps
     // the test stable even when buffer-activation + status-bar plumbing
     // needs a tick or two to settle.
-    harness.wait_until(|h| h.get_status_bar().contains("LSP: off (1)"))?;
+    harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
 
     // The spawn marker would have been written as the script's very
     // first action on startup. Its absence proves the server was never
@@ -172,7 +172,9 @@ fn test_dormant_lsp_renders_off_indicator_on_status_bar() -> anyhow::Result<()> 
 }
 
 /// Opening a buffer whose language has two configured-but-dormant servers
-/// must render a count of 2 ("LSP: off (2)"), not a count of 1.
+/// must still surface the dormant state on the status bar ("LSP (off)").
+/// The indicator collapses to a single "off" label regardless of the
+/// server count — the popup (opened by clicking) lists per-server detail.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
 fn test_dormant_lsp_count_reflects_configured_servers() -> anyhow::Result<()> {
@@ -220,7 +222,7 @@ fn test_dormant_lsp_count_reflects_configured_servers() -> anyhow::Result<()> {
     )?;
 
     harness.open_file(&file)?;
-    harness.wait_until(|h| h.get_status_bar().contains("LSP: off (2)"))?;
+    harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
 
     assert!(
         !marker_a.exists() && !marker_b.exists(),
@@ -282,7 +284,7 @@ fn test_buffer_with_no_lsp_configured_renders_no_indicator() -> anyhow::Result<(
 
 /// Switching from a buffer whose language has a dormant LSP to a buffer
 /// whose language has none must clear the dormant indicator. Without this
-/// refresh, the stale "LSP: off (N)" would follow the user across buffers.
+/// refresh, the stale "LSP (off)" would follow the user across buffers.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_dormant_indicator_refreshes_on_buffer_switch() -> anyhow::Result<()> {
@@ -331,16 +333,16 @@ fn test_dormant_indicator_refreshes_on_buffer_switch() -> anyhow::Result<()> {
 
     // 1. Open the Rust buffer — dormant indicator must appear.
     harness.open_file(&rust_file)?;
-    harness.wait_until(|h| h.get_status_bar().contains("LSP: off (1)"))?;
+    harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
 
     // 2. Open the plain-text buffer — indicator must clear, because
     //    "text" has no LSP configured.
     harness.open_file(&txt_file)?;
-    harness.wait_until(|h| !h.get_status_bar().contains("LSP: off"))?;
+    harness.wait_until(|h| !h.get_status_bar().contains("LSP (off)"))?;
 
     // 3. Switch back to the Rust buffer — indicator must reappear.
     harness.open_file(&rust_file)?;
-    harness.wait_until(|h| h.get_status_bar().contains("LSP: off (1)"))?;
+    harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
 
     // Sanity: still no spawn throughout.
     assert!(

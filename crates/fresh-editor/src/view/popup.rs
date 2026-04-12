@@ -47,6 +47,10 @@ pub enum PopupPosition {
     Centered,
     /// Bottom right corner (above status bar)
     BottomRight,
+    /// Anchored above the status bar at a specific column (left-aligned at x).
+    /// Used by the LSP-status popup so it appears directly above the LSP
+    /// segment that opened it.
+    AboveStatusBarAt { x: u16 },
 }
 
 /// Kind of popup - determines input handling behavior
@@ -128,6 +132,8 @@ pub struct PopupListItem {
     pub icon: Option<String>,
     /// User data associated with this item (for completion, etc.)
     pub data: Option<String>,
+    /// If true, item is rendered grayed-out and not selectable.
+    pub disabled: bool,
 }
 
 impl PopupListItem {
@@ -137,6 +143,7 @@ impl PopupListItem {
             detail: None,
             icon: None,
             data: None,
+            disabled: false,
         }
     }
 
@@ -152,6 +159,11 @@ impl PopupListItem {
 
     pub fn with_data(mut self, data: String) -> Self {
         self.data = Some(data);
+        self
+    }
+
+    pub fn disabled(mut self) -> Self {
+        self.disabled = true;
         self
     }
 }
@@ -829,6 +841,32 @@ impl Popup {
                     height,
                 }
             }
+            PopupPosition::AboveStatusBarAt { x } => {
+                let width = self.width.min(terminal_area.width);
+                let height = self
+                    .content_height()
+                    .min(self.max_height)
+                    .min(terminal_area.height);
+                // Align left edge with the given x, but clamp so the popup
+                // stays within the terminal bounds.
+                let x = if x + width > terminal_area.width {
+                    terminal_area.width.saturating_sub(width)
+                } else {
+                    x
+                };
+                // Sit directly above the status bar (1 row tall), so popup
+                // bottom ends one row above `terminal_height - 1`.
+                let y = terminal_area
+                    .height
+                    .saturating_sub(height)
+                    .saturating_sub(1);
+                Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                }
+            }
         }
     }
 
@@ -1097,20 +1135,32 @@ impl Popup {
                             spans.push(Span::raw(format!("{} ", icon)));
                         }
 
-                        // Add main text with underline for clickable items.
-                        // Split leading whitespace from the text so the underline
-                        // only appears under the visible characters.
+                        // Add main text.  Items are "clickable" when they
+                        // carry a `data` payload and are not disabled — those
+                        // get an underline (like a link) so the user can see
+                        // at a glance which rows act on click.  Header-only
+                        // rows (no data) stay plain; disabled rows are dimmed.
+                        // Leading whitespace is kept separate so the underline
+                        // only sits under the visible text.
                         let text = &item.text;
                         let trimmed = text.trim_start();
                         let indent_len = text.len() - trimmed.len();
                         if indent_len > 0 {
                             spans.push(Span::raw(&text[..indent_len]));
                         }
-                        let text_style = if is_selected {
-                            Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-                        } else {
-                            Style::default().add_modifier(Modifier::UNDERLINED)
-                        };
+                        let is_clickable = item.data.is_some() && !item.disabled;
+                        let mut text_style = Style::default();
+                        if is_selected {
+                            text_style = text_style.add_modifier(Modifier::BOLD);
+                        }
+                        if is_clickable {
+                            text_style = text_style.add_modifier(Modifier::UNDERLINED);
+                        }
+                        if item.disabled {
+                            text_style = text_style
+                                .fg(theme.help_separator_fg)
+                                .add_modifier(Modifier::DIM);
+                        }
                         spans.push(Span::styled(trimmed, text_style));
 
                         // Add detail if present

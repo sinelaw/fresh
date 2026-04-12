@@ -54,6 +54,25 @@ struct RenderedElement {
     kind: ElementKind,
 }
 
+/// Three-state LSP status used by the status bar `Lsp` element.
+///
+/// Collapses the previous "running / auto_start-dormant / opt-in-dormant /
+/// nothing" fan-out into the three user-meaningful buckets the indicator
+/// actually needs to communicate:
+///
+/// - `On`    — at least one server for this language is running
+/// - `Off`   — configured servers exist for this language, none are running
+/// - `Error` — at least one server for this language is in the Error state
+/// - `None`  — no LSP configured or running for this language
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LspIndicatorState {
+    #[default]
+    None,
+    On,
+    Off,
+    Error,
+}
+
 /// Editor state, theming, and runtime inputs needed to render a status bar frame.
 pub struct StatusBarContext<'a> {
     pub state: &'a mut EditorState,
@@ -61,6 +80,11 @@ pub struct StatusBarContext<'a> {
     pub status_message: &'a Option<String>,
     pub plugin_status_message: &'a Option<String>,
     pub lsp_status: &'a str,
+    /// Three-state LSP indicator: On / Off / Error / None.  Drives the
+    /// indicator's background color independently of `warning_level` (the
+    /// latter still scopes whether a warning badge is shown on the right
+    /// side of the status bar).
+    pub lsp_indicator_state: LspIndicatorState,
     pub theme: &'a crate::view::theme::Theme,
     pub display_name: &'a str,
     pub keybindings: &'a crate::input::keybindings::KeybindingResolver,
@@ -744,7 +768,8 @@ impl StatusBarRenderer {
         kind: ElementKind,
         theme: &crate::view::theme::Theme,
         hover: StatusBarHover,
-        warning_level: WarningLevel,
+        _warning_level: WarningLevel,
+        lsp_state: LspIndicatorState,
     ) -> Style {
         match kind {
             ElementKind::Normal | ElementKind::Messages | ElementKind::Clock => Style::default()
@@ -794,27 +819,27 @@ impl StatusBarRenderer {
             }
             ElementKind::Lsp => {
                 let is_hovering = hover == StatusBarHover::LspIndicator;
-                let (fg, bg) = match (warning_level, is_hovering) {
-                    (WarningLevel::Error, true) => (
-                        theme.status_error_indicator_hover_fg,
-                        theme.status_error_indicator_hover_bg,
-                    ),
-                    (WarningLevel::Error, false) => (
-                        theme.status_error_indicator_fg,
-                        theme.status_error_indicator_bg,
-                    ),
-                    (WarningLevel::Warning, true) => (
-                        theme.status_warning_indicator_hover_fg,
-                        theme.status_warning_indicator_hover_bg,
-                    ),
-                    (WarningLevel::Warning, false) => (
-                        theme.status_warning_indicator_fg,
-                        theme.status_warning_indicator_bg,
-                    ),
-                    (WarningLevel::None, _) => (theme.status_bar_fg, theme.status_bar_bg),
+                // Color by LSP state, reusing the diagnostic theme keys:
+                //   Error → diagnostics.error_*   (red-ish)
+                //   Off   → diagnostics.warning_* (yellow-ish)
+                //   On    → diagnostics.info_*    (info-ish)
+                //   None  → default status-bar colors
+                let (fg, bg) = match lsp_state {
+                    LspIndicatorState::Error => {
+                        (theme.diagnostic_error_fg, theme.diagnostic_error_bg)
+                    }
+                    LspIndicatorState::Off => {
+                        (theme.diagnostic_warning_fg, theme.diagnostic_warning_bg)
+                    }
+                    LspIndicatorState::On => (theme.diagnostic_info_fg, theme.diagnostic_info_bg),
+                    LspIndicatorState::None => (theme.status_bar_fg, theme.status_bar_bg),
                 };
                 let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering && warning_level != WarningLevel::None {
+                // Always underline on hover — the indicator is clickable
+                // in all non-empty states.  Previously we only underlined
+                // when warning_level != None, so "LSP (on)" gave no hover
+                // cue that it was clickable.
+                if is_hovering && lsp_state != LspIndicatorState::None {
                     style = style.add_modifier(Modifier::UNDERLINED);
                 }
                 style
@@ -877,6 +902,7 @@ impl StatusBarRenderer {
         theme: &crate::view::theme::Theme,
         hover: StatusBarHover,
         warning_level: WarningLevel,
+        lsp_state: LspIndicatorState,
     ) -> (Vec<Span<'static>>, usize) {
         let base_style = Style::default()
             .fg(theme.status_bar_fg)
@@ -906,7 +932,7 @@ impl StatusBarRenderer {
             );
         }
 
-        let style = Self::element_style(rendered.kind, theme, hover, warning_level);
+        let style = Self::element_style(rendered.kind, theme, hover, warning_level, lsp_state);
         let spans = if rendered.kind == ElementKind::Clock {
             // "HH:MM" — blink the colon via terminal hardware (SGR 5)
             vec![
@@ -934,11 +960,13 @@ impl StatusBarRenderer {
         let theme = ctx.theme;
         let hover = ctx.hover;
         let warning_level = ctx.warning_level;
+        let lsp_state = ctx.lsp_indicator_state;
         rendered
             .into_iter()
             .map(|r| {
                 let kind = r.kind;
-                let (spans, width) = Self::element_spans(&r, theme, hover, warning_level);
+                let (spans, width) =
+                    Self::element_spans(&r, theme, hover, warning_level, lsp_state);
                 (spans, width, kind)
             })
             .collect()
@@ -1015,8 +1043,13 @@ impl StatusBarRenderer {
                 let group_text: String = item_spans.iter().map(|s| s.content.as_ref()).collect();
                 let truncated = truncate_to_width(&group_text, remaining);
                 let truncated_width = str_width(&truncated);
-                let overflow_style =
-                    Self::element_style(kind, ctx.theme, ctx.hover, ctx.warning_level);
+                let overflow_style = Self::element_style(
+                    kind,
+                    ctx.theme,
+                    ctx.hover,
+                    ctx.warning_level,
+                    ctx.lsp_indicator_state,
+                );
                 spans.push(Span::styled(truncated, overflow_style));
                 used_left += truncated_width;
 

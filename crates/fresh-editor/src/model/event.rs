@@ -327,9 +327,18 @@ pub enum PopupPositionData {
     AtCursor,
     BelowCursor,
     AboveCursor,
-    Fixed { x: u16, y: u16 },
+    Fixed {
+        x: u16,
+        y: u16,
+    },
     Centered,
     BottomRight,
+    /// Anchored above the status bar at a specific column. Used for the
+    /// LSP-status popup so it appears directly above the LSP segment of
+    /// the status bar that opened it.
+    AboveStatusBarAt {
+        x: u16,
+    },
 }
 
 /// Margin position for events

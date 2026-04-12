@@ -2755,9 +2755,9 @@ fn test_settings_edit_button_keyboard_navigation() {
 #[test]
 fn test_settings_edit_button_opens_config_file() {
     // Width 120 (not 100) because the status bar's right side now includes
-    // the "LSP: off (N)" dormant-indicator for any language with a default
-    // LSP config (json has one), which truncates the "Editing User config"
-    // status message to "Editing User ..." at 100 cols.
+    // the color-coded "LSP (off)" dormant-indicator for any language with
+    // a default LSP config (json has one), which truncates the "Editing
+    // User config" status message to "Editing User ..." at 100 cols.
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Open settings

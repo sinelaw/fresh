@@ -1623,6 +1623,16 @@ impl Editor {
     pub fn show_lsp_status_popup(&mut self) {
         use crate::services::async_bridge::LspServerStatus;
 
+        // Toggle behavior: if the LSP popup is already showing, close it
+        // instead of rebuilding and re-showing it.  This lets clicking the
+        // status-bar LSP indicator a second time dismiss the popup, matching
+        // the common affordance for status-bar menus.
+        if self.pending_lsp_status_popup.is_some() {
+            self.hide_popup();
+            self.pending_lsp_status_popup = None;
+            return;
+        }
+
         let has_error = self.warning_domains.lsp.level() == crate::app::WarningLevel::Error;
 
         // Get the current buffer's language
@@ -1678,7 +1688,13 @@ impl Editor {
         }
         all_servers.sort();
 
-        let mut items: Vec<crate::model::event::PopupListItemData> = Vec::new();
+        // Build the popup's items as view-level `PopupListItem`s directly.
+        // We bypass the `PopupListItemData` event type here because we need
+        // the `disabled` field (for "View Log" when no log exists), which
+        // is a view-only concern and plumbing it through the event boundary
+        // would require touching ~40 existing literals across the test
+        // suite.
+        let mut items: Vec<crate::view::popup::PopupListItem> = Vec::new();
         let mut action_keys: Vec<(String, String)> = Vec::new();
 
         for name in &all_servers {
@@ -1687,7 +1703,8 @@ impl Editor {
                 .map(|s| !matches!(s, LspServerStatus::Shutdown))
                 .unwrap_or(false);
 
-            // Header: server name + status
+            // Header: server name + status (data = None → not clickable,
+            // not underlined).
             let (icon, label) = match status {
                 Some(LspServerStatus::Running) => ("●", "ready"),
                 Some(LspServerStatus::Error) => ("✗", "error"),
@@ -1695,57 +1712,54 @@ impl Editor {
                 Some(LspServerStatus::Initializing) => ("◌", "initializing"),
                 Some(LspServerStatus::Shutdown) | None => ("○", "not running"),
             };
-            items.push(crate::model::event::PopupListItemData {
-                text: format!("{} {} ({})", icon, name, label),
-                detail: None,
-                icon: None,
-                data: None,
-            });
+            items.push(crate::view::popup::PopupListItem::new(format!(
+                "{} {} ({})",
+                icon, name, label
+            )));
 
             if is_active {
                 // Restart
                 let restart_key = format!("restart:{}/{}", language, name);
-                items.push(crate::model::event::PopupListItemData {
-                    text: format!("    Restart {}", name),
-                    detail: None,
-                    icon: None,
-                    data: Some(restart_key.clone()),
-                });
+                items.push(
+                    crate::view::popup::PopupListItem::new(format!("    Restart {}", name))
+                        .with_data(restart_key.clone()),
+                );
                 action_keys.push((restart_key, format!("Restart {}", name)));
 
                 // Stop
                 let stop_key = format!("stop:{}/{}", language, name);
-                items.push(crate::model::event::PopupListItemData {
-                    text: format!("    Stop {}", name),
-                    detail: None,
-                    icon: None,
-                    data: Some(stop_key.clone()),
-                });
+                items.push(
+                    crate::view::popup::PopupListItem::new(format!("    Stop {}", name))
+                        .with_data(stop_key.clone()),
+                );
                 action_keys.push((stop_key, format!("Stop {}", name)));
             } else {
                 // Start
                 let start_key = format!("start:{}", language);
                 if !action_keys.iter().any(|(k, _)| k == &start_key) {
-                    items.push(crate::model::event::PopupListItemData {
-                        text: format!("    Start {}", name),
-                        detail: None,
-                        icon: None,
-                        data: Some(start_key.clone()),
-                    });
+                    items.push(
+                        crate::view::popup::PopupListItem::new(format!("    Start {}", name))
+                            .with_data(start_key.clone()),
+                    );
                     action_keys.push((start_key, format!("Start {}", name)));
                 }
             }
         }
 
-        // View log action (always, at the end)
+        // View log action (always, at the end) — grayed out and
+        // non-actionable when no log file exists yet for this language
+        // (e.g. the server was never started, or has been rotated away).
+        let log_path = crate::services::log_dirs::lsp_log_path(&language);
+        let log_exists = log_path.exists();
         let log_key = format!("log:{}", language);
-        items.push(crate::model::event::PopupListItemData {
-            text: "    View Log".to_string(),
-            detail: None,
-            icon: None,
-            data: Some(log_key.clone()),
-        });
-        action_keys.push((log_key, "View Log".to_string()));
+        let mut log_item = crate::view::popup::PopupListItem::new("    View Log".to_string());
+        if log_exists {
+            log_item = log_item.with_data(log_key.clone());
+            action_keys.push((log_key, "View Log".to_string()));
+        } else {
+            log_item = log_item.disabled();
+        }
+        items.push(log_item);
 
         // Store action keys for handling confirmation
         self.pending_lsp_status_popup = Some(action_keys);
@@ -1754,25 +1768,54 @@ impl Editor {
         let max_item_width = items.iter().map(|i| i.text.len()).max().unwrap_or(20);
         let popup_width = (max_item_width as u16 + 4).clamp(30, 70);
 
-        // Pre-select the first actionable item (skip header items with no data)
-        let first_actionable = items.iter().position(|i| i.data.is_some()).unwrap_or(0);
+        // Pre-select the first actionable item (skip header items with no
+        // data and disabled items like a non-existent View Log).
+        let first_actionable = items
+            .iter()
+            .position(|i| i.data.is_some() && !i.disabled)
+            .unwrap_or(0);
 
-        let popup = crate::model::event::PopupData {
-            kind: crate::model::event::PopupKindHint::List,
+        // Left-align the popup's column with the LSP indicator on the
+        // status bar, if we know where it was drawn in the last frame.
+        // Falls back to the previous BottomRight anchor when the LSP
+        // segment isn't visible (e.g. first render).
+        let position = self
+            .cached_layout
+            .status_bar_lsp_area
+            .map(
+                |(_, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
+                    x: col_start,
+                },
+            )
+            .unwrap_or(crate::view::popup::PopupPosition::BottomRight);
+
+        use crate::view::popup::{Popup, PopupContent, PopupKind};
+        use ratatui::style::Style;
+
+        let popup = Popup {
+            kind: PopupKind::List,
             title: Some(format!("LSP Servers ({})", language)),
             description: None,
             transient: false,
-            content: crate::model::event::PopupContentData::List {
+            content: PopupContent::List {
                 items,
                 selected: first_actionable,
             },
-            position: crate::model::event::PopupPositionData::BottomRight,
+            position,
             width: popup_width,
             max_height: 15,
             bordered: true,
+            border_style: Style::default().fg(self.theme.popup_border_fg),
+            background_style: Style::default().bg(self.theme.popup_bg),
+            scroll_offset: 0,
+            text_selection: None,
+            accept_key_hint: None,
         };
 
-        self.show_popup(popup);
+        let buffer_id = self.active_buffer();
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.popups.show(popup);
+        }
     }
 
     /// Show a transient hover popup with the given message text, positioned below the cursor.
