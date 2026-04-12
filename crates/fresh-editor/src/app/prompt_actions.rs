@@ -1145,7 +1145,10 @@ impl Editor {
         if stopping_all {
             // Send didClose for all buffers of this language BEFORE shutting
             // down the server, so the notifications reach the still-running
-            // server and its handles are still present.
+            // server and its handles are still present. `disable_lsp_for_buffer`
+            // also marks the buffer's metadata as user-disabled and clears
+            // per-URI stored diagnostics, which is what we want when the
+            // user has asked for the server to go away entirely.
             let buffer_ids: Vec<_> = self
                 .buffers
                 .iter()
@@ -1156,22 +1159,16 @@ impl Editor {
                 self.disable_lsp_for_buffer(buffer_id);
             }
         } else if let Some(name) = server_name {
-            // Send didClose only to the specific server being stopped
+            // Send didClose only to the specific server being stopped.
+            // The shared helper below handles clearing this server's
+            // diagnostics.
             self.send_did_close_to_server(language, name);
-            // Clear diagnostics published by this server and update overlays
-            self.clear_diagnostics_for_server(name);
         }
 
-        // Now shut down the server (removes handles).
-        let stopped = if let Some(lsp) = &mut self.lsp {
-            if let Some(name) = server_name {
-                lsp.shutdown_server_by_name(language, name)
-            } else {
-                lsp.shutdown_server(language)
-            }
-        } else {
-            false
-        };
+        // Shutdown + clear lsp_server_statuses + clear diagnostics in one
+        // step. Without the status clear the indicator stayed stuck at
+        // "LSP (on)" after stop (reported 2026-04-13).
+        let stopped = self.stop_lsp_server_and_cleanup(language, server_name);
 
         if !stopped {
             self.set_status_message(t!("lsp.server_not_found", language = language).to_string());

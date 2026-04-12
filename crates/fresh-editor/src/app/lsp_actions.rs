@@ -360,14 +360,15 @@ impl Editor {
             }
         } else if let Some(target) = action_key.strip_prefix("stop:") {
             if let Some((language, server_name)) = target.split_once('/') {
-                let stopped = if let Some(lsp) = self.lsp.as_mut() {
-                    lsp.shutdown_server_by_name(language, server_name)
-                } else {
-                    false
-                };
+                // Send didClose first so the server drops documents
+                // cleanly; the shared helper then shuts the handle,
+                // clears lsp_server_statuses (so the status-bar pill
+                // flips back off), and clears diagnostics this server
+                // published. The old inline path missed the didClose
+                // and the diagnostic clear.
+                self.send_did_close_to_server(language, server_name);
+                let stopped = self.stop_lsp_server_and_cleanup(language, Some(server_name));
                 if stopped {
-                    self.lsp_server_statuses
-                        .remove(&(language.to_string(), server_name.to_string()));
                     self.status_message =
                         Some(format!("Stopped LSP server: {}/{}", language, server_name));
                 } else {
@@ -615,6 +616,73 @@ impl Editor {
                 }
             }
         }
+    }
+
+    /// Core server-stop teardown shared by the command-palette and
+    /// status-popup stop paths.
+    ///
+    /// Does the three things that must travel together, in the right
+    /// order:
+    ///
+    /// 1. Shutdown the manager handle(s) — either a single named server
+    ///    or every server configured for `language` (`server_name = None`).
+    /// 2. Clear the matching `lsp_server_statuses` entries on the editor
+    ///    so the status-bar indicator (`compose_lsp_status` in
+    ///    `app/render.rs`) doesn't stay stuck at `"LSP (on)"` with a
+    ///    stale `Running` entry. This is the step the palette path
+    ///    used to miss, producing the user-reported stale-indicator
+    ///    bug.
+    /// 3. Drop diagnostics published by the stopped server(s) so
+    ///    red/yellow overlays don't persist on-screen after the
+    ///    producer is gone.
+    ///
+    /// `didClose` for open buffers is the caller's responsibility and
+    /// MUST happen before this function: the handles are removed as
+    /// part of step 1. The palette caller layers config updates
+    /// (`auto_start = false`) and a user-facing status message on top.
+    ///
+    /// Returns `true` if anything was actually stopped (matches
+    /// `LspManager::shutdown_server`'s contract).
+    pub(crate) fn stop_lsp_server_and_cleanup(
+        &mut self,
+        language: &str,
+        server_name: Option<&str>,
+    ) -> bool {
+        // Snapshot the server names we're about to drop — once the
+        // handles are gone the manager can't enumerate them anymore,
+        // and we need the names for the status + diagnostic cleanup.
+        let stopping_names: Vec<String> = if let Some(name) = server_name {
+            vec![name.to_string()]
+        } else {
+            self.lsp
+                .as_ref()
+                .map(|lsp| lsp.server_names_for_language(language))
+                .unwrap_or_default()
+        };
+
+        let stopped = if let Some(lsp) = self.lsp.as_mut() {
+            if let Some(name) = server_name {
+                lsp.shutdown_server_by_name(language, name)
+            } else {
+                lsp.shutdown_server(language)
+            }
+        } else {
+            false
+        };
+
+        if !stopped {
+            return false;
+        }
+
+        for name in &stopping_names {
+            self.lsp_server_statuses
+                .remove(&(language.to_string(), name.clone()));
+            // Clear diagnostics this server published so overlays clear
+            // from every buffer it touched (not just the active one).
+            self.clear_diagnostics_for_server(name);
+        }
+
+        true
     }
 
     /// Disable LSP for a specific buffer and clear all LSP-related data
