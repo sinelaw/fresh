@@ -57,19 +57,30 @@ There are really **two** lifecycle-visibility failures, currently conflated in t
 
 ### 2.3 Remediation Plan
 
+Design choice, up front: **no new status-bar element.** `StatusBarElement::Lsp` is already a pure function of `App::lsp_status: String`. The fix is to widen what that string represents — from "statuses of servers that have spawned" to "the full LSP situation for the active buffer, including configured-but-dormant servers." One element, one string, one place composes it. The existing empty-string → `None` path still handles "no LSP configured at all."
+
 Work is ordered by dependency and impact. Each item cites the specific code site that will be touched.
 
-**Step 1 — Compute a `DormantLspCount` for the active buffer.**
-In `update_lsp_status_from_server_statuses` (`mod.rs:5311`), read the loaded config and count per-language servers whose language matches the active buffer and which have `enabled=true, auto_start=false`. Store on `App` as `dormant_lsp_count: usize`. This is the data the status bar needs; it should be recomputed on the same events that drive `update_lsp_status_from_server_statuses`.
+**Step 1 — Teach `update_lsp_status_from_server_statuses` about dormant servers.**
+In `mod.rs:5311-5357`, before returning, also consult the loaded config for the active buffer's language and count servers with `enabled=true, auto_start=false` whose name is not already in `lsp_server_statuses`. Compose the final `lsp_status` string from the combined view:
 
-**Step 2 — Add a new `StatusBarElement::LspDormant` element.**
-Render in `status_bar.rs` next to `StatusBarElement::Lsp`. When `dormant_lsp_count > 0` and `lsp_status.is_empty()`, render a muted badge like `LSP: off (N)`. When both are present (e.g. one server running + one dormant), render both: `LSP [rust: ready] · off (1)`. Keep it muted — not red, not yellow — so it doesn't fight the warning badge.
+| Running | Dormant | Resulting `lsp_status`                          |
+|---------|---------|--------------------------------------------------|
+| 0       | 0       | `""` (element draws nothing — current behavior)  |
+| 0       | N > 0   | `"LSP: off (N)"`                                 |
+| M > 0   | 0       | `"LSP [rust: ready]"` (current behavior)         |
+| M > 0   | N > 0   | `"LSP [rust: ready] · off (N)"`                  |
 
-**Step 3 — Wire a click handler / keybinding.**
-Existing command `start_restart_lsp` (`input/commands.rs:948`) opens a picker. Make the new badge clickable (hit-test the cell range) and bind to that command. Fall back to showing the command's keybinding in the badge's tooltip/help text.
+`update_lsp_status_from_progress` (`mod.rs:5290-5308`) already overrides with the progress string when active; unchanged.
 
-**Step 4 — Add an e2e test that flips the characterization test.**
-Update `lsp_lifecycle_visibility.rs`: change the equality assertion to a *difference* assertion, and positively assert that the status bar contains the dormant badge. The existing negative-cue list becomes the anti-regression check.
+**Step 2 — Keep the indicator muted.**
+Styling lives on `ElementKind::Lsp` (`view/ui/status_bar.rs`). The dormant case should not use the same foreground as a running server — either add a muted sub-style or have the string include a marker the renderer can recognize. Either way, no new `ElementKind` and no new element enum variant.
+
+**Step 3 — Wire a click / keybinding.**
+Existing command `start_restart_lsp` (`input/commands.rs:948`) opens a picker. Make the `Lsp` element's cell range clickable when the string contains `off` and route to that command.
+
+**Step 4 — Flip the characterization test.**
+Update `lsp_lifecycle_visibility.rs`: change the byte-equality assertion to a *difference* assertion, and positively assert the status bar contains `LSP: off`. The current negative-cue list becomes the anti-regression check against future regressions in the muted styling.
 
 **Step 5 — Diagnose the progress-not-rendered bug (H-2).**
 This is a bug in an existing feature, not net-new work. Add a fake-LSP test that:
@@ -84,11 +95,12 @@ Update `docs/internal/LSP_HEURISTIC_EVAL_CLANGD.md` H-2 to describe the observat
 
 ### 2.4 Acceptance criteria
 
-- Opening a buffer whose language has a configured-but-`auto_start=false` server renders a visible, non-alarming badge on the status bar.
-- Clicking the badge (or invoking the bound keybinding) opens the LSP start picker.
-- `lsp_lifecycle_visibility.rs` positively asserts the badge's presence and format.
+- Opening a buffer whose language has a configured-but-`auto_start=false` server renders a visible, non-alarming segment in the existing `StatusBarElement::Lsp` cell on the status bar.
+- Clicking the cell (or invoking the bound keybinding) opens the LSP start picker.
+- `lsp_lifecycle_visibility.rs` positively asserts the `LSP: off` string appears in the status bar.
 - A new test asserts `$/progress` messages reach the status bar within one tick of arrival.
 - The eval doc is updated so H-2 describes the real problem.
+- No new `StatusBarElement` variant is introduced — the change is in the string composed by `update_lsp_status_from_server_statuses`.
 
 ## 3. Status of Other Concerns
 
@@ -123,9 +135,9 @@ Update `docs/internal/LSP_HEURISTIC_EVAL_CLANGD.md` H-2 to describe the observat
 
 ## 4. Single Highest-Leverage Next Step
 
-Do steps 1–4 of section 2.3 — add the dormant-LSP badge and flip the characterization test. It is:
+Do steps 1–4 of section 2.3 — widen `lsp_status` to cover dormant servers and flip the characterization test. It is:
 
-- small (one new status-bar element, one new `App` field, one test update),
+- small (one function-body change in `update_lsp_status_from_server_statuses`, muted styling on `ElementKind::Lsp`, one test update; no new element, no new `App` field),
 - directly user-visible, and
 - the fix the heuristic eval itself identifies as the top priority.
 
