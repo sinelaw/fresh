@@ -1051,6 +1051,7 @@ function selectFile(newIndex: number) {
     if (filesId !== undefined) {
         editor.scrollBufferToLine(filesId, selectedFilePanelLine());
     }
+    updateReviewStatus();
 }
 
 function review_nav_up() {
@@ -1330,6 +1331,7 @@ async function refreshMagitData() {
     state.diffCursorRow = 1;
     state.diffCache = {}; // git state may have changed — invalidate cached diffs
     updateMagitDisplay();
+    updateReviewStatus();
 }
 
 // --- Resize handler ---
@@ -1952,6 +1954,61 @@ function jumpDiffCursorToRow(row: number): void {
     }
     state.diffCursorRow = row;
     applyCursorLineOverlay('diff');
+    updateReviewStatus();
+}
+
+/**
+ * Compute the 1-indexed global hunk number that corresponds to the current
+ * diff-panel cursor row, counting hunks across all files in display order.
+ *
+ * Returns `null` when no hunk is "current" — e.g. the cursor is on the
+ * header row above the first hunk, or there are no hunks at all.
+ */
+function currentGlobalHunkIndex(): number | null {
+    if (state.hunks.length === 0) return null;
+    const selectedFile = state.files[state.selectedIndex];
+    if (!selectedFile) return null;
+
+    // Count hunks in all files that appear before the selected one.
+    let priorHunks = 0;
+    for (let i = 0; i < state.selectedIndex; i++) {
+        const f = state.files[i];
+        priorHunks += state.hunks.filter(
+            h => h.file === f.path && h.gitStatus === f.category
+        ).length;
+    }
+
+    // Within the current file, find the latest hunk header at or before
+    // the cursor row.
+    let within = -1;
+    for (let i = 0; i < state.hunkHeaderRows.length; i++) {
+        if (state.hunkHeaderRows[i] <= state.diffCursorRow) {
+            within = i;
+        } else {
+            break;
+        }
+    }
+    if (within < 0) return null;
+    return priorHunks + within + 1;
+}
+
+/**
+ * Refresh the status-bar summary for review-diff mode. Shows "Hunk N of M"
+ * when a current hunk is known, falls back to the bare hunk count otherwise.
+ * Safe to call from any review-diff handler.
+ */
+function updateReviewStatus(): void {
+    if (state.groupId === null) return;
+    const total = state.hunks.length;
+    const current = currentGlobalHunkIndex();
+    if (current !== null) {
+        editor.setStatus(editor.t("status.review_summary_indexed", {
+            current: String(current),
+            count: String(total),
+        }));
+    } else {
+        editor.setStatus(editor.t("status.review_summary", { count: String(total) }));
+    }
 }
 
 function review_next_hunk() {
@@ -2436,7 +2493,7 @@ async function start_review_diff() {
     // Register resize handler
     editor.on("resize", "onReviewDiffResize");
 
-    editor.setStatus(editor.t("status.review_summary", { count: String(state.hunks.length) }));
+    updateReviewStatus();
     editor.on("buffer_activated", "on_review_buffer_activated");
     editor.on("buffer_closed", "on_review_buffer_closed");
     editor.on("cursor_moved", "on_review_cursor_moved");
@@ -2520,6 +2577,7 @@ function on_review_cursor_moved(data: {
     if (data.buffer_id !== state.panelBuffers["diff"]) return;
     state.diffCursorRow = data.line;
     applyCursorLineOverlay('diff');
+    updateReviewStatus();
 }
 registerHandler("on_review_cursor_moved", on_review_cursor_moved);
 

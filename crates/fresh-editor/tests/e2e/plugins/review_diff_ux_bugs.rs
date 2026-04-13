@@ -1269,6 +1269,66 @@ fn test_refresh_toolbar_with_staged_file() {
 }
 
 // ---------------------------------------------------------------------------
+// ISSUE #3: No "Hunk N of M" indicator
+// ---------------------------------------------------------------------------
+
+/// After opening Review Diff with multiple hunks and navigating through them,
+/// the status bar should show a current-hunk index (e.g. "Hunk 1 of N"), not
+/// just the total hunk count.
+#[test]
+fn test_issue3_status_bar_shows_current_hunk_index() {
+    init_tracing_from_env();
+    let (repo, main_rs) = repo_with_multi_hunk_file();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        45,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("HUNK_ONE"))
+        .unwrap();
+
+    let _screen = open_review_diff(&mut harness);
+
+    // Tab to the diff panel so `n` / `p` jump between hunks.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Jump to the first hunk.
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            let l = s.to_lowercase();
+            l.contains("hunk 1 of") || l.contains("hunk 1/")
+        })
+        .unwrap();
+
+    // Advance to the second hunk.
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            let l = s.to_lowercase();
+            l.contains("hunk 2 of") || l.contains("hunk 2/")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("ISSUE-3 final screen:\n{}", screen);
+}
+
+// ---------------------------------------------------------------------------
 // ISSUE #4: Empty state is ambiguous (not a git repo vs clean repo)
 // ---------------------------------------------------------------------------
 
