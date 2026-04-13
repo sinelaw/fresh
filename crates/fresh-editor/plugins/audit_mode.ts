@@ -3928,7 +3928,7 @@ editor.defineMode("review-mode", [
     // get the same start-of-line / end-of-line behavior they're used
     // to. Mode bindings replace globals, so we must bind these
     // explicitly even though the actions are built-in.
-    ["Home", "smart_home"], ["End", "move_line_end"],
+    ["Home", "move_line_start"], ["End", "move_line_end"],
     // Hunk navigation across the unified stream.
     ["n", "review_next_hunk"], ["p", "review_prev_hunk"],
     // Per-file collapse: Tab toggles the file under the cursor;
