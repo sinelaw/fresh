@@ -2291,8 +2291,7 @@ fn test_review_diff_renamed_file_message() {
     let mut found_rename = false;
     for _ in 0..6 {
         let s = harness.screen_to_string();
-        if (s.contains("helpers.rs") || s.contains("src/helpers.rs"))
-            && s.contains("Renamed from")
+        if (s.contains("helpers.rs") || s.contains("src/helpers.rs")) && s.contains("Renamed from")
         {
             assert!(
                 s.contains("Renamed from src/utils.rs") || s.contains("Renamed from utils.rs"),
@@ -2384,10 +2383,7 @@ fn test_review_diff_tab_toggles_file_collapse() {
 
     // Modify main.rs to produce a hunk with a unique marker so we can
     // tell when the file is expanded vs. collapsed.
-    repo.create_file(
-        "src/main.rs",
-        "fn main() { /* COLLAPSE_MARKER */ }\n",
-    );
+    repo.create_file("src/main.rs", "fn main() { /* COLLAPSE_MARKER */ }\n");
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2455,14 +2451,8 @@ fn test_review_diff_collapse_all_and_expand_all() {
     repo.git_add_all();
     repo.git_commit("Initial commit");
 
-    repo.create_file(
-        "src/main.rs",
-        "fn main() { /* MARKER_MAIN */ }\n",
-    );
-    repo.create_file(
-        "src/lib.rs",
-        "pub struct Config { /* MARKER_LIB */ }\n",
-    );
+    repo.create_file("src/main.rs", "fn main() { /* MARKER_MAIN */ }\n");
+    repo.create_file("src/lib.rs", "pub struct Config { /* MARKER_LIB */ }\n");
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -3485,9 +3475,7 @@ fn test_review_diff_unified_stream_shows_file_headers() {
     )
     .unwrap();
 
-    harness
-        .open_file(&repo.path.join("src/main.rs"))
-        .unwrap();
+    harness.open_file(&repo.path.join("src/main.rs")).unwrap();
     harness.render().unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("MARKER_A"))
@@ -3859,10 +3847,7 @@ fn test_review_diff_mouse_click_toggles_file_collapse() {
     repo.git_add_all();
     repo.git_commit("Initial");
 
-    repo.create_file(
-        "src/main.rs",
-        "fn main() { /* MOUSE_MARKER */ }\n",
-    );
+    repo.create_file("src/main.rs", "fn main() { /* MOUSE_MARKER */ }\n");
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -3928,10 +3913,7 @@ fn test_review_diff_capital_s_stages_whole_file() {
     repo.git_add_all();
     repo.git_commit("Initial");
 
-    repo.create_file(
-        "src/main.rs",
-        "fn main() { /* CAPS_S_MARKER */ }\n",
-    );
+    repo.create_file("src/main.rs", "fn main() { /* CAPS_S_MARKER */ }\n");
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,

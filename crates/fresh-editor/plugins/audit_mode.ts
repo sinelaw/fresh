@@ -105,6 +105,12 @@ interface ReviewState {
   // Files that are currently collapsed (`${path}\0${category}` keys).
   // Persists across refreshes within a session; cleared on start_review_diff.
   collapsedFiles: Set<string>;
+  // Sections (categories) that are currently collapsed. Same persistence
+  // rules as `collapsedFiles`.
+  collapsedSections: Set<string>;
+  // Maps a category name (`'staged'` etc.) -> 1-indexed row of its
+  // section-header row in the unified stream. Used by Tab toggle.
+  sectionHeaderRows: Record<string, number>;
   // Maps a 1-indexed row in the comments panel -> comment id
   commentsByRow: Record<number, string>;
   // Current selection in the comments panel (1-indexed row, 0 means none)
@@ -138,6 +144,8 @@ const state: ReviewState = {
   diffCursorRow: 1,
   fileHeaderRows: {},
   collapsedFiles: new Set(),
+  collapsedSections: new Set(),
+  sectionHeaderRows: {},
   commentsByRow: {},
   commentsSelectedRow: 0,
   stickyCurrentFile: null,
@@ -168,6 +176,14 @@ const STYLE_REMOVE_TEXT: OverlayColorSpec = "diagnostic.error_fg";
 
 const STYLE_SECTION_HEADER: OverlayColorSpec = "syntax.type";
 const STYLE_COMMENT: OverlayColorSpec = "diagnostic.warning_fg";
+// Subtle bg for file/section header rows. Uses `editor.current_line_bg`
+// which is reliably a notch lighter than editor bg in every theme
+// (line_number_bg matches editor bg in Dracula and would render
+// invisibly; status_bar_bg is the toolbar accent and is hot pink in
+// Dracula). selection_bg is reserved for the cursor-line overlay so
+// using it here would blend the two highlights.
+const STYLE_FILE_HEADER_BG: OverlayColorSpec = "editor.current_line_bg";
+const STYLE_HUNK_HEADER_BG: OverlayColorSpec = "editor.current_line_bg";
 
 
 /**
@@ -536,33 +552,51 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
     for (let fi = 0; fi < state.files.length; fi++) {
         const file = state.files[fi];
 
-        // Section divider when the category changes
+        // Section header — collapsible band, marked with ▾/▸. Tab on
+        // the section header collapses the whole section.
         if (file.category !== lastCategory) {
             lastCategory = file.category;
             let label: string = file.category;
             if (file.category === 'staged') label = editor.t("section.staged") || "Staged";
-            else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Changes";
+            else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Unstaged";
             else if (file.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
+            const sectionCollapsed = state.collapsedSections.has(file.category);
+            const sectionCount = state.files.filter(f => f.category === file.category).length;
+            const triangle = sectionCollapsed ? '▸' : '▾';
             lines.push({
-                text: `══ ${label} ══`,
+                text: ` ${triangle} ${label.toUpperCase()}  (${sectionCount})`,
                 type: 'section-header',
-                style: { fg: STYLE_SECTION_HEADER, bold: true },
+                file: file.category, // store category in 'file' field for reuse
+                filePath: file.category,
+                style: {
+                    fg: STYLE_SECTION_HEADER,
+                    bg: STYLE_FILE_HEADER_BG,
+                    bold: true,
+                    extendToLineEnd: true,
+                },
             });
+            if (sectionCollapsed) {
+                lines.push({ text: '', type: 'empty' });
+                // Skip every file in this section
+                while (fi < state.files.length && state.files[fi].category === file.category) fi++;
+                fi--; // outer for-loop will re-increment
+                continue;
+            }
         }
 
         // File header line — strongly distinguishable from hunk content:
-        //   * Bold keyword foreground.
-        //   * Status-bar background extended across the whole row, so the
-        //     header reads as a discrete band rather than mingling with
-        //     the surrounding diff text.
-        //   * Triangle marker (▾ open / ▸ collapsed) and explicit
-        //     " FILE " label so it can't be confused with anything else.
+        //   * Bold accent foreground.
+        //   * Subtle line-number-bg extended across the whole row, so the
+        //     header reads as a discrete band but the bg works in any
+        //     theme (the toolbar's status_bar_bg is too saturated in
+        //     accent-heavy themes like Dracula).
+        //   * Triangle marker (▾ open / ▸ collapsed).
         const counts = fileChangeCounts(file);
         const key = fileKey(file);
         const collapsed = state.collapsedFiles.has(key);
         const triangle = collapsed ? '▸' : '▾';
         const filename = file.origPath ? `${file.origPath} → ${file.path}` : file.path;
-        const headerText = ` ${triangle} ${filename}   +${counts.added} / -${counts.removed}`;
+        const headerText = `   ${triangle} ${filename}   +${counts.added} / -${counts.removed}`;
         lines.push({
             text: headerText,
             type: 'file-header',
@@ -572,9 +606,8 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             fileIndex: fi,
             style: {
                 fg: STYLE_HEADER,
-                bg: STYLE_TOOLBAR_BG,
+                bg: STYLE_FILE_HEADER_BG,
                 bold: true,
-                underline: true,
                 extendToLineEnd: true,
             },
         });
@@ -617,7 +650,12 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             type: 'hunk-header',
             hunkId: hunk.id,
             file: hunk.file,
-            style: { fg: STYLE_HUNK_HEADER, bold: true },
+            style: {
+                fg: STYLE_HUNK_HEADER,
+                bg: STYLE_HUNK_HEADER_BG,
+                bold: true,
+                extendToLineEnd: true,
+            },
         });
 
         // Render hunk-level comments (those with no line_type) right
@@ -777,14 +815,21 @@ function buildToolbarRow(W: number, groups: HintItem[][]): TextPropertyEntry {
         for (let h = 0; h < groups[g].length && !done; h++) {
             const item = groups[g][h];
             const gap = h > 0 ? "  " : "";
-            const fullLen = gap.length + item.key.length + 1 + item.label.length;
-            const keyOnlyLen = gap.length + item.key.length;
+            // Bracket-style key hint: "[key] label" — the brackets make
+            // the keys legible without a saturated bg, which works in
+            // every theme (no Dracula hot-pink toolbar problem). When
+            // the key itself is `[` or `]`, drop the brackets so we
+            // don't render `[[]` / `[]]`.
+            const isBracket = item.key === '[' || item.key === ']';
+            const keyDisplay = isBracket ? item.key : `[${item.key}]`;
+            const fullLen = gap.length + keyDisplay.length + 1 + item.label.length;
+            const keyOnlyLen = gap.length + keyDisplay.length;
 
             if (text.length + fullLen <= W) {
                 if (gap) { text += gap; bytePos += getByteLength(gap); }
-                const keyLen = getByteLength(item.key);
-                overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bg: STYLE_KEY_BG, bold: true } });
-                text += item.key;
+                const keyLen = getByteLength(keyDisplay);
+                overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bold: true } });
+                text += keyDisplay;
                 bytePos += keyLen;
                 const labelText = " " + item.label;
                 const labelLen = getByteLength(labelText);
@@ -793,9 +838,9 @@ function buildToolbarRow(W: number, groups: HintItem[][]): TextPropertyEntry {
                 bytePos += labelLen;
             } else if (text.length + keyOnlyLen <= W) {
                 if (gap) { text += gap; bytePos += getByteLength(gap); }
-                const keyLen = getByteLength(item.key);
-                overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bg: STYLE_KEY_BG, bold: true } });
-                text += item.key;
+                const keyLen = getByteLength(keyDisplay);
+                overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bold: true } });
+                text += keyDisplay;
                 bytePos += keyLen;
             } else {
                 done = true;
@@ -855,6 +900,7 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     const hunkHeaderRows: number[] = [];
     const diffLineByteOffsets: number[] = [];
     const fileHeaderRows: Record<string, number> = {};
+    const sectionHeaderRows: Record<string, number> = {};
     let runningByte = 0;
     let row = 0; // 0-indexed counter; row + 1 is the 1-indexed line number
 
@@ -885,6 +931,9 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
         if (line.type === 'file-header' && line.fileKey) {
             fileHeaderRows[line.fileKey] = row + 1;
         }
+        if (line.type === 'section-header' && line.filePath) {
+            sectionHeaderRows[line.filePath] = row + 1;
+        }
 
         pushEntry({
             text: (line.text || "") + "\n",
@@ -899,6 +948,7 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     state.hunkHeaderRows = hunkHeaderRows;
     state.diffLineByteOffsets = diffLineByteOffsets;
     state.fileHeaderRows = fileHeaderRows;
+    state.sectionHeaderRows = sectionHeaderRows;
     return entries;
 }
 
@@ -1057,7 +1107,11 @@ function refreshStickyHeader(topVisibleRow: number): void {
     const padded = (text.length > W ? text.slice(0, W) : text).padEnd(W) + "\n";
     editor.setPanelContent(state.groupId, "sticky", [{
         text: padded,
-        style: { ...style, bg: STYLE_TOOLBAR_BG, extendToLineEnd: true },
+        // Same band-bg as file/section headers — keeps the sticky visually
+        // tied to the headers it summarizes and avoids the toolbar's
+        // status_bar_bg, which is a saturated accent in some themes
+        // (Dracula's is hot pink — clashes badly with the diff content).
+        style: { ...style, bg: STYLE_FILE_HEADER_BG, extendToLineEnd: true },
         properties: { type: "sticky-header" },
     }]);
 }
@@ -1280,6 +1334,13 @@ function currentFileFromCursor(): FileEntry | null {
     return bestFile;
 }
 
+function sectionUnderCursor(): string | null {
+    const props = readPropsAtCursor('diff');
+    if (!props || props["type"] !== 'section-header') return null;
+    const filePath = props["filePath"];
+    return typeof filePath === 'string' ? filePath : null;
+}
+
 function review_toggle_file_collapse() {
     if (state.groupId === null) return;
     // Tab from the comments panel swaps focus back to the diff stream.
@@ -1288,8 +1349,18 @@ function review_toggle_file_collapse() {
         return;
     }
     if (state.files.length === 0) return;
-    // Determine which file the cursor is on. Prefer a file-header row
-    // directly under the cursor; fall back to the file the cursor sits
+    // Cursor on a section header → toggle the whole section.
+    const section = sectionUnderCursor();
+    if (section) {
+        if (state.collapsedSections.has(section)) state.collapsedSections.delete(section);
+        else state.collapsedSections.add(section);
+        updateMagitDisplay();
+        const sectionRow = state.sectionHeaderRows[section];
+        if (sectionRow !== undefined) jumpDiffCursorToRow(sectionRow);
+        return;
+    }
+    // Otherwise determine which file the cursor is on. Prefer a file-header
+    // row directly under the cursor; fall back to the file the cursor sits
     // in (so Tab on a hunk row also collapses the parent file).
     const headerFile = fileHeaderUnderCursor() ?? currentFileFromCursor();
     if (!headerFile) return;

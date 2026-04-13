@@ -46,7 +46,7 @@
     "panel.comments": "Comments",
     "panel.no_comments": "No comments yet.",
     "section.staged": "Staged",
-    "section.unstaged": "Changes",
+    "section.unstaged": "Unstaged",
     "section.untracked": "Untracked",
     "status.review_empty": "Review Diff",
     "status.no_comments": "No comments",
