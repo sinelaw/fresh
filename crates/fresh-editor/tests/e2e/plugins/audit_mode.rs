@@ -2147,9 +2147,9 @@ fn test_review_diff_jk_navigation() {
     );
 }
 
-/// Test Home/End cursor motion in the unified-stream diff buffer.
-/// Home jumps to the start of the buffer (first file's header should be
-/// visible at the top); End jumps to the end.
+/// Home / End fall through to the editor's native start-of-line /
+/// end-of-line motion (the plugin intentionally does NOT bind them).
+/// Just verify they don't error.
 #[test]
 fn test_review_diff_home_end_navigation() {
     init_tracing_from_env();
@@ -2160,10 +2160,7 @@ fn test_review_diff_home_end_navigation() {
     repo.git_add_all();
     repo.git_commit("Initial commit");
 
-    // Create enough modified files to fill the viewport.
     repo.create_file("src/main.rs", "fn main() { /* changed */ }\n");
-    repo.create_file("src/lib.rs", "pub struct Config { /* changed */ }\n");
-    repo.create_file("src/utils.rs", "pub fn changed() {}\n");
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2182,24 +2179,14 @@ fn test_review_diff_home_end_navigation() {
 
     let _screen = open_review_diff(&mut harness);
 
-    // End jumps to the bottom of the buffer.
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    let s_end = harness.screen_to_string();
-    assert!(
-        !s_end.contains("TypeError"),
-        "End should not error. Screen:\n{}",
-        s_end
-    );
-
-    // Home jumps back to the top — the first file header is again visible.
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    let s_home = harness.screen_to_string();
     assert!(
-        !s_home.contains("TypeError"),
-        "Home should not error. Screen:\n{}",
-        s_home
+        !harness.screen_to_string().contains("TypeError"),
+        "Home / End should not error. Screen:\n{}",
+        harness.screen_to_string()
     );
 }
 

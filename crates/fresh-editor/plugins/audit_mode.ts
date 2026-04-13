@@ -125,17 +125,11 @@ interface ReviewState {
   // row's props when the cursor sits at a row-boundary byte).
   entryPropsByRow: Record<number, Record<string, unknown>>;
   // Byte ranges of collapsible bodies, captured at build time. Tab /
-  // mouse / z a / z r toggle conceals over these ranges instead of
-  // rebuilding the buffer — the heavy `setPanelContent` only fires
-  // when underlying data (hunks / comments) actually changes.
+  // mouse / z a / z r register these as host folds (see applyFolds)
+  // — no buffer rebuild on collapse / expand.
   sectionBodyRange: Record<string, { start: number; end: number }>;
   fileBodyRange: Record<string, { start: number; end: number }>;
   hunkBodyRange: Record<string, { start: number; end: number }>;
-  // Byte range of the ▾ triangle char on each header row, so we can
-  // swap it for ▸ via a replacement-conceal when the entity collapses.
-  sectionTriRange: Record<string, { start: number; end: number }>;
-  fileTriRange: Record<string, { start: number; end: number }>;
-  hunkTriRange: Record<string, { start: number; end: number }>;
   // Maps a category name (`'staged'` etc.) -> 1-indexed row of its
   // section-header row in the unified stream. Used by Tab toggle.
   sectionHeaderRows: Record<string, number>;
@@ -183,9 +177,6 @@ const state: ReviewState = {
   sectionBodyRange: {},
   fileBodyRange: {},
   hunkBodyRange: {},
-  sectionTriRange: {},
-  fileTriRange: {},
-  hunkTriRange: {},
   sectionHeaderRows: {},
   commentsByRow: {},
   commentsSelectedRow: 0,
@@ -547,32 +538,19 @@ interface DiffLine {
     commentId?: string;
 }
 
-/**
- * Compute +N / -M line counts for a file. Memoized per (path, category)
- * for the lifetime of `state.hunks` — without this, building the diff
- * stream is O(F × total_hunks × avg_hunk_lines) because every file
- * scans every hunk. Recomputed lazily on the first call after
- * refreshMagitData clears the cache.
- */
-let _fileCountsCache: Map<string, { added: number; removed: number }> | null = null;
+/** Compute +N / -M line counts for a file. */
 function fileChangeCounts(file: FileEntry): { added: number; removed: number } {
-    if (_fileCountsCache === null) {
-        _fileCountsCache = new Map();
-        // Single pass over all hunks: O(total_hunks × avg_hunk_lines).
-        for (const h of state.hunks) {
-            const key = `${h.file}\0${h.gitStatus || 'unstaged'}`;
-            let entry = _fileCountsCache.get(key);
-            if (!entry) {
-                entry = { added: 0, removed: 0 };
-                _fileCountsCache.set(key, entry);
-            }
+    let added = 0;
+    let removed = 0;
+    for (const h of state.hunks) {
+        if (h.file === file.path && h.gitStatus === file.category) {
             for (const line of h.lines) {
-                if (line[0] === '+') entry.added++;
-                else if (line[0] === '-') entry.removed++;
+                if (line[0] === '+') added++;
+                else if (line[0] === '-') removed++;
             }
         }
     }
-    return _fileCountsCache.get(fileKey(file)) || { added: 0, removed: 0 };
+    return { added, removed };
 }
 
 /**
@@ -991,27 +969,20 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     const hunkRowByHunkId: Record<string, number> = {};
     const diffLineRowByCommentId: Record<string, number> = {};
     const entryPropsByRow: Record<number, Record<string, unknown>> = {};
-    // Byte ranges of collapsible bodies + triangle chars, captured in
-    // this same single pass so collapse later just toggles conceals
-    // (no rebuild). The "body" of an entity is the byte range from the
-    // byte after its header's newline up to the byte before the next
-    // header that ends it.
+    // Byte ranges of collapsible bodies, captured in this same single
+    // pass so collapse later just registers a host fold (no rebuild).
+    // The "body" of an entity is the byte range from the byte after
+    // its header's newline up to the byte before the next header that
+    // ends it.
     const sectionBodyRange: Record<string, { start: number; end: number }> = {};
     const fileBodyRange: Record<string, { start: number; end: number }> = {};
     const hunkBodyRange: Record<string, { start: number; end: number }> = {};
-    const sectionTriRange: Record<string, { start: number; end: number }> = {};
-    const fileTriRange: Record<string, { start: number; end: number }> = {};
-    const hunkTriRange: Record<string, { start: number; end: number }> = {};
     let curSection: string | null = null;
     let curFile: string | null = null;
     let curHunk: string | null = null;
     let sectionBodyStart = 0;
     let fileBodyStart = 0;
     let hunkBodyStart = 0;
-    // ▾ triangle is at byte offset 1 inside every header text (after one
-    // leading space). UTF-8 length: 3 bytes.
-    const TRI_OFFSET = 1;
-    const TRI_LEN = 3;
 
     let runningByte = 0;
     let row = 0; // 0-indexed counter; row + 1 is the 1-indexed line number
@@ -1049,19 +1020,16 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
             curSection = line.filePath;
             curFile = null;
             curHunk = null;
-            sectionTriRange[curSection] = { start: entryStart + TRI_OFFSET, end: entryStart + TRI_OFFSET + TRI_LEN };
         }
         if (line.type === 'file-header' && line.fileKey) {
             if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: entryStart };
             if (curFile) fileBodyRange[curFile] = { start: fileBodyStart, end: entryStart };
             curFile = line.fileKey;
             curHunk = null;
-            fileTriRange[curFile] = { start: entryStart + TRI_OFFSET, end: entryStart + TRI_OFFSET + TRI_LEN };
         }
         if (line.type === 'hunk-header' && line.hunkId) {
             if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: entryStart };
             curHunk = line.hunkId;
-            hunkTriRange[curHunk] = { start: entryStart + TRI_OFFSET, end: entryStart + TRI_OFFSET + TRI_LEN };
         }
 
         if (line.type === 'hunk-header') {
@@ -1114,9 +1082,6 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     state.sectionBodyRange = sectionBodyRange;
     state.fileBodyRange = fileBodyRange;
     state.hunkBodyRange = hunkBodyRange;
-    state.sectionTriRange = sectionTriRange;
-    state.fileTriRange = fileTriRange;
-    state.hunkTriRange = hunkTriRange;
     return entries;
 }
 
@@ -1232,60 +1197,36 @@ function updateMagitDisplay(): void {
     applyCursorLineOverlay('diff');
 }
 
-const FOLD_NS = "review-fold";
-
 /**
  * Apply collapse state via the host's folding infrastructure. Folds
  * are designed exactly for "header line stays visible, body lines
- * are skipped by the renderer". A fold range covers `[bodyStart, bodyEnd)`
+ * skipped by the renderer". A fold range covers `[bodyStart, bodyEnd)`
  * — the line containing `bodyStart - 1` (the header) stays visible,
- * everything inside the range gets elided.
+ * everything inside the range gets elided. The host renders its own
+ * "..." indicator on the collapsed header line, which is sufficient
+ * visual feedback (no need for a triangle swap).
  *
  * Toggling collapse on a 5000-line diff is now O(collapsed_set_size)
- * `addFold` calls instead of a full setPanelContent + per-file
- * fileChangeCounts scan. `clearFolds` drops the entire set in one
- * call so re-applying after a state change is also cheap.
- *
- * Conceals on the triangle byte range swap ▾ → ▸ on collapsed
- * headers (folds don't change source text, so we still need a small
- * conceal layer for the triangle indicator).
+ * `addFold` calls. `clearFolds` drops the entire set in one host call
+ * so re-applying after a state change is also cheap.
  */
 function applyFolds(): void {
     if (state.groupId === null) return;
     const diffId = state.panelBuffers["diff"];
     if (diffId === undefined) return;
     editor.clearFolds(diffId);
-    editor.clearConcealNamespace(diffId, FOLD_NS);
     for (const cat of state.collapsedSections) {
         const body = state.sectionBodyRange[cat];
-        const tri = state.sectionTriRange[cat];
         if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
-        if (tri) editor.addConceal(diffId, FOLD_NS, tri.start, tri.end, "▸");
     }
     for (const key of state.collapsedFiles) {
         const body = state.fileBodyRange[key];
-        const tri = state.fileTriRange[key];
         if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
-        if (tri) editor.addConceal(diffId, FOLD_NS, tri.start, tri.end, "▸");
     }
     for (const id of state.collapsedHunks) {
         const body = state.hunkBodyRange[id];
-        const tri = state.hunkTriRange[id];
         if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
-        if (tri) editor.addConceal(diffId, FOLD_NS, tri.start, tri.end, "▸");
     }
-}
-
-/**
- * Lighter refresh used by code paths where the buffer text *does*
- * need to change (data refresh, comment add/edit). Reapplies folds
- * after the rebuild so collapsed entities stay collapsed.
- */
-function updateDiffOnly(): void {
-    if (state.groupId === null) return;
-    editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
-    applyFolds();
-    applyCursorLineOverlay('diff');
 }
 
 /**
@@ -1988,12 +1929,11 @@ registerHandler("review_page_up", review_page_up);
 
 function review_page_down() { editor.executeAction("move_page_down"); }
 registerHandler("review_page_down", review_page_down);
-
-function review_nav_home() { editor.executeAction("move_document_start"); }
-registerHandler("review_nav_home", review_nav_home);
-
-function review_nav_end() { editor.executeAction("move_document_end"); }
-registerHandler("review_nav_end", review_nav_end);
+// Home / End intentionally NOT overridden — the editor's native
+// "move to start/end of line" is exactly what we want here. Mapping
+// them to move_document_start/end (as the old layout did when Home/
+// End served as files-pane shortcuts) made them useless on a unified
+// stream.
 
 // --- Real git stage/unstage/discard actions (Step 4) ---
 
@@ -2338,7 +2278,6 @@ async function refreshMagitData() {
     state.emptyState = status.emptyReason;
     state.hunks = await fetchDiffsForFiles(status.files);
     state.diffCursorRow = 1;
-    _fileCountsCache = null; // hunks just changed → drop memoized counts
     updateMagitDisplay();
     restoreCursorAfterRebuild();
     updateReviewStatus();
@@ -3975,7 +3914,8 @@ editor.defineMode("review-mode", [
     ["Up", "review_nav_up"], ["Down", "review_nav_down"],
     ["k", "review_nav_up"], ["j", "review_nav_down"],
     ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
-    ["Home", "review_nav_home"], ["End", "review_nav_end"],
+    // Home / End intentionally not bound — fall through to the
+    // editor's native start-of-line / end-of-line motion.
     // Hunk navigation across the unified stream.
     ["n", "review_next_hunk"], ["p", "review_prev_hunk"],
     // Per-file collapse: Tab toggles the file under the cursor;
