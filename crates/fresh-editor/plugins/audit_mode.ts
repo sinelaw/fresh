@@ -1027,6 +1027,36 @@ function currentFileFromCursor(): FileEntry | null {
     return bestFile;
 }
 
+function review_toggle_file_collapse() {
+    if (state.files.length === 0) return;
+    // Determine which file the cursor is on. Prefer a file-header row
+    // directly under the cursor; fall back to the file the cursor sits
+    // in (so Tab on a hunk row also collapses the parent file).
+    const headerFile = fileHeaderUnderCursor() ?? currentFileFromCursor();
+    if (!headerFile) return;
+    const key = fileKey(headerFile);
+    if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
+    else state.collapsedFiles.add(key);
+    updateMagitDisplay();
+    // Move cursor to the file header row so the user sees what they
+    // collapsed/expanded.
+    const headerRow = state.fileHeaderRows[key];
+    if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+}
+registerHandler("review_toggle_file_collapse", review_toggle_file_collapse);
+
+function review_collapse_all() {
+    state.collapsedFiles = new Set(state.files.map(fileKey));
+    updateMagitDisplay();
+}
+registerHandler("review_collapse_all", review_collapse_all);
+
+function review_expand_all() {
+    state.collapsedFiles.clear();
+    updateMagitDisplay();
+}
+registerHandler("review_expand_all", review_expand_all);
+
 function review_nav_up() { editor.executeAction("move_up"); }
 registerHandler("review_nav_up", review_nav_up);
 
@@ -1919,42 +1949,69 @@ function updateReviewStatus(): void {
     }
 }
 
+/**
+ * Find the global index in `state.hunks` of the hunk currently visible
+ * at the cursor row, scanning the *visible* hunks (i.e. hunks whose
+ * file is not collapsed). Returns -1 if no hunk is at or before cursor.
+ */
+function visibleHunkIndexAtCursor(): number {
+    let visibleIdx = -1;
+    for (let i = 0; i < state.hunkHeaderRows.length; i++) {
+        if (state.hunkHeaderRows[i] <= state.diffCursorRow) visibleIdx = i;
+        else break;
+    }
+    if (visibleIdx < 0) return -1;
+    // Map back to the global state.hunks index.
+    let visited = 0;
+    for (let i = 0; i < state.hunks.length; i++) {
+        const h = state.hunks[i];
+        if (state.collapsedFiles.has(fileKeyOf(h.file, h.gitStatus || 'unstaged'))) continue;
+        if (visited === visibleIdx) return i;
+        visited++;
+    }
+    return -1;
+}
+
+function jumpToGlobalHunk(globalIdx: number) {
+    if (globalIdx < 0 || globalIdx >= state.hunks.length) return;
+    const target = state.hunks[globalIdx];
+    const targetKey = fileKeyOf(target.file, target.gitStatus || 'unstaged');
+    if (state.collapsedFiles.has(targetKey)) {
+        // Auto-expand the file containing the target hunk before jumping.
+        state.collapsedFiles.delete(targetKey);
+        updateMagitDisplay();
+    }
+    // Find the row of the target hunk in the (now possibly rebuilt) buffer.
+    let visibleIdx = 0;
+    for (let i = 0; i < globalIdx; i++) {
+        const h = state.hunks[i];
+        if (state.collapsedFiles.has(fileKeyOf(h.file, h.gitStatus || 'unstaged'))) continue;
+        visibleIdx++;
+    }
+    const row = state.hunkHeaderRows[visibleIdx];
+    if (row !== undefined) jumpDiffCursorToRow(row);
+}
+
 function review_next_hunk() {
-    // Magit review-mode: jump to the next hunk header row, crossing into
-    // the next file if we're already on the last hunk. Works from either
-    // pane — jumpDiffCursorToRow uses setBufferCursor when the diff panel
-    // is unfocused, so the cursor still moves even when focus is on the
-    // files pane (the cursor-line overlay still repaints there).
-    if (state.groupId !== null) {
-        for (const row of state.hunkHeaderRows) {
-            if (row > state.diffCursorRow) {
-                jumpDiffCursorToRow(row);
-                return;
-            }
-        }
+    if (state.groupId === null) return;
+    if (state.hunks.length === 0) return;
+    const cur = visibleHunkIndexAtCursor();
+    // Find next hunk in global order — auto-expanding its file if needed.
+    if (cur < 0) {
+        jumpToGlobalHunk(0);
         return;
     }
-    // Composite diff-view hunk navigation is handled by the Action system
-    // (CompositeNextHunk) via CompositeBuffer context keybindings, so no
-    // plugin fallback is needed here.
+    if (cur + 1 >= state.hunks.length) return;
+    jumpToGlobalHunk(cur + 1);
 }
 registerHandler("review_next_hunk", review_next_hunk);
 
 function review_prev_hunk() {
-    // Walk backwards through the unified stream's hunk header rows.
-    if (state.groupId !== null) {
-        for (let i = state.hunkHeaderRows.length - 1; i >= 0; i--) {
-            const row = state.hunkHeaderRows[i];
-            if (row < state.diffCursorRow) {
-                jumpDiffCursorToRow(row);
-                return;
-            }
-        }
-        return;
-    }
-    // Composite diff-view hunk navigation is handled by the Action system
-    // (CompositePrevHunk) via CompositeBuffer context keybindings, so no
-    // plugin fallback is needed here.
+    if (state.groupId === null) return;
+    if (state.hunks.length === 0) return;
+    const cur = visibleHunkIndexAtCursor();
+    if (cur <= 0) return;
+    jumpToGlobalHunk(cur - 1);
 }
 registerHandler("review_prev_hunk", review_prev_hunk);
 
@@ -2751,6 +2808,11 @@ editor.defineMode("review-mode", [
     ["Home", "review_nav_home"], ["End", "review_nav_end"],
     // Hunk navigation across the unified stream.
     ["n", "review_next_hunk"], ["p", "review_prev_hunk"],
+    // Per-file collapse: Tab toggles the file under the cursor;
+    // `z a` collapses every file; `z r` reveals (expands) every file.
+    ["Tab", "review_toggle_file_collapse"],
+    ["z a", "review_collapse_all"],
+    ["z r", "review_expand_all"],
     // Drill-down to side-by-side view of the file under the cursor.
     ["Enter", "review_drill_down"],
     // Stage/unstage/discard — act on the file (when cursor is on a file
