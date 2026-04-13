@@ -312,7 +312,7 @@ impl Editor {
     /// Centers the hunk header in the viewport and moves the cursor to it.
     pub fn composite_next_hunk(&mut self, split_id: LeafId, buffer_id: BufferId) -> bool {
         let viewport_height = self.get_composite_viewport_height(split_id);
-        if let (Some(composite), Some(view_state)) = (
+        let moved = if let (Some(composite), Some(view_state)) = (
             self.composite_buffers.get(&buffer_id),
             self.composite_view_states.get_mut(&(split_id, buffer_id)),
         ) {
@@ -323,17 +323,28 @@ impl Editor {
                 // Scroll so the hunk header is ~1/3 from the top of the viewport
                 let context_above = viewport_height / 3;
                 view_state.scroll_row = next_row.saturating_sub(context_above);
-                return true;
+                true
+            } else {
+                false
             }
+        } else {
+            false
+        };
+        // Keep the EditorState / split-view cursor in lockstep with the
+        // composite view so the status bar's Ln/Col reflects the new row.
+        // Arrow keys do this via handle_cursor_movement_action; hunk
+        // navigation used to skip it, leaving "Ln 1" stale after n/p.
+        if moved {
+            self.sync_editor_cursor_from_composite(split_id, buffer_id);
         }
-        false
+        moved
     }
 
     /// Navigate to the previous hunk in a composite buffer's diff view.
     /// Centers the hunk header in the viewport and moves the cursor to it.
     pub fn composite_prev_hunk(&mut self, split_id: LeafId, buffer_id: BufferId) -> bool {
         let viewport_height = self.get_composite_viewport_height(split_id);
-        if let (Some(composite), Some(view_state)) = (
+        let moved = if let (Some(composite), Some(view_state)) = (
             self.composite_buffers.get(&buffer_id),
             self.composite_view_states.get_mut(&(split_id, buffer_id)),
         ) {
@@ -341,10 +352,17 @@ impl Editor {
                 view_state.cursor_row = prev_row;
                 let context_above = viewport_height / 3;
                 view_state.scroll_row = prev_row.saturating_sub(context_above);
-                return true;
+                true
+            } else {
+                false
             }
+        } else {
+            false
+        };
+        if moved {
+            self.sync_editor_cursor_from_composite(split_id, buffer_id);
         }
-        false
+        moved
     }
 
     /// Scroll a composite buffer view

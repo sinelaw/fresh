@@ -1269,6 +1269,84 @@ fn test_refresh_toolbar_with_staged_file() {
 }
 
 // ---------------------------------------------------------------------------
+// ISSUE #2: Side-by-side n/p leave the status-bar Ln/Col stale
+// ---------------------------------------------------------------------------
+
+/// In the side-by-side diff view, pressing `n` (next hunk) jumps the
+/// viewport and the composite cursor but does not update the editor's
+/// primary cursor — so the status bar keeps reading "Ln 1" even after we
+/// have navigated tens of lines down. Arrow keys sync correctly, so
+/// hunk navigation should too.
+#[test]
+fn test_issue2_side_by_side_next_hunk_updates_status_bar() {
+    init_tracing_from_env();
+    let (repo, main_rs) = repo_with_multi_hunk_file();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        45,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("HUNK_ONE"))
+        .unwrap();
+
+    let _screen = open_review_diff(&mut harness);
+
+    // Drill down into side-by-side.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            (s.contains("OLD (HEAD)") || s.contains("*Diff:"))
+                && !s.contains("Loading side-by-side diff")
+        })
+        .unwrap();
+
+    // Pre-check: the status bar starts at Ln 1.
+    let initial = harness.screen_to_string();
+    assert!(
+        initial.contains("Ln 1, Col 1"),
+        "ISSUE-2 pre-check: status bar should read 'Ln 1, Col 1' on \
+         entry to side-by-side. Screen:\n{}",
+        initial
+    );
+
+    // Press `n` twice — the cursor should jump past line 1 into a later
+    // hunk, so the status bar Ln indicator must update.
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+
+    // Semantic wait: the status bar should report a line other than 1.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.lines().any(|line| {
+                if let Some(idx) = line.find("Ln ") {
+                    let rest = &line[idx + 3..];
+                    let num: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                    if let Ok(n) = num.parse::<u32>() {
+                        return n > 1;
+                    }
+                }
+                false
+            })
+        })
+        .unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // ISSUE #3: No "Hunk N of M" indicator
 // ---------------------------------------------------------------------------
 
