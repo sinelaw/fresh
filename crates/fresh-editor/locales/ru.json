@@ -304,6 +304,7 @@
   "buffer.opened": "Открыт %{name}",
   "buffer.opened_binary": "Открыт %{name} [бинарный файл, только чтение]",
   "buffer.preview_indicator": "(предпросмотр)",
+  "buffer.switched": "Переключено на %{name}",
   "buffer.create_directory_confirm": "Каталог '%{name}' не существует. (с)оздать, (О)тмена? ",
   "buffer.overwrite_confirm": "'%{name}' существует. (п)ерезаписать, (О)тмена? ",
   "buffer.revert_cancelled": "Откат отменён",

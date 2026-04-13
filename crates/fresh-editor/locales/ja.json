@@ -304,6 +304,7 @@
   "buffer.opened": "%{name}を開きました",
   "buffer.opened_binary": "%{name}を開きました [バイナリファイル、読み取り専用]",
   "buffer.preview_indicator": "(プレビュー)",
+  "buffer.switched": "%{name} に切り替えました",
   "buffer.create_directory_confirm": "ディレクトリ '%{name}' は存在しません。(c)作成, (A)中止? ",
   "buffer.overwrite_confirm": "'%{name}' は存在します。(o)上書き, (C)キャンセル? ",
   "buffer.revert_cancelled": "元に戻すをキャンセル",

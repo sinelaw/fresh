@@ -304,6 +304,7 @@
   "buffer.opened": "เปิด %{name} แล้ว",
   "buffer.opened_binary": "เปิด %{name} แล้ว [ไฟล์ไบนารี, อ่านอย่างเดียว]",
   "buffer.preview_indicator": "(แสดงตัวอย่าง)",
+  "buffer.switched": "สลับไปที่ %{name}",
   "buffer.create_directory_confirm": "ไดเรกทอรี '%{name}' ไม่มีอยู่ (c)สร้าง, (A)ยกเลิก? ",
   "buffer.overwrite_confirm": "'%{name}' มีอยู่แล้ว. (o)เขียนทับ, (C)ยกเลิก? ",
   "buffer.revert_cancelled": "ยกเลิกการย้อนกลับ",

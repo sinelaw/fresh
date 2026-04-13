@@ -304,6 +304,7 @@
   "buffer.opened": "%{name} ouvert",
   "buffer.opened_binary": "%{name} ouvert [fichier binaire, lecture seule]",
   "buffer.preview_indicator": "(aperçu)",
+  "buffer.switched": "Basculé vers %{name}",
   "buffer.create_directory_confirm": "Le répertoire '%{name}' n'existe pas. (c)réer, (A)nnuler ? ",
   "buffer.overwrite_confirm": "'%{name}' existe. (é)craser, (A)nnuler ? ",
   "buffer.revert_cancelled": "Restauration annulée",

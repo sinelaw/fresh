@@ -304,6 +304,7 @@
   "buffer.opened": "%{name} 열림",
   "buffer.opened_binary": "%{name} 열림 [바이너리 파일, 읽기 전용]",
   "buffer.preview_indicator": "(미리 보기)",
+  "buffer.switched": "%{name}(으)로 전환됨",
   "buffer.create_directory_confirm": "디렉토리 '%{name}'이(가) 존재하지 않습니다. (c)생성, (A)취소? ",
   "buffer.overwrite_confirm": "'%{name}' 존재함. (o)덮어쓰기, (C)취소? ",
   "buffer.revert_cancelled": "되돌리기 취소됨",

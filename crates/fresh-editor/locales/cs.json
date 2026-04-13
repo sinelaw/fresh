@@ -304,6 +304,7 @@
   "buffer.opened": "Otevřeno %{name}",
   "buffer.opened_binary": "Otevřeno %{name} [binární soubor, pouze pro čtení]",
   "buffer.preview_indicator": "(náhled)",
+  "buffer.switched": "Přepnuto na %{name}",
   "buffer.create_directory_confirm": "Adresář '%{name}' neexistuje. (v)ytvořit, (Z)rušit? ",
   "buffer.overwrite_confirm": "'%{name}' existuje. (p)řepsat, (Z)rušit? ",
   "buffer.revert_cancelled": "Obnovení zrušeno",

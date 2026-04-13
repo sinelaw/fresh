@@ -304,6 +304,7 @@
   "buffer.opened": "已打开%{name}",
   "buffer.opened_binary": "已打开%{name} [二进制文件，只读]",
   "buffer.preview_indicator": "(预览)",
+  "buffer.switched": "已切换到 %{name}",
   "buffer.create_directory_confirm": "目录 '%{name}' 不存在。(c)创建，(A)取消？",
   "buffer.overwrite_confirm": "'%{name}' 已存在。(o)覆盖，(C)取消？",
   "buffer.revert_cancelled": "还原已取消",

@@ -304,6 +304,7 @@
   "buffer.opened": "Abierto %{name}",
   "buffer.opened_binary": "Abierto %{name} [archivo binario, solo lectura]",
   "buffer.preview_indicator": "(vista previa)",
+  "buffer.switched": "Cambiado a %{name}",
   "buffer.create_directory_confirm": "El directorio '%{name}' no existe. (c)rear, (C)ancelar? ",
   "buffer.overwrite_confirm": "'%{name}' existe. (s)obrescribir, (C)ancelar? ",
   "buffer.revert_cancelled": "Reversión cancelada",

@@ -304,6 +304,7 @@
   "buffer.opened": "%{name} geöffnet",
   "buffer.opened_binary": "%{name} geöffnet [Binärdatei, schreibgeschützt]",
   "buffer.preview_indicator": "(Vorschau)",
+  "buffer.switched": "Zu %{name} gewechselt",
   "buffer.create_directory_confirm": "Verzeichnis '%{name}' existiert nicht. (e)rstellen, (A)bbrechen? ",
   "buffer.overwrite_confirm": "'%{name}' existiert. (ü)berschreiben, (A)bbrechen? ",
   "buffer.revert_cancelled": "Zurücksetzen abgebrochen",
