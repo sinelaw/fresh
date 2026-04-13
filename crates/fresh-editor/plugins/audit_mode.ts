@@ -2048,9 +2048,12 @@ function jumpToAdjacentFileHunk(direction: 1 | -1, firstOrLast: 'first' | 'last'
 }
 
 function review_next_hunk() {
-    // Magit review-mode diff panel: jump to the next hunk header row,
-    // crossing into the next file if we're already on the last hunk.
-    if (state.groupId !== null && state.focusPanel === 'diff') {
+    // Magit review-mode: jump to the next hunk header row, crossing into
+    // the next file if we're already on the last hunk. Works from either
+    // pane — jumpDiffCursorToRow uses setBufferCursor when the diff panel
+    // is unfocused, so the cursor still moves even when focus is on the
+    // files pane (the cursor-line overlay still repaints there).
+    if (state.groupId !== null) {
         for (const row of state.hunkHeaderRows) {
             if (row > state.diffCursorRow) {
                 jumpDiffCursorToRow(row);
@@ -2067,9 +2070,9 @@ function review_next_hunk() {
 registerHandler("review_next_hunk", review_next_hunk);
 
 function review_prev_hunk() {
-    // Magit review-mode diff panel: jump to the previous hunk header row,
-    // crossing into the previous file if we're already on the first hunk.
-    if (state.groupId !== null && state.focusPanel === 'diff') {
+    // Magit review-mode: jump to the previous hunk header row, crossing
+    // into the previous file if we're already on the first hunk.
+    if (state.groupId !== null) {
         for (let i = state.hunkHeaderRows.length - 1; i >= 0; i--) {
             const row = state.hunkHeaderRows[i];
             if (row < state.diffCursorRow) {

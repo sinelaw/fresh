@@ -1269,6 +1269,58 @@ fn test_refresh_toolbar_with_staged_file() {
 }
 
 // ---------------------------------------------------------------------------
+// ISSUE #6: n / p are inert when the files pane has focus
+// ---------------------------------------------------------------------------
+
+/// On entry, focus sits on the files pane. Pressing `n` there should
+/// still advance hunks — today the plugin branches on `focusPanel ===
+/// 'diff'` and does nothing otherwise, so the key feels broken until
+/// the user finds Tab.
+#[test]
+fn test_issue6_n_from_files_pane_advances_hunks() {
+    init_tracing_from_env();
+    let (repo, main_rs) = repo_with_multi_hunk_file();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        45,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("HUNK_ONE"))
+        .unwrap();
+
+    let _ = open_review_diff(&mut harness);
+    // Do NOT press Tab — focus stays on the files pane.
+
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    // The status bar's Hunk-index indicator (issue #3 fix) moves when a
+    // hunk is current — that's our observable that `n` did something.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.to_lowercase().contains("hunk 1 of")
+        })
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.to_lowercase().contains("hunk 2 of")
+        })
+        .unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // ISSUE #7: n / p do not cross file boundaries
 // ---------------------------------------------------------------------------
 
