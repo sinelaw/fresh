@@ -1035,6 +1035,141 @@ function refreshStickyHeader(topVisibleRow: number): void {
     }]);
 }
 
+/**
+ * Helper: jump the diff cursor to the file's first hunk (or its file
+ * header if it has no hunks). Auto-expands the file if collapsed.
+ */
+function jumpToFile(file: FileEntry): void {
+    const key = fileKey(file);
+    if (state.collapsedFiles.has(key)) {
+        state.collapsedFiles.delete(key);
+        updateMagitDisplay();
+    }
+    // Prefer first hunk row; fall back to the file-header row.
+    const fileIdx = state.files.indexOf(file);
+    if (fileIdx >= 0) {
+        // Compute visible hunk index of the first hunk for this file.
+        let visibleIdx = 0;
+        let foundGlobal = -1;
+        for (let i = 0; i < state.hunks.length; i++) {
+            const h = state.hunks[i];
+            const hKey = fileKeyOf(h.file, h.gitStatus || 'unstaged');
+            if (state.collapsedFiles.has(hKey)) continue;
+            if (h.file === file.path && h.gitStatus === file.category) {
+                foundGlobal = i;
+                break;
+            }
+            visibleIdx++;
+        }
+        if (foundGlobal >= 0) {
+            const row = state.hunkHeaderRows[visibleIdx];
+            if (row !== undefined) { jumpDiffCursorToRow(row); return; }
+        }
+    }
+    const headerRow = state.fileHeaderRows[key];
+    if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+}
+
+/**
+ * Mouse click handler. Routes clicks to the appropriate behavior:
+ *   * Diff buffer file-header row → toggle that file's collapse state.
+ *   * Sticky panel → jump to the currently-pinned file's first hunk.
+ *   * Comments panel row → jump diff cursor to that comment's location
+ *     (auto-expanding the file when collapsed) and select the row.
+ */
+function on_review_mouse_click(data: {
+    column: number; row: number; button: string; modifiers: string;
+    content_x: number; content_y: number;
+    buffer_id: number | null; buffer_row: number | null; buffer_col: number | null;
+}): void {
+    if (state.groupId === null) return;
+    if (data.buffer_id === null || data.buffer_row === null) return;
+
+    const diffId = state.panelBuffers["diff"];
+    const stickyId = state.panelBuffers["sticky"];
+    const commentsId = state.panelBuffers["comments"];
+
+    // Click in the diff buffer: only the file-header row is interactive.
+    if (data.buffer_id === diffId) {
+        const targetRow1 = data.buffer_row + 1;
+        for (const f of state.files) {
+            if (state.fileHeaderRows[fileKey(f)] === targetRow1) {
+                const key = fileKey(f);
+                if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
+                else state.collapsedFiles.add(key);
+                updateMagitDisplay();
+                return;
+            }
+        }
+        return;
+    }
+
+    // Click on the sticky pinned-header: jump to the pinned file's first hunk.
+    if (data.buffer_id === stickyId) {
+        // Re-derive the pinned file from current viewport top.
+        const top1 = state.diffCursorRow; // approximation; sticky tracks topmost visible
+        let bestFile: FileEntry | null = null;
+        let bestRow = 0;
+        for (const f of state.files) {
+            const row = state.fileHeaderRows[fileKey(f)];
+            if (row !== undefined && row <= top1 && row > bestRow) {
+                bestRow = row;
+                bestFile = f;
+            }
+        }
+        if (bestFile) jumpToFile(bestFile);
+        return;
+    }
+
+    // Click in the comments panel: jump to the comment's location.
+    if (data.buffer_id === commentsId) {
+        const targetRow1 = data.buffer_row + 1;
+        const commentId = state.commentsByRow[targetRow1];
+        if (commentId) {
+            jumpToComment(commentId);
+            state.commentsSelectedRow = targetRow1;
+            editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+        }
+        return;
+    }
+}
+registerHandler("on_review_mouse_click", on_review_mouse_click);
+
+/**
+ * Jump the diff cursor to the line associated with a comment, auto-
+ * expanding the comment's file if it is currently collapsed.
+ */
+function jumpToComment(commentId: string): void {
+    const comment = state.comments.find(c => c.id === commentId);
+    if (!comment) return;
+    const hunk = state.hunks.find(h => h.id === comment.hunk_id);
+    if (!hunk) return;
+    const file = state.files.find(f => f.path === hunk.file && f.category === hunk.gitStatus);
+    if (file) {
+        const key = fileKey(file);
+        if (state.collapsedFiles.has(key)) {
+            state.collapsedFiles.delete(key);
+            updateMagitDisplay();
+        }
+    }
+    // Find the row of the hunk in the rebuilt buffer.
+    let visibleIdx = 0;
+    let foundGlobal = -1;
+    for (let i = 0; i < state.hunks.length; i++) {
+        const h = state.hunks[i];
+        if (state.collapsedFiles.has(fileKeyOf(h.file, h.gitStatus || 'unstaged'))) continue;
+        if (h.id === hunk.id) { foundGlobal = visibleIdx; break; }
+        visibleIdx++;
+    }
+    if (foundGlobal < 0) return;
+    const hunkRow = state.hunkHeaderRows[foundGlobal];
+    if (hunkRow === undefined) return;
+    // Best-effort: jump to the hunk header. Lining up to the exact line
+    // would require re-parsing the diff line offsets — the hunk header is
+    // close enough that the user can find their line in one glance.
+    jumpDiffCursorToRow(hunkRow);
+}
+
 function on_review_viewport_changed(data: { split_id: number; buffer_id: number; top_byte: number; top_line: number | null; width: number; height: number }): void {
     if (state.groupId === null) return;
     if (data.buffer_id !== state.panelBuffers["diff"]) return;
@@ -2614,6 +2749,7 @@ async function start_review_diff() {
     editor.on("buffer_closed", "on_review_buffer_closed");
     editor.on("cursor_moved", "on_review_cursor_moved");
     editor.on("viewport_changed", "on_review_viewport_changed");
+    editor.on("mouse_click", "on_review_mouse_click");
 }
 registerHandler("start_review_diff", start_review_diff);
 
@@ -2630,6 +2766,7 @@ function stop_review_diff() {
     editor.off("buffer_closed", "on_review_buffer_closed");
     editor.off("cursor_moved", "on_review_cursor_moved");
     editor.off("viewport_changed", "on_review_viewport_changed");
+    editor.off("mouse_click", "on_review_mouse_click");
     editor.setStatus(editor.t("status.stopped"));
 }
 registerHandler("stop_review_diff", stop_review_diff);
