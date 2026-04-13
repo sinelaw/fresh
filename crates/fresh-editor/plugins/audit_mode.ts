@@ -218,6 +218,24 @@ const STYLE_FILE_HEADER_FG: OverlayColorSpec = "editor.fg";
 // bg in dark themes, light text on dark bg in light themes.
 const STYLE_INVERSE_FG: OverlayColorSpec = "editor.bg";
 const STYLE_INVERSE_BG: OverlayColorSpec = "editor.fg";
+// Dim foreground for the per-row old/new line-number gutter. Same key
+// the editor uses for its own gutter — already chosen per-theme to be
+// readable but visibly subordinate to content fg.
+const STYLE_LINE_NUM_FG: OverlayColorSpec = "editor.line_number_fg";
+
+// Width of each line-number column. 4 chars fits up to 9999 lines —
+// past that we just let the number overflow rather than expanding the
+// gutter (extremely rare in review-diff context).
+const LINE_NUM_W = 4;
+
+/** Format the per-row "OLD  NEW " prefix (with trailing space). Either
+ *  side passes `undefined` for blank — removed lines blank the new
+ *  column, added lines blank the old column. */
+function lineNumPrefix(oldNum: number | undefined, newNum: number | undefined): string {
+    const o = oldNum !== undefined ? String(oldNum).padStart(LINE_NUM_W) : ' '.repeat(LINE_NUM_W);
+    const n = newNum !== undefined ? String(newNum).padStart(LINE_NUM_W) : ' '.repeat(LINE_NUM_W);
+    return ` ${o} ${n} `;
+}
 
 
 /**
@@ -543,6 +561,9 @@ function pushLineComments(
             (c.line_type === 'context' && c.new_line === newLine)
         )
     );
+    // Indent the comment so its `»` glyph aligns with the diff content
+    // column (just past the OLD/NEW number gutter and the +/- indicator).
+    const commentIndent = ' '.repeat(LINE_NUM_W + 1 + LINE_NUM_W + 1 + 1 + 1);
     for (const comment of lineComments) {
         const lineRef = comment.line_type === 'add'
             ? `+${comment.new_line}`
@@ -550,7 +571,7 @@ function pushLineComments(
             ? `-${comment.old_line}`
             : `${comment.new_line}`;
         lines.push({
-            text: `  \u00bb [${lineRef}] ${comment.text}`,
+            text: `${commentIndent}\u00bb [${lineRef}] ${comment.text}`,
             type: 'comment',
             commentId: comment.id,
             style: { fg: STYLE_COMMENT, italic: true },
@@ -726,9 +747,14 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                 const newContent = nextLine.substring(1);
                 const parts = diffStrings(oldContent, newContent);
 
-                // Build inline overlays for removed line
-                const removeOverlays: InlineOverlay[] = [];
-                let rOffset = getByteLength(line[0]); // skip prefix
+                // Removed-side line: " OLD       -content"
+                const removePrefix = lineNumPrefix(curOldLine, undefined);
+                const removeText = removePrefix + line;
+                const removePrefixLen = getByteLength(removePrefix);
+                const removeOverlays: InlineOverlay[] = [
+                    { start: 0, end: removePrefixLen, style: { fg: STYLE_LINE_NUM_FG } },
+                ];
+                let rOffset = removePrefixLen + getByteLength(line[0]); // skip diff prefix
                 for (const part of parts) {
                     const pLen = getByteLength(part.text);
                     if (part.type === 'removed') {
@@ -737,19 +763,24 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     if (part.type !== 'added') rOffset += pLen;
                 }
                 lines.push({
-                    text: line, type: 'remove',
+                    text: removeText, type: 'remove',
                     style: { bg: STYLE_REMOVE_BG, extendToLineEnd: true },
                     hunkId: hunk.id, file: hunk.file,
                     lineType: 'remove', oldLine: curOldLine, newLine: undefined, lineContent: line,
-                    inlineOverlays: removeOverlays.length > 0 ? removeOverlays : undefined,
+                    inlineOverlays: removeOverlays,
                 });
                 // Inline comments for the removed line
                 pushLineComments(lines, hunk, 'remove', curOldLine, undefined);
                 oldLineNum++;
 
-                // Build inline overlays for added line
-                const addOverlays: InlineOverlay[] = [];
-                let aOffset = getByteLength(nextLine[0]);
+                // Added-side line: "      NEW +content"
+                const addPrefix = lineNumPrefix(undefined, newLineNum);
+                const addText = addPrefix + nextLine;
+                const addPrefixLen = getByteLength(addPrefix);
+                const addOverlays: InlineOverlay[] = [
+                    { start: 0, end: addPrefixLen, style: { fg: STYLE_LINE_NUM_FG } },
+                ];
+                let aOffset = addPrefixLen + getByteLength(nextLine[0]);
                 for (const part of parts) {
                     const pLen = getByteLength(part.text);
                     if (part.type === 'added') {
@@ -758,11 +789,11 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     if (part.type !== 'removed') aOffset += pLen;
                 }
                 lines.push({
-                    text: nextLine, type: 'add',
+                    text: addText, type: 'add',
                     style: { bg: STYLE_ADD_BG, extendToLineEnd: true },
                     hunkId: hunk.id, file: hunk.file,
                     lineType: 'add', oldLine: undefined, newLine: newLineNum, lineContent: nextLine,
-                    inlineOverlays: addOverlays.length > 0 ? addOverlays : undefined,
+                    inlineOverlays: addOverlays,
                 });
                 pushLineComments(lines, hunk, 'add', undefined, newLineNum);
                 newLineNum++;
@@ -770,27 +801,37 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                 continue;
             }
 
+            const numPrefix = lineNumPrefix(curOldLine, curNewLine);
+            const decoratedText = numPrefix + line;
+            const numPrefixLen = getByteLength(numPrefix);
+            const dimNumOverlay: InlineOverlay = {
+                start: 0, end: numPrefixLen, style: { fg: STYLE_LINE_NUM_FG },
+            };
+
             if (prefix === '+') {
                 lines.push({
-                    text: line, type: 'add',
+                    text: decoratedText, type: 'add',
                     style: { bg: STYLE_ADD_BG, extendToLineEnd: true },
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
+                    inlineOverlays: [dimNumOverlay],
                 });
                 newLineNum++;
             } else if (prefix === '-') {
                 lines.push({
-                    text: line, type: 'remove',
+                    text: decoratedText, type: 'remove',
                     style: { bg: STYLE_REMOVE_BG, extendToLineEnd: true },
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
+                    inlineOverlays: [dimNumOverlay],
                 });
                 oldLineNum++;
             } else {
                 lines.push({
-                    text: line, type: 'context',
+                    text: decoratedText, type: 'context',
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
+                    inlineOverlays: [dimNumOverlay],
                 });
                 oldLineNum++;
                 newLineNum++;
