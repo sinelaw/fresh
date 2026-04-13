@@ -2243,6 +2243,38 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    // === Folds ===
+
+    /// Add a collapsed fold range. Hides bytes [start, end) from
+    /// rendering — the line containing `start - 1` (the fold "header")
+    /// stays visible, while subsequent lines covered by the range are
+    /// skipped.
+    pub fn add_fold(
+        &self,
+        buffer_id: u32,
+        start: u32,
+        end: u32,
+        placeholder: rquickjs::function::Opt<String>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::AddFold {
+                buffer_id: BufferId(buffer_id as usize),
+                start: start as usize,
+                end: end as usize,
+                placeholder: placeholder.0,
+            })
+            .is_ok()
+    }
+
+    /// Clear every collapsed fold range on the buffer.
+    pub fn clear_folds(&self, buffer_id: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearFolds {
+                buffer_id: BufferId(buffer_id as usize),
+            })
+            .is_ok()
+    }
+
     // === Soft Breaks ===
 
     /// Add a soft break point for marker-based line wrapping

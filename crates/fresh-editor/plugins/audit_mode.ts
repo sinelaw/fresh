@@ -124,6 +124,18 @@ interface ReviewState {
   // editor.getTextPropertiesAtCursor (which can return the previous
   // row's props when the cursor sits at a row-boundary byte).
   entryPropsByRow: Record<number, Record<string, unknown>>;
+  // Byte ranges of collapsible bodies, captured at build time. Tab /
+  // mouse / z a / z r toggle conceals over these ranges instead of
+  // rebuilding the buffer — the heavy `setPanelContent` only fires
+  // when underlying data (hunks / comments) actually changes.
+  sectionBodyRange: Record<string, { start: number; end: number }>;
+  fileBodyRange: Record<string, { start: number; end: number }>;
+  hunkBodyRange: Record<string, { start: number; end: number }>;
+  // Byte range of the ▾ triangle char on each header row, so we can
+  // swap it for ▸ via a replacement-conceal when the entity collapses.
+  sectionTriRange: Record<string, { start: number; end: number }>;
+  fileTriRange: Record<string, { start: number; end: number }>;
+  hunkTriRange: Record<string, { start: number; end: number }>;
   // Maps a category name (`'staged'` etc.) -> 1-indexed row of its
   // section-header row in the unified stream. Used by Tab toggle.
   sectionHeaderRows: Record<string, number>;
@@ -168,6 +180,12 @@ const state: ReviewState = {
   hunkRowByHunkId: {},
   diffLineRowByCommentId: {},
   entryPropsByRow: {},
+  sectionBodyRange: {},
+  fileBodyRange: {},
+  hunkBodyRange: {},
+  sectionTriRange: {},
+  fileTriRange: {},
+  hunkTriRange: {},
   sectionHeaderRows: {},
   commentsByRow: {},
   commentsSelectedRow: 0,
@@ -530,20 +548,31 @@ interface DiffLine {
 }
 
 /**
- * Compute +N / -M line counts for a file.
+ * Compute +N / -M line counts for a file. Memoized per (path, category)
+ * for the lifetime of `state.hunks` — without this, building the diff
+ * stream is O(F × total_hunks × avg_hunk_lines) because every file
+ * scans every hunk. Recomputed lazily on the first call after
+ * refreshMagitData clears the cache.
  */
+let _fileCountsCache: Map<string, { added: number; removed: number }> | null = null;
 function fileChangeCounts(file: FileEntry): { added: number; removed: number } {
-    let added = 0;
-    let removed = 0;
-    for (const h of state.hunks) {
-        if (h.file === file.path && h.gitStatus === file.category) {
+    if (_fileCountsCache === null) {
+        _fileCountsCache = new Map();
+        // Single pass over all hunks: O(total_hunks × avg_hunk_lines).
+        for (const h of state.hunks) {
+            const key = `${h.file}\0${h.gitStatus || 'unstaged'}`;
+            let entry = _fileCountsCache.get(key);
+            if (!entry) {
+                entry = { added: 0, removed: 0 };
+                _fileCountsCache.set(key, entry);
+            }
             for (const line of h.lines) {
-                if (line[0] === '+') added++;
-                else if (line[0] === '-') removed++;
+                if (line[0] === '+') entry.added++;
+                else if (line[0] === '-') entry.removed++;
             }
         }
     }
-    return { added, removed };
+    return _fileCountsCache.get(fileKey(file)) || { added: 0, removed: 0 };
 }
 
 /**
@@ -617,11 +646,13 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             if (file.category === 'staged') label = editor.t("section.staged") || "Staged";
             else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Unstaged";
             else if (file.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
-            const sectionCollapsed = state.collapsedSections.has(file.category);
             const sectionCount = state.files.filter(f => f.category === file.category).length;
-            const triangle = sectionCollapsed ? '▸' : '▾';
+            // Always render expanded triangle (▾). Collapse state is
+            // shown by overlaying a `▸` replacement-conceal on the
+            // triangle byte range — the buffer text never changes, so
+            // toggling collapse never has to rebuild.
             lines.push({
-                text: ` ${triangle} ${label.toUpperCase()}  (${sectionCount})`,
+                text: ` ▾ ${label.toUpperCase()}  (${sectionCount})`,
                 type: 'section-header',
                 file: file.category, // store category in 'file' field for reuse
                 filePath: file.category,
@@ -632,28 +663,14 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     extendToLineEnd: true,
                 },
             });
-            if (sectionCollapsed) {
-                lines.push({ text: '', type: 'empty' });
-                // Skip every file in this section
-                while (fi < state.files.length && state.files[fi].category === file.category) fi++;
-                fi--; // outer for-loop will re-increment
-                continue;
-            }
         }
 
-        // File header line — strongly distinguishable from hunk content:
-        //   * Bold accent foreground.
-        //   * Subtle line-number-bg extended across the whole row, so the
-        //     header reads as a discrete band but the bg works in any
-        //     theme (the toolbar's status_bar_bg is too saturated in
-        //     accent-heavy themes like Dracula).
-        //   * Triangle marker (▾ open / ▸ collapsed).
+        // File header — always emit the expanded triangle; conceal
+        // overlays handle the collapsed view.
         const counts = fileChangeCounts(file);
         const key = fileKey(file);
-        const collapsed = state.collapsedFiles.has(key);
-        const triangle = collapsed ? '▸' : '▾';
         const filename = file.origPath ? `${file.origPath} → ${file.path}` : file.path;
-        const headerText = ` ${triangle} ${filename}   +${counts.added} / -${counts.removed}`;
+        const headerText = ` ▾ ${filename}   +${counts.added} / -${counts.removed}`;
         lines.push({
             text: headerText,
             type: 'file-header',
@@ -668,12 +685,6 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                 extendToLineEnd: true,
             },
         });
-
-        // If collapsed, just emit a blank separator and skip hunks
-        if (collapsed) {
-            lines.push({ text: '', type: 'empty' });
-            continue;
-        }
 
         // Find hunks for this file
         const fileHunks = state.hunks.filter(
@@ -697,13 +708,12 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
         }
 
         for (const hunk of fileHunks) {
-        // Hunk header with collapse triangle. ▾ = expanded, ▸ = collapsed.
-        const hunkCollapsed = state.collapsedHunks.has(hunk.id);
-        const hunkTri = hunkCollapsed ? '▸' : '▾';
+        // Hunk header — always emit expanded triangle; collapse
+        // overlays a `▸` replacement-conceal.
         const headerInner = hunk.contextHeader
             ? `@@ ${hunk.contextHeader} @@`
             : `@@ -${hunk.oldRange.start} +${hunk.range.start} @@`;
-        const header = ` ${hunkTri} ${headerInner}`;
+        const header = ` ▾ ${headerInner}`;
 
         lines.push({
             text: header,
@@ -718,11 +728,8 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             },
         });
 
-        if (hunkCollapsed) {
-            // Skip body — single blank separator before the next hunk.
-            lines.push({ text: '', type: 'empty' });
-            continue;
-        }
+        // (Body always emitted — collapse is handled by overlay
+        // conceals on the body's byte range.)
 
         // (Comments are line-based — they appear under their attached
         // diff line via pushLineComments below, never as hunk-level.)
@@ -984,6 +991,28 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     const hunkRowByHunkId: Record<string, number> = {};
     const diffLineRowByCommentId: Record<string, number> = {};
     const entryPropsByRow: Record<number, Record<string, unknown>> = {};
+    // Byte ranges of collapsible bodies + triangle chars, captured in
+    // this same single pass so collapse later just toggles conceals
+    // (no rebuild). The "body" of an entity is the byte range from the
+    // byte after its header's newline up to the byte before the next
+    // header that ends it.
+    const sectionBodyRange: Record<string, { start: number; end: number }> = {};
+    const fileBodyRange: Record<string, { start: number; end: number }> = {};
+    const hunkBodyRange: Record<string, { start: number; end: number }> = {};
+    const sectionTriRange: Record<string, { start: number; end: number }> = {};
+    const fileTriRange: Record<string, { start: number; end: number }> = {};
+    const hunkTriRange: Record<string, { start: number; end: number }> = {};
+    let curSection: string | null = null;
+    let curFile: string | null = null;
+    let curHunk: string | null = null;
+    let sectionBodyStart = 0;
+    let fileBodyStart = 0;
+    let hunkBodyStart = 0;
+    // ▾ triangle is at byte offset 1 inside every header text (after one
+    // leading space). UTF-8 length: 3 bytes.
+    const TRI_OFFSET = 1;
+    const TRI_LEN = 3;
+
     let runningByte = 0;
     let row = 0; // 0-indexed counter; row + 1 is the 1-indexed line number
     let lastDiffLineRow = 0; // 1-indexed row of the most recent +/-/context line
@@ -1009,6 +1038,32 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
         if (line.fileKey !== undefined) props.fileKey = line.fileKey;
         if (line.fileIndex !== undefined) props.fileIndex = line.fileIndex;
 
+        const entryStart = runningByte;
+
+        // Header bookkeeping — close any in-progress body for the
+        // entities about to be replaced, then open a new body range.
+        if (line.type === 'section-header' && line.filePath) {
+            if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: entryStart };
+            if (curFile) fileBodyRange[curFile] = { start: fileBodyStart, end: entryStart };
+            if (curSection) sectionBodyRange[curSection] = { start: sectionBodyStart, end: entryStart };
+            curSection = line.filePath;
+            curFile = null;
+            curHunk = null;
+            sectionTriRange[curSection] = { start: entryStart + TRI_OFFSET, end: entryStart + TRI_OFFSET + TRI_LEN };
+        }
+        if (line.type === 'file-header' && line.fileKey) {
+            if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: entryStart };
+            if (curFile) fileBodyRange[curFile] = { start: fileBodyStart, end: entryStart };
+            curFile = line.fileKey;
+            curHunk = null;
+            fileTriRange[curFile] = { start: entryStart + TRI_OFFSET, end: entryStart + TRI_OFFSET + TRI_LEN };
+        }
+        if (line.type === 'hunk-header' && line.hunkId) {
+            if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: entryStart };
+            curHunk = line.hunkId;
+            hunkTriRange[curHunk] = { start: entryStart + TRI_OFFSET, end: entryStart + TRI_OFFSET + TRI_LEN };
+        }
+
         if (line.type === 'hunk-header') {
             hunkHeaderRows.push(row + 1);
             if (line.hunkId) hunkRowByHunkId[line.hunkId] = row + 1;
@@ -1023,9 +1078,6 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
             lastDiffLineRow = row + 1;
         }
         if (line.type === 'comment' && line.commentId) {
-            // Record the diff line this comment lives under so the
-            // comments panel can jump to the source line, not the
-            // comment-display row.
             diffLineRowByCommentId[line.commentId] = lastDiffLineRow || (row + 1);
         }
 
@@ -1037,7 +1089,18 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
             inlineOverlays: line.inlineOverlays,
             properties: props,
         });
+
+        // After the header is pushed, runningByte points to the first
+        // byte of the body that follows.
+        if (line.type === 'section-header') sectionBodyStart = runningByte;
+        if (line.type === 'file-header') fileBodyStart = runningByte;
+        if (line.type === 'hunk-header') hunkBodyStart = runningByte;
     }
+
+    // Close trailing bodies.
+    if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: runningByte };
+    if (curFile) fileBodyRange[curFile] = { start: fileBodyStart, end: runningByte };
+    if (curSection) sectionBodyRange[curSection] = { start: sectionBodyStart, end: runningByte };
 
     diffLineByteOffsets.push(runningByte);
 
@@ -1048,6 +1111,12 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     state.hunkRowByHunkId = hunkRowByHunkId;
     state.diffLineRowByCommentId = diffLineRowByCommentId;
     state.entryPropsByRow = entryPropsByRow;
+    state.sectionBodyRange = sectionBodyRange;
+    state.fileBodyRange = fileBodyRange;
+    state.hunkBodyRange = hunkBodyRange;
+    state.sectionTriRange = sectionTriRange;
+    state.fileTriRange = fileTriRange;
+    state.hunkTriRange = hunkTriRange;
     return entries;
 }
 
@@ -1159,6 +1228,63 @@ function updateMagitDisplay(): void {
     editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
     editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
     refreshStickyHeader(0);
+    applyFolds();
+    applyCursorLineOverlay('diff');
+}
+
+const FOLD_NS = "review-fold";
+
+/**
+ * Apply collapse state via the host's folding infrastructure. Folds
+ * are designed exactly for "header line stays visible, body lines
+ * are skipped by the renderer". A fold range covers `[bodyStart, bodyEnd)`
+ * — the line containing `bodyStart - 1` (the header) stays visible,
+ * everything inside the range gets elided.
+ *
+ * Toggling collapse on a 5000-line diff is now O(collapsed_set_size)
+ * `addFold` calls instead of a full setPanelContent + per-file
+ * fileChangeCounts scan. `clearFolds` drops the entire set in one
+ * call so re-applying after a state change is also cheap.
+ *
+ * Conceals on the triangle byte range swap ▾ → ▸ on collapsed
+ * headers (folds don't change source text, so we still need a small
+ * conceal layer for the triangle indicator).
+ */
+function applyFolds(): void {
+    if (state.groupId === null) return;
+    const diffId = state.panelBuffers["diff"];
+    if (diffId === undefined) return;
+    editor.clearFolds(diffId);
+    editor.clearConcealNamespace(diffId, FOLD_NS);
+    for (const cat of state.collapsedSections) {
+        const body = state.sectionBodyRange[cat];
+        const tri = state.sectionTriRange[cat];
+        if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
+        if (tri) editor.addConceal(diffId, FOLD_NS, tri.start, tri.end, "▸");
+    }
+    for (const key of state.collapsedFiles) {
+        const body = state.fileBodyRange[key];
+        const tri = state.fileTriRange[key];
+        if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
+        if (tri) editor.addConceal(diffId, FOLD_NS, tri.start, tri.end, "▸");
+    }
+    for (const id of state.collapsedHunks) {
+        const body = state.hunkBodyRange[id];
+        const tri = state.hunkTriRange[id];
+        if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
+        if (tri) editor.addConceal(diffId, FOLD_NS, tri.start, tri.end, "▸");
+    }
+}
+
+/**
+ * Lighter refresh used by code paths where the buffer text *does*
+ * need to change (data refresh, comment add/edit). Reapplies folds
+ * after the rebuild so collapsed entities stay collapsed.
+ */
+function updateDiffOnly(): void {
+    if (state.groupId === null) return;
+    editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+    applyFolds();
     applyCursorLineOverlay('diff');
 }
 
@@ -1290,7 +1416,7 @@ function on_review_mouse_click(data: {
             if (state.sectionHeaderRows[cat] === targetRow1) {
                 if (state.collapsedSections.has(cat)) state.collapsedSections.delete(cat);
                 else state.collapsedSections.add(cat);
-                updateMagitDisplay();
+                applyFolds();
                 const sectionRow = state.sectionHeaderRows[cat];
                 if (sectionRow !== undefined) jumpDiffCursorToRow(sectionRow);
                 return;
@@ -1302,7 +1428,7 @@ function on_review_mouse_click(data: {
                 const key = fileKey(f);
                 if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
                 else state.collapsedFiles.add(key);
-                updateMagitDisplay();
+                applyFolds();
                 const headerRow = state.fileHeaderRows[key];
                 if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
                 return;
@@ -1313,7 +1439,7 @@ function on_review_mouse_click(data: {
             if (state.hunkRowByHunkId[hunkId] === targetRow1) {
                 if (state.collapsedHunks.has(hunkId)) state.collapsedHunks.delete(hunkId);
                 else state.collapsedHunks.add(hunkId);
-                updateMagitDisplay();
+                applyFolds();
                 const hunkRow = state.hunkRowByHunkId[hunkId];
                 if (hunkRow !== undefined) jumpDiffCursorToRow(hunkRow);
                 return;
@@ -1513,7 +1639,7 @@ function review_toggle_file_collapse() {
     if (section) {
         if (state.collapsedSections.has(section)) state.collapsedSections.delete(section);
         else state.collapsedSections.add(section);
-        updateMagitDisplay();
+        applyFolds();
         const sectionRow = state.sectionHeaderRows[section];
         if (sectionRow !== undefined) jumpDiffCursorToRow(sectionRow);
         return;
@@ -1525,7 +1651,7 @@ function review_toggle_file_collapse() {
         const key = fileKey(headerFile);
         if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
         else state.collapsedFiles.add(key);
-        updateMagitDisplay();
+        applyFolds();
         const headerRow = state.fileHeaderRows[key];
         if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
         return;
@@ -1536,7 +1662,7 @@ function review_toggle_file_collapse() {
     if (hunk) {
         if (state.collapsedHunks.has(hunk.id)) state.collapsedHunks.delete(hunk.id);
         else state.collapsedHunks.add(hunk.id);
-        updateMagitDisplay();
+        applyFolds();
         const hunkRow = state.hunkRowByHunkId[hunk.id];
         if (hunkRow !== undefined) jumpDiffCursorToRow(hunkRow);
         return;
@@ -1549,7 +1675,7 @@ function review_toggle_file_collapse() {
     const key = fileKey(fallbackFile);
     if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
     else state.collapsedFiles.add(key);
-    updateMagitDisplay();
+    applyFolds();
     const headerRow = state.fileHeaderRows[key];
     if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
 }
@@ -1560,17 +1686,16 @@ registerHandler("review_toggle_file_collapse", review_toggle_file_collapse);
  * in the unified stream, then by line number. Keeping the ordering
  * here in sync with `buildCommentsPanelEntries` is important so that
  * keyboard navigation lands on the same row the user sees.
+ *
+ * Builds an O(F) path -> index map once per call instead of doing a
+ * linear scan of state.files for every comment in the sort comparator.
  */
 function commentsInPanelOrder(): ReviewComment[] {
-    const fileIndex = (file: string): number => {
-        for (let i = 0; i < state.files.length; i++) {
-            if (state.files[i].path === file) return i;
-        }
-        return Number.MAX_SAFE_INTEGER;
-    };
+    const fileIdx: Record<string, number> = {};
+    for (let i = 0; i < state.files.length; i++) fileIdx[state.files[i].path] = i;
     return [...state.comments].sort((a, b) => {
-        const fa = fileIndex(a.file);
-        const fb = fileIndex(b.file);
+        const fa = fileIdx[a.file] ?? Number.MAX_SAFE_INTEGER;
+        const fb = fileIdx[b.file] ?? Number.MAX_SAFE_INTEGER;
         if (fa !== fb) return fa - fb;
         return (a.new_line ?? a.old_line ?? 0) - (b.new_line ?? b.old_line ?? 0);
     });
@@ -1812,7 +1937,7 @@ function review_collapse_all() {
     // header row after every file collapses.
     const cur = currentFileFromCursor();
     state.collapsedFiles = new Set(state.files.map(fileKey));
-    updateMagitDisplay();
+    applyFolds();
     if (cur) {
         const headerRow = state.fileHeaderRows[fileKey(cur)];
         if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
@@ -1827,7 +1952,7 @@ function review_expand_all() {
     state.collapsedFiles.clear();
     state.collapsedSections.clear();
     state.collapsedHunks.clear();
-    updateMagitDisplay();
+    applyFolds();
     if (cur) {
         const headerRow = state.fileHeaderRows[fileKey(cur)];
         if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
@@ -2213,6 +2338,7 @@ async function refreshMagitData() {
     state.emptyState = status.emptyReason;
     state.hunks = await fetchDiffsForFiles(status.files);
     state.diffCursorRow = 1;
+    _fileCountsCache = null; // hunks just changed → drop memoized counts
     updateMagitDisplay();
     restoreCursorAfterRebuild();
     updateReviewStatus();
@@ -2848,17 +2974,14 @@ function jumpDiffCursorToRow(row: number): void {
     const idx = row - 1;
     if (idx < 0 || idx >= state.diffLineByteOffsets.length) return;
 
-    // Set the cursor by absolute byte offset. When the diff panel is
-    // focused, also fire move_document_start + N move_down so the
-    // editor's native cursor + status bar stay in sync (setBufferCursor
-    // alone leaves them at the pre-rebuild position).
+    // Set the cursor by absolute byte offset + scroll the viewport.
+    // Trust setBufferCursor — the previous N × executeAction("move_down")
+    // walk was O(target_row) round-trips into the editor and made
+    // collapsing big diffs visibly slow (thousands of round trips just
+    // to land the cursor on a header).
     const byteOffset = state.diffLineByteOffsets[idx];
     editor.setBufferCursor(diffId, byteOffset);
     editor.scrollBufferToLine(diffId, idx);
-    if (state.focusPanel === 'diff') {
-        editor.executeAction("move_document_start");
-        for (let i = 0; i < idx; i++) editor.executeAction("move_down");
-    }
     state.diffCursorRow = row;
     applyCursorLineOverlay('diff');
     refreshStickyHeader(idx);

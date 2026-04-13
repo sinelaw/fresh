@@ -5719,6 +5719,18 @@ impl Editor {
                 self.handle_clear_conceals_in_range(buffer_id, start, end);
             }
 
+            PluginCommand::AddFold {
+                buffer_id,
+                start,
+                end,
+                placeholder,
+            } => {
+                self.handle_add_fold(buffer_id, start, end, placeholder);
+            }
+            PluginCommand::ClearFolds { buffer_id } => {
+                self.handle_clear_folds(buffer_id);
+            }
+
             // ==================== Soft Break Commands ====================
             PluginCommand::AddSoftBreak {
                 buffer_id,

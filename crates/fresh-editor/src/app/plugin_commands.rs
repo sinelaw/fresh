@@ -366,6 +366,55 @@ impl Editor {
         }
     }
 
+    // ==================== Fold Commands ====================
+
+    /// Handle AddFold command — register a collapsed fold range for the
+    /// given buffer. The fold lives on the buffer-view-state's
+    /// FoldManager, which is keyed per-(split, buffer); we add it to
+    /// every view state that currently shows the buffer (typically
+    /// exactly one).
+    pub(super) fn handle_add_fold(
+        &mut self,
+        buffer_id: BufferId,
+        start: usize,
+        end: usize,
+        placeholder: Option<String>,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        for vs in self.split_view_states.values_mut() {
+            if vs.keyed_states.contains_key(&buffer_id) {
+                let buf_state = vs.ensure_buffer_state(buffer_id);
+                buf_state
+                    .folds
+                    .add(&mut state.marker_list, start, end, placeholder.clone());
+            }
+        }
+        #[cfg(feature = "plugins")]
+        {
+            self.plugin_render_requested = true;
+        }
+    }
+
+    /// Handle ClearFolds command — drop every collapsed fold range on
+    /// the buffer (across all view states that host it).
+    pub(super) fn handle_clear_folds(&mut self, buffer_id: BufferId) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        for vs in self.split_view_states.values_mut() {
+            if vs.keyed_states.contains_key(&buffer_id) {
+                let buf_state = vs.ensure_buffer_state(buffer_id);
+                buf_state.folds.clear(&mut state.marker_list);
+            }
+        }
+        #[cfg(feature = "plugins")]
+        {
+            self.plugin_render_requested = true;
+        }
+    }
+
     // ==================== Soft Break Commands ====================
 
     /// Handle AddSoftBreak command

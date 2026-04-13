@@ -1115,6 +1115,23 @@ pub enum PluginCommand {
         end: usize,
     },
 
+    /// Add a collapsed fold range. Hides the byte range
+    /// `[start, end)` from rendering — the line containing `start - 1`
+    /// (the fold's "header") stays visible while the lines covered by
+    /// the range are skipped. Used by plugins that want to expose
+    /// outline-style collapse without rebuilding buffer content.
+    AddFold {
+        buffer_id: BufferId,
+        start: usize,
+        end: usize,
+        /// Optional placeholder text to show on the header line
+        /// (currently unused by the renderer; reserved for future use).
+        placeholder: Option<String>,
+    },
+
+    /// Clear every collapsed fold range on the buffer.
+    ClearFolds { buffer_id: BufferId },
+
     /// Add a soft break point for marker-based line wrapping.
     /// The break is stored as a marker that auto-adjusts on buffer edits,
     /// eliminating the flicker caused by async view_transform round-trips.

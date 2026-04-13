@@ -44,6 +44,32 @@ interface ProcessHandle<T> extends PromiseLike<T> {
 type BufferId = number;
 /** Split identifier */
 type SplitId = number;
+/**
+* Payload delivered to handlers registered with `editor.on("mouse_click", ...)`.
+*
+* All coordinate fields are in cell (terminal character) units. `buffer_*`
+* fields are `null` when the click did not land in any buffer panel.
+*/
+interface MouseClickHookArgs {
+	/** Screen column (0-indexed). */
+	column: number;
+	/** Screen row (0-indexed). */
+	row: number;
+	/** Mouse button: "left", "right", "middle". */
+	button: string;
+	/** Modifier keys (e.g. "shift"). */
+	modifiers: string;
+	/** X offset of the content area the click landed in. */
+	content_x: number;
+	/** Y offset of the content area the click landed in. */
+	content_y: number;
+	/** Buffer under the click, or `null` when outside any buffer panel. */
+	buffer_id: number | null;
+	/** 0-indexed buffer row (line number) of the click, accounting for scroll. */
+	buffer_row: number | null;
+	/** 0-indexed byte column inside the buffer row. */
+	buffer_col: number | null;
+}
 type TextPropertyEntry = {
 	/**
 	* Text content for this entry
@@ -1284,6 +1310,17 @@ interface EditorAPI {
 	* Clear all conceal ranges that overlap with a byte range
 	*/
 	clearConcealsInRange(bufferId: number, start: number, end: number): boolean;
+	/**
+	* Add a collapsed fold range. Hides bytes [start, end) from
+	* rendering — the line containing `start - 1` (the fold "header")
+	* stays visible, while subsequent lines covered by the range are
+	* skipped.
+	*/
+	addFold(bufferId: number, start: number, end: number, placeholder?: string): boolean;
+	/**
+	* Clear every collapsed fold range on the buffer.
+	*/
+	clearFolds(bufferId: number): boolean;
 	/**
 	* Add a soft break point for marker-based line wrapping
 	*/

@@ -3034,8 +3034,16 @@ impl SplitRenderer {
         }
 
         // Apply conceal ranges - filter/replace tokens that fall within concealed byte ranges.
-        // Only apply in Compose mode; Source mode shows the raw markdown syntax.
-        if is_compose && !state.conceals.is_empty() {
+        // Conceals are honored unconditionally now: plugins are
+        // responsible for managing their own conceal state. The
+        // markdown-compose plugin clears its `md-syntax` namespace when
+        // toggling to Source view (so raw markers reappear), and the
+        // review-diff plugin uses conceals to fold whole sections /
+        // files / hunks of its virtual buffer without rebuilding. The
+        // previous `is_compose` gate baked a Markdown-specific UX rule
+        // into the generic conceal mechanism, which prevented other
+        // plugins from using conceals on non-compose buffers.
+        if !state.conceals.is_empty() {
             let viewport_end = tokens
                 .iter()
                 .filter_map(|t| t.source_offset)
