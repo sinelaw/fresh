@@ -1269,6 +1269,90 @@ fn test_refresh_toolbar_with_staged_file() {
 }
 
 // ---------------------------------------------------------------------------
+// ISSUE #7: n / p do not cross file boundaries
+// ---------------------------------------------------------------------------
+
+/// Pressing `n` from the last hunk of file A should advance to the first
+/// hunk of file B (in display order). Today it clamps at end of file A,
+/// so a user reviewing multiple files has to `Tab` and `j` between files
+/// to make progress.
+#[test]
+fn test_issue7_next_hunk_crosses_file_boundaries() {
+    init_tracing_from_env();
+
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Two files, one hunk each.
+    let main_rs = repo.path.join("src/main.rs");
+    fs::write(
+        &main_rs,
+        "fn main() {\n    println!(\"FILE_A_CHANGE\");\n}\n",
+    )
+    .unwrap();
+    let lib_rs = repo.path.join("src/lib.rs");
+    fs::write(
+        &lib_rs,
+        "// library\npub fn helper() {\n    // FILE_B_CHANGE\n}\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        45,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("FILE_A_CHANGE"))
+        .unwrap();
+
+    let _ = open_review_diff(&mut harness);
+
+    // The file list is sorted alphabetically, so lib.rs (FILE_B_CHANGE)
+    // sits at index 0 and main.rs (FILE_A_CHANGE) at index 1. The diff
+    // panel starts on lib.rs.
+    let initial = harness.screen_to_string();
+    assert!(
+        initial.contains("FILE_B_CHANGE"),
+        "pre-check: diff should start on lib.rs. Screen:\n{}",
+        initial
+    );
+
+    // Tab into the diff pane. First `n` lands on lib.rs's only hunk.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    for _ in 0..5 {
+        harness.tick_and_render().unwrap();
+    }
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..5 {
+        harness.tick_and_render().unwrap();
+    }
+    // Second `n`: must cross into main.rs's first hunk.
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+    }
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("FILE_A_CHANGE") && screen.contains("DIFF FOR src/main.rs"),
+        "ISSUE-7: second `n` should have crossed from lib.rs to main.rs. \
+         Screen:\n{}",
+        screen
+    );
+}
+
+// ---------------------------------------------------------------------------
 // ISSUE #8: n / p hints invisible in the files-pane toolbar
 // ---------------------------------------------------------------------------
 
@@ -1341,8 +1425,10 @@ fn test_issue1_resize_cycle_restores_all_chrome() {
         before.contains("*Review Diff*"),
         "pre-check: tab row visible"
     );
+    // Group 1 fits comfortably; use "Stage" / "Unstage" as the toolbar
+    // witness (later groups may degrade to key-only at narrow widths).
     assert!(
-        before.contains("Stage") && before.contains("Close"),
+        before.contains("Stage") && before.contains("Unstage"),
         "pre-check: toolbar visible"
     );
 
@@ -1371,7 +1457,7 @@ fn test_issue1_resize_cycle_restores_all_chrome() {
             s.contains(" File ")
                 && s.contains("*Review Diff*")
                 && s.contains("Stage")
-                && s.contains("Close")
+                && s.contains("Unstage")
         })
         .unwrap();
 }

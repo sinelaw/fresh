@@ -750,14 +750,15 @@ function buildToolbar(W: number): TextPropertyEntry {
     // viewport is narrow, the most useful hints get full labels while
     // less discoverable ones are truncated to key-only or dropped.
     // Hunk navigation (`n`/`p`) lives in the third group of both toolbars
-    // so a user on the files pane can still discover it. The per-focus
-    // difference is the file-opening / refresh affordances that only
-    // make sense when the files pane has focus.
+    // so a user on the files pane can still discover it. In the files
+    // toolbar, Export / Close come first so their labels survive narrow
+    // viewports (keeping the previous narrow-width behaviour intact); the
+    // diff toolbar leads with n/p since it's primarily a review surface.
     const groups: HintItem[][] = state.focusPanel === 'files'
         ? [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
             [{ key: "c", label: "Comment" }, { key: "N", label: "Note" }, { key: "x", label: "Del" }],
-            [{ key: "n", label: "Next" }, { key: "p", label: "Prev" }, { key: "e", label: "Export" }, { key: "q", label: "Close" }, { key: "↵", label: "Open" }, { key: "Tab", label: "Switch" }, { key: "r", label: "Refresh" }],
+            [{ key: "e", label: "Export" }, { key: "q", label: "Close" }, { key: "n", label: "Next" }, { key: "p", label: "Prev" }, { key: "↵", label: "Open" }, { key: "Tab", label: "Switch" }, { key: "r", label: "Refresh" }],
           ]
         : [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
@@ -2015,8 +2016,40 @@ function updateReviewStatus(): void {
     }
 }
 
+/** Count hunks owned by the file at `index` in `state.files`. */
+function hunkCountForFileAt(index: number): number {
+    const f = state.files[index];
+    if (!f) return 0;
+    return state.hunks.filter(h => h.file === f.path && h.gitStatus === f.category).length;
+}
+
+/**
+ * Move selection to the next/previous file that actually has hunks, then
+ * jump the diff-panel cursor to the first/last hunk in that file.
+ * Returns true iff a jump happened.
+ */
+function jumpToAdjacentFileHunk(direction: 1 | -1, firstOrLast: 'first' | 'last'): boolean {
+    let idx = state.selectedIndex + direction;
+    while (idx >= 0 && idx < state.files.length) {
+        if (hunkCountForFileAt(idx) > 0) {
+            // selectFile early-returns when idx matches selectedIndex (it
+            // never does here) and resets diffCursorRow to 1 while
+            // rebuilding the diff panel, which repopulates hunkHeaderRows.
+            selectFile(idx);
+            const rows = state.hunkHeaderRows;
+            if (rows.length === 0) return false;
+            const target = firstOrLast === 'first' ? rows[0] : rows[rows.length - 1];
+            jumpDiffCursorToRow(target);
+            return true;
+        }
+        idx += direction;
+    }
+    return false;
+}
+
 function review_next_hunk() {
-    // Magit review-mode diff panel: jump to the next hunk header row.
+    // Magit review-mode diff panel: jump to the next hunk header row,
+    // crossing into the next file if we're already on the last hunk.
     if (state.groupId !== null && state.focusPanel === 'diff') {
         for (const row of state.hunkHeaderRows) {
             if (row > state.diffCursorRow) {
@@ -2024,6 +2057,7 @@ function review_next_hunk() {
                 return;
             }
         }
+        jumpToAdjacentFileHunk(1, 'first');
         return;
     }
     // Composite diff-view hunk navigation is handled by the Action system
@@ -2033,7 +2067,8 @@ function review_next_hunk() {
 registerHandler("review_next_hunk", review_next_hunk);
 
 function review_prev_hunk() {
-    // Magit review-mode diff panel: jump to the previous hunk header row.
+    // Magit review-mode diff panel: jump to the previous hunk header row,
+    // crossing into the previous file if we're already on the first hunk.
     if (state.groupId !== null && state.focusPanel === 'diff') {
         for (let i = state.hunkHeaderRows.length - 1; i >= 0; i--) {
             const row = state.hunkHeaderRows[i];
@@ -2042,6 +2077,7 @@ function review_prev_hunk() {
                 return;
             }
         }
+        jumpToAdjacentFileHunk(-1, 'last');
         return;
     }
     // Composite diff-view hunk navigation is handled by the Action system
