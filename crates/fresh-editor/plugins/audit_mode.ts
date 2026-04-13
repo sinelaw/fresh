@@ -783,10 +783,15 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
  */
 
 // Theme colors for toolbar key hints
-const STYLE_KEY_FG: OverlayColorSpec = "syntax.keyword";
-const STYLE_KEY_BG: OverlayColorSpec = "editor.selection_bg";
+// Toolbar styling — explicitly NOT using `ui.status_bar_bg` because that
+// key is a saturated accent in some themes (Dracula's hot pink). Instead
+// we paint the toolbar with `editor.bg` so it visually matches the
+// editor content and keys/labels get reliable contrast against it.
+//   * Keys: `editor.fg` + bold (white-bold on dark, etc.).
+//   * Labels: `editor.line_number_fg` (dim foreground in every theme).
+const STYLE_KEY_FG: OverlayColorSpec = "editor.fg";
 const STYLE_HINT_FG: OverlayColorSpec = "editor.line_number_fg";
-const STYLE_TOOLBAR_BG: OverlayColorSpec = "ui.status_bar_bg";
+const STYLE_TOOLBAR_BG: OverlayColorSpec = "editor.bg";
 const STYLE_TOOLBAR_SEP: OverlayColorSpec = "ui.split_separator_fg";
 
 interface HintItem {
@@ -1170,15 +1175,30 @@ function on_review_mouse_click(data: {
     const stickyId = state.panelBuffers["sticky"];
     const commentsId = state.panelBuffers["comments"];
 
-    // Click in the diff buffer: only the file-header row is interactive.
+    // Click in the diff buffer: section headers and file headers are
+    // both interactive — clicking either toggles its fold state.
     if (data.buffer_id === diffId) {
         const targetRow1 = data.buffer_row + 1;
+        // Section header click: toggle the whole category.
+        for (const cat of Object.keys(state.sectionHeaderRows)) {
+            if (state.sectionHeaderRows[cat] === targetRow1) {
+                if (state.collapsedSections.has(cat)) state.collapsedSections.delete(cat);
+                else state.collapsedSections.add(cat);
+                updateMagitDisplay();
+                const sectionRow = state.sectionHeaderRows[cat];
+                if (sectionRow !== undefined) jumpDiffCursorToRow(sectionRow);
+                return;
+            }
+        }
+        // File header click: toggle the single file.
         for (const f of state.files) {
             if (state.fileHeaderRows[fileKey(f)] === targetRow1) {
                 const key = fileKey(f);
                 if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
                 else state.collapsedFiles.add(key);
                 updateMagitDisplay();
+                const headerRow = state.fileHeaderRows[key];
+                if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
                 return;
             }
         }
@@ -1480,7 +1500,17 @@ function review_enter_dispatch() {
         review_open_selected_comment();
         return;
     }
-    review_drill_down();
+    // Only drill down when the cursor is inside a file's diff content.
+    // Pressing Enter on a section header, file header, blank separator,
+    // or comment row would otherwise navigate to a side-by-side view of
+    // some unrelated file (whichever currentFileFromCursor happens to
+    // resolve to). Quietly no-op instead.
+    const props = readPropsAtCursor('diff');
+    if (!props) return;
+    const t = props["type"];
+    if (t === 'add' || t === 'remove' || t === 'context' || t === 'hunk-header') {
+        review_drill_down();
+    }
 }
 registerHandler("review_enter_dispatch", review_enter_dispatch);
 
@@ -1618,14 +1648,29 @@ async function applyLineSelection(action: 'stage' | 'unstage' | 'discard') {
 }
 
 function review_collapse_all() {
+    // Remember which file the cursor is in so we can land on its
+    // header row after every file collapses.
+    const cur = currentFileFromCursor();
     state.collapsedFiles = new Set(state.files.map(fileKey));
     updateMagitDisplay();
+    if (cur) {
+        const headerRow = state.fileHeaderRows[fileKey(cur)];
+        if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+    }
 }
 registerHandler("review_collapse_all", review_collapse_all);
 
 function review_expand_all() {
+    // Same intuition for unfold-all: keep the cursor on the file it was
+    // in (rows shift as collapsed files re-emit their hunks).
+    const cur = currentFileFromCursor();
     state.collapsedFiles.clear();
+    state.collapsedSections.clear();
     updateMagitDisplay();
+    if (cur) {
+        const headerRow = state.fileHeaderRows[fileKey(cur)];
+        if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+    }
 }
 registerHandler("review_expand_all", review_expand_all);
 
