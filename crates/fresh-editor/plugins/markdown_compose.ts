@@ -161,11 +161,13 @@ function processTableBorders(
   // Use theme keys (resolved at render time so the borders follow theme
   // changes — same pattern as addOverlay's fg/bg options).
   //
-  //   * fg → editor.line_number_fg (the same dim chrome colour the gutter
-  //     uses, which already exists in every theme)
+  //   * fg → editor.fg (the default document foreground, matching the
+  //     concealed `│` / `─` glyphs inside row text so the virtual
+  //     `┌─┬─┐` / `├─┼─┤` / `└─┴─┘` frame doesn't create a visible seam
+  //     where it meets the in-text borders)
   //   * bg → editor.bg (matches the document background so the borders
   //     blend in rather than carving an opaque slab through the page)
-  const borderOptions = { fg: "editor.line_number_fg", bg: "editor.bg" };
+  const borderOptions = { fg: "editor.fg", bg: "editor.bg" };
 
   for (const line of lines) {
     const ns = `md-tb-${line.line_number}`;
