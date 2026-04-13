@@ -2403,7 +2403,9 @@ fn test_review_diff_tab_toggles_file_collapse() {
     // collapsible ancestor of a hunk is file, then section). Without this
     // the cursor lands on the section header row and Tab collapses the
     // whole section instead of just the file.
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Press Tab to toggle collapse on the file under the cursor.
