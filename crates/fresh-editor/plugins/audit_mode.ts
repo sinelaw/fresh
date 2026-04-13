@@ -2984,6 +2984,35 @@ function findCommentAtCursor(): ReviewComment | null {
 }
 
 async function review_add_comment() {
+    // If the cursor is sitting on an existing comment row, edit it
+    // directly — `c` doubles as "edit this comment" so the user
+    // doesn't have to first move back to the diff line.
+    const props = propsAtCursorRow();
+    if (props && props["type"] === 'comment' && typeof props["commentId"] === 'string') {
+        const existing = state.comments.find(c => c.id === props["commentId"]);
+        if (existing) {
+            editingCommentId = existing.id;
+            pendingCommentInfo = {
+                hunkId: existing.hunk_id,
+                file: existing.file,
+                lineType: existing.line_type,
+                oldLine: existing.old_line,
+                newLine: existing.new_line,
+                lineContent: existing.line_content,
+            };
+            const lineRef =
+                existing.line_type === 'add' && existing.new_line ? `+${existing.new_line}`
+                : existing.line_type === 'remove' && existing.old_line ? `-${existing.old_line}`
+                : existing.new_line ? `L${existing.new_line}`
+                : existing.old_line ? `L${existing.old_line}` : 'line';
+            const label =
+                editor.t("prompt.edit_comment", { line: lineRef }) ||
+                `Edit comment on ${lineRef}: `;
+            editor.startPromptWithInitial(label, "review-comment", existing.text);
+            return;
+        }
+    }
+
     const info = getCurrentLineInfo();
     if (!info) {
         editor.setStatus(
@@ -2993,7 +3022,7 @@ async function review_add_comment() {
         return;
     }
 
-    // Check for existing comment to edit
+    // Check for existing comment on this diff line to edit
     const existing = findCommentAtCursor();
 
     pendingCommentInfo = info;
@@ -3068,6 +3097,13 @@ function on_review_prompt_confirm(args: { prompt_type: string; input: string }):
         return true;
     }
 
+    // Remember the cursor row from before the rebuild so we can put the
+    // user back where they were. Inserting a comment row shifts later
+    // rows down by one, but the line the user was on keeps its row
+    // number — so saving the row pre-rebuild and restoring it after
+    // lands the cursor on the same diff line.
+    const cursorRowBeforeRebuild = state.diffCursorRow;
+
     if (editingCommentId) {
         // Edit mode: update existing comment (empty text keeps the comment unchanged)
         if (args.input && args.input.trim()) {
@@ -3076,6 +3112,7 @@ function on_review_prompt_confirm(args: { prompt_type: string; input: string }):
                 existing.text = args.input.trim();
                 existing.timestamp = new Date().toISOString();
                 updateMagitDisplay();
+                jumpDiffCursorToRow(cursorRowBeforeRebuild);
                 editor.setStatus("Comment updated");
             }
         } else {
@@ -3101,6 +3138,7 @@ function on_review_prompt_confirm(args: { prompt_type: string; input: string }):
         };
         state.comments.push(comment);
         updateMagitDisplay();
+        jumpDiffCursorToRow(cursorRowBeforeRebuild);
         let lineRef = 'hunk';
         if (comment.line_type === 'add' && comment.new_line) {
             lineRef = `line +${comment.new_line}`;
