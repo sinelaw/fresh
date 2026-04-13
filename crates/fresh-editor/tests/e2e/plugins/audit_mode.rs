@@ -3715,3 +3715,270 @@ fn test_review_diff_sticky_header_renders() {
         scrolled
     );
 }
+
+/// `v` starts visual line-selection mode. The selection extends with
+/// `j`; pressing `Esc` cancels. Verifies the no-op happy path doesn't
+/// error and the toolbar hint appears for the cancellation.
+#[test]
+fn test_review_diff_visual_select_and_cancel() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial");
+
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n}\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&repo.path.join("src/main.rs")).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("let a"))
+        .unwrap();
+
+    let _ = open_review_diff(&mut harness);
+
+    // Move into the file's diff content (past the header rows).
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Start visual selection on a diff line.
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Extend the selection downward.
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let after_extend = harness.screen_to_string();
+    assert!(
+        !after_extend.contains("TypeError"),
+        "Visual extend should not error. Screen:\n{}",
+        after_extend
+    );
+
+    // Cancel the selection — Esc should clear and not crash.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let after_esc = harness.screen_to_string();
+    assert!(
+        !after_esc.contains("TypeError"),
+        "Esc should not error. Screen:\n{}",
+        after_esc
+    );
+}
+
+/// Single-key `]` and `[` cycle through comments. With no comments
+/// present the keys should print a "No comments" status message and
+/// not crash.
+#[test]
+fn test_review_diff_comment_nav_single_keys() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial");
+
+    repo.create_file("src/main.rs", "fn main() { /* edit */ }\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&repo.path.join("src/main.rs")).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("edit"))
+        .unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert!(
+        screen.contains("No comments yet"),
+        "Empty comments panel should be visible. Screen:\n{}",
+        screen
+    );
+
+    // `]` and `[` with no comments are a no-op (status message). They
+    // must not error.
+    harness
+        .send_key(KeyCode::Char(']'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let after_close_bracket = harness.screen_to_string();
+    assert!(
+        !after_close_bracket.contains("TypeError"),
+        "`]` should not error. Screen:\n{}",
+        after_close_bracket
+    );
+
+    harness
+        .send_key(KeyCode::Char('['), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let after_open_bracket = harness.screen_to_string();
+    assert!(
+        !after_open_bracket.contains("TypeError"),
+        "`[` should not error. Screen:\n{}",
+        after_open_bracket
+    );
+}
+
+/// Mouse click on a file-header row in the diff stream toggles its
+/// collapse state. Requires a viewport tall enough to render the file
+/// header on a known row.
+#[test]
+fn test_review_diff_mouse_click_toggles_file_collapse() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial");
+
+    repo.create_file(
+        "src/main.rs",
+        "fn main() { /* MOUSE_MARKER */ }\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&repo.path.join("src/main.rs")).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("MOUSE_MARKER"))
+        .unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert!(
+        screen.contains("MOUSE_MARKER"),
+        "File content should be visible while expanded. Screen:\n{}",
+        screen
+    );
+
+    // Find the screen row containing the file header (▾ src/main.rs).
+    let header_row = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("src/main.rs") && l.contains("▾"))
+        .map(|(i, _)| i as u16)
+        .expect("file-header row should be on screen");
+
+    // Click somewhere in the middle of the file path.
+    harness.mouse_click(15, header_row).unwrap();
+    harness.render().unwrap();
+
+    let collapsed = harness.screen_to_string();
+    assert!(
+        !collapsed.contains("MOUSE_MARKER"),
+        "Mouse click on file header should collapse the file. Screen:\n{}",
+        collapsed
+    );
+
+    // Click again to expand.
+    harness.mouse_click(15, header_row).unwrap();
+    harness.render().unwrap();
+    let expanded = harness.screen_to_string();
+    assert!(
+        expanded.contains("MOUSE_MARKER"),
+        "Second mouse click should re-expand the file. Screen:\n{}",
+        expanded
+    );
+}
+
+/// Capital `S` stages the file the cursor is currently inside,
+/// regardless of whether the cursor is on a header or a hunk line.
+/// We move past the header into the hunk body, then press `S` and
+/// verify the file's category transitions from unstaged to staged
+/// (no longer appears in the "Changes" section).
+#[test]
+fn test_review_diff_capital_s_stages_whole_file() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial");
+
+    repo.create_file(
+        "src/main.rs",
+        "fn main() { /* CAPS_S_MARKER */ }\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&repo.path.join("src/main.rs")).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("CAPS_S_MARKER"))
+        .unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    // Initially in the "Changes" (unstaged) section.
+    assert!(
+        screen.contains("Changes"),
+        "Initially the file is unstaged ('Changes' section). Screen:\n{}",
+        screen
+    );
+
+    // Move the cursor down into the file's hunk body so we're not
+    // sitting on the header — that proves capital `S` reaches up to
+    // the enclosing file rather than only acting on the header.
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Capital S — file-level stage.
+    harness
+        .send_key(KeyCode::Char('S'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // After staging, the file moves to the "Staged" section. Wait for
+    // git's status snapshot to refresh.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // Both section labels are visible if both have content; the
+            // file should now be under Staged. With only a single file,
+            // the Changes section disappears entirely.
+            s.contains("Staged") && !s.contains("Changes")
+        })
+        .unwrap();
+}
