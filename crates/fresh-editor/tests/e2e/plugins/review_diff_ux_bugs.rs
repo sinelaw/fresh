@@ -1269,6 +1269,76 @@ fn test_refresh_toolbar_with_staged_file() {
 }
 
 // ---------------------------------------------------------------------------
+// ISSUE #1: Terminal resize leaves chrome hidden after shrink + grow
+// ---------------------------------------------------------------------------
+
+/// After shrinking the terminal to a small size and growing it back, the
+/// menu bar, tab row, and toolbar should all be visible again. Checking
+/// only GIT STATUS/DIFF (as test_bug2 does) is not enough — the bug that
+/// the usability review flagged is that the *chrome* stays hidden.
+#[test]
+fn test_issue1_resize_cycle_restores_all_chrome() {
+    init_tracing_from_env();
+    let (repo, main_rs) = repo_with_one_modification();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        45,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("CHANGED"))
+        .unwrap();
+
+    let before = open_review_diff(&mut harness);
+
+    // Pre-check: full chrome is present before resize.
+    assert!(before.contains(" File "), "pre-check: menu visible");
+    assert!(
+        before.contains("*Review Diff*"),
+        "pre-check: tab row visible"
+    );
+    assert!(
+        before.contains("Stage") && before.contains("Close"),
+        "pre-check: toolbar visible"
+    );
+
+    // Shrink.
+    harness.resize(80, 24).unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("GIT STATUS") || s.contains("DIFF")
+        })
+        .unwrap();
+
+    // Grow back.
+    harness.resize(160, 45).unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("GIT STATUS") && s.contains("DIFF")
+        })
+        .unwrap();
+
+    // Every piece of chrome that was visible pre-resize must be visible again.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains(" File ")
+                && s.contains("*Review Diff*")
+                && s.contains("Stage")
+                && s.contains("Close")
+        })
+        .unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // ISSUE #2: Side-by-side n/p leave the status-bar Ln/Col stale
 // ---------------------------------------------------------------------------
 
