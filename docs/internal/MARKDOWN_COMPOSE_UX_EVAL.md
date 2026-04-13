@@ -307,105 +307,127 @@ Cumulatively, with 11 long-wrap items the user has to wheel ~11 extra times
 to traverse the same content as the keyboard's `Ctrl+End`, so mouse scrolling
 appears to "lag" or "only cover half".
 
-### 6.3 Root cause
+### 6.3 Root cause — scroll math ignores plugin soft-break markers
 
-`crates/fresh-editor/src/app/input.rs:1539-1565` `handle_mouse_scroll` (compose
-path) calls `Viewport::scroll_view_lines` with the **stale**
-`view_transform.tokens` cached from the previous render's `SubmitViewTransform`
-response.
+**Updated 2026-04-13** after the user clarified that the bug also reproduces
+with very slow, single wheel events. My initial hypothesis (race between
+`view_transform_request` and `SubmitViewTransform`) is wrong: the
+markdown_compose plugin no longer uses the view-transform pipeline at all
+for wrapping. From `crates/fresh-editor/plugins/markdown_compose.ts:1489`:
 
-`crates/fresh-editor/src/view/viewport.rs:476-504` `scroll_view_lines`:
+> `view_transform_request` is no longer needed — soft wrapping is handled by
+> marker-based soft breaks (computed in `lines_changed`).
 
-```rust
-let current_idx  = self.find_view_line_for_byte(view_lines, self.top_byte);
-let target_idx   = current_idx + line_offset;            // (signed)
-let max_top_idx  = view_lines.len().saturating_sub(viewport_height);
-let clamped_idx  = target_idx.min(max_top_idx);          // ← the trap
-self.top_byte    = source_byte_for(view_lines[clamped_idx]);
+So in compose mode `view_transform.tokens` is `None`,
+`handle_mouse_scroll` (input.rs:1551) takes the **buffer-based** branch and
+calls `Viewport::scroll_down`, which delegates to `scroll_down_visual`
+(viewport.rs:281-368) when line wrap is on.
+
+The bug is that `scroll_down_visual` (and friends `scroll_up_visual`,
+`apply_visual_scroll_limit`, `find_max_visual_scroll_position`,
+`set_top_byte_with_limit`) all count visual rows by calling `wrap_line`
+(`crates/fresh-editor/src/primitives/line_wrapping.rs:129`) on the raw
+source text. They are **completely unaware** of the markdown plugin's
+soft-break markers. `grep -n soft_break crates/fresh-editor/src/view/viewport.rs`
+returns zero matches.
+
+`wrap_line` only inserts a hanging indent when the *source* text starts
+with whitespace (`detect_indent` at `line_wrapping.rs:158`). A list item
+like `1. Item 1: word1 ... word199` has no leading whitespace, so
+`wrap_line` wraps it at the full viewport width — about 12 rows for the
+fixture. But the markdown plugin inserts a 3-column hanging indent on every
+continuation line (matching the visual width of the `"1. "` marker), giving
+~13 rows. A similar mismatch applies to bullets, blockquotes (`>` indent),
+and tables (column-aware widths).
+
+Concrete consequence: in `scroll_down_visual` at viewport.rs:309-313, the
+"can satisfy scroll within current line" early-return uses the wrong
+`current_visual_rows` count, so `top_view_line_offset` lands on the wrong
+visual row. When the renderer then composes the line with soft-break
+markers, it produces a different number of rows and the visible top doesn't
+match what the scroll handler intended.
+
+### 6.4 Empty-bottom symptom (bug 2) — same root cause
+
+Reproduced cleanly with `/tmp/ux_test/end_test.md` (a small file ending with
+five 99-word numbered list items + an `EOF_MARKER`) at 60×24, slow scroll
+(0.4s between single wheel events):
+
+```
+wheel #23  top: "   word97 word98 word99"
+wheel #24  top: "   word89 word90 word91 word92 word93 word94 word9"   ← jumped backward
+wheel #25  top: "   word89 ..."   (stuck)
+wheel #26..50  top: "   word89 ..."   (stuck — wheel produces no scroll)
 ```
 
-The plugin's transformed tokens cover only the visible viewport plus a small
-look-ahead (`build_base_tokens` reads `visible_count + 4` source lines —
-`crates/fresh-editor/src/view/ui/split_rendering.rs:3657`). After enough
-scrolls, `current_idx` lands at `max_top_idx`. The next wheel computes:
+At the stuck position the bottom of the viewport shows `EOF_MARKER` then 2
+empty rows, but `Ctrl+End` from this state shows that the file content
+extends three more wrap rows above the current top. So the mouse scroll
+*clamped* short of the keyboard's max-scroll position, and a couple of `~`
+filler rows became part of the visible viewport.
 
-```
-target_idx  = max_top_idx + 3
-clamped_idx = min(max_top_idx + 3, max_top_idx) = max_top_idx
-new_top_byte = source byte at view_lines[max_top_idx] = unchanged
-```
+The clamp comes from `apply_visual_scroll_limit` (viewport.rs:373-412). It
+uses `wrap_line` to count "visual rows from current position to end of
+buffer" and, when that count is less than `viewport_height`, calls
+`find_max_visual_scroll_position` to back the viewport up. Because the count
+under-estimates rows by ~1 per long-wrap item (no hanging indent in the
+math), the clamp triggers earlier than it should. The result is a viewport
+whose bottom is filled with `~` instead of the next-item-boundary content
+the user expects. Slow vs. fast scrolling makes no difference; the math
+mistake is deterministic.
 
-So `top_byte` stays put. A *render fires* (we set `needs_render = true`),
-which fires a fresh `view_transform_request` for the same viewport, and the
-plugin's response writes back tokens whose first source byte equals the
-*current* `top_byte`. The next wheel event sees `current_idx = 0` again and
-can advance — until it hits `max_top_idx` again at the next item boundary.
+### 6.5 Reproduction summary
 
-The "missing wheel" is the wheel event that fires *during* this stuck frame.
-It produces a render, but no scroll progress. With one absorbed wheel per
-item start, mouse scrolling effectively runs at a lower rate than keyboard
-PageDown/Ctrl+End on long-wrap content.
+| Symptom | Fixture | Reproduced |
+|---------|---------|------------|
+| Wheel-absorbed at long-list item boundary (bug 1) | `big_repro.md` 60×24 | Yes; 1 wheel "lost" per `N. Item N:` start |
+| Bottom empty / mouse stops short of EOF (bug 2) | `end_test.md` 60×24 | Yes; deterministic at 0.4s spacing |
+| Either symptom in raw (non-compose) mode | same fixtures | No — plugin soft-breaks are not applied |
+| Either symptom in compose mode without lists/long-wrap | small docs | No — wrap_line and plugin agree when there's no hanging indent |
 
-### 6.4 Empty-bottom symptom (bug 2)
+The deciding factor is the mismatch between `wrap_line`'s row count and the
+renderer's effective row count. Bullets, numbered lists, blockquotes, and
+fenced code (with leading whitespace from indented lists) all trigger a
+hanging-indent mismatch.
 
-Same root cause: when the user scrolls past the safe-coverage area of the
-stale tokens (e.g., from a `Ctrl+End` jump or rapid wheel burst), the
-renderer uses tokens whose source range no longer covers `top_byte`. The
-view-anchor logic in
-`crates/fresh-editor/src/view/ui/split_rendering.rs:4293-4326`
-`calculate_view_anchor` then falls through to
-`start_line_idx: 0`, but `view_lines[0]`'s source byte is *behind* `top_byte`,
-so the renderer either re-renders stale content or — when the iteration
-exhausts before filling the viewport — emits `~` filler rows for the rest of
-the screen. The next render with fresh tokens fixes it, but that one frame is
-visible to the user as "the bottom is empty until I wheel again".
+### 6.6 Suggested fix
 
-I observed this transiently after rapid wheel bursts (200+ events back-to-back),
-with the visible content being only the last item plus `~` rows below; the
-state was stable for >2 seconds before further input cleared it.
+The fix needs to reconcile scroll math with rendered layout. Three options
+in increasing scope:
 
-### 6.5 Suggested fix
+**A. Make `wrap_line` aware of list-marker hanging indent.** Detect a
+leading list/blockquote/numbered-list marker (`-`, `*`, `1.`, `>` etc.) in
+the source text and treat its visual width as the hanging indent for
+continuation lines. This brings `wrap_line` in line with the markdown
+plugin's wrapping for the common cases. Pure rust change in
+`primitives/line_wrapping.rs`. May still mis-count for tables / images
+where the plugin uses byte-position-specific breaks.
 
-Three viable directions, in increasing scope:
+**B. Have the viewport consult the buffer's `soft_breaks` markers.**
+Replace `wrap_line(line_content, &wrap_config)` in `scroll_down_visual`
+etc. with a function that returns `wrap_line`'s segments **plus** any
+soft-break markers in the line's byte range. This makes scroll math an
+exact inverse of what the renderer does; works for any plugin that adds
+soft breaks. Requires plumbing the buffer's marker list into the viewport
+(currently it's passed only `&mut Buffer`).
 
-**A. Cheap clamp fix (recommended starting point).**
-In `Viewport::scroll_view_lines`, when scrolling DOWN and `target_idx >
-max_top_idx`, fall back to advancing `top_byte` past the cached tokens'
-coverage by walking the *underlying buffer* for the remaining delta. Roughly:
+**C. Move all mouse-scroll math into the view-pipeline.** Render
+view-lines for the buffer's full visible region (or build them lazily) and
+walk those instead of re-wrapping the source. This is what
+`scroll_view_lines` does today for plugins that *do* use `view_transform`,
+just generalised to the soft-break case.
 
-```rust
-let clamped_idx = target_idx.min(max_top_idx);
-if line_offset > 0 && target_idx > max_top_idx {
-    // Stale tokens don't cover the requested target.
-    // Advance by the cached portion now, and let the next render fetch
-    // fresh tokens for the rest. To prevent the wheel being "lost",
-    // also bump top_byte by at least one source line so we make progress.
-    let cached_delta = max_top_idx.saturating_sub(current_idx);
-    if cached_delta == 0 {
-        // No room left in the cache — advance to the next source line directly.
-        // (Fall through to a buffer-based scroll_down for `line_offset` rows.)
-    }
-}
-```
+(B) is the most surgical fix: one extra parameter on `scroll_down_visual` /
+`scroll_up_visual` and a tweaked row-count helper. (A) would also fix this
+without any new plumbing but is less general (won't help table conceals).
 
-**B. Invalidate stale tokens on scroll.** After `handle_mouse_scroll` mutates
-`top_byte`, mark `view_transform` as needing refresh and have the renderer
-prefer `base_tokens` until fresh ones arrive. Trades extra plugin work per
-wheel for predictable scrolling.
+### 6.7 Repro artifacts
 
-**C. Make the look-ahead wider.** Bump `max_lines = visible_count + 4` to a
-larger constant (say `visible_count * 3`) so even long-wrapped paragraphs
-have enough cached view lines to absorb several wheel events between renders.
-Cheap, but masks the underlying race rather than fixing it.
-
-(A) is likely the right first cut: it's a small change in `viewport.rs`,
-preserves the fast path, and provably eliminates the "wheel absorbed at item
-boundary" symptom that I reproduced.
-
-### 6.6 Repro artifacts
-
-- `/tmp/ux_test/big_repro.md` — fixture
-- This evaluation, sections 6.1–6.4, contains the exact tmux SGR mouse
+- `/tmp/ux_test/big_repro.md` — paragraphs + 99-row table + 29 long-wrap
+  items + sentinel, used for the wheel-absorbed scenario
+- `/tmp/ux_test/end_test.md` — small file with 5 long-wrap items at the
+  end, used for the bottom-empty / mouse-stops-short scenario
+- This document, sections 6.1–6.5, contains the exact tmux SGR mouse
   sequences (`\x1b[<65;col;rowM`) used to drive the wheel events.
 
 ---
