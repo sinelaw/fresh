@@ -24,6 +24,7 @@
     "status.failed_new_version": "Failed to load new file version",
     "status.diff_summary": "Side-by-side diff: +%{added} -%{removed} ~%{modified} | 'q' to return",
     "status.no_hunk_selected": "No hunk selected for comment",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment",
     "status.comment_added": "Comment added to %{line}",
     "status.comment_cancelled": "Comment cancelled",
     "status.overall_comment_added": "Note added",
@@ -117,7 +118,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "de": {
     "cmd.review_diff": "Unterschiede prufen",
@@ -177,7 +179,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "es": {
     "cmd.review_diff": "Revisar Diferencias",
@@ -237,7 +240,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "fr": {
     "cmd.review_diff": "Revoir les Differences",
@@ -297,7 +301,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "it": {
     "cmd.review_diff": "Revisiona differenze",
@@ -357,7 +362,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "ja": {
     "cmd.review_diff": "差分レビュー",
@@ -417,7 +423,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "ko": {
     "cmd.review_diff": "차이점 검토",
@@ -477,7 +484,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "pt-BR": {
     "cmd.review_diff": "Revisar Diferencas",
@@ -537,7 +545,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "ru": {
     "cmd.review_diff": "Просмотр изменений",
@@ -597,7 +606,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "th": {
     "cmd.review_diff": "ตรวจสอบความแตกต่าง",
@@ -657,7 +667,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "uk": {
     "cmd.review_diff": "Перегляд змін",
@@ -717,7 +728,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "vi": {
     "cmd.review_diff": "Xem xét khác biệt",
@@ -777,7 +789,8 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   },
   "zh-CN": {
     "cmd.review_diff": "审查差异",
@@ -837,6 +850,7 @@
     "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
     "status.lines_staged": "Lines staged",
     "status.lines_unstaged": "Lines unstaged",
-    "status.lines_discarded": "Lines discarded"
+    "status.lines_discarded": "Lines discarded",
+    "status.comment_needs_line": "Position cursor on a diff line to add a comment"
   }
 }

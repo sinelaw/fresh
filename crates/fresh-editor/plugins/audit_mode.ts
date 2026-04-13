@@ -115,6 +115,15 @@ interface ReviewState {
   // Maps hunk-id -> 1-indexed row of its hunk-header row in the diff
   // stream. Used by mouse + Tab to identify the nearest hunk.
   hunkRowByHunkId: Record<string, number>;
+  // Maps comment-id -> 1-indexed row of the *diff line* the comment is
+  // attached to (not the comment-display row itself). Lets the comments
+  // panel jump the cursor straight to the source line.
+  diffLineRowByCommentId: Record<string, number>;
+  // Maps 1-indexed row -> the entry's properties. Lets handlers look up
+  // type / hunkId / fileKey / etc. by cursor row directly, bypassing
+  // editor.getTextPropertiesAtCursor (which can return the previous
+  // row's props when the cursor sits at a row-boundary byte).
+  entryPropsByRow: Record<number, Record<string, unknown>>;
   // Maps a category name (`'staged'` etc.) -> 1-indexed row of its
   // section-header row in the unified stream. Used by Tab toggle.
   sectionHeaderRows: Record<string, number>;
@@ -154,6 +163,8 @@ const state: ReviewState = {
   collapsedSections: new Set(),
   collapsedHunks: new Set(),
   hunkRowByHunkId: {},
+  diffLineRowByCommentId: {},
+  entryPropsByRow: {},
   sectionHeaderRows: {},
   commentsByRow: {},
   commentsSelectedRow: 0,
@@ -193,6 +204,10 @@ const STYLE_COMMENT: OverlayColorSpec = "diagnostic.warning_fg";
 // using it here would blend the two highlights.
 const STYLE_FILE_HEADER_BG: OverlayColorSpec = "editor.current_line_bg";
 const STYLE_HUNK_HEADER_BG: OverlayColorSpec = "editor.current_line_bg";
+// File-header foreground: brightest reliable foreground in any theme.
+// `editor.fg` is white-ish on dark themes and black-ish on light, so it
+// always reads as the most prominent text color. Bolded for extra weight.
+const STYLE_FILE_HEADER_FG: OverlayColorSpec = "editor.fg";
 
 
 /**
@@ -605,7 +620,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
         const collapsed = state.collapsedFiles.has(key);
         const triangle = collapsed ? '▸' : '▾';
         const filename = file.origPath ? `${file.origPath} → ${file.path}` : file.path;
-        const headerText = `   ${triangle} ${filename}   +${counts.added} / -${counts.removed}`;
+        const headerText = ` ${triangle} ${filename}   +${counts.added} / -${counts.removed}`;
         lines.push({
             text: headerText,
             type: 'file-header',
@@ -614,7 +629,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             fileKey: key,
             fileIndex: fi,
             style: {
-                fg: STYLE_HEADER,
+                fg: STYLE_FILE_HEADER_FG,
                 bg: STYLE_FILE_HEADER_BG,
                 bold: true,
                 extendToLineEnd: true,
@@ -655,7 +670,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
         const headerInner = hunk.contextHeader
             ? `@@ ${hunk.contextHeader} @@`
             : `@@ -${hunk.oldRange.start} +${hunk.range.start} @@`;
-        const header = `  ${hunkTri} ${headerInner}`;
+        const header = ` ${hunkTri} ${headerInner}`;
 
         lines.push({
             text: header,
@@ -676,19 +691,8 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             continue;
         }
 
-        // Render hunk-level comments (those with no line_type) right
-        // after the hunk header so they are visible in the diff view.
-        const hunkComments = state.comments.filter(c =>
-            c.hunk_id === hunk.id && !c.line_type
-        );
-        for (const comment of hunkComments) {
-            lines.push({
-                text: `  \u00bb [hunk] ${comment.text}`,
-                type: 'comment',
-                commentId: comment.id,
-                style: { fg: STYLE_COMMENT, italic: true },
-            });
-        }
+        // (Comments are line-based — they appear under their attached
+        // diff line via pushLineComments below, never as hunk-level.)
 
         // Track actual file line numbers as we iterate
         let oldLineNum = hunk.oldRange.start;
@@ -925,8 +929,11 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     const fileHeaderRows: Record<string, number> = {};
     const sectionHeaderRows: Record<string, number> = {};
     const hunkRowByHunkId: Record<string, number> = {};
+    const diffLineRowByCommentId: Record<string, number> = {};
+    const entryPropsByRow: Record<number, Record<string, unknown>> = {};
     let runningByte = 0;
     let row = 0; // 0-indexed counter; row + 1 is the 1-indexed line number
+    let lastDiffLineRow = 0; // 1-indexed row of the most recent +/-/context line
 
     const pushEntry = (entry: TextPropertyEntry) => {
         diffLineByteOffsets.push(runningByte);
@@ -959,6 +966,17 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
         if (line.type === 'section-header' && line.filePath) {
             sectionHeaderRows[line.filePath] = row + 1;
         }
+        if (line.type === 'add' || line.type === 'remove' || line.type === 'context') {
+            lastDiffLineRow = row + 1;
+        }
+        if (line.type === 'comment' && line.commentId) {
+            // Record the diff line this comment lives under so the
+            // comments panel can jump to the source line, not the
+            // comment-display row.
+            diffLineRowByCommentId[line.commentId] = lastDiffLineRow || (row + 1);
+        }
+
+        entryPropsByRow[row + 1] = props;
 
         pushEntry({
             text: (line.text || "") + "\n",
@@ -975,6 +993,8 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     state.fileHeaderRows = fileHeaderRows;
     state.sectionHeaderRows = sectionHeaderRows;
     state.hunkRowByHunkId = hunkRowByHunkId;
+    state.diffLineRowByCommentId = diffLineRowByCommentId;
+    state.entryPropsByRow = entryPropsByRow;
     return entries;
 }
 
@@ -1254,13 +1274,15 @@ function on_review_mouse_click(data: {
         return;
     }
 
-    // Click in the comments panel: jump to the comment's location.
+    // Click in the comments panel: jump to the comment's location and
+    // hand focus to the diff so the user can immediately keep navigating.
     if (data.buffer_id === commentsId) {
         const targetRow1 = data.buffer_row + 1;
         const commentId = state.commentsByRow[targetRow1];
         if (commentId) {
-            jumpToComment(commentId);
             state.commentsSelectedRow = targetRow1;
+            jumpToComment(commentId);
+            editor.focusBufferGroupPanel(state.groupId, "diff");
             editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
         }
         return;
@@ -1277,30 +1299,32 @@ function jumpToComment(commentId: string): void {
     if (!comment) return;
     const hunk = state.hunks.find(h => h.id === comment.hunk_id);
     if (!hunk) return;
+    // Auto-expand whatever's between the cursor and this comment.
+    let needRebuild = false;
+    if (hunk.gitStatus && state.collapsedSections.has(hunk.gitStatus)) {
+        state.collapsedSections.delete(hunk.gitStatus);
+        needRebuild = true;
+    }
     const file = state.files.find(f => f.path === hunk.file && f.category === hunk.gitStatus);
     if (file) {
         const key = fileKey(file);
         if (state.collapsedFiles.has(key)) {
             state.collapsedFiles.delete(key);
-            updateMagitDisplay();
+            needRebuild = true;
         }
     }
-    // Find the row of the hunk in the rebuilt buffer.
-    let visibleIdx = 0;
-    let foundGlobal = -1;
-    for (let i = 0; i < state.hunks.length; i++) {
-        const h = state.hunks[i];
-        if (state.collapsedFiles.has(fileKeyOf(h.file, h.gitStatus || 'unstaged'))) continue;
-        if (h.id === hunk.id) { foundGlobal = visibleIdx; break; }
-        visibleIdx++;
+    if (state.collapsedHunks.has(hunk.id)) {
+        state.collapsedHunks.delete(hunk.id);
+        needRebuild = true;
     }
-    if (foundGlobal < 0) return;
-    const hunkRow = state.hunkHeaderRows[foundGlobal];
-    if (hunkRow === undefined) return;
-    // Best-effort: jump to the hunk header. Lining up to the exact line
-    // would require re-parsing the diff line offsets — the hunk header is
-    // close enough that the user can find their line in one glance.
-    jumpDiffCursorToRow(hunkRow);
+    if (needRebuild) updateMagitDisplay();
+    // Prefer the diff line the comment is anchored to (line-based);
+    // fall back to the hunk header if the lookup hasn't seen the
+    // comment yet (race / first render).
+    const lineRow = state.diffLineRowByCommentId[commentId];
+    if (lineRow !== undefined) { jumpDiffCursorToRow(lineRow); return; }
+    const hunkRow = state.hunkRowByHunkId[hunk.id];
+    if (hunkRow !== undefined) jumpDiffCursorToRow(hunkRow);
 }
 
 function on_review_viewport_changed(data: { split_id: number; buffer_id: number; top_byte: number; top_line: number | null; width: number; height: number }): void {
@@ -1386,8 +1410,16 @@ function currentFileFromCursor(): FileEntry | null {
     return bestFile;
 }
 
+/** Look up the entry's properties for the cursor's current row. Uses
+ *  the per-row props map populated during build, which is exact —
+ *  unlike `editor.getTextPropertiesAtCursor`, which can return the
+ *  previous row's properties when the cursor sits at a row boundary. */
+function propsAtCursorRow(): Record<string, unknown> | null {
+    return state.entryPropsByRow[state.diffCursorRow] || null;
+}
+
 function sectionUnderCursor(): string | null {
-    const props = readPropsAtCursor('diff');
+    const props = propsAtCursorRow();
     if (!props || props["type"] !== 'section-header') return null;
     const filePath = props["filePath"];
     return typeof filePath === 'string' ? filePath : null;
@@ -1568,7 +1600,7 @@ function review_enter_dispatch() {
     // or comment row would otherwise navigate to a side-by-side view of
     // some unrelated file (whichever currentFileFromCursor happens to
     // resolve to). Quietly no-op instead.
-    const props = readPropsAtCursor('diff');
+    const props = propsAtCursorRow();
     if (!props) return;
     const t = props["type"];
     if (t === 'add' || t === 'remove' || t === 'context' || t === 'hunk-header') {
@@ -1594,7 +1626,7 @@ registerHandler("review_comments_select_prev", review_comments_select_prev);
  */
 function review_visual_start() {
     if (state.groupId === null) return;
-    const props = readPropsAtCursor('diff');
+    const props = propsAtCursorRow();
     if (!props) return;
     const hunkId = props["hunkId"];
     const lineType = props["lineType"];
@@ -1873,7 +1905,7 @@ function readPropsAtCursor(panel: 'files' | 'diff'): Record<string, unknown> | n
  * something useful.
  */
 function getHunkAtDiffCursor(): Hunk | null {
-    const props = readPropsAtCursor('diff');
+    const props = propsAtCursorRow();
     const hunkId = props ? props["hunkId"] : undefined;
     if (typeof hunkId === 'string') {
         const found = state.hunks.find(h => h.id === hunkId);
@@ -1892,7 +1924,7 @@ function getHunkAtDiffCursor(): Hunk | null {
  * if so, otherwise null.
  */
 function fileHeaderUnderCursor(): FileEntry | null {
-    const props = readPropsAtCursor('diff');
+    const props = propsAtCursorRow();
     if (!props || props["type"] !== 'file-header') return null;
     const filePath = props["filePath"];
     if (typeof filePath !== 'string') return null;
@@ -2443,15 +2475,15 @@ function generateDiffPaneContent(
         // Line number color
         highlights.push({
             range: [currentByte + 2, currentByte + 6],
-            fg: [120, 120, 120]  // Gray line numbers
+            fg: "editor.line_number_fg",
         });
 
         if (isFiller) {
             // Filler styling - extend to full line width
             highlights.push({
                 range: [currentByte + prefixLen, currentByte + lineLen - 1],
-                fg: [60, 60, 60],
-                bg: [30, 30, 30],
+                fg: "editor.line_number_fg",
+                bg: "editor.line_number_bg",
                 extend_to_line_end: true
             });
         } else if (line.changeType === 'added' && side === 'new') {
@@ -2460,7 +2492,7 @@ function generateDiffPaneContent(
             highlights.push({
                 range: [currentByte + prefixLen, currentByte + lineLen - 1],
                 fg: STYLE_ADD_TEXT,
-                bg: [30, 50, 30],
+                bg: STYLE_ADD_BG,
                 extend_to_line_end: true
             });
         } else if (line.changeType === 'removed' && side === 'old') {
@@ -2469,7 +2501,7 @@ function generateDiffPaneContent(
             highlights.push({
                 range: [currentByte + prefixLen, currentByte + lineLen - 1],
                 fg: STYLE_REMOVE_TEXT,
-                bg: [50, 30, 30],
+                bg: STYLE_REMOVE_BG,
                 extend_to_line_end: true
             });
         } else if (line.changeType === 'modified') {
@@ -2745,20 +2777,20 @@ function jumpDiffCursorToRow(row: number): void {
     const idx = row - 1;
     if (idx < 0 || idx >= state.diffLineByteOffsets.length) return;
 
-    // Diff panel is the only scrollable panel that owns the cursor; use
-    // executeAction so the normal cursor event flow fires and the status
-    // bar line number updates correctly.
+    // Set the cursor by absolute byte offset. When the diff panel is
+    // focused, also fire move_document_start + N move_down so the
+    // editor's native cursor + status bar stay in sync (setBufferCursor
+    // alone leaves them at the pre-rebuild position).
+    const byteOffset = state.diffLineByteOffsets[idx];
+    editor.setBufferCursor(diffId, byteOffset);
+    editor.scrollBufferToLine(diffId, idx);
     if (state.focusPanel === 'diff') {
-        const delta = row - state.diffCursorRow;
-        const action = delta > 0 ? "move_down" : "move_up";
-        for (let i = 0, n = Math.abs(delta); i < n; i++) editor.executeAction(action);
-    } else {
-        const byteOffset = state.diffLineByteOffsets[idx];
-        editor.setBufferCursor(diffId, byteOffset);
-        editor.scrollBufferToLine(diffId, idx);
+        editor.executeAction("move_document_start");
+        for (let i = 0; i < idx; i++) editor.executeAction("move_down");
     }
     state.diffCursorRow = row;
     applyCursorLineOverlay('diff');
+    refreshStickyHeader(idx);
     updateReviewStatus();
 }
 
@@ -2897,28 +2929,24 @@ interface PendingCommentInfo {
     lineContent?: string;
 }
 
+/**
+ * Get the line under the cursor for comment attachment. Returns null
+ * unless the cursor is on a real diff line (`add` / `remove` / `context`)
+ * — comments are always line-based, never hunk-level.
+ */
 function getCurrentLineInfo(): PendingCommentInfo | null {
     if (state.files.length === 0) return null;
-    const cur = currentFileFromCursor();
-    if (!cur) return null;
-
-    const props = readPropsAtCursor('diff');
-    const hunkId = props ? props["hunkId"] : undefined;
-    if (typeof hunkId !== 'string') {
-        // Fallback: first hunk for the file under the cursor.
-        const hunk = state.hunks.find(
-            h => h.file === cur.path && h.gitStatus === cur.category
-        );
-        if (!hunk) return null;
-        return { hunkId: hunk.id, file: hunk.file };
-    }
-
-    const file = typeof props!["file"] === 'string' ? props!["file"] as string : cur.path;
-    const lineType = props!["lineType"] as ('add' | 'remove' | 'context' | undefined);
-    const oldLine = typeof props!["oldLine"] === 'number' ? props!["oldLine"] as number : undefined;
-    const newLine = typeof props!["newLine"] === 'number' ? props!["newLine"] as number : undefined;
-    const lineContent = typeof props!["lineContent"] === 'string' ? props!["lineContent"] as string : undefined;
-    return { hunkId, file, lineType, oldLine, newLine, lineContent };
+    const props = propsAtCursorRow();
+    if (!props) return null;
+    const hunkId = props["hunkId"];
+    const lineType = props["lineType"];
+    if (typeof hunkId !== 'string') return null;
+    if (lineType !== 'add' && lineType !== 'remove' && lineType !== 'context') return null;
+    const file = typeof props["file"] === 'string' ? props["file"] as string : '';
+    const oldLine = typeof props["oldLine"] === 'number' ? props["oldLine"] as number : undefined;
+    const newLine = typeof props["newLine"] === 'number' ? props["newLine"] as number : undefined;
+    const lineContent = typeof props["lineContent"] === 'string' ? props["lineContent"] as string : undefined;
+    return { hunkId, file, lineType: lineType as 'add' | 'remove' | 'context', oldLine, newLine, lineContent };
 }
 
 // Pending prompt state for event-based prompt handling
@@ -2930,7 +2958,7 @@ let editingCommentId: string | null = null; // non-null when editing an existing
  * comment display line itself or on the diff line it's attached to.
  */
 function findCommentAtCursor(): ReviewComment | null {
-    const props = readPropsAtCursor('diff');
+    const props = propsAtCursorRow();
     if (!props) return null;
 
     // Cursor sits directly on a comment display line.
@@ -2958,7 +2986,10 @@ function findCommentAtCursor(): ReviewComment | null {
 async function review_add_comment() {
     const info = getCurrentLineInfo();
     if (!info) {
-        editor.setStatus(editor.t("status.no_hunk_selected"));
+        editor.setStatus(
+            editor.t("status.comment_needs_line") ||
+                "Position cursor on a diff line to add a comment"
+        );
         return;
     }
 
@@ -2968,7 +2999,7 @@ async function review_add_comment() {
     pendingCommentInfo = info;
     editingCommentId = existing?.id || null;
 
-    let lineRef = 'hunk';
+    let lineRef = 'line';
     if (info.lineType === 'add' && info.newLine) {
         lineRef = `+${info.newLine}`;
     } else if (info.lineType === 'remove' && info.oldLine) {
