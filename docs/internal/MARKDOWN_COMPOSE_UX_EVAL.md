@@ -15,6 +15,14 @@ mode. It successfully conceals inline syntax (`**`, `*`, `` ` ``, `[…](…)`),
 draws clean Unicode tables, applies a centered page when an explicit width is
 configured, and round-trips back to the raw markdown losslessly.
 
+> **Update 2026-04-13:** after a second-pass reassessment against the fixed
+> binary, **none of the originally-flagged items remain at major severity**.
+> The two sev-3 issues (H8 status-bar truncation, H9 cursor-skip) are
+> resolved or were misdiagnosed; the mouse-wheel scroll bug found
+> separately (§6) is also fixed. The remaining open items are cosmetic,
+> editor-wide (not compose-specific), or defensible design choices — see
+> the "Bottom line on remaining issues" note after §2 for the breakdown.
+
 Two things impressed during testing:
 
 - **Bidirectional sync is solid.** All inline-syntax characters survive a
@@ -40,20 +48,86 @@ No panics, no document corruption, no scrollbar desync was observed.
 
 ## 2. Heuristic Violations (severity 0–4)
 
-| # | Heuristic | Issue | Severity |
-|---|-----------|-------|----------|
-| H1 | Visibility of System Status | No per-tab/per-buffer indicator that Compose is active. The tab strip shows `test_file.md* ×` identically in raw and compose; only the bottom status bar carries the cue. | 2 (Minor) |
-| H2 | Visibility of System Status | Status message contains an untranslated i18n key after a buffer switch: `buffer.switched` (should resolve to a localized string). | 1 (Cosmetic) |
-| H3 | Consistency & Standards | In the command palette, prefix-search "compose" surfaces `Markdown: Set Compose Width` *first* and the more frequently used `Markdown: Toggle Compose/Preview` second. New users hit Enter and land in the width prompt. | 2 (Minor) |
-| H4 | User Control & Freedom | Undo (`Ctrl+Z`) is character-granular even for a long burst of typed text. ~80 keystrokes required ~80 undos to revert a sentence. | 2 (Minor) |
-| H5 | Aesthetic & Minimalist Design | Tables render with inner row separator (`├─┼─┤`) but **no top or bottom border**. Visually the first row sits unsupported above the separator and the last row floats. | 2 (Minor) |
-| H6 | Aesthetic & Minimalist Design | Code-fence blocks render every line in a single `38;5;34` (green) color. No language-aware highlighting bleeds through compose mode despite TextMate grammar being declared as the highlighting source for raw. | 2 (Minor) |
-| H7 | Consistency & Standards | Cursor enters a link in compose: the conceal disappears and the line **stays raw** until the cursor moves away. Functionally correct, but the abrupt re-render with the cursor on the line makes it look like a rendering glitch the first time. | 2 (Minor) |
-| H8 | Visibility of System Status | The status bar text is not responsive: at 60 columns the buffer name and `Ln/Col` indicator are silently truncated to `t  LF  ASCII  Markdown …`, hiding cursor position entirely. | 3 (Major) |
-| H9 | Consistency & Standards | Compose mode width-jump test: `:23` (jump to raw line 23 == `\| 1 \| 2 \| 3 \|`) followed by 3× `→` lands the cursor at `Ln 24, Col 3` (i.e., on `End.`), skipping past the table cell entirely. The `→` arrow does not consistently traverse intra-cell positions. | 3 (Major) |
-| H10 | Error Prevention & Tolerance | Malformed input (`**unclosed`, `` ``` ``unclosed-fence``, broken `\| row \|`) does **not** crash, does **not** corrupt the buffer, and styling does not bleed into surrounding text. ✅ Pass — listed for completeness. | 0 (No problem) |
-| H11 | User Control & Freedom | Compose-mode toggle is per-buffer; it is not preserved when opening a new markdown file in the same session unless `Toggle Compose/Preview (All Files)` is used. The two commands are discoverable but the relationship is not explained. | 1 (Cosmetic) |
-| H12 | Aesthetic & Minimalist Design | Margin/page boundaries are visually clean: page background `48;5;16`, gutter background `48;5;232`, scrollbar `48;5;7`. No bleed observed at width 80 / terminal 200. ✅ | 0 (No problem) |
+> **Update 2026-04-13 (post-fix reassessment):** the `Status` column tracks
+> what was done about each issue after a fresh second-pass evaluation against
+> the fixed binary. Several entries were rated too high in the first pass —
+> H6 was not actually compose-specific (raw mode shows the same flat code
+> color, it's a markdown-grammar limitation), H9 was a misdiagnosis on my
+> part (`:23` correctly landed on the empty line below the table, not in
+> it), H7's reveal is actually surgical (only the link's brackets reveal,
+> not other inline syntax on the line). The "real" remaining issues are
+> mostly cosmetic and either editor-wide (not compose-specific) or
+> defensible design choices.
+
+| # | Heuristic | Issue | Severity (revised) | Status |
+|---|-----------|-------|--------------------|--------|
+| H1 | Visibility of System Status | No per-tab/per-buffer indicator that Compose is active. Tab strip identical in raw vs compose; only the bottom status bar carries the cue (briefly, as a transient message). | 1 (Cosmetic) | Defer — status bar already announces the toggle; persistent indicator is a nicety. |
+| H2 | Visibility of System Status | Status message contains an untranslated i18n key after a buffer switch: `buffer.switched`. | 1 (Cosmetic) | **Fixed** in `37234c2` (added key to all 14 locales). |
+| H3 | Consistency & Standards | Palette query "compose" surfaces `Markdown: Set Compose Width` first; "Toggle Compose/Preview" second. Alphabetical tiebreak for equally-scored fuzzy matches. New users hit Enter and land in the width prompt. | 2 (Minor) | Defer — the fuzzy scorer's tiebreak is technically correct; a different ranking just favors a different user. Frecency-tracking would be a non-trivial scope expansion. |
+| H4 | User Control & Freedom | `Ctrl+Z` is character-granular even for a long burst of typed text. ~80 keystrokes require ~80 undos to revert. | 2 (Minor) | Defer — editor-wide undo behavior, not compose-specific. Worth a separate "coalesce typing into word/burst undo" task. |
+| H5 | Aesthetic & Minimalist Design | Tables render the inner separator (`├─┼─┤`) but no top or bottom border. Header row sits unsupported, last row floats. | 2 (Minor / Cosmetic) | Defer — purely aesthetic, tables work. Plugin can use `addVirtualLine` to inject `┌─┬─┐` / `└─┴─┘` rows; tracked as a follow-up. |
+| H6 | Aesthetic & Minimalist Design | ~~Code-fence body uniform color in compose.~~ **Re-tested:** raw mode shows the same single color (`38;5;34`) — the markdown grammar treats fenced bodies as undifferentiated `code` tokens regardless of language tag. Not a compose regression. | 0 (Not compose-specific) | Ignore — pre-existing markdown-grammar behavior; fixing it requires routing language-tagged grammars through the markdown highlighter, which is a separate, sizeable workstream. |
+| H7 | Consistency & Standards | ~~Cursor on link reveals the entire raw line.~~ **Re-tested:** only the link itself reveals (brackets + URL), bold/italic/code conceals on the same line stay applied. The reveal is surgical, not whole-line. | 1 (Cosmetic) | Ignore — defensible UX (auto-reveal under cursor is the editing affordance). |
+| H8 | Visibility of System Status | Status bar truncation at narrow widths — buffer name and `Ln/Col` clipped at 60 columns. | 3 (Major) | **Fixed** in `f0bc652` (right-side now drops low-priority items to keep left-side budget). |
+| H9 | Consistency & Standards | ~~Cursor "skips past" table cells in compose.~~ **Misdiagnosed:** `:23` in the original test_file.md correctly landed on the empty line below the table (table ended at line 22), not inside it. Rights advanced one source byte at a time, which crossed into "End." as expected. Cursor walks `|`→`│` conceals correctly (verified with `h9_fixture.md`). The real friction is that compose hides line numbers, so users can't easily count raw lines for `:N` jumps. | 1 (Cosmetic — discoverability of raw line numbers in compose) | Ignore as bug — see §3.7 below. Optional follow-up: surface raw `Ln` near the cursor row even when the gutter is hidden. |
+| H10 | Error Prevention & Tolerance | Malformed input does not crash, corrupt, or bleed styling. ✅ | 0 | n/a |
+| H11 | User Control & Freedom | Per-buffer toggle vs `(All Files)` toggle — both commands carry descriptive subtitles in the palette. Minor learning curve. | 1 (Cosmetic) | Defer — well-described already. |
+| H12 | Aesthetic & Minimalist Design | Margin/page background boundaries are visually clean. ✅ | 0 | n/a |
+
+### Bottom line on remaining issues
+
+After the post-fix pass, **none of the remaining items are major bugs**. The
+sev-3 issues (H8, H9) are resolved or were misdiagnosed. Everything else is
+either:
+
+- **Cosmetic** (H1, H5, H11) — defer to follow-up polish work,
+- **Editor-wide / pre-existing** (H4, H6) — not compose-specific regressions
+  to fix here,
+- **Defensible design choice** (H3 alphabetical tiebreak; H7 surgical
+  reveal), or
+- **Misdiagnosed** (H9) — no code change needed.
+
+If we want to keep the polish bar high we should pick H1 (per-tab
+indicator) and H5 (table top/bottom borders) for a future small PR. They're
+both cosmetic but the most "this looks unfinished" of the lot.
+
+### 3.7 H9 reproduced and reassessed
+
+I re-ran the H9 scenario against `h9_fixture.md`:
+
+```
+Line 1: # H9 repro
+Line 2: (empty)
+Line 3: | A | B | C |
+Line 4: |---|---|---|
+Line 5: | a | b | c |
+Line 6: | 1 | 2 | 3 |
+Line 7: (empty)
+Line 8: End.
+```
+
+Compose on, then `:5` then `→×5`:
+
+```
+:5         → Ln 5, Col 1   (cursor on the leading `|`)
+Right ×5   → Ln 5, Col 6   (cursor on the 6th source char — the space
+                            between `a` and the second `|`)
+```
+
+The visual cursor moves to the second `│` separator at the same step.
+`|`→`│` is a same-width replacement, so the source-byte ↔ visual-col mapping
+is direct and the cursor walks it correctly.
+
+What I originally hit (and called a "skip past the cell"): in
+`test_file.md`, the table ended at line 22 and "End." was at line 24, so
+`:23` jumped to the **empty line between them** — not into the table.
+Subsequent `→` presses crossed the newline into "End." as expected for any
+editor that respects raw-source navigation.
+
+So the only honest finding here is that compose hides line numbers, which
+makes raw-line `:N` jumps harder to predict. A future enhancement could
+keep a faint `Ln N` annotation visible at the cursor's row in compose
+mode; the current behavior is not a bug.
 
 ---
 
