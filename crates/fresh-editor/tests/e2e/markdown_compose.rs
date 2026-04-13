@@ -2433,6 +2433,166 @@ End of document.
     );
 }
 
+/// Regression test for the Down-arrow / table-borders interaction:
+///
+/// Place the cursor on a line *before* the table, press Down repeatedly,
+/// and assert that each press advances by exactly one source line until
+/// the cursor reaches the line *after* the table.
+///
+/// The original bug (added together with the table-border virtual lines
+/// in markdown_compose) was that Down would land on a virtual border row
+/// (`┌─┬─┐`, `├─┼─┤`, `└─┴─┘`), which has no source mapping, and the
+/// cursor would either get stuck or rewind to the previous row's
+/// `line_end_byte`.  The fix in `move_visual_line` walks past purely-
+/// virtual rows; this test guards against regressions of that fix or the
+/// table-border feature itself.
+#[test]
+fn test_compose_mode_cursor_down_through_table_borders() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    init_tracing_from_env();
+
+    // Small, deterministic fixture.  Lines are numbered for clarity:
+    //
+    //   1: # Before
+    //   2:
+    //   3: Line before table.
+    //   4:
+    //   5: | A | B | C |
+    //   6: |---|---|---|
+    //   7: | 1 | 2 | 3 |
+    //   8: | 4 | 5 | 6 |
+    //   9: | 7 | 8 | 9 |
+    //  10:
+    //  11: Line after table.
+    //
+    // Compose mode renders the table with the markdown_compose
+    // table-border feature, injecting `┌─┬─┐` above row 5, `├─┼─┤`
+    // between rows 7/8 and 8/9, and `└─┴─┘` below row 9.  These are
+    // virtual rows (no source mapping) — Down must skip past them so the
+    // cursor advances exactly one source line per press.
+    let md_content = "\
+# Before
+
+Line before table.
+
+| A | B | C |
+|---|---|---|
+| 1 | 2 | 3 |
+| 4 | 5 | 6 |
+| 7 | 8 | 9 |
+
+Line after table.
+";
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("cursor_through_table.md");
+    std::fs::write(&md_path, md_content).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    // Enable compose mode.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for the table-border virtual lines to be injected.
+    // Top-border row contains `┌` and `┐`; bottom-border row contains `└`
+    // and `┘`.  Stable means both are present at the same time.
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("┌") && s.contains("┐") && s.contains("└") && s.contains("┘")
+        })
+        .unwrap();
+
+    // Navigate cursor to source line 3 ("Line before table.") — two Down
+    // presses from the heading on line 1.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Helper: read the buffer line number (0-indexed) the primary cursor
+    // is currently on.
+    let cursor_line = |h: &mut EditorTestHarness| -> usize {
+        let pos = h.cursor_position();
+        let content = h.get_buffer_content().unwrap();
+        content[..pos.min(content.len())]
+            .bytes()
+            .filter(|&b| b == b'\n')
+            .count()
+    };
+
+    // Sanity: cursor is on source line 2 (0-indexed) == line 3 in 1-indexed.
+    assert_eq!(
+        cursor_line(&mut harness),
+        2,
+        "Setup: cursor should start on 'Line before table.' (0-indexed line 2)"
+    );
+
+    // Press Down repeatedly through the table and into the after-table
+    // text, recording the cursor's source-line index after each press.
+    // Expected progression — one source line per press, no stalls, no
+    // skips, no rewinds, and crossing the table boundaries:
+    //
+    //   start: 2  (Line before table.)
+    //   after Down 1: 3  (blank)
+    //   after Down 2: 4  (header `| A | B | C |`)
+    //   after Down 3: 5  (source separator `|---|---|---|`)
+    //   after Down 4: 6  (`| 1 | 2 | 3 |`)
+    //   after Down 5: 7  (`| 4 | 5 | 6 |`)
+    //   after Down 6: 8  (`| 7 | 8 | 9 |`)
+    //   after Down 7: 9  (blank below table)
+    //   after Down 8: 10 (`Line after table.`)
+    let mut observed: Vec<usize> = vec![cursor_line(&mut harness)];
+    for _ in 0..8 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        observed.push(cursor_line(&mut harness));
+    }
+
+    let expected: Vec<usize> = (2..=10).collect();
+    assert_eq!(
+        observed, expected,
+        "Down-arrow progression through compose-mode table should advance \
+         exactly one source line per press, skipping virtual border rows. \
+         Observed line indices: {observed:?}, expected: {expected:?}"
+    );
+
+    // Final assertion: cursor must end on "Line after table.", not stuck
+    // on a virtual border row or rewound to an earlier table row.
+    let final_pos = harness.cursor_position();
+    let content = harness.get_buffer_content().unwrap();
+    let after_byte = content.find("Line after table.").unwrap();
+    assert!(
+        final_pos >= after_byte,
+        "After {} Down presses cursor should be at or past 'Line after table.' \
+         (byte {after_byte}), but is at byte {final_pos}",
+        observed.len() - 1,
+    );
+}
+
 /// Regression test: pressing Down through a document with tables (in compose mode)
 /// and then Up all the way back must produce monotonically increasing then
 /// monotonically decreasing cursor byte positions.  A jump to byte 0 mid-sequence
