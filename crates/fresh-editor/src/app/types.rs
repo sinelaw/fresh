@@ -1028,15 +1028,56 @@ impl CachedLayout {
         let mappings = self.view_line_mappings.get(&split_id)?;
         let current_row = self.find_visual_row(split_id, current_pos)?;
 
-        let target_row = if direction < 0 {
-            current_row.checked_sub(1)?
-        } else {
-            let next = current_row + 1;
-            if next >= mappings.len() {
-                return None;
-            }
-            next
+        // Walk past purely-virtual rows (e.g. markdown_compose table top/
+        // bottom borders and inter-row separators).  Those rows have no
+        // source mapping at all — their `char_source_bytes` are all `None`
+        // and their `line_end_byte` is inherited from the adjacent content
+        // row.  If MoveDown/MoveUp stopped on them the cursor would land on
+        // a byte that's already at the row above's end, which in turn
+        // causes Down-after-table to teleport back to an earlier position
+        // (regression exposed by markdown_compose's table border feature).
+        //
+        // A row is "navigable" iff at least one of its visual columns maps
+        // to a real source byte.  Skip entirely-virtual rows in the move
+        // direction until we hit a navigable one or run off the edge.
+        let mut target_row = current_row;
+        let navigable = |idx: usize| -> bool {
+            mappings
+                .get(idx)
+                .map(|m| m.char_source_bytes.iter().any(|b| b.is_some()))
+                .unwrap_or(false)
         };
+        loop {
+            target_row = if direction < 0 {
+                target_row.checked_sub(1)?
+            } else {
+                let next = target_row + 1;
+                if next >= mappings.len() {
+                    return None;
+                }
+                next
+            };
+            // Either the next row has real source content, or we've reached
+            // a legitimate non-source row that the rest of the editor
+            // already treats as a cursor stop (trailing empty line at EOF,
+            // implicit blank final line).  In either case stop walking.
+            if navigable(target_row) {
+                break;
+            }
+            let mapping = mappings.get(target_row)?;
+            let is_plugin_virtual =
+                mapping.visual_to_char.is_empty() || mapping.char_source_bytes.is_empty();
+            if !is_plugin_virtual {
+                // The row has columns but none carry a source byte — most
+                // likely a plugin-injected decoration with padding.  Keep
+                // looking.
+                continue;
+            }
+            // Empty mapping (no visual columns) is how EOF-related virtual
+            // rows are represented; those are legitimate cursor stops so we
+            // accept them and fall out of the loop.
+            break;
+        }
 
         let target_mapping = mappings.get(target_row)?;
 
