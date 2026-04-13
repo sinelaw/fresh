@@ -52,13 +52,6 @@ fn test_code_action_number_key_selects_and_applies() -> anyhow::Result<()> {
     );
 
     let mut harness = EditorTestHarness::create(
-        // 120×24 (not 80) so the status bar has room for the new
-        // 11-cell `LSP (on)` indicator on the right alongside the
-        // file name + cursor + message + language pill. At 80 cols
-        // the status bar truncates and `wait_for_screen_contains("LSP (on)")`
-        // never matches, hanging the test until the CI 180s timeout
-        // (matches the widening commit 8ab5337 did for visual-regression
-        // and settings/markdown_compose tests).
         120,
         24,
         crate::common::harness::HarnessOptions::new()
@@ -69,15 +62,31 @@ fn test_code_action_number_key_selects_and_applies() -> anyhow::Result<()> {
     harness.open_file(&test_file)?;
     harness.render()?;
 
-    // Wait for LSP to be ready
-    harness.wait_for_screen_contains("LSP (on)")?;
+    // Wait for the LSP server to reach `Running` state before we ask it
+    // for code actions.  The status-bar `LSP (on)` indicator flips on as
+    // soon as the server is `Starting` / `Initializing`, so the older
+    // `wait_for_screen_contains("LSP (on)")` would return before the
+    // handshake had completed and any `textDocument/codeAction` request
+    // would be dropped on the floor (empirically reproduced: code-actions
+    // request fires, LSP initialize arrives ~170ms later, the popup never
+    // materialises and the test hits nextest's 180s ceiling).
+    harness.wait_until(|h| h.editor().is_lsp_server_ready("rust"))?;
 
     // Position cursor on "let x = 5;" (line 2)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
     harness.render()?;
 
-    // Trigger code actions via Alt+.
-    harness.send_key(KeyCode::Char('.'), KeyModifiers::ALT)?;
+    // Trigger code actions via the command palette. We avoid Alt+. because
+    // the macOS CI terminal was not delivering the Alt modifier through
+    // crossterm reliably — the keystroke never reached the action
+    // dispatcher, the popup never opened, and the test ran out its 180s
+    // nextest budget (see claude/fix-macos-ci-timeout-OZgNX diagnostic
+    // run).  The command-palette path exercises the same
+    // `Action::LspCodeActions` handler without depending on modifier
+    // decoding.
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.type_text("Code Actions")?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Wait for code action popup
@@ -144,9 +153,6 @@ fn test_code_action_arrow_enter_applies() -> anyhow::Result<()> {
     );
 
     let mut harness = EditorTestHarness::create(
-        // 120×24 (not 80): status bar room for `LSP (on)`. See sibling
-        // test `test_code_action_number_key_selects_and_applies` for
-        // the longer rationale.
         120,
         24,
         crate::common::harness::HarnessOptions::new()
@@ -157,15 +163,21 @@ fn test_code_action_arrow_enter_applies() -> anyhow::Result<()> {
     harness.open_file(&test_file)?;
     harness.render()?;
 
-    // Wait for LSP to be ready
-    harness.wait_for_screen_contains("LSP (on)")?;
+    // Wait for the LSP server to reach `Running` state — see sibling test
+    // for the rationale (the status-bar `LSP (on)` label turns on during
+    // `Starting`, before the handshake completes).
+    harness.wait_until(|h| h.editor().is_lsp_server_ready("rust"))?;
 
     // Position cursor
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
     harness.render()?;
 
-    // Trigger code actions via Alt+.
-    harness.send_key(KeyCode::Char('.'), KeyModifiers::ALT)?;
+    // Trigger code actions via the command palette rather than Alt+. — see
+    // sibling test for the rationale (Alt modifier decoding is unreliable
+    // on macOS CI terminals).
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.type_text("Code Actions")?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
     harness.render()?;
 
     harness.wait_for_screen_contains("Extract function")?;
