@@ -101,4 +101,23 @@ mod tests {
         s.disabled = Some(true);
         assert!(s.is_disabled());
     }
+
+    /// `Suggestion::from_js` round-trips user-visible fields through
+    /// `rquickjs_serde`. A mutant that returns `Ok(Default::default())`
+    /// would drop `text` (becoming empty) and `description`.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn suggestion_from_js_decodes_distinguishing_fields() {
+        use rquickjs::{Context, FromJs, Runtime, Value};
+        let rt = Runtime::new().unwrap();
+        let ctx = Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let v: Value = ctx
+                .eval::<Value, _>(b"({text: 'hello', description: 'world'})".as_slice())
+                .unwrap();
+            let got = Suggestion::from_js(&ctx, v).unwrap();
+            assert_eq!(got.text, "hello");
+            assert_eq!(got.description.as_deref(), Some("world"));
+        });
+    }
 }

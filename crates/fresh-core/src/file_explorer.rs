@@ -30,3 +30,32 @@ impl<'js> rquickjs::FromJs<'js> for FileExplorerDecoration {
         })
     }
 }
+
+#[cfg(all(test, feature = "plugins"))]
+mod tests {
+    use super::*;
+    use rquickjs::{Context, FromJs, Runtime, Value};
+
+    /// `FileExplorerDecoration::from_js` reads every decoration field, not
+    /// just returning a defaulted stub. Uses non-zero priority and a theme
+    /// key colour to tie down the full conversion.
+    #[test]
+    fn from_js_decodes_all_visible_fields() {
+        let rt = Runtime::new().unwrap();
+        let ctx = Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let v: Value = ctx
+                .eval::<Value, _>(
+                    b"({path: '/tmp/a.rs', symbol: 'M', \
+                       color: 'ui.file_status_added_fg', priority: 7})"
+                        .as_slice(),
+                )
+                .unwrap();
+            let got = FileExplorerDecoration::from_js(&ctx, v).unwrap();
+            assert_eq!(got.path, PathBuf::from("/tmp/a.rs"));
+            assert_eq!(got.symbol, "M");
+            assert_eq!(got.priority, 7);
+            assert_eq!(got.color.as_theme_key(), Some("ui.file_status_added_fg"));
+        });
+    }
+}

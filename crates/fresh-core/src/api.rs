@@ -2513,6 +2513,210 @@ mod fromjs_impls {
             })
         }
     }
+
+    // ── Tests for FromJs / IntoJs impls ────────────────────────────────────
+    //
+    // Each impl is a one-liner that delegates to `rquickjs_serde`. A mutant
+    // that replaces the body with `Ok(Default::default())` drops the
+    // decoded payload on the floor. Every test below asserts a
+    // non-defaultable field value, so the mutant cannot pass.
+    //
+    // Note: many of the target structs do not implement `Default`, making
+    // those mutants unviable (they fail to compile) — cargo-mutants still
+    // lists them as candidates. The tests below serve double-duty as
+    // behavioural regression protection for the JS → Rust conversion layer.
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use rquickjs::{Context, Runtime};
+
+        /// Run a closure within a fresh QuickJS context so that `FromJs`
+        /// impls can be exercised end-to-end.
+        fn with_js<R>(f: impl for<'js> FnOnce(Ctx<'js>) -> R) -> R {
+            let rt = Runtime::new().expect("create rquickjs runtime");
+            let ctx = Context::full(&rt).expect("create rquickjs context");
+            ctx.with(f)
+        }
+
+        /// Evaluate a JS object literal and decode it as `T` via `FromJs`.
+        fn eval_as<T>(src: &str) -> T
+        where
+            for<'js> T: rquickjs::FromJs<'js>,
+        {
+            with_js(|ctx| {
+                let value: Value = ctx
+                    .eval::<Value, _>(src.as_bytes())
+                    .expect("eval JS source");
+                T::from_js(&ctx, value).expect("from_js decode")
+            })
+        }
+
+        #[test]
+        fn js_text_property_entry_decodes_text_and_properties() {
+            let got: JsTextPropertyEntry =
+                eval_as("({text: 'hello', properties: {file: '/x.rs'}})");
+            assert_eq!(got.text, "hello");
+            let props = got.properties.expect("properties present");
+            assert_eq!(props.get("file").and_then(|v| v.as_str()), Some("/x.rs"));
+        }
+
+        #[test]
+        fn create_virtual_buffer_options_decodes_name() {
+            let got: CreateVirtualBufferOptions = eval_as("({name: 'logs', readOnly: true})");
+            assert_eq!(got.name, "logs");
+            assert_eq!(got.read_only, Some(true));
+        }
+
+        #[test]
+        fn create_virtual_buffer_in_split_options_decodes_ratio() {
+            let got: CreateVirtualBufferInSplitOptions =
+                eval_as("({name: 'diag', ratio: 0.25, direction: 'horizontal'})");
+            assert_eq!(got.name, "diag");
+            assert!(matches!(got.ratio, Some(r) if (r - 0.25).abs() < 1e-6));
+            assert_eq!(got.direction.as_deref(), Some("horizontal"));
+        }
+
+        #[test]
+        fn create_virtual_buffer_in_existing_split_options_decodes_splitid() {
+            let got: CreateVirtualBufferInExistingSplitOptions =
+                eval_as("({name: 'n', splitId: 7})");
+            assert_eq!(got.name, "n");
+            assert_eq!(got.split_id, 7);
+        }
+
+        #[test]
+        fn create_terminal_options_decodes_cwd_and_focus() {
+            let got: CreateTerminalOptions =
+                eval_as("({cwd: '/tmp', direction: 'vertical', focus: false})");
+            assert_eq!(got.cwd.as_deref(), Some("/tmp"));
+            assert_eq!(got.direction.as_deref(), Some("vertical"));
+            assert_eq!(got.focus, Some(false));
+        }
+
+        #[test]
+        fn action_spec_decodes_action_and_count() {
+            let got: ActionSpec = eval_as("({action: 'move_word_right', count: 5})");
+            assert_eq!(got.action, "move_word_right");
+            assert_eq!(got.count, 5);
+        }
+
+        #[test]
+        fn action_popup_action_decodes_id_and_label() {
+            let got: ActionPopupAction = eval_as("({id: 'ok', label: 'OK'})");
+            assert_eq!(got.id, "ok");
+            assert_eq!(got.label, "OK");
+        }
+
+        #[test]
+        fn action_popup_options_decodes_actions_list() {
+            let got: ActionPopupOptions = eval_as(
+                "({id: 'p', title: 't', message: 'm', \
+                   actions: [{id: 'ok', label: 'OK'}]})",
+            );
+            assert_eq!(got.id, "p");
+            assert_eq!(got.title, "t");
+            assert_eq!(got.message, "m");
+            assert_eq!(got.actions.len(), 1);
+            assert_eq!(got.actions[0].id, "ok");
+        }
+
+        #[test]
+        fn view_token_wire_decodes_offset_and_kind() {
+            // Using `Newline` (a unit variant) avoids the tuple-variant
+            // wire-format ambiguity in rquickjs_serde while still exercising
+            // the `FromJs` impl end-to-end.
+            let got: ViewTokenWire = eval_as("({source_offset: 42, kind: 'Newline'})");
+            assert_eq!(got.source_offset, Some(42));
+            assert!(matches!(got.kind, ViewTokenWireKind::Newline));
+        }
+
+        #[test]
+        fn view_token_style_decodes_boolean_flags() {
+            // `fg`/`bg` are `Option<(u8, u8, u8)>` which rquickjs_serde does
+            // not decode from plain JS arrays, so we pin down the boolean
+            // flags — enough to prove the body actually ran.
+            let got: ViewTokenStyle = eval_as("({bold: true, italic: true})");
+            assert!(got.bold);
+            assert!(got.italic);
+            assert!(got.fg.is_none());
+        }
+
+        #[test]
+        fn layout_hints_decodes_compose_width() {
+            let got: LayoutHints = eval_as("({composeWidth: 120})");
+            assert_eq!(got.compose_width, Some(120));
+            assert!(got.column_guides.is_none());
+        }
+
+        #[test]
+        fn create_composite_buffer_options_decodes_name_and_sources() {
+            let got: CreateCompositeBufferOptions = eval_as(
+                "({name: 'diff', mode: 'm', \
+                   layout: {type: 'side-by-side', ratios: [0.5, 0.5], showSeparator: true}, \
+                   sources: [{bufferId: 3, label: 'OLD'}]})",
+            );
+            assert_eq!(got.name, "diff");
+            assert_eq!(got.layout.layout_type, "side-by-side");
+            assert_eq!(got.sources.len(), 1);
+            assert_eq!(got.sources[0].buffer_id, 3);
+            assert_eq!(got.sources[0].label, "OLD");
+        }
+
+        #[test]
+        fn composite_hunk_decodes_all_fields() {
+            let got: CompositeHunk =
+                eval_as("({oldStart: 1, oldCount: 2, newStart: 3, newCount: 4})");
+            assert_eq!(got.old_start, 1);
+            assert_eq!(got.old_count, 2);
+            assert_eq!(got.new_start, 3);
+            assert_eq!(got.new_count, 4);
+        }
+
+        #[test]
+        fn language_pack_config_decodes_comment_prefix_and_tab_size() {
+            let got: LanguagePackConfig =
+                eval_as("({commentPrefix: '//', tabSize: 7, useTabs: true})");
+            assert_eq!(got.comment_prefix.as_deref(), Some("//"));
+            assert_eq!(got.tab_size, Some(7));
+            assert_eq!(got.use_tabs, Some(true));
+        }
+
+        #[test]
+        fn lsp_server_pack_config_decodes_command_and_args() {
+            let got: LspServerPackConfig =
+                eval_as("({command: 'rust-analyzer', args: ['--log'], autoStart: true})");
+            assert_eq!(got.command, "rust-analyzer");
+            assert_eq!(got.args, vec!["--log".to_string()]);
+            assert_eq!(got.auto_start, Some(true));
+        }
+
+        #[test]
+        fn process_limits_pack_config_decodes_percentages() {
+            let got: ProcessLimitsPackConfig =
+                eval_as("({maxMemoryPercent: 75, maxCpuPercent: 50, enabled: true})");
+            assert_eq!(got.max_memory_percent, Some(75));
+            assert_eq!(got.max_cpu_percent, Some(50));
+            assert_eq!(got.enabled, Some(true));
+        }
+
+        /// `TextPropertiesAtCursor::into_js` must serialise the inner vector
+        /// into a JS array whose length matches the payload. A mutant that
+        /// returns a default (`undefined` / empty) value would fail either
+        /// the array check or the length check.
+        #[test]
+        fn text_properties_at_cursor_into_js_preserves_length() {
+            use rquickjs::IntoJs;
+            with_js(|ctx| {
+                let mut entry = std::collections::HashMap::new();
+                entry.insert("k".to_string(), serde_json::json!("v"));
+                let payload = TextPropertiesAtCursor(vec![entry.clone(), entry]);
+
+                let v = payload.into_js(&ctx).expect("into_js");
+                let arr = v.as_array().expect("expected JS array");
+                assert_eq!(arr.len(), 2);
+            });
+        }
+    }
 }
 
 /// Plugin API context - provides safe access to editor functionality
@@ -3534,5 +3738,384 @@ mod tests {
         let reg: TsCompletionProviderRegistration =
             serde_json::from_str(r#"{"id": "p", "displayName": "P", "priority": 3}"#).unwrap();
         assert_eq!(reg.priority, 3);
+    }
+
+    // ── Behavioural tests added to kill the mutants reported by cargo-mutants ──
+    //
+    // These tests pin down observable behaviour for tiny methods whose bodies
+    // were replaceable with a constant (e.g. `()`, `Ok(())`, `None`, or a
+    // default value) without any existing test noticing.
+
+    /// Helper: build a minimal `Command` with a given name.
+    fn mk_cmd(name: &str) -> Command {
+        Command {
+            name: name.to_string(),
+            description: String::new(),
+            action_name: String::new(),
+            plugin_name: String::new(),
+            custom_contexts: Vec::new(),
+        }
+    }
+
+    /// `CommandRegistry::register` appends new commands and replaces any
+    /// existing entry with the same name; `unregister` removes exactly the
+    /// matching entry and is a no-op for unknown names.
+    ///
+    /// Kills: replace register with `()`; `!= → ==` in register;
+    ///        replace unregister with `()`; `!= → ==` in unregister.
+    #[test]
+    fn command_registry_register_and_unregister_semantics() {
+        let r = CommandRegistry::new();
+
+        r.register(mk_cmd("a"));
+        r.register(mk_cmd("b"));
+        assert_eq!(r.commands.read().unwrap().len(), 2);
+
+        // Re-registering "a" must keep "b" (retain filters by `!=`); the
+        // `== → !=` mutant would drop "b" and leave two copies of "a".
+        r.register(mk_cmd("a"));
+        let names: Vec<String> = r
+            .commands
+            .read()
+            .unwrap()
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, vec!["b".to_string(), "a".to_string()]);
+
+        // Unregister must remove exactly "a" and preserve "b"; the `== → !=`
+        // mutant would keep "a" and drop "b".
+        r.unregister("a");
+        let names: Vec<String> = r
+            .commands
+            .read()
+            .unwrap()
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, vec!["b".to_string()]);
+
+        // Unregistering an unknown name is a no-op.
+        r.unregister("nope");
+        assert_eq!(r.commands.read().unwrap().len(), 1);
+    }
+
+    /// `OverlayColorSpec::as_rgb` returns the exact stored tuple for the RGB
+    /// variant and `None` for the theme-key variant; `as_theme_key` is the
+    /// dual. Uses a triple with no zero or one components and a theme key
+    /// that is neither empty nor `"xyzzy"` to kill every constant-return
+    /// mutant reported by cargo-mutants at once.
+    #[test]
+    fn overlay_color_spec_accessors_are_variant_specific() {
+        let rgb = OverlayColorSpec::rgb(12, 34, 56);
+        assert_eq!(rgb.as_rgb(), Some((12, 34, 56)));
+        assert_eq!(rgb.as_theme_key(), None);
+
+        let tk = OverlayColorSpec::theme_key("ui.status_bar_bg");
+        assert_eq!(tk.as_rgb(), None);
+        assert_eq!(tk.as_theme_key(), Some("ui.status_bar_bg"));
+    }
+
+    /// `PluginCommand::debug_variant_name` returns the actual variant name
+    /// derived from the `Debug` impl, not an empty or hard-coded string.
+    #[test]
+    fn plugin_command_debug_variant_name_returns_real_variant() {
+        let c = PluginCommand::SetStatus {
+            message: "hi".into(),
+        };
+        assert_eq!(c.debug_variant_name(), "SetStatus");
+
+        let c2 = PluginCommand::InsertText {
+            buffer_id: BufferId(1),
+            position: 0,
+            text: String::new(),
+        };
+        assert_eq!(c2.debug_variant_name(), "InsertText");
+    }
+
+    // ── PluginApi dispatch / mutation tests ────────────────────────────────
+    //
+    // Each `PluginApi` method is a one-liner that either pushes a
+    // `PluginCommand` onto the channel or mutates a shared registry. The
+    // mutants replace the body with `Ok(())` / `()`, i.e. the side effect
+    // disappears. One assertion per method ties the side effect down.
+
+    fn mk_api() -> (
+        PluginApi,
+        std::sync::mpsc::Receiver<PluginCommand>,
+        Arc<RwLock<HookRegistry>>,
+        Arc<RwLock<CommandRegistry>>,
+        Arc<RwLock<EditorStateSnapshot>>,
+    ) {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let snap = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let api = PluginApi::new(hooks.clone(), commands.clone(), tx, snap.clone());
+        (api, rx, hooks, commands, snap)
+    }
+
+    /// `unregister_hooks` must actually clear hooks registered under the
+    /// same name; replacing the body with `()` leaves the count at 1.
+    #[test]
+    fn plugin_api_unregister_hooks_clears_registry() {
+        let (api, _rx, hooks, _cmds, _snap) = mk_api();
+        api.register_hook("h", Box::new(|_| true));
+        assert_eq!(hooks.read().unwrap().hook_count("h"), 1);
+        api.unregister_hooks("h");
+        assert_eq!(hooks.read().unwrap().hook_count("h"), 0);
+    }
+
+    /// `register_command` / `unregister_command` must actually write through
+    /// to the shared `CommandRegistry`.
+    #[test]
+    fn plugin_api_register_and_unregister_command_write_through() {
+        let (api, _rx, _hooks, cmds, _snap) = mk_api();
+
+        api.register_command(mk_cmd("x"));
+        assert_eq!(cmds.read().unwrap().commands.read().unwrap().len(), 1);
+
+        api.unregister_command("x");
+        assert_eq!(cmds.read().unwrap().commands.read().unwrap().len(), 0);
+    }
+
+    /// Macro: assert that calling `$call` on a fresh `PluginApi` produces
+    /// exactly one `PluginCommand` matching `$pattern` with the additional
+    /// invariants in `$guard`.
+    macro_rules! assert_dispatches {
+        ($call:expr, $pattern:pat $(if $guard:expr)?) => {{
+            let (api, rx, _h, _c, _s) = mk_api();
+            let _ = $call(&api);
+            match rx.try_recv().expect("no command sent") {
+                $pattern $(if $guard)? => {}
+                other => panic!("unexpected command variant: {:?}", other),
+            }
+        }};
+    }
+
+    /// Every simple `send_command`-based method on `PluginApi` translates
+    /// its arguments into the documented `PluginCommand` variant with the
+    /// expected fields.
+    #[test]
+    fn plugin_api_send_command_methods_dispatch_correctly() {
+        // delete_range
+        assert_dispatches!(
+            |a: &PluginApi| a.delete_range(BufferId(7), 3..9),
+            PluginCommand::DeleteRange { buffer_id, range }
+                if buffer_id == BufferId(7) && range == (3..9)
+        );
+
+        // remove_overlay
+        assert_dispatches!(
+            |a: &PluginApi| a.remove_overlay(BufferId(2), "h-1".into()),
+            PluginCommand::RemoveOverlay { buffer_id, handle }
+                if buffer_id == BufferId(2) && handle.as_str() == "h-1"
+        );
+
+        // clear_namespace
+        assert_dispatches!(
+            |a: &PluginApi| a.clear_namespace(BufferId(3), "diag".into()),
+            PluginCommand::ClearNamespace { buffer_id, namespace }
+                if buffer_id == BufferId(3) && namespace.as_str() == "diag"
+        );
+
+        // clear_overlays_in_range
+        assert_dispatches!(
+            |a: &PluginApi| a.clear_overlays_in_range(BufferId(4), 10, 20),
+            PluginCommand::ClearOverlaysInRange { buffer_id, start, end }
+                if buffer_id == BufferId(4) && start == 10 && end == 20
+        );
+
+        // open_file_at_location
+        assert_dispatches!(
+            |a: &PluginApi| a.open_file_at_location(
+                PathBuf::from("/tmp/x.rs"), Some(4), Some(8)
+            ),
+            PluginCommand::OpenFileAtLocation { path, line, column }
+                if path == PathBuf::from("/tmp/x.rs")
+                    && line == Some(4)
+                    && column == Some(8)
+        );
+
+        // open_file_in_split
+        assert_dispatches!(
+            |a: &PluginApi| a.open_file_in_split(
+                2, PathBuf::from("/tmp/y.rs"), Some(5), None
+            ),
+            PluginCommand::OpenFileInSplit { split_id, path, line, column }
+                if split_id == 2
+                    && path == PathBuf::from("/tmp/y.rs")
+                    && line == Some(5)
+                    && column.is_none()
+        );
+
+        // start_prompt
+        assert_dispatches!(
+            |a: &PluginApi| a.start_prompt("label".into(), "cmd".into()),
+            PluginCommand::StartPrompt { label, prompt_type }
+                if label == "label" && prompt_type == "cmd"
+        );
+
+        // set_prompt_suggestions
+        assert_dispatches!(
+            |a: &PluginApi| a.set_prompt_suggestions(vec![
+                Suggestion::new("one".into()),
+                Suggestion::new("two".into()),
+            ]),
+            PluginCommand::SetPromptSuggestions { suggestions }
+                if suggestions.len() == 2
+                    && suggestions[0].text == "one"
+                    && suggestions[1].text == "two"
+        );
+
+        // set_prompt_input_sync
+        assert_dispatches!(
+            |a: &PluginApi| a.set_prompt_input_sync(true),
+            PluginCommand::SetPromptInputSync { sync } if sync
+        );
+        assert_dispatches!(
+            |a: &PluginApi| a.set_prompt_input_sync(false),
+            PluginCommand::SetPromptInputSync { sync } if !sync
+        );
+
+        // add_menu_item
+        assert_dispatches!(
+            |a: &PluginApi| a.add_menu_item(
+                "File".into(),
+                MenuItem::Label { info: "info".into() },
+                MenuPosition::Bottom,
+            ),
+            PluginCommand::AddMenuItem { menu_label, item, position }
+                if menu_label == "File"
+                    && matches!(item, MenuItem::Label { ref info } if info == "info")
+                    && matches!(position, MenuPosition::Bottom)
+        );
+
+        // add_menu
+        assert_dispatches!(
+            |a: &PluginApi| a.add_menu(
+                Menu {
+                    id: None,
+                    label: "Help".into(),
+                    items: vec![],
+                    when: None,
+                },
+                MenuPosition::After("Edit".into()),
+            ),
+            PluginCommand::AddMenu { menu, position }
+                if menu.label == "Help"
+                    && matches!(position, MenuPosition::After(ref s) if s == "Edit")
+        );
+
+        // remove_menu_item
+        assert_dispatches!(
+            |a: &PluginApi| a.remove_menu_item("File".into(), "Open".into()),
+            PluginCommand::RemoveMenuItem { menu_label, item_label }
+                if menu_label == "File" && item_label == "Open"
+        );
+
+        // remove_menu
+        assert_dispatches!(
+            |a: &PluginApi| a.remove_menu("File".into()),
+            PluginCommand::RemoveMenu { menu_label } if menu_label == "File"
+        );
+
+        // create_virtual_buffer
+        assert_dispatches!(
+            |a: &PluginApi| a.create_virtual_buffer("buf".into(), "mode".into(), true),
+            PluginCommand::CreateVirtualBuffer { name, mode, read_only }
+                if name == "buf" && mode == "mode" && read_only
+        );
+
+        // create_virtual_buffer_with_content
+        assert_dispatches!(
+            |a: &PluginApi| a.create_virtual_buffer_with_content(
+                "n".into(), "m".into(), false, vec![]
+            ),
+            PluginCommand::CreateVirtualBufferWithContent {
+                name, mode, read_only, show_line_numbers, show_cursors,
+                editing_disabled, hidden_from_tabs, request_id, ..
+            }
+                if name == "n" && mode == "m" && !read_only
+                    && show_line_numbers && show_cursors
+                    && !editing_disabled && !hidden_from_tabs
+                    && request_id.is_none()
+        );
+
+        // set_virtual_buffer_content
+        assert_dispatches!(
+            |a: &PluginApi| a.set_virtual_buffer_content(BufferId(9), vec![]),
+            PluginCommand::SetVirtualBufferContent { buffer_id, entries }
+                if buffer_id == BufferId(9) && entries.is_empty()
+        );
+
+        // get_text_properties_at_cursor
+        assert_dispatches!(
+            |a: &PluginApi| a.get_text_properties_at_cursor(BufferId(11)),
+            PluginCommand::GetTextPropertiesAtCursor { buffer_id }
+                if buffer_id == BufferId(11)
+        );
+
+        // define_mode
+        assert_dispatches!(
+            |a: &PluginApi| a.define_mode(
+                "m".into(),
+                vec![("j".into(), "move_down".into())],
+                true,
+                false,
+            ),
+            PluginCommand::DefineMode {
+                name, bindings, read_only, allow_text_input, plugin_name
+            }
+                if name == "m"
+                    && bindings.len() == 1
+                    && bindings[0].0 == "j"
+                    && bindings[0].1 == "move_down"
+                    && read_only
+                    && !allow_text_input
+                    && plugin_name.is_none()
+        );
+
+        // show_buffer
+        assert_dispatches!(
+            |a: &PluginApi| a.show_buffer(BufferId(77)),
+            PluginCommand::ShowBuffer { buffer_id } if buffer_id == BufferId(77)
+        );
+
+        // set_split_scroll
+        assert_dispatches!(
+            |a: &PluginApi| a.set_split_scroll(5, 128),
+            PluginCommand::SetSplitScroll { split_id, top_byte }
+                if split_id == SplitId(5) && top_byte == 128
+        );
+
+        // get_highlights
+        assert_dispatches!(
+            |a: &PluginApi| a.get_highlights(BufferId(1), 0..10, 7),
+            PluginCommand::RequestHighlights { buffer_id, range, request_id }
+                if buffer_id == BufferId(1) && range == (0..10) && request_id == 7
+        );
+    }
+
+    /// `get_active_split_id` reads the snapshot verbatim; a non-{0,1}
+    /// sentinel value kills both the `0` and `1` constant-return mutants.
+    #[test]
+    fn plugin_api_get_active_split_id_reads_snapshot() {
+        let (api, _rx, _h, _c, snap) = mk_api();
+        snap.write().unwrap().active_split_id = 42;
+        assert_eq!(api.get_active_split_id(), 42);
+    }
+
+    /// `state_snapshot_handle` returns a clone of the same `Arc`, not a
+    /// freshly-defaulted snapshot. A distinguishing field value on the
+    /// original state proves that the handle sees it.
+    #[test]
+    fn plugin_api_state_snapshot_handle_shares_underlying_arc() {
+        let (api, _rx, _h, _c, snap) = mk_api();
+        snap.write().unwrap().active_buffer_id = BufferId(42);
+
+        let h = api.state_snapshot_handle();
+        assert_eq!(h.read().unwrap().active_buffer_id, BufferId(42));
+        assert!(Arc::ptr_eq(&h, &snap));
     }
 }
