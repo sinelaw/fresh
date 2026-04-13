@@ -381,12 +381,7 @@ function addBlameHeaders(): void {
       blameState.bufferId,
       block.startByte,        // anchor position
       headerText,             // text content
-      colors.headerFg[0],     // fg_r
-      colors.headerFg[1],     // fg_g
-      colors.headerFg[2],     // fg_b
-      colors.headerBg[0],     // bg_r
-      colors.headerBg[1],     // bg_g
-      colors.headerBg[2],     // bg_b
+      { fg: colors.headerFg, bg: colors.headerBg }, // colors (RGB tuples; passing theme key strings would also work)
       true,                   // above (LineAbove)
       BLAME_NAMESPACE,        // namespace for bulk removal
       0                       // priority

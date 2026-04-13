@@ -158,9 +158,14 @@ function processTableBorders(
   }>,
   widthMap: Map<number, TableWidthInfo>,
 ): void {
-  // Light gray, on near-black (matches existing pipe→│ conceal styling).
-  const fg: [number, number, number] = [188, 188, 188];
-  const bg: [number, number, number] = [16, 16, 16];
+  // Use theme keys (resolved at render time so the borders follow theme
+  // changes — same pattern as addOverlay's fg/bg options).
+  //
+  //   * fg → editor.line_number_fg (the same dim chrome colour the gutter
+  //     uses, which already exists in every theme)
+  //   * bg → editor.bg (matches the document background so the borders
+  //     blend in rather than carving an opaque slab through the page)
+  const borderOptions = { fg: "editor.line_number_fg", bg: "editor.bg" };
 
   for (const line of lines) {
     const ns = `md-tb-${line.line_number}`;
@@ -189,13 +194,11 @@ function processTableBorders(
     // Top border: only above the very first known row of the table.
     // ┌─┬─┐ — opens the frame above the header.
     if (!prevIsTable) {
-      const top = buildTableBorderLine(allocated, "┌", "┬", "┐");
       editor.addVirtualLine(
         bufferId,
         line.byte_start,
-        top,
-        fg[0], fg[1], fg[2],
-        bg[0], bg[1], bg[2],
+        buildTableBorderLine(allocated, "┌", "┬", "┐"),
+        borderOptions,
         true, // above
         ns,
         0,
@@ -214,13 +217,11 @@ function processTableBorders(
     const prevInfo = widthMap.get(line.line_number - 1);
     const prevIsSourceSep = prevInfo?.isSourceSep === true;
     if (prevIsTable && !isSourceSep && !prevIsSourceSep) {
-      const sep = buildTableBorderLine(allocated, "├", "┼", "┤");
       editor.addVirtualLine(
         bufferId,
         line.byte_start,
-        sep,
-        fg[0], fg[1], fg[2],
-        bg[0], bg[1], bg[2],
+        buildTableBorderLine(allocated, "├", "┼", "┤"),
+        borderOptions,
         true, // above
         ns,
         1,
@@ -231,16 +232,14 @@ function processTableBorders(
     // └─┴─┘ — closes the frame.  Anchor at the END of the row's bytes
     // (one before the trailing newline) and place "below".
     if (!nextIsTable) {
-      const bottom = buildTableBorderLine(allocated, "└", "┴", "┘");
       // byte_end points just past the newline; anchor at last byte of
       // the row content so the virtual line renders directly under it.
       const anchor = Math.max(line.byte_start, line.byte_end - 1);
       editor.addVirtualLine(
         bufferId,
         anchor,
-        bottom,
-        fg[0], fg[1], fg[2],
-        bg[0], bg[1], bg[2],
+        buildTableBorderLine(allocated, "└", "┴", "┘"),
+        borderOptions,
         false, // below
         ns,
         0,

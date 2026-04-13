@@ -2543,22 +2543,45 @@ impl JsEditorApi {
     }
 
     /// Add a virtual line (full line above/below a position)
+    ///
+    /// The `options` object accepts:
+    ///   * `fg`, `bg` — either an `[r, g, b]` array (each `0..=255`) or a
+    ///     theme-key string (e.g. `"editor.line_number_fg"`).  Theme keys
+    ///     are resolved at render time so the line follows theme changes.
+    ///     Both default to `null` (no foreground / transparent background).
     #[allow(clippy::too_many_arguments)]
-    pub fn add_virtual_line(
+    pub fn add_virtual_line<'js>(
         &self,
+        _ctx: rquickjs::Ctx<'js>,
         buffer_id: u32,
         position: u32,
         text: String,
-        fg_r: u8,
-        fg_g: u8,
-        fg_b: u8,
-        bg_r: u8,
-        bg_g: u8,
-        bg_b: u8,
+        options: rquickjs::Object<'js>,
         above: bool,
         namespace: String,
         priority: i32,
-    ) -> bool {
+    ) -> rquickjs::Result<bool> {
+        use fresh_core::api::OverlayColorSpec;
+
+        // Same flexible parser as add_overlay: accepts theme key string or
+        // RGB array.  Returns None when the key is missing or unusable.
+        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+            if let Ok(theme_key) = obj.get::<_, String>(key) {
+                if !theme_key.is_empty() {
+                    return Some(OverlayColorSpec::ThemeKey(theme_key));
+                }
+            }
+            if let Ok(arr) = obj.get::<_, Vec<u8>>(key) {
+                if arr.len() >= 3 {
+                    return Some(OverlayColorSpec::Rgb(arr[0], arr[1], arr[2]));
+                }
+            }
+            None
+        }
+
+        let fg_color = parse_color_spec("fg", &options);
+        let bg_color = parse_color_spec("bg", &options);
+
         // Track namespace for cleanup on unload
         self.plugin_tracked_state
             .borrow_mut()
@@ -2567,18 +2590,19 @@ impl JsEditorApi {
             .virtual_line_namespaces
             .push((BufferId(buffer_id as usize), namespace.clone()));
 
-        self.command_sender
+        Ok(self
+            .command_sender
             .send(PluginCommand::AddVirtualLine {
                 buffer_id: BufferId(buffer_id as usize),
                 position: position as usize,
                 text,
-                fg_color: (fg_r, fg_g, fg_b),
-                bg_color: Some((bg_r, bg_g, bg_b)),
+                fg_color,
+                bg_color,
                 above,
                 namespace,
                 priority,
             })
-            .is_ok()
+            .is_ok())
     }
 
     // === Prompts ===

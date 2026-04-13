@@ -1345,8 +1345,14 @@ interface EditorAPI {
 	clearVirtualTextNamespace(bufferId: number, namespace: string): boolean;
 	/**
 	* Add a virtual line (full line above/below a position)
+	* 
+	* The `options` object accepts:
+	* * `fg`, `bg` — either an `[r, g, b]` array (each `0..=255`) or a
+	* theme-key string (e.g. `"editor.line_number_fg"`).  Theme keys
+	* are resolved at render time so the line follows theme changes.
+	* Both default to `null` (no foreground / transparent background).
 	*/
-	addVirtualLine(bufferId: number, position: number, text: string, fgR: number, fgG: number, fgB: number, bgR: number, bgG: number, bgB: number, above: boolean, namespace: string, priority: number): boolean;
+	addVirtualLine(bufferId: number, position: number, text: string, options: Record<string, unknown>, above: boolean, namespace: string, priority: number): boolean;
 	/**
 	* Show a prompt and wait for user input (async)
 	* Returns the user input or null if cancelled

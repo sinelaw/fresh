@@ -3097,7 +3097,7 @@ impl SplitRenderer {
         .collect();
 
         // Inject virtual lines (LineAbove/LineBelow) from VirtualTextManager
-        let lines = Self::inject_virtual_lines(source_lines, state);
+        let lines = Self::inject_virtual_lines(source_lines, state, theme);
         let placeholder_style = fold_placeholder_style(theme);
         let lines = Self::apply_folding(
             lines,
@@ -3332,7 +3332,11 @@ impl SplitRenderer {
     }
 
     /// Inject virtual lines (LineAbove/LineBelow) into the ViewLine stream
-    fn inject_virtual_lines(source_lines: Vec<ViewLine>, state: &EditorState) -> Vec<ViewLine> {
+    fn inject_virtual_lines(
+        source_lines: Vec<ViewLine>,
+        state: &EditorState,
+        theme: &crate::view::theme::Theme,
+    ) -> Vec<ViewLine> {
         use crate::view::virtual_text::VirtualTextPosition;
 
         // Get viewport byte range from source lines.
@@ -3381,7 +3385,14 @@ impl SplitRenderer {
                         && *anchor_pos < end
                         && vtext.position == VirtualTextPosition::LineAbove
                     {
-                        result.push(Self::create_virtual_line(&vtext.text, vtext.style));
+                        // Resolve theme keys against the live theme so the
+                        // virtual line follows theme changes (theme keys
+                        // are stored on the VirtualText itself, not
+                        // pre-baked into `style`).
+                        result.push(Self::create_virtual_line(
+                            &vtext.text,
+                            vtext.resolved_style(theme),
+                        ));
                     }
                 }
             }
@@ -3396,7 +3407,14 @@ impl SplitRenderer {
                         && *anchor_pos < end
                         && vtext.position == VirtualTextPosition::LineBelow
                     {
-                        result.push(Self::create_virtual_line(&vtext.text, vtext.style));
+                        // Resolve theme keys against the live theme so the
+                        // virtual line follows theme changes (theme keys
+                        // are stored on the VirtualText itself, not
+                        // pre-baked into `style`).
+                        result.push(Self::create_virtual_line(
+                            &vtext.text,
+                            vtext.resolved_style(theme),
+                        ));
                     }
                 }
             }
@@ -5342,7 +5360,7 @@ impl SplitRenderer {
                                     &mut line_spans,
                                     &mut line_view_map,
                                     text_with_space,
-                                    vtext.style,
+                                    vtext.resolved_style(theme),
                                     None,
                                 );
                             }
@@ -5420,7 +5438,7 @@ impl SplitRenderer {
                                     &mut line_spans,
                                     &mut line_view_map,
                                     text_with_space,
-                                    vtext.style,
+                                    vtext.resolved_style(theme),
                                     None,
                                 );
                             }

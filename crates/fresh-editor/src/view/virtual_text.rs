@@ -80,8 +80,17 @@ pub struct VirtualText {
     pub marker_id: MarkerId,
     /// Text to display (for LineAbove/LineBelow, this is the full line content)
     pub text: String,
-    /// Styling (typically dimmed/gray for hints)
+    /// Fallback styling, used when the theme-key fields below are unset OR
+    /// the keys don't resolve in the active theme.  The renderer composes
+    /// the final style by overlaying any resolved theme colours on top of
+    /// this fallback (see [`VirtualText::resolved_style`]).
     pub style: Style,
+    /// Optional theme key for the foreground colour (e.g.
+    /// `"editor.line_number_fg"`).  Resolved on every render so the line
+    /// follows live theme changes.
+    pub fg_theme_key: Option<String>,
+    /// Optional theme key for the background colour.
+    pub bg_theme_key: Option<String>,
     /// Where to render relative to the marker position
     pub position: VirtualTextPosition,
     /// Priority for ordering multiple items at same position (higher = later)
@@ -90,6 +99,29 @@ pub struct VirtualText {
     pub string_id: Option<String>,
     /// Optional namespace for bulk removal (like Overlay's namespace)
     pub namespace: Option<VirtualTextNamespace>,
+}
+
+impl VirtualText {
+    /// Resolve the on-screen `Style` for this entry against a live theme.
+    ///
+    /// Theme keys take precedence over the fallback `style`'s fg/bg.  If a
+    /// key fails to resolve (e.g. the theme doesn't define it), the
+    /// fallback colour is kept.  Modifiers from `style` (bold/italic/etc.)
+    /// always survive.
+    pub fn resolved_style(&self, theme: &crate::view::theme::Theme) -> Style {
+        let mut style = self.style;
+        if let Some(ref key) = self.fg_theme_key {
+            if let Some(color) = theme.resolve_theme_key(key) {
+                style = style.fg(color);
+            }
+        }
+        if let Some(ref key) = self.bg_theme_key {
+            if let Some(color) = theme.resolve_theme_key(key) {
+                style = style.bg(color);
+            }
+        }
+        style
+    }
 }
 
 /// Unique identifier for a virtual text entry
@@ -150,6 +182,8 @@ impl VirtualTextManager {
                 marker_id,
                 text,
                 style,
+                fg_theme_key: None,
+                bg_theme_key: None,
                 position: vtext_position,
                 priority,
                 string_id: None,
@@ -185,6 +219,8 @@ impl VirtualTextManager {
                 marker_id,
                 text,
                 style,
+                fg_theme_key: None,
+                bg_theme_key: None,
                 position: vtext_position,
                 priority,
                 string_id: Some(string_id),
@@ -218,6 +254,39 @@ impl VirtualTextManager {
         namespace: VirtualTextNamespace,
         priority: i32,
     ) -> VirtualTextId {
+        self.add_line_with_theme_keys(
+            marker_list,
+            position,
+            text,
+            style,
+            None,
+            None,
+            placement,
+            namespace,
+            priority,
+        )
+    }
+
+    /// Add a virtual line whose foreground/background colours are stored
+    /// as theme keys (resolved at render time so theme changes apply
+    /// live).
+    ///
+    /// `style` is the fallback used when a theme key fails to resolve;
+    /// `fg_theme_key` / `bg_theme_key` are the keys passed to
+    /// `Theme::resolve_theme_key` (e.g. `"editor.line_number_fg"`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_line_with_theme_keys(
+        &mut self,
+        marker_list: &mut MarkerList,
+        position: usize,
+        text: String,
+        style: Style,
+        fg_theme_key: Option<String>,
+        bg_theme_key: Option<String>,
+        placement: VirtualTextPosition,
+        namespace: VirtualTextNamespace,
+        priority: i32,
+    ) -> VirtualTextId {
         debug_assert!(
             placement.is_line(),
             "add_line requires LineAbove or LineBelow"
@@ -234,6 +303,8 @@ impl VirtualTextManager {
                 marker_id,
                 text,
                 style,
+                fg_theme_key,
+                bg_theme_key,
                 position: placement,
                 priority,
                 string_id: None,

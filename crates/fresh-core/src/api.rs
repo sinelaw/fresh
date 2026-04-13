@@ -1066,10 +1066,13 @@ pub enum PluginCommand {
         position: usize,
         /// Full line content to display
         text: String,
-        /// Foreground color (RGB)
-        fg_color: (u8, u8, u8),
-        /// Background color (RGB), None = transparent
-        bg_color: Option<(u8, u8, u8)>,
+        /// Foreground color — RGB tuple or theme key string (e.g.
+        /// `"editor.line_number_fg"`).  Resolved at render time so the line
+        /// follows theme changes.
+        fg_color: Option<OverlayColorSpec>,
+        /// Background color — RGB tuple or theme key string.  None =
+        /// transparent (inherits from underlying viewport background).
+        bg_color: Option<OverlayColorSpec>,
         /// true = above the line containing position, false = below
         above: bool,
         /// Namespace for bulk removal (e.g., "git-blame")

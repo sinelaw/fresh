@@ -227,39 +227,74 @@ impl Editor {
     }
 
     /// Handle AddVirtualLine command
+    ///
+    /// Theme keys carried by the colour specs are NOT resolved here — they
+    /// are stashed verbatim on the VirtualText so the renderer can resolve
+    /// them against the live theme on every frame and the line follows
+    /// theme changes without the plugin re-emitting it.  Only RGB colour
+    /// specs and short colour names (`"Gray"`, `"DarkGray"`, …) are
+    /// pre-baked into the fallback `Style`.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_add_virtual_line(
         &mut self,
         buffer_id: BufferId,
         position: usize,
         text: String,
-        fg_color: (u8, u8, u8),
-        bg_color: Option<(u8, u8, u8)>,
+        fg_color: Option<fresh_core::api::OverlayColorSpec>,
+        bg_color: Option<fresh_core::api::OverlayColorSpec>,
         above: bool,
         namespace: String,
         priority: i32,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
-            use ratatui::style::{Color, Style};
+        use crate::view::theme::named_color_from_str;
+        use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
+        use fresh_core::api::OverlayColorSpec;
+        use ratatui::style::{Color, Style};
 
+        // Split a colour spec into "fallback colour baked into Style" and
+        // "theme key resolved at render time".  Named colour strings are
+        // recognised eagerly here so they end up in the fallback Style
+        // (mirrors OverlayFace::from_options' policy).
+        fn split(spec: Option<OverlayColorSpec>) -> (Option<Color>, Option<String>) {
+            match spec {
+                Some(OverlayColorSpec::Rgb(r, g, b)) => (Some(Color::Rgb(r, g, b)), None),
+                Some(OverlayColorSpec::ThemeKey(key)) => {
+                    if let Some(color) = named_color_from_str(&key) {
+                        (Some(color), None)
+                    } else {
+                        (None, Some(key))
+                    }
+                }
+                None => (None, None),
+            }
+        }
+
+        let (fg_fallback, fg_theme_key) = split(fg_color);
+        let (bg_fallback, bg_theme_key) = split(bg_color);
+
+        let mut style = Style::default();
+        if let Some(c) = fg_fallback {
+            style = style.fg(c);
+        }
+        if let Some(c) = bg_fallback {
+            style = style.bg(c);
+        }
+
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let placement = if above {
                 VirtualTextPosition::LineAbove
             } else {
                 VirtualTextPosition::LineBelow
             };
-
-            let mut style = Style::default().fg(Color::Rgb(fg_color.0, fg_color.1, fg_color.2));
-            if let Some(bg) = bg_color {
-                style = style.bg(Color::Rgb(bg.0, bg.1, bg.2));
-            }
             let ns = VirtualTextNamespace::from_string(namespace);
 
-            state.virtual_texts.add_line(
+            state.virtual_texts.add_line_with_theme_keys(
                 &mut state.marker_list,
                 position,
                 text,
                 style,
+                fg_theme_key,
+                bg_theme_key,
                 placement,
                 ns,
                 priority,
