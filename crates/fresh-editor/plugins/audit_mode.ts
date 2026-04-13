@@ -3019,9 +3019,14 @@ async function start_review_diff() {
     //   ┌──── sticky file header (1 row fixed) ─┬───────────┐
     //   ├──── diff stream (scrollable) ─────────┤ comments  │
     //   └───────────────────────────────────────┴───────────┘
+    //
+    // The host requires a `ratio` on every split node, even when one
+    // child is `fixed` — the renderer ignores the ratio for fixed sides
+    // and uses the fixed `height` instead.
     const layout = JSON.stringify({
         type: "split",
         direction: "v",
+        ratio: 0.05,
         first: { type: "fixed", id: "toolbar", height: 2 },
         second: {
             type: "split",
@@ -3030,6 +3035,7 @@ async function start_review_diff() {
             first: {
                 type: "split",
                 direction: "v",
+                ratio: 0.05,
                 first: { type: "fixed", id: "sticky", height: 1 },
                 second: { type: "scrollable", id: "diff" },
             },
