@@ -5,6 +5,7 @@
 
 use crate::common::fake_lsp::FakeLspServer;
 use crate::common::harness::EditorTestHarness;
+use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 /// Issue #1405: pressing a number key should select, dismiss the popup,
@@ -18,6 +19,11 @@ use crossterm::event::{KeyCode, KeyModifiers};
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
 fn test_code_action_number_key_selects_and_applies() -> anyhow::Result<()> {
+    // Initialize tracing + signal handlers so CI timeouts surface a backtrace
+    // instead of a silent hang (diagnoses the macOS CI 180s timeout).
+    init_tracing_from_env();
+    fresh::services::signal_handler::install_signal_handlers();
+
     let temp_dir = tempfile::tempdir()?;
     let _fake_server = FakeLspServer::spawn_with_code_actions(temp_dir.path())?;
 
@@ -105,6 +111,11 @@ fn test_code_action_number_key_selects_and_applies() -> anyhow::Result<()> {
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
 fn test_code_action_arrow_enter_applies() -> anyhow::Result<()> {
+    // Initialize tracing + signal handlers so CI timeouts surface a backtrace
+    // instead of a silent hang (diagnoses the macOS CI 180s timeout).
+    init_tracing_from_env();
+    fresh::services::signal_handler::install_signal_handlers();
+
     let temp_dir = tempfile::tempdir()?;
     let _fake_server = FakeLspServer::spawn_with_code_actions(temp_dir.path())?;
 
