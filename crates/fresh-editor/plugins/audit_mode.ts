@@ -111,6 +111,10 @@ interface ReviewState {
   commentsSelectedRow: number;
   // Sticky header current content (for Step 4)
   stickyCurrentFile: string | null;
+  // Visual line-selection state. Active iff non-null. start and end are
+  // 1-indexed rows in the unified stream; hunkId pins the selection to
+  // a single hunk (selections that cross hunks are rejected).
+  lineSelection: { startRow: number; endRow: number; hunkId: string } | null;
 }
 
 const state: ReviewState = {
@@ -133,6 +137,7 @@ const state: ReviewState = {
   commentsByRow: {},
   commentsSelectedRow: 0,
   stickyCurrentFile: null,
+  lineSelection: null,
 };
 
 function fileKey(f: FileEntry): string { return `${f.path}\0${f.category}`; }
@@ -1375,6 +1380,129 @@ function review_comments_select_prev() {
 }
 registerHandler("review_comments_select_prev", review_comments_select_prev);
 
+/**
+ * Visual line-selection mode. Activates a multi-row selection rooted
+ * at the cursor's hunk; j/k extend it; Esc cancels. The selection is
+ * rendered as an inverted background overlay across the selected rows.
+ */
+function review_visual_start() {
+    if (state.groupId === null) return;
+    const props = readPropsAtCursor('diff');
+    if (!props) return;
+    const hunkId = props["hunkId"];
+    const lineType = props["lineType"];
+    if (typeof hunkId !== 'string' || (lineType !== 'add' && lineType !== 'remove' && lineType !== 'context')) {
+        editor.setStatus(editor.t("status.visual_no_diff_line") || "Visual selection requires a diff line");
+        return;
+    }
+    state.lineSelection = {
+        startRow: state.diffCursorRow,
+        endRow: state.diffCursorRow,
+        hunkId,
+    };
+    paintLineSelectionOverlay();
+    editor.setStatus(editor.t("status.visual_started") || "Visual: j/k extend, s/u/d apply, Esc cancel");
+}
+registerHandler("review_visual_start", review_visual_start);
+
+function review_visual_cancel() {
+    state.lineSelection = null;
+    if (state.groupId !== null) {
+        const diffId = state.panelBuffers["diff"];
+        if (diffId !== undefined) editor.clearNamespace(diffId, "review-line-selection");
+    }
+    applyCursorLineOverlay('diff');
+}
+registerHandler("review_visual_cancel", review_visual_cancel);
+
+const LINE_SELECTION_NS = "review-line-selection";
+
+function paintLineSelectionOverlay() {
+    if (state.groupId === null) return;
+    const diffId = state.panelBuffers["diff"];
+    if (diffId === undefined) return;
+    editor.clearNamespace(diffId, LINE_SELECTION_NS);
+    if (!state.lineSelection) return;
+    const { startRow, endRow } = state.lineSelection;
+    const lo = Math.min(startRow, endRow);
+    const hi = Math.max(startRow, endRow);
+    for (let r = lo; r <= hi; r++) {
+        const idx = r - 1;
+        if (idx < 0 || idx + 1 >= state.diffLineByteOffsets.length) continue;
+        const start = state.diffLineByteOffsets[idx];
+        const end = state.diffLineByteOffsets[idx + 1];
+        if (end <= start) continue;
+        editor.addOverlay(diffId, LINE_SELECTION_NS, start, end, {
+            bg: STYLE_SELECTED_BG,
+            extendToLineEnd: true,
+        });
+    }
+}
+
+/**
+ * Translate the active line-selection's (startRow, endRow) into a
+ * lineRange (inclusive 0-indexed indices into `hunk.lines`) by walking
+ * the rows of the unified stream that belong to the selection's hunk.
+ *
+ * Returns `null` if the selection crosses out of its hunk (which can't
+ * happen given how j/k extend, but defensively guarded), or the hunk
+ * can't be found, or the selection contains only context lines (which
+ * makes stage/unstage a no-op).
+ */
+function selectionLineRange(): { hunk: Hunk; range: { start: number; end: number } } | null {
+    if (!state.lineSelection) return null;
+    const sel = state.lineSelection;
+    const hunk = state.hunks.find(h => h.id === sel.hunkId);
+    if (!hunk) return null;
+    // Find the row of this hunk's header in the unified stream.
+    const hunkIdx = state.hunks.indexOf(hunk);
+    let visibleIdx = 0;
+    for (let i = 0; i < hunkIdx; i++) {
+        const h = state.hunks[i];
+        if (state.collapsedFiles.has(fileKeyOf(h.file, h.gitStatus || 'unstaged'))) continue;
+        visibleIdx++;
+    }
+    const headerRow = state.hunkHeaderRows[visibleIdx];
+    if (headerRow === undefined) return null;
+
+    const lo = Math.min(sel.startRow, sel.endRow);
+    const hi = Math.max(sel.startRow, sel.endRow);
+    const startInHunk = lo - headerRow - 1; // -1 because the header row itself is not in hunk.lines
+    const endInHunk = hi - headerRow - 1;
+    if (startInHunk < 0 || endInHunk >= hunk.lines.length) return null;
+
+    // Reject context-only selections.
+    let hasChange = false;
+    for (let i = startInHunk; i <= endInHunk; i++) {
+        const ch = hunk.lines[i][0];
+        if (ch === '+' || ch === '-') { hasChange = true; break; }
+    }
+    if (!hasChange) return null;
+
+    return { hunk, range: { start: startInHunk, end: endInHunk } };
+}
+
+async function applyLineSelection(action: 'stage' | 'unstage' | 'discard') {
+    const sel = selectionLineRange();
+    if (!sel) {
+        editor.setStatus(editor.t("status.visual_invalid") || "Selection has no add/remove lines or crosses hunk boundary");
+        return;
+    }
+    const { hunk, range } = sel;
+    const patch = buildHunkPatch(hunk.file, hunk, range);
+    let flags: string[];
+    if (action === 'stage') flags = ["--cached", "--unidiff-zero"];
+    else if (action === 'unstage') flags = ["--cached", "--reverse", "--unidiff-zero"];
+    else flags = ["--reverse", "--unidiff-zero"];
+
+    rememberPendingHunkAnchor(hunk.id);
+    const ok = await applyHunkPatch(patch, flags);
+    if (!ok) return;
+    review_visual_cancel();
+    editor.setStatus(editor.t(`status.lines_${action}d`) || `Lines ${action}d`);
+    await refreshMagitData();
+}
+
 function review_collapse_all() {
     state.collapsedFiles = new Set(state.files.map(fileKey));
     updateMagitDisplay();
@@ -1390,12 +1518,23 @@ registerHandler("review_expand_all", review_expand_all);
 function review_nav_up() {
     if (state.focusPanel === 'comments') { review_comments_select_prev(); return; }
     editor.executeAction("move_up");
+    if (state.lineSelection) {
+        // executeAction has already moved the cursor; sync the selection.
+        // Ensure we don't extend out of the hunk.
+        const newRow = Math.max(1, state.lineSelection.endRow - 1);
+        state.lineSelection.endRow = newRow;
+        paintLineSelectionOverlay();
+    }
 }
 registerHandler("review_nav_up", review_nav_up);
 
 function review_nav_down() {
     if (state.focusPanel === 'comments') { review_comments_select_next(); return; }
     editor.executeAction("move_down");
+    if (state.lineSelection) {
+        state.lineSelection.endRow = state.lineSelection.endRow + 1;
+        paintLineSelectionOverlay();
+    }
 }
 registerHandler("review_nav_down", review_nav_down);
 
@@ -1415,17 +1554,56 @@ registerHandler("review_nav_end", review_nav_end);
 
 /**
  * Build a minimal unified diff patch for a single hunk.
+ *
+ * When `lineRange` is provided, only the +/- lines whose indices fall
+ * inside the inclusive range are kept; +/- lines outside the range are
+ * converted to context lines so that the patch still applies cleanly
+ * to the file. Context lines are always preserved.
  */
-function buildHunkPatch(filePath: string, hunk: Hunk): string {
-    const oldCount = hunk.lines.filter(l => l[0] === '-' || l[0] === ' ').length;
-    const newCount = hunk.lines.filter(l => l[0] === '+' || l[0] === ' ').length;
+function buildHunkPatch(filePath: string, hunk: Hunk, lineRange?: { start: number; end: number }): string {
+    const filtered: string[] = [];
+    let oldCount = 0;
+    let newCount = 0;
+
+    for (let i = 0; i < hunk.lines.length; i++) {
+        const line = hunk.lines[i];
+        const ch = line[0];
+        const inRange = !lineRange || (i >= lineRange.start && i <= lineRange.end);
+        if (ch === '+') {
+            if (inRange) {
+                filtered.push(line);
+                newCount++;
+            } else {
+                // An out-of-range '+' line means: this addition isn't being
+                // applied, so it shouldn't appear in either side. Drop it
+                // entirely (don't convert to context — there's nothing to
+                // match in the source file).
+            }
+        } else if (ch === '-') {
+            if (inRange) {
+                filtered.push(line);
+                oldCount++;
+            } else {
+                // An out-of-range '-' line: this deletion isn't applied,
+                // so the line still exists on both sides — render as context.
+                filtered.push(' ' + line.substring(1));
+                oldCount++;
+                newCount++;
+            }
+        } else {
+            filtered.push(line);
+            oldCount++;
+            newCount++;
+        }
+    }
+
     const header = `@@ -${hunk.oldRange.start},${oldCount} +${hunk.range.start},${newCount} @@`;
     return [
         `diff --git a/${filePath} b/${filePath}`,
         `--- a/${filePath}`,
         `+++ b/${filePath}`,
         header,
-        ...hunk.lines,
+        ...filtered,
         ''
     ].join('\n');
 }
@@ -1505,6 +1683,7 @@ function fileHeaderUnderCursor(): FileEntry | null {
  */
 async function review_stage_scope() {
     if (state.files.length === 0) return;
+    if (state.lineSelection) { await applyLineSelection('stage'); return; }
     const headerFile = fileHeaderUnderCursor();
     if (headerFile) {
         await stageFileEntry(headerFile);
@@ -1516,6 +1695,7 @@ registerHandler("review_stage_scope", review_stage_scope);
 
 async function review_unstage_scope() {
     if (state.files.length === 0) return;
+    if (state.lineSelection) { await applyLineSelection('unstage'); return; }
     const headerFile = fileHeaderUnderCursor();
     if (headerFile) {
         await unstageFileEntry(headerFile);
@@ -1620,6 +1800,7 @@ registerHandler("review_discard_file_only", review_discard_file_only);
 
 function review_discard_file() {
     if (state.files.length === 0) return;
+    if (state.lineSelection) { void applyLineSelection('discard'); return; }
     const headerFile = fileHeaderUnderCursor();
     const f = headerFile ?? currentFileFromCursor();
     if (!headerFile) {
@@ -3264,6 +3445,9 @@ editor.defineMode("review-mode", [
     ["Tab", "review_toggle_file_collapse"],
     ["z a", "review_collapse_all"],
     ["z r", "review_expand_all"],
+    // Visual line-selection mode for line-level stage/unstage/discard.
+    ["v", "review_visual_start"],
+    ["Esc", "review_visual_cancel"],
     // Drill-down to side-by-side view of the file under the cursor —
     // unless focus is in the comments panel, in which case Enter opens
     // the selected comment.
