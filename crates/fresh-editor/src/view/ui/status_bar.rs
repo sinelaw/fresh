@@ -990,10 +990,35 @@ impl StatusBarRenderer {
         }
 
         let left_items = Self::render_side(&config.left, ctx);
-        let right_items = Self::render_side(&config.right, ctx);
+        let mut right_items = Self::render_side(&config.right, ctx);
 
         const SEPARATOR: &str = " | ";
         let separator_width = str_width(SEPARATOR);
+
+        // Reserve a sane minimum for the left side so the buffer name and
+        // cursor position aren't truncated to a single character on narrow
+        // terminals (regression originally reported as
+        // `t  LF  ASCII  Markdown ...`).  Drop low-priority right elements
+        // (configured right-most first) until the remaining right side fits
+        // alongside that minimum left budget.  We never drop the *first*
+        // right element so the user keeps at least one piece of right-side
+        // status if any was configured.
+        let total_right_width: usize = right_items.iter().map(|(_, w, _)| *w).sum();
+        let left_min_target = available_width
+            .saturating_mul(2)
+            .saturating_div(5) // ~40% of width reserved for left when feasible
+            .min(40); // but never demand more than 40 cols even on wide terminals
+        let right_budget = available_width.saturating_sub(left_min_target + 1);
+        if total_right_width > right_budget && right_items.len() > 1 {
+            let mut current = total_right_width;
+            while current > right_budget && right_items.len() > 1 {
+                if let Some(dropped) = right_items.pop() {
+                    current = current.saturating_sub(dropped.1);
+                } else {
+                    break;
+                }
+            }
+        }
 
         let right_width: usize = right_items.iter().map(|(_, w, _)| *w).sum();
 
