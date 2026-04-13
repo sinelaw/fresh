@@ -854,13 +854,12 @@ fn test_open_file_prompt_truncates_long_paths() {
         screen
     );
 
-    // The test.txt file should still be visible in the file browser
-    // (wait for directory to load)
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
-
-    harness.assert_screen_contains("test.txt");
+    // The test.txt file should still be visible in the file browser.
+    // The directory listing is populated asynchronously (see
+    // "Loading..." placeholder) so wait for it indefinitely rather
+    // than relying on a fixed sleep — per CONTRIBUTING.md
+    // "No timeouts or time-sensitive tests".
+    harness.wait_for_screen_contains("test.txt").unwrap();
 }
 
 /// Test that Open File prompt shows completions popup immediately when opened (issue #193)
