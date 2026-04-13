@@ -9,11 +9,19 @@
 All items below are capture-proven open defects. Everything that already
 works is in the appendix, as a sanity check on what the feature is for.
 
+> **Status (follow-up pass):** items 2, 3, 4, 6, 7, 8 are now fixed in
+> this branch with e2e regression tests. Item 1 was not reproducible in
+> the e2e harness (likely a terminal-emulator specific rendering
+> artifact) — a stricter chrome-visibility guard is in place regardless.
+> Items 5, 9 remain deferred: #9 is blocked on the plugin API lacking a
+> way to set inline-overlay priority (whole-entry `extend_to_line_end`
+> currently paints over inline bg overlays).
+
 ---
 
 ## P0 — Ship-blockers
 
-### 1. Terminal resize is unrecoverable
+### 1. Terminal resize is unrecoverable — **deferred (not reproducible)**
 
 Shrink 160×45 → 80×24 → grow back leaves menu, toolbar, and tab row
 hidden. `r` refresh doesn't fix it; resize-bump doesn't fix it;
@@ -23,31 +31,36 @@ pane. Only killing and relaunching the editor recovers.
 *Evidence:* `c_40_at_80.txt`, `c_41_back.txt`, `c_42_after_r.txt`,
 `c_44_bump.txt`, `c_46_reopen.txt`.
 
-### 2. Side-by-side `n` / `p` leave status bar stale
+*Status:* not reproducible in the e2e harness. Added a stricter
+`test_issue1_resize_cycle_restores_all_chrome` as a guard.
 
-`n` / `p` move the viewport but do NOT update the status-bar `Ln` /
-`Col`. Arrow keys update it correctly; `n` / `p` leave it stale.
+### 2. Side-by-side `n` / `p` leave status bar stale — **fixed**
 
-*Evidence:* `c_18_sxs.txt` (Ln 1) → `c_21_sxs_n3.txt` (viewport at
-`L054` but `Ln 8`) → `c_19_sxs_down1.txt` (Down → `Ln 7`, immediate
-update).
+`n` / `p` moved the viewport but did NOT update the status-bar `Ln` /
+`Col`. `composite_{next,prev}_hunk` now call
+`sync_editor_cursor_from_composite`, mirroring the arrow-key path.
 
-### 3. No "Hunk N of M" indicator
+*Evidence:* `c_18_sxs.txt` → `c_21_sxs_n3.txt` → `c_19_sxs_down1.txt`.
+*Regression test:* `test_issue2_side_by_side_next_hunk_updates_status_bar`.
 
-Status bar shows only the *total* count (`Review Diff: 35 hunks`) and
-never the current index, in either the unified or side-by-side pane.
+### 3. No "Hunk N of M" indicator — **fixed**
 
-*Evidence:* `c_03`–`c_09` — the counter is unchanged across every hunk
-jump.
+The status bar now shows `Review Diff: Hunk N of M` whenever a current
+hunk is known (new i18n key `status.review_summary_indexed`), driven by
+a `currentGlobalHunkIndex()` helper invoked from every site that
+changes the current hunk.
 
-### 4. Empty state is ambiguous
+*Evidence:* `c_03`–`c_09`.
+*Regression test:* `test_issue3_status_bar_shows_current_hunk_index`.
 
-Non-git directory and clean git repo render *byte-identically*: empty
-`GIT STATUS` pane, `DIFF` header with no filename, `Review Diff: 0
-hunks`. The i18n keys `status.not_git_repo` and `panel.no_changes`
-exist but are never displayed.
+### 4. Empty state is ambiguous — **fixed**
+
+`getGitStatus()` now returns an `EmptyStateReason` and the files / diff
+panels render a labelled line ("Not a git repository." /
+"No changes to review.") so the two cases are no longer byte-identical.
 
 *Evidence:* `c_22_nogit.txt`, `c_23_clean.txt`.
+*Regression test:* `test_issue4_empty_state_distinguishes_not_git_from_clean_repo`.
 
 ---
 
@@ -63,33 +76,42 @@ int, b: int) -> int:[0m` — single color for the whole keyword-rich
 line. `c_34_sxs_syntax.txt` shows `[38;5;207mdef`, `[38;5;51mreturn`
 with per-token colors.
 
-### 6. `n` / `p` are dead in the files pane
+### 6. `n` / `p` are dead in the files pane — **fixed**
 
-Pressing `n` while focus is on the files pane neither advances the
-file selection nor moves the diff cursor.
+`review_next_hunk` / `review_prev_hunk` used to gate on
+`focusPanel === 'diff'`; the guard is removed because
+`jumpDiffCursorToRow` already handles the unfocused diff panel via
+`setBufferCursor`.
 
 *Evidence:* `c_36_n_filespane.txt`.
+*Regression test:* `test_issue6_n_from_files_pane_advances_hunks`.
 
-### 7. `n` / `p` do not cross file boundaries
+### 7. `n` / `p` do not cross file boundaries — **fixed**
 
-From the last hunk of `a.py`, further `n` presses don't jump to the
-first hunk of `b.py`; cursor clamps just past the last hunk header of
-the current file.
+When the cursor is on the last hunk of the current file, `n` now walks
+into the next file with hunks and lands on its first hunk (and mirror
+for `p`). See `jumpToAdjacentFileHunk`.
 
 *Evidence:* `c_37_n_pastend.txt`.
+*Regression test:* `test_issue7_next_hunk_crosses_file_boundaries`.
 
-### 8. `n` / `p` hints appear in the toolbar only after `Tab`
+### 8. `n` / `p` hints appear in the toolbar only after `Tab` — **fixed**
 
-A user who never Tabs into the diff pane never learns hunk navigation
-exists.
+Hunk-navigation hints are now advertised on both the files-pane and
+diff-pane toolbars. On the files pane Export/Close retain priority so
+their labels survive the narrow viewports documented by bug10.
 
-*Evidence:* `c_01_review.txt` (files-pane toolbar, no `n` / `p`) vs
-`c_13_diff_start.txt` (diff-pane toolbar shows `n Next  p Prev`).
+*Evidence:* `c_01_review.txt` vs `c_13_diff_start.txt`.
+*Regression test:* `test_issue8_n_and_p_hints_visible_on_files_pane_toolbar`.
 
-### 9. Whitespace-only changes have no per-character highlight
+### 9. Whitespace-only changes have no per-character highlight — **deferred**
 
 Trailing-space and double-space edits look identical on the `-` and `+`
-lines; only the leading marker differs.
+lines; only the leading marker differs. The plugin already computes
+per-char diff parts, but the inline-overlay bg it wants to paint is
+overwritten by the whole-entry `extend_to_line_end` bg because both
+overlays share the same priority. Fixing this needs a plugin-API
+addition (overlay priority on `OverlayOptions`).
 
 *Evidence:* `screen_13_whitespace_ansi.txt` — full-line bg, no
 intra-line spans.
