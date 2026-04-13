@@ -801,13 +801,18 @@ function buildToolbarRow(W: number, groups: HintItem[][]): TextPropertyEntry {
  * panel currently has focus (no more files-pane vs diff-pane variants).
  */
 function buildToolbar(W: number): TextPropertyEntry[] {
+    // Row 1: navigation across hunks/comments + per-hunk staging.
+    // Row 2: structural folding + file-level staging + visual + close.
     const row1: HintItem[][] = [
-        [{ key: "n", label: "next hunk" }, { key: "p", label: "prev hunk" }],
-        [{ key: "s", label: "stage" }, { key: "u", label: "unstage" }, { key: "d", label: "discard" }, { key: "c", label: "comment" }],
+        [{ key: "n", label: "next hunk" }, { key: "p", label: "prev hunk" },
+         { key: "]", label: "next cmt" }, { key: "[", label: "prev cmt" }],
+        [{ key: "s", label: "stage" }, { key: "u", label: "unstage" }, { key: "d", label: "discard" },
+         { key: "v", label: "select" }, { key: "c", label: "comment" }],
     ];
     const row2: HintItem[][] = [
         [{ key: "Tab", label: "fold file" }, { key: "z a", label: "fold all" }, { key: "z r", label: "unfold all" }],
-        [{ key: "Enter", label: "jump to source" }, { key: "e", label: "export" }, { key: "q", label: "close" }],
+        [{ key: "S U D", label: "file-level" }, { key: "Enter", label: "jump" },
+         { key: "e", label: "export" }, { key: "q", label: "close" }],
     ];
     return [buildToolbarRow(W, row1), buildToolbarRow(W, row2)];
 }
@@ -3460,8 +3465,8 @@ editor.defineMode("review-mode", [
     ["Enter", "review_enter_dispatch"],
     // Comments-nav: cycle through comments, jump diff cursor, expand
     // the file if needed. Works regardless of which panel has focus.
-    ["] c", "review_next_comment"],
-    ["[ c", "review_prev_comment"],
+    ["]", "review_next_comment"],
+    ["[", "review_prev_comment"],
     // Focus the comments panel (use j/k/Enter inside).
     ["`", "review_focus_comments"],
     // Stage/unstage/discard — context-sensitive. s/u/d act on the file
