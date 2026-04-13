@@ -69,6 +69,13 @@ interface FileEntry {
  * know between events (selected file, focused panel, hunk header rows for
  * `n`/`p` jumps).
  */
+/**
+ * Why the file list is empty. `null` means `state.files` has entries; the
+ * other two distinguish "cwd is not a git repo" from "repo is clean" so the
+ * panels can show a specific message instead of rendering byte-identically.
+ */
+type EmptyStateReason = 'not_git' | 'clean' | null;
+
 interface ReviewState {
   hunks: Hunk[];
   comments: ReviewComment[];
@@ -76,6 +83,7 @@ interface ReviewState {
   reviewBufferId: number | null;
   // New magit-style state
   files: FileEntry[];
+  emptyState: EmptyStateReason;
   selectedIndex: number;
   viewportWidth: number;
   viewportHeight: number;
@@ -108,6 +116,7 @@ const state: ReviewState = {
   note: '',
   reviewBufferId: null,
   files: [],
+  emptyState: null,
   selectedIndex: 0,
   viewportWidth: 80,
   viewportHeight: 24,
@@ -322,11 +331,28 @@ function parseGitStatusPorcelain(raw: string): FileEntry[] {
 
 /**
  * Single source of truth for changed files using `git status --porcelain -z`.
+ *
+ * `emptyReason` distinguishes the two no-content cases so the UI can explain
+ * itself instead of rendering a blank pane:
+ *   - `'not_git'`: `git status` failed (no repo at cwd).
+ *   - `'clean'`: `git status` succeeded but returned no entries.
+ *   - `null`: files were found; render them normally.
  */
-async function getGitStatus(): Promise<FileEntry[]> {
+interface GitStatusResult {
+    files: FileEntry[];
+    emptyReason: EmptyStateReason;
+}
+
+async function getGitStatus(): Promise<GitStatusResult> {
     const result = await editor.spawnProcess("git", ["status", "--porcelain", "-z"]);
-    if (result.exit_code !== 0) return [];
-    return parseGitStatusPorcelain(result.stdout);
+    if (result.exit_code !== 0) {
+        return { files: [], emptyReason: 'not_git' };
+    }
+    const files = parseGitStatusPorcelain(result.stdout);
+    return {
+        files,
+        emptyReason: files.length === 0 ? 'clean' : null,
+    };
 }
 
 /**
@@ -419,6 +445,22 @@ interface DiffLine {
  */
 function buildFileListLines(leftWidth?: number): ListLine[] {
     const lines: ListLine[] = [];
+
+    // Explicit empty-state affordance so "not a git repo" and "clean repo"
+    // don't render byte-identically. Without this both cases leave the pane
+    // blank and the user cannot tell why there is no content.
+    if (state.files.length === 0 && state.emptyState !== null) {
+        const label = state.emptyState === 'not_git'
+            ? (editor.t("status.not_git_repo") || "Not a git repository")
+            : (editor.t("panel.no_changes") || "No changes to review.");
+        lines.push({
+            text: `▸ ${label}`,
+            type: 'section-header',
+            style: { fg: STYLE_SECTION_HEADER, bold: true, italic: true },
+        });
+        return lines;
+    }
+
     let lastCategory: string | undefined;
 
     for (let i = 0; i < state.files.length; i++) {
@@ -511,7 +553,24 @@ function pushLineComments(
  */
 function buildDiffLines(rightWidth: number): DiffLine[] {
     const lines: DiffLine[] = [];
-    if (state.files.length === 0) return lines;
+    if (state.files.length === 0) {
+        // Mirror the files-pane empty state so the right pane isn't a blank
+        // rectangle when there is nothing to diff.
+        if (state.emptyState === 'not_git') {
+            lines.push({
+                text: editor.t("status.not_git_repo") || "Not a git repository",
+                type: 'empty',
+                style: { fg: STYLE_SECTION_HEADER, italic: true },
+            });
+        } else if (state.emptyState === 'clean') {
+            lines.push({
+                text: editor.t("panel.no_changes") || "No changes to review.",
+                type: 'empty',
+                style: { fg: STYLE_SECTION_HEADER, italic: true },
+            });
+        }
+        return lines;
+    }
 
     const selectedFile = state.files[state.selectedIndex];
     if (!selectedFile) return lines;
@@ -1260,9 +1319,10 @@ registerHandler("on_review_discard_confirm", on_review_discard_confirm);
  * Refresh file list and diffs using the new git status approach, then re-render.
  */
 async function refreshMagitData() {
-    const files = await getGitStatus();
-    state.files = files;
-    state.hunks = await fetchDiffsForFiles(files);
+    const status = await getGitStatus();
+    state.files = status.files;
+    state.emptyState = status.emptyReason;
+    state.hunks = await fetchDiffsForFiles(status.files);
     // Clamp selectedIndex
     if (state.selectedIndex >= state.files.length) {
         state.selectedIndex = Math.max(0, state.files.length - 1);
@@ -2323,8 +2383,10 @@ async function start_review_diff() {
     }
 
     // Fetch data using new git status approach
-    state.files = await getGitStatus();
-    state.hunks = await fetchDiffsForFiles(state.files);
+    const status = await getGitStatus();
+    state.files = status.files;
+    state.emptyState = status.emptyReason;
+    state.hunks = await fetchDiffsForFiles(status.files);
     state.comments = [];
     state.note = '';
     state.selectedIndex = 0;

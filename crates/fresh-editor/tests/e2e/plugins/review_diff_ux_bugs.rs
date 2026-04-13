@@ -1267,3 +1267,80 @@ fn test_refresh_toolbar_with_staged_file() {
         screen_after
     );
 }
+
+// ---------------------------------------------------------------------------
+// ISSUE #4: Empty state is ambiguous (not a git repo vs clean repo)
+// ---------------------------------------------------------------------------
+
+/// Open Review Diff in a non-git directory and in a clean git repo.
+/// The two screens must not be byte-identical — the user needs to know why
+/// there is no content (not a repository vs. no changes to review).
+#[test]
+fn test_issue4_empty_state_distinguishes_not_git_from_clean_repo() {
+    init_tracing_from_env();
+
+    // Scenario A: plain (non-git) temp dir with the audit_mode plugin staged.
+    let nongit = tempfile::TempDir::new().unwrap();
+    let plugins_dir_a = nongit.path().join("plugins");
+    fs::create_dir_all(&plugins_dir_a).unwrap();
+    copy_plugin(&plugins_dir_a, "audit_mode");
+    copy_plugin_lib(&plugins_dir_a);
+
+    let mut harness_a = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        nongit.path().to_path_buf(),
+    )
+    .unwrap();
+    harness_a.render().unwrap();
+
+    let screen_nongit = open_review_diff(&mut harness_a);
+
+    // Scenario B: clean git repo (committed, no working-tree changes).
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    let mut harness_b = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness_b.render().unwrap();
+
+    let screen_clean = open_review_diff(&mut harness_b);
+
+    println!("ISSUE-4 non-git screen:\n{}", screen_nongit);
+    println!("ISSUE-4 clean-repo screen:\n{}", screen_clean);
+
+    // The two user-visible screens must differ — otherwise the user cannot
+    // tell "not a git repo" from "clean repo, nothing to review".
+    assert_ne!(
+        screen_nongit, screen_clean,
+        "ISSUE-4: non-git and clean-repo Review Diff screens are \
+         byte-identical. Users cannot distinguish 'no repo' from \
+         'no changes'. Non-git screen:\n{}\nClean-repo screen:\n{}",
+        screen_nongit, screen_clean,
+    );
+
+    // Each screen should carry a readable affordance explaining the state.
+    assert!(
+        screen_nongit.to_lowercase().contains("not")
+            && screen_nongit.to_lowercase().contains("git"),
+        "ISSUE-4: non-git screen should mention it is not a git \
+         repository. Screen:\n{}",
+        screen_nongit
+    );
+    assert!(
+        screen_clean.to_lowercase().contains("no changes")
+            || screen_clean.to_lowercase().contains("no change"),
+        "ISSUE-4: clean-repo screen should say there are no changes. \
+         Screen:\n{}",
+        screen_clean
+    );
+}
