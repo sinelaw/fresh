@@ -37,6 +37,11 @@ function setGlobalComposeEnabled(value: boolean): void {
 interface TableWidthInfo {
   maxW: number[];
   allocated: number[];
+  // True iff this row is the markdown source separator (`|---|---|---|`) — the
+  // border code uses this to avoid drawing a duplicate `├─┼─┤` next to it.
+  // Optional for backwards-compat with persisted view states from older
+  // sessions.
+  isSourceSep?: boolean;
 }
 
 // Helper: check whether the active split has compose mode for this buffer
@@ -89,6 +94,160 @@ const HTML_ENTITY_MAP: Record<string, string> = {
   yen: "\u00A5", cent: "\u00A2", sect: "\u00A7", para: "\u00B6",
   laquo: "\u00AB", raquo: "\u00BB", ensp: "\u2002", emsp: "\u2003", thinsp: "\u2009",
 };
+
+// =============================================================================
+// Table border virtual lines (top/bottom + inter-row separators)
+// =============================================================================
+//
+// Markdown tables source-encode only an underline-style separator between the
+// header and the first data row.  In compose mode we already conceal the
+// pipe characters into Unicode box-drawing (`│`, `├`, `┼`, `┤`).  This module
+// adds the *missing* visual frame: a `┌─┬─┐` top border above the header,
+// `├─┼─┤` separators between consecutive data rows (so each row reads as a
+// distinct cell), and a `└─┴─┘` bottom border below the last row.
+//
+// Implementation:
+//
+//   * Borders are virtual lines (no source bytes), keyed per-line via a
+//     unique namespace `md-tb-${lineNumber}`.  The namespace lets us
+//     clear+rebuild borders for one row without disturbing other tables.
+//   * "First/last/source-separator" classification is derived from the
+//     cached widthMap (a row is "known" iff it has a TableWidthInfo entry).
+//     This is cheap and stable across scrolls because widthMap accumulates.
+//   * Border column widths come from the same `allocated` widths used by
+//     processLineConceals, so the borders line up exactly with the cell
+//     conceals.
+
+/** Build a horizontal table border line of the given style for a row. */
+function buildTableBorderLine(
+  allocated: number[],
+  left: string,
+  mid: string,
+  right: string,
+): string {
+  // Each cell render is `│ <text padded to allocated[i] - 2> │` (2 chars of
+  // inside padding).  The matching border slot must therefore be
+  // `allocated[i]` wide of `─` characters between the corner/junction marks.
+  const parts: string[] = [];
+  for (let i = 0; i < allocated.length; i++) {
+    const fill = "─".repeat(Math.max(1, allocated[i]));
+    parts.push(fill);
+  }
+  return left + parts.join(mid) + right;
+}
+
+/** True if `lineContent` looks like a markdown table separator row. */
+function isTableSeparatorContent(lineContent: string): boolean {
+  return /^\|[-:\s|]+\|$/.test(lineContent.trim());
+}
+
+/** Re-emit the table border virtual lines for the given table-row group.
+ *
+ * Detects the group's first/last visible rows by consulting `widthMap`
+ * (which is updated by `processTableAlignment` before this runs).  A row at
+ * `lineNumber - 1` or `lineNumber + 1` that is *not* in `widthMap` is treated
+ * as the boundary of the table's visible extent.
+ */
+function processTableBorders(
+  bufferId: number,
+  lines: Array<{
+    line_number: number;
+    byte_start: number;
+    byte_end: number;
+    content: string;
+  }>,
+  widthMap: Map<number, TableWidthInfo>,
+): void {
+  // Light gray, on near-black (matches existing pipe→│ conceal styling).
+  const fg: [number, number, number] = [188, 188, 188];
+  const bg: [number, number, number] = [16, 16, 16];
+
+  for (const line of lines) {
+    const ns = `md-tb-${line.line_number}`;
+    // Always start by clearing this row's previous borders (handles
+    // edits that removed/widened the row, scrolls that change the
+    // first/last classification, etc.).
+    editor.clearVirtualTextNamespace(bufferId, ns);
+
+    const trimmed = line.content.trim();
+    const isTableRow = trimmed.startsWith("|") || trimmed.endsWith("|");
+    if (!isTableRow) continue;
+
+    const widthInfo = widthMap.get(line.line_number);
+    if (!widthInfo || widthInfo.allocated.length === 0) continue;
+
+    const allocated = widthInfo.allocated;
+    // Prefer the cached flag (set by processTableAlignment from the source
+    // text of this exact row); fall back to a regex check in case this row
+    // was loaded from a persisted view state without the flag.
+    const isSourceSep = widthInfo.isSourceSep === true
+      || isTableSeparatorContent(line.content);
+
+    const prevIsTable = widthMap.has(line.line_number - 1);
+    const nextIsTable = widthMap.has(line.line_number + 1);
+
+    // Top border: only above the very first known row of the table.
+    // ┌─┬─┐ — opens the frame above the header.
+    if (!prevIsTable) {
+      const top = buildTableBorderLine(allocated, "┌", "┬", "┐");
+      editor.addVirtualLine(
+        bufferId,
+        line.byte_start,
+        top,
+        fg[0], fg[1], fg[2],
+        bg[0], bg[1], bg[2],
+        true, // above
+        ns,
+        0,
+      );
+    }
+
+    // Inter-row separator: between consecutive *data* rows.
+    //
+    // Skip if either side is the source separator row (`|---|---|---|`)
+    // because the source already provides `├─┼─┤` there via conceals —
+    // adding another above/below would draw two adjacent separator lines.
+    //
+    // Drawn ABOVE the current row when its predecessor is also a (non-
+    // source-separator) table row, so each row owns the separator that
+    // appears above it.
+    const prevInfo = widthMap.get(line.line_number - 1);
+    const prevIsSourceSep = prevInfo?.isSourceSep === true;
+    if (prevIsTable && !isSourceSep && !prevIsSourceSep) {
+      const sep = buildTableBorderLine(allocated, "├", "┼", "┤");
+      editor.addVirtualLine(
+        bufferId,
+        line.byte_start,
+        sep,
+        fg[0], fg[1], fg[2],
+        bg[0], bg[1], bg[2],
+        true, // above
+        ns,
+        1,
+      );
+    }
+
+    // Bottom border: only below the last known row of the table.
+    // └─┴─┘ — closes the frame.  Anchor at the END of the row's bytes
+    // (one before the trailing newline) and place "below".
+    if (!nextIsTable) {
+      const bottom = buildTableBorderLine(allocated, "└", "┴", "┘");
+      // byte_end points just past the newline; anchor at last byte of
+      // the row content so the virtual line renders directly under it.
+      const anchor = Math.max(line.byte_start, line.byte_end - 1);
+      editor.addVirtualLine(
+        bufferId,
+        anchor,
+        bottom,
+        fg[0], fg[1], fg[2],
+        bg[0], bg[1], bg[2],
+        false, // below
+        ns,
+        0,
+      );
+    }
+  }
+}
 
 // =============================================================================
 // Block-based parser for hanging indent support
@@ -1375,18 +1534,25 @@ function processTableAlignment(
       if (allocGrew(widthMap.get(ln)!)) { needsRefresh = true; break; }
     }
 
-    // Store merged widths for all lines in the group AND propagate
-    // back to adjacent cached lines so they pick up wider columns
-    // without needing to be re-delivered by lines_changed.
-    const info: TableWidthInfo = { maxW: merged, allocated };
+    // Store merged widths for each line in the group.  We tag the source
+    // separator row (`|---|---|---|`) so the border renderer can skip
+    // drawing a duplicate `├─┼─┤` adjacent to it (the source separator is
+    // already concealed into one).  Each line gets its own info object so
+    // the per-row `isSourceSep` flag is independent.
     for (const line of group) {
-      widthMap.set(line.line_number, info);
+      const isSep = /^\|[-:\s|]+\|$/.test(line.content.trim());
+      widthMap.set(line.line_number, { maxW: merged, allocated, isSourceSep: isSep });
     }
+    // Adjacent cached lines (already-processed neighbours of this group)
+    // need their `allocated` updated but should keep their existing
+    // `isSourceSep` flag — they were classified when they were processed.
     for (let ln = firstLine - 1; widthMap.has(ln); ln--) {
-      widthMap.set(ln, info);
+      const prev = widthMap.get(ln)!;
+      widthMap.set(ln, { maxW: merged, allocated, isSourceSep: prev.isSourceSep });
     }
     for (let ln = lastLine + 1; widthMap.has(ln); ln++) {
-      widthMap.set(ln, info);
+      const prev = widthMap.get(ln)!;
+      widthMap.set(ln, { maxW: merged, allocated, isSourceSep: prev.isSourceSep });
     }
   }
 
@@ -1424,6 +1590,15 @@ function onMarkdownLinesChanged(data: {
   for (const line of data.lines) {
     processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
     processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
+  }
+
+  // Add/refresh table border virtual lines (top/bottom + inter-row separators).
+  // Runs AFTER processTableAlignment so the widthMap reflects the latest
+  // allocated widths, and AFTER processLineConceals so the borders we draw
+  // line up with the cell pipes the conceals produce.
+  const widthMapForBorders = getTableWidths(data.buffer_id);
+  if (widthMapForBorders) {
+    processTableBorders(data.buffer_id, data.lines, widthMapForBorders);
   }
 
   if (tableWidthsGrew) {
