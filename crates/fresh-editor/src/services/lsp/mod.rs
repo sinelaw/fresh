@@ -124,9 +124,16 @@ pub use crate::types::LspServerConfig;
 
 /// Check whether an LSP server command is resolvable as an executable.
 ///
-/// - Absolute / path-containing commands: stat the file directly.
-/// - Bare names: walk `$PATH`, matching the first file-backed entry.
-/// - On Windows, also probes a `.exe` suffix.
+/// Delegates to the `which` crate, which handles the cross-platform
+/// edge cases our previous hand-rolled probe missed:
+///
+/// - **Windows `PATHEXT`**: Node-based LSPs (`typescript-language-server`,
+///   `vscode-html-language-server`, etc.) install as `.cmd` shims under
+///   `npm -g`. A bare `.exe` check treated those as missing.
+/// - **Unix executable bit**: `path.is_file()` is true for non-executable
+///   files; `which` additionally checks `mode & 0o111 != 0`.
+/// - **Symlinks, broken symlinks, absolute-path commands, quoted PATH
+///   entries, and Windows App Execution Aliases** — all handled.
 ///
 /// Returns `false` for empty strings so callers don't need to special-case
 /// unset-command configs.
@@ -137,37 +144,8 @@ pub use crate::types::LspServerConfig;
 /// actively hurt: freshly-installed binaries wouldn't be picked up until
 /// the TTL expired.
 pub fn command_exists(command: &str) -> bool {
-    use std::path::Path;
-
     if command.is_empty() {
         return false;
     }
-
-    if command.contains('/') || command.contains('\\') {
-        let path = Path::new(command);
-        return path.exists() && path.is_file();
-    }
-
-    if let Ok(path_var) = std::env::var("PATH") {
-        #[cfg(unix)]
-        let separator = ':';
-        #[cfg(windows)]
-        let separator = ';';
-
-        for dir in path_var.split(separator) {
-            let full_path = Path::new(dir).join(command);
-            if full_path.exists() && full_path.is_file() {
-                return true;
-            }
-            #[cfg(windows)]
-            {
-                let with_exe = Path::new(dir).join(format!("{}.exe", command));
-                if with_exe.exists() && with_exe.is_file() {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
+    which::which(command).is_ok()
 }
