@@ -2612,6 +2612,55 @@ impl Editor {
         // Dispatch MouseClick hook to plugins
         // Plugins can handle clicks on their virtual buffers
         if self.plugin_manager.has_hook_handlers("mouse_click") {
+            // Compute buffer-local row/col so plugins can react to clicks
+            // on specific rows (e.g. clicking a file header, or a comment
+            // in the comments navigation panel) without redoing the math.
+            let (hook_buffer_row, hook_buffer_col) = {
+                let cached_mappings = self
+                    .cached_layout
+                    .view_line_mappings
+                    .get(&split_id)
+                    .cloned();
+                let fallback = self
+                    .split_view_states
+                    .get(&split_id)
+                    .map(|vs| vs.viewport.top_byte)
+                    .unwrap_or(0);
+                let compose_width = self
+                    .split_view_states
+                    .get(&split_id)
+                    .and_then(|vs| vs.compose_width);
+                let gutter_width = self
+                    .buffers
+                    .get(&buffer_id)
+                    .map(|s| s.margins.left_total_width() as u16)
+                    .unwrap_or(0);
+                let target = Self::screen_to_buffer_position(
+                    col,
+                    row,
+                    content_rect,
+                    gutter_width,
+                    &cached_mappings,
+                    fallback,
+                    true,
+                    compose_width,
+                );
+                match target {
+                    Some(byte_pos) => {
+                        let state = self.buffers.get(&buffer_id);
+                        if let Some(s) = state {
+                            let (line, col_b) = s.buffer.position_to_line_col(byte_pos);
+                            (
+                                Some(line.min(u32::MAX as usize) as u32),
+                                Some(col_b.min(u32::MAX as usize) as u32),
+                            )
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    None => (None, None),
+                }
+            };
             self.plugin_manager.run_hook(
                 "mouse_click",
                 HookArgs::MouseClick {
@@ -2621,6 +2670,9 @@ impl Editor {
                     modifiers: modifiers_str,
                     content_x: content_rect.x,
                     content_y: content_rect.y,
+                    buffer_id: Some(buffer_id.0 as u64),
+                    buffer_row: hook_buffer_row,
+                    buffer_col: hook_buffer_col,
                 },
             );
         }

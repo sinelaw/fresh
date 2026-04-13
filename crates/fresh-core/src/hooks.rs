@@ -190,6 +190,15 @@ pub enum HookArgs {
         content_x: u16,
         /// Content area Y offset
         content_y: u16,
+        /// Buffer under the click (None when the click is outside any
+        /// buffer panel).
+        buffer_id: Option<u64>,
+        /// 0-indexed buffer row (line number) of the click, accounting
+        /// for scroll. None when the click is outside any buffer.
+        buffer_row: Option<u32>,
+        /// 0-indexed byte column inside the buffer row. None when the
+        /// click is outside any buffer.
+        buffer_col: Option<u32>,
     },
 
     /// Mouse move/hover event
@@ -646,6 +655,9 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             modifiers,
             content_x,
             content_y,
+            buffer_id,
+            buffer_row,
+            buffer_col,
         } => {
             serde_json::json!({
                 "column": column,
@@ -654,6 +666,9 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
                 "modifiers": modifiers,
                 "content_x": content_x,
                 "content_y": content_y,
+                "buffer_id": buffer_id,
+                "buffer_row": buffer_row,
+                "buffer_col": buffer_col,
             })
         }
         HookArgs::MouseMove {
