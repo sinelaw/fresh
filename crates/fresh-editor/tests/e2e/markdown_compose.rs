@@ -943,6 +943,152 @@ fn test_compose_mode_mouse_scroll_to_bottom() {
     );
 }
 
+/// Regression test for two compose-mode mouse-wheel scrolling bugs:
+///
+/// 1. **Wheel absorbed at long-wrap item boundaries.** With a numbered/bullet
+///    list whose items wrap to many visual rows under the markdown plugin's
+///    hanging-indent wrapping, every wheel event that landed on the start of
+///    the next item produced no movement — the scroll viewport stayed put.
+///
+/// 2. **Bottom half empty (mouse stops short of EOF).** With a long-wrap
+///    list at the very end of the document, the wheel-scroll math clamped
+///    the viewport short of the keyboard's `Ctrl+End` position, leaving the
+///    bottom of the visible area as `~` filler rows.
+///
+/// Both bugs share a root cause: `Viewport::scroll_down_visual` and friends
+/// counted visual rows using `wrap_line` on raw source text, which doesn't
+/// know about the plugin-injected hanging indent ("1. " marker → 3-column
+/// continuation indent). The plugin's `addSoftBreak` markers describe the
+/// *actual* on-screen wrapping, so those markers are now consulted by the
+/// scroll math (see `EditorState::collect_soft_break_positions`).
+///
+/// The test scrolls a small list-only fixture wheel-by-wheel and asserts
+/// that (a) every wheel makes monotonic progress (no stuck/absorbed
+/// events) and (b) the EOF marker becomes visible within the expected
+/// number of wheels.
+#[test]
+fn test_compose_mode_mouse_wheel_long_list_progresses_to_eof() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    init_tracing_from_env();
+
+    // Build a tiny markdown file: 5 numbered list items, each a 99-word
+    // single line. Under markdown_compose at 60 columns each item wraps to
+    // roughly 13 visual rows (with a 3-column hanging indent). The bug
+    // described above made the wheel "absorb" one event per item start, so
+    // reaching EOF took materially more wheels than the keyboard.
+    let mut md = String::from("# Test\n\n");
+    for i in 1..=5 {
+        md.push_str(&format!("{}. Item {}: ", i, i));
+        for w in 1..=99 {
+            if w > 1 {
+                md.push(' ');
+            }
+            md.push_str(&format!("word{}", w));
+        }
+        md.push('\n');
+    }
+    md.push_str("\nEOF_MARKER\n");
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("scroll_repro.md");
+    std::fs::write(&md_path, md).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(60, 24, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("scroll_repro.md");
+
+    // Enable compose mode.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for compose decorations (the hanging-indent continuation rows
+    // start with at least three leading spaces).
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("   word")
+        })
+        .unwrap();
+
+    // Scroll wheel-by-wheel from the top, asserting monotonic progress and
+    // requiring EOF_MARKER to appear within a generous bound.
+    let (content_start, content_end) = harness.content_area_rows();
+    let mid_row = ((content_start + content_end) / 2) as u16;
+
+    // Visual cost of the document under the plugin's wrapping:
+    //   header (2 rows) + 5 items * ~14 rows + EOF (~3 rows) ≈ 75 rows.
+    // Each wheel advances 3 visual rows, so 25 wheels suffice; 60 leaves
+    // generous slack. With the bug, each item-start absorbed one wheel —
+    // 5 items × 1 = 5 extra wheels, *and* the apply_visual_scroll_limit
+    // clamp could refuse the last few wheels entirely, so this test would
+    // fail before the fix.
+    const MAX_WHEELS: usize = 60;
+
+    let mut prev_top: Option<String> = None;
+    let mut stuck_count = 0usize;
+    let mut wheels_used = 0usize;
+    for i in 1..=MAX_WHEELS {
+        harness.mouse_scroll_down(40, mid_row).unwrap();
+        wheels_used = i;
+
+        let screen = harness.screen_to_string();
+        if screen.contains("EOF_MARKER") {
+            break;
+        }
+
+        // Track per-wheel progress. The top of the visible content area must
+        // not stay identical for more than one wheel in a row — that would
+        // be the "absorbed wheel" symptom from the original bug report.
+        let lines: Vec<&str> = screen.lines().collect();
+        let top = lines
+            .get(content_start)
+            .copied()
+            .unwrap_or("")
+            .trim_end()
+            .to_string();
+        if Some(&top) == prev_top.as_ref() {
+            stuck_count += 1;
+            assert!(
+                stuck_count < 2,
+                "Mouse wheel produced no scroll progress for {stuck_count} consecutive events \
+                 at wheel #{i}. Top of viewport: {top:?}\nFull screen:\n{screen}"
+            );
+        } else {
+            stuck_count = 0;
+        }
+        prev_top = Some(top);
+    }
+
+    let final_screen = harness.screen_to_string();
+    assert!(
+        final_screen.contains("EOF_MARKER"),
+        "EOF_MARKER never became visible after {wheels_used} wheel events; \
+         the wheel scroll appears stuck short of EOF.\nFinal screen:\n{final_screen}"
+    );
+}
+
 /// Test that HTML entities are rendered as their Unicode characters in compose mode.
 ///
 /// Named entities like `&amp;`, `&mdash;`, `&nbsp;` and numeric entities like

@@ -3415,6 +3415,11 @@ impl Editor {
 
             // Get mutable references to both buffer and view state
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                // Collect plugin soft-break positions BEFORE re-borrowing the
+                // buffer so the viewport's visual-row math matches the renderer
+                // (avoids the wheel-absorbed / empty-bottom mouse-scroll bugs
+                // for compose-mode markdown — see scroll_down_visual).
+                let soft_breaks = state.collect_soft_break_positions();
                 let buffer = &mut state.buffer;
                 if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
                     if let Some(tokens) = view_transform_tokens {
@@ -3427,13 +3432,17 @@ impl Editor {
                     } else {
                         // No view transform - use traditional buffer-based scrolling
                         if line_offset > 0 {
-                            view_state
-                                .viewport
-                                .scroll_down(buffer, line_offset as usize);
+                            view_state.viewport.scroll_down(
+                                buffer,
+                                &soft_breaks,
+                                line_offset as usize,
+                            );
                         } else {
-                            view_state
-                                .viewport
-                                .scroll_up(buffer, line_offset.unsigned_abs());
+                            view_state.viewport.scroll_up(
+                                buffer,
+                                &soft_breaks,
+                                line_offset.unsigned_abs(),
+                            );
                         }
                     }
                     // Mark to skip ensure_visible on next render so the scroll isn't undone

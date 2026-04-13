@@ -1537,6 +1537,13 @@ impl Editor {
         let view_state = self.split_view_states.get_mut(&target_split);
 
         if let (Some(state), Some(view_state)) = (state, view_state) {
+            // Collect plugin soft-break positions BEFORE re-borrowing the buffer
+            // so the viewport's visual-row math stays in lock-step with the
+            // renderer (e.g. markdown_compose adds hanging-indent breaks via
+            // addSoftBreak; without these the mouse wheel was either "absorbed"
+            // at long-wrap item boundaries or got clamped short of EOF,
+            // leaving the bottom half empty).
+            let soft_breaks = state.collect_soft_break_positions();
             let buffer = &mut state.buffer;
             let top_byte_before = view_state.viewport.top_byte;
             if let Some(tokens) = view_transform_tokens {
@@ -1549,15 +1556,19 @@ impl Editor {
                     .viewport
                     .scroll_view_lines(&view_lines, delta as isize);
             } else {
-                // No view transform - use traditional buffer-based scrolling
+                // No view transform - use traditional buffer-based scrolling.
                 if delta < 0 {
                     // Scroll up
                     let lines_to_scroll = delta.unsigned_abs() as usize;
-                    view_state.viewport.scroll_up(buffer, lines_to_scroll);
+                    view_state
+                        .viewport
+                        .scroll_up(buffer, &soft_breaks, lines_to_scroll);
                 } else {
                     // Scroll down
                     let lines_to_scroll = delta as usize;
-                    view_state.viewport.scroll_down(buffer, lines_to_scroll);
+                    view_state
+                        .viewport
+                        .scroll_down(buffer, &soft_breaks, lines_to_scroll);
                 }
             }
             // Skip ensure_visible so the scroll position isn't undone during render

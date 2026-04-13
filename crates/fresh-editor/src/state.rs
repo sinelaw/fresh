@@ -1107,6 +1107,24 @@ impl EditorState {
         Ok(())
     }
 
+    /// Resolve all plugin-injected soft-break byte positions for this buffer.
+    ///
+    /// Returns a sorted slice suitable for passing to `Viewport::scroll_up` /
+    /// `scroll_down`, which use it to keep their visual-row counting in
+    /// lock-step with the renderer (which applies these same breaks via
+    /// `apply_soft_breaks`). Empty when no plugin is wrapping the buffer.
+    pub fn collect_soft_break_positions(&self) -> Vec<usize> {
+        if self.soft_breaks.is_empty() {
+            return Vec::new();
+        }
+        // query_viewport already returns positions sorted ascending.
+        self.soft_breaks
+            .query_viewport(0, self.buffer.len() + 1, &self.marker_list)
+            .into_iter()
+            .map(|(pos, _indent)| pos)
+            .collect()
+    }
+
     // ========== DocumentModel Helper Methods ==========
     // These methods provide convenient access to DocumentModel functionality
     // while maintaining backward compatibility with existing code.
