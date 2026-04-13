@@ -1233,6 +1233,12 @@ function currentFileFromCursor(): FileEntry | null {
 }
 
 function review_toggle_file_collapse() {
+    if (state.groupId === null) return;
+    // Tab from the comments panel swaps focus back to the diff stream.
+    if (state.focusPanel === 'comments') {
+        editor.focusBufferGroupPanel(state.groupId, "diff");
+        return;
+    }
     if (state.files.length === 0) return;
     // Determine which file the cursor is on. Prefer a file-header row
     // directly under the cursor; fall back to the file the cursor sits
@@ -1250,6 +1256,125 @@ function review_toggle_file_collapse() {
 }
 registerHandler("review_toggle_file_collapse", review_toggle_file_collapse);
 
+/**
+ * Order comments the same way the comments panel does — by file order
+ * in the unified stream, then by line number. Keeping the ordering
+ * here in sync with `buildCommentsPanelEntries` is important so that
+ * keyboard navigation lands on the same row the user sees.
+ */
+function commentsInPanelOrder(): ReviewComment[] {
+    const fileIndex = (file: string): number => {
+        for (let i = 0; i < state.files.length; i++) {
+            if (state.files[i].path === file) return i;
+        }
+        return Number.MAX_SAFE_INTEGER;
+    };
+    return [...state.comments].sort((a, b) => {
+        const fa = fileIndex(a.file);
+        const fb = fileIndex(b.file);
+        if (fa !== fb) return fa - fb;
+        return (a.new_line ?? a.old_line ?? 0) - (b.new_line ?? b.old_line ?? 0);
+    });
+}
+
+function selectAndJumpToComment(c: ReviewComment) {
+    if (state.groupId === null) return;
+    jumpToComment(c.id);
+    // Find the comment's row in the panel (header is row 1, comments start at 2).
+    const sorted = commentsInPanelOrder();
+    const idx = sorted.findIndex(x => x.id === c.id);
+    if (idx >= 0) {
+        state.commentsSelectedRow = idx + 2;
+        editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    }
+}
+
+function review_next_comment() {
+    if (state.comments.length === 0) {
+        editor.setStatus(editor.t("status.no_comments") || "No comments");
+        return;
+    }
+    const sorted = commentsInPanelOrder();
+    // Determine the comment-id currently under the diff cursor (if any).
+    const currentRow = state.commentsSelectedRow;
+    const currentIdx = currentRow >= 2 ? currentRow - 2 : -1;
+    const nextIdx = Math.min(sorted.length - 1, currentIdx + 1);
+    if (nextIdx === currentIdx && currentIdx >= 0) return;
+    selectAndJumpToComment(sorted[nextIdx >= 0 ? nextIdx : 0]);
+}
+registerHandler("review_next_comment", review_next_comment);
+
+function review_prev_comment() {
+    if (state.comments.length === 0) {
+        editor.setStatus(editor.t("status.no_comments") || "No comments");
+        return;
+    }
+    const sorted = commentsInPanelOrder();
+    const currentRow = state.commentsSelectedRow;
+    const currentIdx = currentRow >= 2 ? currentRow - 2 : sorted.length;
+    const prevIdx = Math.max(0, currentIdx - 1);
+    selectAndJumpToComment(sorted[prevIdx]);
+}
+registerHandler("review_prev_comment", review_prev_comment);
+
+/**
+ * Focus the comments panel. Uses native focus-swap so the buffer's
+ * native cursor takes the keystrokes (j/k/Enter handled by the
+ * comments-mode keybindings).
+ */
+function review_focus_comments() {
+    if (state.groupId === null) return;
+    editor.focusBufferGroupPanel(state.groupId, "comments");
+    // Ensure the selection highlight shows immediately.
+    if (state.commentsSelectedRow < 2 && state.comments.length > 0) {
+        state.commentsSelectedRow = 2;
+    }
+    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+}
+registerHandler("review_focus_comments", review_focus_comments);
+
+/**
+ * Activate the currently-selected comment in the comments panel:
+ * jump the diff cursor to it (auto-expanding the file if collapsed).
+ */
+function review_open_selected_comment() {
+    if (state.commentsSelectedRow < 2) return;
+    const commentId = state.commentsByRow[state.commentsSelectedRow];
+    if (!commentId) return;
+    jumpToComment(commentId);
+}
+registerHandler("review_open_selected_comment", review_open_selected_comment);
+
+function review_comments_select_next() {
+    if (state.groupId === null) return;
+    if (state.comments.length === 0) return;
+    const total = state.comments.length;
+    const currentIdx = Math.max(0, state.commentsSelectedRow - 2);
+    const nextIdx = Math.min(total - 1, currentIdx + 1);
+    state.commentsSelectedRow = nextIdx + 2;
+    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+}
+registerHandler("review_comments_select_next", review_comments_select_next);
+
+function review_enter_dispatch() {
+    if (state.focusPanel === 'comments') {
+        review_open_selected_comment();
+        return;
+    }
+    review_drill_down();
+}
+registerHandler("review_enter_dispatch", review_enter_dispatch);
+
+function review_comments_select_prev() {
+    if (state.groupId === null) return;
+    if (state.comments.length === 0) return;
+    const currentIdx = Math.max(0, state.commentsSelectedRow - 2);
+    const prevIdx = Math.max(0, currentIdx - 1);
+    state.commentsSelectedRow = prevIdx + 2;
+    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+}
+registerHandler("review_comments_select_prev", review_comments_select_prev);
+
 function review_collapse_all() {
     state.collapsedFiles = new Set(state.files.map(fileKey));
     updateMagitDisplay();
@@ -1262,10 +1387,16 @@ function review_expand_all() {
 }
 registerHandler("review_expand_all", review_expand_all);
 
-function review_nav_up() { editor.executeAction("move_up"); }
+function review_nav_up() {
+    if (state.focusPanel === 'comments') { review_comments_select_prev(); return; }
+    editor.executeAction("move_up");
+}
 registerHandler("review_nav_up", review_nav_up);
 
-function review_nav_down() { editor.executeAction("move_down"); }
+function review_nav_down() {
+    if (state.focusPanel === 'comments') { review_comments_select_next(); return; }
+    editor.executeAction("move_down");
+}
 registerHandler("review_nav_down", review_nav_down);
 
 function review_page_up() { editor.executeAction("move_page_up"); }
@@ -3133,8 +3264,16 @@ editor.defineMode("review-mode", [
     ["Tab", "review_toggle_file_collapse"],
     ["z a", "review_collapse_all"],
     ["z r", "review_expand_all"],
-    // Drill-down to side-by-side view of the file under the cursor.
-    ["Enter", "review_drill_down"],
+    // Drill-down to side-by-side view of the file under the cursor —
+    // unless focus is in the comments panel, in which case Enter opens
+    // the selected comment.
+    ["Enter", "review_enter_dispatch"],
+    // Comments-nav: cycle through comments, jump diff cursor, expand
+    // the file if needed. Works regardless of which panel has focus.
+    ["] c", "review_next_comment"],
+    ["[ c", "review_prev_comment"],
+    // Focus the comments panel (use j/k/Enter inside).
+    ["`", "review_focus_comments"],
     // Stage/unstage/discard — context-sensitive. s/u/d act on the file
     // (when cursor is on a file header) or the hunk under the cursor.
     // Capital S/U/D always act on the enclosing file.
