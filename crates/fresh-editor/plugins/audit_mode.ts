@@ -1987,13 +1987,19 @@ function getHunkAtDiffCursor(): Hunk | null {
 /**
  * Determine if the cursor is on a file-header row. Returns the FileEntry
  * if so, otherwise null.
+ *
+ * Looks up by `fileKey` (path + category) — looking up by `path` alone
+ * is wrong when the same file appears in both Staged and Unstaged: the
+ * `state.files.find(... === path)` would always return the first
+ * matching entry (typically the staged one), so Tab on the unstaged
+ * file header would silently act on the staged file instead.
  */
 function fileHeaderUnderCursor(): FileEntry | null {
     const props = propsAtCursorRow();
     if (!props || props["type"] !== 'file-header') return null;
-    const filePath = props["filePath"];
-    if (typeof filePath !== 'string') return null;
-    return state.files.find(f => f.path === filePath) || null;
+    const key = props["fileKey"];
+    if (typeof key !== 'string') return null;
+    return state.files.find(f => fileKey(f) === key) || null;
 }
 
 /**
