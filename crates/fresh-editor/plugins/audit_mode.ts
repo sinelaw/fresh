@@ -131,6 +131,9 @@ interface ReviewState {
   commentsByRow: Record<number, string>;
   // Current selection in the comments panel (1-indexed row, 0 means none)
   commentsSelectedRow: number;
+  // Comment-id the diff cursor is sitting on / attached to. Drives the
+  // `>` follow-cursor marker in the comments panel.
+  commentsHighlightId: string | null;
   // Sticky header current content (for Step 4)
   stickyCurrentFile: string | null;
   // Last known top-visible row in the diff viewport (1-indexed for
@@ -168,6 +171,7 @@ const state: ReviewState = {
   sectionHeaderRows: {},
   commentsByRow: {},
   commentsSelectedRow: 0,
+  commentsHighlightId: null,
   stickyCurrentFile: null,
   diffViewportTopRow: 0,
   lineSelection: null,
@@ -208,6 +212,12 @@ const STYLE_HUNK_HEADER_BG: OverlayColorSpec = "editor.current_line_bg";
 // `editor.fg` is white-ish on dark themes and black-ish on light, so it
 // always reads as the most prominent text color. Bolded for extra weight.
 const STYLE_FILE_HEADER_FG: OverlayColorSpec = "editor.fg";
+// "Inverse" pair — swap of editor.bg/fg. Used for full-line-wide section
+// dividers (STAGED / UNSTAGED / UNTRACKED) and the Comments panel
+// header. Reads as an inverted band in every theme: dark text on light
+// bg in dark themes, light text on dark bg in light themes.
+const STYLE_INVERSE_FG: OverlayColorSpec = "editor.bg";
+const STYLE_INVERSE_BG: OverlayColorSpec = "editor.fg";
 
 
 /**
@@ -576,8 +586,10 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
     for (let fi = 0; fi < state.files.length; fi++) {
         const file = state.files[fi];
 
-        // Section header — collapsible band, marked with ▾/▸. Tab on
-        // the section header collapses the whole section.
+        // Section header — full-line-wide INVERSE band, uppercase, bold.
+        // The strong inverse coloring (editor.bg as fg / editor.fg as bg)
+        // makes the band read as a hard divider between Staged /
+        // Unstaged / Untracked sections regardless of theme.
         if (file.category !== lastCategory) {
             lastCategory = file.category;
             let label: string = file.category;
@@ -593,8 +605,8 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                 file: file.category, // store category in 'file' field for reuse
                 filePath: file.category,
                 style: {
-                    fg: STYLE_SECTION_HEADER,
-                    bg: STYLE_FILE_HEADER_BG,
+                    fg: STYLE_INVERSE_FG,
+                    bg: STYLE_INVERSE_BG,
                     bold: true,
                     extendToLineEnd: true,
                 },
@@ -1009,10 +1021,15 @@ function buildCommentsPanelEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
     state.commentsByRow = {};
 
-    const headerLabel = editor.t("panel.comments") || "Comments";
+    const headerLabel = (editor.t("panel.comments") || "Comments").toUpperCase();
     entries.push({
         text: ` ${headerLabel}\n`,
-        style: { fg: STYLE_HEADER, bold: true, underline: true },
+        style: {
+            fg: STYLE_INVERSE_FG,
+            bg: STYLE_INVERSE_BG,
+            bold: true,
+            extendToLineEnd: true,
+        },
         properties: { type: "header" },
     });
 
@@ -1053,21 +1070,28 @@ function buildCommentsPanelEntries(): TextPropertyEntry[] {
         const lineRef = c.new_line ?? c.old_line ?? 0;
         const path = c.file.split('/').pop() || c.file;
         const snippet = c.text.replace(/\s+/g, ' ').trim();
-        const text = ` ${path}:${lineRef}  ${snippet}`;
+        // Leading marker: ">" when this comment is the diff cursor's
+        // current target (cursor is on the comment row itself, or on
+        // the line the comment is attached to). Otherwise a space.
+        const marker = c.id === state.commentsHighlightId ? '>' : ' ';
+        const text = `${marker} ${path}:${lineRef}  ${snippet}`;
 
         // Truncate to fit panel width (estimate).
         const panelWidth = Math.max(20, Math.floor(state.viewportWidth * 0.25) - 2);
         const display = text.length > panelWidth ? text.slice(0, panelWidth - 1) + '…' : text;
 
         const isSelected = rowIdx === state.commentsSelectedRow && state.focusPanel === 'comments';
+        const isCursorMarked = c.id === state.commentsHighlightId;
         const style: Partial<OverlayOptions> | undefined = isSelected
             ? { bg: STYLE_SELECTED_BG, bold: true, extendToLineEnd: true }
-            : undefined;
+            : isCursorMarked
+                ? { bold: true }
+                : undefined;
 
-        // Color the path:line prefix in keyword color
-        const prefixLen = getByteLength(` ${path}:${lineRef}`);
+        // Color the path:line prefix in keyword color (skip the marker).
+        const prefixLen = getByteLength(`${marker} ${path}:${lineRef}`);
         const inlineOverlays: InlineOverlay[] = [
-            { start: 1, end: prefixLen, style: { fg: STYLE_KEY_FG } },
+            { start: 2, end: prefixLen, style: { fg: STYLE_KEY_FG } },
         ];
 
         state.commentsByRow[rowIdx] = c.id;
@@ -3423,6 +3447,33 @@ registerHandler("on_review_buffer_activated", on_review_buffer_activated);
  * native cursor (`show_cursors = false` blocks keyboard-driven movement
  * but mouse clicks still move the cursor).
  */
+/**
+ * Determine the "current comment" — the one the diff cursor is sitting
+ * on (a comment-display row) or attached to (a +/-/context line).
+ * Returns null if the cursor is not associated with any comment.
+ */
+function currentCommentIdAtCursor(): string | null {
+    const props = propsAtCursorRow();
+    if (!props) return null;
+    if (props["type"] === 'comment' && typeof props["commentId"] === 'string') {
+        return props["commentId"] as string;
+    }
+    const hunkId = props["hunkId"];
+    const lineType = props["lineType"];
+    if (typeof hunkId !== 'string') return null;
+    if (lineType !== 'add' && lineType !== 'remove' && lineType !== 'context') return null;
+    const oldLine = typeof props["oldLine"] === 'number' ? (props["oldLine"] as number) : undefined;
+    const newLine = typeof props["newLine"] === 'number' ? (props["newLine"] as number) : undefined;
+    const found = state.comments.find(c =>
+        c.hunk_id === hunkId && (
+            (c.line_type === 'add' && c.new_line === newLine) ||
+            (c.line_type === 'remove' && c.old_line === oldLine) ||
+            (c.line_type === 'context' && c.new_line === newLine)
+        )
+    );
+    return found ? found.id : null;
+}
+
 function on_review_cursor_moved(data: {
     buffer_id: number;
     cursor_id: number;
@@ -3435,6 +3486,7 @@ function on_review_cursor_moved(data: {
 
     // Diff panel: track cursor row + repaint the cursor-line overlay.
     if (data.buffer_id === state.panelBuffers["diff"]) {
+        const prevHighlight = state.commentsHighlightId;
         state.diffCursorRow = data.line;
         applyCursorLineOverlay('diff');
         // Use the cursor row as a sticky-header anchor too — viewport_changed
@@ -3443,6 +3495,14 @@ function on_review_cursor_moved(data: {
         // "what file am I in" indicator regardless.
         refreshStickyHeader(Math.max(0, data.line - 1));
         updateReviewStatus();
+        // Re-render the comments panel only when the highlighted comment
+        // actually changes — avoids re-emitting the panel on every
+        // cursor tick.
+        const newHighlight = currentCommentIdAtCursor();
+        if (newHighlight !== prevHighlight) {
+            state.commentsHighlightId = newHighlight;
+            editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+        }
         return;
     }
 }
