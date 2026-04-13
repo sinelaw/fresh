@@ -244,6 +244,16 @@ pub enum HookArgs {
         language: String,
         /// Whether there's an active error
         has_error: bool,
+        /// Commands of configured servers whose binaries are not on `$PATH`
+        /// (or absolute-path equivalents). Empty when every configured
+        /// server is installed. Plugins can inspect this to show tailored
+        /// install hints without waiting for a failed spawn.
+        missing_servers: Vec<String>,
+        /// Whether the user previously dismissed the LSP pill for this
+        /// language (via the popup's "Disable" action). Plugins seeing
+        /// this as `true` should offer "Enable" / "Install" rather than
+        /// "Start".
+        user_dismissed: bool,
     },
 
     /// User selected an action from an action popup
@@ -705,10 +715,14 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
         HookArgs::LspStatusClicked {
             language,
             has_error,
+            missing_servers,
+            user_dismissed,
         } => {
             serde_json::json!({
                 "language": language,
                 "has_error": has_error,
+                "missing_servers": missing_servers,
+                "user_dismissed": user_dismissed,
             })
         }
         HookArgs::ActionPopupResult {

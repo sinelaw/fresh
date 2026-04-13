@@ -60,16 +60,22 @@ struct RenderedElement {
 /// nothing" fan-out into the three user-meaningful buckets the indicator
 /// actually needs to communicate:
 ///
-/// - `On`    — at least one server for this language is running
-/// - `Off`   — configured servers exist for this language, none are running
-/// - `Error` — at least one server for this language is in the Error state
-/// - `None`  — no LSP configured or running for this language
+/// - `On`            — at least one server for this language is running
+/// - `Off`           — configured servers exist for this language, none are running
+/// - `OffDismissed`  — like `Off`, but the user clicked "Disable" from the
+///                     popup; rendered with a muted style so it stops
+///                     shouting for attention while remaining clickable
+///                     (so the user can still open the popup to re-enable
+///                     or see install help).
+/// - `Error`         — at least one server for this language is in the Error state
+/// - `None`          — no LSP configured or running for this language
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LspIndicatorState {
     #[default]
     None,
     On,
     Off,
+    OffDismissed,
     Error,
 }
 
@@ -832,6 +838,14 @@ impl StatusBarRenderer {
                         (theme.diagnostic_warning_fg, theme.diagnostic_warning_bg)
                     }
                     LspIndicatorState::On => (theme.diagnostic_info_fg, theme.diagnostic_info_bg),
+                    // Dismissed: fall back to the neutral status-bar
+                    // palette so the pill reads as low-priority.  We
+                    // intentionally don't introduce a dedicated theme
+                    // key — every theme already carries the plain
+                    // status-bar fg/bg, which reliably produces a
+                    // "muted" look next to the vivid error/warning/info
+                    // palettes above.
+                    LspIndicatorState::OffDismissed => (theme.status_bar_fg, theme.status_bar_bg),
                     LspIndicatorState::None => (theme.status_bar_fg, theme.status_bar_bg),
                 };
                 let mut style = Style::default().fg(fg).bg(bg);

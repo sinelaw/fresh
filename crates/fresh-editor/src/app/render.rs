@@ -32,6 +32,7 @@ fn compose_lsp_status(
     lsp_progress: &HashMap<String, LspProgressInfo>,
     lsp_server_statuses: &HashMap<(String, String), crate::services::async_bridge::LspServerStatus>,
     lsp_config: &HashMap<String, crate::types::LspLanguageConfig>,
+    user_dismissed_languages: &std::collections::HashSet<String>,
 ) -> (String, crate::view::ui::status_bar::LspIndicatorState) {
     use crate::services::async_bridge::LspServerStatus;
     use crate::view::ui::status_bar::LspIndicatorState;
@@ -127,7 +128,17 @@ fn compose_lsp_status(
         })
         .unwrap_or(0);
     if configured_count > 0 {
-        return (centered("LSP (off)"), LspIndicatorState::Off);
+        // User-dismissed languages keep the same `LSP (off)` text — only
+        // the style changes (handled by `element_style` via the
+        // `OffDismissed` variant).  We deliberately keep the pill
+        // visible rather than hiding it, so the user retains a
+        // discoverable surface to re-enable or view install help.
+        let state = if user_dismissed_languages.contains(current_language) {
+            LspIndicatorState::OffDismissed
+        } else {
+            LspIndicatorState::Off
+        };
+        return (centered("LSP (off)"), state);
     }
 
     // 5. Nothing configured and nothing running — no indicator.
@@ -741,6 +752,7 @@ impl Editor {
             &self.lsp_progress,
             &self.lsp_server_statuses,
             &self.config.lsp,
+            &self.user_dismissed_lsp_languages,
         );
         let theme = self.theme.clone();
         let keybindings_cloned = self.keybindings.read().unwrap().clone(); // Clone the keybindings

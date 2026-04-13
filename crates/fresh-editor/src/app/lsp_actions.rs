@@ -312,6 +312,25 @@ impl Editor {
         }
     }
 
+    /// Is the given language currently user-dismissed via the LSP popup?
+    pub fn is_lsp_language_user_dismissed(&self, language: &str) -> bool {
+        self.user_dismissed_lsp_languages.contains(language)
+    }
+
+    /// Dismiss the LSP pill for a language until the next editor session
+    /// (or until the user re-enables it from the popup). See docs on
+    /// `Editor::user_dismissed_lsp_languages` for the rationale.
+    pub fn dismiss_lsp_language(&mut self, language: &str) {
+        self.user_dismissed_lsp_languages
+            .insert(language.to_string());
+    }
+
+    /// Undo a previous dismissal — the pill returns to the normal
+    /// yellow `LSP (off)` for this language.
+    pub fn undismiss_lsp_language(&mut self, language: &str) {
+        self.user_dismissed_lsp_languages.remove(language);
+    }
+
     /// Handle an action from the LSP status details popup.
     ///
     /// Action keys have the format:
@@ -319,6 +338,8 @@ impl Editor {
     /// - `start:<language>` — start LSP server(s) for a language
     /// - `stop:<language>/<server_name>` — stop a specific server
     /// - `log:<language>` — open the LSP log file for the language
+    /// - `dismiss:<language>` — hide the pill for this language (dim style)
+    /// - `enable:<language>` — restore a dismissed language's pill
     pub fn handle_lsp_status_action(&mut self, action_key: &str) {
         if let Some(language) = action_key.strip_prefix("start:") {
             // Start/restart LSP for this language (same as the "Start/Restart LSP" command)
@@ -392,6 +413,15 @@ impl Editor {
             } else {
                 self.status_message = Some(format!("No log file found for {}", language));
             }
+        } else if let Some(language) = action_key.strip_prefix("dismiss:") {
+            self.dismiss_lsp_language(language);
+            self.status_message = Some(format!(
+                "LSP pill dimmed for {}. Click it to re-enable.",
+                language
+            ));
+        } else if let Some(language) = action_key.strip_prefix("enable:") {
+            self.undismiss_lsp_language(language);
+            self.status_message = Some(format!("LSP pill restored for {}.", language));
         }
     }
 

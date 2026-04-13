@@ -8,6 +8,8 @@
 
 * **LSP Status Bar Indicator**: Redesigned to a stable-width `LSP (on/off/error)` status indicator with a spinner while a server is starting or working — no more status bar noise as progress messages arrive. Configured-but-dormant servers are now visible as `LSP (off)` so you can see at a glance that an LSP is available to start. Clicking opens a popup with per-server status and live progress under the server name.
 
+* **LSP Indicator: missing-binary detection and dismissable pill**: The LSP popup now probes each configured server's binary up-front, so opening the popup for a language like Python or Go on a system without `pylsp`/`gopls` installed labels the server "binary not in PATH" and replaces the actionable "Start" row with a disabled "Install … to enable" advisory — no more starting a server only to watch it fail. The popup also offers a "Disable LSP pill for {language}" row that mutes the indicator without touching your on-disk config (re-enable it from the same popup; dismissal is session-scoped). Plugins receive the same information through an extended `lsp_status_clicked` hook payload (`missing_servers`, `user_dismissed`).
+
 * **Diagnostics in Hover Popup**: When the cursor sits on a symbol that also carries an error, warning, or hint, the hover popup prepends the overlapping diagnostic (severity and source like `rustc`/`clippy`/`clangd`) above the hover body.
 
 * **C++ Header Detection**: Added heuristics to assign an `.h` files the C++ rather than C language. You can change it manually by clicking on the language in the status bar.

@@ -793,6 +793,15 @@ pub struct Editor {
     /// Contains the list of (action_key, label) pairs for the popup items.
     pending_lsp_status_popup: Option<Vec<(String, String)>>,
 
+    /// Languages the user has interactively dismissed from the LSP popup.
+    ///
+    /// Separate from `LspServerConfig::enabled` (which is the persisted
+    /// config flag) so we can keep the status-bar pill visible in a
+    /// muted style — giving the user a re-enable surface without
+    /// mutating their on-disk config. Session-scoped; dismissal does not
+    /// survive editor restarts.
+    user_dismissed_lsp_languages: std::collections::HashSet<String>,
+
     /// Pending close buffer - buffer to close after SaveFileAs completes
     /// Used when closing a modified buffer that needs to be saved first
     pending_close_buffer: Option<BufferId>,
@@ -1674,6 +1683,7 @@ impl Editor {
             chord_state: Vec::new(),
             pending_lsp_confirmation: None,
             pending_lsp_status_popup: None,
+            user_dismissed_lsp_languages: std::collections::HashSet::new(),
             pending_close_buffer: None,
             auto_revert_enabled: true,
             last_auto_revert_poll: time_source.now(),

@@ -1819,12 +1819,32 @@ impl Editor {
             .map(|s| s.language.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
+        // Compute the set of configured servers whose binaries are not
+        // resolvable — plugins and the popup itself both need this to
+        // decide between "offer to start" and "offer install help".
+        let missing_servers: Vec<String> = self
+            .config
+            .lsp
+            .get(&language)
+            .map(|cfg| {
+                cfg.as_slice()
+                    .iter()
+                    .filter(|c| c.enabled && !c.command.is_empty())
+                    .filter(|c| !crate::services::lsp::command_exists(&c.command))
+                    .map(|c| c.command.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let user_dismissed = self.is_lsp_language_user_dismissed(&language);
+
         // Fire the LspStatusClicked hook for plugins
         self.plugin_manager.run_hook(
             "lsp_status_clicked",
             crate::services::plugins::hooks::HookArgs::LspStatusClicked {
                 language: language.clone(),
                 has_error,
+                missing_servers,
+                user_dismissed,
             },
         );
 
@@ -1883,6 +1903,31 @@ impl Editor {
             })
             .unwrap_or_default();
 
+        // Per-server binary availability map (display_name → bool).
+        // `command_exists` is cached, so repeated popup opens or a
+        // refresh-while-open are cheap.  We look up by display name
+        // because `all_servers` below is built from display names;
+        // LspServerConfig::display_name() falls back to the command
+        // basename when no explicit `name` is set.
+        let missing_by_server: std::collections::HashMap<String, bool> = self
+            .config
+            .lsp
+            .get(language)
+            .map(|cfg| {
+                cfg.as_slice()
+                    .iter()
+                    .filter(|c| !c.command.is_empty())
+                    .map(|c| {
+                        (
+                            c.display_name(),
+                            !crate::services::lsp::command_exists(&c.command),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let user_dismissed = self.is_lsp_language_user_dismissed(language);
+
         if configured_servers.is_empty() && running_statuses.is_empty() {
             self.status_message = Some(t!("lsp.no_server_active").to_string());
             return;
@@ -1938,15 +1983,29 @@ impl Editor {
             let is_active = status
                 .map(|s| !matches!(s, LspServerStatus::Shutdown))
                 .unwrap_or(false);
+            // A server is "missing" only when it's NOT currently running
+            // (an absolute-path binary could have been removed mid-session,
+            // but the live server is still talking to us).
+            let binary_missing =
+                !is_active && missing_by_server.get(name).copied().unwrap_or(false);
 
             // Header: server name + status (data = None → not clickable,
-            // not underlined).
+            // not underlined).  Swap the "not running" label for a more
+            // actionable "binary not found" when we can see up-front that
+            // a start attempt would fail — this is the user-visible half
+            // of the pre-click probe.
             let (icon, label) = match status {
                 Some(LspServerStatus::Running) => ("●", "ready"),
                 Some(LspServerStatus::Error) => ("✗", "error"),
                 Some(LspServerStatus::Starting) => ("◌", "starting"),
                 Some(LspServerStatus::Initializing) => ("◌", "initializing"),
-                Some(LspServerStatus::Shutdown) | None => ("○", "not running"),
+                Some(LspServerStatus::Shutdown) | None => {
+                    if binary_missing {
+                        ("○", "binary not in PATH")
+                    } else {
+                        ("○", "not running")
+                    }
+                }
             };
             items.push(crate::view::popup::PopupListItem::new(format!(
                 "{} {} ({})",
@@ -1991,6 +2050,19 @@ impl Editor {
                         .with_data(stop_key.clone()),
                 );
                 action_keys.push((stop_key, format!("Stop {}", name)));
+            } else if binary_missing {
+                // Show a disabled advisory row instead of an actionable
+                // "Start" — clicking Start here would spawn, fail, and
+                // noise up the status area.  The per-language
+                // Install/Dismiss actions are added once at the end of
+                // the popup, below.
+                items.push(
+                    crate::view::popup::PopupListItem::new(format!(
+                        "    Install {} to enable",
+                        name
+                    ))
+                    .disabled(),
+                );
             } else {
                 // Start
                 let start_key = format!("start:{}", language);
@@ -2002,6 +2074,34 @@ impl Editor {
                     action_keys.push((start_key, format!("Start {}", name)));
                 }
             }
+        }
+
+        // Dismiss / Enable row — shown whenever the language has at
+        // least one configured server.  Gives the user a surface to
+        // mute the pill (dim style) and, later, to restore it.  We
+        // reuse `all_servers.is_empty()` as the "nothing here" signal
+        // since languages with zero configured-or-running servers
+        // already bailed out above.
+        if user_dismissed {
+            let enable_key = format!("enable:{}", language);
+            items.push(
+                crate::view::popup::PopupListItem::new(format!(
+                    "    Enable LSP pill for {}",
+                    language
+                ))
+                .with_data(enable_key.clone()),
+            );
+            action_keys.push((enable_key, format!("Enable LSP for {}", language)));
+        } else {
+            let dismiss_key = format!("dismiss:{}", language);
+            items.push(
+                crate::view::popup::PopupListItem::new(format!(
+                    "    Disable LSP pill for {}",
+                    language
+                ))
+                .with_data(dismiss_key.clone()),
+            );
+            action_keys.push((dismiss_key, format!("Disable LSP for {}", language)));
         }
 
         // View log action (always, at the end) — grayed out and
