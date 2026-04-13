@@ -108,6 +108,13 @@ interface ReviewState {
   // Sections (categories) that are currently collapsed. Same persistence
   // rules as `collapsedFiles`.
   collapsedSections: Set<string>;
+  // Hunks that are currently collapsed (`hunk.id` keys). When collapsed,
+  // only the hunk header row is emitted; the +/-/context lines are
+  // skipped. Same persistence rules as collapsedFiles.
+  collapsedHunks: Set<string>;
+  // Maps hunk-id -> 1-indexed row of its hunk-header row in the diff
+  // stream. Used by mouse + Tab to identify the nearest hunk.
+  hunkRowByHunkId: Record<string, number>;
   // Maps a category name (`'staged'` etc.) -> 1-indexed row of its
   // section-header row in the unified stream. Used by Tab toggle.
   sectionHeaderRows: Record<string, number>;
@@ -145,6 +152,8 @@ const state: ReviewState = {
   fileHeaderRows: {},
   collapsedFiles: new Set(),
   collapsedSections: new Set(),
+  collapsedHunks: new Set(),
+  hunkRowByHunkId: {},
   sectionHeaderRows: {},
   commentsByRow: {},
   commentsSelectedRow: 0,
@@ -640,10 +649,13 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
         }
 
         for (const hunk of fileHunks) {
-        // Hunk header with review status indicator
-        const header = hunk.contextHeader
+        // Hunk header with collapse triangle. ▾ = expanded, ▸ = collapsed.
+        const hunkCollapsed = state.collapsedHunks.has(hunk.id);
+        const hunkTri = hunkCollapsed ? '▸' : '▾';
+        const headerInner = hunk.contextHeader
             ? `@@ ${hunk.contextHeader} @@`
             : `@@ -${hunk.oldRange.start} +${hunk.range.start} @@`;
+        const header = `  ${hunkTri} ${headerInner}`;
 
         lines.push({
             text: header,
@@ -657,6 +669,12 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                 extendToLineEnd: true,
             },
         });
+
+        if (hunkCollapsed) {
+            // Skip body — single blank separator before the next hunk.
+            lines.push({ text: '', type: 'empty' });
+            continue;
+        }
 
         // Render hunk-level comments (those with no line_type) right
         // after the hunk header so they are visible in the diff view.
@@ -877,7 +895,7 @@ function buildToolbar(W: number): TextPropertyEntry[] {
          { key: "v", label: "select" }, { key: "c", label: "comment" }],
     ];
     const row2: HintItem[][] = [
-        [{ key: "Tab", label: "fold file" }, { key: "z a", label: "fold all" }, { key: "z r", label: "unfold all" }],
+        [{ key: "Tab", label: "fold" }, { key: "z a", label: "fold all" }, { key: "z r", label: "unfold all" }],
         [{ key: "S U D", label: "file-level" }, { key: "Enter", label: "jump" },
          { key: "e", label: "export" }, { key: "q", label: "close" }],
     ];
@@ -906,6 +924,7 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     const diffLineByteOffsets: number[] = [];
     const fileHeaderRows: Record<string, number> = {};
     const sectionHeaderRows: Record<string, number> = {};
+    const hunkRowByHunkId: Record<string, number> = {};
     let runningByte = 0;
     let row = 0; // 0-indexed counter; row + 1 is the 1-indexed line number
 
@@ -932,6 +951,7 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
 
         if (line.type === 'hunk-header') {
             hunkHeaderRows.push(row + 1);
+            if (line.hunkId) hunkRowByHunkId[line.hunkId] = row + 1;
         }
         if (line.type === 'file-header' && line.fileKey) {
             fileHeaderRows[line.fileKey] = row + 1;
@@ -954,6 +974,7 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     state.diffLineByteOffsets = diffLineByteOffsets;
     state.fileHeaderRows = fileHeaderRows;
     state.sectionHeaderRows = sectionHeaderRows;
+    state.hunkRowByHunkId = hunkRowByHunkId;
     return entries;
 }
 
@@ -1202,6 +1223,17 @@ function on_review_mouse_click(data: {
                 return;
             }
         }
+        // Hunk header click: toggle the single hunk.
+        for (const hunkId of Object.keys(state.hunkRowByHunkId)) {
+            if (state.hunkRowByHunkId[hunkId] === targetRow1) {
+                if (state.collapsedHunks.has(hunkId)) state.collapsedHunks.delete(hunkId);
+                else state.collapsedHunks.add(hunkId);
+                updateMagitDisplay();
+                const hunkRow = state.hunkRowByHunkId[hunkId];
+                if (hunkRow !== undefined) jumpDiffCursorToRow(hunkRow);
+                return;
+            }
+        }
         return;
     }
 
@@ -1361,15 +1393,25 @@ function sectionUnderCursor(): string | null {
     return typeof filePath === 'string' ? filePath : null;
 }
 
+/**
+ * Tab dispatches to the *nearest ancestor* of the cursor's row:
+ *   * Section header → toggle the section.
+ *   * File header   → toggle the file.
+ *   * Anywhere inside a hunk (header, body, inline comment) → toggle
+ *     the hunk.
+ *   * Blank line above any file header (i.e. cursor inside a file's
+ *     diff before its first hunk) → toggle that file.
+ *   * Cursor in the comments panel → swap focus back to the diff.
+ */
 function review_toggle_file_collapse() {
     if (state.groupId === null) return;
-    // Tab from the comments panel swaps focus back to the diff stream.
     if (state.focusPanel === 'comments') {
         editor.focusBufferGroupPanel(state.groupId, "diff");
         return;
     }
     if (state.files.length === 0) return;
-    // Cursor on a section header → toggle the whole section.
+
+    // Section header → toggle whole section.
     const section = sectionUnderCursor();
     if (section) {
         if (state.collapsedSections.has(section)) state.collapsedSections.delete(section);
@@ -1379,17 +1421,38 @@ function review_toggle_file_collapse() {
         if (sectionRow !== undefined) jumpDiffCursorToRow(sectionRow);
         return;
     }
-    // Otherwise determine which file the cursor is on. Prefer a file-header
-    // row directly under the cursor; fall back to the file the cursor sits
-    // in (so Tab on a hunk row also collapses the parent file).
-    const headerFile = fileHeaderUnderCursor() ?? currentFileFromCursor();
-    if (!headerFile) return;
-    const key = fileKey(headerFile);
+
+    // File header → toggle whole file.
+    const headerFile = fileHeaderUnderCursor();
+    if (headerFile) {
+        const key = fileKey(headerFile);
+        if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
+        else state.collapsedFiles.add(key);
+        updateMagitDisplay();
+        const headerRow = state.fileHeaderRows[key];
+        if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+        return;
+    }
+
+    // Hunk (header / body / inline comment) → toggle that hunk.
+    const hunk = getHunkAtDiffCursor();
+    if (hunk) {
+        if (state.collapsedHunks.has(hunk.id)) state.collapsedHunks.delete(hunk.id);
+        else state.collapsedHunks.add(hunk.id);
+        updateMagitDisplay();
+        const hunkRow = state.hunkRowByHunkId[hunk.id];
+        if (hunkRow !== undefined) jumpDiffCursorToRow(hunkRow);
+        return;
+    }
+
+    // Fall back to the parent file if cursor is in a no-man's-land (e.g.
+    // blank separator after the last hunk of a file).
+    const fallbackFile = currentFileFromCursor();
+    if (!fallbackFile) return;
+    const key = fileKey(fallbackFile);
     if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
     else state.collapsedFiles.add(key);
     updateMagitDisplay();
-    // Move cursor to the file header row so the user sees what they
-    // collapsed/expanded.
     const headerRow = state.fileHeaderRows[key];
     if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
 }
@@ -1662,10 +1725,11 @@ registerHandler("review_collapse_all", review_collapse_all);
 
 function review_expand_all() {
     // Same intuition for unfold-all: keep the cursor on the file it was
-    // in (rows shift as collapsed files re-emit their hunks).
+    // in (rows shift as collapsed files/hunks re-emit their content).
     const cur = currentFileFromCursor();
     state.collapsedFiles.clear();
     state.collapsedSections.clear();
+    state.collapsedHunks.clear();
     updateMagitDisplay();
     if (cur) {
         const headerRow = state.fileHeaderRows[fileKey(cur)];
@@ -2757,20 +2821,25 @@ function visibleHunkIndexAtCursor(): number {
 function jumpToGlobalHunk(globalIdx: number) {
     if (globalIdx < 0 || globalIdx >= state.hunks.length) return;
     const target = state.hunks[globalIdx];
-    const targetKey = fileKeyOf(target.file, target.gitStatus || 'unstaged');
-    if (state.collapsedFiles.has(targetKey)) {
-        // Auto-expand the file containing the target hunk before jumping.
-        state.collapsedFiles.delete(targetKey);
-        updateMagitDisplay();
+    const targetFileKey = fileKeyOf(target.file, target.gitStatus || 'unstaged');
+    let needRebuild = false;
+    // Auto-expand the section, file, AND hunk containing the target so
+    // n/p never silently lands on an invisible row.
+    if (target.gitStatus && state.collapsedSections.has(target.gitStatus)) {
+        state.collapsedSections.delete(target.gitStatus);
+        needRebuild = true;
     }
-    // Find the row of the target hunk in the (now possibly rebuilt) buffer.
-    let visibleIdx = 0;
-    for (let i = 0; i < globalIdx; i++) {
-        const h = state.hunks[i];
-        if (state.collapsedFiles.has(fileKeyOf(h.file, h.gitStatus || 'unstaged'))) continue;
-        visibleIdx++;
+    if (state.collapsedFiles.has(targetFileKey)) {
+        state.collapsedFiles.delete(targetFileKey);
+        needRebuild = true;
     }
-    const row = state.hunkHeaderRows[visibleIdx];
+    if (state.collapsedHunks.has(target.id)) {
+        state.collapsedHunks.delete(target.id);
+        needRebuild = true;
+    }
+    if (needRebuild) updateMagitDisplay();
+    // Look up the target hunk's row directly — much simpler than counting.
+    const row = state.hunkRowByHunkId[target.id];
     if (row !== undefined) jumpDiffCursorToRow(row);
 }
 
