@@ -43,9 +43,19 @@
     "prompt.overall_comment": "Note: ",
     "prompt.discard_hunk": "Discard this hunk in \"%{file}\"? This cannot be undone.",
     "panel.no_changes": "No changes to review.",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
     "section.staged": "Staged",
     "section.unstaged": "Changes",
     "section.untracked": "Untracked",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded",
     "debug.loaded": "Review Diff plugin loaded with review comments support",
     "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
   },
@@ -97,7 +107,17 @@
     "status.hunk_staged": "Blok připraven",
     "status.hunk_unstaged": "Blok odstraněn z přípravy",
     "status.overall_comment_added": "Poznámka přidána",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "de": {
     "cmd.review_diff": "Unterschiede prufen",
@@ -147,7 +167,17 @@
     "status.hunk_staged": "Block bereitgestellt",
     "status.hunk_unstaged": "Block aus Bereitstellung entfernt",
     "status.overall_comment_added": "Notiz hinzugefügt",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "es": {
     "cmd.review_diff": "Revisar Diferencias",
@@ -197,7 +227,17 @@
     "status.hunk_staged": "Bloque preparado",
     "status.hunk_unstaged": "Bloque retirado de preparación",
     "status.overall_comment_added": "Nota añadida",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "fr": {
     "cmd.review_diff": "Revoir les Differences",
@@ -247,7 +287,17 @@
     "status.hunk_staged": "Bloc indexé",
     "status.hunk_unstaged": "Bloc retiré de l'index",
     "status.overall_comment_added": "Note ajoutée",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "it": {
     "cmd.review_diff": "Revisiona differenze",
@@ -297,7 +347,17 @@
     "status.hunk_staged": "Blocco preparato",
     "status.hunk_unstaged": "Blocco rimosso dalla preparazione",
     "status.overall_comment_added": "Nota aggiunta",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "ja": {
     "cmd.review_diff": "差分レビュー",
@@ -347,7 +407,17 @@
     "status.hunk_staged": "ハンクをステージしました",
     "status.hunk_unstaged": "ハンクをアンステージしました",
     "status.overall_comment_added": "メモを追加しました",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "ko": {
     "cmd.review_diff": "차이점 검토",
@@ -397,7 +467,17 @@
     "status.hunk_staged": "헝크가 스테이지되었습니다",
     "status.hunk_unstaged": "헝크가 언스테이지되었습니다",
     "status.overall_comment_added": "메모가 추가되었습니다",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "pt-BR": {
     "cmd.review_diff": "Revisar Diferencas",
@@ -447,7 +527,17 @@
     "status.hunk_staged": "Bloco preparado",
     "status.hunk_unstaged": "Bloco removido da preparação",
     "status.overall_comment_added": "Nota adicionada",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "ru": {
     "cmd.review_diff": "Просмотр изменений",
@@ -497,7 +587,17 @@
     "status.hunk_staged": "Блок подготовлен",
     "status.hunk_unstaged": "Блок убран из подготовки",
     "status.overall_comment_added": "Заметка добавлена",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "th": {
     "cmd.review_diff": "ตรวจสอบความแตกต่าง",
@@ -547,7 +647,17 @@
     "status.hunk_staged": "สเตจบล็อกแล้ว",
     "status.hunk_unstaged": "ยกเลิกสเตจบล็อกแล้ว",
     "status.overall_comment_added": "เพิ่มบันทึกแล้ว",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "uk": {
     "cmd.review_diff": "Перегляд змін",
@@ -597,7 +707,17 @@
     "status.hunk_staged": "Блок підготовлено",
     "status.hunk_unstaged": "Блок прибрано з підготовки",
     "status.overall_comment_added": "Нотатку додано",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "vi": {
     "cmd.review_diff": "Xem xét khác biệt",
@@ -647,7 +767,17 @@
     "status.hunk_staged": "Đã đưa khối vào vùng chuẩn bị",
     "status.hunk_unstaged": "Đã bỏ khối khỏi vùng chuẩn bị",
     "status.overall_comment_added": "Đã thêm ghi chú",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   },
   "zh-CN": {
     "cmd.review_diff": "审查差异",
@@ -697,6 +827,16 @@
     "status.hunk_staged": "代码块已暂存",
     "status.hunk_unstaged": "代码块已取消暂存",
     "status.overall_comment_added": "备注已添加",
-    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}"
+    "status.review_summary_indexed": "Review Diff: Hunk %{current} of %{count}",
+    "panel.comments": "Comments",
+    "panel.no_comments": "No comments yet.",
+    "status.review_empty": "Review Diff",
+    "status.no_comments": "No comments",
+    "status.visual_no_diff_line": "Visual selection requires a diff line",
+    "status.visual_started": "Visual: j/k extend, s/u/d apply, Esc cancel",
+    "status.visual_invalid": "Selection has no add/remove lines or crosses hunk boundary",
+    "status.lines_staged": "Lines staged",
+    "status.lines_unstaged": "Lines unstaged",
+    "status.lines_discarded": "Lines discarded"
   }
 }
