@@ -1921,22 +1921,8 @@ impl Editor {
     /// leaf buffer so callers never see a stale/freed buffer id.
     #[inline]
     pub fn active_buffer(&self) -> BufferId {
-        let active_split = self.split_manager.active_split();
-        if let Some(vs) = self.split_view_states.get(&active_split) {
-            if vs.active_group_tab.is_some() {
-                if let Some(inner_leaf) = vs.focused_group_leaf {
-                    if let Some(inner_vs) = self.split_view_states.get(&inner_leaf) {
-                        let inner_buf = inner_vs.active_buffer;
-                        if self.buffers.contains_key(&inner_buf) {
-                            return inner_buf;
-                        }
-                    }
-                }
-            }
-        }
-        self.split_manager
-            .active_buffer_id()
-            .expect("Editor always has at least one buffer")
+        let (_, buf) = self.effective_active_pair();
+        buf
     }
 
     /// The split id whose `SplitViewState` owns the currently-focused
@@ -1947,17 +1933,48 @@ impl Editor {
     /// split tree).
     #[inline]
     pub fn effective_active_split(&self) -> crate::model::event::LeafId {
+        let (split, _) = self.effective_active_pair();
+        split
+    }
+
+    /// Resolve the effective (split, buffer) pair for the currently-focused
+    /// target. This is the single source of truth — both `active_buffer` and
+    /// `effective_active_split` derive from it so they can never disagree.
+    ///
+    /// Returned invariant: `split_view_states[split]` exists, its
+    /// `active_buffer` equals the returned buffer id, `self.buffers`
+    /// contains the returned buffer id, and `split.keyed_states` contains
+    /// an entry for the returned buffer id. Consequently the mutation path
+    /// in `apply_event_to_active_buffer` (which indexes into
+    /// `keyed_states[buffer]`) is always well-defined for the returned pair.
+    ///
+    /// If a buffer-group panel is focused but any of the invariants above
+    /// is not satisfied for the inner leaf (for example because the panel
+    /// buffer was freed without clearing `focused_group_leaf`), the helper
+    /// falls back to the outer split's own leaf. The fallback is also
+    /// validated before being returned.
+    #[inline]
+    fn effective_active_pair(&self) -> (crate::model::event::LeafId, BufferId) {
         let active_split = self.split_manager.active_split();
         if let Some(vs) = self.split_view_states.get(&active_split) {
             if vs.active_group_tab.is_some() {
                 if let Some(inner_leaf) = vs.focused_group_leaf {
-                    if self.split_view_states.contains_key(&inner_leaf) {
-                        return inner_leaf;
+                    if let Some(inner_vs) = self.split_view_states.get(&inner_leaf) {
+                        let inner_buf = inner_vs.active_buffer;
+                        if self.buffers.contains_key(&inner_buf)
+                            && inner_vs.keyed_states.contains_key(&inner_buf)
+                        {
+                            return (inner_leaf, inner_buf);
+                        }
                     }
                 }
             }
         }
-        active_split
+        let outer_buf = self
+            .split_manager
+            .active_buffer_id()
+            .expect("Editor always has at least one buffer");
+        (active_split, outer_buf)
     }
 
     /// Get the mode name for the active buffer (if it's a virtual buffer)

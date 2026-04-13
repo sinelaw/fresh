@@ -4,7 +4,8 @@
 //! Issue #564: Replace all operation hangs/crashes
 //! Issue #1278: Crash opening file when workspace references deleted files
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::git_test_helper::GitTestRepo;
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;
@@ -707,4 +708,143 @@ fn test_issue_580_global_tab_size_zero_causes_panic() {
         render_result.is_ok(),
         "Rendering should not panic with global tab_size = 0"
     );
+}
+
+/// Panic repro: apply_event_to_active_buffer unwrap at mod.rs:2825
+///
+/// Reported by the user after running `./target/debug/fresh` (no args)
+/// with audit_mode / buffer-group panel state present in the session.
+/// The stack shows `handle_insert_char_editor -> apply_event_to_active_buffer`
+/// — typing a character into the active buffer reaches:
+///
+///     self.split_view_states
+///         .get_mut(&split_id).unwrap()
+///         .keyed_states
+///         .get_mut(&active_buf).unwrap()   // <-- panic here
+///
+/// which panics when `active_buffer()` returns a buffer id that isn't
+/// in the effective active split's `keyed_states`. The reproducer is:
+/// open Review Diff (creates a buffer-group with a "diff" inner panel),
+/// swap focus away (via Tab / Esc / buffer switch) so the active buffer
+/// becomes a non-panel buffer, and type a char.
+///
+/// We drive this via the public command palette + a character key
+/// press to exercise the same code path that panicked in production.
+#[test]
+fn test_review_diff_typing_after_open_does_not_panic() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    let plugins_dir = repo.path.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "audit_mode");
+    copy_plugin_lib(&plugins_dir);
+    repo.git_add_all();
+    repo.git_commit("Initial");
+
+    // Create a modified file so Review Diff has content to render.
+    fs::write(
+        repo.path.join("src/main.rs"),
+        "fn main() { /* changed */ }\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Open the modified file (so the active buffer is a regular file
+    // backing, not the group panel) then open Review Diff on top.
+    harness.open_file(&repo.path.join("src/main.rs")).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("changed"))
+        .unwrap();
+
+    // Open Review Diff via command palette.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("next hunk"))
+        .unwrap();
+
+    // Switch back to the regular file tab (Ctrl+PageUp = prev buffer)
+    // so the active buffer is no longer a review-diff panel.
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Typing a character must not panic. Before the fix this hit the
+    // unwrap at mod.rs:2825.
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::NONE)
+        .unwrap();
+}
+
+/// Alt repro: the same panic but starting from a bare fresh session
+/// (no open file / no Review Diff). Just start the editor, type a
+/// character into the default [No Name] buffer.
+#[test]
+fn test_bare_fresh_typing_does_not_panic() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::NONE)
+        .unwrap();
+}
+
+/// Alt repro 2: open Review Diff on a clean repo (no changes), then
+/// switch back to [No Name] buffer and type.
+#[test]
+fn test_review_diff_empty_repo_then_type_does_not_panic() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    let plugins_dir = repo.path.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "audit_mode");
+    copy_plugin_lib(&plugins_dir);
+    repo.git_add_all();
+    repo.git_commit("Initial");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Open Review Diff on clean repo (no hunks).
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+
+    // Switch back to the [No Name] buffer.
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type — must not panic.
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::NONE)
+        .unwrap();
 }
