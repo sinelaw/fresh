@@ -1162,18 +1162,68 @@ function fileHeaderUnderCursor(): FileEntry | null {
     return state.files.find(f => f.path === filePath) || null;
 }
 
-async function review_stage_file() {
+/**
+ * Stage at the appropriate scope based on cursor context:
+ *   * file header  → stage the whole file
+ *   * hunk         → stage just that hunk
+ */
+async function review_stage_scope() {
     if (state.files.length === 0) return;
-    // If cursor is on a file-header row, act on the whole file. Otherwise
-    // act on the hunk at the cursor.
     const headerFile = fileHeaderUnderCursor();
     if (headerFile) {
-        await editor.spawnProcess("git", ["add", "--", headerFile.path]);
-        await refreshMagitData();
+        await stageFileEntry(headerFile);
         return;
     }
-    const hunk = getHunkAtDiffCursor();
+    await stageHunk(getHunkAtDiffCursor());
+}
+registerHandler("review_stage_scope", review_stage_scope);
+
+async function review_unstage_scope() {
+    if (state.files.length === 0) return;
+    const headerFile = fileHeaderUnderCursor();
+    if (headerFile) {
+        await unstageFileEntry(headerFile);
+        return;
+    }
+    await unstageHunk(getHunkAtDiffCursor());
+}
+registerHandler("review_unstage_scope", review_unstage_scope);
+
+/**
+ * Always-file-level staging (S / U). Acts on the file the cursor is
+ * currently inside, regardless of whether it's on a header or a hunk.
+ */
+async function review_stage_file() {
+    if (state.files.length === 0) return;
+    const f = fileHeaderUnderCursor() ?? currentFileFromCursor();
+    if (!f) return;
+    await stageFileEntry(f);
+}
+registerHandler("review_stage_file", review_stage_file);
+
+async function review_unstage_file() {
+    if (state.files.length === 0) return;
+    const f = fileHeaderUnderCursor() ?? currentFileFromCursor();
+    if (!f) return;
+    await unstageFileEntry(f);
+}
+registerHandler("review_unstage_file", review_unstage_file);
+
+async function stageFileEntry(f: FileEntry) {
+    rememberPendingHunkAnchor(null);
+    await editor.spawnProcess("git", ["add", "--", f.path]);
+    await refreshMagitData();
+}
+
+async function unstageFileEntry(f: FileEntry) {
+    rememberPendingHunkAnchor(null);
+    await editor.spawnProcess("git", ["reset", "HEAD", "--", f.path]);
+    await refreshMagitData();
+}
+
+async function stageHunk(hunk: Hunk | null) {
     if (!hunk || !hunk.file) return;
+    rememberPendingHunkAnchor(hunk.id);
     if (hunk.gitStatus === 'untracked') {
         await editor.spawnProcess("git", ["add", "--", hunk.file]);
     } else {
@@ -1184,30 +1234,53 @@ async function review_stage_file() {
     editor.setStatus(editor.t("status.hunk_staged") || "Hunk staged");
     await refreshMagitData();
 }
-registerHandler("review_stage_file", review_stage_file);
 
-async function review_unstage_file() {
-    if (state.files.length === 0) return;
-    const headerFile = fileHeaderUnderCursor();
-    if (headerFile) {
-        await editor.spawnProcess("git", ["reset", "HEAD", "--", headerFile.path]);
-        await refreshMagitData();
-        return;
-    }
-    const hunk = getHunkAtDiffCursor();
+async function unstageHunk(hunk: Hunk | null) {
     if (!hunk || !hunk.file || hunk.gitStatus !== 'staged') {
         editor.setStatus("Can only unstage staged hunks");
         return;
     }
+    rememberPendingHunkAnchor(hunk.id);
     const patch = buildHunkPatch(hunk.file, hunk);
     const ok = await applyHunkPatch(patch, ["--cached", "--reverse"]);
     if (!ok) return;
     editor.setStatus(editor.t("status.hunk_unstaged") || "Hunk unstaged");
     await refreshMagitData();
 }
-registerHandler("review_unstage_file", review_unstage_file);
+
+/**
+ * Cursor continuity: remember the hunk-id we just acted on so that
+ * after the rebuild we can land the cursor back on the same hunk
+ * (which may have moved between sections), or on the nearest survivor.
+ */
+let pendingHunkAnchor: { hunkId: string | null; section: string | null; row: number } | null = null;
+function rememberPendingHunkAnchor(hunkId: string | null) {
+    const cur = getHunkAtDiffCursor();
+    pendingHunkAnchor = {
+        hunkId,
+        section: cur?.gitStatus ?? null,
+        row: state.diffCursorRow,
+    };
+}
 
 let pendingDiscardFile: FileEntry | null = null;
+
+/** Always-file-level discard (D). Acts on the file the cursor is in. */
+function review_discard_file_only() {
+    if (state.files.length === 0) return;
+    const f = fileHeaderUnderCursor() ?? currentFileFromCursor();
+    if (!f) return;
+    pendingDiscardFile = f;
+    rememberPendingHunkAnchor(null);
+    const action = f.category === 'untracked' ? "Delete" : "Discard changes in";
+    editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
+    const suggestions: PromptSuggestion[] = [
+        { text: `${action} file`, description: "Permanently lose changes", value: "discard" },
+        { text: "Cancel", description: "Keep the file as-is", value: "cancel" },
+    ];
+    editor.setPromptSuggestions(suggestions);
+}
+registerHandler("review_discard_file_only", review_discard_file_only);
 
 function review_discard_file() {
     if (state.files.length === 0) return;
@@ -1217,6 +1290,7 @@ function review_discard_file() {
         // No file-header under cursor → hunk-level discard
         const hunk = getHunkAtDiffCursor();
         if (!hunk || !hunk.file) return;
+        rememberPendingHunkAnchor(hunk.id);
         editor.startPrompt(
             editor.t("prompt.discard_hunk", { file: hunk.file }) ||
             `Discard this hunk in "${hunk.file}"? This cannot be undone.`,
@@ -1233,6 +1307,7 @@ function review_discard_file() {
 
     // Show confirmation prompt — discard is destructive and irreversible
     pendingDiscardFile = f;
+    rememberPendingHunkAnchor(null);
     const action = f.category === 'untracked' ? "Delete" : "Discard changes in";
     editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
     const suggestions: PromptSuggestion[] = [
@@ -1296,7 +1371,38 @@ async function refreshMagitData() {
     state.hunks = await fetchDiffsForFiles(status.files);
     state.diffCursorRow = 1;
     updateMagitDisplay();
+    restoreCursorAfterRebuild();
     updateReviewStatus();
+}
+
+/**
+ * After a rebuild caused by stage/unstage/discard, try to land the cursor
+ * back on the same hunk (now possibly in a different section), or the
+ * nearest survivor in the original section, or the first hunk overall.
+ */
+function restoreCursorAfterRebuild() {
+    const anchor = pendingHunkAnchor;
+    pendingHunkAnchor = null;
+    if (!anchor) return;
+    if (anchor.hunkId) {
+        // Find the hunk by id in the new state.
+        const found = state.hunks.findIndex(h => h.id === anchor.hunkId);
+        if (found >= 0) {
+            // Compute its visible row (auto-expanding if needed).
+            jumpToGlobalHunk(found);
+            return;
+        }
+    }
+    // Hunk vanished — fall back to the next hunk in the same section,
+    // else the previous one, else the first hunk overall.
+    if (anchor.section) {
+        const idx = state.hunks.findIndex(h => h.gitStatus === anchor.section);
+        if (idx >= 0) {
+            jumpToGlobalHunk(idx);
+            return;
+        }
+    }
+    if (state.hunks.length > 0) jumpToGlobalHunk(0);
 }
 
 // --- Resize handler ---
@@ -2815,10 +2921,13 @@ editor.defineMode("review-mode", [
     ["z r", "review_expand_all"],
     // Drill-down to side-by-side view of the file under the cursor.
     ["Enter", "review_drill_down"],
-    // Stage/unstage/discard — act on the file (when cursor is on a file
-    // header) or the hunk under the cursor.
-    ["s", "review_stage_file"], ["u", "review_unstage_file"],
+    // Stage/unstage/discard — context-sensitive. s/u/d act on the file
+    // (when cursor is on a file header) or the hunk under the cursor.
+    // Capital S/U/D always act on the enclosing file.
+    ["s", "review_stage_scope"], ["u", "review_unstage_scope"],
     ["d", "review_discard_file"],
+    ["S", "review_stage_file"], ["U", "review_unstage_file"],
+    ["D", "review_discard_file_only"],
     ["r", "review_refresh"],
     // Comments
     ["c", "review_add_comment"],
