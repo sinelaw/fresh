@@ -16,7 +16,6 @@ pub mod markdown_source;
 pub mod package_manager;
 pub mod plugin;
 pub mod plugin_keybinding_execution;
-pub mod review_diff_files_panel;
 pub mod review_diff_ux_bugs;
 pub mod theme_editor;
 pub mod unified_keybindings;

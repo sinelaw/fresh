@@ -1450,6 +1450,16 @@ function jumpToComment(commentId: string): void {
         needRebuild = true;
     }
     if (needRebuild) updateMagitDisplay();
+    // Pin this comment as the highlighted one BEFORE jumping. Any
+    // subsequent cursor_moved event that re-derives the highlight
+    // will recompute the same id; doing it eagerly avoids a flicker
+    // (and works even when the cursor lands on a row whose props
+    // don't directly carry a comment id).
+    const prevHighlight = state.commentsHighlightId;
+    state.commentsHighlightId = commentId;
+    if (state.groupId !== null && prevHighlight !== commentId) {
+        editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    }
     // Prefer the diff line the comment is anchored to (line-based);
     // fall back to the hunk header if the lookup hasn't seen the
     // comment yet (race / first render).
@@ -3914,8 +3924,11 @@ editor.defineMode("review-mode", [
     ["Up", "review_nav_up"], ["Down", "review_nav_down"],
     ["k", "review_nav_up"], ["j", "review_nav_down"],
     ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
-    // Home / End intentionally not bound — fall through to the
-    // editor's native start-of-line / end-of-line motion.
+    // Home / End — match the editor's normal-mode defaults so users
+    // get the same start-of-line / end-of-line behavior they're used
+    // to. Mode bindings replace globals, so we must bind these
+    // explicitly even though the actions are built-in.
+    ["Home", "smart_home"], ["End", "move_line_end"],
     // Hunk navigation across the unified stream.
     ["n", "review_next_hunk"], ["p", "review_prev_hunk"],
     // Per-file collapse: Tab toggles the file under the cursor;

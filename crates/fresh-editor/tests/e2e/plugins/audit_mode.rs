@@ -1660,20 +1660,20 @@ fn start_server(config: Config) {
         screen
     );
 
-    // Verify section headers are present
+    // Verify section headers are present (uppercase in the unified-stream layout)
     assert!(
-        screen.contains("Staged"),
-        "Should show 'Staged' section header. Screen:\n{}",
+        screen.contains("STAGED"),
+        "Should show 'STAGED' section header. Screen:\n{}",
         screen
     );
     assert!(
-        screen.contains("Changes"),
-        "Should show 'Changes' section header. Screen:\n{}",
+        screen.contains("UNSTAGED"),
+        "Should show 'UNSTAGED' section header. Screen:\n{}",
         screen
     );
     assert!(
-        screen.contains("Untracked"),
-        "Should show 'Untracked' section header. Screen:\n{}",
+        screen.contains("UNTRACKED"),
+        "Should show 'UNTRACKED' section header. Screen:\n{}",
         screen
     );
 
@@ -2224,7 +2224,7 @@ fn test_review_diff_shows_comments_panel() {
 
     // The comments panel header and empty state are visible.
     assert!(
-        screen.contains("Comments"),
+        screen.contains("COMMENTS"),
         "Comments panel header should be visible. Screen:\n{}",
         screen
     );
@@ -3916,10 +3916,10 @@ fn test_review_diff_capital_s_stages_whole_file() {
         .unwrap();
 
     let screen = open_review_diff(&mut harness);
-    // Initially in the "Changes" (unstaged) section.
+    // Initially in the UNSTAGED section.
     assert!(
-        screen.contains("Changes"),
-        "Initially the file is unstaged ('Changes' section). Screen:\n{}",
+        screen.contains("UNSTAGED"),
+        "Initially the file is unstaged. Screen:\n{}",
         screen
     );
 
@@ -3939,15 +3939,12 @@ fn test_review_diff_capital_s_stages_whole_file() {
         .unwrap();
     harness.render().unwrap();
 
-    // After staging, the file moves to the "Staged" section. Wait for
-    // git's status snapshot to refresh.
+    // After staging, the file moves into STAGED and the UNSTAGED
+    // section disappears (single-file repo).
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            // Both section labels are visible if both have content; the
-            // file should now be under Staged. With only a single file,
-            // the Changes section disappears entirely.
-            s.contains("Staged") && !s.contains("Changes")
+            s.contains("STAGED") && !s.contains("UNSTAGED")
         })
         .unwrap();
 }
