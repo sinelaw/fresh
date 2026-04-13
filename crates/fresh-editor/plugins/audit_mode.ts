@@ -111,6 +111,10 @@ interface ReviewState {
   commentsSelectedRow: number;
   // Sticky header current content (for Step 4)
   stickyCurrentFile: string | null;
+  // Last known top-visible row in the diff viewport (1-indexed for
+  // consistency with hunkHeaderRows, even though the host event delivers
+  // 0-indexed). Updated from viewport_changed and cursor_moved.
+  diffViewportTopRow: number;
   // Visual line-selection state. Active iff non-null. start and end are
   // 1-indexed rows in the unified stream; hunkId pins the selection to
   // a single hunk (selections that cross hunks are rejected).
@@ -137,6 +141,7 @@ const state: ReviewState = {
   commentsByRow: {},
   commentsSelectedRow: 0,
   stickyCurrentFile: null,
+  diffViewportTopRow: 0,
   lineSelection: null,
 };
 
@@ -545,13 +550,19 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             });
         }
 
-        // File header line
+        // File header line — strongly distinguishable from hunk content:
+        //   * Bold keyword foreground.
+        //   * Status-bar background extended across the whole row, so the
+        //     header reads as a discrete band rather than mingling with
+        //     the surrounding diff text.
+        //   * Triangle marker (▾ open / ▸ collapsed) and explicit
+        //     " FILE " label so it can't be confused with anything else.
         const counts = fileChangeCounts(file);
         const key = fileKey(file);
         const collapsed = state.collapsedFiles.has(key);
         const triangle = collapsed ? '▸' : '▾';
         const filename = file.origPath ? `${file.origPath} → ${file.path}` : file.path;
-        const headerText = `${triangle} ${filename}   +${counts.added} / -${counts.removed}`;
+        const headerText = ` ${triangle} ${filename}   +${counts.added} / -${counts.removed}`;
         lines.push({
             text: headerText,
             type: 'file-header',
@@ -559,7 +570,13 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             filePath: file.path,
             fileKey: key,
             fileIndex: fi,
-            style: { fg: STYLE_HEADER, bold: true },
+            style: {
+                fg: STYLE_HEADER,
+                bg: STYLE_TOOLBAR_BG,
+                bold: true,
+                underline: true,
+                extendToLineEnd: true,
+            },
         });
 
         // If collapsed, just emit a blank separator and skip hunks
@@ -1183,10 +1200,31 @@ function jumpToComment(commentId: string): void {
 function on_review_viewport_changed(data: { split_id: number; buffer_id: number; top_byte: number; top_line: number | null; width: number; height: number }): void {
     if (state.groupId === null) return;
     if (data.buffer_id !== state.panelBuffers["diff"]) return;
-    const topRow = data.top_line ?? 0;
+    // Prefer top_line when the host provides it. Virtual buffers may not
+    // have line metadata, in which case top_line is null — fall back to
+    // converting top_byte using our own row-byte index.
+    const topRow = data.top_line ?? rowFromByte(data.top_byte);
+    state.diffViewportTopRow = topRow;
     refreshStickyHeader(topRow);
 }
 registerHandler("on_review_viewport_changed", on_review_viewport_changed);
+
+/**
+ * Binary-search `state.diffLineByteOffsets` for the 0-indexed row
+ * whose byte offset is the largest one ≤ topByte.
+ */
+function rowFromByte(topByte: number): number {
+    const offs = state.diffLineByteOffsets;
+    if (offs.length === 0) return 0;
+    let lo = 0;
+    let hi = offs.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (offs[mid] <= topByte) lo = mid;
+        else hi = mid - 1;
+    }
+    return lo;
+}
 
 /**
  * Repaint the synthetic "cursor line" highlight in the diff panel.
@@ -3145,6 +3183,11 @@ function on_review_cursor_moved(data: {
     if (data.buffer_id === state.panelBuffers["diff"]) {
         state.diffCursorRow = data.line;
         applyCursorLineOverlay('diff');
+        // Use the cursor row as a sticky-header anchor too — viewport_changed
+        // doesn't always fire reliably for plugin-managed virtual buffers
+        // (top_line can be null). Tracking the cursor row gives a snappy
+        // "what file am I in" indicator regardless.
+        refreshStickyHeader(Math.max(0, data.line - 1));
         updateReviewStatus();
         return;
     }
