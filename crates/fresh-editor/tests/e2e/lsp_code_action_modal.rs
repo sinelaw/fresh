@@ -46,7 +46,14 @@ fn test_code_action_number_key_selects_and_applies() -> anyhow::Result<()> {
     );
 
     let mut harness = EditorTestHarness::create(
-        80,
+        // 120×24 (not 80) so the status bar has room for the new
+        // 11-cell `LSP (on)` indicator on the right alongside the
+        // file name + cursor + message + language pill. At 80 cols
+        // the status bar truncates and `wait_for_screen_contains("LSP (on)")`
+        // never matches, hanging the test until the CI 180s timeout
+        // (matches the widening commit 8ab5337 did for visual-regression
+        // and settings/markdown_compose tests).
+        120,
         24,
         crate::common::harness::HarnessOptions::new()
             .with_config(config)
@@ -126,7 +133,10 @@ fn test_code_action_arrow_enter_applies() -> anyhow::Result<()> {
     );
 
     let mut harness = EditorTestHarness::create(
-        80,
+        // 120×24 (not 80): status bar room for `LSP (on)`. See sibling
+        // test `test_code_action_number_key_selects_and_applies` for
+        // the longer rationale.
+        120,
         24,
         crate::common::harness::HarnessOptions::new()
             .with_config(config)

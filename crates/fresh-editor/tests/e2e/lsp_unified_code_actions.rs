@@ -65,7 +65,12 @@ fn test_code_actions_merged_from_two_servers() -> anyhow::Result<()> {
     );
 
     let mut harness = EditorTestHarness::create(
-        80,
+        // 120×24 (not 80): the status bar at width 80 truncates the
+        // right-side `LSP (on)` indicator, so the
+        // `wait_for_screen_contains("LSP (on)")` poll below never
+        // matches and the test hangs to CI's 180s timeout. Same
+        // widening pattern as 8ab5337.
+        120,
         24,
         crate::common::harness::HarnessOptions::new()
             .with_config(config)
