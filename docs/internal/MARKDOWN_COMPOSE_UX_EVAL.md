@@ -260,7 +260,157 @@ Listed in rough priority order:
 
 ---
 
-## 6. Test Artifacts
+## 6. Mouse-Wheel Scrolling Bug (Compose Mode)
+
+User report:
+1. Long document with tables followed by long-wrapped bullet/numbered list at
+   the end → mouse wheel scrolls only "halfway"; keyboard navigation works.
+2. Scrolling up then down with the wheel sometimes leaves the bottom half of
+   the visible buffer blank until more wheels arrive.
+3. Both symptoms appear with slow, single wheel events — not just rapid bursts.
+
+### 6.1 Reproduction
+
+Fixture: `/tmp/ux_test/big_repro.md` (337 lines):
+- 99 medium paragraphs
+- 1 large 99-row table
+- 29 numbered list items, each containing a 200-word continuous paragraph
+  that wraps to ~16 visual rows in compose mode at width 60–100
+- A `FILE_END_MARKER_XYZZY` sentinel at EOF
+
+Steps (60×24 terminal):
+
+```
+fresh big_repro.md
+Ctrl+P → "Toggle Compose" → Enter
+Wheel-down ~250 times to land in the long-list area
+Send single wheel-down events with 0.3–0.4s spacing
+```
+
+### 6.2 Observed: every item-start "absorbs" one wheel event
+
+Captured top-row text after each single wheel event:
+
+```
+position before:  "   word139 word140 ... word145"   (Item 2's word139)
+after wheel #1:   "   word160 word161 ... word166"   (advanced 21 words ≈ 3 rows)  ✓
+after wheel #2:   "   word181 word182 ... word187"   (advanced ≈ 3 rows)            ✓
+after wheel #3:   "3. Item 3: word1 word2 ..."        (crossed item boundary)        ✓
+after wheel #4:   "3. Item 3: word1 word2 ..."        (NO ADVANCE — wheel lost)      ✗
+after wheel #5:   "   word25 word26 ... word32"      (back to advancing)             ✓
+```
+
+The pattern repeats deterministically at every item boundary — at "4. Item 4:"
+and "5. Item 5:" the same: one wheel produces no movement.
+
+Cumulatively, with 11 long-wrap items the user has to wheel ~11 extra times
+to traverse the same content as the keyboard's `Ctrl+End`, so mouse scrolling
+appears to "lag" or "only cover half".
+
+### 6.3 Root cause
+
+`crates/fresh-editor/src/app/input.rs:1539-1565` `handle_mouse_scroll` (compose
+path) calls `Viewport::scroll_view_lines` with the **stale**
+`view_transform.tokens` cached from the previous render's `SubmitViewTransform`
+response.
+
+`crates/fresh-editor/src/view/viewport.rs:476-504` `scroll_view_lines`:
+
+```rust
+let current_idx  = self.find_view_line_for_byte(view_lines, self.top_byte);
+let target_idx   = current_idx + line_offset;            // (signed)
+let max_top_idx  = view_lines.len().saturating_sub(viewport_height);
+let clamped_idx  = target_idx.min(max_top_idx);          // ← the trap
+self.top_byte    = source_byte_for(view_lines[clamped_idx]);
+```
+
+The plugin's transformed tokens cover only the visible viewport plus a small
+look-ahead (`build_base_tokens` reads `visible_count + 4` source lines —
+`crates/fresh-editor/src/view/ui/split_rendering.rs:3657`). After enough
+scrolls, `current_idx` lands at `max_top_idx`. The next wheel computes:
+
+```
+target_idx  = max_top_idx + 3
+clamped_idx = min(max_top_idx + 3, max_top_idx) = max_top_idx
+new_top_byte = source byte at view_lines[max_top_idx] = unchanged
+```
+
+So `top_byte` stays put. A *render fires* (we set `needs_render = true`),
+which fires a fresh `view_transform_request` for the same viewport, and the
+plugin's response writes back tokens whose first source byte equals the
+*current* `top_byte`. The next wheel event sees `current_idx = 0` again and
+can advance — until it hits `max_top_idx` again at the next item boundary.
+
+The "missing wheel" is the wheel event that fires *during* this stuck frame.
+It produces a render, but no scroll progress. With one absorbed wheel per
+item start, mouse scrolling effectively runs at a lower rate than keyboard
+PageDown/Ctrl+End on long-wrap content.
+
+### 6.4 Empty-bottom symptom (bug 2)
+
+Same root cause: when the user scrolls past the safe-coverage area of the
+stale tokens (e.g., from a `Ctrl+End` jump or rapid wheel burst), the
+renderer uses tokens whose source range no longer covers `top_byte`. The
+view-anchor logic in
+`crates/fresh-editor/src/view/ui/split_rendering.rs:4293-4326`
+`calculate_view_anchor` then falls through to
+`start_line_idx: 0`, but `view_lines[0]`'s source byte is *behind* `top_byte`,
+so the renderer either re-renders stale content or — when the iteration
+exhausts before filling the viewport — emits `~` filler rows for the rest of
+the screen. The next render with fresh tokens fixes it, but that one frame is
+visible to the user as "the bottom is empty until I wheel again".
+
+I observed this transiently after rapid wheel bursts (200+ events back-to-back),
+with the visible content being only the last item plus `~` rows below; the
+state was stable for >2 seconds before further input cleared it.
+
+### 6.5 Suggested fix
+
+Three viable directions, in increasing scope:
+
+**A. Cheap clamp fix (recommended starting point).**
+In `Viewport::scroll_view_lines`, when scrolling DOWN and `target_idx >
+max_top_idx`, fall back to advancing `top_byte` past the cached tokens'
+coverage by walking the *underlying buffer* for the remaining delta. Roughly:
+
+```rust
+let clamped_idx = target_idx.min(max_top_idx);
+if line_offset > 0 && target_idx > max_top_idx {
+    // Stale tokens don't cover the requested target.
+    // Advance by the cached portion now, and let the next render fetch
+    // fresh tokens for the rest. To prevent the wheel being "lost",
+    // also bump top_byte by at least one source line so we make progress.
+    let cached_delta = max_top_idx.saturating_sub(current_idx);
+    if cached_delta == 0 {
+        // No room left in the cache — advance to the next source line directly.
+        // (Fall through to a buffer-based scroll_down for `line_offset` rows.)
+    }
+}
+```
+
+**B. Invalidate stale tokens on scroll.** After `handle_mouse_scroll` mutates
+`top_byte`, mark `view_transform` as needing refresh and have the renderer
+prefer `base_tokens` until fresh ones arrive. Trades extra plugin work per
+wheel for predictable scrolling.
+
+**C. Make the look-ahead wider.** Bump `max_lines = visible_count + 4` to a
+larger constant (say `visible_count * 3`) so even long-wrapped paragraphs
+have enough cached view lines to absorb several wheel events between renders.
+Cheap, but masks the underlying race rather than fixing it.
+
+(A) is likely the right first cut: it's a small change in `viewport.rs`,
+preserves the fast path, and provably eliminates the "wheel absorbed at item
+boundary" symptom that I reproduced.
+
+### 6.6 Repro artifacts
+
+- `/tmp/ux_test/big_repro.md` — fixture
+- This evaluation, sections 6.1–6.4, contains the exact tmux SGR mouse
+  sequences (`\x1b[<65;col;rowM`) used to drive the wheel events.
+
+---
+
+## 7. Test Artifacts
 
 Generated during this evaluation and stored in `/tmp/ux_test/` on the test
 host:
