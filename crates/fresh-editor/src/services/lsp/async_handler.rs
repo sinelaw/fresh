@@ -2642,7 +2642,7 @@ impl LspTask {
     /// callers) can reuse it without depending on the private
     /// `LspTask` type.
     pub(crate) fn command_exists(command: &str) -> bool {
-        super::command_exists_uncached(command)
+        super::command_exists(command)
     }
 
     /// Spawn the stdout reader task that continuously reads and dispatches LSP messages

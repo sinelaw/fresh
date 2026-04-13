@@ -122,7 +122,7 @@ pub mod semantic_tokens;
 // Re-export for public API (used by tests)
 pub use crate::types::LspServerConfig;
 
-/// Uncached check: does `command` resolve to an executable file?
+/// Check whether an LSP server command is resolvable as an executable.
 ///
 /// - Absolute / path-containing commands: stat the file directly.
 /// - Bare names: walk `$PATH`, matching the first file-backed entry.
@@ -130,7 +130,13 @@ pub use crate::types::LspServerConfig;
 ///
 /// Returns `false` for empty strings so callers don't need to special-case
 /// unset-command configs.
-pub(crate) fn command_exists_uncached(command: &str) -> bool {
+///
+/// Intentionally uncached: called at most a few times per user-driven
+/// action (pill click, spawn attempt) and the OS dentry cache already
+/// makes repeat `$PATH` walks essentially free. A stale cache would
+/// actively hurt: freshly-installed binaries wouldn't be picked up until
+/// the TTL expired.
+pub fn command_exists(command: &str) -> bool {
     use std::path::Path;
 
     if command.is_empty() {
@@ -164,41 +170,4 @@ pub(crate) fn command_exists_uncached(command: &str) -> bool {
     }
 
     false
-}
-
-/// Check whether an LSP server command is available on the current system,
-/// with a short TTL cache so repeat clicks on the status-bar indicator (or
-/// back-to-back spawn attempts) don't re-stat every PATH entry.
-///
-/// The cache TTL is deliberately short — users install missing binaries
-/// during a session and expect the indicator/popup to reflect that without
-/// a restart. One second is long enough to coalesce UI-driven probes
-/// (render, popup open, spawn attempt) and short enough that "I just
-/// installed pylsp" works on the next click.
-pub fn command_exists(command: &str) -> bool {
-    use std::sync::Mutex;
-    use std::time::{Duration, Instant};
-
-    static CACHE: once_cell::sync::Lazy<Mutex<std::collections::HashMap<String, (Instant, bool)>>> =
-        once_cell::sync::Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
-
-    const TTL: Duration = Duration::from_secs(1);
-
-    if command.is_empty() {
-        return false;
-    }
-
-    {
-        let cache = CACHE.lock().unwrap();
-        if let Some((when, exists)) = cache.get(command) {
-            if when.elapsed() < TTL {
-                return *exists;
-            }
-        }
-    }
-
-    let exists = command_exists_uncached(command);
-    let mut cache = CACHE.lock().unwrap();
-    cache.insert(command.to_string(), (Instant::now(), exists));
-    exists
 }
