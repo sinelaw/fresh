@@ -749,11 +749,15 @@ function buildToolbar(W: number): TextPropertyEntry {
     // Items within each group are ordered by importance so that when the
     // viewport is narrow, the most useful hints get full labels while
     // less discoverable ones are truncated to key-only or dropped.
+    // Hunk navigation (`n`/`p`) lives in the third group of both toolbars
+    // so a user on the files pane can still discover it. The per-focus
+    // difference is the file-opening / refresh affordances that only
+    // make sense when the files pane has focus.
     const groups: HintItem[][] = state.focusPanel === 'files'
         ? [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],
             [{ key: "c", label: "Comment" }, { key: "N", label: "Note" }, { key: "x", label: "Del" }],
-            [{ key: "e", label: "Export" }, { key: "q", label: "Close" }, { key: "↵", label: "Open" }, { key: "Tab", label: "Switch" }, { key: "r", label: "Refresh" }],
+            [{ key: "n", label: "Next" }, { key: "p", label: "Prev" }, { key: "e", label: "Export" }, { key: "q", label: "Close" }, { key: "↵", label: "Open" }, { key: "Tab", label: "Switch" }, { key: "r", label: "Refresh" }],
           ]
         : [
             [{ key: "s", label: "Stage" }, { key: "u", label: "Unstage" }, { key: "d", label: "Discard" }],

@@ -1269,6 +1269,44 @@ fn test_refresh_toolbar_with_staged_file() {
 }
 
 // ---------------------------------------------------------------------------
+// ISSUE #8: n / p hints invisible in the files-pane toolbar
+// ---------------------------------------------------------------------------
+
+/// On entry to Review Diff, focus starts on the files pane. The toolbar
+/// at that moment does not advertise the `n` / `p` hunk-navigation keys,
+/// so a user who never presses Tab never discovers they exist. The hints
+/// should be visible in both toolbars.
+#[test]
+fn test_issue8_n_and_p_hints_visible_on_files_pane_toolbar() {
+    init_tracing_from_env();
+    let (repo, main_rs) = repo_with_one_modification();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        45,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("CHANGED"))
+        .unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    // Focus is on the files pane at this point — no Tab has been pressed.
+    // The toolbar must still advertise hunk navigation keys.
+    assert!(
+        screen.contains("Next") && screen.contains("Prev"),
+        "ISSUE-8: files-pane toolbar must advertise the `n Next` / \
+         `p Prev` hunk-navigation hints. Screen:\n{}",
+        screen
+    );
+}
+
+// ---------------------------------------------------------------------------
 // ISSUE #1: Terminal resize leaves chrome hidden after shrink + grow
 // ---------------------------------------------------------------------------
 
