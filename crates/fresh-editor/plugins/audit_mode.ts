@@ -970,8 +970,78 @@ function updateMagitDisplay(): void {
     editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
     editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
     editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    refreshStickyHeader(0);
     applyCursorLineOverlay('diff');
 }
+
+/**
+ * Render the sticky panel for `topVisibleRow` (0-indexed line at the top
+ * of the diff viewport). Shows the file whose header row is the largest
+ * ≤ topVisibleRow, with its category as a dim prefix. Falls back to a
+ * neutral summary when nothing is above the cursor.
+ */
+function refreshStickyHeader(topVisibleRow: number): void {
+    if (state.groupId === null) return;
+    const stickyId = state.panelBuffers["sticky"];
+    if (stickyId === undefined) return;
+
+    const W = state.viewportWidth;
+    let text: string;
+    let style: Partial<OverlayOptions> = { fg: STYLE_HEADER, bold: true };
+
+    // topVisibleRow is 0-indexed; fileHeaderRows are 1-indexed.
+    const top1 = topVisibleRow + 1;
+    let bestFile: FileEntry | null = null;
+    let bestRow = 0;
+    for (const f of state.files) {
+        const row = state.fileHeaderRows[fileKey(f)];
+        if (row !== undefined && row <= top1 && row > bestRow) {
+            bestRow = row;
+            bestFile = f;
+        }
+    }
+
+    if (!bestFile) {
+        if (state.files.length === 0) {
+            text = ` ${editor.t("status.review_empty") || "Review Diff"}`;
+        } else {
+            const totals = state.files.reduce(
+                (acc, f) => {
+                    const c = fileChangeCounts(f);
+                    acc.added += c.added;
+                    acc.removed += c.removed;
+                    return acc;
+                },
+                { added: 0, removed: 0 }
+            );
+            text = ` Review Diff — ${state.files.length} files, +${totals.added} / -${totals.removed}`;
+            style = { fg: STYLE_SECTION_HEADER, italic: true };
+        }
+    } else {
+        const counts = fileChangeCounts(bestFile);
+        let section: string = bestFile.category;
+        if (bestFile.category === 'staged') section = (editor.t("section.staged") || "Staged").toUpperCase();
+        else if (bestFile.category === 'unstaged') section = (editor.t("section.unstaged") || "Changes").toUpperCase();
+        else if (bestFile.category === 'untracked') section = (editor.t("section.untracked") || "Untracked").toUpperCase();
+        const filename = bestFile.origPath ? `${bestFile.origPath} → ${bestFile.path}` : bestFile.path;
+        text = ` ${section} · ${filename}   +${counts.added} / -${counts.removed}`;
+    }
+
+    const padded = (text.length > W ? text.slice(0, W) : text).padEnd(W) + "\n";
+    editor.setPanelContent(state.groupId, "sticky", [{
+        text: padded,
+        style: { ...style, bg: STYLE_TOOLBAR_BG, extendToLineEnd: true },
+        properties: { type: "sticky-header" },
+    }]);
+}
+
+function on_review_viewport_changed(data: { split_id: number; buffer_id: number; top_byte: number; top_line: number | null; width: number; height: number }): void {
+    if (state.groupId === null) return;
+    if (data.buffer_id !== state.panelBuffers["diff"]) return;
+    const topRow = data.top_line ?? 0;
+    refreshStickyHeader(topRow);
+}
+registerHandler("on_review_viewport_changed", on_review_viewport_changed);
 
 /**
  * Repaint the synthetic "cursor line" highlight in the diff panel.
@@ -2499,9 +2569,9 @@ async function start_review_diff() {
 
     // Critique-style unified layout:
     //   toolbar (2 rows fixed)
-    //   ┌──── diff stream ───┬─ comments ─┐
-    //   │  scrollable        │ scrollable │
-    //   └────────────────────┴────────────┘
+    //   ┌──── sticky file header (1 row fixed) ─┬───────────┐
+    //   ├──── diff stream (scrollable) ─────────┤ comments  │
+    //   └───────────────────────────────────────┴───────────┘
     const layout = JSON.stringify({
         type: "split",
         direction: "v",
@@ -2510,7 +2580,12 @@ async function start_review_diff() {
             type: "split",
             direction: "h",
             ratio: 0.75,
-            first: { type: "scrollable", id: "diff" },
+            first: {
+                type: "split",
+                direction: "v",
+                first: { type: "fixed", id: "sticky", height: 1 },
+                second: { type: "scrollable", id: "diff" },
+            },
             second: { type: "scrollable", id: "comments" },
         },
     });
@@ -2538,6 +2613,7 @@ async function start_review_diff() {
     editor.on("buffer_activated", "on_review_buffer_activated");
     editor.on("buffer_closed", "on_review_buffer_closed");
     editor.on("cursor_moved", "on_review_cursor_moved");
+    editor.on("viewport_changed", "on_review_viewport_changed");
 }
 registerHandler("start_review_diff", start_review_diff);
 
@@ -2553,6 +2629,7 @@ function stop_review_diff() {
     editor.off("buffer_activated", "on_review_buffer_activated");
     editor.off("buffer_closed", "on_review_buffer_closed");
     editor.off("cursor_moved", "on_review_cursor_moved");
+    editor.off("viewport_changed", "on_review_viewport_changed");
     editor.setStatus(editor.t("status.stopped"));
 }
 registerHandler("stop_review_diff", stop_review_diff);
