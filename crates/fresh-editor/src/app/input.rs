@@ -1619,33 +1619,22 @@ impl Editor {
             .unwrap_or_else(|| self.split_manager.active_split());
 
         if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
-            // Don't scroll horizontally when line wrap is enabled
+            // Line wrap makes horizontal scroll a no-op.
             if view_state.viewport.line_wrap_enabled {
                 return Ok(());
             }
 
             let columns_to_scroll = delta.unsigned_abs() as usize;
+            let viewport = &mut view_state.viewport;
             if delta < 0 {
-                // Scroll left
-                view_state.viewport.left_column = view_state
-                    .viewport
-                    .left_column
-                    .saturating_sub(columns_to_scroll);
+                viewport.left_column = viewport.left_column.saturating_sub(columns_to_scroll);
             } else {
-                // Scroll right - clamp to max_line_length_seen
-                let visible_width = view_state.viewport.width as usize;
-                let max_scroll = view_state
-                    .viewport
-                    .max_line_length_seen
-                    .saturating_sub(visible_width);
-                let new_left = view_state
-                    .viewport
-                    .left_column
-                    .saturating_add(columns_to_scroll);
-                view_state.viewport.left_column = new_left.min(max_scroll);
+                // No max_line_length_seen clamp: that value is stale between
+                // renders (often 0 before any h-scroll), pinning this at 0
+                // even when long lines exist. Overshoot clips at render.
+                viewport.left_column = viewport.left_column.saturating_add(columns_to_scroll);
             }
-            // Skip ensure_visible so the scroll position isn't undone during render
-            view_state.viewport.set_skip_ensure_visible();
+            viewport.set_skip_ensure_visible();
         }
 
         Ok(())
