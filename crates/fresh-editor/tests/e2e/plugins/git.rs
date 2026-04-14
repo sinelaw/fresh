@@ -1377,15 +1377,23 @@ fn test_git_log_open_different_commits_sequentially() {
     let screen_second_detail = harness.screen_to_string();
     println!("Second commit detail (should be SECOND):\n{screen_second_detail}");
 
-    // CRITICAL ASSERTION: The bug is that it opens the first commit again instead of the second
-    // This should show SECOND_UNIQUE_COMMIT_BBB, NOT THIRD_UNIQUE_COMMIT_CCC
+    // CRITICAL ASSERTION: The bug is that it opens the first commit again instead of the second.
+    // The modern buffer-group layout keeps the commit log visible on the left and shows the
+    // selected commit's detail on the right, so we can't assert that THIRD is absent from the
+    // screen (it's still listed in the left panel). Instead, assert that the detail panel has
+    // moved to SECOND by looking for `file2.txt` (added in SECOND) — the file added in THIRD
+    // (`file3.txt`) must not appear in the right-hand detail body.
     assert!(
         screen_second_detail.contains("SECOND_UNIQUE_COMMIT_BBB"),
         "BUG: After navigating to a different commit and pressing Enter, it should open SECOND_UNIQUE_COMMIT_BBB, but got:\n{screen_second_detail}"
     );
     assert!(
-        !screen_second_detail.contains("THIRD_UNIQUE_COMMIT_CCC"),
-        "BUG: Should NOT show THIRD commit when SECOND was selected:\n{screen_second_detail}"
+        screen_second_detail.contains("file2.txt"),
+        "BUG: The detail panel should reference file2.txt (added in SECOND commit) but got:\n{screen_second_detail}"
+    );
+    assert!(
+        !screen_second_detail.contains("file3.txt"),
+        "BUG: The detail panel should NOT reference file3.txt (THIRD commit's file) when SECOND is selected:\n{screen_second_detail}"
     );
 }
 

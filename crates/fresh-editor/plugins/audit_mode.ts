@@ -9,6 +9,14 @@
 const editor = getEditor();
 
 import { createVirtualBufferFactory } from "./lib/virtual-buffer-factory.ts";
+import {
+  type GitCommit,
+  buildCommitDetailEntries,
+  buildCommitLogEntries,
+  buildDetailPlaceholderEntries,
+  fetchCommitShow,
+  fetchGitLog,
+} from "./lib/git_history.ts";
 const VirtualBufferFactory = createVirtualBufferFactory(editor);
 
 
@@ -3874,8 +3882,314 @@ async function side_by_side_diff_current_file() {
 }
 registerHandler("side_by_side_diff_current_file", side_by_side_diff_current_file);
 
+// =============================================================================
+// Review PR Branch
+//
+// A companion view to `start_review_diff` for reviewing the full set of
+// commits on a PR branch (rather than just the working-tree changes). It
+// opens a buffer group with the commit history on the left (rendered by
+// the shared `lib/git_history.ts` helpers the git_log plugin uses) and a
+// live-updating `git show` of the selected commit on the right. This reuses
+// the same rendering pipeline so both plugins stay visually consistent and
+// respect theme keys in one place.
+// =============================================================================
+
+interface ReviewBranchState {
+    isOpen: boolean;
+    groupId: number | null;
+    logBufferId: number | null;
+    detailBufferId: number | null;
+    commits: GitCommit[];
+    selectedIndex: number;
+    baseRef: string;
+    detailCache: { hash: string; output: string } | null;
+    pendingDetailId: number;
+    /** Byte offset of each row in the log panel; final entry = buffer length. */
+    logRowByteOffsets: number[];
+}
+
+const branchState: ReviewBranchState = {
+    isOpen: false,
+    groupId: null,
+    logBufferId: null,
+    detailBufferId: null,
+    commits: [],
+    selectedIndex: 0,
+    baseRef: "main",
+    detailCache: null,
+    pendingDetailId: 0,
+    logRowByteOffsets: [],
+};
+
+// UTF-8 byte length helper, local copy so audit_mode doesn't pull in the one
+// from git_history (keeps the import list tiny).
+function branchUtf8Len(s: string): number {
+    let b = 0;
+    for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        if (c <= 0x7f) b += 1;
+        else if (c <= 0x7ff) b += 2;
+        else if (c >= 0xd800 && c <= 0xdfff) { b += 4; i++; }
+        else b += 3;
+    }
+    return b;
+}
+
+function branchRowFromByte(bytePos: number): number {
+    const offs = branchState.logRowByteOffsets;
+    if (offs.length === 0) return 0;
+    let lo = 0;
+    let hi = offs.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (offs[mid] <= bytePos) lo = mid;
+        else hi = mid - 1;
+    }
+    return lo;
+}
+
+function branchIndexFromCursor(bytePos: number): number {
+    const row = branchRowFromByte(bytePos);
+    const idx = row - 1; // row 0 is the header
+    if (idx < 0) return 0;
+    if (idx >= branchState.commits.length) return branchState.commits.length - 1;
+    return idx;
+}
+
+function branchRenderLog(): void {
+    if (branchState.groupId === null) return;
+    const rawHeader = editor.t("panel.review_branch_header", { base: branchState.baseRef });
+    const header = (rawHeader && !rawHeader.startsWith("panel.")) ? rawHeader : `Commits (${branchState.baseRef}..HEAD)`;
+    const rawFooter = editor.t("panel.review_branch_footer");
+    const footer = (rawFooter && !rawFooter.startsWith("panel.")) ? rawFooter : "j/k: navigate · Enter: focus detail · r: refresh · q: close";
+    const entries = buildCommitLogEntries(branchState.commits, {
+        selectedIndex: branchState.selectedIndex,
+        header,
+        footer,
+        propertyType: "branch-commit",
+    });
+    const offsets: number[] = [];
+    let running = 0;
+    for (const e of entries) {
+        offsets.push(running);
+        running += branchUtf8Len(e.text);
+    }
+    offsets.push(running);
+    branchState.logRowByteOffsets = offsets;
+    editor.setPanelContent(branchState.groupId, "log", entries);
+}
+
+function branchByteOffsetOfFirstCommit(): number {
+    return branchState.logRowByteOffsets.length > 1 ? branchState.logRowByteOffsets[1] : 0;
+}
+
+async function branchRefreshDetail(): Promise<void> {
+    if (branchState.groupId === null) return;
+    if (branchState.commits.length === 0) {
+        const msg = editor.t("status.review_branch_empty") || "No commits in the selected range.";
+        editor.setPanelContent(
+            branchState.groupId,
+            "detail",
+            buildDetailPlaceholderEntries(msg),
+        );
+        return;
+    }
+    const idx = Math.max(0, Math.min(branchState.selectedIndex, branchState.commits.length - 1));
+    const commit = branchState.commits[idx];
+    if (!commit) return;
+
+    if (branchState.detailCache && branchState.detailCache.hash === commit.hash) {
+        const entries = buildCommitDetailEntries(commit, branchState.detailCache.output, {});
+        editor.setPanelContent(branchState.groupId, "detail", entries);
+        return;
+    }
+    const myId = ++branchState.pendingDetailId;
+    editor.setPanelContent(
+        branchState.groupId,
+        "detail",
+        buildDetailPlaceholderEntries(
+            editor.t("status.loading_commit", { hash: commit.shortHash }) || `Loading ${commit.shortHash}…`,
+        ),
+    );
+    const output = await fetchCommitShow(editor, commit.hash);
+    if (myId !== branchState.pendingDetailId) return;
+    if (branchState.groupId === null) return;
+    branchState.detailCache = { hash: commit.hash, output };
+    editor.setPanelContent(
+        branchState.groupId,
+        "detail",
+        buildCommitDetailEntries(commit, output, {}),
+    );
+}
+
+async function start_review_branch(): Promise<void> {
+    if (branchState.isOpen) {
+        editor.setStatus(editor.t("status.already_open") || "Review branch already open");
+        return;
+    }
+    // Prompt for the base ref so the user can review any PR, not just
+    // one branched off main.
+    const input = await editor.prompt(
+        editor.t("prompt.branch_base") || "Base ref (default: main):",
+        branchState.baseRef,
+    );
+    if (input === null) {
+        editor.setStatus(editor.t("status.cancelled") || "Cancelled");
+        return;
+    }
+    const base = input.trim() || "main";
+    branchState.baseRef = base;
+
+    editor.setStatus(editor.t("status.loading") || "Loading commits…");
+    branchState.commits = await fetchGitLog(editor, { range: `${base}..HEAD`, maxCommits: 500 });
+    if (branchState.commits.length === 0) {
+        editor.setStatus(
+            editor.t("status.review_branch_empty", { base }) ||
+                `No commits in ${base}..HEAD — nothing to review.`,
+        );
+        return;
+    }
+
+    const layout = JSON.stringify({
+        type: "split",
+        direction: "h",
+        ratio: 0.4,
+        first: { type: "scrollable", id: "log" },
+        second: { type: "scrollable", id: "detail" },
+    });
+    // `createBufferGroup` is a runtime-only binding (not in the generated
+    // EditorAPI type); cast to `any` so the type-checker doesn't complain.
+    const group = await (editor as any).createBufferGroup(
+        `*Review Branch ${base}..HEAD*`,
+        "review-branch",
+        layout,
+    );
+    branchState.groupId = group.groupId as number;
+    branchState.logBufferId = (group.panels["log"] as number | undefined) ?? null;
+    branchState.detailBufferId = (group.panels["detail"] as number | undefined) ?? null;
+    branchState.selectedIndex = 0;
+    branchState.detailCache = null;
+    branchState.isOpen = true;
+
+    if (branchState.logBufferId !== null) {
+        editor.setBufferShowCursors(branchState.logBufferId, true);
+    }
+    if (branchState.detailBufferId !== null) {
+        editor.setBufferShowCursors(branchState.detailBufferId, true);
+    }
+
+    branchRenderLog();
+    if (branchState.logBufferId !== null && branchState.commits.length > 0) {
+        editor.setBufferCursor(branchState.logBufferId, branchByteOffsetOfFirstCommit());
+    }
+    await branchRefreshDetail();
+
+    if (branchState.groupId !== null) {
+        editor.focusBufferGroupPanel(branchState.groupId, "log");
+    }
+    editor.on("cursor_moved", "on_review_branch_cursor_moved");
+
+    editor.setStatus(
+        editor.t("status.review_branch_ready", {
+            count: String(branchState.commits.length),
+            base,
+        }) || `Reviewing ${branchState.commits.length} commits in ${base}..HEAD`,
+    );
+}
+registerHandler("start_review_branch", start_review_branch);
+
+function stop_review_branch(): void {
+    if (!branchState.isOpen) return;
+    if (branchState.groupId !== null) editor.closeBufferGroup(branchState.groupId);
+    editor.off("cursor_moved", "on_review_branch_cursor_moved");
+    branchState.isOpen = false;
+    branchState.groupId = null;
+    branchState.logBufferId = null;
+    branchState.detailBufferId = null;
+    branchState.commits = [];
+    branchState.selectedIndex = 0;
+    branchState.detailCache = null;
+    editor.setStatus(editor.t("status.closed") || "Review branch closed");
+}
+registerHandler("stop_review_branch", stop_review_branch);
+
+async function review_branch_refresh(): Promise<void> {
+    if (!branchState.isOpen) return;
+    const base = branchState.baseRef;
+    branchState.commits = await fetchGitLog(editor, { range: `${base}..HEAD`, maxCommits: 500 });
+    branchState.detailCache = null;
+    if (branchState.selectedIndex >= branchState.commits.length) {
+        branchState.selectedIndex = Math.max(0, branchState.commits.length - 1);
+    }
+    branchRenderLog();
+    await branchRefreshDetail();
+}
+registerHandler("review_branch_refresh", review_branch_refresh);
+
+/** Enter: focus the detail panel (so the user can scroll/click within it). */
+function review_branch_enter(): void {
+    if (branchState.groupId === null) return;
+    editor.focusBufferGroupPanel(branchState.groupId, "detail");
+}
+registerHandler("review_branch_enter", review_branch_enter);
+
+/** q/Escape: focus-back from detail, or close when already on log. */
+function review_branch_close_or_back(): void {
+    if (branchState.groupId === null) return;
+    const active = editor.getActiveBufferId();
+    if (branchState.detailBufferId !== null && active === branchState.detailBufferId) {
+        editor.focusBufferGroupPanel(branchState.groupId, "log");
+        return;
+    }
+    stop_review_branch();
+}
+registerHandler("review_branch_close_or_back", review_branch_close_or_back);
+
+function on_review_branch_cursor_moved(data: {
+    buffer_id: number;
+    cursor_id: number;
+    old_position: number;
+    new_position: number;
+}): void {
+    if (!branchState.isOpen) return;
+    if (data.buffer_id !== branchState.logBufferId) return;
+    const idx = branchIndexFromCursor(data.new_position);
+    if (idx === branchState.selectedIndex) return;
+    branchState.selectedIndex = idx;
+    branchRenderLog();
+    branchRefreshDetail();
+}
+registerHandler("on_review_branch_cursor_moved", on_review_branch_cursor_moved);
+
+editor.defineMode(
+    "review-branch",
+    [
+        // Mode bindings replace globals, so we re-bind the editor's built-in
+        // motion actions here explicitly — without this, j/k and Up/Down
+        // do nothing in the commit list.
+        ["Up", "move_up"],
+        ["Down", "move_down"],
+        ["k", "move_up"],
+        ["j", "move_down"],
+        ["PageUp", "page_up"],
+        ["PageDown", "page_down"],
+        ["Home", "move_line_start"],
+        ["End", "move_line_end"],
+        // Enter: focus the right-hand detail panel.
+        ["Return", "review_branch_enter"],
+        ["Tab", "review_branch_enter"],
+        ["r", "review_branch_refresh"],
+        ["q", "review_branch_close_or_back"],
+        ["Escape", "review_branch_close_or_back"],
+    ],
+    true,
+);
+
 // Register Modes and Commands
 editor.registerCommand("%cmd.review_diff", "%cmd.review_diff_desc", "start_review_diff", null);
+editor.registerCommand("%cmd.review_branch", "%cmd.review_branch_desc", "start_review_branch", null);
+editor.registerCommand("%cmd.stop_review_branch", "%cmd.stop_review_branch_desc", "stop_review_branch", "review-branch");
+editor.registerCommand("%cmd.refresh_review_branch", "%cmd.refresh_review_branch_desc", "review_branch_refresh", "review-branch");
 editor.registerCommand("%cmd.stop_review_diff", "%cmd.stop_review_diff_desc", "stop_review_diff", "review-mode");
 editor.registerCommand("%cmd.refresh_review_diff", "%cmd.refresh_review_diff_desc", "review_refresh", "review-mode");
 editor.registerCommand("%cmd.side_by_side_diff", "%cmd.side_by_side_diff_desc", "side_by_side_diff_current_file", null);
