@@ -46,6 +46,13 @@ interface GitLogState {
    */
   pendingDetailId: number;
   /**
+   * Debounce token for `cursor_moved`. Rapid cursor motion (PageDown, held
+   * j/k) would otherwise trigger a full log re-render + `git show` per
+   * intermediate row; we bump this id on every event and only do the work
+   * after a short delay if no newer event has arrived.
+   */
+  pendingCursorMoveId: number;
+  /**
    * Byte offset at the start of each row in the rendered log panel, plus
    * the total buffer length at the end. Populated by `renderLog` so the
    * cursor_moved handler can map byte positions to commit indices without
@@ -64,8 +71,16 @@ const state: GitLogState = {
   selectedIndex: 0,
   detailCache: null,
   pendingDetailId: 0,
+  pendingCursorMoveId: 0,
   logRowByteOffsets: [],
 };
+
+/**
+ * Delay before reacting to `cursor_moved`. Long enough to collapse a burst
+ * of events from held j/k or PageDown into a single render, short enough
+ * that the detail panel still feels live.
+ */
+const CURSOR_DEBOUNCE_MS = 60;
 
 // UTF-8 byte length — the overlay API expects byte offsets; JS strings are
 // UTF-16. Matches the helper used by `lib/git_history.ts`.
@@ -513,12 +528,12 @@ registerHandler("git_log_file_view_close", git_log_file_view_close);
 // the commit list.
 // =============================================================================
 
-function on_git_log_cursor_moved(data: {
+async function on_git_log_cursor_moved(data: {
   buffer_id: number;
   cursor_id: number;
   old_position: number;
   new_position: number;
-}): void {
+}): Promise<void> {
   if (!state.isOpen) return;
   // Only react to movement inside the log panel.
   if (data.buffer_id !== state.logBufferId) return;
@@ -529,16 +544,23 @@ function on_git_log_cursor_moved(data: {
   const idx = indexFromCursorByte(data.new_position);
   if (idx === state.selectedIndex) return;
   state.selectedIndex = idx;
+
+  // Debounce: bump the token, wait a beat, bail if a newer event has
+  // arrived. The log re-render and `git show` are both expensive; a burst
+  // of cursor events (held j/k, PageDown) must collapse to one render.
+  const myId = ++state.pendingCursorMoveId;
+  await editor.delay(CURSOR_DEBOUNCE_MS);
+  if (myId !== state.pendingCursorMoveId) return;
+  if (!state.isOpen) return;
+
   renderLog();
-  // Kick off the detail refresh — it's async and tagged so a rapid
-  // stream of movements collapses to a single render for the final row.
   refreshDetail();
 
-  const commit = state.commits[idx];
+  const commit = state.commits[state.selectedIndex];
   if (commit) {
     editor.setStatus(
       editor.t("status.commit_position", {
-        current: String(idx + 1),
+        current: String(state.selectedIndex + 1),
         total: String(state.commits.length),
       })
     );

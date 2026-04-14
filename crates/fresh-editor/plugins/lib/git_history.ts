@@ -131,18 +131,66 @@ export async function fetchGitLog(
   return commits;
 }
 
+/**
+ * A single file's diff exceeding this line count is omitted from the
+ * rendered `git show` output. Generated files (lockfiles, bundled SVGs,
+ * minified JS) can produce megabyte-scale diffs that balloon the detail
+ * panel into hundreds of thousands of entries — slow to render and not
+ * useful to read. The stat header still lists the file so the user knows
+ * it changed; a footer tells them which ones were skipped.
+ */
+const MAX_DIFF_LINES_PER_FILE = 2000;
+
 export async function fetchCommitShow(
   editor: EditorAPI,
   hash: string,
   cwd?: string
 ): Promise<string> {
-  const result = await editor.spawnProcess(
+  const workdir = cwd ?? editor.getCwd();
+
+  // First pass: numstat only. Small output (one line per changed file),
+  // lets us spot oversized files before asking git for the full patch.
+  const numstatResult = await editor.spawnProcess(
     "git",
-    ["show", "--stat", "--patch", hash],
-    cwd ?? editor.getCwd()
+    ["show", "--numstat", "--format=", hash],
+    workdir
   );
+  const oversized: string[] = [];
+  if (numstatResult.exit_code === 0) {
+    for (const line of numstatResult.stdout.split("\n")) {
+      if (!line) continue;
+      // numstat format: "<added>\t<removed>\t<path>"; "-" for binary files.
+      const tab1 = line.indexOf("\t");
+      const tab2 = tab1 >= 0 ? line.indexOf("\t", tab1 + 1) : -1;
+      if (tab1 < 0 || tab2 < 0) continue;
+      const addedStr = line.slice(0, tab1);
+      const removedStr = line.slice(tab1 + 1, tab2);
+      const path = line.slice(tab2 + 1);
+      const added = addedStr === "-" ? 0 : parseInt(addedStr, 10) || 0;
+      const removed = removedStr === "-" ? 0 : parseInt(removedStr, 10) || 0;
+      if (added + removed > MAX_DIFF_LINES_PER_FILE) {
+        oversized.push(path);
+      }
+    }
+  }
+
+  // Second pass: stat + patch, excluding oversized paths. `:(exclude,top)`
+  // is rooted at the repo root so it matches regardless of git's cwd.
+  const showArgs = ["show", "--stat", "--patch", hash];
+  if (oversized.length > 0) {
+    showArgs.push("--", ".");
+    for (const p of oversized) showArgs.push(`:(exclude,top)${p}`);
+  }
+  const result = await editor.spawnProcess("git", showArgs, workdir);
   if (result.exit_code !== 0) return result.stderr || "(no output)";
-  return result.stdout;
+
+  if (oversized.length === 0) return result.stdout;
+
+  const plural = oversized.length === 1 ? "" : "s";
+  let footer = `\n[${oversized.length} large file${plural} omitted from diff (>${MAX_DIFF_LINES_PER_FILE} lines changed):\n`;
+  for (const p of oversized) footer += `  ${p}\n`;
+  footer += `Run \`git show ${hash.slice(0, 12)} -- <path>\` to view.]\n`;
+  return result.stdout + footer;
 }
 
 // =============================================================================
