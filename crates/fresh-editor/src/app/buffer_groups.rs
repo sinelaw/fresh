@@ -121,7 +121,8 @@ impl super::Editor {
                 TabTarget::Buffer(b) => !hidden_panel_ids.contains(b),
                 TabTarget::Group(_) => true,
             });
-            vs.keyed_states.retain(|bid, _| !hidden_panel_ids.contains(bid));
+            vs.keyed_states
+                .retain(|bid, _| !hidden_panel_ids.contains(bid));
         }
 
         // Add the group as a tab in the CURRENT split's tab bar and make it

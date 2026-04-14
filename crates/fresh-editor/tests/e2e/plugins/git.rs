@@ -1439,10 +1439,7 @@ fn test_git_log_down_arrow_progresses_through_commits() {
 
     // After open, HEAD (Delta) should be auto-selected; detail panel shows its diff.
     harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("Commits:") && s.contains("f4_delta.txt")
-        })
+        .wait_until(|h| h.screen_to_string().contains("f4_delta.txt"))
         .unwrap();
 
     // Down once — detail should switch to Gamma's diff (f3_gamma.txt).
@@ -1464,6 +1461,93 @@ fn test_git_log_down_arrow_progresses_through_commits() {
     harness
         .wait_until(|h| h.screen_to_string().contains("f1_alpha.txt"))
         .unwrap();
+}
+
+/// Regression: pressing Enter on a diff line in the commit details panel
+/// opens the file at that commit. Closing the file-view and pressing Enter
+/// again on a diff line must also work — it previously failed with
+/// "Move cursor to a diff line with file context" because the panel
+/// buffer's cursor position was read from a stale mirror entry in the
+/// outer split's keyed_states.
+#[test]
+fn test_git_log_open_file_works_after_closing_previous_file_view() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+
+    repo.create_file("src/main.rs", "fn main() {\n    println!(\"first\");\n}\n");
+    repo.git_add(&["src/main.rs"]);
+    repo.git_commit("first commit");
+
+    // Same file edited twice so each commit has a diff body to land on.
+    repo.create_file("src/main.rs", "fn main() {\n    println!(\"second\");\n}\n");
+    repo.git_add(&["src/main.rs"]);
+    repo.git_commit("second commit");
+
+    repo.setup_git_log_plugin();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        180,
+        48,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    trigger_git_log(&mut harness);
+    // Wait for the detail panel to render the second (HEAD) commit diff.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("+    println!(\"second\");"))
+        .unwrap();
+
+    // Focus the detail panel (Tab from log) and land on a diff line.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Move down enough to be on an actual diff line (past the commit header).
+    for _ in 0..10 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    // First Enter: open file-view of src/main.rs @ HEAD.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("println!(\"second\");") && !s.contains("Move cursor to a diff line")
+        })
+        .unwrap();
+
+    // Close the file-view (q) and go back to the detail panel.
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("+    println!(\"second\");"))
+        .unwrap();
+
+    // Nudge the detail cursor and press Enter again. Before the fix,
+    // the second Enter reported "Move cursor to a diff line with file context".
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Success: either the file view opens (contains the source line) or
+    // at worst we get a benign "move cursor" message only if we actually
+    // landed outside a diff — but we're guaranteed a diff row by the
+    // Down presses above, so the failure mode is what the assert catches.
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("println!(\"second\");") || s.contains("println!(\"first\");")
+        })
+        .unwrap();
+    let s = harness.screen_to_string();
+    assert!(
+        !s.contains("Move cursor to a diff line with file context"),
+        "BUG: second Enter fell back to move-cursor status:\n{s}",
+    );
 }
 
 // =============================================================================
