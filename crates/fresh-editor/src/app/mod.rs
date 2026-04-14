@@ -5466,24 +5466,14 @@ impl Editor {
                 };
                 snapshot.buffer_saved_diffs.insert(*buffer_id, diff);
 
-                // Prefer the group-panel split (suppress_chrome=true) — that's
-                // where motion lands. The outer split can also end up with
-                // `active_buffer == buffer_id` transiently, but its cursor
-                // state for that buffer is stale.
+                // Panel buffers live in exactly one split's keyed_states
+                // (enforced at group creation); regular buffers live in the
+                // split that has them open. Either way, the first keyed_states
+                // hit is the only hit.
                 let source_split = self
                     .split_view_states
                     .iter()
-                    .find(|(_, vs)| vs.active_buffer == *buffer_id && vs.suppress_chrome)
-                    .or_else(|| {
-                        self.split_view_states
-                            .iter()
-                            .find(|(_, vs)| vs.active_buffer == *buffer_id)
-                    })
-                    .or_else(|| {
-                        self.split_view_states
-                            .iter()
-                            .find(|(_, vs)| vs.keyed_states.contains_key(buffer_id))
-                    });
+                    .find(|(_, vs)| vs.keyed_states.contains_key(buffer_id));
                 let cursor_pos = source_split
                     .and_then(|(_, vs)| vs.buffer_state(*buffer_id))
                     .map(|bs| bs.cursors.primary().position)

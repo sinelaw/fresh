@@ -103,14 +103,25 @@ impl super::Editor {
             }
         }
 
-        // Remove panel buffers from any split's open_buffers list
-        // (they were added during create_virtual_buffer).
+        // Remove panel buffers from every OTHER split's open_buffers AND
+        // keyed_states. create_virtual_buffer adds them to the active split
+        // when each was created; leaving them there makes the outer split
+        // carry a stale cursor entry for the panel buffer, which later
+        // collides with the panel's own view state in any lookup that
+        // scans split_view_states by buffer id.
         let hidden_panel_ids: Vec<BufferId> = panel_buffers.values().copied().collect();
-        for (_leaf_id, vs) in self.split_view_states.iter_mut() {
+        let panel_leaf_ids: std::collections::HashSet<LeafId> =
+            panel_splits.values().copied().collect();
+        for (leaf_id, vs) in self.split_view_states.iter_mut() {
+            if panel_leaf_ids.contains(leaf_id) {
+                // The panel's own view state needs its buffer.
+                continue;
+            }
             vs.open_buffers.retain(|t| match t {
                 TabTarget::Buffer(b) => !hidden_panel_ids.contains(b),
                 TabTarget::Group(_) => true,
             });
+            vs.keyed_states.retain(|bid, _| !hidden_panel_ids.contains(bid));
         }
 
         // Add the group as a tab in the CURRENT split's tab bar and make it
