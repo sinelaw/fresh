@@ -12,6 +12,7 @@
 
 use crate::common::blog_showcase::BlogShowcase;
 use crate::common::fixtures::TestFixture;
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use lsp_types::FoldingRange;
@@ -2258,6 +2259,211 @@ fn blog_showcase_fresh_0_2_18_hot_exit() {
 
     // Show the restored buffer — notes are back!
     hold(&mut h2, &mut s, 10, 100);
+
+    s.finalize().unwrap();
+}
+
+// =========================================================================
+// Blog Post 6: Modernized Git Log Panel (buffer group + live preview)
+// =========================================================================
+
+/// Build a hermetic repo with several commits by distinct authors so the
+/// aligned-column log and right-panel detail have something meaningful
+/// to display in the showcase.
+fn build_git_log_demo_repo() -> GitTestRepo {
+    let repo = GitTestRepo::new();
+
+    // Commit 1 — initial scaffold (Alice).
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    println!(\"Hello, world!\");\n}\n",
+    );
+    repo.create_file("README.md", "# Fresh demo\n\nA tiny sample project.\n");
+    repo.git_add_all();
+    repo.git_commit("feat: initial scaffold");
+
+    // Commit 2 — add add() (Alice).
+    repo.create_file(
+        "src/lib.rs",
+        "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("feat: add add() helper");
+
+    // Commit 3 — add sub() from a different author (John Doe).
+    std::process::Command::new("git")
+        .args(["config", "user.name", "John Doe"])
+        .current_dir(&repo.path)
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "user.email", "john@example.com"])
+        .current_dir(&repo.path)
+        .output()
+        .unwrap();
+    repo.create_file(
+        "src/lib.rs",
+        "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\n\
+         pub fn sub(a: i32, b: i32) -> i32 {\n    a - b\n}\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("feat: add sub() helper");
+
+    // Commit 4 — docs (Alice again).
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Alice Liddell"])
+        .current_dir(&repo.path)
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "user.email", "alice@example.com"])
+        .current_dir(&repo.path)
+        .output()
+        .unwrap();
+    repo.create_file(
+        "README.md",
+        "# Fresh demo\n\nA tiny sample project.\n\n\
+         Provides basic arithmetic helpers.\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("docs: describe the helpers");
+
+    // Commit 5 — cli args TODO (Alice). Tag v0.1 on this one so the log
+    // panel shows a tag ref as well as the HEAD branch ref.
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    println!(\"Hello, world!\");\n}\n\
+         // TODO: support CLI args\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("chore(main): note CLI args TODO");
+    std::process::Command::new("git")
+        .args(["tag", "v0.1.0"])
+        .current_dir(&repo.path)
+        .output()
+        .unwrap();
+
+    // Commit 6 — CLI parser (John again).
+    std::process::Command::new("git")
+        .args(["config", "user.name", "John Doe"])
+        .current_dir(&repo.path)
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "user.email", "john@example.com"])
+        .current_dir(&repo.path)
+        .output()
+        .unwrap();
+    repo.create_file(
+        "src/args.rs",
+        "pub fn parse_args(args: &[String]) -> Vec<String> {\n\
+         \u{0020}   args.iter().skip(1).cloned().collect()\n}\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("feat(cli): add args parser");
+
+    repo
+}
+
+/// Git Log: the modern buffer-group layout with a live-preview right panel.
+/// Walk through the commit list with j/k and show the right-hand detail
+/// update in step, then focus the detail panel with Tab and close with q.
+#[test]
+#[ignore]
+fn blog_showcase_productivity_git_log() {
+    let repo = build_git_log_demo_repo();
+    repo.setup_git_log_plugin();
+
+    // 140x34 is comfortable — the log panel's aligned columns + the detail
+    // panel's diff read well side-by-side at that width.
+    let mut h = EditorTestHarness::with_config_and_working_dir(
+        140,
+        34,
+        Default::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    h.render().unwrap();
+
+    let mut s = BlogShowcase::new(
+        "productivity/git-log",
+        "Git Log",
+        "Magit-style git log with live-preview: a buffer-group tab pairs the aligned commit list with the selected commit's detail, updated as you navigate.",
+    );
+
+    // Opening hold on the blank editor — a moment to read the key badge.
+    hold(&mut h, &mut s, 5, 120);
+
+    // Open the command palette and type "Git Log".
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+P"), 150);
+
+    for ch in "Git Log".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some(&ch.to_string()), 60);
+    }
+    hold(&mut h, &mut s, 2, 120);
+
+    // Confirm — this runs `show_git_log` which creates the buffer group.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // The group buffer + `git show` dispatch is async; wait for the log
+    // header *and* the detail-panel "Author:" line so both panels are
+    // fully rendered before we start snapping.
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("Commits:") && screen.contains("Author:")
+    })
+    .unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 300);
+    hold(&mut h, &mut s, 5, 120);
+
+    // Walk down the commit list — each `j` fires `cursor_moved`, which
+    // re-renders the right panel with the newly-selected commit's diff.
+    for _ in 0..3 {
+        h.send_key(KeyCode::Char('j'), KeyModifiers::NONE).unwrap();
+        // Let the async `git show` land before we snapshot so the right
+        // panel matches the highlighted row.
+        h.process_async_and_render().unwrap();
+        snap(&mut h, &mut s, Some("j"), 180);
+        hold(&mut h, &mut s, 2, 120);
+    }
+    // One more for effect.
+    h.send_key(KeyCode::Char('j'), KeyModifiers::NONE).unwrap();
+    h.process_async_and_render().unwrap();
+    snap(&mut h, &mut s, Some("j"), 220);
+    hold(&mut h, &mut s, 3, 150);
+
+    // Climb back up to highlight live-update going both directions.
+    for _ in 0..2 {
+        h.send_key(KeyCode::Char('k'), KeyModifiers::NONE).unwrap();
+        h.process_async_and_render().unwrap();
+        snap(&mut h, &mut s, Some("k"), 180);
+    }
+    hold(&mut h, &mut s, 3, 120);
+
+    // Tab jumps focus into the detail panel so the user can scroll the
+    // diff without losing the log's cursor.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Tab"), 200);
+    hold(&mut h, &mut s, 4, 150);
+
+    // q in the detail panel hops back to the log panel (it doesn't close
+    // the group until q is pressed from the log panel).
+    h.send_key(KeyCode::Char('q'), KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("q"), 180);
+    hold(&mut h, &mut s, 3, 120);
+
+    // Final close — q in the log panel tears the group down.
+    h.send_key(KeyCode::Char('q'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Commits:"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("q"), 220);
+    hold(&mut h, &mut s, 4, 150);
 
     s.finalize().unwrap();
 }
