@@ -772,11 +772,10 @@ impl Editor {
         // session. Paths in read_only_files are relative (under working_dir)
         // or absolute — try both lookups.
         for ro_path in &workspace.read_only_files {
-            let buffer_id = path_to_buffer.get(ro_path).copied().or_else(|| {
-                path_to_buffer
-                    .get(&self.working_dir.join(ro_path))
-                    .copied()
-            });
+            let buffer_id = path_to_buffer
+                .get(ro_path)
+                .copied()
+                .or_else(|| path_to_buffer.get(&self.working_dir.join(ro_path)).copied());
             if let Some(id) = buffer_id {
                 self.mark_buffer_read_only(id, true);
             }
