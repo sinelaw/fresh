@@ -36,6 +36,9 @@ interface GitLogState {
   groupId: number | null;
   logBufferId: number | null;
   detailBufferId: number | null;
+  toolbarBufferId: number | null;
+  /** Click-regions for the toolbar's buttons, populated by `renderToolbar`. */
+  toolbarButtons: ToolbarButton[];
   commits: GitCommit[];
   selectedIndex: number;
   /** Cached `git show` output for the currently-displayed detail commit. */
@@ -67,6 +70,8 @@ const state: GitLogState = {
   groupId: null,
   logBufferId: null,
   detailBufferId: null,
+  toolbarBufferId: null,
+  toolbarButtons: [],
   commits: [],
   selectedIndex: 0,
   detailCache: null,
@@ -136,7 +141,6 @@ editor.defineMode(
     ["Return", "git_log_enter"],
     ["Tab", "git_log_tab"],
     ["q", "git_log_q"],
-    ["Escape", "git_log_q"],
     ["r", "git_log_refresh"],
     ["y", "git_log_copy_hash"],
   ],
@@ -177,56 +181,76 @@ const GROUP_LAYOUT = JSON.stringify({
 interface ToolbarHint {
   key: string;
   label: string;
+  /** Click action — `null` for hints that are keyboard-only (j/k, PgUp). */
+  onClick: (() => void | Promise<void>) | null;
 }
 
-const TOOLBAR_HINTS: ToolbarHint[] = [
-  { key: "j/k", label: "navigate" },
-  { key: "PgUp/PgDn", label: "page" },
-  { key: "Tab", label: "switch pane" },
-  { key: "RET", label: "open file" },
-  { key: "y", label: "yank hash" },
-  { key: "r", label: "refresh" },
-  { key: "q", label: "quit" },
-];
+interface ToolbarButton {
+  row: number;
+  startCol: number;
+  endCol: number;
+  onClick: (() => void | Promise<void>) | null;
+}
+
+function toolbarHints(): ToolbarHint[] {
+  return [
+    { key: "Tab", label: "switch pane", onClick: git_log_tab },
+    { key: "RET", label: "open file", onClick: git_log_enter },
+    { key: "y", label: "copy hash", onClick: git_log_copy_hash },
+    { key: "r", label: "refresh", onClick: git_log_refresh },
+    { key: "q", label: "quit", onClick: git_log_q },
+  ];
+}
 
 /**
- * Build a single-row sticky toolbar. Keys render bold; separators between
- * hints are dim. No width-aware truncation — the host crops to panel width,
- * and the hints are already short enough to fit a typical terminal.
+ * Build the single-row toolbar. Each hint renders as a discrete button with
+ * its own background so it reads as clickable; the column range of each
+ * button is captured in `state.toolbarButtons` so `on_git_log_toolbar_click`
+ * can map a mouse click back to the right handler.
  */
-function buildToolbarEntries(): TextPropertyEntry[] {
-  let text = " ";
+function buildToolbarEntries(width: number): TextPropertyEntry[] {
+  const W = Math.max(20, width);
+  const buttons: ToolbarButton[] = [];
+  let text = "";
   const overlays: InlineOverlay[] = [];
 
-  for (let i = 0; i < TOOLBAR_HINTS.length; i++) {
-    if (i > 0) {
-      const sep = "  │  ";
-      const sepStart = utf8Len(text);
-      text += sep;
-      overlays.push({
-        start: sepStart,
-        end: utf8Len(text),
-        style: { fg: "ui.split_separator_fg" },
-      });
-    }
-    const { key, label } = TOOLBAR_HINTS[i];
-    const keyDisplay = `[${key}]`;
-    const keyStart = utf8Len(text);
-    text += keyDisplay;
+  for (const hint of toolbarHints()) {
+    const body = ` [${hint.key}] ${hint.label} `;
+    const bodyLen = body.length;
+    const gap = text.length > 0 ? 1 : 0;
+    if (text.length + gap + bodyLen > W) break;
+
+    if (gap) text += " ";
+
+    const startCol = text.length;
+    const startByte = utf8Len(text);
+    text += body;
+    const endByte = utf8Len(text);
+    const endCol = text.length;
+
     overlays.push({
-      start: keyStart,
-      end: utf8Len(text),
+      start: startByte,
+      end: endByte,
+      style: { bg: "ui.status_bar_bg" },
+    });
+    const keyDisplay = `[${hint.key}]`;
+    const keyStartByte = startByte + utf8Len(" ");
+    const keyEndByte = keyStartByte + utf8Len(keyDisplay);
+    overlays.push({
+      start: keyStartByte,
+      end: keyEndByte,
       style: { fg: "editor.fg", bold: true },
     });
-    const labelText = " " + label;
-    const labelStart = utf8Len(text);
-    text += labelText;
     overlays.push({
-      start: labelStart,
-      end: utf8Len(text),
+      start: keyEndByte,
+      end: endByte,
       style: { fg: "editor.line_number_fg" },
     });
+
+    buttons.push({ row: 0, startCol, endCol, onClick: hint.onClick });
   }
+
+  state.toolbarButtons = buttons;
 
   return [
     {
@@ -240,8 +264,35 @@ function buildToolbarEntries(): TextPropertyEntry[] {
 
 function renderToolbar(): void {
   if (state.groupId === null) return;
-  editor.setPanelContent(state.groupId, "toolbar", buildToolbarEntries());
+  const vp = editor.getViewport();
+  const width = vp ? vp.width : 80;
+  editor.setPanelContent(state.groupId, "toolbar", buildToolbarEntries(width));
 }
+
+function on_git_log_toolbar_click(data: {
+  buffer_id: number | null;
+  buffer_row: number | null;
+  buffer_col: number | null;
+}): void {
+  if (!state.isOpen) return;
+  if (data.buffer_id === null || data.buffer_id !== state.toolbarBufferId) return;
+  if (data.buffer_row === null || data.buffer_col === null) return;
+  const row = data.buffer_row;
+  const col = data.buffer_col;
+  const hit = state.toolbarButtons.find(
+    (b) => b.row === row && col >= b.startCol && col < b.endCol
+  );
+  if (hit && hit.onClick) {
+    void hit.onClick();
+  }
+}
+registerHandler("on_git_log_toolbar_click", on_git_log_toolbar_click);
+
+function on_git_log_resize(_data: { width: number; height: number }): void {
+  if (!state.isOpen) return;
+  renderToolbar();
+}
+registerHandler("on_git_log_resize", on_git_log_resize);
 
 // =============================================================================
 // Rendering
@@ -374,6 +425,7 @@ async function show_git_log(): Promise<void> {
   state.groupId = group.groupId as number;
   state.logBufferId = (group.panels["log"] as number | undefined) ?? null;
   state.detailBufferId = (group.panels["detail"] as number | undefined) ?? null;
+  state.toolbarBufferId = (group.panels["toolbar"] as number | undefined) ?? null;
   state.selectedIndex = 0;
   state.detailCache = null;
   state.isOpen = true;
@@ -407,6 +459,8 @@ async function show_git_log(): Promise<void> {
     editor.focusBufferGroupPanel(state.groupId, "log");
   }
   editor.on("cursor_moved", "on_git_log_cursor_moved");
+  editor.on("mouse_click", "on_git_log_toolbar_click");
+  editor.on("resize", "on_git_log_resize");
 
   editor.setStatus(
     editor.t("status.log_ready", { count: String(state.commits.length) })
@@ -420,10 +474,14 @@ function git_log_close(): void {
     editor.closeBufferGroup(state.groupId);
   }
   editor.off("cursor_moved", "on_git_log_cursor_moved");
+  editor.off("mouse_click", "on_git_log_toolbar_click");
+  editor.off("resize", "on_git_log_resize");
   state.isOpen = false;
   state.groupId = null;
   state.logBufferId = null;
   state.detailBufferId = null;
+  state.toolbarBufferId = null;
+  state.toolbarButtons = [];
   state.commits = [];
   state.selectedIndex = 0;
   state.detailCache = null;
