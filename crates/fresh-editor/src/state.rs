@@ -185,6 +185,11 @@ pub struct EditorState {
     /// but navigation, selection, and copy are still allowed
     pub editing_disabled: bool,
 
+    /// Whether this buffer can be scrolled (default true). Fixed buffer-group
+    /// panels (toolbars, headers, footers) set this to false so the mouse
+    /// wheel is ignored and no scrollbar is drawn.
+    pub scrollable: bool,
+
     /// Per-buffer user settings (tab size, indentation style, etc.)
     /// These settings are preserved across file reloads (auto-revert)
     pub buffer_settings: BufferSettings,
@@ -287,6 +292,7 @@ impl EditorState {
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
             editing_disabled: false,
+            scrollable: true,
             buffer_settings: BufferSettings::default(),
             reference_highlighter: ReferenceHighlighter::new(),
             is_composite_buffer: false,

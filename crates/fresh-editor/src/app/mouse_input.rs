@@ -1105,6 +1105,15 @@ impl Editor {
     ) -> AnyhowResult<()> {
         use crate::model::event::Event;
 
+        // Non-interactive panels (hidden cursor) swallow double-click.
+        if self
+            .buffers
+            .get(&buffer_id)
+            .is_some_and(|s| !s.show_cursors)
+        {
+            return Ok(());
+        }
+
         // Focus this split
         self.focus_split(split_id, buffer_id);
 
@@ -1244,6 +1253,14 @@ impl Editor {
         content_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
         use crate::model::event::Event;
+
+        if self
+            .buffers
+            .get(&buffer_id)
+            .is_some_and(|s| !s.show_cursors)
+        {
+            return Ok(());
+        }
 
         // Focus this split
         self.focus_split(split_id, buffer_id);

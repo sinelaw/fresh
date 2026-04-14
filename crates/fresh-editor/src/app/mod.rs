@@ -2589,6 +2589,18 @@ impl Editor {
     ///
     /// Use this instead of calling set_active_split directly when switching focus.
     pub(super) fn focus_split(&mut self, split_id: LeafId, buffer_id: BufferId) {
+        // Buffer-group panels with hidden cursors (toolbars, headers, footers)
+        // aren't focus targets: focusing them would route keyboard input at an
+        // invisible cursor. Plugins can still detect clicks via the mouse_click
+        // hook, which fires in the click handlers before reaching here.
+        if self
+            .buffers
+            .get(&buffer_id)
+            .is_some_and(|s| !s.show_cursors)
+        {
+            return;
+        }
+
         let previous_split = self.split_manager.active_split();
         let previous_buffer = self.active_buffer(); // Get BEFORE changing split
         let split_changed = previous_split != split_id;

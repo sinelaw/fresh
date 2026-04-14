@@ -1504,6 +1504,13 @@ impl Editor {
             .split_at_position(col, row)
             .unwrap_or_else(|| (self.split_manager.active_split(), self.active_buffer()));
 
+        // Panels marked non-scrollable (buffer-group toolbars/headers/footers
+        // default to this) swallow the wheel event — their content is pinned
+        // so scrolling would just shift the visible rows by one line.
+        if self.is_non_scrollable_buffer(buffer_id) {
+            return Ok(());
+        }
+
         // Check if this is a composite buffer - if so, use composite scroll
         if self.is_composite_buffer(buffer_id) {
             let max_row = self
@@ -1613,10 +1620,13 @@ impl Editor {
         row: u16,
         delta: i32,
     ) -> AnyhowResult<()> {
-        let target_split = self
+        let (target_split, buffer_id) = self
             .split_at_position(col, row)
-            .map(|(id, _)| id)
-            .unwrap_or_else(|| self.split_manager.active_split());
+            .unwrap_or_else(|| (self.split_manager.active_split(), self.active_buffer()));
+
+        if self.is_non_scrollable_buffer(buffer_id) {
+            return Ok(());
+        }
 
         if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
             // Line wrap makes horizontal scroll a no-op.
@@ -2664,6 +2674,16 @@ impl Editor {
                     buffer_col: hook_buffer_col,
                 },
             );
+        }
+
+        // Buffers with hidden cursors (buffer-group toolbars/headers/footers)
+        // aren't interactive targets: focusing them would let arrow keys move
+        // an invisible cursor and scroll the pinned content. Swallow the click
+        // after the plugin hook has had a chance to observe it.
+        if let Some(state) = self.buffers.get(&buffer_id) {
+            if !state.show_cursors {
+                return Ok(());
+            }
         }
 
         // Focus this split (handles terminal mode exit, tab state, etc.)

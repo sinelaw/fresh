@@ -15,9 +15,22 @@ use std::collections::HashMap;
 #[serde(tag = "type")]
 enum LayoutDesc {
     #[serde(rename = "scrollable")]
-    Scrollable { id: String },
+    Scrollable {
+        id: String,
+        /// Whether this panel responds to scroll events. Defaults to true
+        /// for scrollable panels.
+        scrollable: Option<bool>,
+    },
     #[serde(rename = "fixed")]
-    Fixed { id: String, height: u16 },
+    Fixed {
+        id: String,
+        height: u16,
+        /// Whether this panel responds to scroll events. Defaults to false
+        /// for fixed-height panels — their content is pinned to the panel
+        /// size, so mouse-wheel scroll is a no-op and no scrollbar is drawn.
+        /// Callers can override by passing `"scrollable": true`.
+        scrollable: Option<bool>,
+    },
     #[serde(rename = "split")]
     Split {
         direction: String, // "h" or "v"
@@ -232,13 +245,14 @@ impl super::Editor {
         panel_buffers: &mut HashMap<String, BufferId>,
     ) -> Result<GroupLayoutNode, String> {
         match desc {
-            LayoutDesc::Scrollable { id } => {
+            LayoutDesc::Scrollable { id, scrollable } => {
+                let scrollable = scrollable.unwrap_or(true);
                 let buffer_id =
                     self.create_virtual_buffer(format!("*{}*", id), mode.to_string(), true);
-                // Configure the buffer for panel use
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     state.show_cursors = false;
                     state.editing_disabled = true;
+                    state.scrollable = scrollable;
                     state.margins.configure_for_line_numbers(false);
                 }
                 panel_buffers.insert(id.clone(), buffer_id);
@@ -248,12 +262,18 @@ impl super::Editor {
                     split_id: None,
                 })
             }
-            LayoutDesc::Fixed { id, height } => {
+            LayoutDesc::Fixed {
+                id,
+                height,
+                scrollable,
+            } => {
+                let scrollable = scrollable.unwrap_or(false);
                 let buffer_id =
                     self.create_virtual_buffer(format!("*{}*", id), mode.to_string(), true);
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     state.show_cursors = false;
                     state.editing_disabled = true;
+                    state.scrollable = scrollable;
                     state.margins.configure_for_line_numbers(false);
                 }
                 panel_buffers.insert(id.clone(), buffer_id);
@@ -499,6 +519,15 @@ fn fixed_height_of(node: &GroupLayoutNode) -> Option<u16> {
     match node {
         GroupLayoutNode::Fixed { height, .. } => Some(*height),
         _ => None,
+    }
+}
+
+impl super::Editor {
+    /// Whether the given buffer is marked non-scrollable. Buffer-group
+    /// panels can set `scrollable: false` (and Fixed panels default to
+    /// it) so the mouse wheel is a no-op and no scrollbar is drawn.
+    pub(crate) fn is_non_scrollable_buffer(&self, buffer_id: BufferId) -> bool {
+        self.buffers.get(&buffer_id).is_some_and(|s| !s.scrollable)
     }
 }
 

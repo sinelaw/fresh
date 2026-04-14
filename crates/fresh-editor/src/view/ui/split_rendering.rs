@@ -1113,6 +1113,12 @@ impl SplitRenderer {
                     .and_then(|svs| svs.get(&split_id))
                     .is_some_and(|vs| vs.hide_tilde);
 
+            // Non-scrollable panels (Fixed toolbars/headers/footers by default,
+            // or any panel created with `scrollable: false`) don't get a
+            // scrollbar — their content is pinned to the panel size.
+            let is_non_scrollable = buffers.get(&buffer_id).is_some_and(|s| !s.scrollable);
+            let panel_show_vscroll = show_vertical_scrollbar && !is_non_scrollable;
+
             let layout = if is_inner_group_leaf {
                 // Inner leaf: split_area IS the content rect already.
                 SplitLayout {
@@ -1120,17 +1126,15 @@ impl SplitRenderer {
                     content_rect: Rect::new(
                         split_area.x,
                         split_area.y,
-                        split_area.width.saturating_sub(if show_vertical_scrollbar {
-                            1
-                        } else {
-                            0
-                        }),
+                        split_area
+                            .width
+                            .saturating_sub(if panel_show_vscroll { 1 } else { 0 }),
                         split_area.height,
                     ),
                     scrollbar_rect: Rect::new(
                         split_area.x + split_area.width.saturating_sub(1),
                         split_area.y,
-                        if show_vertical_scrollbar { 1 } else { 0 },
+                        if panel_show_vscroll { 1 } else { 0 },
                         split_area.height,
                     ),
                     horizontal_scrollbar_rect: Rect::new(0, 0, 0, 0),
@@ -1139,8 +1143,8 @@ impl SplitRenderer {
                 Self::split_layout(
                     split_area,
                     split_tab_bar_visible,
-                    show_vertical_scrollbar,
-                    show_horizontal_scrollbar,
+                    show_vertical_scrollbar && !is_non_scrollable,
+                    show_horizontal_scrollbar && !is_non_scrollable,
                 )
             };
             let (split_buffers, tab_scroll_offset) = if is_inner_group_leaf {
@@ -1334,18 +1338,19 @@ impl SplitRenderer {
                         // Render scrollbar for composite buffer
                         let total_rows = composite.row_count();
                         let content_height = layout.content_rect.height.saturating_sub(1) as usize; // -1 for header
-                        let (thumb_start, thumb_end) = if show_vertical_scrollbar {
-                            Self::render_composite_scrollbar(
-                                frame,
-                                layout.scrollbar_rect,
-                                total_rows,
-                                view_state.scroll_row,
-                                content_height,
-                                is_active,
-                            )
-                        } else {
-                            (0, 0)
-                        };
+                        let (thumb_start, thumb_end) =
+                            if show_vertical_scrollbar && !is_non_scrollable {
+                                Self::render_composite_scrollbar(
+                                    frame,
+                                    layout.scrollbar_rect,
+                                    total_rows,
+                                    view_state.scroll_row,
+                                    content_height,
+                                    is_active,
+                                )
+                            } else {
+                                (0, 0)
+                            };
 
                         // Store the areas for mouse handling
                         split_areas.push((
@@ -1487,7 +1492,7 @@ impl SplitRenderer {
                 };
 
                 // Render vertical scrollbar for this split and get thumb position
-                let (thumb_start, thumb_end) = if show_vertical_scrollbar {
+                let (thumb_start, thumb_end) = if show_vertical_scrollbar && !is_non_scrollable {
                     Self::render_scrollbar(
                         frame,
                         state,
