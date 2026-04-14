@@ -1637,12 +1637,16 @@ impl Editor {
         // Set text properties
         state.text_properties = properties;
 
-        // Create inline overlays for the new content
+        // Create inline overlays for the new content. Build the full vec
+        // first and bulk-add it so the OverlayManager sorts exactly once;
+        // a per-overlay `add` re-sorts every time and is O(n² log n) for
+        // N entries (a big git-show diff can be ~500k overlays).
         {
             use crate::view::overlay::{Overlay, OverlayFace};
             use fresh_core::overlay::OverlayNamespace;
 
             let inline_ns = OverlayNamespace::from_string("_inline".to_string());
+            let mut new_overlays = Vec::with_capacity(collected_overlays.len());
 
             for co in collected_overlays {
                 let face = OverlayFace::from_options(&co.options);
@@ -1656,8 +1660,9 @@ impl Editor {
                 if let Some(url) = co.options.url {
                     overlay.url = Some(url);
                 }
-                state.overlays.add(overlay);
+                new_overlays.push(overlay);
             }
+            state.overlays.extend(new_overlays);
         }
 
         // Preserve cursor position (clamped to new content length and snapped to char boundary)

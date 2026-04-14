@@ -288,6 +288,17 @@ impl OverlayManager {
         handle
     }
 
+    /// Append many overlays at once, sorting a single time at the end.
+    ///
+    /// `add` re-sorts the whole vector on every insertion, which is O(n² log n)
+    /// when a caller has N overlays to add. Use this instead when rebuilding an
+    /// overlay set from scratch (e.g. `set_virtual_buffer_content`), where the
+    /// caller already owns the full list up front.
+    pub fn extend<I: IntoIterator<Item = Overlay>>(&mut self, overlays: I) {
+        self.overlays.extend(overlays);
+        self.overlays.sort_by_key(|o| o.priority);
+    }
+
     /// Remove an overlay by its handle
     pub fn remove_by_handle(
         &mut self,
