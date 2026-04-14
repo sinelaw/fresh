@@ -1104,6 +1104,15 @@ impl HighlightEngine {
             }
         }
 
+        // No TextMate grammar — fall back to tree-sitter the same way
+        // `for_file` does, so "set language TypeScript" on a non-.ts buffer
+        // still gets highlighted (syntect ships no TypeScript grammar).
+        if let Some(lang) = ts_language {
+            if let Ok(highlighter) = Highlighter::new(lang) {
+                return Self::TreeSitter(Box::new(highlighter));
+            }
+        }
+
         Self::None
     }
 

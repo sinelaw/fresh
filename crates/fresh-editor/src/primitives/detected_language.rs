@@ -141,21 +141,22 @@ impl DetectedLanguage {
         registry: &GrammarRegistry,
         languages: &HashMap<String, LanguageConfig>,
     ) -> Option<Self> {
-        if registry.find_syntax_by_name(name).is_some() {
-            let ts_language = Language::from_name(name);
-            let highlighter = HighlightEngine::for_syntax_name(name, registry, ts_language);
-            // Resolve the canonical language ID from config (e.g., "Rust" → "rust").
-            let language_id =
-                resolve_language_id(name, registry, languages).unwrap_or_else(|| name.to_string());
-            Some(Self {
-                name: language_id,
-                display_name: name.to_string(),
-                highlighter,
-                ts_language,
-            })
-        } else {
-            None
+        let ts_language = Language::from_name(name);
+        // Accept the selection if EITHER syntect has a grammar by this name
+        // OR tree-sitter does. Bailing on syntect-only lookup skipped
+        // tree-sitter-only languages like TypeScript.
+        if registry.find_syntax_by_name(name).is_none() && ts_language.is_none() {
+            return None;
         }
+        let highlighter = HighlightEngine::for_syntax_name(name, registry, ts_language);
+        let language_id =
+            resolve_language_id(name, registry, languages).unwrap_or_else(|| name.to_string());
+        Some(Self {
+            name: language_id,
+            display_name: name.to_string(),
+            highlighter,
+            ts_language,
+        })
     }
 
     /// Create a DetectedLanguage for a user-configured language that has no

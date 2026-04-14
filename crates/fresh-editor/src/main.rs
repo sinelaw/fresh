@@ -2130,7 +2130,10 @@ fn list_grammars_command() -> AnyhowResult<()> {
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
     let config_dir = dir_context.config_dir.clone();
     let registry = fresh::primitives::grammar::GrammarRegistry::for_editor(config_dir);
-    let grammars = registry.available_grammar_info();
+    // Load the user config so tree-sitter-only languages (e.g. TypeScript)
+    // still appear even though syntect has no grammar for them.
+    let config = fresh::config::Config::load_with_layers(&dir_context, &std::env::current_dir()?);
+    let grammars = registry.available_grammar_info_with_languages(&config.languages);
 
     if grammars.is_empty() {
         println!("No grammars available.");

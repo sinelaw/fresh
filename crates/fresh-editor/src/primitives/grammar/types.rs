@@ -1016,6 +1016,48 @@ impl GrammarRegistry {
             .collect()
     }
 
+    /// Like `available_grammar_info` but also merges in languages that only
+    /// have a tree-sitter grammar (no syntect definition). Those languages
+    /// are selectable from the language palette and can highlight a buffer,
+    /// but wouldn't show up if we only listed syntect syntaxes — e.g.
+    /// TypeScript is tree-sitter-only.
+    pub fn available_grammar_info_with_languages(
+        &self,
+        languages: &HashMap<String, crate::config::LanguageConfig>,
+    ) -> Vec<GrammarInfo> {
+        let mut result = self.available_grammar_info();
+        let existing: std::collections::HashSet<String> =
+            result.iter().map(|g| g.name.to_lowercase()).collect();
+
+        for (lang_id, lang_cfg) in languages {
+            let grammar = if lang_cfg.grammar.is_empty() {
+                lang_id.as_str()
+            } else {
+                lang_cfg.grammar.as_str()
+            };
+            // Resolve to a tree-sitter language; skip if neither syntect nor
+            // tree-sitter knows this grammar (there's nothing to highlight).
+            let Some(ts_lang) = fresh_languages::Language::from_name(grammar)
+                .or_else(|| fresh_languages::Language::from_id(lang_id))
+            else {
+                continue;
+            };
+            let display_name = ts_lang.display_name().to_string();
+            if existing.contains(&display_name.to_lowercase()) {
+                continue;
+            }
+            result.push(GrammarInfo {
+                name: display_name,
+                source: GrammarSource::BuiltIn,
+                file_extensions: lang_cfg.extensions.clone(),
+                short_name: None,
+            });
+        }
+
+        result.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        result
+    }
+
     /// List all available grammars with provenance information.
     ///
     /// Returns a sorted list of `GrammarInfo` entries. Each entry includes
