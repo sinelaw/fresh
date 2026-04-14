@@ -287,32 +287,53 @@ fn get_text_properties_at_cursor_typed(
         Err(_) => return TextPropertiesAtCursor(Vec::new()),
     };
     let buffer_id_typed = BufferId(buffer_id as usize);
-    let cursor_pos = match snap
-        .buffer_cursor_positions
-        .get(&buffer_id_typed)
-        .copied()
-        .or_else(|| {
-            if snap.active_buffer_id == buffer_id_typed {
-                snap.primary_cursor.as_ref().map(|c| c.position)
-            } else {
-                None
-            }
-        }) {
+    let snapshot_pos = snap.buffer_cursor_positions.get(&buffer_id_typed).copied();
+    let fallback_pos = if snap.active_buffer_id == buffer_id_typed {
+        snap.primary_cursor.as_ref().map(|c| c.position)
+    } else {
+        None
+    };
+    let cursor_pos = match snapshot_pos.or(fallback_pos) {
         Some(pos) => pos,
-        None => return TextPropertiesAtCursor(Vec::new()),
+        None => {
+            tracing::debug!(
+                "getTextPropertiesAtCursor({:?}): no cursor (snapshot_pos={:?}, active_buffer={:?})",
+                buffer_id_typed,
+                snapshot_pos,
+                snap.active_buffer_id
+            );
+            return TextPropertiesAtCursor(Vec::new());
+        }
     };
 
     let properties = match snap.buffer_text_properties.get(&buffer_id_typed) {
         Some(p) => p,
-        None => return TextPropertiesAtCursor(Vec::new()),
+        None => {
+            tracing::debug!(
+                "getTextPropertiesAtCursor({:?}): no text_properties in snapshot (cursor_pos={})",
+                buffer_id_typed,
+                cursor_pos
+            );
+            return TextPropertiesAtCursor(Vec::new());
+        }
     };
 
-    // Find all properties at cursor position
     let result: Vec<_> = properties
         .iter()
         .filter(|prop| prop.start <= cursor_pos && cursor_pos < prop.end)
         .map(|prop| prop.properties.clone())
         .collect();
+
+    tracing::debug!(
+        "getTextPropertiesAtCursor({:?}): cursor_pos={} (snapshot_pos={:?}, fallback_pos={:?}, active_buffer={:?}), total_props={}, matched={}",
+        buffer_id_typed,
+        cursor_pos,
+        snapshot_pos,
+        fallback_pos,
+        snap.active_buffer_id,
+        properties.len(),
+        result.len()
+    );
 
     TextPropertiesAtCursor(result)
 }

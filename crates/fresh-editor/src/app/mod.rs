@@ -5472,18 +5472,25 @@ impl Editor {
                 // keyed_states with a stale position, so a plain find_map
                 // iterates a HashMap non-deterministically and sometimes picks
                 // the wrong one.
-                let cursor_pos = self
+                let source_split = self
                     .split_view_states
-                    .values()
-                    .find(|vs| vs.active_buffer == *buffer_id)
+                    .iter()
+                    .find(|(_, vs)| vs.active_buffer == *buffer_id)
                     .or_else(|| {
                         self.split_view_states
-                            .values()
-                            .find(|vs| vs.keyed_states.contains_key(buffer_id))
-                    })
-                    .and_then(|vs| vs.buffer_state(*buffer_id))
+                            .iter()
+                            .find(|(_, vs)| vs.keyed_states.contains_key(buffer_id))
+                    });
+                let cursor_pos = source_split
+                    .and_then(|(_, vs)| vs.buffer_state(*buffer_id))
                     .map(|bs| bs.cursors.primary().position)
                     .unwrap_or(0);
+                tracing::trace!(
+                    "snapshot: buffer {:?} cursor_pos={} (from split {:?})",
+                    buffer_id,
+                    cursor_pos,
+                    source_split.map(|(id, _)| *id),
+                );
                 snapshot
                     .buffer_cursor_positions
                     .insert(*buffer_id, cursor_pos);
