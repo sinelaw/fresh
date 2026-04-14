@@ -314,6 +314,9 @@ async function show_git_log(): Promise<void> {
   }
   if (state.detailBufferId !== null) {
     editor.setBufferShowCursors(state.detailBufferId, true);
+    // Wrap long lines in the detail panel — git diffs often exceed the
+    // 40% split width, and horizontal scrolling a commit is awkward.
+    editor.setLineWrap(state.detailBufferId, null, true);
     // Per-panel mode: the group was created with "git-log" which applies
     // to the initially-focused panel (log). The detail panel's mode is
     // set when we focus into it.
