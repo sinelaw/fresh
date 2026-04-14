@@ -2458,6 +2458,15 @@ impl Editor {
             }
         }
 
+        // Notify plugins so they can reset any state tied to this buffer
+        // (e.g. a plugin that owns a buffer group clears its `isOpen` flag
+        // when the group is closed via the tab's close button rather than
+        // through the plugin's own close command).
+        self.plugin_manager.run_hook(
+            "buffer_closed",
+            fresh_core::hooks::HookArgs::BufferClosed { buffer_id: id },
+        );
+
         Ok(())
     }
 

@@ -461,6 +461,7 @@ async function show_git_log(): Promise<void> {
   editor.on("cursor_moved", "on_git_log_cursor_moved");
   editor.on("mouse_click", "on_git_log_toolbar_click");
   editor.on("resize", "on_git_log_resize");
+  editor.on("buffer_closed", "on_git_log_buffer_closed");
 
   editor.setStatus(
     editor.t("status.log_ready", { count: String(state.commits.length) })
@@ -468,14 +469,15 @@ async function show_git_log(): Promise<void> {
 }
 registerHandler("show_git_log", show_git_log);
 
-function git_log_close(): void {
+/** Reset all state + unsubscribe. Idempotent; safe to call from either
+ * path (user-initiated close or externally-closed group via the tab's
+ * close button, which triggers `buffer_closed`). */
+function git_log_cleanup(): void {
   if (!state.isOpen) return;
-  if (state.groupId !== null) {
-    editor.closeBufferGroup(state.groupId);
-  }
   editor.off("cursor_moved", "on_git_log_cursor_moved");
   editor.off("mouse_click", "on_git_log_toolbar_click");
   editor.off("resize", "on_git_log_resize");
+  editor.off("buffer_closed", "on_git_log_buffer_closed");
   state.isOpen = false;
   state.groupId = null;
   state.logBufferId = null;
@@ -485,9 +487,30 @@ function git_log_close(): void {
   state.commits = [];
   state.selectedIndex = 0;
   state.detailCache = null;
+}
+
+function git_log_close(): void {
+  if (!state.isOpen) return;
+  const groupId = state.groupId;
+  git_log_cleanup();
+  if (groupId !== null) {
+    editor.closeBufferGroup(groupId);
+  }
   editor.setStatus(editor.t("status.closed"));
 }
 registerHandler("git_log_close", git_log_close);
+
+function on_git_log_buffer_closed(data: { buffer_id: number }): void {
+  if (!state.isOpen) return;
+  if (
+    data.buffer_id === state.logBufferId ||
+    data.buffer_id === state.detailBufferId ||
+    data.buffer_id === state.toolbarBufferId
+  ) {
+    git_log_cleanup();
+  }
+}
+registerHandler("on_git_log_buffer_closed", on_git_log_buffer_closed);
 
 async function git_log_refresh(): Promise<void> {
   if (!state.isOpen) return;
