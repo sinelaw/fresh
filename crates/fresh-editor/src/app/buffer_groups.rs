@@ -386,6 +386,15 @@ impl super::Editor {
                 vs.active_group_tab = Some(group_leaf_id);
                 vs.focused_group_leaf = Some(inner_leaf);
             }
+            // Persist the choice on the SplitNode so a tab-away/back round
+            // trip restores the same panel — `activate_group_tab` reads
+            // this field when re-focusing the group.
+            if let Some(crate::view::split::SplitNode::Grouped {
+                active_inner_leaf, ..
+            }) = self.grouped_subtrees.get_mut(&group_leaf_id)
+            {
+                *active_inner_leaf = inner_leaf;
+            }
             // Transfer focus away from File Explorer (or any other context)
             // to the editor, since we're explicitly focusing a panel.
             self.key_context = crate::input::keybindings::KeyContext::Normal;
