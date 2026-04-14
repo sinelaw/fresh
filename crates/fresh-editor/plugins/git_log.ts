@@ -570,8 +570,8 @@ async function git_log_detail_open_file(): Promise<void> {
     entries,
   });
   if (view) {
-    // Position cursor near target line — best-effort; the host may not
-    // have a byte offset for virtual buffer lines until layout runs.
+    const byte = await editor.getLineStartPosition(Math.max(0, line - 1));
+    if (byte !== null) editor.setBufferCursor(view.bufferId, byte);
     editor.setStatus(
       editor.t("status.file_view_ready", {
         file,
