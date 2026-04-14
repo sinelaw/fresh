@@ -1105,12 +1105,10 @@ impl Editor {
     ) -> AnyhowResult<()> {
         use crate::model::event::Event;
 
-        // Non-interactive panels (hidden cursor) swallow double-click.
-        if self
-            .buffers
-            .get(&buffer_id)
-            .is_some_and(|s| !s.show_cursors)
-        {
+        // Fixed panels (toolbars, headers) are inert — no click focus,
+        // no selection. Scrollable group panels still accept clicks even
+        // when their cursor is hidden.
+        if self.is_non_scrollable_buffer(buffer_id) {
             return Ok(());
         }
 
@@ -1254,11 +1252,7 @@ impl Editor {
     ) -> AnyhowResult<()> {
         use crate::model::event::Event;
 
-        if self
-            .buffers
-            .get(&buffer_id)
-            .is_some_and(|s| !s.show_cursors)
-        {
+        if self.is_non_scrollable_buffer(buffer_id) {
             return Ok(());
         }
 

@@ -2589,15 +2589,12 @@ impl Editor {
     ///
     /// Use this instead of calling set_active_split directly when switching focus.
     pub(super) fn focus_split(&mut self, split_id: LeafId, buffer_id: BufferId) {
-        // Buffer-group panels with hidden cursors (toolbars, headers, footers)
-        // aren't focus targets: focusing them would route keyboard input at an
-        // invisible cursor. Plugins can still detect clicks via the mouse_click
-        // hook, which fires in the click handlers before reaching here.
-        if self
-            .buffers
-            .get(&buffer_id)
-            .is_some_and(|s| !s.show_cursors)
-        {
+        // Fixed buffer-group panels (toolbars, headers, footers) aren't focus
+        // targets: focusing them would route keyboard input at an invisible
+        // cursor. Plugins can still detect clicks via the mouse_click hook,
+        // which fires in the click handlers before reaching here. Scrollable
+        // panels still receive focus even with a hidden cursor.
+        if self.is_non_scrollable_buffer(buffer_id) {
             return;
         }
 

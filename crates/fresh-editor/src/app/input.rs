@@ -2676,14 +2676,14 @@ impl Editor {
             );
         }
 
-        // Buffers with hidden cursors (buffer-group toolbars/headers/footers)
-        // aren't interactive targets: focusing them would let arrow keys move
-        // an invisible cursor and scroll the pinned content. Swallow the click
-        // after the plugin hook has had a chance to observe it.
-        if let Some(state) = self.buffers.get(&buffer_id) {
-            if !state.show_cursors {
-                return Ok(());
-            }
+        // Fixed buffer-group panels (toolbars/headers/footers) aren't
+        // interactive targets: focusing them would let arrow keys move an
+        // invisible cursor and scroll the pinned content. Swallow the click
+        // after the plugin hook has had a chance to observe it. Scrollable
+        // group panels still accept the click (focus routes to them) even
+        // when their cursor is hidden.
+        if self.is_non_scrollable_buffer(buffer_id) {
+            return Ok(());
         }
 
         // Focus this split (handles terminal mode exit, tab state, etc.)
