@@ -534,6 +534,58 @@ function buildDetailLineEntry(
 }
 
 /**
+ * Rejoin the hard-wrapped commit message paragraphs so soft-wrap has a
+ * single logical line per paragraph to break at panel width. Without this
+ * step the message keeps its original 72-col hard breaks and soft-wrap
+ * produces an ugly staircase of half-width lines in a narrow panel.
+ *
+ * Only touches the message region between the Author/Date header and the
+ * first `diff --git` line; diff lines pass through unchanged.
+ */
+function reflowCommitMessage(lines: string[]): string[] {
+  const out: string[] = [];
+  let pastHeader = false;
+  let inDiff = false;
+  let paragraph = "";
+
+  const flush = () => {
+    if (paragraph !== "") {
+      out.push("    " + paragraph);
+      paragraph = "";
+    }
+  };
+
+  for (const line of lines) {
+    if (inDiff) {
+      out.push(line);
+      continue;
+    }
+    if (line.startsWith("diff --git")) {
+      flush();
+      inDiff = true;
+      out.push(line);
+      continue;
+    }
+    if (!pastHeader) {
+      out.push(line);
+      // First blank line closes the commit/Author/Date/Merge header.
+      if (line === "") pastHeader = true;
+      continue;
+    }
+    if (line === "") {
+      flush();
+      out.push("");
+      continue;
+    }
+    // Git show indents the message by 4 spaces; strip it before joining.
+    const content = line.startsWith("    ") ? line.slice(4) : line;
+    paragraph = paragraph === "" ? content : paragraph + " " + content;
+  }
+  flush();
+  return out;
+}
+
+/**
  * Build the entries for a commit detail view — a colourful replay of
  * `git show --stat --patch`.
  */
@@ -553,7 +605,7 @@ export function buildCommitDetailEntries(
   }
 
   const ctx: DetailBuildContext = { currentFile: null, currentNewLine: 0 };
-  const lines = showOutput.split("\n");
+  const lines = reflowCommitMessage(showOutput.split("\n"));
   for (const line of lines) {
     entries.push(buildDetailLineEntry(line, ctx));
   }
