@@ -558,7 +558,9 @@ async function git_log_detail_open_file(): Promise<void> {
     properties: { type: "content", line: i + 1 },
   }));
 
-  const name = `${file} @ ${commit.shortHash}`;
+  // `*<hash>:<path>*` matches the virtual-name convention the host uses
+  // to detect syntax from the trailing filename's extension.
+  const name = `*${commit.shortHash}:${file}*`;
   const view = await editor.createVirtualBuffer({
     name,
     mode: "git-log-file-view",
