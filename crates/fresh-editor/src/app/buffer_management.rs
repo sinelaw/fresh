@@ -1601,15 +1601,6 @@ impl Editor {
         buffer_id: BufferId,
         entries: Vec<crate::primitives::text_property::TextPropertyEntry>,
     ) -> Result<(), String> {
-        // Preserve cursor position across the rebuild. Group-panel buffers
-        // aren't in any split's `open_buffers`, so look in `keyed_states`.
-        let old_cursor_pos = self
-            .split_view_states
-            .values()
-            .find_map(|vs| vs.keyed_states.get(&buffer_id))
-            .map(|bs| bs.cursors.primary().position)
-            .unwrap_or(0);
-
         let state = self
             .buffers
             .get_mut(&buffer_id)
@@ -1665,18 +1656,30 @@ impl Editor {
             state.overlays.extend(new_overlays);
         }
 
-        // Preserve cursor position (clamped to new content length and snapped to char boundary)
+        // Each split keeps its own cursor; just clamp anything that fell
+        // past the new buffer end and snap to a char boundary. Don't read
+        // one split's cursor and write it into the others.
         let new_len = state.buffer.len();
-        let clamped_pos = old_cursor_pos.min(new_len);
-        // Ensure cursor is at a valid UTF-8 character boundary (without moving if already valid)
-        let new_cursor_pos = state.buffer.snap_to_char_boundary(clamped_pos);
-
-        // Update cursor in the split view state that has this buffer
+        // `state` is no longer used past this point — re-borrow `self.buffers`
+        // immutably for the snap and `self.split_view_states` mutably for the
+        // write. These are disjoint fields of `self`.
+        let buffer = &self
+            .buffers
+            .get(&buffer_id)
+            .expect("buffer still present")
+            .buffer;
         for view_state in self.split_view_states.values_mut() {
-            if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
-                buf_state.cursors.primary_mut().position = new_cursor_pos;
-                buf_state.cursors.primary_mut().anchor = None;
-            }
+            let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) else {
+                continue;
+            };
+            buf_state.cursors.map(|cursor| {
+                let pos = cursor.position.min(new_len);
+                cursor.position = buffer.snap_to_char_boundary(pos);
+                if let Some(anchor) = cursor.anchor {
+                    let clamped = anchor.min(new_len);
+                    cursor.anchor = Some(buffer.snap_to_char_boundary(clamped));
+                }
+            });
         }
 
         Ok(())
