@@ -83,6 +83,11 @@ pub struct Workspace {
     #[serde(default)]
     pub external_files: Vec<PathBuf>,
 
+    /// Files that were read-only at save time; re-applied on restore.
+    /// Relative to `working_dir` when possible, otherwise absolute.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_only_files: Vec<PathBuf>,
+
     /// Unnamed buffers that should be restored from recovery files
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unnamed_buffers: Vec<UnnamedBufferRef>,
@@ -878,6 +883,7 @@ impl Workspace {
             bookmarks: HashMap::new(),
             terminals: Vec::new(),
             external_files: Vec::new(),
+            read_only_files: Vec::new(),
             unnamed_buffers: Vec::new(),
             plugin_global_state: HashMap::new(),
             saved_at: SystemTime::now()

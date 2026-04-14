@@ -278,6 +278,22 @@ impl Editor {
             tracing::debug!("Captured {} external files", external_files.len());
         }
 
+        // Capture read-only file paths. Store relative when inside
+        // working_dir (matches how open_tabs paths are stored), otherwise
+        // absolute — mirrors external_files.
+        let read_only_files: Vec<PathBuf> = self
+            .buffer_metadata
+            .values()
+            .filter(|meta| meta.read_only)
+            .filter_map(|meta| meta.file_path().cloned())
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| {
+                p.strip_prefix(&self.working_dir)
+                    .map(|rel| rel.to_path_buf())
+                    .unwrap_or(p)
+            })
+            .collect();
+
         // Capture unnamed buffer references (for hot_exit)
         let unnamed_buffers: Vec<UnnamedBufferRef> = if self.config.editor.hot_exit {
             self.buffer_metadata
@@ -325,6 +341,7 @@ impl Editor {
             bookmarks,
             terminals,
             external_files,
+            read_only_files,
             unnamed_buffers,
             plugin_global_state: self.plugin_global_state.clone(),
             saved_at: std::time::SystemTime::now()
@@ -748,6 +765,20 @@ impl Editor {
                 } else {
                     tracing::debug!("Skipping non-existent external file: {:?}", abs_path);
                 }
+            }
+        }
+
+        // Re-apply read-only flag for files that were locked in the saved
+        // session. Paths in read_only_files are relative (under working_dir)
+        // or absolute — try both lookups.
+        for ro_path in &workspace.read_only_files {
+            let buffer_id = path_to_buffer.get(ro_path).copied().or_else(|| {
+                path_to_buffer
+                    .get(&self.working_dir.join(ro_path))
+                    .copied()
+            });
+            if let Some(id) = buffer_id {
+                self.mark_buffer_read_only(id, true);
             }
         }
 
