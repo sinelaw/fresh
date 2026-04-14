@@ -346,36 +346,62 @@ function renderDetailForCommit(commit: GitCommit, showOutput: string): void {
 }
 
 /**
- * Fetch + render the detail panel for the selected commit. Multiple rapid
- * calls can overlap; we tag each call with an id and only render the most
- * recent one so the user's final selection always wins.
+ * Synchronous detail refresh: render from cache if we have it, otherwise
+ * a "loading…" placeholder. Never spawns git. Called immediately on every
+ * selection change so the user sees instant feedback even while the real
+ * `git show` is debounced.
+ *
+ * Returns the commit that needs fetching (cache miss) or null (cache hit
+ * or no commit selected) so the caller can decide whether to spawn.
  */
-async function refreshDetail(): Promise<void> {
-  if (state.groupId === null) return;
+function refreshDetailImmediate(): GitCommit | null {
+  if (state.groupId === null) return null;
   if (state.commits.length === 0) {
     renderDetailPlaceholder(editor.t("status.no_commits"));
-    return;
+    return null;
   }
   const idx = Math.max(0, Math.min(state.selectedIndex, state.commits.length - 1));
   const commit = state.commits[idx];
-  if (!commit) return;
+  if (!commit) return null;
 
-  // Cache hit — render immediately, no git invocation.
   if (state.detailCache && state.detailCache.hash === commit.hash) {
     renderDetailForCommit(commit, state.detailCache.output);
-    return;
+    return null;
   }
 
-  const myId = ++state.pendingDetailId;
   renderDetailPlaceholder(
     editor.t("status.loading_commit", { hash: commit.shortHash })
   );
+  return commit;
+}
+
+/**
+ * Spawn `git show` for `commit` and render the result. Tagged with
+ * `pendingDetailId` so a newer selection supersedes in-flight fetches.
+ */
+async function fetchAndRenderDetail(commit: GitCommit): Promise<void> {
+  const myId = ++state.pendingDetailId;
   const output = await fetchCommitShow(editor, commit.hash);
-  // Discard stale result if the user moved on.
   if (myId !== state.pendingDetailId) return;
   if (state.groupId === null) return;
   state.detailCache = { hash: commit.hash, output };
+  // Only render if the current selection is still this commit — a rapid
+  // Up/Down burst might have moved on before we got here.
+  const currentIdx = Math.max(
+    0,
+    Math.min(state.selectedIndex, state.commits.length - 1)
+  );
+  if (state.commits[currentIdx]?.hash !== commit.hash) return;
   renderDetailForCommit(commit, output);
+}
+
+/**
+ * Combined synchronous + asynchronous refresh used by open/refresh paths
+ * where there's no burst of events to collapse.
+ */
+async function refreshDetail(): Promise<void> {
+  const pending = refreshDetailImmediate();
+  if (pending) await fetchAndRenderDetail(pending);
 }
 
 // =============================================================================
@@ -697,16 +723,12 @@ async function on_git_log_cursor_moved(data: {
   if (idx === state.selectedIndex) return;
   state.selectedIndex = idx;
 
-  // Debounce: bump the token, wait a beat, bail if a newer event has
-  // arrived. The log re-render and `git show` are both expensive; a burst
-  // of cursor events (held j/k, PageDown) must collapse to one render.
-  const myId = ++state.pendingCursorMoveId;
-  await editor.delay(CURSOR_DEBOUNCE_MS);
-  if (myId !== state.pendingCursorMoveId) return;
-  if (!state.isOpen) return;
-
+  // Immediate feedback: update the log panel's selection highlight and
+  // either show the cached detail or a "loading" placeholder. Only the
+  // actual `git show` spawn is debounced below, so a burst of j/k events
+  // still feels responsive even though we collapse the fetches into one.
   renderLog();
-  refreshDetail();
+  const pending = refreshDetailImmediate();
 
   const commit = state.commits[state.selectedIndex];
   if (commit) {
@@ -717,6 +739,17 @@ async function on_git_log_cursor_moved(data: {
       })
     );
   }
+
+  if (!pending) return;
+
+  // Debounce: bump the token, wait a beat, bail if a newer event has
+  // arrived. `git show` is expensive; a burst of cursor events (held
+  // j/k, PageDown) must collapse to one spawn.
+  const myId = ++state.pendingCursorMoveId;
+  await editor.delay(CURSOR_DEBOUNCE_MS);
+  if (myId !== state.pendingCursorMoveId) return;
+  if (!state.isOpen) return;
+  await fetchAndRenderDetail(pending);
 }
 registerHandler("on_git_log_cursor_moved", on_git_log_cursor_moved);
 
