@@ -201,16 +201,12 @@ export async function fetchCommitShow(
 
   // 2. Metadata — pull the fields we want with a structured format so we
   // can reflow just the message body without having to recognise the
-  // header in free-form `git show` output.
-  const META_SEP = "\x00";
-  const META_FORMAT = [
-    "%H",  // full hash
-    "%P",  // parent hashes (space-separated)
-    "%an", // author name
-    "%ae", // author email
-    "%aD", // author date, RFC 2822 — matches `git show` default
-    "%B",  // raw subject + body
-  ].join(META_SEP);
+  // header in free-form `git show` output. Use `%x00` in the format
+  // string (git expands it into a literal NUL in its output); passing a
+  // raw NUL byte as a process argument fails because it can't cross the
+  // CString boundary of spawnProcess.
+  const META_FORMAT =
+    "%H%x00%P%x00%an%x00%ae%x00%aD%x00%B";
   const metaResult = await editor.spawnProcess(
     "git",
     ["log", "-n1", `--format=${META_FORMAT}`, hash],
@@ -219,7 +215,7 @@ export async function fetchCommitShow(
   if (metaResult.exit_code !== 0) {
     return metaResult.stderr || "(no output)";
   }
-  const metaFields = metaResult.stdout.split(META_SEP);
+  const metaFields = metaResult.stdout.split("\x00");
   const fullHash = (metaFields[0] ?? hash).trim();
   const parents = (metaFields[1] ?? "").trim().split(" ").filter((p) => p.length > 0);
   const author = metaFields[2] ?? "";
