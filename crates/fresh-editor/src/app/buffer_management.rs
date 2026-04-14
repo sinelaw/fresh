@@ -2343,60 +2343,99 @@ impl Editor {
                 })
             });
 
-        // Fall back: any visible buffer in the split, then any visible buffer at all.
-        let fallback_buffer: Option<BufferId> = if replacement_target.is_none() {
-            self.buffers
-                .keys()
-                .find(|&&bid| {
-                    bid != id
-                        && !self
-                            .buffer_metadata
-                            .get(&bid)
-                            .map(|m| m.hidden_from_tabs)
-                            .unwrap_or(false)
-                })
-                .copied()
-        } else {
-            None
-        };
+        // Any visible buffer other than the one being closed. Used as the
+        // general fallback (no LRU target or LRU points at a gone group).
+        let fallback_buffer: Option<BufferId> = self
+            .buffers
+            .keys()
+            .find(|&&bid| {
+                bid != id
+                    && !self
+                        .buffer_metadata
+                        .get(&bid)
+                        .map(|m| m.hidden_from_tabs)
+                        .unwrap_or(false)
+            })
+            .copied();
 
         // Capture before the replacement computation — new_buffer() has the
         // side effect of calling set_active_buffer which changes active_buffer().
         let closing_active = self.active_buffer() == id;
 
-        // Determine what to do: activate a group, switch to a buffer, or
-        // create a new empty buffer as last resort.
+        // Pick the BufferId that becomes the host split's `active_buffer`.
+        // When `return_to_group` is set, `active_buffer` is a housekeeping
+        // fiction — nothing renders it — so any existing buffer works; we
+        // just need to avoid synthesizing a phantom `[No Name]` when a real
+        // option exists. A synthetic buffer fires only when the editor has
+        // literally no other buffer left.
         let return_to_group = match replacement_target {
             Some(crate::view::split::TabTarget::Group(leaf)) => Some(leaf),
             _ => None,
         };
-        let replacement_buffer = match replacement_target {
-            Some(crate::view::split::TabTarget::Buffer(bid)) => bid,
-            Some(crate::view::split::TabTarget::Group(_group_leaf)) => {
-                // The host split's active_buffer is a housekeeping fiction
-                // when the active tab is a group — the real cursor lives in
-                // the group's inner panel split, and activate_group_tab below
-                // sets the focus marker. Pick a buffer already keyed in the
-                // host split so switch_buffer does not auto-insert a fresh
-                // BufferViewState for a panel buffer; that shadow entry
-                // (cursor=0, never updated) would later collide with the
-                // panel's authoritative state and make plugin cursor lookups
-                // non-deterministic.
-                self.split_view_states
-                    .get(&active_split)
-                    .and_then(|vs| vs.keyed_states.keys().find(|&&bid| bid != id).copied())
-                    .unwrap_or_else(|| fallback_buffer.unwrap_or_else(|| self.new_buffer()))
-            }
-            None => fallback_buffer.unwrap_or_else(|| self.new_buffer()),
+
+        let direct_replacement = match replacement_target {
+            Some(crate::view::split::TabTarget::Buffer(bid)) => Some(bid),
+            _ => None,
         };
 
-        let created_empty_buffer = replacement_target.is_none() && fallback_buffer.is_none();
+        // Prefer a buffer already keyed in the host split: `switch_buffer`
+        // inserts a default BufferViewState for any new active_buffer, which
+        // for hidden panel buffers becomes a shadow entry (cursor=0) that
+        // the plugin-state snapshot could non-deterministically prefer over
+        // the panel split's authoritative copy. Picking something already
+        // keyed sidesteps that insert. (We clean up after the fact if a
+        // shadow does get created — see below.)
+        let already_keyed = return_to_group.and_then(|_| {
+            self.split_view_states
+                .get(&active_split)?
+                .keyed_states
+                .keys()
+                .find(|&&bid| bid != id)
+                .copied()
+        });
+
+        // Absolute last-resort pool for the Group case: any buffer at all,
+        // including hidden panel ones. The shadow cleanup below keeps
+        // those invisible.
+        let any_remaining =
+            return_to_group.and_then(|_| self.buffers.keys().copied().find(|&bid| bid != id));
+
+        let (replacement_buffer, created_empty_buffer) = match direct_replacement
+            .or(already_keyed)
+            .or(fallback_buffer)
+            .or(any_remaining)
+        {
+            Some(bid) => (bid, false),
+            None => (self.new_buffer(), true),
+        };
 
         // Switch to replacement buffer BEFORE updating splits.
         // Only needed when the closing buffer is the one the user is
         // looking at — otherwise the current active buffer stays.
         if closing_active {
             self.set_active_buffer(replacement_buffer);
+
+            // If we landed on a hidden panel buffer to fill the Group-case
+            // housekeeping slot, scrub the *visible* side effects
+            // (`open_buffers`, `focus_history`) so the panel buffer doesn't
+            // appear as a tab. The `keyed_states` entry `switch_buffer`
+            // inserted has to stay — `active_state()` requires
+            // `active_buffer ∈ keyed_states` — but it's harmless as long as
+            // the plugin-snapshot lookup skips it; see
+            // `snapshot_source_split` in `update_plugin_state_snapshot`.
+            let hidden = self
+                .buffer_metadata
+                .get(&replacement_buffer)
+                .is_some_and(|m| m.hidden_from_tabs);
+            if return_to_group.is_some() && hidden {
+                use crate::view::split::TabTarget;
+                if let Some(vs) = self.split_view_states.get_mut(&active_split) {
+                    vs.open_buffers
+                        .retain(|t| *t != TabTarget::Buffer(replacement_buffer));
+                    vs.focus_history
+                        .retain(|t| *t != TabTarget::Buffer(replacement_buffer));
+                }
+            }
         }
 
         // Update all splits that are showing this buffer to show the replacement

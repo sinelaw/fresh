@@ -5475,14 +5475,22 @@ impl Editor {
                 };
                 snapshot.buffer_saved_diffs.insert(*buffer_id, diff);
 
-                // Panel buffers live in exactly one split's keyed_states
-                // (enforced at group creation); regular buffers live in the
-                // split that has them open. Either way, the first keyed_states
-                // hit is the only hit.
-                let source_split = self
-                    .split_view_states
-                    .iter()
-                    .find(|(_, vs)| vs.keyed_states.contains_key(buffer_id));
+                // Regular buffers live in exactly one split's keyed_states.
+                // Panel (hidden) buffers natively live inside a group's inner
+                // split — but the close-buffer path can leave a *shadow*
+                // entry in the group's host split (from `switch_buffer`'s
+                // auto-insert, kept to preserve the
+                // `active_buffer ∈ keyed_states` invariant). For hidden
+                // buffers we therefore skip group-host splits and pick the
+                // inner split, which is the authoritative home.
+                let is_hidden = self
+                    .buffer_metadata
+                    .get(buffer_id)
+                    .is_some_and(|m| m.hidden_from_tabs);
+                let source_split = self.split_view_states.iter().find(|(split_id, vs)| {
+                    vs.keyed_states.contains_key(buffer_id)
+                        && !(is_hidden && self.grouped_subtrees.contains_key(split_id))
+                });
                 let cursor_pos = source_split
                     .and_then(|(_, vs)| vs.buffer_state(*buffer_id))
                     .map(|bs| bs.cursors.primary().position)
