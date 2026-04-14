@@ -141,32 +141,6 @@ export async function fetchGitLog(
  */
 const MAX_DIFF_LINES_PER_FILE = 2000;
 
-/**
- * Rejoin hard-wrapped lines within a paragraph into one logical line. Blank
- * lines remain blank and delimit paragraphs. Used only for commit messages
- * (author-chosen 72-col hard wraps need to be erased so soft-wrap in a
- * narrow panel can re-break at the panel edge).
- */
-function reflowParagraphs(text: string): string {
-  const out: string[] = [];
-  let paragraph = "";
-  for (const line of text.split("\n")) {
-    if (line === "") {
-      if (paragraph !== "") {
-        out.push(paragraph);
-        paragraph = "";
-      }
-      out.push("");
-      continue;
-    }
-    paragraph = paragraph === "" ? line : paragraph + " " + line;
-  }
-  if (paragraph !== "") out.push(paragraph);
-  // Drop a single trailing blank that `%B` always adds.
-  while (out.length > 0 && out[out.length - 1] === "") out.pop();
-  return out.join("\n");
-}
-
 export async function fetchCommitShow(
   editor: EditorAPI,
   hash: string,
@@ -174,7 +148,8 @@ export async function fetchCommitShow(
 ): Promise<string> {
   const workdir = cwd ?? editor.getCwd();
 
-  // 1. numstat — small, lets us spot oversized files before the full diff.
+  // numstat first — small output, lets us spot oversized files before
+  // pulling the full diff.
   const numstatResult = await editor.spawnProcess(
     "git",
     ["show", "--numstat", "--format=", hash],
@@ -199,66 +174,23 @@ export async function fetchCommitShow(
     }
   }
 
-  // 2. Metadata — pull the fields we want with a structured format so we
-  // can reflow just the message body without having to recognise the
-  // header in free-form `git show` output. Use `%x00` in the format
-  // string (git expands it into a literal NUL in its output); passing a
-  // raw NUL byte as a process argument fails because it can't cross the
-  // CString boundary of spawnProcess.
-  const META_FORMAT =
-    "%H%x00%P%x00%an%x00%ae%x00%aD%x00%B";
-  const metaResult = await editor.spawnProcess(
-    "git",
-    ["log", "-n1", `--format=${META_FORMAT}`, hash],
-    workdir
-  );
-  if (metaResult.exit_code !== 0) {
-    return metaResult.stderr || "(no output)";
-  }
-  const metaFields = metaResult.stdout.split("\x00");
-  const fullHash = (metaFields[0] ?? hash).trim();
-  const parents = (metaFields[1] ?? "").trim().split(" ").filter((p) => p.length > 0);
-  const author = metaFields[2] ?? "";
-  const email = metaFields[3] ?? "";
-  const date = metaFields[4] ?? "";
-  const rawMessage = metaFields[5] ?? "";
-
-  // 3. Stat + patch, no metadata, with oversized paths excluded.
-  const showArgs = ["show", "--format=", "--stat", "--patch", hash];
+  // Stat + patch, excluding oversized paths. `:(exclude,top)` is rooted
+  // at the repo root so it matches regardless of git's cwd.
+  const showArgs = ["show", "--stat", "--patch", hash];
   if (oversized.length > 0) {
     showArgs.push("--", ".");
     for (const p of oversized) showArgs.push(`:(exclude,top)${p}`);
   }
-  const showResult = await editor.spawnProcess("git", showArgs, workdir);
-  if (showResult.exit_code !== 0) return showResult.stderr || "(no output)";
+  const result = await editor.spawnProcess("git", showArgs, workdir);
+  if (result.exit_code !== 0) return result.stderr || "(no output)";
 
-  // Assemble. The shape matches stock `git show` output so
-  // `buildDetailLineEntry` keeps recognising the header.
-  let out = `commit ${fullHash}\n`;
-  if (parents.length > 1) {
-    out += `Merge: ${parents.map((p) => p.slice(0, 7)).join(" ")}\n`;
-  }
-  out += `Author: ${author} <${email}>\n`;
-  out += `Date:   ${date}\n\n`;
+  if (oversized.length === 0) return result.stdout;
 
-  // Reflow only the message. Indent with 4 spaces to match git's own layout.
-  const reflowed = reflowParagraphs(rawMessage);
-  for (const line of reflowed.split("\n")) {
-    out += line === "" ? "\n" : `    ${line}\n`;
-  }
-  out += "\n";
-
-  // Stat + patch, untouched.
-  out += showResult.stdout;
-
-  if (oversized.length > 0) {
-    const plural = oversized.length === 1 ? "" : "s";
-    out += `\n[${oversized.length} large file${plural} omitted from diff (>${MAX_DIFF_LINES_PER_FILE} lines changed):\n`;
-    for (const p of oversized) out += `  ${p}\n`;
-    out += `Run \`git show ${hash.slice(0, 12)} -- <path>\` to view.]\n`;
-  }
-
-  return out;
+  const plural = oversized.length === 1 ? "" : "s";
+  let footer = `\n[${oversized.length} large file${plural} omitted from diff (>${MAX_DIFF_LINES_PER_FILE} lines changed):\n`;
+  for (const p of oversized) footer += `  ${p}\n`;
+  footer += `Run \`git show ${hash.slice(0, 12)} -- <path>\` to view.]\n`;
+  return result.stdout + footer;
 }
 
 // =============================================================================
