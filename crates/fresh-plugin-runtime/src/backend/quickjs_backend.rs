@@ -2719,6 +2719,7 @@ impl JsEditorApi {
         bindings_arr: Vec<Vec<String>>,
         read_only: rquickjs::function::Opt<bool>,
         allow_text_input: rquickjs::function::Opt<bool>,
+        inherit_normal_bindings: rquickjs::function::Opt<bool>,
     ) -> bool {
         let bindings: Vec<(String, String)> = bindings_arr
             .into_iter()
@@ -2766,6 +2767,7 @@ impl JsEditorApi {
                 bindings,
                 read_only: read_only.0.unwrap_or(false),
                 allow_text_input: allow_text,
+                inherit_normal_bindings: inherit_normal_bindings.0.unwrap_or(false),
                 plugin_name: Some(self.plugin_name.clone()),
             })
             .is_ok()
@@ -5612,6 +5614,7 @@ mod tests {
                 bindings,
                 read_only,
                 allow_text_input,
+                inherit_normal_bindings,
                 plugin_name,
             } => {
                 assert_eq!(name, "test-mode");
@@ -5620,6 +5623,7 @@ mod tests {
                 assert_eq!(bindings[1], ("b".to_string(), "action_b".to_string()));
                 assert!(!read_only);
                 assert!(!allow_text_input);
+                assert!(!inherit_normal_bindings);
                 assert!(plugin_name.is_some());
             }
             _ => panic!("Expected DefineMode, got {:?}", cmd),

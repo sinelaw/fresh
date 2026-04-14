@@ -20,6 +20,11 @@ pub struct BufferMode {
     /// without registering individual bindings for every character.
     pub allow_text_input: bool,
 
+    /// When true, keys not bound by this mode fall through to the Normal-context
+    /// bindings (motion, selection, copy, …) instead of being dropped. Lets
+    /// viewer-style modes skip re-declaring every built-in cursor action.
+    pub inherit_normal_bindings: bool,
+
     /// Name of the plugin that registered this mode (for attribution in keybinding editor)
     pub plugin_name: Option<String>,
 }
@@ -31,6 +36,7 @@ impl BufferMode {
             name: name.into(),
             read_only: false,
             allow_text_input: false,
+            inherit_normal_bindings: false,
             plugin_name: None,
         }
     }
@@ -50,6 +56,12 @@ impl BufferMode {
     /// Set whether unbound character keys should be dispatched as text input events
     pub fn with_allow_text_input(mut self, allow: bool) -> Self {
         self.allow_text_input = allow;
+        self
+    }
+
+    /// Set whether unbound keys fall through to Normal-context bindings
+    pub fn with_inherit_normal_bindings(mut self, inherit: bool) -> Self {
+        self.inherit_normal_bindings = inherit;
         self
     }
 }
@@ -94,6 +106,14 @@ impl ModeRegistry {
         self.modes
             .get(mode_name)
             .map(|m| m.allow_text_input)
+            .unwrap_or(false)
+    }
+
+    /// Check if a mode inherits Normal-context bindings for unbound keys
+    pub fn inherits_normal_bindings(&self, mode_name: &str) -> bool {
+        self.modes
+            .get(mode_name)
+            .map(|m| m.inherit_normal_bindings)
             .unwrap_or(false)
     }
 

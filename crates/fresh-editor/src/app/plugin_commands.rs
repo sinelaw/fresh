@@ -1537,6 +1537,7 @@ impl Editor {
         bindings: Vec<(String, String)>,
         read_only: bool,
         allow_text_input: bool,
+        inherit_normal_bindings: bool,
         plugin_name: Option<String>,
     ) {
         use super::parse_key_string;
@@ -1546,13 +1547,15 @@ impl Editor {
         let mode = BufferMode::new(name.clone())
             .with_read_only(read_only)
             .with_allow_text_input(allow_text_input)
+            .with_inherit_normal_bindings(inherit_normal_bindings)
             .with_plugin_name(plugin_name);
 
         // Clear any existing plugin defaults for this mode before re-registering
-        self.keybindings
-            .write()
-            .unwrap()
-            .clear_plugin_defaults_for_mode(&name);
+        {
+            let mut kb = self.keybindings.write().unwrap();
+            kb.clear_plugin_defaults_for_mode(&name);
+            kb.set_mode_inherits_normal_bindings(&name, inherit_normal_bindings);
+        }
 
         let mode_context = KeyContext::Mode(name.clone());
 

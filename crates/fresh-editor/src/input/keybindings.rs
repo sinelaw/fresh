@@ -1243,6 +1243,11 @@ pub struct KeybindingResolver {
 
     /// Plugin default chord bindings (for mode chord bindings from defineMode)
     plugin_chord_defaults: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
+
+    /// Plugin modes that want unbound keys to fall through to Normal
+    /// bindings (motion, selection, copy). Populated by `defineMode` when
+    /// `inheritNormalBindings: true`.
+    inheriting_modes: std::collections::HashSet<String>,
 }
 
 impl KeybindingResolver {
@@ -1255,6 +1260,7 @@ impl KeybindingResolver {
             chord_bindings: HashMap::new(),
             default_chord_bindings: HashMap::new(),
             plugin_chord_defaults: HashMap::new(),
+            inheriting_modes: std::collections::HashSet::new(),
         };
 
         // Load bindings from the active keymap (with inheritance resolution) into default_bindings
@@ -1435,6 +1441,17 @@ impl KeybindingResolver {
         let context = KeyContext::Mode(mode_name.to_string());
         self.plugin_defaults.remove(&context);
         self.plugin_chord_defaults.remove(&context);
+        self.inheriting_modes.remove(mode_name);
+    }
+
+    /// Mark (or unmark) a plugin mode as inheriting Normal-context bindings
+    /// for keys it doesn't bind itself.
+    pub fn set_mode_inherits_normal_bindings(&mut self, mode_name: &str, inherit: bool) {
+        if inherit {
+            self.inheriting_modes.insert(mode_name.to_string());
+        } else {
+            self.inheriting_modes.remove(mode_name);
+        }
     }
 
     /// Get all plugin default bindings (for keybinding editor display)
@@ -1642,7 +1659,8 @@ impl KeybindingResolver {
         // Contexts with allows_normal_fallthrough (e.g. CompositeBuffer) get ALL
         // Normal bindings; other contexts only get application-wide actions.
         if context != KeyContext::Normal {
-            let full_fallthrough = context.allows_normal_fallthrough();
+            let full_fallthrough = context.allows_normal_fallthrough()
+                || matches!(&context, KeyContext::Mode(name) if self.inheriting_modes.contains(name));
 
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
                 if let Some(action) = normal_bindings.get(norm) {

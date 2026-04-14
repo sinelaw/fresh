@@ -124,34 +124,15 @@ function rowFromByte(bytePos: number): number {
 // the log, and opens the file at the cursor when pressed in the detail).
 // =============================================================================
 
+// j/k as vi-style aliases for Up/Down, plus the plugin-specific action
+// keys. Everything else (arrows, Page{Up,Down}, Home/End, Shift+motion for
+// selection, Ctrl+C copy, …) is inherited from the Normal keymap because
+// the mode is registered with `inheritNormalBindings: true`.
 editor.defineMode(
   "git-log",
   [
-    // Arrow / vi motion — mode bindings replace globals, so we re-bind the
-    // editor's built-in move actions here explicitly. Without this, j/k
-    // and Up/Down do nothing in the log panel.
-    ["Up", "move_up"],
-    ["Down", "move_down"],
-    ["Left", "move_left"],
-    ["Right", "move_right"],
     ["k", "move_up"],
     ["j", "move_down"],
-    ["PageUp", "move_page_up"],
-    ["PageDown", "move_page_down"],
-    ["Home", "move_line_start"],
-    ["End", "move_line_end"],
-    // Shift+arrows extend a selection like in a normal buffer, so the
-    // built-in Copy (Ctrl+C / Cmd+C) can grab commit text out of either
-    // panel.
-    ["Shift+Up", "select_up"],
-    ["Shift+Down", "select_down"],
-    ["Shift+Left", "select_left"],
-    ["Shift+Right", "select_right"],
-    ["Shift+PageUp", "select_page_up"],
-    ["Shift+PageDown", "select_page_down"],
-    ["Shift+Home", "select_line_start"],
-    ["Shift+End", "select_line_end"],
-    // Plugin actions.
     ["Return", "git_log_enter"],
     ["Tab", "git_log_tab"],
     ["q", "git_log_q"],
@@ -159,7 +140,9 @@ editor.defineMode(
     ["r", "git_log_refresh"],
     ["y", "git_log_copy_hash"],
   ],
-  true // read-only
+  true, // read-only
+  false, // allow_text_input
+  true, // inherit Normal-context bindings for unbound keys
 );
 
 // =============================================================================

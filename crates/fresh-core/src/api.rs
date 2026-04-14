@@ -1401,6 +1401,9 @@ pub enum PluginCommand {
         read_only: bool,
         /// When true, unbound character keys dispatch as `mode_text_input:<char>`.
         allow_text_input: bool,
+        /// When true, keys not bound by this mode fall through to the Normal
+        /// context (motion, selection, copy) instead of being dropped.
+        inherit_normal_bindings: bool,
         /// Name of the plugin that defined this mode (for attribution)
         plugin_name: Option<String>,
     },
@@ -3031,6 +3034,7 @@ impl PluginApi {
             bindings,
             read_only,
             allow_text_input,
+            inherit_normal_bindings: false,
             plugin_name: None,
         })
     }
@@ -4082,7 +4086,7 @@ mod tests {
                 false,
             ),
             PluginCommand::DefineMode {
-                name, bindings, read_only, allow_text_input, plugin_name
+                name, bindings, read_only, allow_text_input, inherit_normal_bindings, plugin_name
             }
                 if name == "m"
                     && bindings.len() == 1
@@ -4090,6 +4094,7 @@ mod tests {
                     && bindings[0].1 == "move_down"
                     && read_only
                     && !allow_text_input
+                    && !inherit_normal_bindings
                     && plugin_name.is_none()
         );
 
