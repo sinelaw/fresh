@@ -2372,24 +2372,19 @@ impl Editor {
         };
         let replacement_buffer = match replacement_target {
             Some(crate::view::split::TabTarget::Buffer(bid)) => bid,
-            Some(crate::view::split::TabTarget::Group(group_leaf)) => {
-                // The group's inner panel buffer serves as the split leaf's
-                // underlying buffer. The group takes over the active target
-                // via activate_group_tab below, so this isn't user-visible.
-                self.grouped_subtrees
-                    .get(&group_leaf)
-                    .and_then(|node| {
-                        if let crate::view::split::SplitNode::Grouped {
-                            active_inner_leaf, ..
-                        } = node
-                        {
-                            self.split_view_states
-                                .get(active_inner_leaf)
-                                .map(|vs| vs.active_buffer)
-                        } else {
-                            None
-                        }
-                    })
+            Some(crate::view::split::TabTarget::Group(_group_leaf)) => {
+                // The host split's active_buffer is a housekeeping fiction
+                // when the active tab is a group — the real cursor lives in
+                // the group's inner panel split, and activate_group_tab below
+                // sets the focus marker. Pick a buffer already keyed in the
+                // host split so switch_buffer does not auto-insert a fresh
+                // BufferViewState for a panel buffer; that shadow entry
+                // (cursor=0, never updated) would later collide with the
+                // panel's authoritative state and make plugin cursor lookups
+                // non-deterministic.
+                self.split_view_states
+                    .get(&active_split)
+                    .and_then(|vs| vs.keyed_states.keys().find(|&&bid| bid != id).copied())
                     .unwrap_or_else(|| fallback_buffer.unwrap_or_else(|| self.new_buffer()))
             }
             None => fallback_buffer.unwrap_or_else(|| self.new_buffer()),
@@ -2402,19 +2397,6 @@ impl Editor {
         // looking at — otherwise the current active buffer stays.
         if closing_active {
             self.set_active_buffer(replacement_buffer);
-
-            // When the replacement is a group's hidden inner panel buffer,
-            // undo the side effects of set_active_buffer adding it to the
-            // host split's tab list and focus history.
-            if return_to_group.is_some() {
-                if let Some(vs) = self.split_view_states.get_mut(&active_split) {
-                    use crate::view::split::TabTarget;
-                    vs.open_buffers
-                        .retain(|t| *t != TabTarget::Buffer(replacement_buffer));
-                    vs.focus_history
-                        .retain(|t| *t != TabTarget::Buffer(replacement_buffer));
-                }
-            }
         }
 
         // Update all splits that are showing this buffer to show the replacement
