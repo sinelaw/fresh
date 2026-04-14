@@ -975,19 +975,21 @@ fn test_git_log_shows_commits() {
     // Trigger git log
     trigger_git_log(&mut harness);
 
-    // Wait for git log to load
+    // Wait for git log to load (sticky toolbar + at least one commit subject)
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            // Should show "Commits:" header and at least one commit hash
-            screen.contains("Commits:") && screen.contains("Initial commit")
+            screen.contains("switch pane") && screen.contains("Initial commit")
         })
         .unwrap();
 
     let screen = harness.screen_to_string();
     println!("Git log screen:\n{screen}");
 
-    assert!(screen.contains("Commits:"), "Should show Commits: header");
+    assert!(
+        screen.contains("Initial commit"),
+        "Should show the seeded commit subject"
+    );
 }
 
 /// Test git log cursor navigation
@@ -1027,7 +1029,7 @@ fn test_git_log_cursor_navigation() {
 
     // Wait for git log to load
     harness
-        .wait_until(|h| h.screen_to_string().contains("Commits:"))
+        .wait_until(|h| h.screen_to_string().contains("switch pane"))
         .unwrap();
 
     // Navigate down using j key (should work via inherited normal mode)
@@ -1050,7 +1052,7 @@ fn test_git_log_cursor_navigation() {
     println!("After navigation:\n{screen}");
 
     // Git log should still be visible
-    assert!(screen.contains("Commits:"));
+    assert!(screen.contains("switch pane"));
 }
 
 /// Test git log show commit detail with Enter
@@ -1077,7 +1079,7 @@ fn test_git_log_show_commit_detail() {
 
     // Wait for git log to load
     harness
-        .wait_until(|h| h.screen_to_string().contains("Commits:"))
+        .wait_until(|h| h.screen_to_string().contains("switch pane"))
         .unwrap();
 
     // Move cursor to a commit line (down from header)
@@ -1126,7 +1128,7 @@ fn test_git_log_back_from_commit_detail() {
 
     // Wait for git log to load
     harness
-        .wait_until(|h| h.screen_to_string().contains("Commits:"))
+        .wait_until(|h| h.screen_to_string().contains("switch pane"))
         .unwrap();
 
     // Move to commit and show detail
@@ -1152,7 +1154,7 @@ fn test_git_log_back_from_commit_detail() {
 
     // Wait for git log to reappear
     harness
-        .wait_until(|h| h.screen_to_string().contains("Commits:"))
+        .wait_until(|h| h.screen_to_string().contains("switch pane"))
         .unwrap();
 
     let screen_log = harness.screen_to_string();
@@ -1183,11 +1185,11 @@ fn test_git_log_close() {
 
     // Wait for git log to load
     harness
-        .wait_until(|h| h.screen_to_string().contains("Commits:"))
+        .wait_until(|h| h.screen_to_string().contains("switch pane"))
         .unwrap();
 
     let screen_before = harness.screen_to_string();
-    assert!(screen_before.contains("Commits:"));
+    assert!(screen_before.contains("switch pane"));
 
     // Press q to close git log
     harness
@@ -1203,7 +1205,8 @@ fn test_git_log_close() {
     println!("After closing:\n{screen_after}");
 
     // Should no longer show git log
-    harness.assert_screen_not_contains("Commits:");
+    // Toolbar is gone once the plugin's buffer group is closed.
+    harness.assert_screen_not_contains("switch pane");
 }
 
 /// Test diff coloring in commit detail
@@ -1231,7 +1234,7 @@ fn test_git_log_diff_coloring() {
 
     // Wait for git log to load
     harness
-        .wait_until(|h| h.screen_to_string().contains("Commits:"))
+        .wait_until(|h| h.screen_to_string().contains("switch pane"))
         .unwrap();
 
     // Move to the commit and show detail
@@ -1299,7 +1302,7 @@ fn test_git_log_open_different_commits_sequentially() {
 
     // Wait for git log to load
     harness
-        .wait_until(|h| h.screen_to_string().contains("Commits:"))
+        .wait_until(|h| h.screen_to_string().contains("switch pane"))
         .unwrap();
 
     let screen_log = harness.screen_to_string();
@@ -1319,81 +1322,31 @@ fn test_git_log_open_different_commits_sequentially() {
         "Should show first commit"
     );
 
-    // Navigate down to the first commit line (header is line 1, commits start at line 2)
-    // Most recent commit (THIRD) is at the top
+    // Initial selection is HEAD (THIRD) — detail panel auto-previews its diff.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("file3.txt"))
+        .unwrap();
+
+    // Down → SECOND selected → detail switches to file2.txt.
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.process_async_and_render().unwrap();
-
-    // Open the first commit (THIRD_UNIQUE_COMMIT_CCC - most recent)
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .wait_until(|h| h.screen_to_string().contains("file2.txt"))
         .unwrap();
+    let screen_second = harness.screen_to_string();
+    assert!(
+        screen_second.contains("SECOND_UNIQUE_COMMIT_BBB"),
+        "Detail should reference SECOND commit subject:\n{screen_second}"
+    );
 
-    // Wait for commit detail
-    harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("Author:") && screen.contains("THIRD_UNIQUE_COMMIT_CCC")
-        })
-        .unwrap();
-
-    let screen_first_detail = harness.screen_to_string();
-    println!("First commit detail (should be THIRD):\n{screen_first_detail}");
-
-    // Press q to go back to git log
-    harness
-        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
-        .unwrap();
-    harness.process_async_and_render().unwrap();
-
-    // Wait for git log to reappear
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Commits:"))
-        .unwrap();
-
-    let screen_back_to_log = harness.screen_to_string();
-    println!("Back to git log:\n{screen_back_to_log}");
-
-    // Now navigate DOWN to a DIFFERENT commit (SECOND_UNIQUE_COMMIT_BBB)
+    // Down again → FIRST selected → detail switches to file1.txt.
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.process_async_and_render().unwrap();
-
-    let screen_after_nav = harness.screen_to_string();
-    println!("After navigating down:\n{screen_after_nav}");
-
-    // Open the second commit - THIS IS THE BUG: it should open SECOND, not THIRD
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .wait_until(|h| h.screen_to_string().contains("file1.txt"))
         .unwrap();
-
-    // Wait for commit detail
-    harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("Author:")
-        })
-        .unwrap();
-
-    let screen_second_detail = harness.screen_to_string();
-    println!("Second commit detail (should be SECOND):\n{screen_second_detail}");
-
-    // CRITICAL ASSERTION: The bug is that it opens the first commit again instead of the second.
-    // The modern buffer-group layout keeps the commit log visible on the left and shows the
-    // selected commit's detail on the right, so we can't assert that THIRD is absent from the
-    // screen (it's still listed in the left panel). Instead, assert that the detail panel has
-    // moved to SECOND by looking for `file2.txt` (added in SECOND) — the file added in THIRD
-    // (`file3.txt`) must not appear in the right-hand detail body.
+    let screen_first = harness.screen_to_string();
     assert!(
-        screen_second_detail.contains("SECOND_UNIQUE_COMMIT_BBB"),
-        "BUG: After navigating to a different commit and pressing Enter, it should open SECOND_UNIQUE_COMMIT_BBB, but got:\n{screen_second_detail}"
-    );
-    assert!(
-        screen_second_detail.contains("file2.txt"),
-        "BUG: The detail panel should reference file2.txt (added in SECOND commit) but got:\n{screen_second_detail}"
-    );
-    assert!(
-        !screen_second_detail.contains("file3.txt"),
-        "BUG: The detail panel should NOT reference file3.txt (THIRD commit's file) when SECOND is selected:\n{screen_second_detail}"
+        screen_first.contains("FIRST_UNIQUE_COMMIT_AAA"),
+        "Detail should reference FIRST commit subject:\n{screen_first}"
     );
 }
 
