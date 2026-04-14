@@ -403,7 +403,11 @@ function indexFromCursorByte(bytePos: number): number {
 
 async function show_git_log(): Promise<void> {
   if (state.isOpen) {
-    editor.setStatus(editor.t("status.already_open"));
+    // Already open — pull the existing tab to the front instead of
+    // bailing out with a status message.
+    if (state.groupId !== null) {
+      editor.focusBufferGroupPanel(state.groupId, "log");
+    }
     return;
   }
   editor.setStatus(editor.t("status.loading"));
