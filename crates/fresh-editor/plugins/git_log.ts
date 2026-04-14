@@ -132,12 +132,25 @@ editor.defineMode(
     // and Up/Down do nothing in the log panel.
     ["Up", "move_up"],
     ["Down", "move_down"],
+    ["Left", "move_left"],
+    ["Right", "move_right"],
     ["k", "move_up"],
     ["j", "move_down"],
-    ["PageUp", "page_up"],
-    ["PageDown", "page_down"],
+    ["PageUp", "move_page_up"],
+    ["PageDown", "move_page_down"],
     ["Home", "move_line_start"],
     ["End", "move_line_end"],
+    // Shift+arrows extend a selection like in a normal buffer, so the
+    // built-in Copy (Ctrl+C / Cmd+C) can grab commit text out of either
+    // panel.
+    ["Shift+Up", "select_up"],
+    ["Shift+Down", "select_down"],
+    ["Shift+Left", "select_left"],
+    ["Shift+Right", "select_right"],
+    ["Shift+PageUp", "select_page_up"],
+    ["Shift+PageDown", "select_page_down"],
+    ["Shift+Home", "select_line_start"],
+    ["Shift+End", "select_line_end"],
     // Plugin actions.
     ["Return", "git_log_enter"],
     ["Tab", "git_log_tab"],
