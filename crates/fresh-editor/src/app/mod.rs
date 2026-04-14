@@ -5466,11 +5466,22 @@ impl Editor {
                 };
                 snapshot.buffer_saved_diffs.insert(*buffer_id, diff);
 
-                // Store cursor position for this buffer (from any split that has it)
+                // Store cursor position for this buffer. Prefer the split where
+                // this buffer is `active_buffer` — that's where motion actions
+                // write to. Group-panel buffers also sit in the outer split's
+                // keyed_states with a stale position, so a plain find_map
+                // iterates a HashMap non-deterministically and sometimes picks
+                // the wrong one.
                 let cursor_pos = self
                     .split_view_states
                     .values()
-                    .find_map(|vs| vs.buffer_state(*buffer_id))
+                    .find(|vs| vs.active_buffer == *buffer_id)
+                    .or_else(|| {
+                        self.split_view_states
+                            .values()
+                            .find(|vs| vs.keyed_states.contains_key(buffer_id))
+                    })
+                    .and_then(|vs| vs.buffer_state(*buffer_id))
                     .map(|bs| bs.cursors.primary().position)
                     .unwrap_or(0);
                 snapshot
