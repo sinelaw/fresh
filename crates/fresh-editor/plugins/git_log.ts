@@ -286,9 +286,12 @@ function renderDetailPlaceholder(message: string): void {
 
 function renderDetailForCommit(commit: GitCommit, showOutput: string): void {
   if (state.groupId === null) return;
-  // No footer: the sticky toolbar panel carries all the shortcut hints now.
   const entries = buildCommitDetailEntries(commit, showOutput);
   editor.setPanelContent(state.groupId, "detail", entries);
+  // Always scroll the detail panel back to the top when the selection changes.
+  if (state.detailBufferId !== null) {
+    editor.setBufferCursor(state.detailBufferId, 0);
+  }
 }
 
 /**
