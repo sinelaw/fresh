@@ -584,20 +584,9 @@ function git_log_enter(): void {
 }
 registerHandler("git_log_enter", git_log_enter);
 
-/**
- * q/Escape: closes the entire log group when the log panel is focused,
- * otherwise steps back into the log panel (so the user's mental model
- * matches the previous "detail is a stacked view on top of the log").
- */
+/** q/Escape: closes the entire log group from any panel. */
 function git_log_q(): void {
   if (state.groupId === null) return;
-  if (isDetailFocused()) {
-    editor.focusBufferGroupPanel(state.groupId, "log");
-    editor.setStatus(
-      editor.t("status.log_ready", { count: String(state.commits.length) })
-    );
-    return;
-  }
   git_log_close();
 }
 registerHandler("git_log_q", git_log_q);
