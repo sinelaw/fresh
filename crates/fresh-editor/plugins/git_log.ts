@@ -154,24 +154,102 @@ editor.defineMode(
 // =============================================================================
 
 /**
- * Group buffer layout — a vertical split: commit log on the left (60%),
- * detail on the right (40%). Uses the runtime's JSON layout schema.
+ * Group buffer layout — a one-row sticky toolbar on top, then a horizontal
+ * split below with the commit log on the left (60%) and detail on the
+ * right (40%). The toolbar mirrors the review-diff style: a fixed-height
+ * panel above the scrollable content that holds all the keybinding hints
+ * so they don't shift or scroll with the data.
  */
 const GROUP_LAYOUT = JSON.stringify({
   type: "split",
-  direction: "h", // horizontal split = side by side
-  ratio: 0.6,
-  first: { type: "scrollable", id: "log" },
-  second: { type: "scrollable", id: "detail" },
+  direction: "v",
+  ratio: 0.05, // ignored when one side is `fixed`
+  first: { type: "fixed", id: "toolbar", height: 1 },
+  second: {
+    type: "split",
+    direction: "h",
+    ratio: 0.6,
+    first: { type: "scrollable", id: "log" },
+    second: { type: "scrollable", id: "detail" },
+  },
 });
+
+// =============================================================================
+// Toolbar
+// =============================================================================
+
+interface ToolbarHint {
+  key: string;
+  label: string;
+}
+
+const TOOLBAR_HINTS: ToolbarHint[] = [
+  { key: "j/k", label: "navigate" },
+  { key: "PgUp/PgDn", label: "page" },
+  { key: "Tab", label: "switch pane" },
+  { key: "RET", label: "open file" },
+  { key: "y", label: "yank hash" },
+  { key: "r", label: "refresh" },
+  { key: "q", label: "quit" },
+];
+
+/**
+ * Build a single-row sticky toolbar. Keys render bold; separators between
+ * hints are dim. No width-aware truncation — the host crops to panel width,
+ * and the hints are already short enough to fit a typical terminal.
+ */
+function buildToolbarEntries(): TextPropertyEntry[] {
+  let text = " ";
+  const overlays: InlineOverlay[] = [];
+
+  for (let i = 0; i < TOOLBAR_HINTS.length; i++) {
+    if (i > 0) {
+      const sep = "  │  ";
+      const sepStart = utf8Len(text);
+      text += sep;
+      overlays.push({
+        start: sepStart,
+        end: utf8Len(text),
+        style: { fg: "ui.split_separator_fg" },
+      });
+    }
+    const { key, label } = TOOLBAR_HINTS[i];
+    const keyDisplay = `[${key}]`;
+    const keyStart = utf8Len(text);
+    text += keyDisplay;
+    overlays.push({
+      start: keyStart,
+      end: utf8Len(text),
+      style: { fg: "editor.fg", bold: true },
+    });
+    const labelText = " " + label;
+    const labelStart = utf8Len(text);
+    text += labelText;
+    overlays.push({
+      start: labelStart,
+      end: utf8Len(text),
+      style: { fg: "editor.line_number_fg" },
+    });
+  }
+
+  return [
+    {
+      text: text + "\n",
+      properties: { type: "git-log-toolbar" },
+      style: { bg: "editor.bg", extendToLineEnd: true },
+      inlineOverlays: overlays,
+    },
+  ];
+}
+
+function renderToolbar(): void {
+  if (state.groupId === null) return;
+  editor.setPanelContent(state.groupId, "toolbar", buildToolbarEntries());
+}
 
 // =============================================================================
 // Rendering
 // =============================================================================
-
-function logFooter(count: number): string {
-  return editor.t("panel.log_footer", { count: String(count) });
-}
 
 function detailFooter(hash: string): string {
   return editor.t("status.commit_ready", { hash });
@@ -179,10 +257,11 @@ function detailFooter(hash: string): string {
 
 function renderLog(): void {
   if (state.groupId === null) return;
+  // No footer: shortcuts now live in the sticky toolbar panel above the
+  // group, and commit count appears in the status line when the group opens.
   const entries = buildCommitLogEntries(state.commits, {
     selectedIndex: state.selectedIndex,
     header: editor.t("panel.commits_header"),
-    footer: logFooter(state.commits.length),
   });
   // Rebuild the byte-offset table used by cursor_moved to map positions
   // to commit indices. `offsets[i]` is the byte offset of row i; the
@@ -215,9 +294,8 @@ function renderDetailPlaceholder(message: string): void {
 
 function renderDetailForCommit(commit: GitCommit, showOutput: string): void {
   if (state.groupId === null) return;
-  const entries = buildCommitDetailEntries(commit, showOutput, {
-    footer: editor.t("panel.detail_footer"),
-  });
+  // No footer: the sticky toolbar panel carries all the shortcut hints now.
+  const entries = buildCommitDetailEntries(commit, showOutput);
   editor.setPanelContent(state.groupId, "detail", entries);
 }
 
@@ -322,6 +400,7 @@ async function show_git_log(): Promise<void> {
     // set when we focus into it.
   }
 
+  renderToolbar();
   renderLog();
   // Position the cursor on the first commit row (row index 1 — row 0 is
   // the "Commits:" header).
