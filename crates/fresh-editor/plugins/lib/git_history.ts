@@ -141,6 +141,32 @@ export async function fetchGitLog(
  */
 const MAX_DIFF_LINES_PER_FILE = 2000;
 
+/**
+ * Rejoin hard-wrapped lines within a paragraph into one logical line. Blank
+ * lines remain blank and delimit paragraphs. Used only for commit messages
+ * (author-chosen 72-col hard wraps need to be erased so soft-wrap in a
+ * narrow panel can re-break at the panel edge).
+ */
+function reflowParagraphs(text: string): string {
+  const out: string[] = [];
+  let paragraph = "";
+  for (const line of text.split("\n")) {
+    if (line === "") {
+      if (paragraph !== "") {
+        out.push(paragraph);
+        paragraph = "";
+      }
+      out.push("");
+      continue;
+    }
+    paragraph = paragraph === "" ? line : paragraph + " " + line;
+  }
+  if (paragraph !== "") out.push(paragraph);
+  // Drop a single trailing blank that `%B` always adds.
+  while (out.length > 0 && out[out.length - 1] === "") out.pop();
+  return out.join("\n");
+}
+
 export async function fetchCommitShow(
   editor: EditorAPI,
   hash: string,
@@ -148,8 +174,7 @@ export async function fetchCommitShow(
 ): Promise<string> {
   const workdir = cwd ?? editor.getCwd();
 
-  // First pass: numstat only. Small output (one line per changed file),
-  // lets us spot oversized files before asking git for the full patch.
+  // 1. numstat — small, lets us spot oversized files before the full diff.
   const numstatResult = await editor.spawnProcess(
     "git",
     ["show", "--numstat", "--format=", hash],
@@ -174,23 +199,70 @@ export async function fetchCommitShow(
     }
   }
 
-  // Second pass: stat + patch, excluding oversized paths. `:(exclude,top)`
-  // is rooted at the repo root so it matches regardless of git's cwd.
-  const showArgs = ["show", "--stat", "--patch", hash];
+  // 2. Metadata — pull the fields we want with a structured format so we
+  // can reflow just the message body without having to recognise the
+  // header in free-form `git show` output.
+  const META_SEP = "\x00";
+  const META_FORMAT = [
+    "%H",  // full hash
+    "%P",  // parent hashes (space-separated)
+    "%an", // author name
+    "%ae", // author email
+    "%aD", // author date, RFC 2822 — matches `git show` default
+    "%B",  // raw subject + body
+  ].join(META_SEP);
+  const metaResult = await editor.spawnProcess(
+    "git",
+    ["log", "-n1", `--format=${META_FORMAT}`, hash],
+    workdir
+  );
+  if (metaResult.exit_code !== 0) {
+    return metaResult.stderr || "(no output)";
+  }
+  const metaFields = metaResult.stdout.split(META_SEP);
+  const fullHash = (metaFields[0] ?? hash).trim();
+  const parents = (metaFields[1] ?? "").trim().split(" ").filter((p) => p.length > 0);
+  const author = metaFields[2] ?? "";
+  const email = metaFields[3] ?? "";
+  const date = metaFields[4] ?? "";
+  const rawMessage = metaFields[5] ?? "";
+
+  // 3. Stat + patch, no metadata, with oversized paths excluded.
+  const showArgs = ["show", "--format=", "--stat", "--patch", hash];
   if (oversized.length > 0) {
     showArgs.push("--", ".");
     for (const p of oversized) showArgs.push(`:(exclude,top)${p}`);
   }
-  const result = await editor.spawnProcess("git", showArgs, workdir);
-  if (result.exit_code !== 0) return result.stderr || "(no output)";
+  const showResult = await editor.spawnProcess("git", showArgs, workdir);
+  if (showResult.exit_code !== 0) return showResult.stderr || "(no output)";
 
-  if (oversized.length === 0) return result.stdout;
+  // Assemble. The shape matches stock `git show` output so
+  // `buildDetailLineEntry` keeps recognising the header.
+  let out = `commit ${fullHash}\n`;
+  if (parents.length > 1) {
+    out += `Merge: ${parents.map((p) => p.slice(0, 7)).join(" ")}\n`;
+  }
+  out += `Author: ${author} <${email}>\n`;
+  out += `Date:   ${date}\n\n`;
 
-  const plural = oversized.length === 1 ? "" : "s";
-  let footer = `\n[${oversized.length} large file${plural} omitted from diff (>${MAX_DIFF_LINES_PER_FILE} lines changed):\n`;
-  for (const p of oversized) footer += `  ${p}\n`;
-  footer += `Run \`git show ${hash.slice(0, 12)} -- <path>\` to view.]\n`;
-  return result.stdout + footer;
+  // Reflow only the message. Indent with 4 spaces to match git's own layout.
+  const reflowed = reflowParagraphs(rawMessage);
+  for (const line of reflowed.split("\n")) {
+    out += line === "" ? "\n" : `    ${line}\n`;
+  }
+  out += "\n";
+
+  // Stat + patch, untouched.
+  out += showResult.stdout;
+
+  if (oversized.length > 0) {
+    const plural = oversized.length === 1 ? "" : "s";
+    out += `\n[${oversized.length} large file${plural} omitted from diff (>${MAX_DIFF_LINES_PER_FILE} lines changed):\n`;
+    for (const p of oversized) out += `  ${p}\n`;
+    out += `Run \`git show ${hash.slice(0, 12)} -- <path>\` to view.]\n`;
+  }
+
+  return out;
 }
 
 // =============================================================================
@@ -534,60 +606,9 @@ function buildDetailLineEntry(
 }
 
 /**
- * Rejoin the hard-wrapped commit message paragraphs so soft-wrap has a
- * single logical line per paragraph to break at panel width. Without this
- * step the message keeps its original 72-col hard breaks and soft-wrap
- * produces an ugly staircase of half-width lines in a narrow panel.
- *
- * Only touches the message region between the Author/Date header and the
- * first `diff --git` line; diff lines pass through unchanged.
- */
-function reflowCommitMessage(lines: string[]): string[] {
-  const out: string[] = [];
-  let pastHeader = false;
-  let inDiff = false;
-  let paragraph = "";
-
-  const flush = () => {
-    if (paragraph !== "") {
-      out.push("    " + paragraph);
-      paragraph = "";
-    }
-  };
-
-  for (const line of lines) {
-    if (inDiff) {
-      out.push(line);
-      continue;
-    }
-    if (line.startsWith("diff --git")) {
-      flush();
-      inDiff = true;
-      out.push(line);
-      continue;
-    }
-    if (!pastHeader) {
-      out.push(line);
-      // First blank line closes the commit/Author/Date/Merge header.
-      if (line === "") pastHeader = true;
-      continue;
-    }
-    if (line === "") {
-      flush();
-      out.push("");
-      continue;
-    }
-    // Git show indents the message by 4 spaces; strip it before joining.
-    const content = line.startsWith("    ") ? line.slice(4) : line;
-    paragraph = paragraph === "" ? content : paragraph + " " + content;
-  }
-  flush();
-  return out;
-}
-
-/**
  * Build the entries for a commit detail view — a colourful replay of
- * `git show --stat --patch`.
+ * `git show --stat --patch`. The commit message body is already reflowed
+ * by `fetchCommitShow`; stat lines and diff lines pass through unchanged.
  */
 export function buildCommitDetailEntries(
   commit: GitCommit | null,
@@ -605,8 +626,7 @@ export function buildCommitDetailEntries(
   }
 
   const ctx: DetailBuildContext = { currentFile: null, currentNewLine: 0 };
-  const lines = reflowCommitMessage(showOutput.split("\n"));
-  for (const line of lines) {
+  for (const line of showOutput.split("\n")) {
     entries.push(buildDetailLineEntry(line, ctx));
   }
 
