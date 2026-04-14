@@ -469,7 +469,13 @@ impl TabsRenderer {
                 _ => (false, false),
             };
 
-            // Determine base style
+            // Determine base style. For the inactive split's active tab,
+            // we keep BOLD to show which tab is active inside that split,
+            // but use `tab_inactive_fg` instead of `tab_active_fg`. Pairing
+            // `tab_active_fg` with `tab_inactive_bg` assumed active_fg was
+            // chosen against active_bg — which breaks on themes (e.g.
+            // high-contrast) where active_fg == inactive_bg and the tab
+            // label disappears.
             let mut base_style = if is_active {
                 if is_active_split {
                     Style::default()
@@ -478,7 +484,7 @@ impl TabsRenderer {
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
-                        .fg(theme.tab_active_fg)
+                        .fg(theme.tab_inactive_fg)
                         .bg(theme.tab_inactive_bg)
                         .add_modifier(Modifier::BOLD)
                 }
