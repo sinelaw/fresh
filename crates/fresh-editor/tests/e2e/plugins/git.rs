@@ -1104,14 +1104,15 @@ fn test_git_log_show_commit_detail() {
     println!("Commit detail screen:\n{screen}");
 }
 
-/// Test going back from commit detail to git log
+/// Pressing `q` while the detail panel has focus closes the whole git-log
+/// group. The older behaviour stepped focus back to the log panel first,
+/// making close a two-keystroke gesture that surprised users.
 #[test]
-fn test_git_log_back_from_commit_detail() {
+fn test_git_log_q_from_detail_closes_group() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
     repo.setup_git_log_plugin();
 
-    // Change to repo directory so git commands work correctly
     let original_dir = repo.change_to_repo_dir();
     let _guard = DirGuard::new(original_dir);
 
@@ -1123,42 +1124,25 @@ fn test_git_log_back_from_commit_detail() {
     )
     .unwrap();
 
-    // Trigger git log
     trigger_git_log(&mut harness);
 
-    // Wait for git log to load
-    harness
-        .wait_until(|h| h.screen_to_string().contains("switch pane"))
-        .unwrap();
-
-    // Move to commit and show detail
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.process_async_and_render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-
-    // Wait for commit detail
+    // Wait for the detail panel to populate (live-preview of HEAD).
     harness
         .wait_until(|h| h.screen_to_string().contains("Author:"))
         .unwrap();
 
-    let screen_detail = harness.screen_to_string();
-    println!("Commit detail:\n{screen_detail}");
+    // Move focus into the detail panel.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
 
-    // Press q to go back to git log
+    // q from the detail panel should close the entire group: the toolbar
+    // (and its "switch pane" hint) disappears along with the *Git Log* tab.
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
         .unwrap();
-    harness.process_async_and_render().unwrap();
-
-    // Wait for git log to reappear
     harness
-        .wait_until(|h| h.screen_to_string().contains("switch pane"))
+        .wait_until(|h| !h.screen_to_string().contains("switch pane"))
         .unwrap();
-
-    let screen_log = harness.screen_to_string();
-    println!("Back to git log:\n{screen_log}");
 }
 
 /// Test closing git log with q
@@ -1300,27 +1284,19 @@ fn test_git_log_open_different_commits_sequentially() {
     // Trigger git log
     trigger_git_log(&mut harness);
 
-    // Wait for git log to load
+    // The toolbar renders before `git log` finishes; wait for the actual
+    // commit rows in the log panel before asserting on them.
     harness
-        .wait_until(|h| h.screen_to_string().contains("switch pane"))
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("THIRD_UNIQUE_COMMIT_CCC")
+                && s.contains("SECOND_UNIQUE_COMMIT_BBB")
+                && s.contains("FIRST_UNIQUE_COMMIT_AAA")
+        })
         .unwrap();
 
     let screen_log = harness.screen_to_string();
     println!("Git log with commits:\n{screen_log}");
-
-    // Verify all commits are visible
-    assert!(
-        screen_log.contains("THIRD_UNIQUE_COMMIT_CCC"),
-        "Should show third commit"
-    );
-    assert!(
-        screen_log.contains("SECOND_UNIQUE_COMMIT_BBB"),
-        "Should show second commit"
-    );
-    assert!(
-        screen_log.contains("FIRST_UNIQUE_COMMIT_AAA"),
-        "Should show first commit"
-    );
 
     // Initial selection is HEAD (THIRD) — detail panel auto-previews its diff.
     harness
