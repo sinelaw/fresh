@@ -38,8 +38,8 @@ export interface FetchGitLogOptions {
 export interface BuildCommitLogEntriesOptions {
   /** Index of the "selected" row — rendered with the selected-bg highlight. */
   selectedIndex?: number;
-  /** Optional header string (e.g. "Commits:"). Default: "Commits:". */
-  header?: string;
+  /** Optional header string (e.g. "Commits:"). `null` omits the header row. */
+  header?: string | null;
   /** Footer line (status hint). Omitted when null/undefined. */
   footer?: string | null;
   /** Target width for padding column alignment (default 0 = no padding). */
@@ -380,18 +380,20 @@ export function buildCommitLogEntries(
   commits: GitCommit[],
   opts: BuildCommitLogEntriesOptions = {}
 ): TextPropertyEntry[] {
-  const header = opts.header ?? "Commits:";
+  const header = opts.header === undefined ? "Commits:" : opts.header;
   const footer = opts.footer;
   const selectedIndex = opts.selectedIndex ?? -1;
   const propertyType = opts.propertyType ?? "log-commit";
 
   const entries: TextPropertyEntry[] = [];
 
-  entries.push({
-    text: header + "\n",
-    properties: { type: "log-header" },
-    style: { fg: GIT_THEME.header, bold: true, underline: true },
-  });
+  if (header !== null) {
+    entries.push({
+      text: header + "\n",
+      properties: { type: "log-header" },
+      style: { fg: GIT_THEME.header, bold: true, underline: true },
+    });
+  }
 
   if (commits.length === 0) {
     entries.push({

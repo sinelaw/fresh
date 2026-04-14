@@ -257,14 +257,15 @@ function detailFooter(hash: string): string {
 
 function renderLog(): void {
   if (state.groupId === null) return;
-  // No footer: shortcuts now live in the sticky toolbar panel above the
-  // group, and commit count appears in the status line when the group opens.
+  // No header row and no footer: the sticky toolbar above the group
+  // carries the shortcut hints, and the commit count goes to the status
+  // line when the group opens.
   const entries = buildCommitLogEntries(state.commits, {
     selectedIndex: state.selectedIndex,
-    header: editor.t("panel.commits_header"),
+    header: null,
   });
   // Rebuild the byte-offset table used by cursor_moved to map positions
-  // to commit indices. `offsets[i]` is the byte offset of row i; the
+  // to commit indices. `offsets[i]` is the byte offset of commit i; the
   // final entry is the total buffer length, so row lookups clamp
   // correctly on the last row.
   const offsets: number[] = [];
@@ -276,11 +277,6 @@ function renderLog(): void {
   offsets.push(running);
   state.logRowByteOffsets = offsets;
   editor.setPanelContent(state.groupId, "log", entries);
-}
-
-/** Byte offset of the first commit row (i.e. row 1 — row 0 is the header). */
-function byteOffsetOfFirstCommit(): number {
-  return state.logRowByteOffsets.length > 1 ? state.logRowByteOffsets[1] : 0;
 }
 
 function renderDetailPlaceholder(message: string): void {
@@ -344,9 +340,8 @@ function selectedCommit(): GitCommit | null {
 }
 
 function indexFromCursorByte(bytePos: number): number {
-  // Row 0 is the header; commits live at rows 1..N.
-  const row0 = rowFromByte(bytePos);
-  const idx = row0 - 1;
+  // No header row — row 0 is commit 0.
+  const idx = rowFromByte(bytePos);
   if (idx < 0) return 0;
   if (idx >= state.commits.length) return state.commits.length - 1;
   return idx;
@@ -402,10 +397,10 @@ async function show_git_log(): Promise<void> {
 
   renderToolbar();
   renderLog();
-  // Position the cursor on the first commit row (row index 1 — row 0 is
-  // the "Commits:" header).
+  // Position the cursor on the first commit (row 0 now that the header
+  // row is gone).
   if (state.logBufferId !== null && state.commits.length > 0) {
-    editor.setBufferCursor(state.logBufferId, byteOffsetOfFirstCommit());
+    editor.setBufferCursor(state.logBufferId, 0);
   }
   await refreshDetail();
 
