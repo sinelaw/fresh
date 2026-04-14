@@ -2702,15 +2702,17 @@ impl Editor {
         self.buffers.get_mut(&self.active_buffer()).unwrap()
     }
 
-    /// Get the cursors for the active buffer in the active split
+    /// Get the cursors for the active buffer in the active split.
+    /// Uses `effective_active_split` so focused buffer-group panels return
+    /// their own cursors (not the outer split's stale ones).
     pub fn active_cursors(&self) -> &Cursors {
-        let split_id = self.split_manager.active_split();
+        let split_id = self.effective_active_split();
         &self.split_view_states.get(&split_id).unwrap().cursors
     }
 
     /// Get the cursors for the active buffer in the active split (mutable)
     pub fn active_cursors_mut(&mut self) -> &mut Cursors {
-        let split_id = self.split_manager.active_split();
+        let split_id = self.effective_active_split();
         &mut self.split_view_states.get_mut(&split_id).unwrap().cursors
     }
 
