@@ -1397,6 +1397,75 @@ fn test_git_log_open_different_commits_sequentially() {
     );
 }
 
+/// Pressing Down repeatedly in the log panel should progressively deepen the
+/// selection: each press advances to the next-older commit, and the right-hand
+/// detail panel updates to show that commit's diff. Regression test for a bug
+/// where the log cursor jumped back to the top of the buffer once the detail
+/// panel re-rendered, causing subsequent Down presses to stick on commit #2.
+#[test]
+fn test_git_log_down_arrow_progresses_through_commits() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+
+    // Four commits, each introduces a distinctively-named file so we can
+    // identify which commit's diff the detail panel is currently rendering.
+    repo.create_file("f1_alpha.txt", "one");
+    repo.git_add(&["f1_alpha.txt"]);
+    repo.git_commit("Alpha commit");
+
+    repo.create_file("f2_beta.txt", "two");
+    repo.git_add(&["f2_beta.txt"]);
+    repo.git_commit("Beta commit");
+
+    repo.create_file("f3_gamma.txt", "three");
+    repo.git_add(&["f3_gamma.txt"]);
+    repo.git_commit("Gamma commit");
+
+    repo.create_file("f4_delta.txt", "four");
+    repo.git_add(&["f4_delta.txt"]);
+    repo.git_commit("Delta commit");
+
+    repo.setup_git_log_plugin();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        180,
+        48,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    trigger_git_log(&mut harness);
+
+    // After open, HEAD (Delta) should be auto-selected; detail panel shows its diff.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Commits:") && s.contains("f4_delta.txt")
+        })
+        .unwrap();
+
+    // Down once — detail should switch to Gamma's diff (f3_gamma.txt).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("f3_gamma.txt"))
+        .unwrap();
+
+    // Down again — if the log cursor jumps back to row 0 after the Gamma
+    // detail render, the next Down would only re-select Gamma and we'd
+    // never reach Beta. Assert that Beta's file shows up in the detail.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("f2_beta.txt"))
+        .unwrap();
+
+    // Down once more for good measure — should reach Alpha.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("f1_alpha.txt"))
+        .unwrap();
+}
+
 // =============================================================================
 // Git Blame Tests
 // =============================================================================

@@ -1601,12 +1601,12 @@ impl Editor {
         buffer_id: BufferId,
         entries: Vec<crate::primitives::text_property::TextPropertyEntry>,
     ) -> Result<(), String> {
-        // Save current cursor position from split view state to preserve it after content update
+        // Preserve cursor position across the rebuild. Group-panel buffers
+        // aren't in any split's `open_buffers`, so look in `keyed_states`.
         let old_cursor_pos = self
             .split_view_states
             .values()
-            .find(|vs| vs.has_buffer(buffer_id))
-            .and_then(|vs| vs.keyed_states.get(&buffer_id))
+            .find_map(|vs| vs.keyed_states.get(&buffer_id))
             .map(|bs| bs.cursors.primary().position)
             .unwrap_or(0);
 
