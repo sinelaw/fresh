@@ -8,4 +8,6 @@
 
 pub(super) mod contexts;
 pub(super) mod overlays;
+pub(super) mod render_buffer;
+pub(super) mod render_composite;
 pub(super) mod render_line;
