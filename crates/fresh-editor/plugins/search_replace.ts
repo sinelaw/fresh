@@ -1157,6 +1157,20 @@ async function doReplaceAll(): Promise<void> {
     editor.setStatus(editor.t("status.no_items_selected"));
     return;
   }
+  // Confirm before applying.  Replacements write to disk immediately; Undo
+  // only covers files that remain open in this session (see bug #1 report).
+  const fileCount = new Set(selected.map(r => r.match.file)).size;
+  const confirmed = await editor.prompt(
+    editor.t("prompt.confirm_replace", {
+      count: String(selected.length),
+      files: String(fileCount),
+    }),
+    "",
+  );
+  if (confirmed === null) {
+    editor.setStatus(editor.t("status.replace_cancelled"));
+    return;
+  }
   panel.busy = true;
   editor.setStatus(editor.t("status.replacing", { count: String(selected.length) }));
   const statusMsg = await executeReplacements(selected);
@@ -1189,6 +1203,19 @@ async function doReplaceScoped(): Promise<void> {
 
   if (toReplace.length === 0) {
     editor.setStatus(editor.t("status.no_selected"));
+    return;
+  }
+
+  const fileCount = new Set(toReplace.map(r => r.match.file)).size;
+  const confirmed = await editor.prompt(
+    editor.t("prompt.confirm_replace", {
+      count: String(toReplace.length),
+      files: String(fileCount),
+    }),
+    "",
+  );
+  if (confirmed === null) {
+    editor.setStatus(editor.t("status.replace_cancelled"));
     return;
   }
 

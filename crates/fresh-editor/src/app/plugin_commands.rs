@@ -2469,9 +2469,62 @@ impl Editor {
 
         let replacements = edits.len();
 
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            // Apply all edits as a single bulk operation (single undo action)
+        // Owned tuples for helpers that don't take references.
+        let edits_owned: Vec<(usize, usize, String)> = sorted_matches
+            .iter()
+            .map(|&(offset, len)| (offset, len, replacement.clone()))
+            .collect();
+        // Merged edit-lengths list for marker/margin replay on undo/redo.
+        // Mirrors the merging logic in `apply_events_as_bulk_edit`.
+        let edit_lengths: Vec<(usize, usize, usize)> = {
+            let mut lengths: Vec<(usize, usize, usize)> = Vec::new();
+            for (pos, del_len, text) in &edits_owned {
+                if let Some(last) = lengths.last_mut() {
+                    if last.0 == *pos {
+                        last.1 += del_len;
+                        last.2 += text.len();
+                        continue;
+                    }
+                }
+                lengths.push((*pos, *del_len, text.len()));
+            }
+            lengths
+        };
+
+        // Apply edits and capture pre/post snapshots so the replace is undoable
+        // via the standard event log machinery.  Project replace has no
+        // meaningful cursor positions to restore on undo, so we pass empty
+        // cursor lists.
+        let bulk_edit_event = if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let old_snapshot = state.buffer.snapshot_buffer_state();
+            let displaced_markers = state.capture_displaced_markers_bulk(&edits_owned);
+
+            // Apply all edits as a single bulk operation
             state.buffer.apply_bulk_edits(&edits);
+
+            // Adjust markers and margins to track the edits, matching the
+            // logic used by interactive multi-cursor edits.
+            for &(pos, del_len, ins_len) in &edit_lengths {
+                if del_len > 0 && ins_len > 0 {
+                    if ins_len > del_len {
+                        state.marker_list.adjust_for_insert(pos, ins_len - del_len);
+                        state.margins.adjust_for_insert(pos, ins_len - del_len);
+                    } else if del_len > ins_len {
+                        state.marker_list.adjust_for_delete(pos, del_len - ins_len);
+                        state.margins.adjust_for_delete(pos, del_len - ins_len);
+                    }
+                } else if del_len > 0 {
+                    state.marker_list.adjust_for_delete(pos, del_len);
+                    state.margins.adjust_for_delete(pos, del_len);
+                } else if ins_len > 0 {
+                    state.marker_list.adjust_for_insert(pos, ins_len);
+                    state.margins.adjust_for_insert(pos, ins_len);
+                }
+            }
+
+            state.highlighter.invalidate_all();
+
+            let new_snapshot = state.buffer.snapshot_buffer_state();
 
             // Save the buffer via the FileSystem trait
             if let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) {
@@ -2482,6 +2535,48 @@ impl Editor {
                     );
                     return;
                 }
+            }
+
+            Some(Event::BulkEdit {
+                old_snapshot: Some(old_snapshot),
+                new_snapshot: Some(new_snapshot),
+                old_cursors: Vec::new(),
+                new_cursors: Vec::new(),
+                description: format!(
+                    "Project replace ({} replacement{})",
+                    replacements,
+                    if replacements == 1 { "" } else { "s" }
+                ),
+                edits: edit_lengths,
+                displaced_markers,
+            })
+        } else {
+            None
+        };
+
+        // Record the BulkEdit on the buffer's event log so Undo can revert it.
+        if let Some(event) = bulk_edit_event {
+            if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+                event_log.append(event);
+            }
+            self.invalidate_layouts_for_buffer(buffer_id);
+
+            // Notify LSP with full document content (bulk edits collapse
+            // incremental ranges).
+            let full_content_change = self
+                .buffers
+                .get(&buffer_id)
+                .and_then(|s| s.buffer.to_string())
+                .map(|text| {
+                    vec![lsp_types::TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text,
+                    }]
+                })
+                .unwrap_or_default();
+            if !full_content_change.is_empty() {
+                self.send_lsp_changes_for_buffer(buffer_id, full_content_change);
             }
         }
 

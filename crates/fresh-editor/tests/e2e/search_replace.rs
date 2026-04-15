@@ -89,6 +89,22 @@ fn enter_search_and_replace(harness: &mut EditorTestHarness, search: &str, repla
     harness.render().unwrap();
 }
 
+/// Trigger Replace All (Alt+Enter), accept the confirmation prompt, and wait
+/// for the "Replaced" status. Used by every test that exercises a successful
+/// replacement — the confirmation prompt was added to guard against the
+/// accidental-replace-you-can't-undo case described in bug #1.
+fn confirm_replace_all(harness: &mut EditorTestHarness) {
+    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Replaced"))
+        .unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -367,13 +383,8 @@ fn test_search_replace_executes_replacement() {
         })
         .unwrap();
 
-    // Press Alt+Enter to execute Replace All
-    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
-
-    // Wait for the status message confirming replacement
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Replaced"))
-        .unwrap();
+    // Press Alt+Enter to execute Replace All (confirms via prompt).
+    confirm_replace_all(&mut harness);
 
     // Verify files were modified on disk
     let alpha = fs::read_to_string(project_root.join("alpha.txt")).unwrap();
@@ -440,12 +451,8 @@ fn test_search_replace_delete_pattern() {
         })
         .unwrap();
 
-    // Alt+Enter to execute Replace All
-    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
-
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Replaced"))
-        .unwrap();
+    // Alt+Enter to execute Replace All (confirms via prompt).
+    confirm_replace_all(&mut harness);
 
     let content = fs::read_to_string(project_root.join("target.txt")).unwrap();
     assert_eq!(
@@ -598,10 +605,18 @@ fn test_search_replace_multiple_matches_same_line() {
         harness.screen_to_string()
     );
 
-    // Alt+Enter to execute Replace All
+    // Alt+Enter to execute Replace All (confirms via prompt).
     eprintln!("[DEBUG {}] pressing Alt+Enter to Replace All", elapsed());
     harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
-    eprintln!("[DEBUG {}] Alt+Enter sent", elapsed());
+    harness.wait_for_prompt().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    eprintln!(
+        "[DEBUG {}] Alt+Enter sent and confirmation accepted",
+        elapsed()
+    );
 
     eprintln!("[DEBUG {}] waiting for 'Replaced' confirmation", elapsed());
     {
@@ -635,6 +650,141 @@ fn test_search_replace_multiple_matches_same_line() {
         content
     );
     eprintln!("[DEBUG {}] test PASSED", elapsed());
+}
+
+/// Bug 1 (upstream) companion: pressing Alt+Enter opens a confirmation
+/// prompt explaining that the replace is not restore-safe.  Cancelling the
+/// prompt must leave the file unchanged.
+#[test]
+fn test_search_replace_confirmation_prompt_cancel_leaves_files_untouched() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    let original = "hello world\nhello again\n";
+    fs::write(project_root.join("cancel.txt"), original).unwrap();
+
+    let start_file = project_root.join("cancel.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    enter_search_and_replace(&mut harness, "hello", "XYZ");
+
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
+        .unwrap();
+
+    // Trigger Replace All — expect the confirmation prompt to open.
+    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    // Prompt text should warn about the undo caveat.
+    let prompt_screen = harness.screen_to_string();
+    assert!(
+        prompt_screen.contains("Undo only covers"),
+        "Confirmation prompt should warn about undo scope.  Screen:\n{}",
+        prompt_screen
+    );
+
+    // Cancel the prompt with Escape.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Replacement cancelled"))
+        .unwrap();
+
+    // File must be unchanged on disk.
+    let after = fs::read_to_string(project_root.join("cancel.txt")).unwrap();
+    assert_eq!(
+        after, original,
+        "File must be unchanged after cancelling the confirmation prompt."
+    );
+}
+
+/// Bug 1 (upstream): after a project-wide replace, the `Undo` command must
+/// actually revert the in-memory buffer for the currently-focused file.
+/// Previously replaceInFile bypassed the event log, so Ctrl+Z / the Undo
+/// command was a no-op and users couldn't recover from a mistaken replace.
+#[test]
+fn test_search_replace_is_undoable_via_command_palette() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    fs::write(
+        project_root.join("undo.txt"),
+        "hello world\nhello there\nfinal hello line\n",
+    )
+    .unwrap();
+
+    let start_file = project_root.join("undo.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    enter_search_and_replace(&mut harness, "hello", "XYZ");
+
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
+        .unwrap();
+
+    confirm_replace_all(&mut harness);
+
+    // Close the panel so focus returns to undo.txt.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("*Search/Replace*"))
+        .unwrap();
+
+    // Sanity: the focused buffer shows the replaced text.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("XYZ world"))
+        .unwrap();
+
+    // Invoke `Undo` via the command palette (avoids any terminal Ctrl+Z/SUSP
+    // ambiguity and tests the command, not the keybinding).
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Undo").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Undo the last edit"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Buffer must revert to the pre-replace content.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("hello world")
+                && s.contains("hello there")
+                && s.contains("final hello line")
+                && !s.contains("XYZ world")
+        })
+        .unwrap();
 }
 
 /// Bug 2 (upstream): after a successful replace, the match tree must be
@@ -682,10 +832,7 @@ fn test_search_replace_refreshes_match_list_after_replace() {
     );
 
     // Execute replacement.
-    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Replaced"))
-        .unwrap();
+    confirm_replace_all(&mut harness);
 
     // After the replacement settles, the match tree must no longer display
     // stale "hello" rows — the file has no "hello" left, so the list should
@@ -754,11 +901,8 @@ fn test_search_replace_second_alt_enter_does_not_corrupt_files() {
         })
         .unwrap();
 
-    // First Alt+Enter — replace all.
-    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Replaced"))
-        .unwrap();
+    // First Alt+Enter — replace all (confirms via prompt).
+    confirm_replace_all(&mut harness);
 
     let after_first = fs::read_to_string(project_root.join("corrupt.txt")).unwrap();
     assert_eq!(

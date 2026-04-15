@@ -36,7 +36,9 @@
     "panel.replace_all_btn": "Replace All (Alt+Ret)",
     "panel.type_pattern": "Type a search pattern above",
     "panel.matches_count": "Matches (%{count} in %{files} files)",
-    "panel.matches_title": "Matches"
+    "panel.matches_title": "Matches",
+    "prompt.confirm_replace": "Replace %{count} match(es) in %{files} file(s)? Undo only covers files still open in this session. Press Enter to confirm, Esc to cancel.",
+    "status.replace_cancelled": "Replacement cancelled"
   },
   "cs": {
     "cmd.search_replace": "Hledat a nahradit v projektu",
