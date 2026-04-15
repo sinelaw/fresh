@@ -1161,8 +1161,15 @@ async function doReplaceAll(): Promise<void> {
   editor.setStatus(editor.t("status.replacing", { count: String(selected.length) }));
   const statusMsg = await executeReplacements(selected);
   editor.setStatus(statusMsg);
-  await rerunSearchQuiet();
+  // Clear stale results before re-searching: the byte offsets in
+  // `panel.searchResults` now point at positions in the pre-replacement
+  // file and must never be re-used (see bug #4 — a second Alt+Enter would
+  // otherwise corrupt files by writing into moved offsets).  We also drop
+  // `busy` so rerunSearchQuiet doesn't bail out on its own guard.
+  panel.searchResults = [];
+  panel.fileGroups = [];
   panel.busy = false;
+  await rerunSearchQuiet();
   updatePanelContent();
 }
 
@@ -1189,8 +1196,11 @@ async function doReplaceScoped(): Promise<void> {
   editor.setStatus(editor.t("status.replacing", { count: String(toReplace.length) }));
   const statusMsg = await executeReplacements(toReplace);
   editor.setStatus(statusMsg);
-  await rerunSearchQuiet();
+  // See doReplaceAll — clear stale offsets and drop busy before re-searching.
+  panel.searchResults = [];
+  panel.fileGroups = [];
   panel.busy = false;
+  await rerunSearchQuiet();
   updatePanelContent();
 }
 

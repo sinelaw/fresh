@@ -636,3 +636,85 @@ fn test_search_replace_multiple_matches_same_line() {
     );
     eprintln!("[DEBUG {}] test PASSED", elapsed());
 }
+
+/// Bug 4 (upstream): pressing Alt+Enter a second time should not re-apply
+/// the replacement using stale byte offsets from the pre-replacement search,
+/// which would corrupt the file (e.g. "XYZ world" → "hhXYZrld").
+///
+/// After a successful replace, the panel must refresh its match list before
+/// honoring another Alt+Enter.  A second Alt+Enter must leave the file
+/// byte-for-byte identical to the state after the first Alt+Enter.
+#[test]
+fn test_search_replace_second_alt_enter_does_not_corrupt_files() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    // Use a replacement shorter than the pattern to make byte-offset drift
+    // observable: "hello" → "XYZ" shrinks the file by 2 bytes per match, so
+    // replaying the original offsets would clobber innocent bytes.
+    fs::write(
+        project_root.join("corrupt.txt"),
+        "hello world\nhello there\nthis is a hello test\nfinal hello line\n",
+    )
+    .unwrap();
+
+    let start_file = project_root.join("corrupt.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    enter_search_and_replace(&mut harness, "hello", "XYZ");
+
+    // Wait for search results and focus to stabilize.
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
+        .unwrap();
+
+    // First Alt+Enter — replace all.
+    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Replaced"))
+        .unwrap();
+
+    let after_first = fs::read_to_string(project_root.join("corrupt.txt")).unwrap();
+    assert_eq!(
+        after_first, "XYZ world\nXYZ there\nthis is a XYZ test\nfinal XYZ line\n",
+        "First Alt+Enter should produce clean replacements. Got:\n{}",
+        after_first
+    );
+
+    // Let the panel settle (rerunSearchQuiet should have cleared the list
+    // since "hello" no longer exists in the file).
+    harness
+        .wait_until_stable(|h| !h.screen_to_string().contains("Replacing"))
+        .unwrap();
+
+    // Second Alt+Enter — with a correctly-refreshed match list there are no
+    // remaining matches, so this must be a no-op on disk.
+    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
+
+    // Give any async replace work a chance to finish.  We can't key off
+    // "Replaced" here because a correct implementation will NOT produce that
+    // status a second time — so wait for the screen to stabilize instead.
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+
+    let after_second = fs::read_to_string(project_root.join("corrupt.txt")).unwrap();
+    assert_eq!(
+        after_second, after_first,
+        "Second Alt+Enter must not modify the file further (no stale offsets). \
+         After first: {:?}\nAfter second: {:?}",
+        after_first, after_second
+    );
+}
