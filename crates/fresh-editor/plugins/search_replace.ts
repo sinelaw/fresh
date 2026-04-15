@@ -428,115 +428,106 @@ function buildPanelEntries(): TextPropertyEntry[] {
   });
 
   // ── Matches tree (virtual-scrolled) ──
-  // Build all tree lines first, then show only a viewport-sized slice.
-  // The control bar above (query + options + separator) is always visible.
-  const allTreeLines: TextPropertyEntry[] = [];
-  let selectedLineIdx = -1;
+  const flatItems = buildFlatItems();
+  const fixedRows = 5;
+  const treeVisibleRows = Math.max(3, getViewportHeight() - fixedRows);
 
   if (searchPattern && totalMatches === 0) {
-    allTreeLines.push({
+    entries.push({
       text: padStr("  " + editor.t("panel.no_matches"), W) + "\n",
       properties: { type: "empty" },
       style: { fg: C.dim },
     });
   } else if (!searchPattern) {
-    allTreeLines.push({
+    entries.push({
       text: padStr("  " + editor.t("panel.type_pattern"), W) + "\n",
       properties: { type: "empty" },
       style: { fg: C.dim },
     });
   } else {
-    let flatIdx = 0;
-    for (let fi = 0; fi < fileGroups.length; fi++) {
-      const group = fileGroups[fi];
-      const isFileSelected = focusPanel === "matches" && panel.matchIndex === flatIdx;
-      if (isFileSelected) selectedLineIdx = allTreeLines.length;
-      const expandIcon = group.expanded ? "v" : ">";
-      const badge = getFileExtBadge(group.relPath);
-      const matchCount = group.matches.length;
-      const selectedInFile = group.matches.filter(m => m.selected).length;
-      const fileLineText = ` ${expandIcon} ${badge} ${group.relPath} (${selectedInFile}/${matchCount})`;
+    let selectedLineIdx = focusPanel === "matches" ? panel.matchIndex : -1;
 
-      const fileOverlays: InlineOverlay[] = [];
-      const eiStart = byteLen(" ");
-      const eiEnd = eiStart + byteLen(expandIcon);
-      fileOverlays.push({ start: eiStart, end: eiEnd, style: { fg: C.expandIcon } });
-      const bgStart = eiEnd + byteLen(" ");
-      const bgEnd = bgStart + byteLen(badge);
-      fileOverlays.push({ start: bgStart, end: bgEnd, style: { fg: C.fileIcon, bold: true } });
-      const fpStart = bgEnd + byteLen(" ");
-      const fpEnd = fpStart + byteLen(group.relPath);
-      fileOverlays.push({ start: fpStart, end: fpEnd, style: { fg: C.filePath } });
+    // Adjust scroll offset to keep selected line visible
+    if (selectedLineIdx >= 0) {
+      if (selectedLineIdx < panel.scrollOffset) {
+        panel.scrollOffset = selectedLineIdx;
+      }
+      if (selectedLineIdx >= panel.scrollOffset + treeVisibleRows) {
+        panel.scrollOffset = selectedLineIdx - treeVisibleRows + 1;
+      }
+    }
+    const maxOffset = Math.max(0, flatItems.length - treeVisibleRows);
+    if (panel.scrollOffset > maxOffset) panel.scrollOffset = maxOffset;
+    if (panel.scrollOffset < 0) panel.scrollOffset = 0;
 
-      allTreeLines.push({
-        text: padStr(fileLineText, W) + "\n",
-        properties: { type: "file-row", fileIndex: fi },
-        style: isFileSelected ? { bg: C.selectedBg } : undefined,
-        inlineOverlays: fileOverlays,
-      });
-      flatIdx++;
+    // ONLY loop through the items that are literally on the screen right now
+    for (let i = panel.scrollOffset; i < panel.scrollOffset + treeVisibleRows; i++) {
+      if (i >= flatItems.length) break;
+      const item = flatItems[i];
+      const isSelected = focusPanel === "matches" && panel.matchIndex === i;
 
-      if (group.expanded) {
-        for (let mi = 0; mi < group.matches.length; mi++) {
-          const result = group.matches[mi];
-          const isMatchSelected = focusPanel === "matches" && panel.matchIndex === flatIdx;
-          if (isMatchSelected) selectedLineIdx = allTreeLines.length;
-          const checkbox = result.selected ? "[v]" : "[ ]";
-          const location = `${group.relPath}:${result.match.line}`;
-          const context = result.match.context.trim();
-          const prefixText = `   ${isMatchSelected ? ">" : " "} ${checkbox} `;
-          const maxCtx = W - charLen(prefixText) - charLen(location) - 3;
-          const displayCtx = truncate(context, Math.max(10, maxCtx));
-          const matchLineText = `${prefixText}${location} - ${displayCtx}`;
+      if (item.type === "file") {
+        const group = fileGroups[item.fileIndex];
+        const expandIcon = group.expanded ? "v" : ">";
+        const badge = getFileExtBadge(group.relPath);
+        const matchCount = group.matches.length;
+        const selectedInFile = group.matches.filter(m => m.selected).length;
+        const fileLineText = ` ${expandIcon} ${badge} ${group.relPath} (${selectedInFile}/${matchCount})`;
 
-          const inlines: InlineOverlay[] = [];
-          const cbStart = byteLen(`   ${isMatchSelected ? ">" : " "} `);
-          const cbEnd = cbStart + byteLen(checkbox);
-          inlines.push({ start: cbStart, end: cbEnd, style: { fg: result.selected ? C.checkOn : C.checkOff } });
-          const locStart = cbEnd + byteLen(" ");
-          const locEnd = locStart + byteLen(location);
-          inlines.push({ start: locStart, end: locEnd, style: { fg: C.lineNum } });
+        const fileOverlays: InlineOverlay[] = [];
+        const eiStart = byteLen(" ");
+        const eiEnd = eiStart + byteLen(expandIcon);
+        fileOverlays.push({ start: eiStart, end: eiEnd, style: { fg: C.expandIcon } });
+        const bgStart = eiEnd + byteLen(" ");
+        const bgEnd = bgStart + byteLen(badge);
+        fileOverlays.push({ start: bgStart, end: bgEnd, style: { fg: C.fileIcon, bold: true } });
+        const fpStart = bgEnd + byteLen(" ");
+        const fpEnd = fpStart + byteLen(group.relPath);
+        fileOverlays.push({ start: fpStart, end: fpEnd, style: { fg: C.filePath } });
 
-          if (panel.searchPattern) {
-            const ctxStart = locEnd + byteLen(" - ");
-            highlightMatches(displayCtx, panel.searchPattern, ctxStart, panel.useRegex, panel.caseSensitive, inlines);
-          }
+        entries.push({
+          text: padStr(fileLineText, W) + "\n",
+          properties: { type: "file-row", fileIndex: item.fileIndex },
+          style: isSelected ? { bg: C.selectedBg } : undefined,
+          inlineOverlays: fileOverlays,
+        });
+      } else {
+        const group = fileGroups[item.fileIndex];
+        const result = group.matches[item.matchIndex!];
+        const checkbox = result.selected ? "[v]" : "[ ]";
+        const location = `${group.relPath}:${result.match.line}`;
+        const context = result.match.context.trim();
+        const prefixText = `   ${isSelected ? ">" : " "} ${checkbox} `;
+        const maxCtx = W - charLen(prefixText) - charLen(location) - 3;
+        const displayCtx = truncate(context, Math.max(10, maxCtx));
+        const matchLineText = `${prefixText}${location} - ${displayCtx}`;
 
-          allTreeLines.push({
-            text: padStr(matchLineText, W) + "\n",
-            properties: { type: "match-row", fileIndex: fi, matchIndex: mi },
-            style: isMatchSelected ? { bg: C.selectedBg } : undefined,
-            inlineOverlays: inlines.length > 0 ? inlines : undefined,
-          });
-          flatIdx++;
+        const inlines: InlineOverlay[] = [];
+        const cbStart = byteLen(`   ${isSelected ? ">" : " "} `);
+        const cbEnd = cbStart + byteLen(checkbox);
+        inlines.push({ start: cbStart, end: cbEnd, style: { fg: result.selected ? C.checkOn : C.checkOff } });
+        const locStart = cbEnd + byteLen(" ");
+        const locEnd = locStart + byteLen(location);
+        inlines.push({ start: locStart, end: locEnd, style: { fg: C.lineNum } });
+
+        if (panel.searchPattern) {
+          const ctxStart = locEnd + byteLen(" - ");
+          highlightMatches(displayCtx, panel.searchPattern, ctxStart, panel.useRegex, panel.caseSensitive, inlines);
         }
+
+        entries.push({
+          text: padStr(matchLineText, W) + "\n",
+          properties: { type: "match-row", fileIndex: item.fileIndex, matchIndex: item.matchIndex },
+          style: isSelected ? { bg: C.selectedBg } : undefined,
+          inlineOverlays: inlines.length > 0 ? inlines : undefined,
+        });
       }
     }
   }
 
-  // Virtual scroll: fixed rows = query(1) + options(1) + separator(1) + help(1) + tab bar(1) = 5
-  const fixedRows = 5;
-  const treeVisibleRows = Math.max(3, getViewportHeight() - fixedRows);
-
-  // Adjust scroll offset to keep selected line visible
-  if (selectedLineIdx >= 0) {
-    if (selectedLineIdx < panel.scrollOffset) {
-      panel.scrollOffset = selectedLineIdx;
-    }
-    if (selectedLineIdx >= panel.scrollOffset + treeVisibleRows) {
-      panel.scrollOffset = selectedLineIdx - treeVisibleRows + 1;
-    }
-  }
-  const maxOffset = Math.max(0, allTreeLines.length - treeVisibleRows);
-  if (panel.scrollOffset > maxOffset) panel.scrollOffset = maxOffset;
-  if (panel.scrollOffset < 0) panel.scrollOffset = 0;
-
-  const visibleLines = allTreeLines.slice(panel.scrollOffset, panel.scrollOffset + treeVisibleRows);
-  for (const line of visibleLines) entries.push(line);
-
   // Scroll indicators
   const canScrollUp = panel.scrollOffset > 0;
-  const canScrollDown = panel.scrollOffset + treeVisibleRows < allTreeLines.length;
+  const canScrollDown = panel.scrollOffset + treeVisibleRows < flatItems.length;
   const scrollHint = canScrollUp || canScrollDown
     ? "  " + (canScrollUp ? "↑" : " ") + (canScrollDown ? "↓" : " ")
     : "";
@@ -635,6 +626,8 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
   if (!panel) return [];
 
   const generation = ++currentSearchGeneration;
+  let lastUiUpdate = Date.now();
+  const UI_UPDATE_INTERVAL_MS = 100; // Force maximum 10 UI updates per second
 
   try {
     const fixedString = !panel.useRegex;
@@ -649,17 +642,24 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
         maxResults: MAX_RESULTS,
         wholeWords: panel.wholeWords,
       },
-      (matches: GrepMatch[], _done: boolean) => {
+      (matches: GrepMatch[], done: boolean) => {
         // Discard if a newer search has started
         if (generation !== currentSearchGeneration || !panel) return;
 
-        const newResults: SearchResult[] = matches.map(m => ({ match: m, selected: true }));
-
-        if (newResults.length > 0) {
-          allResults = allResults.concat(newResults);
+        if (matches.length > 0) {
+          // Use push loop instead of allResults.concat() to save massive memory allocations
+          for (const m of matches) {
+            allResults.push({ match: m, selected: true });
+          }
           panel.searchResults = allResults;
+        }
+
+        const now = Date.now();
+        // Only trigger the expensive UI rebuild if enough time passed or stream finished
+        if (done || now - lastUiUpdate > UI_UPDATE_INTERVAL_MS) {
           panel.fileGroups = buildFileGroups(allResults);
           updatePanelContent();
+          lastUiUpdate = now;
         }
       }
     );
@@ -1091,7 +1091,7 @@ function search_replace_enter(): void {
           if (panel) {
             panel.focusPanel = "matches";
             panel.matchIndex = 0;
-  panel.scrollOffset = 0;
+            panel.scrollOffset = 0;
             updatePanelContent();
           }
         });
