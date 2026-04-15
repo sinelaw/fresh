@@ -1146,7 +1146,8 @@ impl Editor {
     }
 
     /// Apply inlay hints to editor state as virtual text
-    pub(crate) fn apply_inlay_hints_to_state(
+    #[doc(hidden)]
+    pub fn apply_inlay_hints_to_state(
         state: &mut crate::state::EditorState,
         hints: &[lsp_types::InlayHint],
     ) {
@@ -1187,12 +1188,35 @@ impl Editor {
                 continue;
             }
 
-            let (byte_offset, position) = if byte_offset >= state.buffer.len() {
-                // If hint is at EOF, anchor to last character and render after it.
-                (
-                    state.buffer.len().saturating_sub(1),
-                    VirtualTextPosition::AfterChar,
-                )
+            // Pick the anchor character for this hint. If the LSP-computed
+            // byte lies on a line terminator (\n or the \r of a CRLF), the
+            // "following character" is the first byte of the next line.
+            // Anchoring to it would make the hint drift one line down on
+            // any whitespace edit adjacent to the brace (issue #1572), so
+            // instead anchor to the *preceding* non-newline character with
+            // `AfterChar`. That keeps the hint stuck to the glyph the LSP
+            // intended to annotate even as edits shift bytes around it.
+            let buf_len = state.buffer.len();
+            let byte_here = if byte_offset < buf_len {
+                state
+                    .buffer
+                    .slice_bytes(byte_offset..byte_offset + 1)
+                    .first()
+                    .copied()
+            } else {
+                None
+            };
+            let at_line_break = matches!(byte_here, Some(b'\n' | b'\r'));
+
+            let (byte_offset, position) = if byte_offset >= buf_len {
+                // Hint is at EOF: anchor to last character and render
+                // after it.
+                (buf_len.saturating_sub(1), VirtualTextPosition::AfterChar)
+            } else if at_line_break && byte_offset > 0 {
+                // Hint points past the last glyph on a line: anchor to
+                // that glyph with AfterChar so the marker cannot drift
+                // onto a subsequent line when whitespace is edited.
+                (byte_offset - 1, VirtualTextPosition::AfterChar)
             } else {
                 (byte_offset, VirtualTextPosition::BeforeChar)
             };

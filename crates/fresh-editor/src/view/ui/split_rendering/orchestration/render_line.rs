@@ -681,6 +681,13 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                             .iter()
                             .filter(|v| v.position == VirtualTextPosition::AfterChar)
                         {
+                            // Flush the accumulated text so the virtual
+                            // text is placed *after* the current char
+                            // rather than sneaking in front of the next
+                            // flush of `span_acc`. Without this flush,
+                            // AfterChar hints render at the start of the
+                            // buffered run (issue #1572).
+                            span_acc.flush(&mut line_spans, &mut line_view_map);
                             let text_with_space = format!(" {}", vtext.text);
                             push_span_with_map(
                                 &mut line_spans,
