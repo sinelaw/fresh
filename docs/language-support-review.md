@@ -2,31 +2,46 @@
 
 ## How Syntax Highlighting Works in Fresh
 
-Fresh uses a **dual-engine architecture** for language support:
+Fresh keeps every known language in a **unified grammar catalog**
+(`GrammarRegistry::catalog`). Each entry records which engines can serve it:
 
-### Syntect (TextMate/Sublime grammars) — Primary highlighting engine
-- **Syntect is the PRIMARY system for syntax highlighting** (colorizing code).
-- Uses TextMate / Sublime `.sublime-syntax` grammars to tokenize and color code.
-- Provides broad coverage: **100+ languages** via built-in defaults + 9 custom embedded grammars.
-- Selection priority: TextMate grammar is tried first; tree-sitter is only used as a
-  fallback for highlighting when no TextMate grammar exists for a file.
+- **Syntect (TextMate/Sublime grammars)** — the primary highlighting engine,
+  covering ~115 built-in and embedded grammars.
+- **Tree-sitter** — used for structural features (auto-indent, bracket
+  matching, semantic highlighting) and as a highlighting fallback for the
+  ~18 languages it supports. Notably, TypeScript is tree-sitter-only —
+  syntect ships no grammar for it.
 
-### Tree-sitter — Structural/semantic features (NOT primarily for highlighting)
-- Tree-sitter is used for **non-highlighting features**: auto-indentation (via `.scm`
-  indent queries), bracket matching, reference/semantic highlighting, and language detection.
-- Tree-sitter CAN highlight as a **fallback** when no TextMate grammar is available,
-  but this is not the primary path.
-- Currently supports **18 languages** with tree-sitter parsers.
+A single catalog entry may be served by syntect, tree-sitter, or both.
 
-### How they interact
-1. `HighlightEngine::for_file()` first looks for a TextMate grammar in the registry.
-2. If none found, falls back to tree-sitter for highlighting.
-3. Even when using TextMate highlighting, tree-sitter `Language` is still detected and
-   stored for indentation/bracket/semantic features.
+### Lookup API
 
-**Key implication for adding language support:** Adding a new language primarily means
-adding a **TextMate/Sublime grammar** (for highlighting) and optionally a **tree-sitter
-parser** (for indentation, bracket matching). The recommendations below reflect this.
+All resolution happens through three methods on `GrammarRegistry`:
+
+- `find_by_path(&Path)` — filename → glob → extension, honouring user
+  `[languages]` config (filenames, globs, extensions all merged into the
+  catalog via `apply_language_config`).
+- `find_by_name(&str)` — display name, language id, short alias, all
+  case-insensitive, single HashMap lookup.
+- `find_by_extension(&str)` — just the extension index.
+
+Each returns `Option<&GrammarEntry>`. `HighlightEngine::from_entry` and
+`DetectedLanguage::from_entry` consume those entries. The
+"prefer syntect, else tree-sitter, else None" fallback lives in exactly
+one place: `HighlightEngine::from_entry`.
+
+### Adding a language
+
+- **New syntect grammar** — drop a `.sublime-syntax` into
+  `crates/fresh-editor/src/grammars/` and register it in
+  `GrammarRegistry::add_embedded_grammars`. The catalog picks it up on the
+  next rebuild.
+- **New tree-sitter language** — add a variant to `fresh_languages::Language`
+  (extensions, display_name, highlight_config). The catalog auto-creates a
+  tree-sitter-only entry if no syntect grammar matches.
+- **User config mapping** — edit `~/.config/fresh/config.toml`
+  `[languages]` section. Extensions, exact filenames, and globs all merge
+  through `apply_language_config` into the catalog.
 
 ---
 

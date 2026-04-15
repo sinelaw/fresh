@@ -1,72 +1,41 @@
-# Highlight Engine Cleanup Plan
+# Highlight Engine Cleanup
 
-## Background
+## Status: complete
 
-`highlight_engine.rs` has accumulated complexity from organic growth. It exposes
-a dual-backend system (tree-sitter + TextMate/syntect), but in practice TextMate
-is the only highlighting backend used — tree-sitter fires solely as a fallback
-for TypeScript/TSX (where syntect lacks a grammar). The tree-sitter `Language`
-type is still detected and used for non-highlighting features (indentation,
-bracket matching, semantic highlighting), but that is orthogonal to this module.
+The cleanup originally planned in this document has been carried out and then
+superseded by the unified grammar catalog refactor (see `GrammarRegistry` in
+`crates/fresh-editor/src/primitives/grammar/types.rs`).
 
-### Current problems
+### What the module looks like now
 
-- **Constructor proliferation**: 6 public constructors + 2 private helpers form
-  a combinatorial matrix of (path vs name vs language) × (with/without languages
-  config) × (with/without preference).
-- **Dead preference system**: `HighlighterPreference` has 3 variants (`Auto`,
-  `TextMate`, `TreeSitter`) but `Auto` and `TextMate` are identical. `TreeSitter`
-  is only used in one test. Every built-in language config (70+) hardcodes `Auto`.
-- **Dead constructor**: `for_language()` has zero callers.
-- **Duplicated private helpers**: `textmate_for_file` and
-  `textmate_for_file_with_languages` are near-identical (~40 lines each).
-- **Repeated syntax index lookup**: The same linear scan appears 4 times.
-- **Double detection of `ts_language`**: `DetectedLanguage::from_path` and the
-  engine's internal helpers both call `Language::from_path` independently.
+`HighlightEngine` in `crates/fresh-editor/src/primitives/highlight_engine.rs`
+exposes exactly three public constructors:
 
-## Plan
+- `from_entry(&GrammarEntry, &GrammarRegistry) -> Self` — the canonical path.
+  Picks syntect if the entry has a `syntect` index, else tree-sitter if it has
+  a `Language`, else `HighlightEngine::None`. This is the single place the
+  "prefer syntect, fall back to tree-sitter" fallback lives.
+- `for_file(path, registry) -> Self` — thin wrapper: `registry.find_by_path` +
+  `from_entry`.
+- `for_syntax_name(name, registry) -> Self` — thin wrapper: `find_by_name` +
+  `from_entry`.
 
-### Step 1 — Delete `HighlighterPreference` and the `highlighter` config field
+`DetectedLanguage::from_entry` consumes the same catalog entries, so the
+highlighter and the per-buffer language state stay in sync through one type.
 
-Remove the `HighlighterPreference` enum entirely. Remove the `highlighter` field
-from `LanguageConfig`, `LanguageCliHint`, and all ~70 built-in language entries.
-Remove preference parameters from all constructors. The one test that used
-`TreeSitter` preference can test `Highlighter` directly.
+### What's gone
 
-### Step 2 — Delete `for_language()` (dead code)
+- `HighlighterPreference` enum (the `Auto`/`TextMate`/`TreeSitter` dead
+  preference system).
+- `for_language()` constructor.
+- `for_file_with_languages`, `for_file_with_preference`,
+  `for_file_with_languages_and_preference` — collapsed into `for_file`.
+- Duplicated `textmate_for_file` helpers.
+- Double detection of `ts_language`: the catalog entry carries it, so
+  `Language::from_path` runs at most once per resolution.
 
-Remove the `for_language` constructor — zero callers in the codebase.
+### How to add a language now
 
-### Step 3 — Collapse path-based constructors
-
-Replace `for_file`, `for_file_with_languages`, `for_file_with_preference`, and
-`for_file_with_languages_and_preference` with a single:
-
-```rust
-pub fn for_file(
-    path: &Path,
-    registry: &GrammarRegistry,
-    languages: Option<&HashMap<String, LanguageConfig>>,
-) -> Self
-```
-
-Update call sites in `detected_language.rs`.
-
-### Step 4 — Merge duplicated `textmate_for_file` helpers
-
-Combine `textmate_for_file` and `textmate_for_file_with_languages` into one
-private method that takes `Option<&HashMap<...>>` and picks the right registry
-lookup.
-
-### Step 5 — Extract syntax index lookup helper
-
-Replace the 4 repeated occurrences of:
-```rust
-syntax_set.syntaxes().iter().position(|s| s.name == syntax.name)
-```
-with a local `fn syntax_index(...)` helper.
-
-### Step 6 — Eliminate double `ts_language` detection
-
-Pass the already-detected `Option<Language>` into the engine constructor so
-`Language::from_path` is called once, not twice.
+Extend the catalog, not the engine. See `GrammarRegistry::rebuild_catalog` and
+`fresh_languages::Language::extensions` for the shape. Plugin authors use
+`GrammarRegistry::with_additional_grammars`.

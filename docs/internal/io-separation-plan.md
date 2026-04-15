@@ -27,10 +27,17 @@ Currently mixes:
 - **Pure types** (lines 1-760): `ColorDef`, `ThemeFile`, `EditorColors`, `UiColors`, `SearchColors`, `DiagnosticColors`, `SyntaxColors`, `Theme`
 - **I/O operations** (lines 1104-1196): `from_file()`, `load_builtin_theme()`, `from_name()`, `available_themes()`
 
-#### 2. Grammar Registry (`primitives/grammar_registry.rs` - 646 lines)
-Currently mixes:
-- **Pure types**: `GrammarRegistry` struct, syntax lookup methods
-- **I/O operations**: `load()`, `load_user_grammars_into()`, `parse_package_json()`, `load_direct_grammar()`
+#### 2. Grammar Registry — **done**
+The split lives under `primitives/grammar/`:
+- `types.rs` — pure types (`GrammarRegistry`, `GrammarEntry`, lookup API)
+- `loader.rs` — `GrammarLoader` trait + `LocalGrammarLoader` (filesystem I/O)
+- `mod.rs` — re-exports; loader is gated behind `feature = "runtime"` for WASM builds
+
+The lookup API has since been unified around a single catalog
+(`GrammarEntry`) with `find_by_name` / `find_by_path` / `find_by_extension` /
+`apply_language_config` as the canonical methods. See
+`docs/internal/highlight-engine-cleanup.md` for the corresponding
+highlighter-side cleanup.
 
 ## Design
 
