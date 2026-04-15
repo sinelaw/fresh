@@ -77,7 +77,9 @@
     "panel.replace_all_btn": "Nahradit vše (Alt+Ret)",
     "panel.type_pattern": "Zadejte vyhledávací vzor",
     "panel.matches_count": "Shody (%{count} v %{files} souborech)",
-    "panel.matches_title": "Shody"
+    "panel.matches_title": "Shody",
+    "prompt.confirm_replace": "Nahradit %{count} výskyt(ů) v %{files} souboru(ech)? Vrátit zpět lze jen soubory otevřené v této relaci. Enter potvrdí, Esc zruší.",
+    "status.replace_cancelled": "Nahrazení zrušeno"
   },
   "de": {
     "cmd.search_replace": "Suchen und Ersetzen im Projekt",
@@ -116,7 +118,9 @@
     "panel.replace_all_btn": "Alle ersetzen (Alt+Ret)",
     "panel.type_pattern": "Suchmuster oben eingeben",
     "panel.matches_count": "Treffer (%{count} in %{files} Dateien)",
-    "panel.matches_title": "Treffer"
+    "panel.matches_title": "Treffer",
+    "prompt.confirm_replace": "%{count} Treffer in %{files} Datei(en) ersetzen? Rückgängig wirkt nur auf Dateien, die in dieser Sitzung geöffnet sind. Enter bestätigt, Esc bricht ab.",
+    "status.replace_cancelled": "Ersetzen abgebrochen"
   },
   "es": {
     "cmd.search_replace": "Buscar y Reemplazar en Proyecto",
@@ -155,7 +159,9 @@
     "panel.replace_all_btn": "Reemplazar todo (Alt+Ret)",
     "panel.type_pattern": "Escriba un patrón de búsqueda",
     "panel.matches_count": "Coincidencias (%{count} en %{files} archivos)",
-    "panel.matches_title": "Coincidencias"
+    "panel.matches_title": "Coincidencias",
+    "prompt.confirm_replace": "¿Reemplazar %{count} coincidencia(s) en %{files} archivo(s)? Deshacer solo cubre los archivos abiertos en esta sesión. Intro confirma, Esc cancela.",
+    "status.replace_cancelled": "Reemplazo cancelado"
   },
   "fr": {
     "cmd.search_replace": "Rechercher et Remplacer dans le Projet",
@@ -194,7 +200,9 @@
     "panel.replace_all_btn": "Tout remplacer (Alt+Ret)",
     "panel.type_pattern": "Saisissez un motif de recherche",
     "panel.matches_count": "Correspondances (%{count} dans %{files} fichiers)",
-    "panel.matches_title": "Correspondances"
+    "panel.matches_title": "Correspondances",
+    "prompt.confirm_replace": "Remplacer %{count} correspondance(s) dans %{files} fichier(s) ? L'annulation ne concerne que les fichiers ouverts dans cette session. Entrée confirme, Échap annule.",
+    "status.replace_cancelled": "Remplacement annulé"
   },
   "it": {
     "cmd.search_replace": "Cerca e sostituisci nel progetto",
@@ -233,7 +241,9 @@
     "panel.replace_all_btn": "Sostituisci tutto (Alt+Ret)",
     "panel.type_pattern": "Digita un modello di ricerca",
     "panel.matches_count": "Corrispondenze (%{count} in %{files} file)",
-    "panel.matches_title": "Corrispondenze"
+    "panel.matches_title": "Corrispondenze",
+    "prompt.confirm_replace": "Sostituire %{count} corrispondenza/e in %{files} file? L'annulla copre solo i file aperti in questa sessione. Invio conferma, Esc annulla.",
+    "status.replace_cancelled": "Sostituzione annullata"
   },
   "ja": {
     "cmd.search_replace": "プロジェクト内で検索と置換",
@@ -272,7 +282,9 @@
     "panel.replace_all_btn": "すべて置換 (Alt+Ret)",
     "panel.type_pattern": "検索パターンを入力してください",
     "panel.matches_count": "一致 (%{files}ファイル中%{count}件)",
-    "panel.matches_title": "一致"
+    "panel.matches_title": "一致",
+    "prompt.confirm_replace": "%{files} 個のファイルで %{count} 件の一致を置換しますか？元に戻せるのはこのセッションで開いているファイルのみです。Enterで確認、Escでキャンセル。",
+    "status.replace_cancelled": "置換がキャンセルされました"
   },
   "ko": {
     "cmd.search_replace": "프로젝트에서 검색 및 바꾸기",
@@ -311,7 +323,9 @@
     "panel.replace_all_btn": "모두 바꾸기 (Alt+Ret)",
     "panel.type_pattern": "검색 패턴을 입력하세요",
     "panel.matches_count": "일치 (%{files}개 파일에서 %{count}개)",
-    "panel.matches_title": "일치"
+    "panel.matches_title": "일치",
+    "prompt.confirm_replace": "%{files}개 파일에서 %{count}개 일치를 바꾸시겠습니까? 실행 취소는 이 세션에서 열려 있는 파일에만 적용됩니다. Enter 확인, Esc 취소.",
+    "status.replace_cancelled": "바꾸기가 취소됨"
   },
   "pt-BR": {
     "cmd.search_replace": "Pesquisar e Substituir no Projeto",
@@ -350,7 +364,9 @@
     "panel.replace_all_btn": "Substituir tudo (Alt+Ret)",
     "panel.type_pattern": "Digite um padrão de pesquisa",
     "panel.matches_count": "Correspondências (%{count} em %{files} arquivos)",
-    "panel.matches_title": "Correspondências"
+    "panel.matches_title": "Correspondências",
+    "prompt.confirm_replace": "Substituir %{count} ocorrência(s) em %{files} arquivo(s)? Desfazer só cobre arquivos abertos nesta sessão. Enter confirma, Esc cancela.",
+    "status.replace_cancelled": "Substituição cancelada"
   },
   "ru": {
     "cmd.search_replace": "Поиск и замена в проекте",
@@ -389,7 +405,9 @@
     "panel.replace_all_btn": "Заменить все (Alt+Ret)",
     "panel.type_pattern": "Введите шаблон поиска",
     "panel.matches_count": "Совпадения (%{count} в %{files} файлах)",
-    "panel.matches_title": "Совпадения"
+    "panel.matches_title": "Совпадения",
+    "prompt.confirm_replace": "Заменить %{count} совпадений в %{files} файлах? Отмена применяется только к файлам, открытым в этом сеансе. Enter — подтвердить, Esc — отменить.",
+    "status.replace_cancelled": "Замена отменена"
   },
   "th": {
     "cmd.search_replace": "ค้นหาและแทนที่ในโปรเจกต์",
@@ -428,7 +446,9 @@
     "panel.replace_all_btn": "แทนที่ทั้งหมด (Alt+Ret)",
     "panel.type_pattern": "พิมพ์รูปแบบการค้นหา",
     "panel.matches_count": "รายการที่ตรงกัน (%{count} ใน %{files} ไฟล์)",
-    "panel.matches_title": "รายการที่ตรงกัน"
+    "panel.matches_title": "รายการที่ตรงกัน",
+    "prompt.confirm_replace": "แทนที่ %{count} รายการใน %{files} ไฟล์? เลิกทำครอบคลุมเฉพาะไฟล์ที่เปิดอยู่ในเซสชันนี้เท่านั้น กด Enter เพื่อยืนยัน, Esc เพื่อยกเลิก",
+    "status.replace_cancelled": "ยกเลิกการแทนที่"
   },
   "uk": {
     "cmd.search_replace": "Пошук та заміна в проекті",
@@ -467,7 +487,9 @@
     "panel.replace_all_btn": "Замінити все (Alt+Ret)",
     "panel.type_pattern": "Введіть шаблон пошуку",
     "panel.matches_count": "Збіги (%{count} у %{files} файлах)",
-    "panel.matches_title": "Збіги"
+    "panel.matches_title": "Збіги",
+    "prompt.confirm_replace": "Замінити %{count} збіг(ів) у %{files} файл(ах)? Скасування охоплює лише файли, відкриті в цьому сеансі. Enter — підтвердити, Esc — скасувати.",
+    "status.replace_cancelled": "Заміну скасовано"
   },
   "vi": {
     "cmd.search_replace": "Tìm và Thay thế trong Dự án",
@@ -506,7 +528,9 @@
     "panel.replace_all_btn": "Thay thế tất cả (Alt+Ret)",
     "panel.type_pattern": "Nhập mẫu tìm kiếm",
     "panel.matches_count": "Kết quả (%{count} trong %{files} tệp)",
-    "panel.matches_title": "Kết quả"
+    "panel.matches_title": "Kết quả",
+    "prompt.confirm_replace": "Thay thế %{count} kết quả trong %{files} tệp? Hoàn tác chỉ áp dụng cho các tệp đang mở trong phiên này. Enter để xác nhận, Esc để hủy.",
+    "status.replace_cancelled": "Đã hủy thay thế"
   },
   "zh-CN": {
     "cmd.search_replace": "在项目中搜索和替换",
@@ -545,6 +569,8 @@
     "panel.replace_all_btn": "全部替换 (Alt+Ret)",
     "panel.type_pattern": "请输入搜索模式",
     "panel.matches_count": "匹配 (%{files} 个文件中 %{count} 个)",
-    "panel.matches_title": "匹配"
+    "panel.matches_title": "匹配",
+    "prompt.confirm_replace": "在 %{files} 个文件中替换 %{count} 处匹配？撤销仅适用于本次会话中打开的文件。按 Enter 确认，Esc 取消。",
+    "status.replace_cancelled": "替换已取消"
   }
 }
