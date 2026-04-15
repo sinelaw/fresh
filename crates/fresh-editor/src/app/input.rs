@@ -3122,15 +3122,15 @@ impl Editor {
 
         let current_language = self.active_state().language.clone();
 
-        // Build a reverse map from syntect display name -> (config key, source label)
-        // so we can show extra columns in the language selector popup.
-        let mut syntax_to_config: std::collections::HashMap<String, (String, &str)> =
+        // Map each catalog entry's display name to a config key (when the user
+        // declared a custom key for it) so we can show the extra column.
+        let mut config_key_by_display: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         for (lang_id, lang_config) in &self.config.languages {
             if let Some(entry) = self.grammar_registry.find_by_name(&lang_config.grammar) {
-                syntax_to_config
+                config_key_by_display
                     .entry(entry.display_name.clone())
-                    .or_insert((lang_id.clone(), "config"));
+                    .or_insert_with(|| lang_id.clone());
             }
         }
 
@@ -3151,53 +3151,31 @@ impl Editor {
             },
         ];
 
-        // Entries: (display_name, config_key, source, value_for_selection)
-        // display_name = syntect syntax name or config lang_id
-        // config_key = the key from config.json languages section (if any)
-        // source = "config" or "builtin"
         struct LangEntry {
             display_name: String,
             config_key: String,
             source: &'static str,
         }
 
-        let mut entries: Vec<LangEntry> = Vec::new();
-
-        // Add all available syntaxes from the grammar registry
-        for syntax_name in self.grammar_registry.available_syntaxes() {
-            if syntax_name == "Plain Text" {
-                continue;
-            }
-            let (config_key, source) = syntax_to_config
-                .get(syntax_name)
-                .map(|(k, s)| (k.clone(), *s))
-                .unwrap_or_else(|| (syntax_name.to_lowercase(), "builtin"));
-            entries.push(LangEntry {
-                display_name: syntax_name.to_string(),
-                config_key,
-                source,
-            });
-        }
-
-        // Add user-configured languages that don't have a matching syntect grammar
-        let entry_names_lower: std::collections::HashSet<String> = entries
+        // The catalog is the single source of truth: every syntect grammar,
+        // every tree-sitter-only language, and every user-config-declared
+        // entry lives here after `apply_language_config`.
+        let mut entries: Vec<LangEntry> = self
+            .grammar_registry
+            .catalog()
             .iter()
-            .map(|e| e.display_name.to_lowercase())
+            .map(|entry| {
+                let (config_key, source) = match config_key_by_display.get(&entry.display_name) {
+                    Some(key) => (key.clone(), "config"),
+                    None => (entry.language_id.clone(), "builtin"),
+                };
+                LangEntry {
+                    display_name: entry.display_name.clone(),
+                    config_key,
+                    source,
+                }
+            })
             .collect();
-        for (lang_id, lang_config) in &self.config.languages {
-            let has_grammar = !lang_config.grammar.is_empty()
-                && self
-                    .grammar_registry
-                    .find_syntax_by_name(&lang_config.grammar)
-                    .is_some();
-            if !has_grammar && !entry_names_lower.contains(&lang_id.to_lowercase()) {
-                entries.push(LangEntry {
-                    display_name: lang_id.clone(),
-                    config_key: lang_id.clone(),
-                    source: "config",
-                });
-            }
-        }
 
         // Sort alphabetically for easier navigation
         entries.sort_unstable_by(|a, b| {

@@ -448,11 +448,10 @@ impl Editor {
 
         // Create the editor state - either load from file or create empty buffer
         tracing::info!(
-            "[SYNTAX DEBUG] open_file_no_focus: path={:?}, extension={:?}, registry_syntaxes={}, user_extensions={:?}",
+            "[SYNTAX DEBUG] open_file_no_focus: path={:?}, extension={:?}, catalog={}",
             path,
             path.extension(),
-            self.grammar_registry.available_syntaxes().len(),
-            self.grammar_registry.user_extensions_debug()
+            self.grammar_registry.catalog().len(),
         );
         let mut state = if file_exists {
             // Load from canonical path (for I/O and dedup), detect language from

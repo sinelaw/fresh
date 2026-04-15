@@ -1865,7 +1865,7 @@ impl Editor {
             let all_mapped = !g.extensions.is_empty()
                 && g.extensions
                     .iter()
-                    .all(|ext| self.grammar_registry.user_extensions().contains_key(ext));
+                    .all(|ext| self.grammar_registry.find_by_extension(ext).is_some());
             if all_mapped {
                 tracing::debug!(
                     "Skipping already-loaded grammar '{}' (extensions {:?} already mapped)",

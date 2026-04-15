@@ -254,7 +254,7 @@ impl GrammarRegistry {
     ///
     /// This is typically called by `GrammarLoader` implementations after
     /// loading grammars from various sources.
-    pub fn new(
+    pub(crate) fn new(
         syntax_set: SyntaxSet,
         user_extensions: HashMap<String, String>,
         filename_scopes: HashMap<String, String>,
@@ -272,7 +272,7 @@ impl GrammarRegistry {
     ///
     /// Used by the loader when plugin grammars were included in the initial build,
     /// so that `loaded_grammar_paths()` reflects what was actually loaded.
-    pub fn new_with_loaded_paths(
+    pub(crate) fn new_with_loaded_paths(
         syntax_set: SyntaxSet,
         user_extensions: HashMap<String, String>,
         filename_scopes: HashMap<String, String>,
@@ -358,7 +358,7 @@ impl GrammarRegistry {
     ///
     /// These map common file extensions to existing syntect grammar scopes,
     /// filling gaps where syntect's built-in extension lists are incomplete.
-    pub fn build_extra_extensions() -> HashMap<String, String> {
+    pub(crate) fn build_extra_extensions() -> HashMap<String, String> {
         let mut map = HashMap::new();
 
         // JavaScript variants not in syntect defaults (["js", "htc"])
@@ -373,7 +373,7 @@ impl GrammarRegistry {
     }
 
     /// Build the default filename -> scope mappings for dotfiles and special files.
-    pub fn build_filename_scopes() -> HashMap<String, String> {
+    pub(crate) fn build_filename_scopes() -> HashMap<String, String> {
         let mut map = HashMap::new();
 
         // Shell configuration files -> Bash/Shell script scope
@@ -479,7 +479,7 @@ impl GrammarRegistry {
     }
 
     /// Add embedded grammars (TOML, Odin, etc.) to a syntax set builder.
-    pub fn add_embedded_grammars(builder: &mut SyntaxSetBuilder) {
+    pub(crate) fn add_embedded_grammars(builder: &mut SyntaxSetBuilder) {
         // TOML grammar
         match SyntaxDefinition::load_from_str(TOML_GRAMMAR, true, Some("TOML")) {
             Ok(syntax) => {
@@ -649,41 +649,6 @@ impl GrammarRegistry {
         self.syntax_set.find_syntax_for_file(path).ok().flatten()
     }
 
-    /// Deprecated: use `find_by_path` (which honours user config applied via
-    /// `apply_language_config`). Retained as a thin wrapper for call sites
-    /// still passing the `languages` map around.
-    #[deprecated(note = "use find_by_path after apply_language_config")]
-    pub fn find_syntax_for_file_with_languages(
-        &self,
-        path: &Path,
-        _languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
-    ) -> Option<&SyntaxReference> {
-        self.find_syntax_for_file(path)
-    }
-
-    /// Deprecated: use `find_by_name(&lang_config.grammar)` and read the
-    /// engines field directly.
-    #[deprecated(note = "use find_by_name on the grammar field")]
-    pub fn find_syntax_for_lang_config(
-        &self,
-        lang_config: &crate::config::LanguageConfig,
-    ) -> Option<&SyntaxReference> {
-        self.find_syntax_by_name(&lang_config.grammar)
-    }
-
-    /// Find syntax by first line content (shebang, mode line, etc.)
-    ///
-    /// Use this when you have the file content but path-based detection failed.
-    pub fn find_syntax_by_first_line(&self, first_line: &str) -> Option<&SyntaxReference> {
-        self.syntax_set.find_syntax_by_first_line(first_line)
-    }
-
-    /// Find syntax by scope name
-    pub fn find_syntax_by_scope(&self, scope: &str) -> Option<&SyntaxReference> {
-        let scope = syntect::parsing::Scope::new(scope).ok()?;
-        self.syntax_set.find_syntax_by_scope(scope)
-    }
-
     /// Find syntax by name, with alias resolution.
     ///
     /// Thin wrapper around `find_by_name` that returns the associated syntect
@@ -754,7 +719,7 @@ impl GrammarRegistry {
     /// - Each alias target (full name) exists in the syntax set
     /// - No alias collides (case-insensitive) with an existing grammar full name
     /// - No duplicate aliases exist
-    pub fn populate_built_in_aliases(&mut self) {
+    pub(crate) fn populate_built_in_aliases(&mut self) {
         for (short, full) in Self::built_in_aliases() {
             self.register_alias_inner(short, full, true);
         }
@@ -766,7 +731,7 @@ impl GrammarRegistry {
     /// Returns `true` if the alias was registered, `false` if rejected due to
     /// collision or missing target. For built-in aliases, collisions panic
     /// (they indicate a bug). For dynamic aliases, collisions log a warning.
-    pub fn register_alias(&mut self, short_name: &str, full_name: &str) -> bool {
+    pub(crate) fn register_alias(&mut self, short_name: &str, full_name: &str) -> bool {
         let registered = self.register_alias_inner(short_name, full_name, false);
         if registered {
             self.rebuild_catalog();
@@ -852,18 +817,6 @@ impl GrammarRegistry {
 
         self.aliases.insert(short_lower, exact_name);
         true
-    }
-
-    /// Get the aliases map (short_name -> full grammar name)
-    pub fn aliases(&self) -> &HashMap<String, String> {
-        &self.aliases
-    }
-
-    /// Look up the full grammar name for a short alias.
-    pub fn resolve_alias(&self, short_name: &str) -> Option<&str> {
-        self.aliases
-            .get(&short_name.to_lowercase())
-            .map(|s| s.as_str())
     }
 
     // === Unified catalog ===
@@ -1217,19 +1170,14 @@ impl GrammarRegistry {
     }
 
     /// Get the grammar sources map.
-    pub fn grammar_sources(&self) -> &HashMap<String, GrammarInfo> {
+    pub(crate) fn grammar_sources(&self) -> &HashMap<String, GrammarInfo> {
         &self.grammar_sources
-    }
-
-    /// Get a mutable reference to the grammar sources map.
-    pub fn grammar_sources_mut(&mut self) -> &mut HashMap<String, GrammarInfo> {
-        &mut self.grammar_sources
     }
 
     /// Build grammar source info from a pre-compiled syntax set.
     ///
     /// All grammars in the packdump (syntect defaults + embedded) are tagged as built-in.
-    pub fn build_grammar_sources_from_syntax_set(
+    pub(crate) fn build_grammar_sources_from_syntax_set(
         syntax_set: &SyntaxSet,
     ) -> HashMap<String, GrammarInfo> {
         let mut sources = HashMap::new();
@@ -1247,38 +1195,15 @@ impl GrammarRegistry {
         sources
     }
 
-    /// Debug helper: get user extensions as a string for logging
-    pub fn user_extensions_debug(&self) -> String {
-        format!("{:?}", self.user_extensions.keys().collect::<Vec<_>>())
-    }
-
-    /// Check if a syntax is available for an extension
-    pub fn has_syntax_for_extension(&self, ext: &str) -> bool {
-        if self.user_extensions.contains_key(ext) {
-            return true;
-        }
-
-        // Check built-in syntaxes
-        let dummy_path = PathBuf::from(format!("file.{}", ext));
-        self.syntax_set
-            .find_syntax_for_file(&dummy_path)
-            .ok()
-            .flatten()
-            .is_some()
-    }
-
-    /// Get the user extensions mapping (extension -> scope name)
-    pub fn user_extensions(&self) -> &HashMap<String, String> {
+    /// Get the user extensions mapping (extension -> scope name).
+    #[cfg(test)]
+    pub(crate) fn user_extensions(&self) -> &HashMap<String, String> {
         &self.user_extensions
     }
 
-    /// Get the filename scopes mapping (filename -> scope name)
-    pub fn filename_scopes(&self) -> &HashMap<String, String> {
-        &self.filename_scopes
-    }
-
-    /// Get the loaded grammar paths (for deduplication in flush_pending_grammars)
-    pub fn loaded_grammar_paths(&self) -> &[GrammarSpec] {
+    /// Get the loaded grammar paths (for deduplication in flush_pending_grammars).
+    #[cfg(test)]
+    pub(crate) fn loaded_grammar_paths(&self) -> &[GrammarSpec] {
         &self.loaded_grammar_paths
     }
 
@@ -1920,13 +1845,4 @@ mod tests {
         assert_eq!(rs.display_name, "Rust");
     }
 
-    #[test]
-    fn test_resolve_alias() {
-        let registry = GrammarRegistry::default();
-        assert_eq!(
-            registry.resolve_alias("bash"),
-            Some("Bourne Again Shell (bash)")
-        );
-        assert_eq!(registry.resolve_alias("nonexistent"), None);
-    }
 }
