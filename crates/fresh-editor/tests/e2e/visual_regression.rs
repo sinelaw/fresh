@@ -81,16 +81,13 @@ fn long_function() {
         .unwrap();
     harness.render().unwrap();
 
-    // Wait for file explorer to load
-    let _ = harness.wait_until(|h| h.screen_to_string().contains("File explorer ready"));
-    harness.render().unwrap();
-
-    // Expand the src directory in the explorer
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    // Wait for file explorer to load and auto-expand to show the current
+    // file (issue #1569): `src/` is expanded automatically, no manual
+    // navigation required.
+    let _ = harness.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("File explorer ready") && s.contains("main.rs")
+    });
     harness.render().unwrap();
 
     // Focus back on the editor pane (Ctrl+E when in file explorer focuses editor)

@@ -403,38 +403,38 @@
   <rect x="891" y="36" width="9" height="18" fill="#6272a4"/>
   <rect x="0" y="54" width="9" height="18" fill="#000000"/>
   <text x="1" y="68" fill="#8c8c8c" class="terminal" style="">│</text>
-  <rect x="9" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="18" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="27" y="54" width="9" height="18" fill="#141414"/>
+  <rect x="9" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="18" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="27" y="54" width="9" height="18" fill="#000000"/>
   <text x="28" y="68" fill="#ffff00" class="terminal" style="">▼</text>
-  <rect x="36" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="45" y="54" width="9" height="18" fill="#141414"/>
+  <rect x="36" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="45" y="54" width="9" height="18" fill="#000000"/>
   <text x="46" y="68" fill="#00ffff" class="terminal" style="">s</text>
-  <rect x="54" y="54" width="9" height="18" fill="#141414"/>
+  <rect x="54" y="54" width="9" height="18" fill="#000000"/>
   <text x="55" y="68" fill="#00ffff" class="terminal" style="">r</text>
-  <rect x="63" y="54" width="9" height="18" fill="#141414"/>
+  <rect x="63" y="54" width="9" height="18" fill="#000000"/>
   <text x="64" y="68" fill="#00ffff" class="terminal" style="">c</text>
-  <rect x="72" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="81" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="90" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="99" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="108" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="117" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="126" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="135" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="144" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="153" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="162" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="171" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="180" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="189" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="198" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="207" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="216" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="225" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="234" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="243" y="54" width="9" height="18" fill="#141414"/>
-  <rect x="252" y="54" width="9" height="18" fill="#141414"/>
+  <rect x="72" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="81" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="90" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="99" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="108" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="117" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="126" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="135" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="144" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="153" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="162" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="171" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="180" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="189" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="198" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="207" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="216" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="225" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="234" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="243" y="54" width="9" height="18" fill="#000000"/>
+  <rect x="252" y="54" width="9" height="18" fill="#000000"/>
   <rect x="261" y="54" width="9" height="18" fill="#000000"/>
   <text x="262" y="68" fill="#8c8c8c" class="terminal" style="">│</text>
   <rect x="270" y="54" width="9" height="18" fill="#000000"/>
@@ -521,41 +521,41 @@
   <rect x="891" y="54" width="9" height="18" fill="#6272a4"/>
   <rect x="0" y="72" width="9" height="18" fill="#000000"/>
   <text x="1" y="86" fill="#8c8c8c" class="terminal" style="">│</text>
-  <rect x="9" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="18" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="27" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="36" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="45" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="54" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="63" y="72" width="9" height="18" fill="#000000"/>
+  <rect x="9" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="18" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="27" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="36" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="45" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="54" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="63" y="72" width="9" height="18" fill="#141414"/>
   <text x="64" y="86" fill="#ffffff" class="terminal" style="">m</text>
-  <rect x="72" y="72" width="9" height="18" fill="#000000"/>
+  <rect x="72" y="72" width="9" height="18" fill="#141414"/>
   <text x="73" y="86" fill="#ffffff" class="terminal" style="">a</text>
-  <rect x="81" y="72" width="9" height="18" fill="#000000"/>
+  <rect x="81" y="72" width="9" height="18" fill="#141414"/>
   <text x="82" y="86" fill="#ffffff" class="terminal" style="">i</text>
-  <rect x="90" y="72" width="9" height="18" fill="#000000"/>
+  <rect x="90" y="72" width="9" height="18" fill="#141414"/>
   <text x="91" y="86" fill="#ffffff" class="terminal" style="">n</text>
-  <rect x="99" y="72" width="9" height="18" fill="#000000"/>
+  <rect x="99" y="72" width="9" height="18" fill="#141414"/>
   <text x="100" y="86" fill="#ffffff" class="terminal" style="">.</text>
-  <rect x="108" y="72" width="9" height="18" fill="#000000"/>
+  <rect x="108" y="72" width="9" height="18" fill="#141414"/>
   <text x="109" y="86" fill="#ffffff" class="terminal" style="">r</text>
-  <rect x="117" y="72" width="9" height="18" fill="#000000"/>
+  <rect x="117" y="72" width="9" height="18" fill="#141414"/>
   <text x="118" y="86" fill="#ffffff" class="terminal" style="">s</text>
-  <rect x="126" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="135" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="144" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="153" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="162" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="171" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="180" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="189" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="198" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="207" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="216" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="225" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="234" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="243" y="72" width="9" height="18" fill="#000000"/>
-  <rect x="252" y="72" width="9" height="18" fill="#000000"/>
+  <rect x="126" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="135" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="144" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="153" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="162" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="171" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="180" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="189" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="198" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="207" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="216" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="225" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="234" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="243" y="72" width="9" height="18" fill="#141414"/>
+  <rect x="252" y="72" width="9" height="18" fill="#141414"/>
   <rect x="261" y="72" width="9" height="18" fill="#000000"/>
   <text x="262" y="86" fill="#8c8c8c" class="terminal" style="">│</text>
   <rect x="270" y="72" width="9" height="18" fill="#000000"/>

@@ -252,22 +252,28 @@ impl MultiCursorShadow {
     }
 
     /// Move all cursors left.
-    /// The editor always moves from cursor.position, clearing any selection.
+    /// With an active selection, collapse to the left edge of the selection
+    /// (issue #1566). Without, move back one byte.
     fn move_left(&mut self) {
         for cursor in &mut self.cursors {
-            cursor.anchor = None;
-            if cursor.position > 0 {
+            if let Some(anchor) = cursor.anchor {
+                cursor.position = cursor.position.min(anchor);
+                cursor.anchor = None;
+            } else if cursor.position > 0 {
                 cursor.position -= 1;
             }
         }
     }
 
     /// Move all cursors right.
-    /// The editor always moves from cursor.position, clearing any selection.
+    /// With an active selection, collapse to the right edge of the selection
+    /// (issue #1566). Without, move forward one byte.
     fn move_right(&mut self) {
         for cursor in &mut self.cursors {
-            cursor.anchor = None;
-            if cursor.position < self.content.len() {
+            if let Some(anchor) = cursor.anchor {
+                cursor.position = cursor.position.max(anchor);
+                cursor.anchor = None;
+            } else if cursor.position < self.content.len() {
                 cursor.position += 1;
             }
         }
