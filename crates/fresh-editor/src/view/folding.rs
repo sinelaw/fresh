@@ -45,6 +45,9 @@ pub struct CollapsedFoldLineRange {
     pub end_line: usize,
     /// Optional placeholder text
     pub placeholder: Option<String>,
+    /// Header line text at the time this snapshot was taken (used by
+    /// session restore to detect stale line numbers, issue #1568).
+    pub header_text: Option<String>,
 }
 
 /// Manages collapsed fold ranges for a buffer.
@@ -214,6 +217,9 @@ impl FoldManager {
     }
 
     /// Return collapsed fold ranges as line-based data (for persistence/cloning).
+    ///
+    /// Each entry captures the header line's text so session restore can
+    /// detect external edits that shifted line numbers (issue #1568).
     pub fn collapsed_line_ranges(
         &self,
         buffer: &Buffer,
@@ -221,10 +227,19 @@ impl FoldManager {
     ) -> Vec<CollapsedFoldLineRange> {
         self.resolved_ranges(buffer, marker_list)
             .into_iter()
-            .map(|range| CollapsedFoldLineRange {
-                header_line: range.header_line,
-                end_line: range.end_line,
-                placeholder: range.placeholder,
+            .map(|range| {
+                let header_text = buffer.get_line(range.header_line).map(|bytes| {
+                    String::from_utf8_lossy(&bytes)
+                        .trim_end_matches('\n')
+                        .trim_end_matches('\r')
+                        .to_string()
+                });
+                CollapsedFoldLineRange {
+                    header_line: range.header_line,
+                    end_line: range.end_line,
+                    placeholder: range.placeholder,
+                    header_text,
+                }
             })
             .collect()
     }

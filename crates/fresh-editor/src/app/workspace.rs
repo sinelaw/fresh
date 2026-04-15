@@ -43,6 +43,56 @@ use crate::workspace::{
 use super::types::Bookmark;
 use super::Editor;
 
+/// Resolve a saved fold's header_line against the current buffer, using
+/// `header_text` to detect drift from external edits (issue #1568).
+///
+/// - If no `header_text` is available (older session files), trust the saved
+///   line number.
+/// - If the text at the saved line still matches, use that line.
+/// - Otherwise, search a small window above and below the saved line for the
+///   same text (trimmed) — lines may have shifted by a few either way after a
+///   local external edit.
+/// - If still not found, return `None` so the caller drops the fold rather
+///   than re-attaching it to unrelated content.
+fn resolve_fold_header_line(
+    buffer: &crate::model::buffer::Buffer,
+    saved_line: usize,
+    header_text: Option<&str>,
+) -> Option<usize> {
+    let Some(expected) = header_text else {
+        // Backward compatibility: no recorded text, trust the line number.
+        return Some(saved_line);
+    };
+    let expected_trimmed = expected.trim();
+    let line_matches = |line: usize| -> bool {
+        buffer
+            .get_line(line)
+            .map(|bytes| {
+                let text = String::from_utf8_lossy(&bytes);
+                text.trim_end_matches('\n').trim_end_matches('\r').trim() == expected_trimmed
+            })
+            .unwrap_or(false)
+    };
+    if line_matches(saved_line) {
+        return Some(saved_line);
+    }
+    // Search nearby (expanding outward) for the displaced header.
+    const SEARCH_WINDOW: usize = 32;
+    for delta in 1..=SEARCH_WINDOW {
+        let above = saved_line.checked_sub(delta);
+        if let Some(l) = above {
+            if line_matches(l) {
+                return Some(l);
+            }
+        }
+        let below = saved_line.saturating_add(delta);
+        if line_matches(below) {
+            return Some(below);
+        }
+    }
+    None
+}
+
 /// Workspace persistence state tracker
 ///
 /// Tracks dirty state and handles debounced saving for crash resistance.
@@ -1548,8 +1598,30 @@ impl Editor {
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 buf_state.folds.clear(&mut state.marker_list);
                 for fold in &file_state.folds {
-                    let start_line = fold.header_line.saturating_add(1);
-                    let end_line = fold.end_line;
+                    // Resolve the stored line numbers against the current
+                    // buffer content. If a header_text was recorded (issue
+                    // #1568), validate — and if necessary relocate — the
+                    // fold so it lands on the line it was actually meant
+                    // for, even after an external edit shifted line
+                    // numbers.
+                    let Some(resolved_header) = resolve_fold_header_line(
+                        &state.buffer,
+                        fold.header_line,
+                        fold.header_text.as_deref(),
+                    ) else {
+                        tracing::debug!(
+                            "Dropping stale fold: header_line={} no longer matches stored \
+                             header_text after external edit",
+                            fold.header_line,
+                        );
+                        continue;
+                    };
+
+                    // Adjust end_line by the same shift we applied to the header.
+                    let shift = resolved_header as i64 - fold.header_line as i64;
+                    let adjusted_end = (fold.end_line as i64 + shift).max(0) as usize;
+                    let start_line = resolved_header.saturating_add(1);
+                    let end_line = adjusted_end;
                     if start_line > end_line {
                         continue;
                     }
@@ -1847,6 +1919,7 @@ fn serialize_split_view_state(
                         header_line: range.header_line,
                         end_line: range.end_line,
                         placeholder: range.placeholder,
+                        header_text: range.header_text,
                     })
                     .collect::<Vec<_>>()
             })

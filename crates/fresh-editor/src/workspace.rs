@@ -224,6 +224,16 @@ pub struct SerializedFoldRange {
     /// Optional placeholder text for the fold
     #[serde(default)]
     pub placeholder: Option<String>,
+    /// Text of the header line at save time. Used on restore to detect
+    /// whether the file was edited externally between sessions (issue #1568):
+    /// if the text at `header_line` no longer matches, we search nearby
+    /// lines for it and fall back to dropping the fold rather than
+    /// re-attaching it to unrelated content.
+    ///
+    /// `Option` for backward compatibility with older session files that
+    /// didn't record the text.
+    #[serde(default)]
+    pub header_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
