@@ -637,6 +637,80 @@ fn test_search_replace_multiple_matches_same_line() {
     eprintln!("[DEBUG {}] test PASSED", elapsed());
 }
 
+/// Bug 2 (upstream): after a successful replace, the match tree must be
+/// refreshed.  It previously kept displaying the pre-replacement matches
+/// (e.g. still showed "hello" rows after replacing hello→XYZ), hiding what
+/// actually changed and feeding the repeat-replace corruption (bug 4).
+#[test]
+fn test_search_replace_refreshes_match_list_after_replace() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    fs::write(
+        project_root.join("refresh.txt"),
+        "hello world\nhello again\nhello there\n",
+    )
+    .unwrap();
+
+    let start_file = project_root.join("refresh.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    enter_search_and_replace(&mut harness, "hello", "XYZ");
+
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
+        .unwrap();
+
+    // Pre-condition: the match tree shows the pre-replacement context.
+    let before = harness.screen_to_string();
+    assert!(
+        before.contains("hello world"),
+        "Expected pre-replacement match context on screen. Got:\n{}",
+        before
+    );
+
+    // Execute replacement.
+    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Replaced"))
+        .unwrap();
+
+    // After the replacement settles, the match tree must no longer display
+    // stale "hello" rows — the file has no "hello" left, so the list should
+    // either be empty ("No matches") or show fresh post-replace state.
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            // Tree has refreshed: stale match-row context is gone.
+            !s.contains("hello world") && !s.contains("hello again") && !s.contains("hello there")
+        })
+        .unwrap();
+
+    let after = harness.screen_to_string();
+    assert!(
+        !after.contains("hello world"),
+        "Match list must not display stale 'hello world' row after replacement.\n{}",
+        after
+    );
+    assert!(
+        !after.contains("hello again"),
+        "Match list must not display stale 'hello again' row after replacement.\n{}",
+        after
+    );
+}
+
 /// Bug 4 (upstream): pressing Alt+Enter a second time should not re-apply
 /// the replacement using stale byte offsets from the pre-replacement search,
 /// which would corrupt the file (e.g. "XYZ world" → "hhXYZrld").
