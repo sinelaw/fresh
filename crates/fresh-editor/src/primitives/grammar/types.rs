@@ -1845,4 +1845,99 @@ mod tests {
         let rs = registry.find_by_extension("rs").expect("rs should resolve");
         assert_eq!(rs.display_name, "Rust");
     }
+
+    /// Build a minimal LanguageConfig for tests.
+    fn lang_cfg(
+        grammar: &str,
+        extensions: &[&str],
+        filenames: &[&str],
+    ) -> crate::config::LanguageConfig {
+        crate::config::LanguageConfig {
+            extensions: extensions.iter().map(|s| s.to_string()).collect(),
+            filenames: filenames.iter().map(|s| s.to_string()).collect(),
+            grammar: grammar.to_string(),
+            comment_prefix: None,
+            auto_indent: true,
+            auto_close: None,
+            auto_surround: None,
+            textmate_grammar: None,
+            show_whitespace_tabs: true,
+            line_wrap: None,
+            wrap_column: None,
+            page_view: None,
+            page_width: None,
+            use_tabs: None,
+            tab_size: None,
+            formatter: None,
+            format_on_save: false,
+            on_save: vec![],
+            word_characters: None,
+        }
+    }
+
+    /// Bug #1: a user-declared config key that aliases an existing grammar
+    /// (e.g. `[languages.mylang] grammar = "Rust"`) must resolve via
+    /// `find_by_name("mylang")` so the language palette can select it.
+    #[test]
+    fn test_user_alias_resolves_via_find_by_name() {
+        let mut registry = GrammarRegistry::default();
+        let mut languages = std::collections::HashMap::new();
+        languages.insert("mylang".to_string(), lang_cfg("Rust", &[], &[]));
+        registry.apply_language_config(&languages);
+
+        let entry = registry
+            .find_by_name("mylang")
+            .expect("user-declared alias 'mylang' must resolve");
+        assert_eq!(entry.display_name, "Rust");
+    }
+
+    /// Bug #2: `register_alias` used to rebuild the catalog from scratch,
+    /// wiping out everything `apply_language_config` had merged. Registering
+    /// an alias afterwards must not lose user config.
+    #[test]
+    fn test_register_alias_preserves_applied_language_config() {
+        let mut registry = GrammarRegistry::default();
+        let mut languages = std::collections::HashMap::new();
+        languages.insert(
+            "shell-configs".to_string(),
+            lang_cfg("bash", &["myconf"], &["*.myconf"]),
+        );
+        registry.apply_language_config(&languages);
+
+        // Sanity: config applied.
+        assert!(registry.find_by_extension("myconf").is_some());
+        assert!(
+            registry.find_by_path(Path::new("foo.myconf")).is_some(),
+            "glob should match before register_alias"
+        );
+
+        // Registering an alias must not erase the config we just applied.
+        registry.register_alias("mycustom", "Rust");
+
+        assert!(
+            registry.find_by_extension("myconf").is_some(),
+            "config extension must survive register_alias"
+        );
+        assert!(
+            registry.find_by_path(Path::new("foo.myconf")).is_some(),
+            "glob must survive register_alias"
+        );
+    }
+
+    /// Bug #4: `from_syntax_name` used to unconditionally overwrite the
+    /// catalog's canonical display name with whatever the user typed (e.g.
+    /// "BASH") — that string ended up in the status bar.
+    #[test]
+    fn test_from_syntax_name_preserves_canonical_display_name() {
+        use crate::primitives::detected_language::DetectedLanguage;
+        let registry = GrammarRegistry::default();
+        let languages = std::collections::HashMap::new();
+
+        let detected = DetectedLanguage::from_syntax_name("BASH", &registry, &languages)
+            .expect("BASH should resolve via alias");
+        assert_eq!(
+            detected.display_name, "Bourne Again Shell (bash)",
+            "display_name must be canonical, not user-typed"
+        );
+    }
 }
