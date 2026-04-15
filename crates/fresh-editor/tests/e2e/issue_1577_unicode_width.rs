@@ -229,3 +229,97 @@ fn test_issue_1577_rendered_cluster_matches_internal_width() {
         "row must include the family emoji between A and Z, got {between:?}"
     );
 }
+
+/// End-to-end regression for the rendering corruption the user reported on
+/// the GitHub issue: with the exact mixed-width sample string in a 137-col
+/// window, the line gets mangled — duplicated fragments, overlapping
+/// content, missing whole substrings.
+///
+/// Root cause: `view_pipeline` assigns each grapheme cluster a single
+/// `UnicodeWidthStr::width` column (so a ZWJ family emoji is 2 columns, a
+/// base+combining sequence is 1 column, …) and ratatui uses the same
+/// width when placing spans on screen. But `render_line` was tracking
+/// `col_offset` by summing per-codepoint `char_width` — which gives 8 for
+/// the ZWJ family cluster, 2 for base+combining, etc. That diverging
+/// column count feeds into horizontal-scroll skipping, cursor
+/// positioning, and padding math, producing the garbled frame.
+///
+/// This test exercises the whole rendering pipeline at 137 columns with
+/// the exact ticket sample and asserts that:
+///   * each of the sample's distinctive words appears exactly once on
+///     screen (no duplicated fragments), and
+///   * no spurious repeated-word artifact like "combiningbwordg" leaks
+///     through.
+#[test]
+fn test_issue_1577_full_ticket_sample_renders_consistently_at_137_cols() {
+    const TICKET_WIDTH: u16 = 137;
+    const TICKET_HEIGHT: u16 = 30;
+
+    let mut harness = EditorTestHarness::new(TICKET_WIDTH, TICKET_HEIGHT).unwrap();
+    let sample = "A standard \"i\", a ＦＵＬＬＷＩＤＴＨ \"Ｗ\", a massive Arabic \
+                  ligature \"\u{FDFD}\", a ZWJ emoji sequence \
+                  \"\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}\", \
+                  a Zalgo combining word \"t\u{337}e\u{337}x\u{337}t\u{337}\", \
+                  and an ancient cuneiform \"\u{12019}\".\n";
+    let _fixture = harness.load_buffer_from_text(sample).unwrap();
+    harness.render().unwrap();
+
+    // Drive the cursor from end-of-line back to the start. This is the
+    // reproducer path the user described: moving the cursor through the
+    // line causes weird rendering changes — duplicated fragments,
+    // overlapping words, text reappearing on neighbouring rows. Each
+    // Left press must:
+    //   * decrement the byte position (never stay put, never jump
+    //     backwards past the start of a cluster)
+    //   * leave every distinctive fragment of the line appearing
+    //     exactly once on screen (the sample's characteristic words
+    //     must not multiply or disappear as the cursor walks past them)
+    const STABLE_FRAGMENTS: &[&str] = &[
+        "A standard",
+        "Arabic ligature",
+        "ZWJ emoji sequence",
+        "Zalgo combining word",
+        "ancient cuneiform",
+    ];
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    let mut prev_byte = harness.cursor_position();
+    let mut steps = 0usize;
+    while prev_byte > 0 {
+        harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+        let now = harness.cursor_position();
+        assert!(
+            now < prev_byte,
+            "Left at byte {prev_byte} did not advance (ended up at byte {now}) — \
+             cursor got stuck traversing a multi-byte cluster",
+        );
+        prev_byte = now;
+        steps += 1;
+        assert!(
+            steps < 500,
+            "Left took more than 500 presses to reach BOL — something is very wrong",
+        );
+
+        let screen = harness.screen_to_string();
+        for needle in STABLE_FRAGMENTS {
+            let count = screen.matches(needle).count();
+            assert_eq!(
+                count, 1,
+                "after {steps} Left press(es), {needle:?} appears {count} times \
+                 (should always be exactly 1 — duplicates / disappearances are the \
+                 rendering corruption from the bug report)\nScreen:\n{screen}",
+            );
+        }
+    }
+
+    // And the obvious corruption fingerprints from the bug report —
+    // "word" mid-word-smashed like "combiningbwordg", "wordg wor", etc.
+    // — must never appear, at any cursor position.
+    let final_screen = harness.screen_to_string();
+    for bad in ["combiningbword", "combiningword", "wordg wor"] {
+        assert!(
+            !final_screen.contains(bad),
+            "rendering corruption fingerprint {bad:?} appeared on screen\nScreen:\n{final_screen}",
+        );
+    }
+}

@@ -202,6 +202,8 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         let line_has_newline = current_view_line.ends_with_newline;
         let line_char_source_bytes = &current_view_line.char_source_bytes;
         let line_char_styles = &current_view_line.char_styles;
+        let line_char_visual_cols = &current_view_line.char_visual_cols;
+        let line_total_visual_width = current_view_line.visual_width();
         let line_visual_to_char = &current_view_line.visual_to_char;
         let line_tab_starts = &current_view_line.tab_starts;
         let _line_start_type = current_view_line.line_start;
@@ -729,10 +731,20 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
             byte_index += ch.len_utf8();
             display_char_idx += 1; // Increment character index for next lookup
-                                   // col_offset tracks visual column position (for indexing into visual_to_char)
-                                   // visual_to_char has one entry per visual column, not per character
-            let ch_width = char_width(ch);
-            col_offset += ch_width;
+                                   // col_offset tracks visual column position (for indexing into visual_to_char).
+                                   // We read the per-char visual column that view_pipeline assigned so that
+                                   // grapheme clusters (ZWJ emoji, base+combining, etc.) advance by
+                                   // `UnicodeWidthStr::width(cluster)` — the same width ratatui uses when
+                                   // re-segmenting spans — instead of summing per-codepoint `char_width`.
+                                   // Without this, the renderer's col_offset diverges from the view
+                                   // pipeline's for any cluster whose str_width ≠ Σ char_width, producing
+                                   // variable-width rendering corruption (issue #1577).
+            let next_col_for_char = line_char_visual_cols
+                .get(display_char_idx)
+                .copied()
+                .unwrap_or(line_total_visual_width);
+            let ch_width = next_col_for_char.saturating_sub(col_offset);
+            col_offset = next_col_for_char;
             visible_char_count += ch_width;
         }
 

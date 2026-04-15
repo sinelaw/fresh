@@ -290,7 +290,9 @@ impl Editor {
                 }
             }
         }
-        let _ = watchdog.join();
+        if let Err(e) = watchdog.join() {
+            tracing::warn!("formatter watchdog thread panicked: {e:?}");
+        }
 
         if timed_out.load(std::sync::atomic::Ordering::SeqCst) {
             return ActionResult::Error(format!(

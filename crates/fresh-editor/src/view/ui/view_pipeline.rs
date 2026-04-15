@@ -263,7 +263,12 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                 char_styles.push($style);
                 char_visual_cols.push(col);
 
-                // Per-visual-column data (for O(1) mouse clicks)
+                // Per-visual-column data (for O(1) mouse clicks).
+                // Note: $width is 0 for zero-width codepoints (combining
+                // marks, ZWJ, continuation codepoints within a grapheme
+                // cluster) — we deliberately emit no visual_to_char
+                // entries for them.
+                #[allow(clippy::reversed_empty_ranges)]
                 for _ in 0..$width {
                     visual_to_char.push(char_idx);
                 }
@@ -346,6 +351,36 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                         let mut segmented_bytes = 0usize;
                         for (g_byte_offset, grapheme) in valid.grapheme_indices(true) {
                             segmented_bytes = g_byte_offset + grapheme.len();
+
+                            // In binary mode, any ASCII unprintable byte inside the
+                            // decoded slice must still be rendered as `<XX>`. This
+                            // covers graphemes consisting entirely of one unprintable
+                            // byte (e.g. `\x1A`) and CRLF (`\r\n`) where only the
+                            // `\r` half is unprintable — we split those out.
+                            if self.binary_mode {
+                                let bytes = grapheme.as_bytes();
+                                let has_unprintable =
+                                    bytes.iter().any(|&b| b < 0x80 && is_unprintable_byte(b));
+                                if has_unprintable {
+                                    let mut inner = 0usize;
+                                    for ch in grapheme.chars() {
+                                        let ch_len = ch.len_utf8();
+                                        let src =
+                                            base.map(|s| s + byte_idx + g_byte_offset + inner);
+                                        let ch_byte = ch as u32;
+                                        if ch_byte < 0x80 && is_unprintable_byte(ch_byte as u8) {
+                                            let formatted = format_unprintable_byte(ch_byte as u8);
+                                            for display_ch in formatted.chars() {
+                                                add_char!(display_ch, src, token_style.clone(), 1);
+                                            }
+                                        } else {
+                                            add_char!(ch, src, token_style.clone(), 1);
+                                        }
+                                        inner += ch_len;
+                                    }
+                                    continue;
+                                }
+                            }
 
                             // Tab: a single codepoint forming its own grapheme, expanded to spaces.
                             if grapheme == "\t" {
