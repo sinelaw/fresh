@@ -1116,6 +1116,25 @@ impl Viewport {
         )
         .entered();
 
+        // When `top_view_line_offset > 0` the true top of the viewport is
+        // some number of view lines into the wrapped line that starts at
+        // `top_byte`. This routine has only a byte-oriented view of the
+        // buffer, so its visibility math measures from `top_byte`, which
+        // sits above the actual visible top. For a cursor that is below
+        // `top_byte`, that undercounts the effective viewport and can
+        // declare a cursor that is visually at the bottom of the screen
+        // "outside the viewport", triggering a spurious scroll. Let the
+        // view-line-aware `ensure_visible_in_layout` make the scroll
+        // decision in that case — otherwise the viewport drifts one row
+        // per arrow key press in heavily wrapped buffers (issue #1574).
+        //
+        // If the cursor is *above* `top_byte`, the byte-oriented math is
+        // still correct (scroll up to bring the earlier line into view),
+        // so we only skip when the cursor is below the current top.
+        if self.top_view_line_offset > 0 && cursor.position >= self.top_byte {
+            return;
+        }
+
         // Check if we should skip sync due to session restore
         // This prevents the restored scroll position from being overwritten
         if self.should_skip_resize_sync() {
