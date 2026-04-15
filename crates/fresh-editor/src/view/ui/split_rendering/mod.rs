@@ -1,5 +1,24 @@
 //! Split pane layout and buffer rendering
 
+mod char_style;
+mod post_pass;
+mod spans;
+mod style;
+
+use char_style::{compute_char_style, CharStyleContext, CharStyleOutput};
+use post_pass::{
+    apply_background_to_lines, apply_hyperlink_overlays, apply_osc8_to_cells, render_column_guides,
+    render_ruler_bg,
+};
+use spans::{
+    compress_chars, compute_inline_diff, push_debug_tag, push_span_with_map, span_color_at,
+    span_info_at, DebugSpanTracker, SpanAccumulator,
+};
+use style::{
+    append_fold_placeholder, create_virtual_line, dim_color_for_tilde, fold_placeholder_style,
+    inline_diagnostic_style,
+};
+
 use std::collections::BTreeMap;
 
 use crate::app::types::ViewLineMapping;
@@ -13,7 +32,6 @@ use crate::primitives::display_width::char_width;
 use crate::state::{EditorState, ViewMode};
 use crate::view::folding::FoldManager;
 use crate::view::split::SplitManager;
-use crate::view::theme::color_to_rgb;
 use crate::view::ui::tabs::TabsRenderer;
 use crate::view::ui::view_pipeline::{
     should_show_line_number, LineStart, ViewLine, ViewLineIterator,
@@ -34,278 +52,6 @@ use std::ops::Range;
 /// each bounded to this width. 10,000 columns is far wider than any monitor while keeping
 /// memory usage reasonable (~80KB per ViewLine instead of hundreds of MB).
 const MAX_SAFE_LINE_WIDTH: usize = 10_000;
-
-/// Compute character-level diff between two strings, returning ranges of changed characters.
-/// Returns a tuple of (old_changed_ranges, new_changed_ranges) where each range indicates
-/// character indices that differ between the strings.
-fn compute_inline_diff(old_text: &str, new_text: &str) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
-    let old_chars: Vec<char> = old_text.chars().collect();
-    let new_chars: Vec<char> = new_text.chars().collect();
-
-    let mut old_ranges = Vec::new();
-    let mut new_ranges = Vec::new();
-
-    // Find common prefix
-    let prefix_len = old_chars
-        .iter()
-        .zip(new_chars.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
-
-    // Find common suffix (from the non-prefix part)
-    let old_remaining = old_chars.len() - prefix_len;
-    let new_remaining = new_chars.len() - prefix_len;
-    let suffix_len = old_chars
-        .iter()
-        .rev()
-        .zip(new_chars.iter().rev())
-        .take(old_remaining.min(new_remaining))
-        .take_while(|(a, b)| a == b)
-        .count();
-
-    // The changed range is between prefix and suffix
-    let old_start = prefix_len;
-    let old_end = old_chars.len().saturating_sub(suffix_len);
-    let new_start = prefix_len;
-    let new_end = new_chars.len().saturating_sub(suffix_len);
-
-    if old_start < old_end {
-        old_ranges.push(old_start..old_end);
-    }
-    if new_start < new_end {
-        new_ranges.push(new_start..new_end);
-    }
-
-    (old_ranges, new_ranges)
-}
-
-fn push_span_with_map(
-    spans: &mut Vec<Span<'static>>,
-    map: &mut Vec<Option<usize>>,
-    text: String,
-    style: Style,
-    source: Option<usize>,
-) {
-    if text.is_empty() {
-        return;
-    }
-    // Push one map entry per visual column (not per character)
-    // Double-width characters (CJK, emoji) need 2 entries
-    // Zero-width characters (like \u{200b}) get 0 entries - they don't occupy screen space
-    for ch in text.chars() {
-        let width = char_width(ch);
-        for _ in 0..width {
-            map.push(source);
-        }
-    }
-    spans.push(Span::styled(text, style));
-}
-
-/// Debug tag style - dim/muted color to distinguish from actual content
-fn debug_tag_style() -> Style {
-    Style::default()
-        .fg(Color::DarkGray)
-        .add_modifier(Modifier::DIM)
-}
-
-fn fold_placeholder_style(theme: &crate::view::theme::Theme) -> ViewTokenStyle {
-    let fg = color_to_rgb(theme.line_number_fg).or_else(|| color_to_rgb(theme.editor_fg));
-    ViewTokenStyle {
-        fg,
-        bg: None,
-        bold: false,
-        italic: true,
-    }
-}
-
-/// Compute a dimmed version of a color for EOF tilde lines.
-/// This replaces using Modifier::DIM which can bleed through to overlays.
-fn dim_color_for_tilde(color: Color) -> Color {
-    match color {
-        Color::Rgb(r, g, b) => {
-            // Reduce brightness by ~50% (similar to DIM modifier effect)
-            Color::Rgb(r / 2, g / 2, b / 2)
-        }
-        Color::Indexed(idx) => {
-            // For indexed colors, map to a reasonable dim equivalent
-            // Standard colors 0-7: use corresponding bright versions dimmed
-            // Bright colors 8-15: dim them down
-            // Grayscale and cube colors: just use a dark gray
-            if idx < 16 {
-                Color::Rgb(50, 50, 50) // Dark gray for basic colors
-            } else {
-                Color::Rgb(40, 40, 40) // Slightly darker for extended colors
-            }
-        }
-        // Map named colors to dimmed RGB equivalents
-        Color::Black => Color::Rgb(15, 15, 15),
-        Color::White => Color::Rgb(128, 128, 128),
-        Color::Red => Color::Rgb(100, 30, 30),
-        Color::Green => Color::Rgb(30, 100, 30),
-        Color::Yellow => Color::Rgb(100, 100, 30),
-        Color::Blue => Color::Rgb(30, 30, 100),
-        Color::Magenta => Color::Rgb(100, 30, 100),
-        Color::Cyan => Color::Rgb(30, 100, 100),
-        Color::Gray => Color::Rgb(64, 64, 64),
-        Color::DarkGray => Color::Rgb(40, 40, 40),
-        Color::LightRed => Color::Rgb(128, 50, 50),
-        Color::LightGreen => Color::Rgb(50, 128, 50),
-        Color::LightYellow => Color::Rgb(128, 128, 50),
-        Color::LightBlue => Color::Rgb(50, 50, 128),
-        Color::LightMagenta => Color::Rgb(128, 50, 128),
-        Color::LightCyan => Color::Rgb(50, 128, 128),
-        Color::Reset => Color::Rgb(50, 50, 50),
-    }
-}
-
-/// Accumulator for building spans - collects characters with the same style
-/// into a single span, flushing when style changes. This is important for
-/// proper rendering of combining characters (like Thai diacritics) which
-/// must be in the same string as their base character.
-struct SpanAccumulator {
-    text: String,
-    style: Style,
-    first_source: Option<usize>,
-}
-
-impl SpanAccumulator {
-    fn new() -> Self {
-        Self {
-            text: String::new(),
-            style: Style::default(),
-            first_source: None,
-        }
-    }
-
-    /// Add a character to the accumulator. If the style matches, append to current span.
-    /// If style differs, flush the current span first and start a new one.
-    fn push(
-        &mut self,
-        ch: char,
-        style: Style,
-        source: Option<usize>,
-        spans: &mut Vec<Span<'static>>,
-        map: &mut Vec<Option<usize>>,
-    ) {
-        // If we have accumulated text and the style changed, flush first
-        if !self.text.is_empty() && style != self.style {
-            self.flush(spans, map);
-        }
-
-        // Start new accumulation if empty
-        if self.text.is_empty() {
-            self.style = style;
-            self.first_source = source;
-        }
-
-        self.text.push(ch);
-
-        // Update map for this character's visual width
-        let width = char_width(ch);
-        for _ in 0..width {
-            map.push(source);
-        }
-    }
-
-    /// Flush accumulated text as a span
-    fn flush(&mut self, spans: &mut Vec<Span<'static>>, _map: &mut Vec<Option<usize>>) {
-        if !self.text.is_empty() {
-            spans.push(Span::styled(std::mem::take(&mut self.text), self.style));
-            self.first_source = None;
-        }
-    }
-}
-
-/// Push a debug tag span (no map entries since these aren't real content)
-fn push_debug_tag(spans: &mut Vec<Span<'static>>, map: &mut Vec<Option<usize>>, text: String) {
-    if text.is_empty() {
-        return;
-    }
-    // Debug tags don't map to source positions - they're visual-only
-    for ch in text.chars() {
-        let width = char_width(ch);
-        for _ in 0..width {
-            map.push(None);
-        }
-    }
-    spans.push(Span::styled(text, debug_tag_style()));
-}
-
-/// Context for tracking active spans in debug mode
-#[derive(Default)]
-struct DebugSpanTracker {
-    /// Currently active highlight span (byte range)
-    active_highlight: Option<Range<usize>>,
-    /// Currently active overlay spans (byte ranges)
-    active_overlays: Vec<Range<usize>>,
-}
-
-impl DebugSpanTracker {
-    /// Get opening tags for spans that start at this byte position
-    fn get_opening_tags(
-        &mut self,
-        byte_pos: Option<usize>,
-        highlight_spans: &[crate::primitives::highlighter::HighlightSpan],
-        viewport_overlays: &[(crate::view::overlay::Overlay, Range<usize>)],
-    ) -> Vec<String> {
-        let mut tags = Vec::new();
-
-        if let Some(bp) = byte_pos {
-            // Check if we're entering a new highlight span
-            if let Some(span) = highlight_spans.iter().find(|s| s.range.start == bp) {
-                tags.push(format!("<hl:{}-{}>", span.range.start, span.range.end));
-                self.active_highlight = Some(span.range.clone());
-            }
-
-            // Check if we're entering new overlay spans
-            for (overlay, range) in viewport_overlays.iter() {
-                if range.start == bp {
-                    let overlay_type = match &overlay.face {
-                        crate::view::overlay::OverlayFace::Underline { .. } => "ul",
-                        crate::view::overlay::OverlayFace::Background { .. } => "bg",
-                        crate::view::overlay::OverlayFace::Foreground { .. } => "fg",
-                        crate::view::overlay::OverlayFace::Style { .. } => "st",
-                        crate::view::overlay::OverlayFace::ThemedStyle { .. } => "ts",
-                    };
-                    tags.push(format!("<{}:{}-{}>", overlay_type, range.start, range.end));
-                    self.active_overlays.push(range.clone());
-                }
-            }
-        }
-
-        tags
-    }
-
-    /// Get closing tags for spans that end at this byte position
-    fn get_closing_tags(&mut self, byte_pos: Option<usize>) -> Vec<String> {
-        let mut tags = Vec::new();
-
-        if let Some(bp) = byte_pos {
-            // Check if we're exiting the active highlight span
-            if let Some(ref range) = self.active_highlight {
-                if bp >= range.end {
-                    tags.push("</hl>".to_string());
-                    self.active_highlight = None;
-                }
-            }
-
-            // Check if we're exiting any overlay spans
-            let mut closed_indices = Vec::new();
-            for (i, range) in self.active_overlays.iter().enumerate() {
-                if bp >= range.end {
-                    tags.push("</ov>".to_string());
-                    closed_indices.push(i);
-                }
-            }
-            // Remove closed overlays (in reverse order to preserve indices)
-            for i in closed_indices.into_iter().rev() {
-                self.active_overlays.remove(i);
-            }
-        }
-
-        tags
-    }
-}
 
 /// Processed view data containing display lines from the view pipeline
 struct ViewData {
@@ -438,46 +184,6 @@ struct LineRenderInput<'a> {
     screen_width: u16,
 }
 
-/// Context for computing the style of a single character
-struct CharStyleContext<'a> {
-    byte_pos: Option<usize>,
-    token_style: Option<&'a fresh_core::api::ViewTokenStyle>,
-    ansi_style: Style,
-    is_cursor: bool,
-    is_selected: bool,
-    theme: &'a crate::view::theme::Theme,
-    /// Pre-resolved syntax highlight color for this byte position (from cursor-based lookup)
-    highlight_color: Option<Color>,
-    /// Theme key for the syntax highlight category (e.g. "syntax.keyword")
-    highlight_theme_key: Option<&'static str>,
-    /// Pre-resolved semantic token color for this byte position (from cursor-based lookup)
-    semantic_token_color: Option<Color>,
-    viewport_overlays: &'a [(crate::view::overlay::Overlay, Range<usize>)],
-    primary_cursor_position: usize,
-    is_active: bool,
-    /// Skip REVERSED style on the primary cursor cell.
-    /// True when a hardware cursor is available (not software_cursor_only),
-    /// or in session mode. Avoids double-inversion in terminal multiplexers
-    /// like zellij where the hardware block cursor inverts the cell too.
-    skip_primary_cursor_reverse: bool,
-    /// Whether this character is on the cursor line and current line highlighting is enabled
-    is_cursor_line_highlighted: bool,
-    /// Background color for the current line
-    current_line_bg: Color,
-}
-
-/// Output from compute_char_style
-struct CharStyleOutput {
-    style: Style,
-    is_secondary_cursor: bool,
-    /// Theme key for the foreground color used on this cell
-    fg_theme_key: Option<&'static str>,
-    /// Theme key for the background color used on this cell
-    bg_theme_key: Option<&'static str>,
-    /// Region label for this cell
-    region: &'static str,
-}
-
 /// Context for rendering the left margin (line numbers, indicators, separator)
 struct LeftMarginContext<'a> {
     state: &'a EditorState,
@@ -507,17 +213,6 @@ struct LeftMarginContext<'a> {
     highlight_current_line: bool,
     /// Whether this split is the active (focused) one
     is_active: bool,
-}
-
-/// Compute the inline diagnostic style from overlay priority (severity).
-/// Priority values: 100=error, 50=warning, 30=info, 10=hint.
-fn inline_diagnostic_style(priority: i32, theme: &crate::view::theme::Theme) -> Style {
-    match priority {
-        100 => Style::default().fg(theme.diagnostic_error_fg),
-        50 => Style::default().fg(theme.diagnostic_warning_fg),
-        30 => Style::default().fg(theme.diagnostic_info_fg),
-        _ => Style::default().fg(theme.diagnostic_hint_fg),
-    }
 }
 
 /// Render the left margin (indicators + line numbers + separator) to line_spans
@@ -673,248 +368,7 @@ fn render_left_margin(
     }
 }
 
-/// Advance a cursor through sorted, non-overlapping spans to find the color at `byte_pos`.
-/// Returns the color if `byte_pos` falls inside a span, and advances `cursor` past any
-/// spans that end before `byte_pos` so subsequent calls are O(1) amortized.
-#[inline]
-fn span_color_at(
-    spans: &[crate::primitives::highlighter::HighlightSpan],
-    cursor: &mut usize,
-    byte_pos: usize,
-) -> Option<Color> {
-    while *cursor < spans.len() {
-        let span = &spans[*cursor];
-        if span.range.end <= byte_pos {
-            *cursor += 1;
-        } else if span.range.start > byte_pos {
-            return None;
-        } else {
-            return Some(span.color);
-        }
-    }
-    None
-}
 
-/// Like `span_color_at` but also returns the theme key for the highlight category.
-fn span_info_at(
-    spans: &[crate::primitives::highlighter::HighlightSpan],
-    cursor: &mut usize,
-    byte_pos: usize,
-) -> (Option<Color>, Option<&'static str>, Option<&'static str>) {
-    while *cursor < spans.len() {
-        let span = &spans[*cursor];
-        if span.range.end <= byte_pos {
-            *cursor += 1;
-        } else if span.range.start > byte_pos {
-            return (None, None, None);
-        } else {
-            let theme_key = span.category.as_ref().map(|c| c.theme_key());
-            let display_name = span.category.as_ref().map(|c| c.display_name());
-            return (Some(span.color), theme_key, display_name);
-        }
-    }
-    (None, None, None)
-}
-
-/// Compute the style for a character by layering: token -> ANSI -> syntax -> semantic -> overlays -> selection -> cursor
-/// Also tracks which theme keys produced the final fg/bg colors.
-fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
-    use crate::view::overlay::OverlayFace;
-
-    let highlight_color = ctx.highlight_color;
-
-    // Track theme key provenance alongside style
-    let mut fg_theme_key: Option<&'static str> = None;
-    let mut bg_theme_key: Option<&'static str> = Some("editor.bg");
-    let mut region: &'static str = "Editor Content";
-
-    // Find overlays for this byte position
-    let overlays: Vec<&crate::view::overlay::Overlay> = if let Some(bp) = ctx.byte_pos {
-        ctx.viewport_overlays
-            .iter()
-            .filter(|(_, range)| range.contains(&bp))
-            .map(|(overlay, _)| overlay)
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    // Start with token style if present (for injected content like annotation headers)
-    // Otherwise use ANSI/syntax/theme default
-    let mut style = if let Some(ts) = ctx.token_style {
-        let mut s = Style::default();
-        if let Some((r, g, b)) = ts.fg {
-            s = s.fg(ratatui::style::Color::Rgb(r, g, b));
-        } else {
-            s = s.fg(ctx.theme.editor_fg);
-            fg_theme_key = Some("editor.fg");
-        }
-        if let Some((r, g, b)) = ts.bg {
-            s = s.bg(ratatui::style::Color::Rgb(r, g, b));
-        }
-        if ts.bold {
-            s = s.add_modifier(Modifier::BOLD);
-        }
-        if ts.italic {
-            s = s.add_modifier(Modifier::ITALIC);
-        }
-        region = "Plugin Token";
-        s
-    } else if ctx.ansi_style.fg.is_some()
-        || ctx.ansi_style.bg.is_some()
-        || !ctx.ansi_style.add_modifier.is_empty()
-    {
-        // Apply ANSI styling from escape codes
-        let mut s = Style::default();
-        if let Some(fg) = ctx.ansi_style.fg {
-            s = s.fg(fg);
-        } else {
-            s = s.fg(ctx.theme.editor_fg);
-            fg_theme_key = Some("editor.fg");
-        }
-        if let Some(bg) = ctx.ansi_style.bg {
-            s = s.bg(bg);
-            bg_theme_key = None; // ANSI bg, not from theme
-        }
-        s = s.add_modifier(ctx.ansi_style.add_modifier);
-        region = "ANSI Escape";
-        s
-    } else if let Some(color) = highlight_color {
-        // Apply syntax highlighting
-        fg_theme_key = ctx.highlight_theme_key;
-        Style::default().fg(color)
-    } else {
-        // Default color from theme
-        fg_theme_key = Some("editor.fg");
-        Style::default().fg(ctx.theme.editor_fg)
-    };
-
-    // If we have ANSI style but also syntax highlighting, syntax takes precedence for color
-    // (unless ANSI has explicit color which we already applied above)
-    if let Some(color) = highlight_color {
-        if ctx.ansi_style.fg.is_none()
-            && (ctx.ansi_style.bg.is_some() || !ctx.ansi_style.add_modifier.is_empty())
-        {
-            style = style.fg(color);
-            fg_theme_key = ctx.highlight_theme_key;
-        }
-    }
-
-    // Note: Reference highlighting (word under cursor) is now handled via overlays
-    // in the "Apply overlay styles" section below
-
-    // Apply LSP semantic token foreground color when no custom token style is set.
-    if ctx.token_style.is_none() {
-        if let Some(color) = ctx.semantic_token_color {
-            style = style.fg(color);
-            // Semantic tokens don't have a single static key; leave fg_theme_key as-is
-            // (the syntax highlight key is a reasonable approximation)
-        }
-    }
-
-    // Apply overlay styles — last overlay wins for each attribute
-    for overlay in &overlays {
-        match &overlay.face {
-            OverlayFace::Underline {
-                color,
-                style: _underline_style,
-            } => {
-                style = style.add_modifier(Modifier::UNDERLINED).fg(*color);
-                if let Some(key) = overlay.theme_key {
-                    fg_theme_key = Some(key);
-                }
-            }
-            OverlayFace::Background { color } => {
-                style = style.bg(*color);
-                if let Some(key) = overlay.theme_key {
-                    bg_theme_key = Some(key);
-                }
-            }
-            OverlayFace::Foreground { color } => {
-                style = style.fg(*color);
-                if let Some(key) = overlay.theme_key {
-                    fg_theme_key = Some(key);
-                }
-            }
-            OverlayFace::Style {
-                style: overlay_style,
-            } => {
-                style = style.patch(*overlay_style);
-                // Style overlays may set both fg and bg; use overlay's theme_key for bg
-                if let Some(key) = overlay.theme_key {
-                    if overlay_style.bg.is_some() {
-                        bg_theme_key = Some(key);
-                    }
-                    if overlay_style.fg.is_some() {
-                        fg_theme_key = Some(key);
-                    }
-                }
-            }
-            OverlayFace::ThemedStyle {
-                fallback_style,
-                fg_theme,
-                bg_theme,
-            } => {
-                let mut themed_style = *fallback_style;
-                if let Some(fg_key) = fg_theme {
-                    if let Some(color) = ctx.theme.resolve_theme_key(fg_key) {
-                        themed_style = themed_style.fg(color);
-                    }
-                }
-                if let Some(bg_key) = bg_theme {
-                    if let Some(color) = ctx.theme.resolve_theme_key(bg_key) {
-                        themed_style = themed_style.bg(color);
-                    }
-                }
-                style = style.patch(themed_style);
-                // ThemedStyle carries its own theme keys — no need for overlay.theme_key
-            }
-        }
-    }
-
-    // Apply current line background highlight (before selection, so selection overrides it)
-    if ctx.is_cursor_line_highlighted && !ctx.is_selected && style.bg.is_none() {
-        style = style.bg(ctx.current_line_bg);
-    }
-
-    // Apply selection highlighting (preserve fg/syntax colors, only change bg)
-    if ctx.is_selected {
-        style = style.bg(ctx.theme.selection_bg);
-        bg_theme_key = Some("editor.selection_bg");
-        region = "Selection";
-    }
-
-    // Apply cursor styling - make all cursors visible with reversed colors
-    // For active splits: apply REVERSED to ensure character under cursor is visible
-    // (especially important for block cursors where white-on-white would be invisible)
-    // For inactive splits: use a less pronounced background color (no hardware cursor)
-    let is_secondary_cursor = ctx.is_cursor && ctx.byte_pos != Some(ctx.primary_cursor_position);
-    if ctx.is_active {
-        if ctx.is_cursor {
-            if ctx.skip_primary_cursor_reverse {
-                if is_secondary_cursor {
-                    style = style.add_modifier(Modifier::REVERSED);
-                }
-            } else {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
-            region = "Cursor";
-        }
-    } else if ctx.is_cursor {
-        style = style.fg(ctx.theme.editor_fg).bg(ctx.theme.inactive_cursor);
-        fg_theme_key = Some("editor.fg");
-        bg_theme_key = Some("editor.inactive_cursor");
-        region = "Inactive Cursor";
-    }
-
-    CharStyleOutput {
-        style,
-        is_secondary_cursor,
-        fg_theme_key,
-        bg_theme_key,
-        region,
-    }
-}
 
 /// Renders split panes and their content
 pub struct SplitRenderer;
@@ -3216,7 +2670,7 @@ impl SplitRenderer {
                         } else {
                             format!(" {}", raw_text)
                         };
-                        Self::append_fold_placeholder(&mut line, &text, placeholder_style);
+                        append_fold_placeholder(&mut line, &text, placeholder_style);
                     }
                 }
             } else if let Some(next_byte) = next_source_byte[idx] {
@@ -3241,100 +2695,6 @@ impl SplitRenderer {
         ranges
             .iter()
             .any(|range| byte >= range.start_byte && byte < range.end_byte)
-    }
-
-    fn append_fold_placeholder(line: &mut ViewLine, text: &str, style: &ViewTokenStyle) {
-        if text.is_empty() {
-            return;
-        }
-
-        // If this line ends with a newline, temporarily remove it so we can insert
-        // the placeholder before the newline.
-        let mut removed_newline: Option<(char, Option<usize>, Option<ViewTokenStyle>)> = None;
-        if line.ends_with_newline {
-            if let Some(last_char) = line.text.chars().last() {
-                if last_char == '\n' {
-                    let removed = line.text.pop();
-                    if removed.is_some() {
-                        let removed_source = line.char_source_bytes.pop().unwrap_or(None);
-                        let removed_style = line.char_styles.pop().unwrap_or(None);
-                        line.char_visual_cols.pop();
-                        let width = char_width(last_char);
-                        for _ in 0..width {
-                            line.visual_to_char.pop();
-                        }
-                        removed_newline = Some((last_char, removed_source, removed_style));
-                    }
-                }
-            }
-        }
-
-        let mut col = line.visual_to_char.len();
-        for ch in text.chars() {
-            let char_idx = line.char_source_bytes.len();
-            let width = char_width(ch);
-            line.text.push(ch);
-            line.char_source_bytes.push(None);
-            line.char_styles.push(Some(style.clone()));
-            line.char_visual_cols.push(col);
-            for _ in 0..width {
-                line.visual_to_char.push(char_idx);
-            }
-            col += width;
-        }
-
-        if let Some((ch, source, style)) = removed_newline {
-            let char_idx = line.char_source_bytes.len();
-            let width = char_width(ch);
-            line.text.push(ch);
-            line.char_source_bytes.push(source);
-            line.char_styles.push(style);
-            line.char_visual_cols.push(col);
-            for _ in 0..width {
-                line.visual_to_char.push(char_idx);
-            }
-        }
-    }
-
-    /// Create a ViewLine from virtual text content (for LineAbove/LineBelow)
-    fn create_virtual_line(text: &str, style: ratatui::style::Style) -> ViewLine {
-        use fresh_core::api::ViewTokenStyle;
-
-        let text = text.to_string();
-        let len = text.chars().count();
-
-        // Convert ratatui Style to ViewTokenStyle
-        let token_style = ViewTokenStyle {
-            fg: style.fg.and_then(|c| match c {
-                ratatui::style::Color::Rgb(r, g, b) => Some((r, g, b)),
-                _ => None,
-            }),
-            bg: style.bg.and_then(|c| match c {
-                ratatui::style::Color::Rgb(r, g, b) => Some((r, g, b)),
-                _ => None,
-            }),
-            bold: style.add_modifier.contains(ratatui::style::Modifier::BOLD),
-            italic: style
-                .add_modifier
-                .contains(ratatui::style::Modifier::ITALIC),
-        };
-
-        ViewLine {
-            text,
-            source_start_byte: None,
-            // Per-character data: all None - no source mapping (this is injected content)
-            char_source_bytes: vec![None; len],
-            // All have the virtual text's style
-            char_styles: vec![Some(token_style); len],
-            // Visual column positions for each character (0, 1, 2, ...)
-            char_visual_cols: (0..len).collect(),
-            // Per-visual-column: each column maps to its corresponding character
-            visual_to_char: (0..len).collect(),
-            tab_starts: HashSet::new(),
-            // AfterInjectedNewline means no line number will be shown
-            line_start: LineStart::AfterInjectedNewline,
-            ends_with_newline: true,
-        }
     }
 
     /// Inject virtual lines (LineAbove/LineBelow) into the ViewLine stream
@@ -3395,7 +2755,7 @@ impl SplitRenderer {
                         // virtual line follows theme changes (theme keys
                         // are stored on the VirtualText itself, not
                         // pre-baked into `style`).
-                        result.push(Self::create_virtual_line(
+                        result.push(create_virtual_line(
                             &vtext.text,
                             vtext.resolved_style(theme),
                         ));
@@ -3417,7 +2777,7 @@ impl SplitRenderer {
                         // virtual line follows theme changes (theme keys
                         // are stored on the VirtualText itself, not
                         // pre-baked into `style`).
-                        result.push(Self::create_virtual_line(
+                        result.push(create_virtual_line(
                             &vtext.text,
                             vtext.resolved_style(theme),
                         ));
@@ -6442,7 +5802,7 @@ impl SplitRenderer {
         let background_x_offset = layout_output.left_column;
 
         if let Some(bg) = ansi_background {
-            Self::apply_background_to_lines(
+            apply_background_to_lines(
                 &mut lines,
                 render_area.width,
                 bg,
@@ -6484,7 +5844,7 @@ impl SplitRenderer {
         // Render config-based vertical rulers
         if !rulers.is_empty() {
             let ruler_cols: Vec<u16> = rulers.iter().map(|&r| r as u16).collect();
-            Self::render_ruler_bg(
+            render_ruler_bg(
                 frame,
                 &ruler_cols,
                 theme.ruler_bg,
@@ -6500,7 +5860,7 @@ impl SplitRenderer {
             let guide_style = Style::default()
                 .fg(theme.line_number_fg)
                 .add_modifier(Modifier::DIM);
-            Self::render_column_guides(
+            render_column_guides(
                 frame,
                 &guides,
                 guide_style,
@@ -6628,273 +5988,7 @@ impl SplitRenderer {
         view_line_mappings
     }
 
-    /// Render vertical column guide lines in the editor content area.
-    /// Used for both config-based vertical rulers and compose-mode column guides.
-    fn render_column_guides(
-        frame: &mut Frame,
-        columns: &[u16],
-        style: Style,
-        render_area: Rect,
-        gutter_width: usize,
-        content_height: usize,
-        left_column: usize,
-    ) {
-        let guide_height = content_height.min(render_area.height as usize);
-        for &col in columns {
-            // Account for horizontal scroll
-            let Some(scrolled_col) = (col as usize).checked_sub(left_column) else {
-                continue;
-            };
-            let guide_x = render_area.x + gutter_width as u16 + scrolled_col as u16;
-            if guide_x < render_area.x + render_area.width {
-                for row in 0..guide_height {
-                    let cell = &mut frame.buffer_mut()[(guide_x, render_area.y + row as u16)];
-                    cell.set_symbol("│");
-                    if let Some(fg) = style.fg {
-                        cell.set_fg(fg);
-                    }
-                    if !style.add_modifier.is_empty() {
-                        cell.set_style(Style::default().add_modifier(style.add_modifier));
-                    }
-                }
-            }
-        }
-    }
 
-    /// Render vertical rulers as a subtle background color tint.
-    /// Unlike `render_column_guides` which draws │ characters (for compose guides),
-    /// this preserves the existing text content and only adjusts the background color.
-    fn render_ruler_bg(
-        frame: &mut Frame,
-        columns: &[u16],
-        color: Color,
-        render_area: Rect,
-        gutter_width: usize,
-        content_height: usize,
-        left_column: usize,
-    ) {
-        let guide_height = content_height.min(render_area.height as usize);
-        for &col in columns {
-            let Some(scrolled_col) = (col as usize).checked_sub(left_column) else {
-                continue;
-            };
-            let guide_x = render_area.x + gutter_width as u16 + scrolled_col as u16;
-            if guide_x < render_area.x + render_area.width {
-                for row in 0..guide_height {
-                    let cell = &mut frame.buffer_mut()[(guide_x, render_area.y + row as u16)];
-                    cell.set_bg(color);
-                }
-            }
-        }
-    }
-
-    /// Post-process the rendered frame to apply OSC 8 hyperlink escape sequences
-    /// for any overlays that have a URL set.
-    ///
-    /// Uses view_line_mappings to translate overlay byte ranges into screen
-    /// positions, then wraps the corresponding cells with OSC 8 sequences so
-    /// they become clickable in terminals that support the protocol.
-    #[allow(dead_code)]
-    fn apply_hyperlink_overlays(
-        frame: &mut Frame,
-        viewport_overlays: &[(crate::view::overlay::Overlay, Range<usize>)],
-        view_line_mappings: &[ViewLineMapping],
-        render_area: Rect,
-        gutter_width: usize,
-        cursor_screen_pos: Option<(u16, u16)>,
-    ) {
-        let hyperlink_overlays: Vec<_> = viewport_overlays
-            .iter()
-            .filter(|(overlay, _)| overlay.url.is_some())
-            .collect();
-
-        if hyperlink_overlays.is_empty() {
-            return;
-        }
-
-        let buf = frame.buffer_mut();
-        for (screen_row, mapping) in view_line_mappings.iter().enumerate() {
-            let y = render_area.y + screen_row as u16;
-            if y >= render_area.y + render_area.height {
-                break;
-            }
-            for (overlay, range) in &hyperlink_overlays {
-                let url = overlay.url.as_ref().unwrap();
-                // Find screen columns in this row whose source byte falls in range
-                let mut run_start: Option<u16> = None;
-                let content_x_offset = render_area.x + gutter_width as u16;
-                for (char_idx, maybe_byte) in mapping.char_source_bytes.iter().enumerate() {
-                    let in_range = maybe_byte
-                        .map(|b| b >= range.start && b < range.end)
-                        .unwrap_or(false);
-                    let screen_x = content_x_offset + char_idx as u16;
-                    if in_range && screen_x < render_area.x + render_area.width {
-                        if run_start.is_none() {
-                            run_start = Some(screen_x);
-                        }
-                    } else if let Some(start_x) = run_start.take() {
-                        Self::apply_osc8_to_cells(
-                            buf,
-                            start_x,
-                            screen_x,
-                            y,
-                            url,
-                            cursor_screen_pos,
-                        );
-                    }
-                }
-                // Flush trailing run
-                if let Some(start_x) = run_start {
-                    let end_x = content_x_offset + mapping.char_source_bytes.len() as u16;
-                    let end_x = end_x.min(render_area.x + render_area.width);
-                    Self::apply_osc8_to_cells(buf, start_x, end_x, y, url, cursor_screen_pos);
-                }
-            }
-        }
-    }
-
-    /// Apply OSC 8 hyperlink escape sequences to a run of buffer cells.
-    ///
-    /// Uses 2-character chunking to work around Crossterm width accounting
-    /// issues with OSC sequences (same approach as popup hyperlinks).
-    /// When the cursor falls on the second character of a 2-char chunk, the
-    /// chunk is split into two 1-char chunks so the terminal cursor remains
-    /// visible on the correct cell.
-    #[allow(dead_code)]
-    fn apply_osc8_to_cells(
-        buf: &mut ratatui::buffer::Buffer,
-        start_x: u16,
-        end_x: u16,
-        y: u16,
-        url: &str,
-        cursor_pos: Option<(u16, u16)>,
-    ) {
-        let area = *buf.area();
-        if y < area.y || y >= area.y + area.height {
-            return;
-        }
-        let max_x = area.x + area.width;
-        // If the cursor is on this row, note its x so we can avoid
-        // swallowing it into the second half of a 2-char chunk.
-        let cursor_x = cursor_pos.and_then(|(cx, cy)| if cy == y { Some(cx) } else { None });
-        let mut x = start_x;
-        while x < end_x {
-            if x >= max_x {
-                break;
-            }
-            // Determine chunk size: normally 2, but use 1 if the cursor
-            // sits on the second cell of the pair so it stays addressable.
-            let chunk_size = if cursor_x == Some(x + 1) { 1 } else { 2 };
-
-            let mut chunk = String::new();
-            let chunk_start = x;
-            for _ in 0..chunk_size {
-                if x >= end_x || x >= max_x {
-                    break;
-                }
-                let sym = buf[(x, y)].symbol().to_string();
-                chunk.push_str(&sym);
-                x += 1;
-            }
-            if !chunk.is_empty() {
-                let actual_chunk_len = x - chunk_start;
-                let hyperlink = format!("\x1B]8;;{}\x07{}\x1B]8;;\x07", url, chunk);
-                buf[(chunk_start, y)].set_symbol(&hyperlink);
-                // Clear trailing cells that were folded into this chunk so
-                // ratatui's diff picks up the change when chunking shifts.
-                for cx in (chunk_start + 1)..chunk_start + actual_chunk_len {
-                    buf[(cx, y)].set_symbol("");
-                }
-            }
-        }
-    }
-
-    /// Apply styles from original line_spans to a wrapped segment
-    ///
-    /// Maps each character in the segment text back to its original span to preserve
-    /// syntax highlighting, selections, and other styling across wrapped lines.
-    ///
-    /// # Arguments
-    /// * `segment_text` - The text content of this wrapped segment
-    /// * `line_spans` - The original styled spans for the entire line
-    /// * `segment_start_offset` - Character offset where this segment starts in the original line
-    /// * `scroll_offset` - Additional offset for horizontal scrolling (non-wrap mode)
-    #[allow(clippy::too_many_arguments)]
-    fn apply_background_to_lines(
-        lines: &mut Vec<Line<'static>>,
-        area_width: u16,
-        background: &AnsiBackground,
-        theme_bg: Color,
-        default_fg: Color,
-        fade: f32,
-        x_offset: usize,
-        y_offset: usize,
-    ) {
-        if area_width == 0 {
-            return;
-        }
-
-        let width = area_width as usize;
-
-        for (y, line) in lines.iter_mut().enumerate() {
-            // Flatten existing spans into per-character styles
-            let mut existing: Vec<(char, Style)> = Vec::new();
-            let spans = std::mem::take(&mut line.spans);
-            for span in spans {
-                let style = span.style;
-                for ch in span.content.chars() {
-                    existing.push((ch, style));
-                }
-            }
-
-            let mut chars_with_style = Vec::with_capacity(width);
-            for x in 0..width {
-                let sample_x = x_offset + x;
-                let sample_y = y_offset + y;
-
-                let (ch, mut style) = if x < existing.len() {
-                    existing[x]
-                } else {
-                    (' ', Style::default().fg(default_fg))
-                };
-
-                if let Some(bg_color) = background.faded_color(sample_x, sample_y, theme_bg, fade) {
-                    if style.bg.is_none() || matches!(style.bg, Some(Color::Reset)) {
-                        style = style.bg(bg_color);
-                    }
-                }
-
-                chars_with_style.push((ch, style));
-            }
-
-            line.spans = Self::compress_chars(chars_with_style);
-        }
-    }
-
-    fn compress_chars(chars: Vec<(char, Style)>) -> Vec<Span<'static>> {
-        if chars.is_empty() {
-            return vec![];
-        }
-
-        let mut spans = Vec::new();
-        let mut current_style = chars[0].1;
-        let mut current_text = String::new();
-        current_text.push(chars[0].0);
-
-        for (ch, style) in chars.into_iter().skip(1) {
-            if style == current_style {
-                current_text.push(ch);
-            } else {
-                spans.push(Span::styled(current_text.clone(), current_style));
-                current_text.clear();
-                current_text.push(ch);
-                current_style = style;
-            }
-        }
-
-        spans.push(Span::styled(current_text, current_style));
-        spans
-    }
 }
 
 #[cfg(test)]
@@ -8357,7 +7451,7 @@ mod tests {
         let url = "https://example.com";
 
         // Apply with cursor at col 0 (not inside the overlay range)
-        SplitRenderer::apply_osc8_to_cells(&mut buf, 1, 14, 0, url, Some((0, 0)));
+        apply_osc8_to_cells(&mut buf, 1, 14, 0, url, Some((0, 0)));
 
         let row = read_row(&buf, 0);
         assert_eq!(
@@ -8389,7 +7483,7 @@ mod tests {
                 buf1[(i as u16, 0)].set_symbol(&ch.to_string());
             }
         }
-        SplitRenderer::apply_osc8_to_cells(
+        apply_osc8_to_cells(
             &mut buf1,
             1,
             14,
@@ -8406,7 +7500,7 @@ mod tests {
                 buf2[(i as u16, 0)].set_symbol(&ch.to_string());
             }
         }
-        SplitRenderer::apply_osc8_to_cells(
+        apply_osc8_to_cells(
             &mut buf2,
             1,
             14,
@@ -8437,7 +7531,7 @@ mod tests {
             frame1[(i as u16, 0)].set_symbol(&ch.to_string());
         }
         // OSC 8 covers cols 0..13 (concealed mapping)
-        SplitRenderer::apply_osc8_to_cells(
+        apply_osc8_to_cells(
             &mut frame1,
             0,
             13,
@@ -8463,7 +7557,7 @@ mod tests {
             }
         }
         // OSC 8 covers cols 1..14 (unconcealed mapping)
-        SplitRenderer::apply_osc8_to_cells(
+        apply_osc8_to_cells(
             &mut frame2,
             1,
             14,
