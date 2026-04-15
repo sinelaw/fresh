@@ -1463,14 +1463,20 @@ fn test_git_log_open_file_works_after_closing_previous_file_view() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Success: either the file view opens (contains the source line) or
-    // at worst we get a benign "move cursor" message only if we actually
-    // landed outside a diff — but we're guaranteed a diff row by the
-    // Down presses above, so the failure mode is what the assert catches.
+    // Semantic wait: the second Enter either succeeds (a fresh file-view
+    // virtual buffer `*<hash>:src/main.rs*` appears as a tab — that name is
+    // only produced by `createVirtualBuffer` in git_log.ts, so it cannot be
+    // matched by the still-visible detail panel) or the plugin falls back
+    // to the move-cursor status (the bug we're guarding against). The
+    // assert below distinguishes the two. Using `wait_until_stable` here
+    // was racy: the detail panel already contains "+    println!(\"second\")",
+    // so the condition matched before the Enter was processed, and the
+    // stability phase looped forever on an oscillating status-bar cell.
     harness
-        .wait_until_stable(|h| {
+        .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("println!(\"second\");") || s.contains("println!(\"first\");")
+            s.contains(":src/main.rs*")
+                || s.contains("Move cursor to a diff line with file context")
         })
         .unwrap();
     let s = harness.screen_to_string();
