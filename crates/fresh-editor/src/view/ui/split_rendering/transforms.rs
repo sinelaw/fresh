@@ -1,0 +1,562 @@
+//! Token / line stream transforms used by the view pipeline.
+//!
+//! This module contains four independent passes:
+//! - `apply_wrapping_transform` — hard + soft wrap by display width
+//! - `apply_soft_breaks` — inject breaks at plugin-requested positions
+//! - `apply_conceal_ranges` — conceal or replace byte ranges in Text tokens
+//! - `inject_virtual_lines` — inject `LineAbove` / `LineBelow` virtual text
+//!
+//! None of these depend on any shared render-time "mega struct".
+
+use super::style::create_virtual_line;
+use crate::primitives::{ansi, display_width, visual_layout};
+use crate::state::EditorState;
+use crate::view::theme::Theme;
+use crate::view::ui::view_pipeline::ViewLine;
+use crate::view::virtual_text::VirtualTextPosition;
+use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+use std::collections::HashSet;
+
+/// Wrap tokens to fit within `content_width` columns (accounting for a
+/// leading gutter on the first visual line). Emits `Break` tokens where
+/// lines should wrap, optionally with a hanging indent for continuation
+/// lines.
+pub(super) fn apply_wrapping_transform(
+    tokens: Vec<ViewTokenWire>,
+    content_width: usize,
+    gutter_width: usize,
+    hanging_indent: bool,
+) -> Vec<ViewTokenWire> {
+    use visual_layout::visual_width;
+
+    /// Minimum content width for continuation lines when hanging indent is active.
+    const MIN_CONTINUATION_CONTENT_WIDTH: usize = 10;
+
+    // Calculate available width (accounting for gutter on first line only)
+    let available_width = content_width.saturating_sub(gutter_width);
+
+    // Guard against zero or very small available width which would produce
+    // one Break per character, causing pathological memory usage.
+    if available_width < 2 {
+        return tokens;
+    }
+
+    let mut wrapped = Vec::new();
+    let mut current_line_width: usize = 0;
+
+    // Hanging indent state: the visual indent width for the current logical line.
+    let mut line_indent: usize = 0;
+    let mut measuring_indent = hanging_indent;
+    let mut on_continuation = false;
+
+    /// Effective width for the current segment.
+    ///
+    /// Always returns `available_width` because hanging indent is already
+    /// accounted for by the indent text emitted into `current_line_width`
+    /// via `emit_break_with_indent`. Subtracting `line_indent` here would
+    /// double-count it.
+    #[inline]
+    fn effective_width(
+        available_width: usize,
+        _line_indent: usize,
+        _on_continuation: bool,
+    ) -> usize {
+        available_width
+    }
+
+    /// Emit a Break token followed by hanging indent spaces.
+    fn emit_break_with_indent(
+        wrapped: &mut Vec<ViewTokenWire>,
+        current_line_width: &mut usize,
+        indent_string: &str,
+    ) {
+        wrapped.push(ViewTokenWire {
+            source_offset: None,
+            kind: ViewTokenWireKind::Break,
+            style: None,
+        });
+        *current_line_width = 0;
+        if !indent_string.is_empty() {
+            wrapped.push(ViewTokenWire {
+                source_offset: None,
+                kind: ViewTokenWireKind::Text(indent_string.to_string()),
+                style: None,
+            });
+            *current_line_width = indent_string.len();
+        }
+    }
+
+    // Pre-computed indent string, updated only when line_indent changes.
+    let mut cached_indent_string = String::new();
+    let mut cached_indent_len: usize = 0;
+
+    for token in tokens {
+        match &token.kind {
+            ViewTokenWireKind::Newline => {
+                wrapped.push(token);
+                current_line_width = 0;
+                line_indent = 0;
+                cached_indent_string.clear();
+                cached_indent_len = 0;
+                measuring_indent = hanging_indent;
+                on_continuation = false;
+            }
+            ViewTokenWireKind::Text(text) => {
+                if measuring_indent {
+                    let mut ws_char_count = 0usize;
+                    let mut ws_visual_width = 0usize;
+                    for c in text.chars() {
+                        if c == ' ' {
+                            ws_visual_width += 1;
+                            ws_char_count += 1;
+                        } else if c == '\t' {
+                            let tab_stop = 4;
+                            let col = line_indent + ws_visual_width;
+                            ws_visual_width += tab_stop - (col % tab_stop);
+                            ws_char_count += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if ws_char_count == text.chars().count() {
+                        line_indent += ws_visual_width;
+                    } else {
+                        line_indent += ws_visual_width;
+                        measuring_indent = false;
+                    }
+                    if line_indent + MIN_CONTINUATION_CONTENT_WIDTH > available_width {
+                        line_indent = 0;
+                    }
+                    if line_indent != cached_indent_len {
+                        cached_indent_string = " ".repeat(line_indent);
+                        cached_indent_len = line_indent;
+                    }
+                }
+
+                let eff_width = effective_width(available_width, line_indent, on_continuation);
+                let text_visual_width = visual_width(text, current_line_width);
+
+                if current_line_width > 0 && current_line_width + text_visual_width > eff_width {
+                    on_continuation = true;
+                    emit_break_with_indent(
+                        &mut wrapped,
+                        &mut current_line_width,
+                        &cached_indent_string,
+                    );
+                }
+
+                let eff_width = effective_width(available_width, line_indent, on_continuation);
+                let text_visual_width = visual_width(text, current_line_width);
+
+                if text_visual_width > eff_width && !ansi::contains_ansi_codes(text) {
+                    use unicode_segmentation::UnicodeSegmentation;
+
+                    let graphemes: Vec<(usize, &str)> = text.grapheme_indices(true).collect();
+                    let mut grapheme_idx = 0;
+                    let source_base = token.source_offset;
+
+                    while grapheme_idx < graphemes.len() {
+                        let eff_width =
+                            effective_width(available_width, line_indent, on_continuation);
+                        let remaining_width = eff_width.saturating_sub(current_line_width);
+                        if remaining_width == 0 {
+                            if on_continuation && current_line_width >= eff_width {
+                                // Force one grapheme onto this line to avoid infinite loop
+                            } else {
+                                on_continuation = true;
+                                emit_break_with_indent(
+                                    &mut wrapped,
+                                    &mut current_line_width,
+                                    &cached_indent_string,
+                                );
+                                continue;
+                            }
+                        }
+
+                        let mut chunk_visual_width = 0;
+                        let mut chunk_grapheme_count = 0;
+                        let mut col = current_line_width;
+
+                        for &(_byte_offset, grapheme) in &graphemes[grapheme_idx..] {
+                            let g_width = if grapheme == "\t" {
+                                visual_layout::tab_expansion_width(col)
+                            } else {
+                                display_width::str_width(grapheme)
+                            };
+
+                            if chunk_visual_width + g_width > remaining_width
+                                && chunk_grapheme_count > 0
+                            {
+                                break;
+                            }
+
+                            chunk_visual_width += g_width;
+                            chunk_grapheme_count += 1;
+                            col += g_width;
+                        }
+
+                        if chunk_grapheme_count == 0 {
+                            chunk_grapheme_count = 1;
+                            let grapheme = graphemes[grapheme_idx].1;
+                            chunk_visual_width = if grapheme == "\t" {
+                                visual_layout::tab_expansion_width(current_line_width)
+                            } else {
+                                display_width::str_width(grapheme)
+                            };
+                        }
+
+                        let chunk_start_byte = graphemes[grapheme_idx].0;
+                        let chunk_end_byte =
+                            if grapheme_idx + chunk_grapheme_count < graphemes.len() {
+                                graphemes[grapheme_idx + chunk_grapheme_count].0
+                            } else {
+                                text.len()
+                            };
+                        let chunk = text[chunk_start_byte..chunk_end_byte].to_string();
+                        let chunk_source = source_base.map(|b| b + chunk_start_byte);
+
+                        wrapped.push(ViewTokenWire {
+                            source_offset: chunk_source,
+                            kind: ViewTokenWireKind::Text(chunk),
+                            style: token.style.clone(),
+                        });
+
+                        current_line_width += chunk_visual_width;
+                        grapheme_idx += chunk_grapheme_count;
+
+                        let eff_width =
+                            effective_width(available_width, line_indent, on_continuation);
+                        if current_line_width >= eff_width {
+                            on_continuation = true;
+                            emit_break_with_indent(
+                                &mut wrapped,
+                                &mut current_line_width,
+                                &cached_indent_string,
+                            );
+                        }
+                    }
+                } else {
+                    wrapped.push(token);
+                    current_line_width += text_visual_width;
+                }
+            }
+            ViewTokenWireKind::Space => {
+                if measuring_indent {
+                    line_indent += 1;
+                    if line_indent + MIN_CONTINUATION_CONTENT_WIDTH > available_width {
+                        line_indent = 0;
+                    }
+                }
+
+                let eff_width = effective_width(available_width, line_indent, on_continuation);
+                if current_line_width + 1 > eff_width {
+                    on_continuation = true;
+                    emit_break_with_indent(
+                        &mut wrapped,
+                        &mut current_line_width,
+                        &cached_indent_string,
+                    );
+                }
+                wrapped.push(token);
+                current_line_width += 1;
+            }
+            ViewTokenWireKind::Break => {
+                wrapped.push(token);
+                current_line_width = 0;
+                on_continuation = true;
+                if line_indent > 0 {
+                    wrapped.push(ViewTokenWire {
+                        source_offset: None,
+                        kind: ViewTokenWireKind::Text(" ".repeat(line_indent)),
+                        style: None,
+                    });
+                    current_line_width = line_indent;
+                }
+            }
+            ViewTokenWireKind::BinaryByte(_) => {
+                if measuring_indent {
+                    measuring_indent = false;
+                }
+
+                let eff_width = effective_width(available_width, line_indent, on_continuation);
+                let byte_display_width = 4;
+                if current_line_width + byte_display_width > eff_width {
+                    on_continuation = true;
+                    emit_break_with_indent(
+                        &mut wrapped,
+                        &mut current_line_width,
+                        &cached_indent_string,
+                    );
+                }
+                wrapped.push(token);
+                current_line_width += byte_display_width;
+            }
+        }
+    }
+
+    wrapped
+}
+
+/// Apply soft breaks to a token stream.
+///
+/// Walks tokens with a sorted break list `[(position, indent)]`. When a
+/// token's `source_offset` matches a break position:
+/// - For Space tokens: replace with Newline + indent Spaces
+/// - For other tokens: insert Newline + indent Spaces before the token
+///
+/// Tokens without source_offset (injected/virtual) pass through unchanged.
+pub(super) fn apply_soft_breaks(
+    tokens: Vec<ViewTokenWire>,
+    soft_breaks: &[(usize, u16)],
+) -> Vec<ViewTokenWire> {
+    if soft_breaks.is_empty() {
+        return tokens;
+    }
+
+    let mut output = Vec::with_capacity(tokens.len() + soft_breaks.len() * 2);
+    let mut break_idx = 0;
+
+    for token in tokens {
+        let offset = match token.source_offset {
+            Some(o) => o,
+            None => {
+                output.push(token);
+                continue;
+            }
+        };
+
+        while break_idx < soft_breaks.len() && soft_breaks[break_idx].0 < offset {
+            break_idx += 1;
+        }
+
+        if break_idx < soft_breaks.len() && soft_breaks[break_idx].0 == offset {
+            let indent = soft_breaks[break_idx].1;
+            break_idx += 1;
+
+            match &token.kind {
+                ViewTokenWireKind::Space => {
+                    output.push(ViewTokenWire {
+                        source_offset: None,
+                        kind: ViewTokenWireKind::Newline,
+                        style: None,
+                    });
+                    for _ in 0..indent {
+                        output.push(ViewTokenWire {
+                            source_offset: None,
+                            kind: ViewTokenWireKind::Space,
+                            style: None,
+                        });
+                    }
+                }
+                _ => {
+                    output.push(ViewTokenWire {
+                        source_offset: None,
+                        kind: ViewTokenWireKind::Newline,
+                        style: None,
+                    });
+                    for _ in 0..indent {
+                        output.push(ViewTokenWire {
+                            source_offset: None,
+                            kind: ViewTokenWireKind::Space,
+                            style: None,
+                        });
+                    }
+                    output.push(token);
+                }
+            }
+        } else {
+            output.push(token);
+        }
+    }
+
+    output
+}
+
+/// Apply conceal ranges to a token stream.
+///
+/// Handles partial token overlap: if a Text token spans bytes that are
+/// partially concealed, the token is split at conceal boundaries. Non-text
+/// tokens (Space, Newline) are treated as single-byte.
+///
+/// Tokens without source_offset (injected/virtual) always pass through.
+pub(super) fn apply_conceal_ranges(
+    tokens: Vec<ViewTokenWire>,
+    conceal_ranges: &[(std::ops::Range<usize>, Option<&str>)],
+) -> Vec<ViewTokenWire> {
+    if conceal_ranges.is_empty() {
+        return tokens;
+    }
+
+    let mut output = Vec::with_capacity(tokens.len());
+    let mut emitted_replacements: HashSet<usize> = HashSet::new();
+
+    let is_concealed = |byte_offset: usize| -> Option<usize> {
+        for (idx, (range, _)) in conceal_ranges.iter().enumerate() {
+            if byte_offset >= range.start && byte_offset < range.end {
+                return Some(idx);
+            }
+        }
+        None
+    };
+
+    for token in tokens {
+        let offset = match token.source_offset {
+            Some(o) => o,
+            None => {
+                output.push(token);
+                continue;
+            }
+        };
+
+        match &token.kind {
+            ViewTokenWireKind::Text(text) => {
+                let mut current_byte = offset;
+                let mut visible_start: Option<usize> = None;
+                let mut visible_chars = String::new();
+
+                for ch in text.chars() {
+                    let ch_len = ch.len_utf8();
+
+                    if let Some(cidx) = is_concealed(current_byte) {
+                        if !visible_chars.is_empty() {
+                            output.push(ViewTokenWire {
+                                source_offset: visible_start,
+                                kind: ViewTokenWireKind::Text(std::mem::take(&mut visible_chars)),
+                                style: token.style.clone(),
+                            });
+                            visible_start = None;
+                        }
+
+                        // Emit replacement text once per conceal range.
+                        // Split into first-char (with source_offset for cursor/click
+                        // positioning) and remaining chars (with None source_offset).
+                        if let Some(repl) = conceal_ranges[cidx].1 {
+                            if !emitted_replacements.contains(&cidx) {
+                                emitted_replacements.insert(cidx);
+                                if !repl.is_empty() {
+                                    let mut chars = repl.chars();
+                                    if let Some(first_ch) = chars.next() {
+                                        output.push(ViewTokenWire {
+                                            source_offset: Some(conceal_ranges[cidx].0.start),
+                                            kind: ViewTokenWireKind::Text(first_ch.to_string()),
+                                            style: None,
+                                        });
+                                        let rest: String = chars.collect();
+                                        if !rest.is_empty() {
+                                            output.push(ViewTokenWire {
+                                                source_offset: None,
+                                                kind: ViewTokenWireKind::Text(rest),
+                                                style: None,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        if visible_start.is_none() {
+                            visible_start = Some(current_byte);
+                        }
+                        visible_chars.push(ch);
+                    }
+
+                    current_byte += ch_len;
+                }
+
+                if !visible_chars.is_empty() {
+                    output.push(ViewTokenWire {
+                        source_offset: visible_start,
+                        kind: ViewTokenWireKind::Text(visible_chars),
+                        style: token.style.clone(),
+                    });
+                }
+            }
+            ViewTokenWireKind::Space
+            | ViewTokenWireKind::Newline
+            | ViewTokenWireKind::Break => {
+                if is_concealed(offset).is_some() {
+                    // Skip concealed single-byte tokens
+                } else {
+                    output.push(token);
+                }
+            }
+            ViewTokenWireKind::BinaryByte(_) => {
+                if is_concealed(offset).is_some() {
+                    // Skip concealed binary byte
+                } else {
+                    output.push(token);
+                }
+            }
+        }
+    }
+
+    output
+}
+
+/// Inject `LineAbove` / `LineBelow` virtual lines into the view line stream.
+pub(super) fn inject_virtual_lines(
+    source_lines: Vec<ViewLine>,
+    state: &EditorState,
+    theme: &Theme,
+) -> Vec<ViewLine> {
+    // Get viewport byte range from source lines.
+    // Use the last line that has source bytes (not a trailing empty line
+    // which the iterator may emit at the buffer end).
+    let viewport_start = source_lines
+        .first()
+        .and_then(|l| l.char_source_bytes.iter().find_map(|m| *m))
+        .unwrap_or(0);
+    let viewport_end = source_lines
+        .iter()
+        .rev()
+        .find_map(|l| l.char_source_bytes.iter().rev().find_map(|m| *m))
+        .map(|b| b + 1)
+        .unwrap_or(viewport_start);
+
+    let virtual_lines =
+        state
+            .virtual_texts
+            .query_lines_in_range(&state.marker_list, viewport_start, viewport_end);
+
+    if virtual_lines.is_empty() {
+        return source_lines;
+    }
+
+    let mut result = Vec::with_capacity(source_lines.len() + virtual_lines.len());
+
+    for source_line in source_lines {
+        let line_start_byte = source_line.char_source_bytes.iter().find_map(|m| *m);
+        let line_end_byte = source_line
+            .char_source_bytes
+            .iter()
+            .rev()
+            .find_map(|m| *m)
+            .map(|b| b + 1);
+
+        if let (Some(start), Some(end)) = (line_start_byte, line_end_byte) {
+            for (anchor_pos, vtext) in &virtual_lines {
+                if *anchor_pos >= start
+                    && *anchor_pos < end
+                    && vtext.position == VirtualTextPosition::LineAbove
+                {
+                    result.push(create_virtual_line(&vtext.text, vtext.resolved_style(theme)));
+                }
+            }
+        }
+
+        result.push(source_line.clone());
+
+        if let (Some(start), Some(end)) = (line_start_byte, line_end_byte) {
+            for (anchor_pos, vtext) in &virtual_lines {
+                if *anchor_pos >= start
+                    && *anchor_pos < end
+                    && vtext.position == VirtualTextPosition::LineBelow
+                {
+                    result.push(create_virtual_line(&vtext.text, vtext.resolved_style(theme)));
+                }
+            }
+        }
+    }
+
+    result
+}

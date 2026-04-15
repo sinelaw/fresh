@@ -1,10 +1,26 @@
 //! Split pane layout and buffer rendering
 
+mod base_tokens;
 mod char_style;
+mod folding;
 mod post_pass;
+mod scrollbar;
 mod spans;
 mod style;
+mod transforms;
 
+use base_tokens::build_base_tokens;
+use folding::{
+    apply_folding, diff_indicators_for_viewport, fold_adjusted_visible_count,
+    fold_indicators_for_viewport, FoldIndicator,
+};
+use scrollbar::{
+    compute_max_line_length, render_composite_scrollbar, render_horizontal_scrollbar,
+    render_scrollbar, scrollbar_line_counts,
+};
+use transforms::{
+    apply_conceal_ranges, apply_soft_breaks, apply_wrapping_transform, inject_virtual_lines,
+};
 use char_style::{compute_char_style, CharStyleContext, CharStyleOutput};
 use post_pass::{
     apply_background_to_lines, apply_hyperlink_overlays, apply_osc8_to_cells, render_column_guides,
@@ -91,11 +107,6 @@ struct DecorationContext {
     line_indicators: BTreeMap<usize, crate::view::margin::LineIndicator>,
     /// Fold indicators indexed by line-start byte offset
     fold_indicators: BTreeMap<usize, FoldIndicator>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct FoldIndicator {
-    collapsed: bool,
 }
 
 struct LineRenderOutput {
@@ -794,7 +805,7 @@ impl SplitRenderer {
                         let content_height = layout.content_rect.height.saturating_sub(1) as usize; // -1 for header
                         let (thumb_start, thumb_end) =
                             if show_vertical_scrollbar && !is_non_scrollable {
-                                Self::render_composite_scrollbar(
+                                render_composite_scrollbar(
                                     frame,
                                     layout.scrollbar_rect,
                                     total_rows,
@@ -937,7 +948,7 @@ impl SplitRenderer {
                 let buffer_len = state.buffer.len();
                 let (total_lines, top_line) = {
                     let _span = tracing::trace_span!("scrollbar_line_counts").entered();
-                    Self::scrollbar_line_counts(
+                    scrollbar_line_counts(
                         state,
                         &viewport,
                         large_file_threshold_bytes,
@@ -947,7 +958,7 @@ impl SplitRenderer {
 
                 // Render vertical scrollbar for this split and get thumb position
                 let (thumb_start, thumb_end) = if show_vertical_scrollbar && !is_non_scrollable {
-                    Self::render_scrollbar(
+                    render_scrollbar(
                         frame,
                         state,
                         &viewport,
@@ -965,7 +976,7 @@ impl SplitRenderer {
                 // Compute the actual max line length for horizontal scrollbar
                 let max_content_width = if show_horizontal_scrollbar && !viewport.line_wrap_enabled
                 {
-                    let mcw = Self::compute_max_line_length(state, &mut viewport);
+                    let mcw = compute_max_line_length(state, &mut viewport);
                     // Clamp left_column so content can't scroll past the end of the longest line
                     let visible_width = viewport.width as usize;
                     let max_scroll = mcw.saturating_sub(visible_width);
@@ -979,7 +990,7 @@ impl SplitRenderer {
 
                 // Render horizontal scrollbar for this split
                 let (hthumb_start, hthumb_end) = if show_horizontal_scrollbar {
-                    Self::render_horizontal_scrollbar(
+                    render_horizontal_scrollbar(
                         frame,
                         &viewport,
                         layout.horizontal_scrollbar_rect,
@@ -1826,78 +1837,6 @@ impl SplitRenderer {
         }
     }
 
-    /// Render a scrollbar for composite buffer views
-    fn render_composite_scrollbar(
-        frame: &mut Frame,
-        scrollbar_rect: Rect,
-        total_rows: usize,
-        scroll_row: usize,
-        viewport_height: usize,
-        is_active: bool,
-    ) -> (usize, usize) {
-        let height = scrollbar_rect.height as usize;
-        if height == 0 || total_rows == 0 {
-            return (0, 0);
-        }
-
-        // Calculate thumb size based on viewport ratio to total document
-        let thumb_size_raw = if total_rows > 0 {
-            ((viewport_height as f64 / total_rows as f64) * height as f64).ceil() as usize
-        } else {
-            1
-        };
-
-        // Maximum scroll position
-        let max_scroll = total_rows.saturating_sub(viewport_height);
-
-        // When content fits in viewport, fill entire scrollbar
-        let thumb_size = if max_scroll == 0 {
-            height
-        } else {
-            // Cap thumb size: minimum 1, maximum 80% of scrollbar height
-            let max_thumb_size = (height as f64 * 0.8).floor() as usize;
-            thumb_size_raw.max(1).min(max_thumb_size).min(height)
-        };
-
-        // Calculate thumb position
-        let thumb_start = if max_scroll > 0 {
-            let scroll_ratio = scroll_row.min(max_scroll) as f64 / max_scroll as f64;
-            let max_thumb_start = height.saturating_sub(thumb_size);
-            (scroll_ratio * max_thumb_start as f64) as usize
-        } else {
-            0
-        };
-
-        let thumb_end = thumb_start + thumb_size;
-
-        // Choose colors based on whether split is active
-        let track_color = if is_active {
-            Color::DarkGray
-        } else {
-            Color::Black
-        };
-        let thumb_color = if is_active {
-            Color::Gray
-        } else {
-            Color::DarkGray
-        };
-
-        // Render as background fills
-        for row in 0..height {
-            let cell_area = Rect::new(scrollbar_rect.x, scrollbar_rect.y + row as u16, 1, 1);
-
-            let style = if row >= thumb_start && row < thumb_end {
-                Style::default().bg(thumb_color)
-            } else {
-                Style::default().bg(track_color)
-            };
-
-            let paragraph = Paragraph::new(" ").style(style);
-            frame.render_widget(paragraph, cell_area);
-        }
-
-        (thumb_start, thumb_end)
-    }
 
     fn split_layout(
         split_area: Rect,
@@ -2016,421 +1955,6 @@ impl SplitRenderer {
         }
     }
 
-    fn scrollbar_line_counts(
-        state: &mut EditorState,
-        viewport: &crate::view::viewport::Viewport,
-        large_file_threshold_bytes: u64,
-        buffer_len: usize,
-    ) -> (usize, usize) {
-        if buffer_len > large_file_threshold_bytes as usize {
-            return (0, 0);
-        }
-
-        // When line wrapping is enabled, count visual rows instead of logical lines
-        if viewport.line_wrap_enabled {
-            return Self::scrollbar_visual_row_counts(state, viewport, buffer_len);
-        }
-
-        let total_lines = if buffer_len > 0 {
-            state.buffer.get_line_number(buffer_len.saturating_sub(1)) + 1
-        } else {
-            1
-        };
-
-        let top_line = if viewport.top_byte < buffer_len {
-            state.buffer.get_line_number(viewport.top_byte)
-        } else {
-            0
-        };
-
-        (total_lines, top_line)
-    }
-
-    /// Calculate scrollbar position based on visual rows (for line-wrapped content)
-    /// Returns (total_visual_rows, top_visual_row)
-    ///
-    /// Uses a cache to avoid re-wrapping every line on each frame. The cache is
-    /// invalidated when the buffer version, viewport width, or wrap settings change.
-    /// When only top_byte changes (scrolling), the cached total_visual_rows is reused
-    /// and only the top_visual_row is recomputed.
-    fn scrollbar_visual_row_counts(
-        state: &mut EditorState,
-        viewport: &crate::view::viewport::Viewport,
-        buffer_len: usize,
-    ) -> (usize, usize) {
-        use crate::primitives::line_wrapping::{wrap_line, WrapConfig};
-
-        if buffer_len == 0 {
-            return (1, 0);
-        }
-
-        let buf_version = state.buffer.version();
-        let cache = &state.scrollbar_row_cache;
-
-        // Check if the cache is valid: same buffer version, viewport width, and wrap settings
-        let cache_fully_valid = cache.valid
-            && cache.buffer_version == buf_version
-            && cache.viewport_width == viewport.width
-            && cache.wrap_indent == viewport.wrap_indent
-            && cache.top_byte == viewport.top_byte
-            && cache.top_view_line_offset == viewport.top_view_line_offset;
-
-        if cache_fully_valid {
-            return (cache.total_visual_rows, cache.top_visual_row);
-        }
-
-        // Check if we can reuse the total_visual_rows (only top_byte changed)
-        let total_rows_valid = cache.valid
-            && cache.buffer_version == buf_version
-            && cache.viewport_width == viewport.width
-            && cache.wrap_indent == viewport.wrap_indent;
-
-        let gutter_width = viewport.gutter_width(&state.buffer);
-        let wrap_config = WrapConfig::new(
-            viewport.width as usize,
-            gutter_width,
-            true,
-            viewport.wrap_indent,
-        );
-
-        let line_count = state
-            .buffer
-            .line_count()
-            .unwrap_or_else(|| (buffer_len / state.buffer.estimated_line_length()).max(1));
-
-        let mut total_visual_rows = 0;
-        let mut top_visual_row = 0;
-        let mut found_top = false;
-
-        if total_rows_valid {
-            // Buffer hasn't changed — only need to find the new top_visual_row
-            total_visual_rows = cache.total_visual_rows;
-            for line_idx in 0..line_count {
-                let line_start = state
-                    .buffer
-                    .line_start_offset(line_idx)
-                    .unwrap_or(buffer_len);
-
-                if line_start >= viewport.top_byte {
-                    top_visual_row = total_visual_rows.min(
-                        // We actually need to count rows up to this line
-                        // so fall through to full computation below
-                        0,
-                    );
-                    // Can't shortcut top_visual_row without counting rows up to here.
-                    // Fall through to full computation.
-                    break;
-                }
-            }
-            // We need the row count up to top_byte, so do a partial scan
-            let mut rows_before_top = 0;
-            for line_idx in 0..line_count {
-                let line_start = state
-                    .buffer
-                    .line_start_offset(line_idx)
-                    .unwrap_or(buffer_len);
-
-                if line_start >= viewport.top_byte {
-                    top_visual_row = rows_before_top + viewport.top_view_line_offset;
-                    found_top = true;
-                    break;
-                }
-
-                let line_content = if let Some(bytes) = state.buffer.get_line(line_idx) {
-                    String::from_utf8_lossy(&bytes)
-                        .trim_end_matches('\n')
-                        .trim_end_matches('\r')
-                        .to_string()
-                } else {
-                    break;
-                };
-
-                let segments = wrap_line(&line_content, &wrap_config);
-                rows_before_top += segments.len().max(1);
-            }
-
-            if !found_top {
-                top_visual_row = total_visual_rows.saturating_sub(1);
-            }
-        } else {
-            // Full recomputation needed
-            for line_idx in 0..line_count {
-                let line_start = state
-                    .buffer
-                    .line_start_offset(line_idx)
-                    .unwrap_or(buffer_len);
-
-                if !found_top && line_start >= viewport.top_byte {
-                    top_visual_row = total_visual_rows + viewport.top_view_line_offset;
-                    found_top = true;
-                }
-
-                let line_content = if let Some(bytes) = state.buffer.get_line(line_idx) {
-                    String::from_utf8_lossy(&bytes)
-                        .trim_end_matches('\n')
-                        .trim_end_matches('\r')
-                        .to_string()
-                } else {
-                    break;
-                };
-
-                let segments = wrap_line(&line_content, &wrap_config);
-                total_visual_rows += segments.len().max(1);
-            }
-
-            if !found_top {
-                top_visual_row = total_visual_rows.saturating_sub(1);
-            }
-
-            total_visual_rows = total_visual_rows.max(1);
-        }
-
-        // Update cache
-        state.scrollbar_row_cache = crate::state::ScrollbarRowCache {
-            buffer_version: buf_version,
-            viewport_width: viewport.width,
-            wrap_indent: viewport.wrap_indent,
-            total_visual_rows,
-            top_byte: viewport.top_byte,
-            top_visual_row,
-            top_view_line_offset: viewport.top_view_line_offset,
-            valid: true,
-        };
-
-        (total_visual_rows, top_visual_row)
-    }
-
-    /// Render a scrollbar for a split
-    /// Returns (thumb_start, thumb_end) positions for mouse hit testing
-    #[allow(clippy::too_many_arguments)]
-    fn render_scrollbar(
-        frame: &mut Frame,
-        state: &EditorState,
-        viewport: &crate::view::viewport::Viewport,
-        scrollbar_rect: Rect,
-        is_active: bool,
-        _theme: &crate::view::theme::Theme,
-        large_file_threshold_bytes: u64,
-        total_lines: usize,
-        top_line: usize,
-    ) -> (usize, usize) {
-        let height = scrollbar_rect.height as usize;
-        if height == 0 {
-            return (0, 0);
-        }
-
-        let buffer_len = state.buffer.len();
-        let viewport_top = viewport.top_byte;
-        // Use the scrollbar height as the viewport height for line count calculations.
-        // This represents the actual number of visible content rows, which matches
-        // what the user sees. When line wrapping is enabled, total_lines represents
-        // visual rows, so we need to compare against actual visible rows (height),
-        // not the full terminal height (viewport.height includes menu, status bar, etc.)
-        let viewport_height_lines = height;
-
-        // Calculate scrollbar thumb position and size
-        let (thumb_start, thumb_size) = if buffer_len > large_file_threshold_bytes as usize {
-            // Large file: use constant 1-character thumb for performance
-            let thumb_start = if buffer_len > 0 {
-                ((viewport_top as f64 / buffer_len as f64) * height as f64) as usize
-            } else {
-                0
-            };
-            (thumb_start, 1)
-        } else {
-            // Small file: use actual line count for accurate scrollbar
-            // total_lines and top_line are passed in (already calculated with mutable access)
-
-            // Calculate thumb size based on viewport ratio to total document
-            let thumb_size_raw = if total_lines > 0 {
-                ((viewport_height_lines as f64 / total_lines as f64) * height as f64).ceil()
-                    as usize
-            } else {
-                1
-            };
-
-            // Calculate the maximum scroll position first to determine if buffer fits in viewport
-            // The maximum scroll position is when the last line of the file is at
-            // the bottom of the viewport, i.e., max_scroll_line = total_lines - viewport_height
-            let max_scroll_line = total_lines.saturating_sub(viewport_height_lines);
-
-            // When buffer fits entirely in viewport (no scrolling possible),
-            // fill the entire scrollbar to make it obvious to the user
-            let thumb_size = if max_scroll_line == 0 {
-                height
-            } else {
-                // Cap thumb size: minimum 1, maximum 80% of scrollbar height
-                let max_thumb_size = (height as f64 * 0.8).floor() as usize;
-                thumb_size_raw.max(1).min(max_thumb_size).min(height)
-            };
-
-            // Calculate thumb position using proper linear mapping:
-            // - At line 0: thumb_start = 0
-            // - At max scroll position: thumb_start = height - thumb_size
-            let thumb_start = if max_scroll_line > 0 {
-                // Linear interpolation from 0 to (height - thumb_size)
-                let scroll_ratio = top_line.min(max_scroll_line) as f64 / max_scroll_line as f64;
-                let max_thumb_start = height.saturating_sub(thumb_size);
-                (scroll_ratio * max_thumb_start as f64) as usize
-            } else {
-                // File fits in viewport, thumb fills entire height starting at top
-                0
-            };
-
-            (thumb_start, thumb_size)
-        };
-
-        let thumb_end = thumb_start + thumb_size;
-
-        // Choose colors based on whether split is active
-        let track_color = if is_active {
-            Color::DarkGray
-        } else {
-            Color::Black
-        };
-        let thumb_color = if is_active {
-            Color::Gray
-        } else {
-            Color::DarkGray
-        };
-
-        // Render as background fills to avoid glyph gaps in terminals like Apple Terminal.
-        for row in 0..height {
-            let cell_area = Rect::new(scrollbar_rect.x, scrollbar_rect.y + row as u16, 1, 1);
-
-            let style = if row >= thumb_start && row < thumb_end {
-                // Thumb
-                Style::default().bg(thumb_color)
-            } else {
-                // Track
-                Style::default().bg(track_color)
-            };
-
-            let paragraph = Paragraph::new(" ").style(style);
-            frame.render_widget(paragraph, cell_area);
-        }
-
-        // Return thumb position for mouse hit testing
-        (thumb_start, thumb_end)
-    }
-
-    /// Compute the maximum line length encountered so far (in display columns).
-    /// Only scans the currently visible lines (plus a small margin) and updates
-    /// the running maximum stored in the viewport. This avoids scanning the
-    /// entire file, which would break large file support.
-    fn compute_max_line_length(
-        state: &mut EditorState,
-        viewport: &mut crate::view::viewport::Viewport,
-    ) -> usize {
-        let buffer_len = state.buffer.len();
-        let visible_width = viewport.width as usize;
-
-        if buffer_len == 0 {
-            return viewport.max_line_length_seen.max(visible_width);
-        }
-
-        // Scan only the visible lines (with a small margin) to update the running maximum
-        let visible_lines = viewport.height as usize + 5; // small margin beyond visible area
-        let mut lines_scanned = 0usize;
-        let mut iter = state.buffer.line_iterator(viewport.top_byte, 80);
-        loop {
-            if lines_scanned >= visible_lines {
-                break;
-            }
-            match iter.next_line() {
-                Some((_byte_offset, content)) => {
-                    let display_len = content.len();
-                    if display_len > viewport.max_line_length_seen {
-                        viewport.max_line_length_seen = display_len;
-                    }
-                    lines_scanned += 1;
-                }
-                None => break,
-            }
-        }
-
-        // Return at least visible_width (not left_column + visible_width) to avoid
-        // a feedback loop where scrolling right increases the limit further
-        viewport.max_line_length_seen.max(visible_width)
-    }
-
-    /// Render a horizontal scrollbar for a split.
-    /// `max_content_width` should be the actual max line length (from compute_max_line_length).
-    /// Returns (thumb_start_col, thumb_end_col) for mouse hit testing.
-    fn render_horizontal_scrollbar(
-        frame: &mut Frame,
-        viewport: &crate::view::viewport::Viewport,
-        hscrollbar_rect: Rect,
-        is_active: bool,
-        max_content_width: usize,
-    ) -> (usize, usize) {
-        let width = hscrollbar_rect.width as usize;
-        if width == 0 || hscrollbar_rect.height == 0 {
-            return (0, 0);
-        }
-
-        let track_color = if is_active {
-            Color::DarkGray
-        } else {
-            Color::Black
-        };
-
-        // When line wrapping is enabled, render empty track
-        if viewport.line_wrap_enabled {
-            for col in 0..width {
-                let cell_area = Rect::new(hscrollbar_rect.x + col as u16, hscrollbar_rect.y, 1, 1);
-                let paragraph = Paragraph::new(" ").style(Style::default().bg(track_color));
-                frame.render_widget(paragraph, cell_area);
-            }
-            return (0, width);
-        }
-
-        let visible_width = viewport.width as usize;
-        let left_column = viewport.left_column;
-
-        // If content fits entirely in viewport, fill the entire scrollbar with thumb
-        let max_scroll = max_content_width.saturating_sub(visible_width);
-
-        let (thumb_start, thumb_size) = if max_scroll == 0 {
-            (0, width)
-        } else {
-            // Calculate thumb size proportional to visible/total ratio
-            let thumb_size_raw =
-                ((visible_width as f64 / max_content_width as f64) * width as f64).ceil() as usize;
-            let thumb_size = thumb_size_raw.max(2).min(width); // min 2 cols for visibility
-
-            // Calculate thumb position
-            let scroll_ratio = left_column.min(max_scroll) as f64 / max_scroll as f64;
-            let max_thumb_start = width.saturating_sub(thumb_size);
-            let thumb_start = (scroll_ratio * max_thumb_start as f64).round() as usize;
-
-            (thumb_start, thumb_size)
-        };
-
-        let thumb_end = thumb_start + thumb_size;
-
-        let thumb_color = if is_active {
-            Color::Gray
-        } else {
-            Color::DarkGray
-        };
-
-        // Render as background fills (horizontal)
-        for col in 0..width {
-            let cell_area = Rect::new(hscrollbar_rect.x + col as u16, hscrollbar_rect.y, 1, 1);
-
-            let style = if col >= thumb_start && col < thumb_end {
-                Style::default().bg(thumb_color)
-            } else {
-                Style::default().bg(track_color)
-            };
-
-            let paragraph = Paragraph::new(" ").style(style);
-            frame.render_widget(paragraph, cell_area);
-        }
-
-        (thumb_start, thumb_end)
-    }
 
     #[allow(clippy::too_many_arguments)]
     fn build_view_data(
@@ -2446,7 +1970,7 @@ impl SplitRenderer {
         folds: &FoldManager,
         theme: &crate::view::theme::Theme,
     ) -> ViewData {
-        let adjusted_visible_count = Self::fold_adjusted_visible_count(
+        let adjusted_visible_count = fold_adjusted_visible_count(
             &state.buffer,
             &state.marker_list,
             folds,
@@ -2459,7 +1983,7 @@ impl SplitRenderer {
         let line_ending = state.buffer.line_ending();
 
         // Build base token stream from source
-        let base_tokens = Self::build_base_tokens(
+        let base_tokens = build_base_tokens(
             &mut state.buffer,
             viewport.top_byte,
             estimated_line_length,
@@ -2488,7 +2012,7 @@ impl SplitRenderer {
                 &state.marker_list,
             );
             if !soft_breaks.is_empty() {
-                tokens = Self::apply_soft_breaks(tokens, &soft_breaks);
+                tokens = apply_soft_breaks(tokens, &soft_breaks);
             }
         }
 
@@ -2506,7 +2030,7 @@ impl SplitRenderer {
                     .conceals
                     .query_viewport(viewport.top_byte, viewport_end, &state.marker_list);
             if !conceal_ranges.is_empty() {
-                tokens = Self::apply_conceal_ranges(tokens, &conceal_ranges);
+                tokens = apply_conceal_ranges(tokens, &conceal_ranges);
             }
         }
 
@@ -2526,7 +2050,7 @@ impl SplitRenderer {
         };
         let hanging_indent = line_wrap_enabled && viewport.wrap_indent;
         tokens =
-            Self::apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
+            apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
 
         // Convert tokens to display lines using the view pipeline
         // Each ViewLine preserves LineStart info for correct line number rendering
@@ -2556,9 +2080,9 @@ impl SplitRenderer {
         .collect();
 
         // Inject virtual lines (LineAbove/LineBelow) from VirtualTextManager
-        let lines = Self::inject_virtual_lines(source_lines, state, theme);
+        let lines = inject_virtual_lines(source_lines, state, theme);
         let placeholder_style = fold_placeholder_style(theme);
-        let lines = Self::apply_folding(
+        let lines = apply_folding(
             lines,
             &state.buffer,
             &state.marker_list,
@@ -2569,768 +2093,8 @@ impl SplitRenderer {
         ViewData { lines }
     }
 
-    fn fold_adjusted_visible_count(
-        buffer: &Buffer,
-        marker_list: &crate::model::marker::MarkerList,
-        folds: &FoldManager,
-        top_byte: usize,
-        visible_count: usize,
-    ) -> usize {
-        if folds.is_empty() {
-            return visible_count;
-        }
 
-        let start_line = buffer.get_line_number(top_byte);
-        let mut total = visible_count;
 
-        let mut ranges = folds.resolved_ranges(buffer, marker_list);
-        if ranges.is_empty() {
-            return visible_count;
-        }
-        ranges.sort_by_key(|range| range.header_line);
-
-        let mut min_header_line = start_line;
-        if let Some(containing_end) = ranges
-            .iter()
-            .filter(|range| start_line >= range.start_line && start_line <= range.end_line)
-            .map(|range| range.end_line)
-            .max()
-        {
-            let hidden_remaining = containing_end.saturating_sub(start_line).saturating_add(1);
-            total = total.saturating_add(hidden_remaining);
-            min_header_line = containing_end.saturating_add(1);
-        }
-
-        let mut end_line = start_line.saturating_add(total);
-
-        for range in ranges {
-            if range.header_line < min_header_line {
-                continue;
-            }
-            if range.header_line > end_line {
-                break;
-            }
-            let hidden = range
-                .end_line
-                .saturating_sub(range.start_line)
-                .saturating_add(1);
-            total = total.saturating_add(hidden);
-            end_line = start_line.saturating_add(total);
-        }
-
-        total
-    }
-
-    fn apply_folding(
-        lines: Vec<ViewLine>,
-        buffer: &Buffer,
-        marker_list: &crate::model::marker::MarkerList,
-        folds: &FoldManager,
-        placeholder_style: &ViewTokenStyle,
-    ) -> Vec<ViewLine> {
-        if folds.is_empty() {
-            return lines;
-        }
-
-        let collapsed_ranges = folds.resolved_ranges(buffer, marker_list);
-        if collapsed_ranges.is_empty() {
-            return lines;
-        }
-
-        let collapsed_header_bytes = folds.collapsed_header_bytes(buffer, marker_list);
-
-        // Pre-compute: for each line, what is the source byte of the next line?
-        let mut next_source_byte: Vec<Option<usize>> = vec![None; lines.len()];
-        let mut next_byte: Option<usize> = None;
-        for (idx, line) in lines.iter().enumerate().rev() {
-            next_source_byte[idx] = next_byte;
-            if let Some(byte) = Self::view_line_source_byte(line) {
-                next_byte = Some(byte);
-            }
-        }
-
-        let mut filtered = Vec::with_capacity(lines.len());
-        for (idx, mut line) in lines.into_iter().enumerate() {
-            let source_byte = Self::view_line_source_byte(&line);
-
-            if let Some(byte) = source_byte {
-                if Self::is_hidden_byte(byte, &collapsed_ranges) {
-                    continue;
-                }
-
-                if let Some(placeholder) = collapsed_header_bytes.get(&byte) {
-                    // Only append placeholder on the last visual segment of the line
-                    if next_source_byte[idx] != Some(byte) {
-                        let raw_text = placeholder
-                            .as_deref()
-                            .filter(|s| !s.trim().is_empty())
-                            .unwrap_or("...");
-                        let text = if raw_text.starts_with(' ') {
-                            raw_text.to_string()
-                        } else {
-                            format!(" {}", raw_text)
-                        };
-                        append_fold_placeholder(&mut line, &text, placeholder_style);
-                    }
-                }
-            } else if let Some(next_byte) = next_source_byte[idx] {
-                if Self::is_hidden_byte(next_byte, &collapsed_ranges) {
-                    continue;
-                }
-            }
-
-            filtered.push(line);
-        }
-
-        filtered
-    }
-
-    /// Get the source byte offset of a view line (first `Some` in char_source_bytes).
-    fn view_line_source_byte(line: &ViewLine) -> Option<usize> {
-        line.char_source_bytes.iter().find_map(|m| *m)
-    }
-
-    /// Check if a byte offset falls within any collapsed fold range.
-    fn is_hidden_byte(byte: usize, ranges: &[crate::view::folding::ResolvedFoldRange]) -> bool {
-        ranges
-            .iter()
-            .any(|range| byte >= range.start_byte && byte < range.end_byte)
-    }
-
-    /// Inject virtual lines (LineAbove/LineBelow) into the ViewLine stream
-    fn inject_virtual_lines(
-        source_lines: Vec<ViewLine>,
-        state: &EditorState,
-        theme: &crate::view::theme::Theme,
-    ) -> Vec<ViewLine> {
-        use crate::view::virtual_text::VirtualTextPosition;
-
-        // Get viewport byte range from source lines.
-        // Use the last line that has source bytes (not a trailing empty line
-        // which the iterator may emit at the buffer end).
-        let viewport_start = source_lines
-            .first()
-            .and_then(|l| l.char_source_bytes.iter().find_map(|m| *m))
-            .unwrap_or(0);
-        let viewport_end = source_lines
-            .iter()
-            .rev()
-            .find_map(|l| l.char_source_bytes.iter().rev().find_map(|m| *m))
-            .map(|b| b + 1)
-            .unwrap_or(viewport_start);
-
-        // Query virtual lines in viewport range
-        let virtual_lines = state.virtual_texts.query_lines_in_range(
-            &state.marker_list,
-            viewport_start,
-            viewport_end,
-        );
-
-        // If no virtual lines, return source lines unchanged
-        if virtual_lines.is_empty() {
-            return source_lines;
-        }
-
-        // Build result with virtual lines injected
-        let mut result = Vec::with_capacity(source_lines.len() + virtual_lines.len());
-
-        for source_line in source_lines {
-            // Get this line's byte range
-            let line_start_byte = source_line.char_source_bytes.iter().find_map(|m| *m);
-            let line_end_byte = source_line
-                .char_source_bytes
-                .iter()
-                .rev()
-                .find_map(|m| *m)
-                .map(|b| b + 1);
-
-            // Find LineAbove virtual texts anchored to this line
-            if let (Some(start), Some(end)) = (line_start_byte, line_end_byte) {
-                for (anchor_pos, vtext) in &virtual_lines {
-                    if *anchor_pos >= start
-                        && *anchor_pos < end
-                        && vtext.position == VirtualTextPosition::LineAbove
-                    {
-                        // Resolve theme keys against the live theme so the
-                        // virtual line follows theme changes (theme keys
-                        // are stored on the VirtualText itself, not
-                        // pre-baked into `style`).
-                        result.push(create_virtual_line(
-                            &vtext.text,
-                            vtext.resolved_style(theme),
-                        ));
-                    }
-                }
-            }
-
-            // Add the source line
-            result.push(source_line.clone());
-
-            // Find LineBelow virtual texts anchored to this line
-            if let (Some(start), Some(end)) = (line_start_byte, line_end_byte) {
-                for (anchor_pos, vtext) in &virtual_lines {
-                    if *anchor_pos >= start
-                        && *anchor_pos < end
-                        && vtext.position == VirtualTextPosition::LineBelow
-                    {
-                        // Resolve theme keys against the live theme so the
-                        // virtual line follows theme changes (theme keys
-                        // are stored on the VirtualText itself, not
-                        // pre-baked into `style`).
-                        result.push(create_virtual_line(
-                            &vtext.text,
-                            vtext.resolved_style(theme),
-                        ));
-                    }
-                }
-            }
-        }
-
-        result
-    }
-
-    /// Apply soft breaks to a token stream.
-    ///
-    /// Walks tokens with a sorted break list `[(position, indent)]`.
-    /// When a token's `source_offset` matches a break position:
-    /// - For Space tokens: replace with Newline + indent Spaces
-    /// - For other tokens: insert Newline + indent Spaces before the token
-    ///
-    /// Tokens without source_offset (injected/virtual) pass through unchanged.
-    fn apply_soft_breaks(
-        tokens: Vec<fresh_core::api::ViewTokenWire>,
-        soft_breaks: &[(usize, u16)],
-    ) -> Vec<fresh_core::api::ViewTokenWire> {
-        use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
-
-        if soft_breaks.is_empty() {
-            return tokens;
-        }
-
-        let mut output = Vec::with_capacity(tokens.len() + soft_breaks.len() * 2);
-        let mut break_idx = 0;
-
-        for token in tokens {
-            let offset = match token.source_offset {
-                Some(o) => o,
-                None => {
-                    // Injected tokens pass through
-                    output.push(token);
-                    continue;
-                }
-            };
-
-            // Check if any break points match this token's position
-            // Advance past any break positions that are before this token
-            while break_idx < soft_breaks.len() && soft_breaks[break_idx].0 < offset {
-                break_idx += 1;
-            }
-
-            if break_idx < soft_breaks.len() && soft_breaks[break_idx].0 == offset {
-                let indent = soft_breaks[break_idx].1;
-                break_idx += 1;
-
-                match &token.kind {
-                    ViewTokenWireKind::Space => {
-                        // Replace the Space with Newline + indent Spaces
-                        output.push(ViewTokenWire {
-                            source_offset: None,
-                            kind: ViewTokenWireKind::Newline,
-                            style: None,
-                        });
-                        for _ in 0..indent {
-                            output.push(ViewTokenWire {
-                                source_offset: None,
-                                kind: ViewTokenWireKind::Space,
-                                style: None,
-                            });
-                        }
-                    }
-                    _ => {
-                        // Insert Newline + indent Spaces before the token
-                        output.push(ViewTokenWire {
-                            source_offset: None,
-                            kind: ViewTokenWireKind::Newline,
-                            style: None,
-                        });
-                        for _ in 0..indent {
-                            output.push(ViewTokenWire {
-                                source_offset: None,
-                                kind: ViewTokenWireKind::Space,
-                                style: None,
-                            });
-                        }
-                        output.push(token);
-                    }
-                }
-            } else {
-                output.push(token);
-            }
-        }
-
-        output
-    }
-
-    /// Apply conceal ranges to a token stream.
-    ///
-    /// Handles partial token overlap: if a Text token spans bytes that are
-    /// partially concealed, the token is split at conceal boundaries.
-    /// Non-text tokens (Space, Newline) are treated as single-byte.
-    ///
-    /// Tokens without source_offset (injected/virtual) always pass through.
-    fn apply_conceal_ranges(
-        tokens: Vec<fresh_core::api::ViewTokenWire>,
-        conceal_ranges: &[(std::ops::Range<usize>, Option<&str>)],
-    ) -> Vec<fresh_core::api::ViewTokenWire> {
-        use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
-        use std::collections::HashSet;
-
-        if conceal_ranges.is_empty() {
-            return tokens;
-        }
-
-        let mut output = Vec::with_capacity(tokens.len());
-        let mut emitted_replacements: HashSet<usize> = HashSet::new();
-
-        // Helper: check if a byte offset is concealed, returns (is_concealed, conceal_index)
-        let is_concealed = |byte_offset: usize| -> Option<usize> {
-            for (idx, (range, _)) in conceal_ranges.iter().enumerate() {
-                if byte_offset >= range.start && byte_offset < range.end {
-                    return Some(idx);
-                }
-            }
-            None
-        };
-
-        for token in tokens {
-            let offset = match token.source_offset {
-                Some(o) => o,
-                None => {
-                    // Injected tokens always pass through
-                    output.push(token);
-                    continue;
-                }
-            };
-
-            match &token.kind {
-                ViewTokenWireKind::Text(text) => {
-                    // Text tokens may span multiple bytes. We need to check
-                    // each character's byte offset against conceal ranges and
-                    // split the token at conceal boundaries.
-                    let mut current_byte = offset;
-                    let mut visible_start: Option<usize> = None; // byte offset of visible run start
-                    let mut visible_chars = String::new();
-
-                    for ch in text.chars() {
-                        let ch_len = ch.len_utf8();
-
-                        if let Some(cidx) = is_concealed(current_byte) {
-                            // This char is concealed - flush any visible run first
-                            if !visible_chars.is_empty() {
-                                output.push(ViewTokenWire {
-                                    source_offset: visible_start,
-                                    kind: ViewTokenWireKind::Text(std::mem::take(
-                                        &mut visible_chars,
-                                    )),
-                                    style: token.style.clone(),
-                                });
-                                visible_start = None;
-                            }
-
-                            // Emit replacement text once per conceal range.
-                            // Split into first-char (with source_offset for cursor/click
-                            // positioning) and remaining chars (with None source_offset).
-                            // Without this split, the view pipeline's byte-advancing logic
-                            // (`source + byte_idx`) causes multi-character replacements to
-                            // "claim" buffer byte positions beyond the concealed range,
-                            // leading to ghost cursors and mispositioned hardware cursors.
-                            if let Some(repl) = conceal_ranges[cidx].1 {
-                                if !emitted_replacements.contains(&cidx) {
-                                    emitted_replacements.insert(cidx);
-                                    if !repl.is_empty() {
-                                        let mut chars = repl.chars();
-                                        if let Some(first_ch) = chars.next() {
-                                            // First character maps to the concealed range start
-                                            output.push(ViewTokenWire {
-                                                source_offset: Some(conceal_ranges[cidx].0.start),
-                                                kind: ViewTokenWireKind::Text(first_ch.to_string()),
-                                                style: None,
-                                            });
-                                            let rest: String = chars.collect();
-                                            if !rest.is_empty() {
-                                                // Remaining characters are synthetic — no source mapping
-                                                output.push(ViewTokenWire {
-                                                    source_offset: None,
-                                                    kind: ViewTokenWireKind::Text(rest),
-                                                    style: None,
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            // Visible char - accumulate
-                            if visible_start.is_none() {
-                                visible_start = Some(current_byte);
-                            }
-                            visible_chars.push(ch);
-                        }
-
-                        current_byte += ch_len;
-                    }
-
-                    // Flush remaining visible chars
-                    if !visible_chars.is_empty() {
-                        output.push(ViewTokenWire {
-                            source_offset: visible_start,
-                            kind: ViewTokenWireKind::Text(visible_chars),
-                            style: token.style.clone(),
-                        });
-                    }
-                }
-                ViewTokenWireKind::Space
-                | ViewTokenWireKind::Newline
-                | ViewTokenWireKind::Break => {
-                    // Single-byte tokens: conceal or pass through
-                    if is_concealed(offset).is_some() {
-                        // Skip concealed space/newline
-                    } else {
-                        output.push(token);
-                    }
-                }
-                ViewTokenWireKind::BinaryByte(_) => {
-                    if is_concealed(offset).is_some() {
-                        // Skip concealed binary byte
-                    } else {
-                        output.push(token);
-                    }
-                }
-            }
-        }
-
-        output
-    }
-
-    fn build_base_tokens(
-        buffer: &mut Buffer,
-        top_byte: usize,
-        estimated_line_length: usize,
-        visible_count: usize,
-        is_binary: bool,
-        line_ending: crate::model::buffer::LineEnding,
-    ) -> Vec<fresh_core::api::ViewTokenWire> {
-        use crate::model::buffer::LineEnding;
-        use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
-
-        let mut tokens = Vec::new();
-
-        // For binary files, read raw bytes directly to preserve byte values
-        // (LineIterator uses String::from_utf8_lossy which loses high bytes)
-        if is_binary {
-            return Self::build_base_tokens_binary(
-                buffer,
-                top_byte,
-                estimated_line_length,
-                visible_count,
-            );
-        }
-
-        let mut iter = buffer.line_iterator(top_byte, estimated_line_length);
-        let mut lines_seen = 0usize;
-        let max_lines = visible_count.saturating_add(4);
-
-        while lines_seen < max_lines {
-            if let Some((line_start, line_content)) = iter.next_line() {
-                let mut byte_offset = 0usize;
-                let content_bytes = line_content.as_bytes();
-                let mut skip_next_lf = false; // Track if we should skip \n after \r in CRLF
-                let mut chars_this_line = 0usize; // Track chars to enforce MAX_SAFE_LINE_WIDTH
-                for ch in line_content.chars() {
-                    // Limit characters per line to prevent memory exhaustion from huge lines.
-                    // Insert a Break token to force wrapping at safe intervals.
-                    if chars_this_line >= MAX_SAFE_LINE_WIDTH {
-                        tokens.push(ViewTokenWire {
-                            source_offset: None,
-                            kind: ViewTokenWireKind::Break,
-                            style: None,
-                        });
-                        chars_this_line = 0;
-                        // Count this as a new visual line for the max_lines limit
-                        lines_seen += 1;
-                        if lines_seen >= max_lines {
-                            break;
-                        }
-                    }
-                    chars_this_line += 1;
-
-                    let ch_len = ch.len_utf8();
-                    let source_offset = Some(line_start + byte_offset);
-
-                    match ch {
-                        '\r' => {
-                            // In CRLF mode with \r\n: emit Newline at \r position, skip the \n
-                            // This allows cursor at \r (end of line) to be visible
-                            // In LF/Unix files, ANY \r is unusual and should be shown as <0D>
-                            let is_crlf_file = line_ending == LineEnding::CRLF;
-                            let next_byte = content_bytes.get(byte_offset + 1);
-                            if is_crlf_file && next_byte == Some(&b'\n') {
-                                // CRLF: emit Newline token at \r position for cursor visibility
-                                tokens.push(ViewTokenWire {
-                                    source_offset,
-                                    kind: ViewTokenWireKind::Newline,
-                                    style: None,
-                                });
-                                // Mark to skip the following \n in the char iterator
-                                skip_next_lf = true;
-                                byte_offset += ch_len;
-                                continue;
-                            }
-                            // LF file or standalone \r - show as control character
-                            tokens.push(ViewTokenWire {
-                                source_offset,
-                                kind: ViewTokenWireKind::BinaryByte(ch as u8),
-                                style: None,
-                            });
-                        }
-                        '\n' if skip_next_lf => {
-                            // Skip \n that follows \r in CRLF mode (already emitted Newline at \r)
-                            skip_next_lf = false;
-                            byte_offset += ch_len;
-                            continue;
-                        }
-                        '\n' => {
-                            tokens.push(ViewTokenWire {
-                                source_offset,
-                                kind: ViewTokenWireKind::Newline,
-                                style: None,
-                            });
-                        }
-                        ' ' => {
-                            tokens.push(ViewTokenWire {
-                                source_offset,
-                                kind: ViewTokenWireKind::Space,
-                                style: None,
-                            });
-                        }
-                        '\t' => {
-                            // Tab is safe, emit as Text
-                            tokens.push(ViewTokenWire {
-                                source_offset,
-                                kind: ViewTokenWireKind::Text(ch.to_string()),
-                                style: None,
-                            });
-                        }
-                        _ if Self::is_control_char(ch) => {
-                            // Control character - emit as BinaryByte to render as <XX>
-                            tokens.push(ViewTokenWire {
-                                source_offset,
-                                kind: ViewTokenWireKind::BinaryByte(ch as u8),
-                                style: None,
-                            });
-                        }
-                        _ => {
-                            // Accumulate consecutive non-space/non-newline chars into Text tokens
-                            if let Some(last) = tokens.last_mut() {
-                                if let ViewTokenWireKind::Text(ref mut s) = last.kind {
-                                    // Extend existing Text token if contiguous
-                                    let expected_offset = last.source_offset.map(|o| o + s.len());
-                                    if expected_offset == Some(line_start + byte_offset) {
-                                        s.push(ch);
-                                        byte_offset += ch_len;
-                                        continue;
-                                    }
-                                }
-                            }
-                            tokens.push(ViewTokenWire {
-                                source_offset,
-                                kind: ViewTokenWireKind::Text(ch.to_string()),
-                                style: None,
-                            });
-                        }
-                    }
-                    byte_offset += ch_len;
-                }
-                lines_seen += 1;
-            } else {
-                break;
-            }
-        }
-
-        // Handle empty buffer
-        if tokens.is_empty() {
-            tokens.push(ViewTokenWire {
-                source_offset: Some(top_byte),
-                kind: ViewTokenWireKind::Text(String::new()),
-                style: None,
-            });
-        }
-
-        tokens
-    }
-
-    /// Build tokens for binary files by reading raw bytes directly
-    /// This preserves byte values >= 0x80 that would be lost by String::from_utf8_lossy
-    fn build_base_tokens_binary(
-        buffer: &mut Buffer,
-        top_byte: usize,
-        estimated_line_length: usize,
-        visible_count: usize,
-    ) -> Vec<fresh_core::api::ViewTokenWire> {
-        use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
-
-        let mut tokens = Vec::new();
-        let max_lines = visible_count.saturating_add(4);
-        let buffer_len = buffer.len();
-
-        if top_byte >= buffer_len {
-            tokens.push(ViewTokenWire {
-                source_offset: Some(top_byte),
-                kind: ViewTokenWireKind::Text(String::new()),
-                style: None,
-            });
-            return tokens;
-        }
-
-        // Estimate how many bytes we need to read
-        let estimated_bytes = estimated_line_length * max_lines * 2;
-        let bytes_to_read = estimated_bytes.min(buffer_len - top_byte);
-
-        // Read raw bytes directly from buffer
-        let raw_bytes = buffer.slice_bytes(top_byte..top_byte + bytes_to_read);
-
-        let mut byte_offset = 0usize;
-        let mut lines_seen = 0usize;
-        let mut current_text = String::new();
-        let mut current_text_start: Option<usize> = None;
-
-        // Helper to flush accumulated text to tokens
-        let flush_text =
-            |tokens: &mut Vec<ViewTokenWire>, text: &mut String, start: &mut Option<usize>| {
-                if !text.is_empty() {
-                    tokens.push(ViewTokenWire {
-                        source_offset: *start,
-                        kind: ViewTokenWireKind::Text(std::mem::take(text)),
-                        style: None,
-                    });
-                    *start = None;
-                }
-            };
-
-        while byte_offset < raw_bytes.len() && lines_seen < max_lines {
-            let b = raw_bytes[byte_offset];
-            let source_offset = top_byte + byte_offset;
-
-            match b {
-                b'\n' => {
-                    flush_text(&mut tokens, &mut current_text, &mut current_text_start);
-                    tokens.push(ViewTokenWire {
-                        source_offset: Some(source_offset),
-                        kind: ViewTokenWireKind::Newline,
-                        style: None,
-                    });
-                    lines_seen += 1;
-                }
-                b' ' => {
-                    flush_text(&mut tokens, &mut current_text, &mut current_text_start);
-                    tokens.push(ViewTokenWire {
-                        source_offset: Some(source_offset),
-                        kind: ViewTokenWireKind::Space,
-                        style: None,
-                    });
-                }
-                _ => {
-                    // For binary files, emit unprintable bytes as BinaryByte tokens
-                    // This ensures view_pipeline.rs can map all 4 chars of <XX> to the same source byte
-                    if Self::is_binary_unprintable(b) {
-                        // Flush any accumulated printable text first
-                        flush_text(&mut tokens, &mut current_text, &mut current_text_start);
-                        // Emit as BinaryByte so cursor positioning works correctly
-                        tokens.push(ViewTokenWire {
-                            source_offset: Some(source_offset),
-                            kind: ViewTokenWireKind::BinaryByte(b),
-                            style: None,
-                        });
-                    } else {
-                        // Printable ASCII - accumulate into text token
-                        // Each printable char is 1 byte so accumulation works correctly
-                        if current_text_start.is_none() {
-                            current_text_start = Some(source_offset);
-                        }
-                        current_text.push(b as char);
-                    }
-                }
-            }
-            byte_offset += 1;
-        }
-
-        // Flush any remaining text
-        flush_text(&mut tokens, &mut current_text, &mut current_text_start);
-
-        // Handle empty buffer
-        if tokens.is_empty() {
-            tokens.push(ViewTokenWire {
-                source_offset: Some(top_byte),
-                kind: ViewTokenWireKind::Text(String::new()),
-                style: None,
-            });
-        }
-
-        tokens
-    }
-
-    /// Check if a byte should be displayed as <XX> in binary mode
-    /// Returns true for:
-    /// - Control characters (0x00-0x1F) except tab and newline
-    /// - DEL (0x7F)
-    /// - High bytes (0x80-0xFF) which are not valid single-byte UTF-8
-    ///
-    /// Note: In binary mode, we must be very strict about what characters we allow through,
-    /// because control characters can move the terminal cursor and corrupt the display:
-    /// - CR (0x0D) moves cursor to column 0, overwriting the gutter
-    /// - VT (0x0B) and FF (0x0C) move cursor vertically
-    /// - ESC (0x1B) starts ANSI escape sequences
-    fn is_binary_unprintable(b: u8) -> bool {
-        // Only allow: tab (0x09) and newline (0x0A)
-        // These are the only safe whitespace characters in binary mode
-        // All other control characters can corrupt terminal output
-        if b == 0x09 || b == 0x0A {
-            return false;
-        }
-        // All other control characters (0x00-0x1F) are unprintable in binary mode
-        // This includes CR, VT, FF, ESC which can move the cursor
-        if b < 0x20 {
-            return true;
-        }
-        // DEL character (0x7F) is unprintable
-        if b == 0x7F {
-            return true;
-        }
-        // High bytes (0x80-0xFF) are unprintable in binary mode
-        // (they're not valid single-byte UTF-8 and would be converted to replacement char)
-        if b >= 0x80 {
-            return true;
-        }
-        false
-    }
-
-    /// Check if a character is a control character that should be rendered as <XX>
-    /// This applies to ALL files (binary and non-binary) to prevent terminal corruption
-    fn is_control_char(ch: char) -> bool {
-        let code = ch as u32;
-        // Only check ASCII range
-        if code >= 128 {
-            return false;
-        }
-        let b = code as u8;
-        // Allow: tab (0x09), newline (0x0A), ESC (0x1B - for ANSI sequences)
-        if b == 0x09 || b == 0x0A || b == 0x1B {
-            return false;
-        }
-        // Other control characters (0x00-0x1F) and DEL (0x7F) are dangerous
-        // This includes CR (0x0D), VT (0x0B), FF (0x0C) which move the cursor
-        b < 0x20 || b == 0x7F
-    }
 
     /// Public wrapper for building base tokens - used by render.rs for the view_transform_request hook
     pub fn build_base_tokens_for_hook(
@@ -3341,7 +2105,7 @@ impl SplitRenderer {
         is_binary: bool,
         line_ending: crate::model::buffer::LineEnding,
     ) -> Vec<fresh_core::api::ViewTokenWire> {
-        Self::build_base_tokens(
+        build_base_tokens(
             buffer,
             top_byte,
             estimated_line_length,
@@ -3351,328 +2115,6 @@ impl SplitRenderer {
         )
     }
 
-    fn apply_wrapping_transform(
-        tokens: Vec<fresh_core::api::ViewTokenWire>,
-        content_width: usize,
-        gutter_width: usize,
-        hanging_indent: bool,
-    ) -> Vec<fresh_core::api::ViewTokenWire> {
-        use crate::primitives::visual_layout::visual_width;
-        use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
-
-        /// Minimum content width for continuation lines when hanging indent is active.
-        const MIN_CONTINUATION_CONTENT_WIDTH: usize = 10;
-
-        // Calculate available width (accounting for gutter on first line only)
-        let available_width = content_width.saturating_sub(gutter_width);
-
-        // Guard against zero or very small available width which would produce
-        // one Break per character, causing pathological memory usage.
-        // Return tokens unwrapped instead of exploding memory.
-        if available_width < 2 {
-            return tokens;
-        }
-
-        let mut wrapped = Vec::new();
-        let mut current_line_width: usize = 0;
-
-        // Hanging indent state: the visual indent width for the current logical line.
-        // Reset to 0 on each Newline, measured from leading whitespace.
-        let mut line_indent: usize = 0;
-        // Whether we're still measuring leading whitespace for the current line
-        let mut measuring_indent = hanging_indent;
-        // Whether we've emitted a Break for the current logical line (i.e., we're on a continuation)
-        let mut on_continuation = false;
-
-        /// Effective width for the current segment.
-        ///
-        /// This always returns `available_width` because hanging indent is
-        /// already accounted for by the indent text emitted into
-        /// `current_line_width` via `emit_break_with_indent`.  Subtracting
-        /// `line_indent` here would double-count it, causing "squished"
-        /// wrapping on narrow terminals (issue #1502).
-        #[inline]
-        fn effective_width(
-            available_width: usize,
-            _line_indent: usize,
-            _on_continuation: bool,
-        ) -> usize {
-            available_width
-        }
-
-        /// Emit a Break token followed by hanging indent spaces.
-        /// Updates current_line_width to reflect the indent.
-        /// Uses a pre-computed indent string to avoid repeated allocations.
-        fn emit_break_with_indent(
-            wrapped: &mut Vec<ViewTokenWire>,
-            current_line_width: &mut usize,
-            indent_string: &str,
-        ) {
-            wrapped.push(ViewTokenWire {
-                source_offset: None,
-                kind: ViewTokenWireKind::Break,
-                style: None,
-            });
-            *current_line_width = 0;
-            if !indent_string.is_empty() {
-                wrapped.push(ViewTokenWire {
-                    source_offset: None,
-                    kind: ViewTokenWireKind::Text(indent_string.to_string()),
-                    style: None,
-                });
-                *current_line_width = indent_string.len();
-            }
-        }
-
-        // Pre-computed indent string, updated only when line_indent changes.
-        // Avoids allocating " ".repeat(n) on every Break emission.
-        let mut cached_indent_string = String::new();
-        let mut cached_indent_len: usize = 0;
-
-        for token in tokens {
-            match &token.kind {
-                ViewTokenWireKind::Newline => {
-                    // Real newlines always break the line
-                    wrapped.push(token);
-                    current_line_width = 0;
-                    line_indent = 0;
-                    cached_indent_string.clear();
-                    cached_indent_len = 0;
-                    measuring_indent = hanging_indent;
-                    on_continuation = false;
-                }
-                ViewTokenWireKind::Text(text) => {
-                    // Measure leading whitespace at the start of a logical line
-                    if measuring_indent {
-                        let mut ws_char_count = 0usize;
-                        let mut ws_visual_width = 0usize;
-                        for c in text.chars() {
-                            if c == ' ' {
-                                ws_visual_width += 1;
-                                ws_char_count += 1;
-                            } else if c == '\t' {
-                                // Expand tab to next 4-column tab stop, matching detect_indent()
-                                let tab_stop = 4;
-                                let col = line_indent + ws_visual_width;
-                                ws_visual_width += tab_stop - (col % tab_stop);
-                                ws_char_count += 1;
-                            } else {
-                                break;
-                            }
-                        }
-                        if ws_char_count == text.chars().count() {
-                            // Entire token is whitespace — accumulate and continue measuring
-                            line_indent += ws_visual_width;
-                        } else {
-                            // Token has non-whitespace: finalize indent measurement
-                            line_indent += ws_visual_width;
-                            measuring_indent = false;
-                        }
-                        // Clamp indent to ensure continuation lines have room for content
-                        if line_indent + MIN_CONTINUATION_CONTENT_WIDTH > available_width {
-                            line_indent = 0;
-                        }
-                        // Rebuild cached indent string if indent changed
-                        if line_indent != cached_indent_len {
-                            cached_indent_string = " ".repeat(line_indent);
-                            cached_indent_len = line_indent;
-                        }
-                    }
-
-                    let eff_width = effective_width(available_width, line_indent, on_continuation);
-
-                    // Use visual_width which properly handles tabs and ANSI codes
-                    let text_visual_width = visual_width(text, current_line_width);
-
-                    // If this token would exceed line width, insert Break before it
-                    if current_line_width > 0 && current_line_width + text_visual_width > eff_width
-                    {
-                        on_continuation = true;
-                        emit_break_with_indent(
-                            &mut wrapped,
-                            &mut current_line_width,
-                            &cached_indent_string,
-                        );
-                    }
-
-                    let eff_width = effective_width(available_width, line_indent, on_continuation);
-
-                    // Recalculate visual width after potential line break (tabs depend on column)
-                    let text_visual_width = visual_width(text, current_line_width);
-
-                    // If visible text is longer than line width, we need to split
-                    // However, we don't split tokens containing ANSI codes to avoid
-                    // breaking escape sequences. ANSI-heavy content may exceed line width.
-                    if text_visual_width > eff_width
-                        && !crate::primitives::ansi::contains_ansi_codes(text)
-                    {
-                        use unicode_segmentation::UnicodeSegmentation;
-
-                        // Collect graphemes with their byte offsets for proper Unicode handling
-                        let graphemes: Vec<(usize, &str)> = text.grapheme_indices(true).collect();
-                        let mut grapheme_idx = 0;
-                        let source_base = token.source_offset;
-
-                        while grapheme_idx < graphemes.len() {
-                            let eff_width =
-                                effective_width(available_width, line_indent, on_continuation);
-                            // Calculate how many graphemes fit in remaining space
-                            // by summing visual widths until we exceed available width
-                            let remaining_width = eff_width.saturating_sub(current_line_width);
-                            if remaining_width == 0 {
-                                // Need to break to next line.
-                                // If we already are on a continuation and line_indent
-                                // fills half or more of available_width, breaking again
-                                // would leave remaining_width == 0 again — infinite loop.
-                                // Force-emit at least one grapheme to guarantee progress.
-                                if on_continuation && current_line_width >= eff_width {
-                                    // Force one grapheme onto this line to avoid infinite loop
-                                } else {
-                                    on_continuation = true;
-                                    emit_break_with_indent(
-                                        &mut wrapped,
-                                        &mut current_line_width,
-                                        &cached_indent_string,
-                                    );
-                                    continue;
-                                }
-                            }
-
-                            let mut chunk_visual_width = 0;
-                            let mut chunk_grapheme_count = 0;
-                            let mut col = current_line_width;
-
-                            for &(_byte_offset, grapheme) in &graphemes[grapheme_idx..] {
-                                let g_width = if grapheme == "\t" {
-                                    crate::primitives::visual_layout::tab_expansion_width(col)
-                                } else {
-                                    crate::primitives::display_width::str_width(grapheme)
-                                };
-
-                                if chunk_visual_width + g_width > remaining_width
-                                    && chunk_grapheme_count > 0
-                                {
-                                    break;
-                                }
-
-                                chunk_visual_width += g_width;
-                                chunk_grapheme_count += 1;
-                                col += g_width;
-                            }
-
-                            if chunk_grapheme_count == 0 {
-                                // Single grapheme is wider than available width, force it
-                                chunk_grapheme_count = 1;
-                                let grapheme = graphemes[grapheme_idx].1;
-                                chunk_visual_width = if grapheme == "\t" {
-                                    crate::primitives::visual_layout::tab_expansion_width(
-                                        current_line_width,
-                                    )
-                                } else {
-                                    crate::primitives::display_width::str_width(grapheme)
-                                };
-                            }
-
-                            // Build chunk from graphemes and calculate source offset
-                            let chunk_start_byte = graphemes[grapheme_idx].0;
-                            let chunk_end_byte =
-                                if grapheme_idx + chunk_grapheme_count < graphemes.len() {
-                                    graphemes[grapheme_idx + chunk_grapheme_count].0
-                                } else {
-                                    text.len()
-                                };
-                            let chunk = text[chunk_start_byte..chunk_end_byte].to_string();
-                            let chunk_source = source_base.map(|b| b + chunk_start_byte);
-
-                            wrapped.push(ViewTokenWire {
-                                source_offset: chunk_source,
-                                kind: ViewTokenWireKind::Text(chunk),
-                                style: token.style.clone(),
-                            });
-
-                            current_line_width += chunk_visual_width;
-                            grapheme_idx += chunk_grapheme_count;
-
-                            let eff_width =
-                                effective_width(available_width, line_indent, on_continuation);
-                            // If we filled the line, break
-                            if current_line_width >= eff_width {
-                                on_continuation = true;
-                                emit_break_with_indent(
-                                    &mut wrapped,
-                                    &mut current_line_width,
-                                    &cached_indent_string,
-                                );
-                            }
-                        }
-                    } else {
-                        wrapped.push(token);
-                        current_line_width += text_visual_width;
-                    }
-                }
-                ViewTokenWireKind::Space => {
-                    // Measure leading whitespace (spaces)
-                    if measuring_indent {
-                        line_indent += 1;
-                        // Clamp indent
-                        if line_indent + MIN_CONTINUATION_CONTENT_WIDTH > available_width {
-                            line_indent = 0;
-                        }
-                    }
-
-                    let eff_width = effective_width(available_width, line_indent, on_continuation);
-                    // Spaces count toward line width
-                    if current_line_width + 1 > eff_width {
-                        on_continuation = true;
-                        emit_break_with_indent(
-                            &mut wrapped,
-                            &mut current_line_width,
-                            &cached_indent_string,
-                        );
-                    }
-                    wrapped.push(token);
-                    current_line_width += 1;
-                }
-                ViewTokenWireKind::Break => {
-                    // Pass through existing breaks
-                    wrapped.push(token);
-                    current_line_width = 0;
-                    on_continuation = true;
-                    // Inject indent for pre-existing breaks too
-                    if line_indent > 0 {
-                        wrapped.push(ViewTokenWire {
-                            source_offset: None,
-                            kind: ViewTokenWireKind::Text(" ".repeat(line_indent)),
-                            style: None,
-                        });
-                        current_line_width = line_indent;
-                    }
-                }
-                ViewTokenWireKind::BinaryByte(_) => {
-                    // Stop measuring indent on non-whitespace content
-                    if measuring_indent {
-                        measuring_indent = false;
-                    }
-
-                    let eff_width = effective_width(available_width, line_indent, on_continuation);
-                    // Binary bytes render as <XX> which is 4 characters
-                    let byte_display_width = 4;
-                    if current_line_width + byte_display_width > eff_width {
-                        on_continuation = true;
-                        emit_break_with_indent(
-                            &mut wrapped,
-                            &mut current_line_width,
-                            &cached_indent_string,
-                        );
-                    }
-                    wrapped.push(token);
-                    current_line_width += byte_display_width;
-                }
-            }
-        }
-
-        wrapped
-    }
 
     fn calculate_view_anchor(view_lines: &[ViewLine], top_byte: usize) -> ViewAnchor {
         // Find the first line that contains source content at or after top_byte
@@ -4027,12 +2469,12 @@ impl SplitRenderer {
         // Merge native diff-since-saved indicators (cornflower blue │ for unsaved edits).
         // These have priority 5, lower than git gutter (10), so existing indicators win.
         let diff_indicators =
-            Self::diff_indicators_for_viewport(state, viewport_start, viewport_end);
+            diff_indicators_for_viewport(state, viewport_start, viewport_end);
         for (key, diff_ind) in diff_indicators {
             line_indicators.entry(key).or_insert(diff_ind);
         }
 
-        let fold_indicators = Self::fold_indicators_for_viewport(state, folds, view_lines);
+        let fold_indicators = fold_indicators_for_viewport(state, folds, view_lines);
 
         DecorationContext {
             highlight_spans,
@@ -4046,140 +2488,7 @@ impl SplitRenderer {
         }
     }
 
-    fn fold_indicators_for_viewport(
-        state: &EditorState,
-        folds: &FoldManager,
-        view_lines: &[ViewLine],
-    ) -> BTreeMap<usize, FoldIndicator> {
-        let mut indicators = BTreeMap::new();
 
-        // Collapsed headers from marker-based folds — always keyed by header_byte
-        for range in folds.resolved_ranges(&state.buffer, &state.marker_list) {
-            indicators.insert(range.header_byte, FoldIndicator { collapsed: true });
-        }
-
-        if !state.folding_ranges.is_empty() {
-            // Use LSP-provided folding ranges. Resolve markers to current
-            // line numbers post-edit (issue #1571).
-            // Filter to only ranges that start on one of our visible view lines.
-            let visible_starts: HashSet<usize> = view_lines
-                .iter()
-                .filter_map(|l| l.source_start_byte)
-                .collect();
-
-            let resolved = state
-                .folding_ranges
-                .resolved(&state.buffer, &state.marker_list);
-            for range in &resolved {
-                let start_line = range.start_line as usize;
-                let end_line = range.end_line as usize;
-                if end_line <= start_line {
-                    continue;
-                }
-                if let Some(line_byte) = state.buffer.line_start_offset(start_line) {
-                    if visible_starts.contains(&line_byte) {
-                        indicators
-                            .entry(line_byte)
-                            .or_insert(FoldIndicator { collapsed: false });
-                    }
-                }
-            }
-        } else {
-            // Indent-based fold detection on viewport bytes — key by absolute byte offset
-            use crate::view::folding::indent_folding;
-            let tab_size = state.buffer_settings.tab_size;
-            let max_lookahead = crate::config::INDENT_FOLD_INDICATOR_MAX_SCAN;
-
-            // Iterate through ONLY the visible view lines. This automatically ignores
-            // thousands of lines hidden by collapsed folds.
-            for (i, view_line) in view_lines.iter().enumerate() {
-                // Only source lines (not wrapped continuations) can be fold headers
-                if let Some(line_start_byte) = view_line.source_start_byte {
-                    if view_line.line_start.is_continuation() {
-                        continue;
-                    }
-
-                    // Check if this line is foldable by looking at subsequent visible lines
-                    let mut subsequent_lines = Vec::new();
-                    let lookahead_limit = (i + 1 + max_lookahead).min(view_lines.len());
-                    for j in i..lookahead_limit {
-                        subsequent_lines.push(view_lines[j].text.as_bytes());
-                    }
-
-                    if indent_folding::is_line_foldable_in_bytes(&subsequent_lines, tab_size) {
-                        indicators
-                            .entry(line_start_byte)
-                            .or_insert(FoldIndicator { collapsed: false });
-                    }
-                }
-            }
-        }
-
-        indicators
-    }
-
-    /// Compute diff-since-saved indicators for the viewport.
-    ///
-    /// Calls `diff_since_saved()` to get byte ranges that differ from the saved
-    /// version, intersects them with the viewport, and scans for line starts to
-    /// produce per-line indicators. Works identically with and without line
-    /// number metadata (byte-offset mode for large files).
-    fn diff_indicators_for_viewport(
-        state: &EditorState,
-        viewport_start: usize,
-        viewport_end: usize,
-    ) -> BTreeMap<usize, crate::view::margin::LineIndicator> {
-        use crate::view::folding::indent_folding;
-        let diff = state.buffer.diff_since_saved();
-        if diff.equal || diff.byte_ranges.is_empty() {
-            return BTreeMap::new();
-        }
-
-        let mut indicators = BTreeMap::new();
-        let indicator = crate::view::margin::LineIndicator::new(
-            "│",
-            Color::Rgb(100, 149, 237), // Cornflower blue
-            5,                         // Lower priority than git gutter (10)
-        );
-
-        let bytes = state.buffer.slice_bytes(viewport_start..viewport_end);
-        if bytes.is_empty() {
-            return indicators;
-        }
-
-        for range in &diff.byte_ranges {
-            // Intersect diff range with viewport
-            let lo = range.start.max(viewport_start);
-            let hi = range.end.min(viewport_end);
-            if lo >= hi {
-                continue;
-            }
-
-            // Mark the line containing the start of this diff range
-            let line_start = indent_folding::find_line_start_byte(&state.buffer, lo);
-            if line_start >= viewport_start && line_start < viewport_end {
-                indicators
-                    .entry(line_start)
-                    .or_insert_with(|| indicator.clone());
-            }
-
-            // Scan forward for \n within [lo..hi] to find subsequent line starts
-            let rel_lo = lo - viewport_start;
-            let rel_hi = (hi - viewport_start).min(bytes.len());
-            for (i, &byte) in bytes[rel_lo..rel_hi].iter().enumerate() {
-                if byte == b'\n' {
-                    let next_line_start = viewport_start + rel_lo + i + 1;
-                    if next_line_start < viewport_end {
-                        indicators
-                            .entry(next_line_start)
-                            .or_insert_with(|| indicator.clone());
-                    }
-                }
-            }
-        }
-
-        indicators
-    }
 
     // semantic token colors are mapped when overlays are created
 
@@ -5656,7 +3965,7 @@ impl SplitRenderer {
             );
         }
 
-        let adjusted_visible_count = Self::fold_adjusted_visible_count(
+        let adjusted_visible_count = fold_adjusted_visible_count(
             &state.buffer,
             &state.marker_list,
             folds,
@@ -6196,7 +4505,7 @@ mod tests {
             ends_with_newline: true,
         }];
 
-        let indicators = SplitRenderer::fold_indicators_for_viewport(&state, &folds, &view_lines);
+        let indicators = fold_indicators_for_viewport(&state, &folds, &view_lines);
 
         // Collapsed fold: header is line 0 (byte 0)
         assert_eq!(indicators.get(&0).map(|i| i.collapsed), Some(true));
@@ -7215,7 +5524,7 @@ mod tests {
 
         // Apply wrapping with MAX_SAFE_LINE_WIDTH (simulating line_wrap disabled)
         let wrapped =
-            SplitRenderer::apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
+            apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
 
         // Count Break tokens - should have at least 2 breaks for 25K chars at 10K width
         let break_count = wrapped
@@ -7266,7 +5575,7 @@ mod tests {
 
         // Apply wrapping with MAX_SAFE_LINE_WIDTH (simulating line_wrap disabled)
         let wrapped =
-            SplitRenderer::apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
+            apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
 
         // Should have no Break tokens for short lines
         let break_count = wrapped
@@ -7324,7 +5633,7 @@ mod tests {
 
         // Apply safety wrapping (simulating line_wrap=false with MAX_SAFE_LINE_WIDTH)
         let wrapped =
-            SplitRenderer::apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
+            apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
 
         // Convert to ViewLines
         let view_lines: Vec<_> = ViewLineIterator::new(&wrapped, false, false, 4, false).collect();
