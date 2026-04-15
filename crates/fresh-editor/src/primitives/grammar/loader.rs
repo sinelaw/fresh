@@ -883,11 +883,10 @@ mod tests {
     #[test]
     fn test_find_syntax_with_custom_languages_config() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut registry = Arc::try_unwrap(GrammarRegistry::for_editor(
-            temp_dir.path().to_path_buf(),
-        ))
-        .ok()
-        .expect("registry should have refcount 1");
+        let mut registry =
+            Arc::try_unwrap(GrammarRegistry::for_editor(temp_dir.path().to_path_buf()))
+                .ok()
+                .expect("registry should have refcount 1");
 
         // Create a custom languages config that maps "custom.myext" files to bash
         let mut languages = std::collections::HashMap::new();

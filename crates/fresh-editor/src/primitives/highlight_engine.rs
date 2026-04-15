@@ -1031,7 +1031,10 @@ impl HighlightEngine {
     /// logic. Callers that start from a path or a syntax name should resolve
     /// the entry through `GrammarRegistry::find_by_path` / `find_by_name` and
     /// then call this.
-    pub fn from_entry(entry: &crate::primitives::grammar::GrammarEntry, registry: &GrammarRegistry) -> Self {
+    pub fn from_entry(
+        entry: &crate::primitives::grammar::GrammarEntry,
+        registry: &GrammarRegistry,
+    ) -> Self {
         let syntax_set = registry.syntax_set_arc();
         if let Some(index) = entry.engines.syntect {
             return Self::TextMate(Box::new(TextMateEngine::with_language(

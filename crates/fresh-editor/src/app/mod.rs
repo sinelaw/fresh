@@ -1102,8 +1102,7 @@ impl Editor {
     ) -> AnyhowResult<Self> {
         tracing::info!("Building default grammar registry...");
         let start = std::time::Instant::now();
-        let mut grammar_registry =
-            crate::primitives::grammar::GrammarRegistry::defaults_only();
+        let mut grammar_registry = crate::primitives::grammar::GrammarRegistry::defaults_only();
         // Merge user config so find_by_path respects user globs/filenames
         // from the very first lookup.
         if let Some(r) = std::sync::Arc::get_mut(&mut grammar_registry) {

@@ -642,7 +642,10 @@ impl GrammarRegistry {
             // catalog match (e.g. a user-declared "fish" or tree-sitter-only
             // TypeScript) is authoritative, and syntect might misclassify
             // `.fish` as bash via its built-in heuristics.
-            return entry.engines.syntect.map(|i| &self.syntax_set.syntaxes()[i]);
+            return entry
+                .engines
+                .syntect
+                .map(|i| &self.syntax_set.syntaxes()[i]);
         }
         // No catalog match — try syntect's file detection (first-line /
         // Makefile-style filenames that aren't in filename_scopes).
@@ -864,20 +867,21 @@ impl GrammarRegistry {
         // tagged with a tree-sitter language. `Language::from_name` has
         // fuzzy "contains shell" fallbacks that would wrongly pair e.g.
         // Nushell with tree-sitter Bash.
-        let derive_language_id = |display_name: &str| -> (String, Option<fresh_languages::Language>) {
-            let ts = match display_name {
-                // Syntect display name that differs from Language::display_name
-                "Bourne Again Shell (bash)" => Some(fresh_languages::Language::Bash),
-                other => fresh_languages::Language::all()
-                    .iter()
-                    .find(|l| l.display_name() == other)
-                    .copied(),
+        let derive_language_id =
+            |display_name: &str| -> (String, Option<fresh_languages::Language>) {
+                let ts = match display_name {
+                    // Syntect display name that differs from Language::display_name
+                    "Bourne Again Shell (bash)" => Some(fresh_languages::Language::Bash),
+                    other => fresh_languages::Language::all()
+                        .iter()
+                        .find(|l| l.display_name() == other)
+                        .copied(),
+                };
+                let id = ts
+                    .map(|l| l.id().to_string())
+                    .unwrap_or_else(|| display_name.to_lowercase());
+                (id, ts)
             };
-            let id = ts
-                .map(|l| l.id().to_string())
-                .unwrap_or_else(|| display_name.to_lowercase());
-            (id, ts)
-        };
 
         let mut catalog: Vec<GrammarEntry> = Vec::new();
         let mut scope_to_index: HashMap<String, usize> = HashMap::new();
@@ -947,8 +951,7 @@ impl GrammarRegistry {
             let display_name = lang.display_name().to_string();
             let language_id = lang.id().to_string();
             let short_name = short_by_full.get(&display_name.to_lowercase()).cloned();
-            let extensions: Vec<String> =
-                lang.extensions().iter().map(|s| s.to_string()).collect();
+            let extensions: Vec<String> = lang.extensions().iter().map(|s| s.to_string()).collect();
             catalog.push(GrammarEntry {
                 display_name,
                 language_id,
@@ -1839,10 +1842,7 @@ mod tests {
             .find_by_path(Path::new("foo.ts"))
             .expect("foo.ts should resolve");
         assert_eq!(ts.display_name, "TypeScript");
-        let rs = registry
-            .find_by_extension("rs")
-            .expect("rs should resolve");
+        let rs = registry.find_by_extension("rs").expect("rs should resolve");
         assert_eq!(rs.display_name, "Rust");
     }
-
 }
