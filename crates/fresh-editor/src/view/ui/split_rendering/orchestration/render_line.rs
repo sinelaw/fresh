@@ -18,14 +18,14 @@ use super::super::spans::{
 use super::super::style::dim_color_for_tilde;
 use crate::app::types::ViewLineMapping;
 use crate::primitives::ansi::AnsiParser;
-use crate::primitives::display_width::{char_width, str_width};
+use crate::primitives::display_width::char_width;
 use crate::state::EditorState;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{should_show_line_number, LineStart, ViewLine};
 use crate::view::virtual_text::VirtualTextPosition;
 use std::collections::HashSet;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 pub(crate) struct LineRenderOutput {
