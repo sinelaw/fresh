@@ -75,6 +75,45 @@ pub struct GrammarInfo {
     pub short_name: Option<String>,
 }
 
+/// Which highlighters can serve a given `GrammarEntry`.
+///
+/// A catalog entry may come from syntect (a TextMate grammar indexed into
+/// `SyntaxSet`), tree-sitter (a `fresh_languages::Language`), or both.
+#[derive(Clone, Debug, Default)]
+pub struct GrammarEngines {
+    /// Index into `GrammarRegistry::syntax_set().syntaxes()`, if a syntect
+    /// grammar is available.
+    pub syntect: Option<usize>,
+    /// Tree-sitter language, if one is registered for this grammar.
+    pub tree_sitter: Option<fresh_languages::Language>,
+}
+
+/// A single entry in the unified grammar catalog.
+///
+/// Each entry represents one logical language (e.g. "Rust", "TypeScript") and
+/// records which highlighting engines can serve it, plus the names/extensions
+/// used to look it up. The catalog is the single source of truth for grammar
+/// lookups — `find_by_name`, `find_by_path`, `find_by_extension` all return
+/// entries from here, and both `HighlightEngine::from_entry` and
+/// `DetectedLanguage::from_entry` consume them.
+#[derive(Clone, Debug)]
+pub struct GrammarEntry {
+    /// Human-readable display name (e.g. "TypeScript", "Bourne Again Shell (bash)").
+    pub display_name: String,
+    /// Canonical language ID used in config and LSP (e.g. "typescript", "csharp").
+    pub language_id: String,
+    /// Short alias, if one exists (e.g. "ts" for TypeScript).
+    pub short_name: Option<String>,
+    /// File extensions (without leading dot).
+    pub extensions: Vec<String>,
+    /// Exact filenames or glob-free filename matches (e.g. "Dockerfile").
+    pub filenames: Vec<String>,
+    /// Where this grammar was loaded from.
+    pub source: GrammarSource,
+    /// Highlighters that can serve this entry.
+    pub engines: GrammarEngines,
+}
+
 /// Embedded TOML grammar (syntect doesn't include one)
 pub const TOML_GRAMMAR: &str = include_str!("../../grammars/toml.sublime-syntax");
 
@@ -195,6 +234,17 @@ pub struct GrammarRegistry {
     /// Provides a deterministic, one-to-one mapping so users can write
     /// `grammar = "bash"` instead of `grammar = "Bourne Again Shell (bash)"`.
     aliases: HashMap<String, String>,
+    /// Unified catalog of every known grammar. Rebuilt whenever the syntax set
+    /// or alias table changes. Lookups (`find_by_name`, `find_by_path`, ...)
+    /// all resolve against this.
+    catalog: Vec<GrammarEntry>,
+    /// Index from lowercased lookup keys (display name, language_id, short_name)
+    /// to catalog index.
+    catalog_by_name: HashMap<String, usize>,
+    /// Index from file extension (without dot) to catalog index.
+    catalog_by_extension: HashMap<String, usize>,
+    /// Index from filename to catalog index.
+    catalog_by_filename: HashMap<String, usize>,
 }
 
 impl GrammarRegistry {
@@ -227,28 +277,40 @@ impl GrammarRegistry {
         loaded_grammar_paths: Vec<GrammarSpec>,
         grammar_sources: HashMap<String, GrammarInfo>,
     ) -> Self {
-        Self {
+        let mut reg = Self {
             syntax_set: Arc::new(syntax_set),
             user_extensions,
             filename_scopes,
             loaded_grammar_paths,
             grammar_sources,
             aliases: HashMap::new(),
-        }
+            catalog: Vec::new(),
+            catalog_by_name: HashMap::new(),
+            catalog_by_extension: HashMap::new(),
+            catalog_by_filename: HashMap::new(),
+        };
+        reg.rebuild_catalog();
+        reg
     }
 
     /// Create an empty grammar registry (fast, for tests that don't need syntax highlighting)
     pub fn empty() -> Arc<Self> {
         let mut builder = SyntaxSetBuilder::new();
         builder.add_plain_text_syntax();
-        Arc::new(Self {
+        let mut reg = Self {
             syntax_set: Arc::new(builder.build()),
             user_extensions: HashMap::new(),
             filename_scopes: HashMap::new(),
             loaded_grammar_paths: Vec::new(),
             grammar_sources: HashMap::new(),
             aliases: HashMap::new(),
-        })
+            catalog: Vec::new(),
+            catalog_by_name: HashMap::new(),
+            catalog_by_extension: HashMap::new(),
+            catalog_by_filename: HashMap::new(),
+        };
+        reg.rebuild_catalog();
+        Arc::new(reg)
     }
 
     /// Create a registry with only syntect's pre-compiled defaults (~0ms).
@@ -280,8 +342,13 @@ impl GrammarRegistry {
             loaded_grammar_paths: Vec::new(),
             grammar_sources,
             aliases: HashMap::new(),
+            catalog: Vec::new(),
+            catalog_by_name: HashMap::new(),
+            catalog_by_extension: HashMap::new(),
+            catalog_by_filename: HashMap::new(),
         };
         registry.populate_built_in_aliases();
+        registry.rebuild_catalog();
         Arc::new(registry)
     }
 
@@ -810,33 +877,12 @@ impl GrammarRegistry {
 
     /// Find syntax by name, with alias resolution.
     ///
-    /// Lookup order:
-    /// 1. Exact match against syntect grammar names
-    /// 2. Case-insensitive match against syntect grammar names
-    /// 3. Alias lookup (short_name -> full grammar name, then exact syntect match)
-    ///
-    /// This allows config files to use `"go"` (case-insensitive match of `"Go"`),
-    /// or `"bash"` (alias for `"Bourne Again Shell (bash)"`).
+    /// Thin wrapper around `find_by_name` that returns the associated syntect
+    /// `SyntaxReference` if one exists. Tree-sitter-only entries return `None`.
     pub fn find_syntax_by_name(&self, name: &str) -> Option<&SyntaxReference> {
-        // 1. Exact match
-        if let Some(syntax) = self.syntax_set.find_syntax_by_name(name) {
-            return Some(syntax);
-        }
-        // 2. Case-insensitive match
-        let name_lower = name.to_lowercase();
-        if let Some(syntax) = self
-            .syntax_set
-            .syntaxes()
-            .iter()
-            .find(|s| s.name.to_lowercase() == name_lower)
-        {
-            return Some(syntax);
-        }
-        // 3. Alias lookup
-        if let Some(full_name) = self.aliases.get(&name_lower) {
-            return self.syntax_set.find_syntax_by_name(full_name);
-        }
-        None
+        let entry = self.find_by_name(name)?;
+        let idx = entry.engines.syntect?;
+        Some(&self.syntax_set.syntaxes()[idx])
     }
 
     // === Alias management ===
@@ -894,6 +940,7 @@ impl GrammarRegistry {
         for (short, full) in Self::built_in_aliases() {
             self.register_alias_inner(short, full, true);
         }
+        self.rebuild_catalog();
     }
 
     /// Register a short-name alias for a grammar.
@@ -902,7 +949,11 @@ impl GrammarRegistry {
     /// collision or missing target. For built-in aliases, collisions panic
     /// (they indicate a bug). For dynamic aliases, collisions log a warning.
     pub fn register_alias(&mut self, short_name: &str, full_name: &str) -> bool {
-        self.register_alias_inner(short_name, full_name, false)
+        let registered = self.register_alias_inner(short_name, full_name, false);
+        if registered {
+            self.rebuild_catalog();
+        }
+        registered
     }
 
     fn register_alias_inner(
@@ -997,6 +1048,211 @@ impl GrammarRegistry {
             .map(|s| s.as_str())
     }
 
+    // === Unified catalog ===
+
+    /// Rebuild the flat catalog of grammar entries.
+    ///
+    /// Called after the syntax set, aliases, or filename scopes change.
+    /// Produces one entry per logical language by merging:
+    /// 1. Every `SyntaxReference` in the syntax set (except "Plain Text")
+    /// 2. Every `fresh_languages::Language` not already covered by a syntect entry
+    /// 3. Alias short-names attached to their target entry
+    /// 4. Filename mappings from `filename_scopes` attached to their scope's entry
+    /// 5. Extra extensions from `user_extensions` attached to their scope's entry
+    pub fn rebuild_catalog(&mut self) {
+        // Reverse-map: full_name (lowercase) -> shortest alias.
+        //
+        // Seed from the built-in alias table as well as the live `aliases`
+        // HashMap: the live map only contains aliases whose target exists in
+        // the syntect set, so tree-sitter-only entries (TypeScript) would
+        // otherwise never get their short name ("ts").
+        let mut short_by_full: HashMap<String, String> = HashMap::new();
+        let record = |map: &mut HashMap<String, String>, short: &str, full: &str| {
+            let key = full.to_lowercase();
+            let keep = match map.get(&key) {
+                None => true,
+                Some(existing) => short.len() < existing.len(),
+            };
+            if keep {
+                map.insert(key, short.to_string());
+            }
+        };
+        for (short, full) in Self::built_in_aliases() {
+            record(&mut short_by_full, short, full);
+        }
+        for (short, full) in &self.aliases {
+            record(&mut short_by_full, short, full);
+        }
+
+        // Resolve (language_id, tree_sitter) for a syntect entry.
+        //
+        // Uses a strict mapping so only genuinely-equivalent entries get
+        // tagged with a tree-sitter language. `Language::from_name` has
+        // fuzzy "contains shell" fallbacks that would wrongly pair e.g.
+        // Nushell with tree-sitter Bash.
+        let derive_language_id = |display_name: &str| -> (String, Option<fresh_languages::Language>) {
+            let ts = match display_name {
+                // Syntect display name that differs from Language::display_name
+                "Bourne Again Shell (bash)" => Some(fresh_languages::Language::Bash),
+                other => fresh_languages::Language::all()
+                    .iter()
+                    .find(|l| l.display_name() == other)
+                    .copied(),
+            };
+            let id = ts
+                .map(|l| l.id().to_string())
+                .unwrap_or_else(|| display_name.to_lowercase());
+            (id, ts)
+        };
+
+        let mut catalog: Vec<GrammarEntry> = Vec::new();
+        let mut scope_to_index: HashMap<String, usize> = HashMap::new();
+
+        // Syntect-backed entries (skip Plain Text)
+        for (idx, syntax) in self.syntax_set.syntaxes().iter().enumerate() {
+            if syntax.name == "Plain Text" {
+                continue;
+            }
+            let (language_id, tree_sitter) = derive_language_id(&syntax.name);
+            let short_name = short_by_full.get(&syntax.name.to_lowercase()).cloned();
+            let source = self
+                .grammar_sources
+                .get(&syntax.name)
+                .map(|info| info.source.clone())
+                .unwrap_or(GrammarSource::BuiltIn);
+            let entry_index = catalog.len();
+            scope_to_index.insert(syntax.scope.to_string(), entry_index);
+            catalog.push(GrammarEntry {
+                display_name: syntax.name.clone(),
+                language_id,
+                short_name,
+                extensions: syntax.file_extensions.clone(),
+                filenames: Vec::new(),
+                source,
+                engines: GrammarEngines {
+                    syntect: Some(idx),
+                    tree_sitter,
+                },
+            });
+        }
+
+        // Attach filename_scopes to their entries.
+        for (filename, scope) in &self.filename_scopes {
+            if let Some(&idx) = scope_to_index.get(scope) {
+                if !catalog[idx].filenames.iter().any(|f| f == filename) {
+                    catalog[idx].filenames.push(filename.clone());
+                }
+            }
+        }
+
+        // Attach user_extensions (extra → scope) to their entries.
+        for (ext, scope) in &self.user_extensions {
+            if let Some(&idx) = scope_to_index.get(scope) {
+                if !catalog[idx].extensions.iter().any(|e| e == ext) {
+                    catalog[idx].extensions.push(ext.clone());
+                }
+            }
+        }
+
+        // Ensure every tree-sitter language has an entry. If a syntect entry
+        // already maps to the same tree-sitter language, skip it; otherwise
+        // add a tree-sitter-only entry so the catalog is complete (TypeScript
+        // being the motivating example — syntect ships no grammar for it).
+        let mut ts_covered: std::collections::HashSet<fresh_languages::Language> =
+            std::collections::HashSet::new();
+        for entry in &catalog {
+            if let Some(lang) = entry.engines.tree_sitter {
+                ts_covered.insert(lang);
+            }
+        }
+        for lang in fresh_languages::Language::all() {
+            if ts_covered.contains(lang) {
+                continue;
+            }
+            let display_name = lang.display_name().to_string();
+            let language_id = lang.id().to_string();
+            let short_name = short_by_full.get(&display_name.to_lowercase()).cloned();
+            let extensions: Vec<String> =
+                lang.extensions().iter().map(|s| s.to_string()).collect();
+            catalog.push(GrammarEntry {
+                display_name,
+                language_id,
+                short_name,
+                extensions,
+                filenames: Vec::new(),
+                source: GrammarSource::BuiltIn,
+                engines: GrammarEngines {
+                    syntect: None,
+                    tree_sitter: Some(*lang),
+                },
+            });
+        }
+
+        // Build name / extension / filename indices.
+        let mut by_name: HashMap<String, usize> = HashMap::new();
+        let mut by_extension: HashMap<String, usize> = HashMap::new();
+        let mut by_filename: HashMap<String, usize> = HashMap::new();
+        for (idx, entry) in catalog.iter().enumerate() {
+            by_name.insert(entry.display_name.to_lowercase(), idx);
+            by_name.insert(entry.language_id.to_lowercase(), idx);
+            if let Some(short) = &entry.short_name {
+                by_name.insert(short.to_lowercase(), idx);
+            }
+            for ext in &entry.extensions {
+                by_extension.entry(ext.to_lowercase()).or_insert(idx);
+            }
+            for filename in &entry.filenames {
+                by_filename.entry(filename.clone()).or_insert(idx);
+            }
+        }
+
+        self.catalog = catalog;
+        self.catalog_by_name = by_name;
+        self.catalog_by_extension = by_extension;
+        self.catalog_by_filename = by_filename;
+    }
+
+    /// Return the full catalog of grammar entries.
+    pub fn catalog(&self) -> &[GrammarEntry] {
+        &self.catalog
+    }
+
+    /// Look up a grammar entry by display name, language ID, or short alias
+    /// (case-insensitive). Also resolves aliases via the alias table.
+    pub fn find_by_name(&self, name: &str) -> Option<&GrammarEntry> {
+        let lower = name.to_lowercase();
+        if let Some(&idx) = self.catalog_by_name.get(&lower) {
+            return Some(&self.catalog[idx]);
+        }
+        // Fall back to alias table (e.g. "rs" -> "Rust" even if not indexed).
+        if let Some(full) = self.aliases.get(&lower) {
+            if let Some(&idx) = self.catalog_by_name.get(&full.to_lowercase()) {
+                return Some(&self.catalog[idx]);
+            }
+        }
+        None
+    }
+
+    /// Look up a grammar entry by file path (exact filename first, then extension).
+    pub fn find_by_path(&self, path: &Path) -> Option<&GrammarEntry> {
+        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+            if let Some(&idx) = self.catalog_by_filename.get(filename) {
+                return Some(&self.catalog[idx]);
+            }
+        }
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            return self.find_by_extension(ext);
+        }
+        None
+    }
+
+    /// Look up a grammar entry by file extension (case-insensitive, without dot).
+    pub fn find_by_extension(&self, ext: &str) -> Option<&GrammarEntry> {
+        self.catalog_by_extension
+            .get(&ext.to_lowercase())
+            .map(|&idx| &self.catalog[idx])
+    }
+
     /// Get the underlying syntax set
     pub fn syntax_set(&self) -> &Arc<SyntaxSet> {
         &self.syntax_set
@@ -1016,88 +1272,21 @@ impl GrammarRegistry {
             .collect()
     }
 
-    /// Like `available_grammar_info` but also merges in languages that only
-    /// have a tree-sitter grammar (no syntect definition). Those languages
-    /// are selectable from the language palette and can highlight a buffer,
-    /// but wouldn't show up if we only listed syntect syntaxes — e.g.
-    /// TypeScript is tree-sitter-only.
-    pub fn available_grammar_info_with_languages(
-        &self,
-        languages: &HashMap<String, crate::config::LanguageConfig>,
-    ) -> Vec<GrammarInfo> {
-        let mut result = self.available_grammar_info();
-        let existing: std::collections::HashSet<String> =
-            result.iter().map(|g| g.name.to_lowercase()).collect();
-
-        for (lang_id, lang_cfg) in languages {
-            let grammar = if lang_cfg.grammar.is_empty() {
-                lang_id.as_str()
-            } else {
-                lang_cfg.grammar.as_str()
-            };
-            // Resolve to a tree-sitter language; skip if neither syntect nor
-            // tree-sitter knows this grammar (there's nothing to highlight).
-            let Some(ts_lang) = fresh_languages::Language::from_name(grammar)
-                .or_else(|| fresh_languages::Language::from_id(lang_id))
-            else {
-                continue;
-            };
-            let display_name = ts_lang.display_name().to_string();
-            if existing.contains(&display_name.to_lowercase()) {
-                continue;
-            }
-            result.push(GrammarInfo {
-                name: display_name,
-                source: GrammarSource::BuiltIn,
-                file_extensions: lang_cfg.extensions.clone(),
-                short_name: None,
-            });
-        }
-
-        result.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        result
-    }
-
     /// List all available grammars with provenance information.
     ///
-    /// Returns a sorted list of `GrammarInfo` entries. Each entry includes
-    /// the grammar name, where it was loaded from, and associated file extensions.
+    /// Returns a sorted list of `GrammarInfo` entries derived from the unified
+    /// catalog — this includes both syntect grammars and tree-sitter-only
+    /// languages (like TypeScript). Each entry is listed exactly once even
+    /// when both engines can serve it.
     pub fn available_grammar_info(&self) -> Vec<GrammarInfo> {
-        // Build reverse map: full_name -> list of short aliases
-        let mut reverse_aliases: HashMap<&str, Vec<&str>> = HashMap::new();
-        for (short, full) in &self.aliases {
-            reverse_aliases
-                .entry(full.as_str())
-                .or_default()
-                .push(short.as_str());
-        }
-
         let mut result: Vec<GrammarInfo> = self
-            .syntax_set
-            .syntaxes()
+            .catalog
             .iter()
-            .filter(|s| s.name != "Plain Text")
-            .map(|s| {
-                let name = s.name.clone();
-                let source = self
-                    .grammar_sources
-                    .get(&name)
-                    .map(|info| info.source.clone())
-                    .unwrap_or(GrammarSource::BuiltIn);
-                let file_extensions = s.file_extensions.clone();
-                // Pick the first (shortest) alias as the canonical short name
-                let short_name = reverse_aliases.get(name.as_str()).and_then(|aliases| {
-                    aliases
-                        .iter()
-                        .min_by_key(|a| a.len())
-                        .map(|a| a.to_string())
-                });
-                GrammarInfo {
-                    name,
-                    source,
-                    file_extensions,
-                    short_name,
-                }
+            .map(|entry| GrammarInfo {
+                name: entry.display_name.clone(),
+                source: entry.source.clone(),
+                file_extensions: entry.extensions.clone(),
+                short_name: entry.short_name.clone(),
             })
             .collect();
         result.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -1262,14 +1451,20 @@ impl GrammarRegistry {
             }
         }
 
-        Some(Self {
+        let mut reg = Self {
             syntax_set: Arc::new(builder.build()),
             user_extensions,
             filename_scopes: base.filename_scopes.clone(),
             loaded_grammar_paths,
             grammar_sources,
             aliases: base.aliases.clone(),
-        })
+            catalog: Vec::new(),
+            catalog_by_name: HashMap::new(),
+            catalog_by_extension: HashMap::new(),
+            catalog_by_filename: HashMap::new(),
+        };
+        reg.rebuild_catalog();
+        Some(reg)
     }
 
     /// Load a grammar file from disk
@@ -1311,6 +1506,7 @@ impl Default for GrammarRegistry {
 
         let mut registry = Self::new(syntax_set, extra_extensions, filename_scopes);
         registry.populate_built_in_aliases();
+        registry.rebuild_catalog();
         registry
     }
 }
@@ -1742,6 +1938,73 @@ mod tests {
         );
         // The shortest alias for bash is "sh"
         assert_eq!(bash_info.short_name.as_deref(), Some("sh"));
+    }
+
+    #[test]
+    fn test_catalog_contains_each_language_once() {
+        let registry = GrammarRegistry::default();
+        let catalog = registry.catalog();
+
+        // Every catalog entry must have a unique (case-insensitive) display name.
+        let mut seen = std::collections::HashSet::new();
+        for entry in catalog {
+            let key = entry.display_name.to_lowercase();
+            assert!(
+                seen.insert(key.clone()),
+                "duplicate catalog entry for display_name={:?}",
+                entry.display_name
+            );
+        }
+
+        // TypeScript is tree-sitter-only (syntect ships no grammar for it) yet
+        // must still appear in the catalog.
+        let ts = registry
+            .find_by_name("TypeScript")
+            .expect("TypeScript must be in the catalog");
+        assert!(ts.engines.syntect.is_none());
+        assert_eq!(
+            ts.engines.tree_sitter,
+            Some(fresh_languages::Language::TypeScript)
+        );
+        assert_eq!(ts.language_id, "typescript");
+        assert!(ts.extensions.iter().any(|e| e == "ts"));
+
+        // Languages that exist in both syntect and tree-sitter (Rust, Python,
+        // JavaScript) must appear exactly once and prefer the syntect engine.
+        for name in ["Rust", "Python", "JavaScript"] {
+            let entry = registry
+                .find_by_name(name)
+                .unwrap_or_else(|| panic!("{} must be in the catalog", name));
+            assert!(
+                entry.engines.syntect.is_some(),
+                "{} should have a syntect index",
+                name
+            );
+            assert!(
+                entry.engines.tree_sitter.is_some(),
+                "{} should also have a tree-sitter language",
+                name
+            );
+            // Only one entry with this display name (already checked above),
+            // but also verify language_id lookup lands on the same entry.
+            let by_id = registry
+                .find_by_name(&entry.language_id)
+                .expect("language_id should resolve");
+            assert_eq!(by_id.display_name, entry.display_name);
+        }
+    }
+
+    #[test]
+    fn test_catalog_find_by_path_and_extension() {
+        let registry = GrammarRegistry::default();
+        let ts = registry
+            .find_by_path(Path::new("foo.ts"))
+            .expect("foo.ts should resolve");
+        assert_eq!(ts.display_name, "TypeScript");
+        let rs = registry
+            .find_by_extension("rs")
+            .expect("rs should resolve");
+        assert_eq!(rs.display_name, "Rust");
     }
 
     #[test]

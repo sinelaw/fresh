@@ -149,7 +149,7 @@ impl HighlightCategory {
 }
 
 /// Language configuration for syntax highlighting
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Language {
     Rust,
     Python,
@@ -588,6 +588,34 @@ impl Language {
             (Self::TypeScript, "tsx") => "typescriptreact",
             (Self::JavaScript, "jsx") => "javascriptreact",
             _ => self.id(),
+        }
+    }
+
+    /// File extensions associated with this language.
+    ///
+    /// Keep in sync with `from_path`. Used by the grammar catalog so that
+    /// tree-sitter-only languages (like TypeScript) still advertise the
+    /// extensions they can highlight.
+    pub fn extensions(&self) -> &'static [&'static str] {
+        match self {
+            Self::Rust => &["rs"],
+            Self::Python => &["py"],
+            Self::JavaScript => &["js", "jsx", "mjs", "cjs"],
+            Self::TypeScript => &["ts", "tsx", "mts", "cts"],
+            Self::HTML => &["html"],
+            Self::CSS => &["css"],
+            Self::C => &["c", "h"],
+            Self::Cpp => &["cpp", "hpp", "cc", "hh", "cxx", "hxx", "cppm", "ixx"],
+            Self::Go => &["go"],
+            Self::Json => &["json"],
+            Self::Java => &["java"],
+            Self::CSharp => &["cs"],
+            Self::Php => &["php"],
+            Self::Ruby => &["rb"],
+            Self::Bash => &["sh", "bash"],
+            Self::Lua => &["lua"],
+            Self::Pascal => &["pas", "p"],
+            Self::Odin => &["odin"],
         }
     }
 

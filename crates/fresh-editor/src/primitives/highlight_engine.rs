@@ -1024,95 +1024,66 @@ impl TextMateEngine {
     }
 }
 
-/// Find the index of a syntax by name in a syntax set.
-fn syntax_index(syntax_set: &syntect::parsing::SyntaxSet, name: &str) -> Option<usize> {
-    syntax_set.syntaxes().iter().position(|s| s.name == name)
-}
-
 impl HighlightEngine {
+    /// Build a highlighting engine for a catalog entry.
+    ///
+    /// Single chokepoint for the "prefer syntect, fall back to tree-sitter"
+    /// logic. Callers that start from a path or a syntax name should resolve
+    /// the entry through `GrammarRegistry::find_by_path` / `find_by_name` and
+    /// then call this.
+    pub fn from_entry(entry: &crate::primitives::grammar::GrammarEntry, registry: &GrammarRegistry) -> Self {
+        let syntax_set = registry.syntax_set_arc();
+        if let Some(index) = entry.engines.syntect {
+            return Self::TextMate(Box::new(TextMateEngine::with_language(
+                syntax_set,
+                index,
+                entry.engines.tree_sitter,
+            )));
+        }
+        if let Some(lang) = entry.engines.tree_sitter {
+            if let Ok(highlighter) = Highlighter::new(lang) {
+                return Self::TreeSitter(Box::new(highlighter));
+            }
+        }
+        Self::None
+    }
+
     /// Create a highlighting engine for a file.
     ///
-    /// Uses TextMate/syntect for highlighting (broadest language coverage), falling
-    /// back to tree-sitter for languages syntect lacks (e.g. TypeScript). Also
-    /// detects tree-sitter language for non-highlighting features (indentation,
-    /// semantic highlighting).
-    ///
-    /// If `languages` is provided, user-configured filename/extension mappings are
-    /// checked before built-in detection.
+    /// Resolves the file to a catalog entry and hands off to `from_entry`.
+    /// When `languages` is provided, user-configured filename/extension
+    /// mappings are consulted before the built-in catalog.
     pub fn for_file(
         path: &Path,
         registry: &GrammarRegistry,
         languages: Option<&std::collections::HashMap<String, crate::config::LanguageConfig>>,
     ) -> Self {
-        let syntax_set = registry.syntax_set_arc();
-        let ts_language = Language::from_path(path);
-
-        // Find syntax, checking user language config first if provided
-        let syntax = if let Some(langs) = languages {
-            registry.find_syntax_for_file_with_languages(path, langs)
-        } else {
-            registry.find_syntax_for_file(path)
-        };
-
-        if let Some(syntax) = syntax {
-            if let Some(index) = syntax_index(&syntax_set, &syntax.name) {
-                return Self::TextMate(Box::new(TextMateEngine::with_language(
-                    syntax_set,
-                    index,
-                    ts_language,
-                )));
+        if let Some(langs) = languages {
+            if let Some(syntax) = registry.find_syntax_for_file_with_languages(path, langs) {
+                if let Some(entry) = registry.find_by_name(&syntax.name) {
+                    return Self::from_entry(entry, registry);
+                }
             }
         }
-
-        // No TextMate grammar found - fall back to tree-sitter if available
-        // This handles languages like TypeScript that syntect doesn't include by default
-        if let Some(lang) = ts_language {
-            if let Ok(highlighter) = Highlighter::new(lang) {
-                tracing::debug!(
-                    "No TextMate grammar for {:?}, falling back to tree-sitter",
-                    path.extension()
-                );
-                return Self::TreeSitter(Box::new(highlighter));
-            }
+        if let Some(entry) = registry.find_by_path(path) {
+            return Self::from_entry(entry, registry);
         }
-
         Self::None
     }
 
     /// Create a highlighting engine for a syntax by name.
     ///
-    /// This looks up the syntax in the grammar registry and creates a TextMate
-    /// highlighter for it. This supports all syntect syntaxes (100+) including
-    /// user-configured grammars.
-    ///
-    /// The `ts_language` parameter optionally provides a tree-sitter language
-    /// for non-highlighting features (indentation, semantic highlighting).
+    /// Thin wrapper around `from_entry` that performs the lookup via
+    /// `find_by_name`. The `_ts_language` parameter is ignored — the catalog
+    /// entry already knows which tree-sitter `Language` (if any) serves it.
     pub fn for_syntax_name(
         name: &str,
         registry: &GrammarRegistry,
-        ts_language: Option<Language>,
+        _ts_language: Option<Language>,
     ) -> Self {
-        let syntax_set = registry.syntax_set_arc();
-
-        if let Some(syntax) = registry.find_syntax_by_name(name) {
-            if let Some(index) = syntax_index(&syntax_set, &syntax.name) {
-                return Self::TextMate(Box::new(TextMateEngine::with_language(
-                    syntax_set,
-                    index,
-                    ts_language,
-                )));
-            }
+        if let Some(entry) = registry.find_by_name(name) {
+            return Self::from_entry(entry, registry);
         }
-
-        // No TextMate grammar — fall back to tree-sitter the same way
-        // `for_file` does, so "set language TypeScript" on a non-.ts buffer
-        // still gets highlighted (syntect ships no TypeScript grammar).
-        if let Some(lang) = ts_language {
-            if let Ok(highlighter) = Highlighter::new(lang) {
-                return Self::TreeSitter(Box::new(highlighter));
-            }
-        }
-
         Self::None
     }
 

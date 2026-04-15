@@ -5,6 +5,7 @@
 //! All code paths that set or change a buffer's language should go through this module.
 
 use crate::config::LanguageConfig;
+use crate::primitives::grammar::GrammarEntry;
 use crate::primitives::highlight_engine::HighlightEngine;
 use crate::primitives::highlighter::Language;
 use crate::primitives::GrammarRegistry;
@@ -29,6 +30,19 @@ pub struct DetectedLanguage {
 }
 
 impl DetectedLanguage {
+    /// Build a `DetectedLanguage` from a unified catalog entry.
+    ///
+    /// The single place that glues a `GrammarEntry` to a `HighlightEngine`.
+    /// All path-based and name-based constructors funnel through this.
+    pub fn from_entry(entry: &GrammarEntry, registry: &GrammarRegistry) -> Self {
+        Self {
+            name: entry.language_id.clone(),
+            display_name: entry.display_name.clone(),
+            highlighter: HighlightEngine::from_entry(entry, registry),
+            ts_language: entry.engines.tree_sitter,
+        }
+    }
+
     /// Detect language from a file path using user configuration.
     ///
     /// This is the primary detection path used when opening, reloading, or saving files.
@@ -36,7 +50,7 @@ impl DetectedLanguage {
     /// 1. Exact filename match in user config
     /// 2. Glob pattern match in user config
     /// 3. Extension match in user config
-    /// 4. Built-in detection (tree-sitter `Language::from_path` + syntect)
+    /// 4. Built-in detection (catalog lookup)
     /// 5. Fallback config (if set and no other match found)
     pub fn from_path(
         path: &Path,
@@ -55,108 +69,84 @@ impl DetectedLanguage {
         languages: &HashMap<String, LanguageConfig>,
         default_language: Option<&str>,
     ) -> Self {
-        let highlighter = HighlightEngine::for_file(path, registry, Some(languages));
-        let ts_language = Language::from_path(path);
-        // Prefer config-based language name (e.g., "csharp") so it matches
-        // the LSP config key. Fall back to tree-sitter name (e.g., "c_sharp")
-        // or "text" if neither is available.
-        let name =
-            crate::services::lsp::manager::detect_language(path, languages).unwrap_or_else(|| {
-                ts_language
-                    .as_ref()
-                    .map(|l| l.to_string())
-                    .unwrap_or_else(|| "text".to_string())
-            });
-        // Resolve display name from the syntax matched for this file.
-        let display_name = registry
-            .find_syntax_for_file_with_languages(path, languages)
-            .map(|s| s.name.clone())
-            .unwrap_or_else(|| name.clone());
-
-        // If no language was detected and a default_language is configured,
-        // look up its grammar for highlighting (#1219)
-        if name == "text" && matches!(highlighter, HighlightEngine::None) {
-            if let Some(lang_key) = default_language {
-                let grammar = languages
-                    .get(lang_key)
-                    .map(|lc| lc.grammar.as_str())
-                    .filter(|g| !g.is_empty())
-                    .unwrap_or(lang_key);
-                let fb_highlighter =
-                    HighlightEngine::for_syntax_name(grammar, registry, ts_language);
-                if !matches!(fb_highlighter, HighlightEngine::None) {
-                    let fb_display = registry
-                        .find_syntax_by_name(grammar)
-                        .map(|s| s.name.clone())
-                        .unwrap_or_else(|| grammar.to_string());
-                    return Self {
-                        name,
-                        display_name: fb_display,
-                        highlighter: fb_highlighter,
-                        ts_language,
-                    };
+        // Config-aware match first (filenames/extensions declared in user config).
+        if let Some(syntax) = registry.find_syntax_for_file_with_languages(path, languages) {
+            if let Some(entry) = registry.find_by_name(&syntax.name) {
+                let mut detected = Self::from_entry(entry, registry);
+                // Prefer the config's language ID (e.g. "csharp" vs tree-sitter's
+                // "c_sharp") when it matches the resolved grammar.
+                if let Some(id) = crate::services::lsp::manager::detect_language(path, languages) {
+                    detected.name = id;
                 }
+                return detected;
             }
         }
 
-        Self {
-            name,
-            display_name,
-            highlighter,
-            ts_language,
+        // Catalog lookup (extension / filename match).
+        if let Some(entry) = registry.find_by_path(path) {
+            let mut detected = Self::from_entry(entry, registry);
+            if let Some(id) = crate::services::lsp::manager::detect_language(path, languages) {
+                detected.name = id;
+            }
+            return detected;
         }
+
+        // Nothing detected — try the user-configured default language.
+        if let Some(lang_key) = default_language {
+            let grammar = languages
+                .get(lang_key)
+                .map(|lc| lc.grammar.as_str())
+                .filter(|g| !g.is_empty())
+                .unwrap_or(lang_key);
+            if let Some(entry) = registry.find_by_name(grammar) {
+                return Self::from_entry(entry, registry);
+            }
+        }
+
+        Self::plain_text()
     }
 
     /// Detect language from a file path using only built-in rules (no user config).
     ///
-    /// Used by `from_file()` (the legacy constructor) and for virtual buffer names
-    /// where user config doesn't apply.
+    /// Used for virtual buffer names where user config doesn't apply.
     pub fn from_path_builtin(path: &Path, registry: &GrammarRegistry) -> Self {
-        let highlighter = HighlightEngine::for_file(path, registry, None);
+        if let Some(entry) = registry.find_by_path(path) {
+            return Self::from_entry(entry, registry);
+        }
+        // No catalog entry matches — fall back to tree-sitter-only detection so
+        // unknown-to-catalog paths still get a sensible language ID.
         let ts_language = Language::from_path(path);
         let name = ts_language
             .as_ref()
             .map(|l| l.to_string())
             .unwrap_or_else(|| "text".to_string());
-        let display_name = registry
-            .find_syntax_for_file(path)
-            .map(|s| s.name.clone())
-            .unwrap_or_else(|| name.clone());
         Self {
-            name,
-            display_name,
-            highlighter,
+            name: name.clone(),
+            display_name: name,
+            highlighter: HighlightEngine::None,
             ts_language,
         }
     }
 
     /// Set language by syntax name (user selected from the language palette).
     ///
-    /// Looks up the syntax in the grammar registry and optionally finds a
-    /// tree-sitter language for enhanced features. The `languages` config is used
+    /// Looks up the entry in the unified catalog. The `languages` config is used
     /// to resolve the canonical language ID (e.g., "Rust" syntax → "rust" config key).
-    /// Returns `None` if the syntax name is not found in the registry.
+    /// Returns `None` if the name matches no catalog entry.
     pub fn from_syntax_name(
         name: &str,
         registry: &GrammarRegistry,
         languages: &HashMap<String, LanguageConfig>,
     ) -> Option<Self> {
-        let ts_language = Language::from_name(name);
-        // Accept the selection if EITHER syntect has a grammar by this name
-        // OR tree-sitter does. Bailing on syntect-only lookup skipped
-        // tree-sitter-only languages like TypeScript.
-        if registry.find_syntax_by_name(name).is_none() && ts_language.is_none() {
-            return None;
+        let entry = registry.find_by_name(name)?;
+        let mut detected = Self::from_entry(entry, registry);
+        // Prefer a matching config language ID so LSP lookup works when the
+        // user has declared the language under a different key.
+        if let Some(id) = resolve_language_id(&entry.display_name, registry, languages) {
+            detected.name = id;
         }
-        let highlighter = HighlightEngine::for_syntax_name(name, registry, ts_language);
-        let language_id =
-            resolve_language_id(name, registry, languages).unwrap_or_else(|| name.to_string());
-        Some(Self {
-            name: language_id,
-            display_name: name.to_string(),
-            highlighter,
-            ts_language,
-        })
+        detected.display_name = name.to_string();
+        Some(detected)
     }
 
     /// Create a DetectedLanguage for a user-configured language that has no
@@ -194,6 +184,7 @@ impl DetectedLanguage {
         };
         Self::from_path_builtin(Path::new(filename), registry)
     }
+
 }
 
 /// Resolve a syntect syntax display name to its canonical config language ID.
