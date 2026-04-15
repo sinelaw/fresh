@@ -21,9 +21,10 @@
 //! not reconstructed from flattened text.
 
 use crate::primitives::ansi::AnsiParser;
-use crate::primitives::display_width::char_width;
+use crate::primitives::display_width::str_width;
 use fresh_core::api::{ViewTokenStyle, ViewTokenWire, ViewTokenWireKind};
 use std::collections::HashSet;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// A display line built from tokens, preserving token-level information
 #[derive(Debug, Clone)]
@@ -284,10 +285,11 @@ impl<'a> Iterator for ViewLineIterator<'a> {
 
                     while byte_idx < t_bytes.len() {
                         let b = t_bytes[byte_idx];
-                        let source = base.map(|s| s + byte_idx);
 
-                        // In binary mode, render unprintable bytes as code points
+                        // In binary mode, render unprintable bytes as <XX> code points.
+                        // These are never part of a grapheme cluster.
                         if self.binary_mode && is_unprintable_byte(b) {
+                            let source = base.map(|s| s + byte_idx);
                             let formatted = format_unprintable_byte(b);
                             for display_ch in formatted.chars() {
                                 add_char!(display_ch, source, token_style.clone(), 1);
@@ -296,99 +298,126 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                             continue;
                         }
 
-                        // Decode the character at this position
-                        let ch = if b < 0x80 {
-                            // ASCII character
-                            byte_idx += 1;
-                            b as char
-                        } else {
-                            // Multi-byte UTF-8 - decode carefully
-                            let remaining = &t_bytes[byte_idx..];
-                            match std::str::from_utf8(remaining) {
-                                Ok(s) => {
-                                    if let Some(ch) = s.chars().next() {
-                                        byte_idx += ch.len_utf8();
-                                        ch
-                                    } else {
-                                        byte_idx += 1;
-                                        '\u{FFFD}'
-                                    }
-                                }
-                                Err(e) => {
-                                    // Invalid UTF-8 - in binary mode show as hex, otherwise replacement char
+                        // Decode the largest valid UTF-8 slice starting here so we can
+                        // segment it into grapheme clusters. Any invalid byte is
+                        // handled as a single-byte replacement char and we resume
+                        // decoding afterwards.
+                        let remaining = &t_bytes[byte_idx..];
+                        let valid = match std::str::from_utf8(remaining) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                let valid_up_to = e.valid_up_to();
+                                if valid_up_to == 0 {
+                                    let source = base.map(|s| s + byte_idx);
                                     if self.binary_mode {
                                         let formatted = format_unprintable_byte(b);
                                         for display_ch in formatted.chars() {
                                             add_char!(display_ch, source, token_style.clone(), 1);
                                         }
-                                        byte_idx += 1;
-                                        continue;
                                     } else {
-                                        // Try to get valid portion, then skip the bad byte
-                                        let valid_up_to = e.valid_up_to();
-                                        if valid_up_to > 0 {
-                                            if let Some(ch) =
-                                                std::str::from_utf8(&remaining[..valid_up_to])
-                                                    .ok()
-                                                    .and_then(|s| s.chars().next())
-                                            {
-                                                byte_idx += ch.len_utf8();
-                                                ch
-                                            } else {
-                                                byte_idx += 1;
-                                                '\u{FFFD}'
-                                            }
-                                        } else {
-                                            byte_idx += 1;
-                                            '\u{FFFD}'
-                                        }
+                                        add_char!('\u{FFFD}', source, token_style.clone(), 1);
+                                    }
+                                    byte_idx += 1;
+                                    continue;
+                                } else {
+                                    // SAFETY: `valid_up_to` is a char boundary.
+                                    unsafe {
+                                        std::str::from_utf8_unchecked(&remaining[..valid_up_to])
                                     }
                                 }
                             }
                         };
 
-                        if ch == '\t' {
-                            // Tab expands to spaces - record start position
-                            let tab_start_pos = char_source_bytes.len();
-                            tab_starts.insert(tab_start_pos);
-                            let spaces = self.tab_expansion_width(col);
+                        // Canonical Unicode handling: iterate grapheme clusters, not
+                        // codepoints. The width of a cluster is `str_width(cluster)` —
+                        // `unicode-width` 0.2 correctly returns 2 for ZWJ family emoji,
+                        // 1 for a base+combining sequence like "é", 2 for fullwidth
+                        // letters, and so on. This is the same width ratatui computes
+                        // when it re-segments the span, so every stage of the pipeline
+                        // (wrap, column tracking, span placement) agrees on how many
+                        // cells each cluster occupies.
+                        //
+                        // We still record per-codepoint entries in the char-indexed
+                        // arrays (char_source_bytes / char_styles / char_visual_cols)
+                        // so byte↔column mapping stays exact for LSP positions, mouse
+                        // clicks, and cursor arithmetic. But `col` advances exactly
+                        // once per grapheme: the first codepoint of a cluster carries
+                        // the full width, the rest carry 0.
+                        let mut segmented_bytes = 0usize;
+                        for (g_byte_offset, grapheme) in valid.grapheme_indices(true) {
+                            segmented_bytes = g_byte_offset + grapheme.len();
 
-                            // Tab is ONE character that expands to multiple visual columns
-                            let char_idx = char_source_bytes.len();
-                            text.push(' '); // First space char
-                            char_source_bytes.push(source);
-                            char_styles.push(token_style.clone());
-                            char_visual_cols.push(col);
+                            // Tab: a single codepoint forming its own grapheme, expanded to spaces.
+                            if grapheme == "\t" {
+                                let source = base.map(|s| s + byte_idx + g_byte_offset);
+                                let tab_start_pos = char_source_bytes.len();
+                                tab_starts.insert(tab_start_pos);
+                                let spaces = self.tab_expansion_width(col);
 
-                            // All visual columns of the tab map to the same char
-                            for _ in 0..spaces {
-                                visual_to_char.push(char_idx);
-                            }
-                            col += spaces;
-
-                            // Push remaining spaces as separate display chars
-                            // (text contains expanded spaces for rendering)
-                            for _ in 1..spaces {
+                                let char_idx = char_source_bytes.len();
                                 text.push(' ');
                                 char_source_bytes.push(source);
                                 char_styles.push(token_style.clone());
-                                char_visual_cols
-                                    .push(col - spaces + char_source_bytes.len() - char_idx);
-                            }
-                        } else {
-                            // Handle ANSI escape sequences - give them width 0
-                            let width = if let Some(ref mut parser) = ansi_parser {
-                                // Use AnsiParser: parse_char returns None for escape chars
-                                if parser.parse_char(ch).is_none() {
-                                    0 // Part of escape sequence, zero width
-                                } else {
-                                    char_width(ch)
+                                char_visual_cols.push(col);
+
+                                for _ in 0..spaces {
+                                    visual_to_char.push(char_idx);
                                 }
-                            } else {
-                                char_width(ch)
-                            };
-                            add_char!(ch, source, token_style.clone(), width);
+                                col += spaces;
+
+                                for _ in 1..spaces {
+                                    text.push(' ');
+                                    char_source_bytes.push(source);
+                                    char_styles.push(token_style.clone());
+                                    char_visual_cols
+                                        .push(col - spaces + char_source_bytes.len() - char_idx);
+                                }
+                                continue;
+                            }
+
+                            // ANSI escape sequences. Process char-by-char so the
+                            // AnsiParser state machine keeps track of the escape,
+                            // and keep them as width 0. In practice ESC never sits
+                            // inside a grapheme with visible content, so treating
+                            // a grapheme that starts with ESC as width-0 here is
+                            // correct.
+                            if let Some(ref mut parser) = ansi_parser {
+                                let first_ch = grapheme.chars().next().unwrap_or('\0');
+                                if parser.parse_char(first_ch).is_none() {
+                                    for ch in grapheme.chars() {
+                                        // All codepoints of an escape grapheme are width 0.
+                                        let src = base.map(|s| s + byte_idx + g_byte_offset);
+                                        // Keep the parser fed so state transitions work
+                                        // even across a multi-codepoint escape (rare).
+                                        if ch != first_ch {
+                                            let _ = parser.parse_char(ch);
+                                        }
+                                        add_char!(ch, src, token_style.clone(), 0);
+                                    }
+                                    continue;
+                                }
+                            }
+
+                            // Normal case: emit one display unit per grapheme.
+                            // Width goes on the FIRST codepoint, the rest are 0.
+                            let cluster_width = str_width(grapheme);
+                            let mut first = true;
+                            let mut inner_byte_offset = 0usize;
+                            for ch in grapheme.chars() {
+                                let source =
+                                    base.map(|s| s + byte_idx + g_byte_offset + inner_byte_offset);
+                                let w = if first {
+                                    first = false;
+                                    cluster_width
+                                } else {
+                                    0
+                                };
+                                add_char!(ch, source, token_style.clone(), w);
+                                inner_byte_offset += ch.len_utf8();
+                            }
                         }
+
+                        byte_idx += segmented_bytes.max(1);
                     }
                     self.token_idx += 1;
                 }
