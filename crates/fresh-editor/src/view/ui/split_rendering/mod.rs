@@ -3,21 +3,31 @@
 mod base_tokens;
 mod char_style;
 mod folding;
+mod gutter;
+mod layout;
 mod post_pass;
 mod scrollbar;
 mod spans;
 mod style;
 mod transforms;
+mod view_data;
 
 use base_tokens::build_base_tokens;
 use folding::{
     apply_folding, diff_indicators_for_viewport, fold_adjusted_visible_count,
     fold_indicators_for_viewport, FoldIndicator,
 };
+use gutter::{render_compose_margins, render_left_margin, LeftMarginContext};
+use layout::{
+    calculate_compose_layout, calculate_view_anchor, calculate_viewport_end, render_separator,
+    resolve_view_preferences, split_buffers_for_tabs, split_layout, sync_viewport_to_content,
+    ComposeLayout, SplitLayout, ViewAnchor, ViewPreferences,
+};
 use scrollbar::{
     compute_max_line_length, render_composite_scrollbar, render_horizontal_scrollbar,
     render_scrollbar, scrollbar_line_counts,
 };
+use view_data::{build_view_data, ViewData};
 use transforms::{
     apply_conceal_ranges, apply_soft_breaks, apply_wrapping_transform, inject_virtual_lines,
 };
@@ -69,22 +79,7 @@ use std::ops::Range;
 /// memory usage reasonable (~80KB per ViewLine instead of hundreds of MB).
 const MAX_SAFE_LINE_WIDTH: usize = 10_000;
 
-/// Processed view data containing display lines from the view pipeline
-struct ViewData {
-    /// Display lines with all token information preserved
-    lines: Vec<ViewLine>,
-}
 
-struct ViewAnchor {
-    start_line_idx: usize,
-    start_line_skip: usize,
-}
-
-struct ComposeLayout {
-    render_area: Rect,
-    left_pad: u16,
-    right_pad: u16,
-}
 
 struct SelectionContext {
     ranges: Vec<Range<usize>>,
@@ -138,25 +133,6 @@ struct BufferLayoutOutput {
     selection: SelectionContext,
 }
 
-struct SplitLayout {
-    tabs_rect: Rect,
-    content_rect: Rect,
-    scrollbar_rect: Rect,
-    horizontal_scrollbar_rect: Rect,
-}
-
-struct ViewPreferences {
-    view_mode: ViewMode,
-    compose_width: Option<u16>,
-    compose_column_guides: Option<Vec<u16>>,
-    view_transform: Option<ViewTransformPayload>,
-    rulers: Vec<usize>,
-    /// Per-split line number visibility (from BufferViewState)
-    show_line_numbers: bool,
-    /// Per-split current line highlight visibility (from BufferViewState)
-    highlight_current_line: bool,
-}
-
 struct LineRenderInput<'a> {
     state: &'a EditorState,
     theme: &'a crate::view::theme::Theme,
@@ -195,189 +171,6 @@ struct LineRenderInput<'a> {
     screen_width: u16,
 }
 
-/// Context for rendering the left margin (line numbers, indicators, separator)
-struct LeftMarginContext<'a> {
-    state: &'a EditorState,
-    theme: &'a crate::view::theme::Theme,
-    is_continuation: bool,
-    /// Line-start byte offset for fold/diagnostic/indicator lookups (None for continuations)
-    line_start_byte: Option<usize>,
-    /// Display line number or byte offset for the gutter
-    gutter_num: usize,
-    estimated_lines: usize,
-    diagnostic_lines: &'a HashSet<usize>,
-    /// Pre-computed line indicators (line_start_byte -> indicator)
-    line_indicators: &'a BTreeMap<usize, crate::view::margin::LineIndicator>,
-    /// Fold indicators (line_start_byte -> indicator)
-    fold_indicators: &'a BTreeMap<usize, FoldIndicator>,
-    /// Line-start byte of the cursor line (for relative line numbers and cursor highlight)
-    cursor_line_start_byte: usize,
-    /// 0-indexed line number of the cursor line (for relative line number calculation)
-    cursor_line_number: usize,
-    /// Whether to show relative line numbers
-    relative_line_numbers: bool,
-    /// Whether to show line numbers in the gutter
-    show_line_numbers: bool,
-    /// Whether the gutter shows byte offsets instead of line numbers
-    byte_offset_mode: bool,
-    /// Whether to highlight the current line in the gutter
-    highlight_current_line: bool,
-    /// Whether this split is the active (focused) one
-    is_active: bool,
-}
-
-/// Render the left margin (indicators + line numbers + separator) to line_spans
-fn render_left_margin(
-    ctx: &LeftMarginContext,
-    line_spans: &mut Vec<Span<'static>>,
-    line_view_map: &mut Vec<Option<usize>>,
-) {
-    if !ctx.state.margins.left_config.enabled {
-        return;
-    }
-
-    let lookup_key = ctx.line_start_byte;
-    // Pre-compute indicator bg for cursor line highlighting
-    let indicator_is_cursor_line = lookup_key.is_some_and(|k| k == ctx.cursor_line_start_byte);
-    let indicator_bg = if indicator_is_cursor_line && ctx.highlight_current_line && ctx.is_active {
-        Some(ctx.theme.current_line_bg)
-    } else {
-        None
-    };
-
-    // For continuation lines, don't show any indicators
-    if ctx.is_continuation {
-        let mut style = Style::default();
-        if let Some(bg) = indicator_bg {
-            style = style.bg(bg);
-        }
-        push_span_with_map(line_spans, line_view_map, " ".to_string(), style, None);
-    } else if lookup_key.is_some_and(|k| ctx.diagnostic_lines.contains(&k)) {
-        // Diagnostic indicators have highest priority
-        let mut style = Style::default().fg(ratatui::style::Color::Red);
-        if let Some(bg) = indicator_bg {
-            style = style.bg(bg);
-        }
-        push_span_with_map(line_spans, line_view_map, "●".to_string(), style, None);
-    } else if lookup_key.is_some_and(|k| {
-        ctx.fold_indicators.contains_key(&k) && !ctx.line_indicators.contains_key(&k)
-    }) {
-        // Show fold indicator when no other indicator is present
-        let fold = ctx.fold_indicators.get(&lookup_key.unwrap()).unwrap();
-        let symbol = if fold.collapsed { "▸" } else { "▾" };
-        let mut style = Style::default().fg(ctx.theme.line_number_fg);
-        if let Some(bg) = indicator_bg {
-            style = style.bg(bg);
-        }
-        push_span_with_map(line_spans, line_view_map, symbol.to_string(), style, None);
-    } else if let Some(indicator) = lookup_key.and_then(|k| ctx.line_indicators.get(&k)) {
-        // Show line indicator (git gutter, breakpoints, etc.)
-        let mut style = Style::default().fg(indicator.color);
-        if let Some(bg) = indicator_bg {
-            style = style.bg(bg);
-        }
-        push_span_with_map(
-            line_spans,
-            line_view_map,
-            indicator.symbol.clone(),
-            style,
-            None,
-        );
-    } else {
-        // Show space (no indicator)
-        let mut style = Style::default();
-        if let Some(bg) = indicator_bg {
-            style = style.bg(bg);
-        }
-        push_span_with_map(line_spans, line_view_map, " ".to_string(), style, None);
-    }
-
-    let is_cursor_line = lookup_key.is_some_and(|k| k == ctx.cursor_line_start_byte);
-    let use_cursor_line_bg = is_cursor_line && ctx.highlight_current_line && ctx.is_active;
-
-    // Render line number (right-aligned) or blank for continuations
-    if ctx.is_continuation {
-        // For wrapped continuation lines, render blank space
-        let blank = " ".repeat(ctx.state.margins.left_config.width);
-        let mut style = Style::default().fg(ctx.theme.line_number_fg);
-        if use_cursor_line_bg {
-            style = style.bg(ctx.theme.current_line_bg);
-        }
-        push_span_with_map(line_spans, line_view_map, blank, style, None);
-    } else if ctx.byte_offset_mode && ctx.show_line_numbers {
-        // Byte offset mode: show the absolute byte offset at the start of each line
-        let rendered_text = format!(
-            "{:>width$}",
-            ctx.gutter_num,
-            width = ctx.state.margins.left_config.width
-        );
-        let mut margin_style = if is_cursor_line {
-            Style::default().fg(ctx.theme.editor_fg)
-        } else {
-            Style::default().fg(ctx.theme.line_number_fg)
-        };
-        if use_cursor_line_bg {
-            margin_style = margin_style.bg(ctx.theme.current_line_bg);
-        }
-        push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
-    } else if ctx.relative_line_numbers {
-        // Relative line numbers: show distance from cursor, or absolute for cursor line
-        let display_num = if is_cursor_line {
-            // Show absolute line number for the cursor line (1-indexed)
-            ctx.gutter_num + 1
-        } else {
-            // Show relative distance for other lines
-            ctx.gutter_num.abs_diff(ctx.cursor_line_number)
-        };
-        let rendered_text = format!(
-            "{:>width$}",
-            display_num,
-            width = ctx.state.margins.left_config.width
-        );
-        // Use brighter color for the cursor line
-        let mut margin_style = if is_cursor_line {
-            Style::default().fg(ctx.theme.editor_fg)
-        } else {
-            Style::default().fg(ctx.theme.line_number_fg)
-        };
-        if use_cursor_line_bg {
-            margin_style = margin_style.bg(ctx.theme.current_line_bg);
-        }
-        push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
-    } else {
-        let margin_content = ctx.state.margins.render_line(
-            ctx.gutter_num,
-            crate::view::margin::MarginPosition::Left,
-            ctx.estimated_lines,
-            ctx.show_line_numbers,
-        );
-        let (rendered_text, style_opt) = margin_content.render(ctx.state.margins.left_config.width);
-
-        // Use custom style if provided, otherwise use default theme color
-        let mut margin_style =
-            style_opt.unwrap_or_else(|| Style::default().fg(ctx.theme.line_number_fg));
-        if use_cursor_line_bg {
-            margin_style = margin_style.bg(ctx.theme.current_line_bg);
-        }
-
-        push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
-    }
-
-    // Render separator
-    if ctx.state.margins.left_config.show_separator {
-        let mut separator_style = Style::default().fg(ctx.theme.line_number_fg);
-        if use_cursor_line_bg {
-            separator_style = separator_style.bg(ctx.theme.current_line_bg);
-        }
-        push_span_with_map(
-            line_spans,
-            line_view_map,
-            ctx.state.margins.left_config.separator.clone(),
-            separator_style,
-            None,
-        );
-    }
-}
 
 
 
@@ -502,7 +295,7 @@ impl SplitRenderer {
                             .as_deref()
                             .and_then(|svs| svs.get(main_split_id))
                             .is_some_and(|vs| vs.suppress_chrome);
-                    let main_layout = Self::split_layout(
+                    let main_layout = split_layout(
                         *split_area,
                         split_tab_bar_visible,
                         show_vertical_scrollbar,
@@ -605,7 +398,7 @@ impl SplitRenderer {
                     horizontal_scrollbar_rect: Rect::new(0, 0, 0, 0),
                 }
             } else {
-                Self::split_layout(
+                split_layout(
                     split_area,
                     split_tab_bar_visible,
                     show_vertical_scrollbar && !is_non_scrollable,
@@ -615,7 +408,7 @@ impl SplitRenderer {
             let (split_buffers, tab_scroll_offset) = if is_inner_group_leaf {
                 (Vec::new(), 0)
             } else {
-                Self::split_buffers_for_tabs(split_view_states.as_deref(), split_id, buffer_id)
+                split_buffers_for_tabs(split_view_states.as_deref(), split_id, buffer_id)
             };
 
             // Determine hover state for this split's tabs
@@ -880,7 +673,7 @@ impl SplitRenderer {
 
                 {
                     let _span = tracing::trace_span!("sync_viewport_to_content").entered();
-                    Self::sync_viewport_to_content(
+                    sync_viewport_to_content(
                         &mut viewport,
                         &mut state.buffer,
                         &split_cursors,
@@ -889,7 +682,7 @@ impl SplitRenderer {
                     );
                 }
                 let view_prefs =
-                    Self::resolve_view_preferences(state, split_view_states.as_deref(), split_id);
+                    resolve_view_preferences(state, split_view_states.as_deref(), split_id);
 
                 // When cursors are hidden, also suppress current-line highlighting
                 // and selection rendering so the buffer appears fully non-interactive.
@@ -1042,7 +835,7 @@ impl SplitRenderer {
         // active Grouped subtrees dispatched at render time.
         let separators = split_manager.get_separators(area);
         for (direction, x, y, length) in separators {
-            Self::render_separator(frame, direction, x, y, length, theme);
+            render_separator(frame, direction, x, y, length, theme);
         }
         // Walk base_visible again to render internal separators of active
         // groups (the group's Split nodes live in the side-map, not in the
@@ -1068,7 +861,7 @@ impl SplitRenderer {
                             .as_deref()
                             .and_then(|svs| svs.get(main_split_id))
                             .is_some_and(|vs| vs.suppress_chrome);
-                    let main_layout = Self::split_layout(
+                    let main_layout = split_layout(
                         *split_area,
                         split_tab_bar_visible,
                         show_vertical_scrollbar,
@@ -1078,7 +871,7 @@ impl SplitRenderer {
                         for (id, direction, x, y, length) in
                             layout.get_separators_with_ids(main_layout.content_rect)
                         {
-                            Self::render_separator(frame, direction, x, y, length, theme);
+                            render_separator(frame, direction, x, y, length, theme);
                             grouped_separator_areas.push((id, direction, x, y, length));
                         }
                     }
@@ -1133,7 +926,7 @@ impl SplitRenderer {
                     .get(&split_id)
                     .map_or(false, |vs| vs.suppress_chrome);
 
-            let layout = Self::split_layout(
+            let layout = split_layout(
                 split_area,
                 split_tab_bar_visible,
                 show_vertical_scrollbar,
@@ -1181,7 +974,7 @@ impl SplitRenderer {
                 })
                 .unwrap_or_default();
 
-            Self::sync_viewport_to_content(
+            sync_viewport_to_content(
                 &mut viewport,
                 &mut state.buffer,
                 &split_cursors,
@@ -1189,7 +982,7 @@ impl SplitRenderer {
                 &hidden_ranges,
             );
             let view_prefs =
-                Self::resolve_view_preferences(state, Some(&*split_view_states), split_id);
+                resolve_view_preferences(state, Some(&*split_view_states), split_id);
 
             let effective_highlight_current_line =
                 view_prefs.highlight_current_line && state.show_cursors;
@@ -1236,35 +1029,6 @@ impl SplitRenderer {
         view_line_mappings
     }
 
-    /// Render a split separator line
-    fn render_separator(
-        frame: &mut Frame,
-        direction: SplitDirection,
-        x: u16,
-        y: u16,
-        length: u16,
-        theme: &crate::view::theme::Theme,
-    ) {
-        match direction {
-            SplitDirection::Horizontal => {
-                // Draw horizontal line
-                let line_area = Rect::new(x, y, length, 1);
-                let line_text = "─".repeat(length as usize);
-                let paragraph =
-                    Paragraph::new(line_text).style(Style::default().fg(theme.split_separator_fg));
-                frame.render_widget(paragraph, line_area);
-            }
-            SplitDirection::Vertical => {
-                // Draw vertical line
-                for offset in 0..length {
-                    let cell_area = Rect::new(x, y + offset, 1, 1);
-                    let paragraph =
-                        Paragraph::new("│").style(Style::default().fg(theme.split_separator_fg));
-                    frame.render_widget(paragraph, cell_area);
-                }
-            }
-        }
-    }
 
     /// Render a composite buffer (side-by-side view of multiple source buffers)
     /// Uses ViewLines for proper syntax highlighting, ANSI handling, etc.
@@ -1425,7 +1189,7 @@ impl SplitRenderer {
                     // Need enough lines to cover from first_line to last_line
                     let lines_needed = last_line - first_line + 10;
                     let empty_folds = FoldManager::new();
-                    let view_data = Self::build_view_data(
+                    let view_data = build_view_data(
                         source_state,
                         &viewport,
                         None,         // No view transform
@@ -1838,260 +1602,7 @@ impl SplitRenderer {
     }
 
 
-    fn split_layout(
-        split_area: Rect,
-        tab_bar_visible: bool,
-        show_vertical_scrollbar: bool,
-        show_horizontal_scrollbar: bool,
-    ) -> SplitLayout {
-        let tabs_height = if tab_bar_visible { 1u16 } else { 0u16 };
-        let scrollbar_width = if show_vertical_scrollbar { 1u16 } else { 0u16 };
-        let hscrollbar_height = if show_horizontal_scrollbar {
-            1u16
-        } else {
-            0u16
-        };
 
-        let tabs_rect = Rect::new(split_area.x, split_area.y, split_area.width, tabs_height);
-        let content_rect = Rect::new(
-            split_area.x,
-            split_area.y + tabs_height,
-            split_area.width.saturating_sub(scrollbar_width),
-            split_area
-                .height
-                .saturating_sub(tabs_height)
-                .saturating_sub(hscrollbar_height),
-        );
-        let scrollbar_rect = Rect::new(
-            split_area.x + split_area.width.saturating_sub(scrollbar_width),
-            split_area.y + tabs_height,
-            scrollbar_width,
-            split_area
-                .height
-                .saturating_sub(tabs_height)
-                .saturating_sub(hscrollbar_height),
-        );
-        let horizontal_scrollbar_rect = Rect::new(
-            split_area.x,
-            split_area.y + split_area.height.saturating_sub(hscrollbar_height),
-            split_area.width.saturating_sub(scrollbar_width),
-            hscrollbar_height,
-        );
-
-        SplitLayout {
-            tabs_rect,
-            content_rect,
-            scrollbar_rect,
-            horizontal_scrollbar_rect,
-        }
-    }
-
-    fn split_buffers_for_tabs(
-        split_view_states: Option<&HashMap<LeafId, crate::view::split::SplitViewState>>,
-        split_id: LeafId,
-        buffer_id: BufferId,
-    ) -> (Vec<crate::view::split::TabTarget>, usize) {
-        if let Some(view_states) = split_view_states {
-            if let Some(view_state) = view_states.get(&split_id) {
-                return (
-                    view_state.open_buffers.clone(),
-                    view_state.tab_scroll_offset,
-                );
-            }
-        }
-        (vec![crate::view::split::TabTarget::Buffer(buffer_id)], 0)
-    }
-
-    fn sync_viewport_to_content(
-        viewport: &mut crate::view::viewport::Viewport,
-        buffer: &mut crate::model::buffer::Buffer,
-        cursors: &crate::model::cursor::Cursors,
-        content_rect: Rect,
-        hidden_ranges: &[(usize, usize)],
-    ) {
-        let size_changed =
-            viewport.width != content_rect.width || viewport.height != content_rect.height;
-
-        if size_changed {
-            viewport.resize(content_rect.width, content_rect.height);
-        }
-
-        // Always sync viewport with cursor to ensure visibility after cursor movements
-        // The sync_with_cursor method internally checks needs_sync and skip_resize_sync
-        // so this is safe to call unconditionally. Previously needs_sync was set by
-        // EditorState.apply() but now viewport is owned by SplitViewState.
-        let primary = *cursors.primary();
-        viewport.ensure_visible(buffer, &primary, hidden_ranges);
-    }
-
-    fn resolve_view_preferences(
-        _state: &EditorState,
-        split_view_states: Option<&HashMap<LeafId, crate::view::split::SplitViewState>>,
-        split_id: LeafId,
-    ) -> ViewPreferences {
-        if let Some(view_states) = split_view_states {
-            if let Some(view_state) = view_states.get(&split_id) {
-                return ViewPreferences {
-                    view_mode: view_state.view_mode.clone(),
-                    compose_width: view_state.compose_width,
-                    compose_column_guides: view_state.compose_column_guides.clone(),
-                    view_transform: view_state.view_transform.clone(),
-                    rulers: view_state.rulers.clone(),
-                    show_line_numbers: view_state.show_line_numbers,
-                    highlight_current_line: view_state.highlight_current_line,
-                };
-            }
-        }
-
-        // Fallback when no SplitViewState is available (shouldn't happen in practice)
-        ViewPreferences {
-            view_mode: ViewMode::Source,
-            compose_width: None,
-            compose_column_guides: None,
-            view_transform: None,
-            rulers: Vec::new(),
-            show_line_numbers: true,
-            highlight_current_line: true,
-        }
-    }
-
-
-    #[allow(clippy::too_many_arguments)]
-    fn build_view_data(
-        state: &mut EditorState,
-        viewport: &crate::view::viewport::Viewport,
-        view_transform: Option<ViewTransformPayload>,
-        estimated_line_length: usize,
-        visible_count: usize,
-        line_wrap_enabled: bool,
-        content_width: usize,
-        gutter_width: usize,
-        view_mode: &ViewMode,
-        folds: &FoldManager,
-        theme: &crate::view::theme::Theme,
-    ) -> ViewData {
-        let adjusted_visible_count = fold_adjusted_visible_count(
-            &state.buffer,
-            &state.marker_list,
-            folds,
-            viewport.top_byte,
-            visible_count,
-        );
-
-        // Check if buffer is binary before building tokens
-        let is_binary = state.buffer.is_binary();
-        let line_ending = state.buffer.line_ending();
-
-        // Build base token stream from source
-        let base_tokens = build_base_tokens(
-            &mut state.buffer,
-            viewport.top_byte,
-            estimated_line_length,
-            adjusted_visible_count,
-            is_binary,
-            line_ending,
-        );
-
-        // Use plugin transform if available, otherwise use base tokens
-        let has_view_transform = view_transform.is_some();
-        let mut tokens = view_transform.map(|vt| vt.tokens).unwrap_or(base_tokens);
-
-        // Apply soft breaks — marker-based line wrapping that survives edits without flicker.
-        // Only apply in Compose mode; Source mode shows the raw unwrapped text.
-        let is_compose = matches!(view_mode, ViewMode::PageView);
-        if is_compose && !state.soft_breaks.is_empty() {
-            let viewport_end = tokens
-                .iter()
-                .filter_map(|t| t.source_offset)
-                .next_back()
-                .unwrap_or(viewport.top_byte)
-                + 1;
-            let soft_breaks = state.soft_breaks.query_viewport(
-                viewport.top_byte,
-                viewport_end,
-                &state.marker_list,
-            );
-            if !soft_breaks.is_empty() {
-                tokens = apply_soft_breaks(tokens, &soft_breaks);
-            }
-        }
-
-        // Apply conceal ranges - filter/replace tokens that fall within concealed byte ranges.
-        // Only apply in Compose mode; Source mode shows the raw markdown syntax.
-        if is_compose && !state.conceals.is_empty() {
-            let viewport_end = tokens
-                .iter()
-                .filter_map(|t| t.source_offset)
-                .next_back()
-                .unwrap_or(viewport.top_byte)
-                + 1;
-            let conceal_ranges =
-                state
-                    .conceals
-                    .query_viewport(viewport.top_byte, viewport_end, &state.marker_list);
-            if !conceal_ranges.is_empty() {
-                tokens = apply_conceal_ranges(tokens, &conceal_ranges);
-            }
-        }
-
-        // Apply wrapping transform - always enabled for safety, but with different thresholds.
-        // When line_wrap is on: wrap at viewport width (or wrap_column if set) for normal text flow.
-        // When line_wrap is off: wrap at MAX_SAFE_LINE_WIDTH to prevent memory exhaustion
-        // from extremely long lines (e.g., 10MB single-line JSON files).
-        let effective_width = if line_wrap_enabled {
-            if let Some(col) = viewport.wrap_column {
-                // Wrap at the configured column, but never beyond viewport width
-                col.min(content_width)
-            } else {
-                content_width
-            }
-        } else {
-            MAX_SAFE_LINE_WIDTH
-        };
-        let hanging_indent = line_wrap_enabled && viewport.wrap_indent;
-        tokens =
-            apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
-
-        // Convert tokens to display lines using the view pipeline
-        // Each ViewLine preserves LineStart info for correct line number rendering
-        // Use binary mode if the buffer contains binary content
-        // Enable ANSI awareness for non-binary content to handle escape sequences correctly
-        let is_binary = state.buffer.is_binary();
-        let ansi_aware = !is_binary; // ANSI parsing for normal text files
-        let at_buffer_end = if has_view_transform {
-            // View transforms supply their own token streams; the trailing
-            // empty line logic doesn't apply to them.
-            false
-        } else {
-            let max_source_offset = tokens
-                .iter()
-                .filter_map(|t| t.source_offset)
-                .max()
-                .unwrap_or(0);
-            max_source_offset + 2 >= state.buffer.len()
-        };
-        let source_lines: Vec<ViewLine> = ViewLineIterator::new(
-            &tokens,
-            is_binary,
-            ansi_aware,
-            state.buffer_settings.tab_size,
-            at_buffer_end,
-        )
-        .collect();
-
-        // Inject virtual lines (LineAbove/LineBelow) from VirtualTextManager
-        let lines = inject_virtual_lines(source_lines, state, theme);
-        let placeholder_style = fold_placeholder_style(theme);
-        let lines = apply_folding(
-            lines,
-            &state.buffer,
-            &state.marker_list,
-            folds,
-            &placeholder_style,
-        );
-
-        ViewData { lines }
-    }
 
 
 
@@ -2116,137 +1627,7 @@ impl SplitRenderer {
     }
 
 
-    fn calculate_view_anchor(view_lines: &[ViewLine], top_byte: usize) -> ViewAnchor {
-        // Find the first line that contains source content at or after top_byte
-        // Walk backwards to include any injected content (headers) that precede it
-        for (idx, line) in view_lines.iter().enumerate() {
-            // Check if this line has source content at or after top_byte
-            if let Some(first_source) = line.char_source_bytes.iter().find_map(|m| *m) {
-                if first_source >= top_byte {
-                    // Found a line with source >= top_byte
-                    // But we may need to include previous lines if they're injected headers
-                    let mut start_idx = idx;
-                    while start_idx > 0 {
-                        let prev_line = &view_lines[start_idx - 1];
-                        // If previous line is all injected (no source mappings), include it
-                        let prev_has_source =
-                            prev_line.char_source_bytes.iter().any(|m| m.is_some());
-                        if !prev_has_source {
-                            start_idx -= 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    return ViewAnchor {
-                        start_line_idx: start_idx,
-                        start_line_skip: 0,
-                    };
-                }
-            }
-        }
 
-        // No matching source found, start from beginning
-        ViewAnchor {
-            start_line_idx: 0,
-            start_line_skip: 0,
-        }
-    }
-
-    fn calculate_compose_layout(
-        area: Rect,
-        view_mode: &ViewMode,
-        compose_width: Option<u16>,
-    ) -> ComposeLayout {
-        // Enable centering/margins if:
-        // 1. View mode is explicitly Compose, OR
-        // 2. compose_width is set (plugin-driven compose mode)
-        let should_compose = view_mode == &ViewMode::PageView || compose_width.is_some();
-
-        if !should_compose {
-            return ComposeLayout {
-                render_area: area,
-                left_pad: 0,
-                right_pad: 0,
-            };
-        }
-
-        let target_width = compose_width.unwrap_or(area.width);
-        let clamped_width = target_width.min(area.width).max(1);
-        if clamped_width >= area.width {
-            return ComposeLayout {
-                render_area: area,
-                left_pad: 0,
-                right_pad: 0,
-            };
-        }
-
-        let pad_total = area.width - clamped_width;
-        let left_pad = pad_total / 2;
-        let right_pad = pad_total - left_pad;
-
-        ComposeLayout {
-            render_area: Rect::new(area.x + left_pad, area.y, clamped_width, area.height),
-            left_pad,
-            right_pad,
-        }
-    }
-
-    fn render_compose_margins(
-        frame: &mut Frame,
-        area: Rect,
-        layout: &ComposeLayout,
-        _view_mode: &ViewMode,
-        theme: &crate::view::theme::Theme,
-        effective_editor_bg: ratatui::style::Color,
-    ) {
-        // Render margins if there are any pads (indicates compose layout is active)
-        if layout.left_pad == 0 && layout.right_pad == 0 {
-            return;
-        }
-
-        // Paper-on-desk effect: outer "desk" margin with inner "paper edge"
-        // Layout: [desk][paper edge][content][paper edge][desk]
-        const PAPER_EDGE_WIDTH: u16 = 1;
-
-        let desk_style = Style::default().bg(theme.compose_margin_bg);
-        let paper_style = Style::default().bg(effective_editor_bg);
-
-        if layout.left_pad > 0 {
-            let paper_edge = PAPER_EDGE_WIDTH.min(layout.left_pad);
-            let desk_width = layout.left_pad.saturating_sub(paper_edge);
-
-            // Desk area (outer)
-            if desk_width > 0 {
-                let desk_rect = Rect::new(area.x, area.y, desk_width, area.height);
-                frame.render_widget(Block::default().style(desk_style), desk_rect);
-            }
-
-            // Paper edge (inner, adjacent to content)
-            if paper_edge > 0 {
-                let paper_rect = Rect::new(area.x + desk_width, area.y, paper_edge, area.height);
-                frame.render_widget(Block::default().style(paper_style), paper_rect);
-            }
-        }
-
-        if layout.right_pad > 0 {
-            let paper_edge = PAPER_EDGE_WIDTH.min(layout.right_pad);
-            let desk_width = layout.right_pad.saturating_sub(paper_edge);
-            let right_start = area.x + layout.left_pad + layout.render_area.width;
-
-            // Paper edge (inner, adjacent to content)
-            if paper_edge > 0 {
-                let paper_rect = Rect::new(right_start, area.y, paper_edge, area.height);
-                frame.render_widget(Block::default().style(paper_style), paper_rect);
-            }
-
-            // Desk area (outer)
-            if desk_width > 0 {
-                let desk_rect =
-                    Rect::new(right_start + paper_edge, area.y, desk_width, area.height);
-                frame.render_widget(Block::default().style(desk_style), desk_rect);
-            }
-        }
-    }
 
     fn selection_context(
         state: &EditorState,
@@ -2492,25 +1873,6 @@ impl SplitRenderer {
 
     // semantic token colors are mapped when overlays are created
 
-    fn calculate_viewport_end(
-        state: &mut EditorState,
-        viewport_start: usize,
-        estimated_line_length: usize,
-        visible_count: usize,
-    ) -> usize {
-        let mut iter_temp = state
-            .buffer
-            .line_iterator(viewport_start, estimated_line_length);
-        let mut viewport_end = viewport_start;
-        for _ in 0..visible_count {
-            if let Some((line_start, line_content)) = iter_temp.next_line() {
-                viewport_end = line_start + line_content.len();
-            } else {
-                break;
-            }
-        }
-        viewport_end
-    }
 
     fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput {
         use crate::view::folding::indent_folding;
@@ -3854,7 +3216,7 @@ impl SplitRenderer {
             .update_width_for_buffer(estimated_lines, show_line_numbers);
         let gutter_width = state.margins.left_total_width();
 
-        let compose_layout = Self::calculate_compose_layout(area, &view_mode, compose_width);
+        let compose_layout = calculate_compose_layout(area, &view_mode, compose_width);
         let render_area = compose_layout.render_area;
 
         // Clone view_transform so we can reuse it if scrolling triggers a rebuild
@@ -3862,7 +3224,7 @@ impl SplitRenderer {
 
         let view_data = {
             let _span = tracing::trace_span!("build_view_data").entered();
-            Self::build_view_data(
+            build_view_data(
                 state,
                 viewport,
                 view_transform,
@@ -3890,7 +3252,7 @@ impl SplitRenderer {
         // ensure_visible_in_layout runs (so it sees the correct view lines).
         let (view_data, view_transform_for_rebuild) = if sync_scrolled {
             viewport.top_view_line_offset = 0;
-            let rebuilt = Self::build_view_data(
+            let rebuilt = build_view_data(
                 state,
                 viewport,
                 view_transform_for_rebuild,
@@ -3918,7 +3280,7 @@ impl SplitRenderer {
         let view_data = if scrolled {
             if let Some(vt) = view_transform_for_rebuild {
                 viewport.top_view_line_offset = 0;
-                let rebuilt = Self::build_view_data(
+                let rebuilt = build_view_data(
                     state,
                     viewport,
                     vt,
@@ -3940,7 +3302,7 @@ impl SplitRenderer {
             view_data
         };
 
-        let view_anchor = Self::calculate_view_anchor(&view_data.lines, viewport.top_byte);
+        let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte);
 
         let selection = Self::selection_context(state, cursors);
 
@@ -3981,7 +3343,7 @@ impl SplitRenderer {
             .populate_line_cache(viewport.top_byte, adjusted_visible_count);
 
         let viewport_start = viewport.top_byte;
-        let viewport_end = Self::calculate_viewport_end(
+        let viewport_end = calculate_viewport_end(
             state,
             viewport_start,
             estimated_line_length,
@@ -4013,7 +3375,7 @@ impl SplitRenderer {
         let (view_lines_to_render, adjusted_view_anchor) =
             if calculated_offset > 0 && calculated_offset < view_data.lines.len() {
                 let sliced = &view_data.lines[calculated_offset..];
-                let adjusted_anchor = Self::calculate_view_anchor(sliced, viewport.top_byte);
+                let adjusted_anchor = calculate_view_anchor(sliced, viewport.top_byte);
                 (sliced, adjusted_anchor)
             } else {
                 (&view_data.lines[..], view_anchor)
@@ -4098,7 +3460,7 @@ impl SplitRenderer {
         let gutter_width = layout_output.gutter_width;
         let starting_line_num = 0; // used only for background offset
 
-        Self::render_compose_margins(
+        render_compose_margins(
             frame,
             area,
             &layout_output.compose_layout,
@@ -4343,7 +3705,7 @@ mod tests {
         let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
         let empty_folds = FoldManager::new();
 
-        let view_data = SplitRenderer::build_view_data(
+        let view_data = build_view_data(
             &mut state,
             &viewport,
             None,
@@ -4356,7 +3718,7 @@ mod tests {
             &empty_folds,
             &theme,
         );
-        let view_anchor = SplitRenderer::calculate_view_anchor(&view_data.lines, 0);
+        let view_anchor = calculate_view_anchor(&view_data.lines, 0);
 
         let estimated_lines = (state.buffer.len() / state.buffer.estimated_line_length()).max(1);
         state.margins.update_width_for_buffer(estimated_lines, true);
@@ -4367,7 +3729,7 @@ mod tests {
             .buffer
             .populate_line_cache(viewport.top_byte, visible_count);
         let viewport_start = viewport.top_byte;
-        let viewport_end = SplitRenderer::calculate_viewport_end(
+        let viewport_end = calculate_viewport_end(
             &mut state,
             viewport_start,
             content.len().max(1),
@@ -4435,7 +3797,7 @@ mod tests {
         let viewport = Viewport::new(40, 6);
         let gutter_width = state.margins.left_total_width();
         let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
-        let view_data = SplitRenderer::build_view_data(
+        let view_data = build_view_data(
             &mut state,
             &viewport,
             None,
@@ -5914,7 +5276,7 @@ mod tests {
         let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
         let empty_folds = FoldManager::new();
 
-        let view_data = SplitRenderer::build_view_data(
+        let view_data = build_view_data(
             &mut state,
             &viewport,
             None,
@@ -5927,7 +5289,7 @@ mod tests {
             &empty_folds,
             &theme,
         );
-        let view_anchor = SplitRenderer::calculate_view_anchor(&view_data.lines, 0);
+        let view_anchor = calculate_view_anchor(&view_data.lines, 0);
 
         let estimated_lines = (state.buffer.len() / state.buffer.estimated_line_length()).max(1);
         state.margins.update_width_for_buffer(estimated_lines, true);
@@ -5938,7 +5300,7 @@ mod tests {
             .buffer
             .populate_line_cache(viewport.top_byte, visible_count);
         let viewport_start = viewport.top_byte;
-        let viewport_end = SplitRenderer::calculate_viewport_end(
+        let viewport_end = calculate_viewport_end(
             &mut state,
             viewport_start,
             content.len().max(1),
