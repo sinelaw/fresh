@@ -2524,11 +2524,33 @@ impl Editor {
         ) in cursor_data
         {
             let (new_pos, new_sticky) = match &visual_action {
-                VisualAction::UpDown { direction, .. } => {
+                VisualAction::UpDown {
+                    direction,
+                    is_select,
+                } => {
+                    // When a selection is active, plain (non-selecting) vertical
+                    // motion starts from the selection's edge closest to the
+                    // motion direction (top edge for Up, bottom edge for Down),
+                    // matching VSCode/Sublime/browser behavior (issue #1566).
+                    // Emacs mark-mode (`deselect_on_move == false`) is unaffected.
+                    let from_pos = if deselect_on_move && !*is_select {
+                        if let Some(anchor) = anchor {
+                            if *direction < 0 {
+                                position.min(anchor)
+                            } else {
+                                position.max(anchor)
+                            }
+                        } else {
+                            position
+                        }
+                    } else {
+                        position
+                    };
+
                     // Calculate current visual column from cached layout
                     let current_visual_col = self
                         .cached_layout
-                        .byte_to_visual_column(split_id, position)?;
+                        .byte_to_visual_column(split_id, from_pos)?;
 
                     let goal_visual_col = if sticky_column > 0 {
                         sticky_column
@@ -2538,7 +2560,7 @@ impl Editor {
 
                     match self.cached_layout.move_visual_line(
                         split_id,
-                        position,
+                        from_pos,
                         goal_visual_col,
                         *direction,
                     ) {

@@ -1353,8 +1353,21 @@ pub fn action_to_events(
         // Uses grapheme cluster boundaries for proper handling of combining characters
         Action::MoveLeft => {
             for (cursor_id, cursor) in cursors.iter() {
-                let new_pos = state.buffer.prev_grapheme_boundary(cursor.position);
-                let new_pos = adjust_position_for_crlf_left(&state.buffer, new_pos);
+                // If a selection is active and the cursor is in "deselect on move"
+                // mode (i.e. normal, non-Emacs-mark), collapse the selection to
+                // its LEFT edge instead of stepping one grapheme. This matches
+                // VSCode, Sublime, browser text inputs, etc. (issue #1566).
+                let new_pos = if cursor.deselect_on_move {
+                    if let Some(range) = cursor.selection_range() {
+                        range.start
+                    } else {
+                        let p = state.buffer.prev_grapheme_boundary(cursor.position);
+                        adjust_position_for_crlf_left(&state.buffer, p)
+                    }
+                } else {
+                    let p = state.buffer.prev_grapheme_boundary(cursor.position);
+                    adjust_position_for_crlf_left(&state.buffer, p)
+                };
 
                 // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
@@ -1377,7 +1390,20 @@ pub fn action_to_events(
         Action::MoveRight => {
             for (cursor_id, cursor) in cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
-                let new_pos = next_position_for_crlf(&state.buffer, cursor.position, max_pos);
+                // If a selection is active and the cursor is in "deselect on
+                // move" mode (i.e. normal, non-Emacs-mark), collapse the
+                // selection to its RIGHT edge instead of stepping one grapheme.
+                // This matches VSCode, Sublime, browser text inputs, etc.
+                // (issue #1566).
+                let new_pos = if cursor.deselect_on_move {
+                    if let Some(range) = cursor.selection_range() {
+                        range.end.min(max_pos)
+                    } else {
+                        next_position_for_crlf(&state.buffer, cursor.position, max_pos)
+                    }
+                } else {
+                    next_position_for_crlf(&state.buffer, cursor.position, max_pos)
+                };
 
                 // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
@@ -1399,12 +1425,21 @@ pub fn action_to_events(
 
         Action::MoveUp => {
             for (cursor_id, cursor) in cursors.iter() {
+                // When a selection is active in normal (non-Emacs-mark) mode,
+                // vertical motion starts from the TOP edge of the selection,
+                // matching VSCode/Sublime/browser behavior (issue #1566).
+                let from_pos = if cursor.deselect_on_move {
+                    cursor
+                        .selection_range()
+                        .map(|r| r.start)
+                        .unwrap_or(cursor.position)
+                } else {
+                    cursor.position
+                };
+
                 // Calculate visual column first (iterator is dropped after this call)
-                let (current_visual_column, _) = calculate_visual_column(
-                    &mut state.buffer,
-                    cursor.position,
-                    estimated_line_length,
-                );
+                let (current_visual_column, _) =
+                    calculate_visual_column(&mut state.buffer, from_pos, estimated_line_length);
 
                 // Use sticky_column if set (now stores visual column), otherwise use current visual column
                 let goal_visual_column = if cursor.sticky_column > 0 {
@@ -1414,9 +1449,7 @@ pub fn action_to_events(
                 };
 
                 // Now create iterator for navigation
-                let mut iter = state
-                    .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state.buffer.line_iterator(from_pos, estimated_line_length);
 
                 if let Some((prev_line_start, prev_line_content)) = iter.prev() {
                     // Calculate byte offset from visual column, ensuring valid character boundary
@@ -1446,12 +1479,21 @@ pub fn action_to_events(
 
         Action::MoveDown => {
             for (cursor_id, cursor) in cursors.iter() {
+                // When a selection is active in normal (non-Emacs-mark) mode,
+                // vertical motion starts from the BOTTOM edge of the selection,
+                // matching VSCode/Sublime/browser behavior (issue #1566).
+                let from_pos = if cursor.deselect_on_move {
+                    cursor
+                        .selection_range()
+                        .map(|r| r.end)
+                        .unwrap_or(cursor.position)
+                } else {
+                    cursor.position
+                };
+
                 // Calculate visual column first (iterator is dropped after this call)
-                let (current_visual_column, _) = calculate_visual_column(
-                    &mut state.buffer,
-                    cursor.position,
-                    estimated_line_length,
-                );
+                let (current_visual_column, _) =
+                    calculate_visual_column(&mut state.buffer, from_pos, estimated_line_length);
 
                 // Use sticky_column if set (now stores visual column), otherwise use current visual column
                 let goal_visual_column = if cursor.sticky_column > 0 {
@@ -1461,9 +1503,7 @@ pub fn action_to_events(
                 };
 
                 // Now create iterator for navigation
-                let mut iter = state
-                    .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state.buffer.line_iterator(from_pos, estimated_line_length);
 
                 // Consume current line
                 iter.next_line();
