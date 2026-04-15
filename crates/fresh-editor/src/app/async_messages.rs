@@ -1199,6 +1199,15 @@ impl Editor {
 
         self.file_explorer = Some(view);
         self.set_status_message(t!("status.file_explorer_ready").to_string());
+
+        // If the user opened the explorer while a file from a nested
+        // directory was active, the sync triggered by toggle_file_explorer
+        // ran before this initialization completed (file_explorer was still
+        // None) and did nothing. Run it again now so the tree auto-expands
+        // to reveal the current file on first open (issue #1569).
+        if self.file_explorer_visible {
+            self.sync_file_explorer_to_active_file();
+        }
     }
 
     /// Handle file explorer node toggle completed
