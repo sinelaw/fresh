@@ -1279,6 +1279,19 @@ function onSearchReplacePromptCancelled(args: { prompt_type: string }): boolean 
 registerHandler("onSearchReplacePromptCancelled", onSearchReplacePromptCancelled);
 editor.on("prompt_cancelled", "onSearchReplacePromptCancelled");
 
+// If the panel's virtual buffer is closed externally (via the × button,
+// the Close Buffer/Close Tab commands, or anything else), reset the
+// plugin's internal state so the next invocation of `openPanel` creates
+// a fresh buffer/split instead of trying to update a buffer that no
+// longer exists (which silently no-ops and leaves the user with no UI).
+function onSearchReplaceBufferClosed(args: { buffer_id: number }): void {
+  if (panel && args.buffer_id === panel.resultsBufferId) {
+    panel = null;
+  }
+}
+registerHandler("onSearchReplaceBufferClosed", onSearchReplaceBufferClosed);
+editor.on("buffer_closed", "onSearchReplaceBufferClosed");
+
 editor.registerCommand(
   "%cmd.search_replace",
   "%cmd.search_replace_desc",

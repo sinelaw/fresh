@@ -2519,7 +2519,9 @@ impl Editor {
     /// the user closes them all together by closing the group tab.
     pub fn close_tab(&mut self) {
         // If the active split has a group tab active, close the whole group
-        // rather than just the focused panel buffer.
+        // rather than just the focused panel buffer — only the Close-Tab
+        // command (or keybinding) can express "close the group I'm viewing",
+        // so this prelude stays here rather than in `close_tab_in_split`.
         let active_split = self.split_manager.active_split();
         if let Some(group_leaf_id) = self
             .split_view_states
@@ -2531,125 +2533,21 @@ impl Editor {
             return;
         }
 
+        // Delegate to `close_tab_in_split` so the Close-Buffer command,
+        // Alt+W, and the mouse × button all run the same code path —
+        // there should be no difference in behavior between them.
         let buffer_id = self.active_buffer();
-
-        // Count how many splits have this buffer in their open_buffers
-        let buffer_in_other_splits = self
-            .split_view_states
-            .iter()
-            .filter(|(&split_id, view_state)| {
-                split_id != active_split && view_state.has_buffer(buffer_id)
-            })
-            .count();
-
-        // Get current split's open buffers
-        let current_split_tabs = self
-            .split_view_states
-            .get(&active_split)
-            .map(|vs| vs.buffer_tab_ids_vec())
-            .unwrap_or_default();
-
-        // If this is the only tab in this split and there are no other splits with this buffer,
-        // this is the last viewport - behave like close_buffer
-        let is_last_viewport = buffer_in_other_splits == 0;
-
-        if is_last_viewport {
-            // If this is the only buffer in this split AND there are other splits,
-            // close the split instead of the buffer (don't create an empty replacement)
-            let has_other_splits = self.split_manager.root().count_leaves() > 1;
-            if current_split_tabs.len() <= 1 && has_other_splits {
-                // Check for unsaved changes first
-                if self.active_state().buffer.is_modified() {
-                    let name = self.get_buffer_display_name(buffer_id);
-                    let save_key = t!("prompt.key.save").to_string();
-                    let discard_key = t!("prompt.key.discard").to_string();
-                    let cancel_key = t!("prompt.key.cancel").to_string();
-                    self.start_prompt(
-                        t!(
-                            "prompt.buffer_modified",
-                            name = name,
-                            save_key = save_key,
-                            discard_key = discard_key,
-                            cancel_key = cancel_key
-                        )
-                        .to_string(),
-                        PromptType::ConfirmCloseBuffer { buffer_id },
-                    );
-                    return;
-                }
-                // Close the buffer first, then the split
-                if let Err(e) = self.close_buffer(buffer_id) {
-                    tracing::warn!("Failed to close buffer: {}", e);
-                }
-                self.close_active_split();
-                return;
-            }
-
-            // Last viewport of this buffer - close the buffer entirely
-            if self.active_state().buffer.is_modified() {
-                // Buffer has unsaved changes - prompt for confirmation
-                let name = self.get_buffer_display_name(buffer_id);
-                let save_key = t!("prompt.key.save").to_string();
-                let discard_key = t!("prompt.key.discard").to_string();
-                let cancel_key = t!("prompt.key.cancel").to_string();
-                self.start_prompt(
-                    t!(
-                        "prompt.buffer_modified",
-                        name = name,
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string(),
-                    PromptType::ConfirmCloseBuffer { buffer_id },
-                );
-            } else if let Err(e) = self.close_buffer(buffer_id) {
-                self.set_status_message(t!("file.cannot_close", error = e.to_string()).to_string());
-            } else {
-                self.set_status_message(t!("buffer.tab_closed").to_string());
-            }
-        } else {
-            // There are other viewports of this buffer - just remove from current split's tabs
-            if current_split_tabs.len() <= 1 {
-                // This is the only tab in this split - close the split
-                // If we're closing a terminal buffer while in terminal mode, exit terminal mode
-                if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
-                    self.terminal_mode = false;
-                    self.key_context = crate::input::keybindings::KeyContext::Normal;
-                }
-                self.close_active_split();
-                return;
-            }
-
-            // Find replacement buffer for this split
-            let current_idx = current_split_tabs
-                .iter()
-                .position(|&id| id == buffer_id)
-                .unwrap_or(0);
-            let replacement_idx = if current_idx > 0 { current_idx - 1 } else { 1 };
-            let replacement_buffer = current_split_tabs[replacement_idx];
-
-            // If we're closing a terminal buffer while in terminal mode, exit terminal mode
-            if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
-                self.terminal_mode = false;
-                self.key_context = crate::input::keybindings::KeyContext::Normal;
-            }
-
-            // Remove buffer from this split's tabs
-            if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                view_state.remove_buffer(buffer_id);
-            }
-
-            // Update the split to show the replacement buffer
-            self.split_manager
-                .set_split_buffer(active_split, replacement_buffer);
-
-            self.set_status_message(t!("buffer.tab_closed").to_string());
-        }
+        self.close_tab_in_split(buffer_id, active_split);
     }
 
     /// Close a specific tab (buffer) in a specific split.
-    /// Used by mouse click handler on tab close button.
+    ///
+    /// This is the single shared implementation used by:
+    ///   * the mouse × button on a tab,
+    ///   * the Close Buffer command (via `close_tab`),
+    ///   * the Close Tab command and the `Alt+W` keybinding (via `close_tab`).
+    ///
+    /// All three paths should behave identically; keep new logic here.
     /// Returns true if the tab was closed without needing a prompt.
     pub fn close_tab_in_split(&mut self, buffer_id: BufferId, split_id: LeafId) -> bool {
         // If closing a terminal buffer while in terminal mode, exit terminal mode
@@ -2696,6 +2594,26 @@ impl Editor {
                     );
                     return false;
                 }
+            }
+            // If this is the only tab in this split AND there are other
+            // splits, close the split rather than swap it to a fallback
+            // buffer.  Mirrors `close_tab()` so mouse-click close and
+            // Close Buffer/Close Tab commands behave the same — without
+            // this, the × button leaves a leftover split showing some
+            // unrelated buffer (observed with the Search/Replace panel).
+            let has_other_splits = self.split_manager.root().count_leaves() > 1;
+            if split_tabs.len() <= 1 && has_other_splits {
+                self.handle_close_split(split_id.into());
+                // handle_close_split also disposes the buffer-less split;
+                // buffer lifetime cleanup happens via its own path.
+                if let Err(e) = self.close_buffer(buffer_id) {
+                    tracing::debug!(
+                        "close_tab_in_split: buffer cleanup after split close failed: {}",
+                        e
+                    );
+                }
+                self.set_status_message(t!("buffer.tab_closed").to_string());
+                return true;
             }
             if let Err(e) = self.close_buffer(buffer_id) {
                 self.set_status_message(t!("file.cannot_close", error = e.to_string()).to_string());

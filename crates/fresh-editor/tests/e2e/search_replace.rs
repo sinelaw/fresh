@@ -750,6 +750,105 @@ fn test_search_replace_split_not_restored_across_restart() {
     }
 }
 
+/// Regression: closing the *Search/Replace* panel via the tab × button
+/// (mouse click) used to leave a stray split behind showing a duplicate
+/// of the original buffer, while the `Close Buffer` command closed the
+/// split cleanly.  Both close paths should behave the same.
+#[test]
+fn test_search_replace_tab_x_button_closes_whole_split() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+
+    // Find the panel's buffer id and split id, then invoke the same code
+    // path the mouse × handler uses.
+    let (panel_buffer, panel_split) = {
+        let editor = harness.editor();
+        let split_id = editor.effective_active_split();
+        let buffer_id = editor.active_buffer();
+        (buffer_id, split_id)
+    };
+    harness
+        .editor_mut()
+        .close_tab_in_split(panel_buffer, panel_split);
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("*Search/Replace*"),
+        "Panel should be gone after × close.\nScreen:\n{}",
+        screen
+    );
+    let alpha_tab_count = screen.matches("alpha.txt ×").count();
+    assert_eq!(
+        alpha_tab_count, 1,
+        "alpha.txt should appear as exactly one tab after × close — no \
+         leftover split with a duplicate alpha.txt pane.\nScreen:\n{}",
+        screen
+    );
+}
+
+/// Regression: opening the panel, closing it via Escape, then immediately
+/// reopening it used to fail silently — the plugin state held a stale
+/// reference to the now-dead virtual buffer and `updatePanelContent` noop'd.
+/// After the fix (a `buffer_closed` hook resets plugin state), reopen
+/// creates a fresh panel.
+#[test]
+fn test_search_replace_reopen_after_close_works() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    // Open panel once.
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+
+    // Close via Escape (plugin's own close path).
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("*Search/Replace*"))
+        .unwrap();
+
+    // Reopen — panel must be visible again.
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    assert!(
+        harness.screen_to_string().contains("*Search/Replace*"),
+        "Panel should reopen after having been closed."
+    );
+}
+
 /// Regression: closing the *Search/Replace* panel via the `Close Buffer`
 /// command after a project-wide replace used to leave a stray split behind
 /// showing one of the auto-opened hidden buffers (b.txt, c.txt) instead of
