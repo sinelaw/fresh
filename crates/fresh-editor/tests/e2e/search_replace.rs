@@ -652,6 +652,42 @@ fn test_search_replace_multiple_matches_same_line() {
     eprintln!("[DEBUG {}] test PASSED", elapsed());
 }
 
+/// Bug 3 (upstream): opening the search/replace panel used to create the
+/// virtual buffer in the *current* split's tab bar AND in a new split,
+/// leaving `*Search/Replace*` visible twice on screen.  Assert it appears
+/// exactly once.
+#[test]
+fn test_search_replace_panel_not_duplicated_in_tabs() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(160, 40, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    // Count only tab-bar occurrences (label followed by the close × or
+    // end-of-tab spacing).  Tabs render as `*Search/Replace* ×`; the
+    // bottom status bar shows `*Search/Replace* [RO]` which we ignore.
+    let tab_occurrences = screen.matches("*Search/Replace* ×").count();
+    assert_eq!(
+        tab_occurrences, 1,
+        "The *Search/Replace* buffer should have exactly one tab on screen \
+         (in its own split), not duplicated as a tab in the source split.\n\
+         Screen:\n{}",
+        screen
+    );
+}
+
 /// Bug 1 (upstream) companion: pressing Alt+Enter opens a confirmation
 /// prompt explaining that the replace is not restore-safe.  Cancelling the
 /// prompt must leave the file unchanged.

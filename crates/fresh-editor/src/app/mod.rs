@@ -6473,6 +6473,13 @@ impl Editor {
                     }
                 }
 
+                // Capture the source split before creating the buffer —
+                // `create_virtual_buffer` unconditionally adds the new buffer
+                // as a tab to the currently active split, which is the wrong
+                // thing for a panel that lives in its own dedicated split
+                // (it would show up as a tab in BOTH splits — see bug #3).
+                let source_split_before_create = self.split_manager.active_split();
+
                 // Create the virtual buffer first
                 let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
                 tracing::info!(
@@ -6519,6 +6526,18 @@ impl Editor {
                     .split_active_positioned(split_dir, buffer_id, ratio, before)
                 {
                     Ok(new_split_id) => {
+                        // The buffer now lives in its own split, so drop its
+                        // tab from the source split (see bug #3).  Only do
+                        // this when the new split actually differs from the
+                        // source split — otherwise we'd leave no split
+                        // displaying the buffer.
+                        if new_split_id != source_split_before_create {
+                            if let Some(source_view_state) =
+                                self.split_view_states.get_mut(&source_split_before_create)
+                            {
+                                source_view_state.remove_buffer(buffer_id);
+                            }
+                        }
                         // Create independent view state for the new split with the buffer in tabs
                         let mut view_state = SplitViewState::with_buffer(
                             self.terminal_width,
