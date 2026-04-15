@@ -172,29 +172,17 @@ pub enum Language {
 }
 
 impl Language {
-    /// Detect language from file extension
+    /// Detect language from file extension.
+    ///
+    /// Derived from `extensions()` — see `Self::all` / `Self::extensions` for
+    /// the authoritative table. A linear scan over ~18 languages is cheap
+    /// enough that the nicer invariant (no duplicate tables) beats a match.
     pub fn from_path(path: &Path) -> Option<Self> {
-        match path.extension()?.to_str()? {
-            "rs" => Some(Language::Rust),
-            "py" => Some(Language::Python),
-            "js" | "jsx" | "mjs" | "cjs" => Some(Language::JavaScript),
-            "ts" | "tsx" | "mts" | "cts" => Some(Language::TypeScript),
-            "html" => Some(Language::HTML),
-            "css" => Some(Language::CSS),
-            "c" | "h" => Some(Language::C),
-            "cpp" | "hpp" | "cc" | "hh" | "cxx" | "hxx" | "cppm" | "ixx" => Some(Language::Cpp),
-            "go" => Some(Language::Go),
-            "json" => Some(Language::Json),
-            "java" => Some(Language::Java),
-            "cs" => Some(Language::CSharp),
-            "php" => Some(Language::Php),
-            "rb" => Some(Language::Ruby),
-            "sh" | "bash" => Some(Language::Bash),
-            "lua" => Some(Language::Lua),
-            "pas" | "p" => Some(Language::Pascal),
-            "odin" => Some(Language::Odin),
-            _ => None,
-        }
+        let ext = path.extension()?.to_str()?;
+        Self::all()
+            .iter()
+            .find(|lang| lang.extensions().contains(&ext))
+            .copied()
     }
 
     /// Get tree-sitter highlight configuration for this language
@@ -820,5 +808,28 @@ mod tests {
         // Language::id() must return "csharp" to match the config key
         // used for LSP server lookup and language detection.
         assert_eq!(Language::CSharp.id(), "csharp");
+    }
+
+    /// Guard: `from_path` and `extensions()` must stay in sync — they used to
+    /// be two hand-maintained tables with a "keep in sync" comment, which
+    /// silently drifted when either was edited in isolation.
+    #[test]
+    fn test_from_path_matches_extensions() {
+        for lang in Language::all() {
+            for ext in lang.extensions() {
+                let path = std::path::PathBuf::from(format!("x.{}", ext));
+                let detected = Language::from_path(&path).unwrap_or_else(|| {
+                    panic!(
+                        "extension .{} listed by {:?} but from_path returned None",
+                        ext, lang
+                    )
+                });
+                assert_eq!(
+                    detected, *lang,
+                    "extension .{} listed by {:?} but from_path returned {:?}",
+                    ext, lang, detected
+                );
+            }
+        }
     }
 }

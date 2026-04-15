@@ -75,6 +75,30 @@ pub struct GrammarInfo {
     pub short_name: Option<String>,
 }
 
+/// Bridge between syntect display names and `fresh_languages::Language`.
+///
+/// Most syntect grammars map one-to-one: "Rust" → `Language::Rust`. A few
+/// have verbose display names that don't match the tree-sitter enum's
+/// `display_name()`, and `Language::from_name` has fuzzy "contains shell"
+/// fallbacks that would wrongly tag Nushell as tree-sitter Bash. This is
+/// the one place we spell the exceptions out explicitly.
+const SYNTECT_TO_TREE_SITTER_ALIASES: &[(&str, fresh_languages::Language)] =
+    &[("Bourne Again Shell (bash)", fresh_languages::Language::Bash)];
+
+/// Resolve a syntect syntax display name to a tree-sitter language, using
+/// strict equality against the alias table and `Language::display_name()`.
+fn tree_sitter_for_syntect_name(display_name: &str) -> Option<fresh_languages::Language> {
+    for (syntect_name, lang) in SYNTECT_TO_TREE_SITTER_ALIASES {
+        if *syntect_name == display_name {
+            return Some(*lang);
+        }
+    }
+    fresh_languages::Language::all()
+        .iter()
+        .find(|l| l.display_name() == display_name)
+        .copied()
+}
+
 /// Which highlighters can serve a given `GrammarEntry`.
 ///
 /// A catalog entry may come from syntect (a TextMate grammar indexed into
@@ -879,22 +903,9 @@ impl GrammarRegistry {
             record(&mut short_by_full, short, full);
         }
 
-        // Resolve (language_id, tree_sitter) for a syntect entry.
-        //
-        // Uses a strict mapping so only genuinely-equivalent entries get
-        // tagged with a tree-sitter language. `Language::from_name` has
-        // fuzzy "contains shell" fallbacks that would wrongly pair e.g.
-        // Nushell with tree-sitter Bash.
         let derive_language_id =
             |display_name: &str| -> (String, Option<fresh_languages::Language>) {
-                let ts = match display_name {
-                    // Syntect display name that differs from Language::display_name
-                    "Bourne Again Shell (bash)" => Some(fresh_languages::Language::Bash),
-                    other => fresh_languages::Language::all()
-                        .iter()
-                        .find(|l| l.display_name() == other)
-                        .copied(),
-                };
+                let ts = tree_sitter_for_syntect_name(display_name);
                 let id = ts
                     .map(|l| l.id().to_string())
                     .unwrap_or_else(|| display_name.to_lowercase());
@@ -1959,5 +1970,120 @@ mod tests {
             detected.display_name, "Bourne Again Shell (bash)",
             "display_name must be canonical, not user-typed"
         );
+    }
+
+    /// A config-only language (no matching syntect grammar) must still appear
+    /// in the catalog so the language palette can offer it — the old
+    /// `DetectedLanguage::from_config_language` branch was load-bearing.
+    #[test]
+    fn test_config_only_language_appears_in_catalog() {
+        let mut registry = GrammarRegistry::default();
+        let mut languages = std::collections::HashMap::new();
+        // "fish" isn't in syntect; grammar="fish" doesn't resolve either.
+        languages.insert("fish".to_string(), lang_cfg("fish", &["fish"], &[]));
+        registry.apply_language_config(&languages);
+
+        let entry = registry
+            .find_by_name("fish")
+            .expect("fish should be in the catalog after apply_language_config");
+        assert!(entry.engines.syntect.is_none());
+        assert!(entry.engines.tree_sitter.is_none());
+        assert_eq!(entry.language_id, "fish");
+        assert!(entry.extensions.iter().any(|e| e == "fish"));
+    }
+
+    /// Config-declared extensions must override the built-in mapping. If the
+    /// user says `[languages.typescript-overlay] extensions = ["js"] grammar
+    /// = "TypeScript"`, then `foo.js` must resolve to TypeScript, not
+    /// JavaScript.
+    #[test]
+    fn test_config_extension_overrides_builtin() {
+        let mut registry = GrammarRegistry::default();
+        // Sanity: default mapping is JavaScript.
+        assert_eq!(
+            registry.find_by_extension("js").unwrap().display_name,
+            "JavaScript"
+        );
+
+        let mut languages = std::collections::HashMap::new();
+        languages.insert(
+            "ts-overlay".to_string(),
+            lang_cfg("TypeScript", &["js"], &[]),
+        );
+        registry.apply_language_config(&languages);
+
+        assert_eq!(
+            registry.find_by_extension("js").unwrap().display_name,
+            "TypeScript",
+            "user-config extension must win over built-in"
+        );
+    }
+
+    /// `apply_language_config` must be idempotent: calling it twice with the
+    /// same config yields the same catalog state.
+    #[test]
+    fn test_apply_language_config_idempotent() {
+        let mut registry = GrammarRegistry::default();
+        let mut languages = std::collections::HashMap::new();
+        languages.insert(
+            "shell-cfg".to_string(),
+            lang_cfg("bash", &["myconf"], &["*.myconf"]),
+        );
+
+        registry.apply_language_config(&languages);
+        let first_extensions = registry
+            .find_by_name("bash")
+            .unwrap()
+            .extensions
+            .iter()
+            .filter(|e| e == &"myconf")
+            .count();
+        let first_globs = registry
+            .find_by_name("bash")
+            .unwrap()
+            .filename_globs
+            .iter()
+            .filter(|g| g == &"*.myconf")
+            .count();
+        assert_eq!(first_extensions, 1);
+        assert_eq!(first_globs, 1);
+
+        // Second call must not duplicate anything.
+        registry.apply_language_config(&languages);
+        let second_extensions = registry
+            .find_by_name("bash")
+            .unwrap()
+            .extensions
+            .iter()
+            .filter(|e| e == &"myconf")
+            .count();
+        let second_globs = registry
+            .find_by_name("bash")
+            .unwrap()
+            .filename_globs
+            .iter()
+            .filter(|g| g == &"*.myconf")
+            .count();
+        assert_eq!(second_extensions, 1, "extensions must not duplicate");
+        assert_eq!(second_globs, 1, "globs must not duplicate");
+    }
+
+    /// `tree_sitter_for_syntect_name` handles the alias table + strict
+    /// display-name match. The alias table catches syntect's verbose names;
+    /// the strict match handles the common case.
+    #[test]
+    fn test_tree_sitter_bridge() {
+        assert_eq!(
+            tree_sitter_for_syntect_name("Bourne Again Shell (bash)"),
+            Some(fresh_languages::Language::Bash)
+        );
+        assert_eq!(
+            tree_sitter_for_syntect_name("Rust"),
+            Some(fresh_languages::Language::Rust)
+        );
+        // Must NOT fuzzy-match Nushell to Bash.
+        assert_eq!(tree_sitter_for_syntect_name("Nushell"), None);
+        // Must NOT match arbitrary strings.
+        assert_eq!(tree_sitter_for_syntect_name("does-not-exist"), None);
     }
 }
