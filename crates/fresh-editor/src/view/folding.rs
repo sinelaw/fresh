@@ -307,53 +307,34 @@ pub mod indent_folding {
         (indent, all_blank)
     }
 
-    /// Identify foldable lines in a raw byte slice by analysing indentation.
-    ///
-    /// Works without any line metadata, so it can be used on large files whose
-    /// piece tree has not been scanned for line feeds.
-    ///
-    /// `max_lookahead` limits how many lines *ahead* of each candidate we scan
-    /// to decide foldability.
-    ///
-    /// Returns an iterator of 0-based line indices (within the slice) that are
-    /// foldable.
-    pub fn foldable_lines_in_bytes(
-        bytes: &[u8],
-        tab_size: usize,
-        max_lookahead: usize,
-    ) -> Vec<usize> {
-        // Split into lines (preserving empty trailing line if present).
-        let lines: Vec<&[u8]> = bytes.split(|&b| b == b'\n').collect();
-        let line_count = lines.len();
-        let mut result = Vec::new();
-
-        for i in 0..line_count {
-            let (header_indent, header_blank) = slice_indent(lines[i], tab_size);
-            if header_blank {
-                continue;
-            }
-
-            // Find next non-blank line within lookahead.
-            let limit = line_count.min(i + 1 + max_lookahead);
-            let mut next = i + 1;
-            while next < limit {
-                let (_, blank) = slice_indent(lines[next], tab_size);
-                if !blank {
-                    break;
-                }
-                next += 1;
-            }
-            if next >= limit {
-                continue;
-            }
-
-            let (next_indent, _) = slice_indent(lines[next], tab_size);
-            if next_indent > header_indent {
-                result.push(i);
-            }
+    /// Check if the first line in the given slice is foldable.
+    /// Uses subsequent lines in the slice for lookahead.
+    pub fn is_line_foldable_in_bytes(lines: &[&[u8]], tab_size: usize) -> bool {
+        if lines.is_empty() {
+            return false;
         }
 
-        result
+        let (header_indent, header_blank) = slice_indent(lines[0], tab_size);
+        if header_blank {
+            return false;
+        }
+
+        // Find next non-blank line within the provided lines.
+        let mut next = 1;
+        while next < lines.len() {
+            let (_, blank) = slice_indent(lines[next], tab_size);
+            if !blank {
+                break;
+            }
+            next += 1;
+        }
+
+        if next >= lines.len() {
+            return false;
+        }
+
+        let (next_indent, _) = slice_indent(lines[next], tab_size);
+        next_indent > header_indent
     }
 
     /// Byte-based fold-end search for a single header line.
@@ -519,44 +500,21 @@ pub mod indent_folding {
         }
 
         #[test]
-        fn test_foldable_lines_basic() {
-            let text = b"fn main() {\n    println!();\n}\n";
-            let foldable = foldable_lines_in_bytes(text, 4, 50);
-            assert_eq!(foldable, vec![0]); // line 0 is foldable
+        fn test_is_line_foldable_basic() {
+            let lines: Vec<&[u8]> = vec![b"fn main() {", b"    println!();", b"}"];
+            assert!(is_line_foldable_in_bytes(&lines, 4));
         }
 
         #[test]
-        fn test_foldable_lines_nested() {
-            let text = b"fn main() {\n    if true {\n        x();\n    }\n}\n";
-            let foldable = foldable_lines_in_bytes(text, 4, 50);
-            assert_eq!(foldable, vec![0, 1]); // both fn and if are foldable
+        fn test_is_line_foldable_not_foldable() {
+            let lines: Vec<&[u8]> = vec![b"line1", b"line2", b"line3"];
+            assert!(!is_line_foldable_in_bytes(&lines, 4));
         }
 
         #[test]
-        fn test_foldable_lines_not_foldable() {
-            let text = b"line1\nline2\nline3\n";
-            let foldable = foldable_lines_in_bytes(text, 4, 50);
-            assert!(foldable.is_empty());
-        }
-
-        #[test]
-        fn test_foldable_lines_blank_lines_skipped() {
-            // Blank line between header and indented line should still be foldable
-            let text = b"fn main() {\n\n    println!();\n}\n";
-            let foldable = foldable_lines_in_bytes(text, 4, 50);
-            assert_eq!(foldable, vec![0]);
-        }
-
-        #[test]
-        fn test_foldable_lines_max_lookahead() {
-            // With max_lookahead=1, a blank line between header and content means
-            // the lookahead can't reach the indented line.
-            let text = b"fn main() {\n\n\n    println!();\n}\n";
-            let foldable_short = foldable_lines_in_bytes(text, 4, 1);
-            assert!(foldable_short.is_empty());
-
-            let foldable_long = foldable_lines_in_bytes(text, 4, 50);
-            assert_eq!(foldable_long, vec![0]);
+        fn test_is_line_foldable_blank_lines_skipped() {
+            let lines: Vec<&[u8]> = vec![b"fn main() {", b"", b"    println!();", b"}"];
+            assert!(is_line_foldable_in_bytes(&lines, 4));
         }
     }
 }

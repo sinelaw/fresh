@@ -3321,6 +3321,7 @@ impl SplitRenderer {
 
         ViewLine {
             text,
+            source_start_byte: None,
             // Per-character data: all None - no source mapping (this is injected content)
             char_source_bytes: vec![None; len],
             // All have the virtual text's style
@@ -4521,6 +4522,7 @@ impl SplitRenderer {
         highlight_context_bytes: usize,
         view_mode: &ViewMode,
         diagnostics_inline_text: bool,
+        view_lines: &[ViewLine],
     ) -> DecorationContext {
         use crate::view::folding::indent_folding;
 
@@ -4670,8 +4672,7 @@ impl SplitRenderer {
             line_indicators.entry(key).or_insert(diff_ind);
         }
 
-        let fold_indicators =
-            Self::fold_indicators_for_viewport(state, folds, viewport_start, viewport_end);
+        let fold_indicators = Self::fold_indicators_for_viewport(state, folds, view_lines);
 
         DecorationContext {
             highlight_spans,
@@ -4688,8 +4689,7 @@ impl SplitRenderer {
     fn fold_indicators_for_viewport(
         state: &EditorState,
         folds: &FoldManager,
-        viewport_start: usize,
-        viewport_end: usize,
+        view_lines: &[ViewLine],
     ) -> BTreeMap<usize, FoldIndicator> {
         let mut indicators = BTreeMap::new();
 
@@ -4699,7 +4699,13 @@ impl SplitRenderer {
         }
 
         if !state.folding_ranges.is_empty() {
-            // Use LSP-provided folding ranges — key by line-start byte
+            // Use LSP-provided folding ranges.
+            // Filter to only ranges that start on one of our visible view lines.
+            let visible_starts: HashSet<usize> = view_lines
+                .iter()
+                .filter_map(|l| l.source_start_byte)
+                .collect();
+
             for range in &state.folding_ranges {
                 let start_line = range.start_line as usize;
                 let end_line = range.end_line as usize;
@@ -4707,9 +4713,11 @@ impl SplitRenderer {
                     continue;
                 }
                 if let Some(line_byte) = state.buffer.line_start_offset(start_line) {
-                    indicators
-                        .entry(line_byte)
-                        .or_insert(FoldIndicator { collapsed: false });
+                    if visible_starts.contains(&line_byte) {
+                        indicators
+                            .entry(line_byte)
+                            .or_insert(FoldIndicator { collapsed: false });
+                    }
                 }
             }
         } else {
@@ -4717,15 +4725,28 @@ impl SplitRenderer {
             use crate::view::folding::indent_folding;
             let tab_size = state.buffer_settings.tab_size;
             let max_lookahead = crate::config::INDENT_FOLD_INDICATOR_MAX_SCAN;
-            let bytes = state.buffer.slice_bytes(viewport_start..viewport_end);
-            if !bytes.is_empty() {
-                let foldable =
-                    indent_folding::foldable_lines_in_bytes(&bytes, tab_size, max_lookahead);
-                for line_idx in foldable {
-                    let byte_off = Self::byte_offset_of_line_in_bytes(&bytes, line_idx);
-                    indicators
-                        .entry(viewport_start + byte_off)
-                        .or_insert(FoldIndicator { collapsed: false });
+
+            // Iterate through ONLY the visible view lines. This automatically ignores
+            // thousands of lines hidden by collapsed folds.
+            for (i, view_line) in view_lines.iter().enumerate() {
+                // Only source lines (not wrapped continuations) can be fold headers
+                if let Some(line_start_byte) = view_line.source_start_byte {
+                    if view_line.line_start.is_continuation() {
+                        continue;
+                    }
+
+                    // Check if this line is foldable by looking at subsequent visible lines
+                    let mut subsequent_lines = Vec::new();
+                    let lookahead_limit = (i + 1 + max_lookahead).min(view_lines.len());
+                    for j in i..lookahead_limit {
+                        subsequent_lines.push(view_lines[j].text.as_bytes());
+                    }
+
+                    if indent_folding::is_line_foldable_in_bytes(&subsequent_lines, tab_size) {
+                        indicators
+                            .entry(line_start_byte)
+                            .or_insert(FoldIndicator { collapsed: false });
+                    }
                 }
             }
         }
@@ -4794,22 +4815,6 @@ impl SplitRenderer {
         }
 
         indicators
-    }
-
-    /// Given a byte slice, return the byte offset of line N (0-indexed)
-    /// within that slice.
-    fn byte_offset_of_line_in_bytes(bytes: &[u8], line_idx: usize) -> usize {
-        let mut current_line = 0;
-        for (i, &b) in bytes.iter().enumerate() {
-            if current_line == line_idx {
-                return i;
-            }
-            if b == b'\n' {
-                current_line += 1;
-            }
-        }
-        // If we exhausted the bytes without reaching the line, return end
-        bytes.len()
     }
 
     // semantic token colors are mapped when overlays are created
@@ -4939,6 +4944,7 @@ impl SplitRenderer {
                 static EMPTY_LINE: std::sync::OnceLock<ViewLine> = std::sync::OnceLock::new();
                 EMPTY_LINE.get_or_init(|| ViewLine {
                     text: String::new(),
+                    source_start_byte: None,
                     char_source_bytes: Vec::new(),
                     char_styles: Vec::new(),
                     char_visual_cols: Vec::new(),
@@ -6319,6 +6325,7 @@ impl SplitRenderer {
             highlight_context_bytes,
             &view_mode,
             diagnostics_inline_text,
+            &view_data.lines,
         );
 
         let calculated_offset = viewport.top_view_line_offset;
@@ -6969,6 +6976,7 @@ mod tests {
             100_000,           // default highlight context bytes
             &ViewMode::Source, // Tests use source mode
             false,             // inline diagnostics off for test
+            &[],
         );
 
         let mut dummy_theme_map = Vec::new();
@@ -7074,13 +7082,24 @@ mod tests {
         let mut folds = FoldManager::new();
         folds.add(&mut state.marker_list, start, end, None);
 
-        let indicators =
-            SplitRenderer::fold_indicators_for_viewport(&state, &folds, 0, state.buffer.len());
+        let line1_byte = state.buffer.line_start_offset(1).unwrap();
+        let view_lines = vec![ViewLine {
+            text: "b\n".to_string(),
+            source_start_byte: Some(line1_byte),
+            char_source_bytes: vec![Some(line1_byte), Some(line1_byte + 1)],
+            char_styles: vec![None, None],
+            char_visual_cols: vec![0, 1],
+            visual_to_char: vec![0, 1],
+            tab_starts: HashSet::new(),
+            line_start: LineStart::AfterSourceNewline,
+            ends_with_newline: true,
+        }];
+
+        let indicators = SplitRenderer::fold_indicators_for_viewport(&state, &folds, &view_lines);
 
         // Collapsed fold: header is line 0 (byte 0)
         assert_eq!(indicators.get(&0).map(|i| i.collapsed), Some(true));
         // LSP range starting at line 1 (byte 2, since "a\n" is 2 bytes)
-        let line1_byte = state.buffer.line_start_offset(1).unwrap();
         assert_eq!(
             indicators.get(&line1_byte).map(|i| i.collapsed),
             Some(false)
@@ -8525,6 +8544,7 @@ mod tests {
             100_000,
             &ViewMode::Source,
             false,
+            &[],
         );
 
         SplitRenderer::render_view_lines(LineRenderInput {

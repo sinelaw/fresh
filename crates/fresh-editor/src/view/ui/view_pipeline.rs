@@ -31,6 +31,9 @@ pub struct ViewLine {
     /// The display text for this line (tabs expanded to spaces, etc.)
     pub text: String,
 
+    /// Absolute source byte offset of the start of this line (if it has one)
+    pub source_start_byte: Option<usize>,
+
     // === Per-CHARACTER mappings (indexed by char position in text) ===
     /// Source byte offset for each character
     /// Length == text.chars().count()
@@ -210,8 +213,10 @@ impl<'a> Iterator for ViewLineIterator<'a> {
             if self.at_buffer_end && matches!(self.next_line_start, LineStart::AfterSourceNewline) {
                 // Flip to Beginning so the *next* call returns None.
                 self.next_line_start = LineStart::Beginning;
+                let last_source_byte = self.tokens.last().and_then(|t| t.source_offset);
                 return Some(ViewLine {
                     text: String::new(),
+                    source_start_byte: last_source_byte.map(|s| s + 1),
                     char_source_bytes: vec![],
                     char_styles: vec![],
                     char_visual_cols: vec![],
@@ -452,6 +457,7 @@ impl<'a> Iterator for ViewLineIterator<'a> {
 
         Some(ViewLine {
             text,
+            source_start_byte: char_source_bytes.iter().find_map(|s| *s),
             char_source_bytes,
             char_styles,
             char_visual_cols,
