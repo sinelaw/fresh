@@ -556,10 +556,15 @@ function vi_yank_line() : void {
     editor.executeActions([{ action: "select_line", count }]);
   }
   editor.executeAction("copy");
-  // Move back to original line using synchronous actions
-  // (setBufferCursor is async and doesn't take effect in time)
-  editor.executeAction("move_up");
+  // Move back to original line. After #1566 the plain arrow keys collapse
+  // an active selection to its edge, so we can't rely on `move_up` from
+  // the end of a `select_line` selection to land on the original line —
+  // it would collapse to the top edge (line N) and then move up to N-1.
+  // Clear the selection first by issuing `move_line_start` (which drops
+  // the anchor without moving the cursor horizontally), then `move_up`
+  // steps cleanly to the original line.
   editor.executeAction("move_line_start");
+  editor.executeAction("move_up");
   state.lastYankWasLinewise = true;
   editor.setStatus(editor.t("status.yanked_lines", { count: String(count) }));
   switchMode("normal");
