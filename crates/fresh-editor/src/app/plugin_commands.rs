@@ -2444,6 +2444,18 @@ impl Editor {
                     if let Some(meta) = self.buffer_metadata.get_mut(&bid) {
                         meta.hidden_from_tabs = true;
                     }
+                    // `open_file_no_focus` unconditionally attaches the new
+                    // buffer as a tab to the preferred split.  When we're
+                    // running as a side effect of the Search/Replace panel,
+                    // the preferred split may be the panel's split (or any
+                    // normal split), which then carries a phantom tab for
+                    // this "hidden" buffer.  Close-Buffer on the panel would
+                    // then fall through to that tab instead of closing the
+                    // whole split.  Strip the buffer from every split's tab
+                    // list so only the panel split holds the panel buffer.
+                    for view_state in self.split_view_states.values_mut() {
+                        view_state.remove_buffer(bid);
+                    }
                     bid
                 }
                 Err(e) => {

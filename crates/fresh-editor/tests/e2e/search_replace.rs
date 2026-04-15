@@ -750,6 +750,85 @@ fn test_search_replace_split_not_restored_across_restart() {
     }
 }
 
+/// Regression: closing the *Search/Replace* panel via the `Close Buffer`
+/// command after a project-wide replace used to leave a stray split behind
+/// showing one of the auto-opened hidden buffers (b.txt, c.txt) instead of
+/// closing the panel's split entirely.  The replace opens each modified
+/// file via `open_file_no_focus`, which unconditionally attaches the new
+/// buffer as a tab to the preferred split — leaving phantom tabs behind.
+/// Close-Buffer would then fall through to a hidden file tab instead of
+/// closing the split.
+#[test]
+fn test_search_replace_close_buffer_after_replace_closes_split() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    enter_search_and_replace(&mut harness, "hello", "XYZ");
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
+        .unwrap();
+    confirm_replace_all(&mut harness);
+
+    // Invoke Close Buffer via the command palette while focus is still on
+    // the *Search/Replace* buffer.  This must close the whole panel split —
+    // not swap the split to a hidden buffer that was auto-opened by the
+    // replace.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Close Buffer").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Close the current buffer"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // After Close Buffer: only the original alpha.txt tab should remain.
+    // No *Search/Replace* tab, no duplicate alpha.txt in a leftover split,
+    // no beta.txt / gamma.txt tabs from the auto-opened hidden buffers.
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("*Search/Replace*"))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    let alpha_tab_count = screen.matches("alpha.txt ×").count();
+    assert_eq!(
+        alpha_tab_count, 1,
+        "alpha.txt should appear as exactly one tab after closing the panel.\n\
+         Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("beta.txt ×"),
+        "beta.txt (auto-opened hidden buffer) must not end up as a tab.\n\
+         Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("gamma.txt ×"),
+        "gamma.txt must not end up as a tab.\nScreen:\n{}",
+        screen
+    );
+}
+
 /// Bug 3 (upstream): opening the search/replace panel used to create the
 /// virtual buffer in the *current* split's tab bar AND in a new split,
 /// leaving `*Search/Replace*` visible twice on screen.  Assert it appears
