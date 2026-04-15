@@ -1401,6 +1401,7 @@ fn test_git_log_down_arrow_progresses_through_commits() {
 #[test]
 fn test_git_log_open_file_works_after_closing_previous_file_view() {
     init_tracing_from_env();
+    fresh::services::signal_handler::install_signal_handlers();
     let repo = GitTestRepo::new();
 
     repo.create_file("src/main.rs", "fn main() {\n    println!(\"first\");\n}\n");
