@@ -43,14 +43,6 @@ use std::collections::HashMap;
 /// memory usage reasonable (~80KB per ViewLine instead of hundreds of MB).
 const MAX_SAFE_LINE_WIDTH: usize = 10_000;
 
-
-
-
-
-
-
-
-
 /// Public façade for split-pane rendering.
 ///
 /// All logic lives in `orchestration::*`. This struct exists only to
@@ -216,7 +208,6 @@ impl SplitRenderer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::folding::fold_indicators_for_viewport;
     use super::layout::{calculate_view_anchor, calculate_viewport_end};
     use super::orchestration::overlays::{decoration_context, selection_context};
@@ -227,9 +218,9 @@ mod tests {
     use super::post_pass::apply_osc8_to_cells;
     use super::transforms::apply_wrapping_transform;
     use super::view_data::build_view_data;
+    use super::*;
 
     use crate::model::buffer::{Buffer, LineEnding};
-    use fresh_core::api::ViewTokenWire;
     use crate::model::filesystem::StdFileSystem;
     use crate::primitives::display_width::str_width;
     use crate::state::{EditorState, ViewMode};
@@ -238,6 +229,7 @@ mod tests {
     use crate::view::theme::Theme;
     use crate::view::ui::view_pipeline::{LineStart, ViewLine};
     use crate::view::viewport::Viewport;
+    use fresh_core::api::ViewTokenWire;
     use lsp_types::FoldingRange;
     use std::collections::HashSet;
     use std::sync::Arc;
@@ -1452,8 +1444,7 @@ mod tests {
         ];
 
         // Apply wrapping with MAX_SAFE_LINE_WIDTH (simulating line_wrap disabled)
-        let wrapped =
-            apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
+        let wrapped = apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
 
         // Count Break tokens - should have at least 2 breaks for 25K chars at 10K width
         let break_count = wrapped
@@ -1503,8 +1494,7 @@ mod tests {
         ];
 
         // Apply wrapping with MAX_SAFE_LINE_WIDTH (simulating line_wrap disabled)
-        let wrapped =
-            apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
+        let wrapped = apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
 
         // Should have no Break tokens for short lines
         let break_count = wrapped
@@ -1561,8 +1551,7 @@ mod tests {
         ];
 
         // Apply safety wrapping (simulating line_wrap=false with MAX_SAFE_LINE_WIDTH)
-        let wrapped =
-            apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
+        let wrapped = apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0, false);
 
         // Convert to ViewLines
         let view_lines: Vec<_> = ViewLineIterator::new(&wrapped, false, false, 4, false).collect();
@@ -1721,14 +1710,7 @@ mod tests {
                 buf1[(i as u16, 0)].set_symbol(&ch.to_string());
             }
         }
-        apply_osc8_to_cells(
-            &mut buf1,
-            1,
-            14,
-            0,
-            "https://example.com",
-            Some((0, 0)),
-        );
+        apply_osc8_to_cells(&mut buf1, 1, 14, 0, "https://example.com", Some((0, 0)));
         let row1 = read_row(&buf1, 0);
 
         // Second render: fresh buffer, same text, apply OSC 8 with cursor at col 5
@@ -1738,14 +1720,7 @@ mod tests {
                 buf2[(i as u16, 0)].set_symbol(&ch.to_string());
             }
         }
-        apply_osc8_to_cells(
-            &mut buf2,
-            1,
-            14,
-            0,
-            "https://example.com",
-            Some((5, 0)),
-        );
+        apply_osc8_to_cells(&mut buf2, 1, 14, 0, "https://example.com", Some((5, 0)));
         let row2 = read_row(&buf2, 0);
 
         assert_eq!(row1, text);
@@ -1769,14 +1744,7 @@ mod tests {
             frame1[(i as u16, 0)].set_symbol(&ch.to_string());
         }
         // OSC 8 covers cols 0..13 (concealed mapping)
-        apply_osc8_to_cells(
-            &mut frame1,
-            0,
-            13,
-            0,
-            "https://example.com",
-            Some((0, 5)),
-        );
+        apply_osc8_to_cells(&mut frame1, 0, 13, 0, "https://example.com", Some((0, 5)));
 
         // Simulate backend: starts empty, apply diff from frame1
         let prev = Buffer::empty(area);
@@ -1795,14 +1763,7 @@ mod tests {
             }
         }
         // OSC 8 covers cols 1..14 (unconcealed mapping)
-        apply_osc8_to_cells(
-            &mut frame2,
-            1,
-            14,
-            0,
-            "https://example.com",
-            Some((0, 0)),
-        );
+        apply_osc8_to_cells(&mut frame2, 1, 14, 0, "https://example.com", Some((0, 0)));
 
         // Apply diff from frame1→frame2 to backend
         let diff2 = frame1.diff(&frame2);

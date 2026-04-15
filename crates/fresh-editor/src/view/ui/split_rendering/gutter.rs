@@ -231,8 +231,7 @@ pub(super) fn render_compose_margins(
         }
 
         if desk_width > 0 {
-            let desk_rect =
-                Rect::new(right_start + paper_edge, area.y, desk_width, area.height);
+            let desk_rect = Rect::new(right_start + paper_edge, area.y, desk_width, area.height);
             frame.render_widget(Block::default().style(desk_style), desk_rect);
         }
     }

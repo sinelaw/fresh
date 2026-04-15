@@ -3,9 +3,9 @@
 //! These two functions are the only places that write the shared carriers;
 //! every consumer is another module inside `orchestration/`.
 
-use super::contexts::{DecorationContext, SelectionContext};
 use super::super::folding::{diff_indicators_for_viewport, fold_indicators_for_viewport};
 use super::super::style::inline_diagnostic_style;
+use super::contexts::{DecorationContext, SelectionContext};
 use crate::model::cursor::{Cursors, SelectionMode};
 use crate::state::{EditorState, ViewMode};
 use crate::view::folding::FoldManager;
@@ -64,8 +64,7 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
         })
         .collect();
 
-    let cursor_positions: Vec<usize> =
-        cursors.iter().map(|(_, cursor)| cursor.position).collect();
+    let cursor_positions: Vec<usize> = cursors.iter().map(|(_, cursor)| cursor.position).collect();
 
     SelectionContext {
         ranges,
@@ -191,8 +190,7 @@ pub(crate) fn decoration_context(
                 continue;
             }
             if let Some(ref message) = overlay.message {
-                let line_start =
-                    indent_folding::find_line_start_byte(&state.buffer, range.start);
+                let line_start = indent_folding::find_line_start_byte(&state.buffer, range.start);
                 let priority = overlay.priority;
                 let dominated = by_line
                     .get(&line_start)
@@ -212,20 +210,20 @@ pub(crate) fn decoration_context(
         HashMap::new()
     };
 
-    let virtual_text_lookup: HashMap<usize, Vec<crate::view::virtual_text::VirtualText>> =
-        state
-            .virtual_texts
-            .build_lookup(&state.marker_list, viewport_start, viewport_end)
-            .into_iter()
-            .map(|(position, texts)| (position, texts.into_iter().cloned().collect()))
-            .collect();
+    let virtual_text_lookup: HashMap<usize, Vec<crate::view::virtual_text::VirtualText>> = state
+        .virtual_texts
+        .build_lookup(&state.marker_list, viewport_start, viewport_end)
+        .into_iter()
+        .map(|(position, texts)| (position, texts.into_iter().cloned().collect()))
+        .collect();
 
     // Pre-compute line indicators for the viewport.
-    let mut line_indicators = state.margins.get_indicators_for_viewport(
-        viewport_start,
-        viewport_end,
-        |byte_offset| indent_folding::find_line_start_byte(&state.buffer, byte_offset),
-    );
+    let mut line_indicators =
+        state
+            .margins
+            .get_indicators_for_viewport(viewport_start, viewport_end, |byte_offset| {
+                indent_folding::find_line_start_byte(&state.buffer, byte_offset)
+            });
 
     // Merge native diff-since-saved indicators (cornflower blue │ for unsaved edits).
     // These have priority 5, lower than git gutter (10).

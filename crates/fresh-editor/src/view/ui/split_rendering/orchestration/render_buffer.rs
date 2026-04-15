@@ -6,18 +6,16 @@
 //! - [`render_buffer_in_split`] — the two phases combined, the API used by
 //!   the top-level `render_content`.
 
-use super::contexts::SelectionContext;
-use super::overlays::{decoration_context, selection_context};
-use super::render_line::{render_view_lines, LastLineEnd, LineRenderInput, LineRenderOutput};
 use super::super::folding::fold_adjusted_visible_count;
 use super::super::gutter::render_compose_margins;
 use super::super::layout::{
     calculate_compose_layout, calculate_view_anchor, calculate_viewport_end, ComposeLayout,
 };
-use super::super::post_pass::{
-    apply_background_to_lines, render_column_guides, render_ruler_bg,
-};
+use super::super::post_pass::{apply_background_to_lines, render_column_guides, render_ruler_bg};
 use super::super::view_data::build_view_data;
+use super::contexts::SelectionContext;
+use super::overlays::{decoration_context, selection_context};
+use super::render_line::{render_view_lines, LastLineEnd, LineRenderInput, LineRenderOutput};
 use crate::app::types::{CellThemeInfo, ViewLineMapping};
 use crate::model::cursor::Cursors;
 use crate::model::event::{BufferId, EventLog};

@@ -185,8 +185,7 @@ pub(super) fn calculate_view_anchor(view_lines: &[ViewLine], top_byte: usize) ->
                 let mut start_idx = idx;
                 while start_idx > 0 {
                     let prev_line = &view_lines[start_idx - 1];
-                    let prev_has_source =
-                        prev_line.char_source_bytes.iter().any(|m| m.is_some());
+                    let prev_has_source = prev_line.char_source_bytes.iter().any(|m| m.is_some());
                     if !prev_has_source {
                         start_idx -= 1;
                     } else {

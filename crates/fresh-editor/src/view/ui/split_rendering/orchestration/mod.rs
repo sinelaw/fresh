@@ -383,10 +383,9 @@ pub(crate) fn render_content(
                             if split_vs.viewport.width != layout.content_rect.width
                                 || split_vs.viewport.height != layout.content_rect.height
                             {
-                                split_vs.viewport.resize(
-                                    layout.content_rect.width,
-                                    layout.content_rect.height,
-                                );
+                                split_vs
+                                    .viewport
+                                    .resize(layout.content_rect.width, layout.content_rect.height);
                             }
                         }
                     }
@@ -409,9 +408,7 @@ pub(crate) fn render_content(
                         // Walk hunk headers to find the Nth one
                         let mut hunk_count = 0usize;
                         for (row_idx, row) in composite.alignment.rows.iter().enumerate() {
-                            if row.row_type
-                                == crate::model::composite_buffer::RowType::HunkHeader
-                            {
+                            if row.row_type == crate::model::composite_buffer::RowType::HunkHeader {
                                 if hunk_count == hunk_index {
                                     target_row = Some(row_idx);
                                     break;
@@ -444,19 +441,19 @@ pub(crate) fn render_content(
                     // Render scrollbar for composite buffer
                     let total_rows = composite.row_count();
                     let content_height = layout.content_rect.height.saturating_sub(1) as usize; // -1 for header
-                    let (thumb_start, thumb_end) =
-                        if show_vertical_scrollbar && !is_non_scrollable {
-                            render_composite_scrollbar(
-                                frame,
-                                layout.scrollbar_rect,
-                                total_rows,
-                                view_state.scroll_row,
-                                content_height,
-                                is_active,
-                            )
-                        } else {
-                            (0, 0)
-                        };
+                    let (thumb_start, thumb_end) = if show_vertical_scrollbar && !is_non_scrollable
+                    {
+                        render_composite_scrollbar(
+                            frame,
+                            layout.scrollbar_rect,
+                            total_rows,
+                            view_state.scroll_row,
+                            content_height,
+                            is_active,
+                        )
+                    } else {
+                        (0, 0)
+                    };
 
                     // Store the areas for mouse handling
                     split_areas.push((
@@ -589,12 +586,7 @@ pub(crate) fn render_content(
             let buffer_len = state.buffer.len();
             let (total_lines, top_line) = {
                 let _span = tracing::trace_span!("scrollbar_line_counts").entered();
-                scrollbar_line_counts(
-                    state,
-                    &viewport,
-                    large_file_threshold_bytes,
-                    buffer_len,
-                )
+                scrollbar_line_counts(state, &viewport, large_file_threshold_bytes, buffer_len)
             };
 
             // Render vertical scrollbar for this split and get thumb position
@@ -615,8 +607,7 @@ pub(crate) fn render_content(
             };
 
             // Compute the actual max line length for horizontal scrollbar
-            let max_content_width = if show_horizontal_scrollbar && !viewport.line_wrap_enabled
-            {
+            let max_content_width = if show_horizontal_scrollbar && !viewport.line_wrap_enabled {
                 let mcw = compute_max_line_length(state, &mut viewport);
                 // Clamp left_column so content can't scroll past the end of the longest line
                 let visible_width = viewport.width as usize;
@@ -828,8 +819,7 @@ pub(crate) fn compute_content_layout(
             layout.content_rect,
             &hidden_ranges,
         );
-        let view_prefs =
-            resolve_view_preferences(state, Some(&*split_view_states), split_id);
+        let view_prefs = resolve_view_preferences(state, Some(&*split_view_states), split_id);
 
         let effective_highlight_current_line =
             view_prefs.highlight_current_line && state.show_cursors;
@@ -875,8 +865,6 @@ pub(crate) fn compute_content_layout(
 
     view_line_mappings
 }
-
-
 
 /// Public wrapper for building base tokens - used by render.rs for the view_transform_request hook
 pub(crate) fn build_base_tokens_for_hook(

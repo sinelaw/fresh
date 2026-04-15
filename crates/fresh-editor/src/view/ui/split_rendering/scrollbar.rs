@@ -190,10 +190,7 @@ pub(super) fn scrollbar_visual_row_counts(
 /// Compute the maximum line length encountered so far (in display columns).
 /// Only scans the currently visible lines (plus a small margin) and updates
 /// the running maximum stored in the viewport.
-pub(super) fn compute_max_line_length(
-    state: &mut EditorState,
-    viewport: &mut Viewport,
-) -> usize {
+pub(super) fn compute_max_line_length(state: &mut EditorState, viewport: &mut Viewport) -> usize {
     let buffer_len = state.buffer.len();
     let visible_width = viewport.width as usize;
 

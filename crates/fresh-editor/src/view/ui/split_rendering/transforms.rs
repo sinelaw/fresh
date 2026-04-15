@@ -471,9 +471,7 @@ pub(super) fn apply_conceal_ranges(
                     });
                 }
             }
-            ViewTokenWireKind::Space
-            | ViewTokenWireKind::Newline
-            | ViewTokenWireKind::Break => {
+            ViewTokenWireKind::Space | ViewTokenWireKind::Newline | ViewTokenWireKind::Break => {
                 if is_concealed(offset).is_some() {
                     // Skip concealed single-byte tokens
                 } else {
@@ -539,7 +537,10 @@ pub(super) fn inject_virtual_lines(
                     && *anchor_pos < end
                     && vtext.position == VirtualTextPosition::LineAbove
                 {
-                    result.push(create_virtual_line(&vtext.text, vtext.resolved_style(theme)));
+                    result.push(create_virtual_line(
+                        &vtext.text,
+                        vtext.resolved_style(theme),
+                    ));
                 }
             }
         }
@@ -552,7 +553,10 @@ pub(super) fn inject_virtual_lines(
                     && *anchor_pos < end
                     && vtext.position == VirtualTextPosition::LineBelow
                 {
-                    result.push(create_virtual_line(&vtext.text, vtext.resolved_style(theme)));
+                    result.push(create_virtual_line(
+                        &vtext.text,
+                        vtext.resolved_style(theme),
+                    ));
                 }
             }
         }

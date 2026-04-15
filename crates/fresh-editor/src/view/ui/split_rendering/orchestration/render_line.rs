@@ -7,7 +7,6 @@
 //!
 //! Everything here is quarantined to `orchestration/`.
 
-use super::contexts::{DecorationContext, SelectionContext};
 use super::super::char_style::{compute_char_style, CharStyleContext, CharStyleOutput};
 use super::super::gutter::{render_left_margin, LeftMarginContext};
 use super::super::layout::ViewAnchor;
@@ -16,6 +15,7 @@ use super::super::spans::{
     SpanAccumulator,
 };
 use super::super::style::dim_color_for_tilde;
+use super::contexts::{DecorationContext, SelectionContext};
 use crate::app::types::ViewLineMapping;
 use crate::primitives::ansi::AnsiParser;
 use crate::primitives::display_width::char_width;
@@ -23,10 +23,10 @@ use crate::state::EditorState;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{should_show_line_number, LineStart, ViewLine};
 use crate::view::virtual_text::VirtualTextPosition;
-use std::collections::HashSet;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::collections::HashSet;
 
 pub(crate) struct LineRenderOutput {
     pub lines: Vec<Line<'static>>,
@@ -245,8 +245,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     // Trailing empty line (after final newline) has no source bytes,
                     // but its logical position is buffer.len() — needed for diagnostic
                     // gutter markers placed at the end of the file.
-                    if line_content.is_empty()
-                        && _line_start_type == LineStart::AfterSourceNewline
+                    if line_content.is_empty() && _line_start_type == LineStart::AfterSourceNewline
                     {
                         Some(state.buffer.len())
                     } else {
@@ -444,14 +443,15 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 // Check if this character is in any selection range (but not at cursor position)
                 // Also check for block/rectangular selections (uses gutter_num which is
                 // the line number for small files — block_rects stores line numbers)
-                let is_in_block_selection = block_selections.iter().any(
-                    |(start_line, start_col, end_line, end_col)| {
-                        gutter_num >= *start_line
-                            && gutter_num <= *end_line
-                            && byte_index >= *start_col
-                            && byte_index <= *end_col
-                    },
-                );
+                let is_in_block_selection =
+                    block_selections
+                        .iter()
+                        .any(|(start_line, start_col, end_line, end_col)| {
+                            gutter_num >= *start_line
+                                && gutter_num <= *end_line
+                                && byte_index >= *start_col
+                                && byte_index <= *end_col
+                        });
 
                 // For primary cursor in active split, terminal hardware cursor provides
                 // visual indication, so we can still show selection background.
@@ -473,11 +473,11 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     .and_then(|s| s.as_ref());
 
                 // Resolve highlight/semantic colors via cursor-based O(1) lookup
-                let (highlight_color, highlight_theme_key, highlight_display_name) =
-                    match byte_pos {
-                        Some(bp) => span_info_at(highlight_spans, &mut hl_cursor, bp),
-                        None => (None, None, None),
-                    };
+                let (highlight_color, highlight_theme_key, highlight_display_name) = match byte_pos
+                {
+                    Some(bp) => span_info_at(highlight_spans, &mut hl_cursor, bp),
+                    None => (None, None, None),
+                };
                 let semantic_token_color = match byte_pos {
                     Some(bp) => span_color_at(semantic_token_spans, &mut sem_cursor, bp),
                     None => None,
@@ -623,11 +623,8 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     if let Some(ref mut tracker) = debug_tracker {
                         // Flush before debug tags
                         span_acc.flush(&mut line_spans, &mut line_view_map);
-                        let opening_tags = tracker.get_opening_tags(
-                            byte_pos,
-                            highlight_spans,
-                            viewport_overlays,
-                        );
+                        let opening_tags =
+                            tracker.get_opening_tags(byte_pos, highlight_spans, viewport_overlays);
                         for tag in opening_tags {
                             push_debug_tag(&mut line_spans, &mut line_view_map, tag);
                         }
@@ -670,8 +667,8 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     if let Some(bp) = byte_pos {
                         if bp == primary_cursor_position && char_width(ch) == 0 {
                             // Account for horizontal scrolling by subtracting left_col
-                            cursor_screen_x = gutter_width as u16
-                                + col_offset.saturating_sub(left_col) as u16;
+                            cursor_screen_x =
+                                gutter_width as u16 + col_offset.saturating_sub(left_col) as u16;
                             cursor_screen_y = lines.len() as u16;
                             have_cursor = true;
                         }
@@ -697,8 +694,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 }
 
                 if is_cursor && ch == '\n' {
-                    let should_add_indicator =
-                        if is_active { is_secondary_cursor } else { true };
+                    let should_add_indicator = if is_active { is_secondary_cursor } else { true };
                     if should_add_indicator {
                         // Flush accumulated text before adding cursor indicator
                         // so the indicator appears after the line content, not before
@@ -751,8 +747,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             let last_char_idx = line_len_chars.saturating_sub(1);
             let after_last_char_idx = line_len_chars;
 
-            let last_char_buf_pos =
-                line_char_source_bytes.get(last_char_idx).copied().flatten();
+            let last_char_buf_pos = line_char_source_bytes.get(last_char_idx).copied().flatten();
             let after_last_char_buf_pos = line_char_source_bytes
                 .get(after_last_char_idx)
                 .copied()
@@ -879,8 +874,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         // Only for non-continuation lines that have a diagnostic overlay.
         if let Some(lsb) = line_start_byte {
             if let Some((message, diag_style)) = decorations.diagnostic_inline_texts.get(&lsb) {
-                let content_width =
-                    render_area.width.saturating_sub(gutter_width as u16) as usize;
+                let content_width = render_area.width.saturating_sub(gutter_width as u16) as usize;
                 let used = visible_char_count;
                 let available = content_width.saturating_sub(used);
                 let gap = 2usize;
@@ -919,8 +913,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     }
 
                     // Apply current line background to diagnostic text when on cursor line
-                    let effective_diag_style = if cursor_line_active && diag_style.bg.is_none()
-                    {
+                    let effective_diag_style = if cursor_line_active && diag_style.bg.is_none() {
                         diag_style.bg(theme.current_line_bg)
                     } else {
                         *diag_style
@@ -959,9 +952,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     viewport_overlays
                         .iter()
                         .filter(|(overlay, range)| {
-                            overlay.extend_to_line_end
-                                && range.start <= end
-                                && range.end > start
+                            overlay.extend_to_line_end && range.start <= end && range.end > start
                         })
                         .max_by_key(|(o, _)| o.priority)
                         .and_then(|(overlay, _)| {
