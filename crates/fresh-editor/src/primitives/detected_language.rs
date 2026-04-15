@@ -69,17 +69,26 @@ impl DetectedLanguage {
         languages: &HashMap<String, LanguageConfig>,
         default_language: Option<&str>,
     ) -> Self {
-        if let Some(entry) = registry.find_by_path(path) {
-            let mut detected = Self::from_entry(entry, registry);
-            // Prefer the config's language ID (e.g. "csharp" vs tree-sitter's
-            // "c_sharp") when the path resolves via a config entry.
-            if let Some(id) = crate::services::lsp::manager::detect_language(path, languages) {
-                detected.name = id;
+        // Resolve the config/LSP language id *independently* of the grammar
+        // catalog. A file matching a `[languages.foo]` rule must end up with
+        // `name = "foo"` so comment prefix / tab config / LSP routing all
+        // work — even when the grammar registry is empty (common in tests)
+        // or has no matching entry.
+        let config_lang_id = crate::services::lsp::manager::detect_language(path, languages);
+        let override_name = |mut d: Self| -> Self {
+            if let Some(id) = config_lang_id.clone() {
+                d.name = id;
             }
-            return detected;
+            d
+        };
+
+        if let Some(entry) = registry.find_by_path(path) {
+            return override_name(Self::from_entry(entry, registry));
         }
 
-        // Nothing detected — try the user-configured default language.
+        // No grammar match — try the user-configured default language for
+        // highlighting, and fall back to plain text. Either way, keep any
+        // config-derived language id.
         if let Some(lang_key) = default_language {
             let grammar = languages
                 .get(lang_key)
@@ -87,11 +96,11 @@ impl DetectedLanguage {
                 .filter(|g| !g.is_empty())
                 .unwrap_or(lang_key);
             if let Some(entry) = registry.find_by_name(grammar) {
-                return Self::from_entry(entry, registry);
+                return override_name(Self::from_entry(entry, registry));
             }
         }
 
-        Self::plain_text()
+        override_name(Self::plain_text())
     }
 
     /// Set language by syntax name (user selected from the language palette).

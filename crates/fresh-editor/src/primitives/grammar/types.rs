@@ -923,7 +923,15 @@ impl GrammarRegistry {
         let mut catalog: Vec<GrammarEntry> = Vec::new();
         let mut scope_to_index: HashMap<String, usize> = HashMap::new();
 
-        // Syntect-backed entries (skip Plain Text)
+        // Syntect-backed entries (skip Plain Text).
+        //
+        // Syntect's `file_extensions` is a hybrid list: real extensions like
+        // "rb" sit alongside bare filenames like "Gemfile", "Rakefile",
+        // "Makefile". Syntect's own `find_syntax_for_file` tries each entry
+        // against the whole filename AND against the path's extension, and
+        // the catalog has to preserve that semantics. We keep everything in
+        // `extensions` here and index each entry as *both* an extension and
+        // a filename at the bottom of this method.
         for (idx, syntax) in self.syntax_set.syntaxes().iter().enumerate() {
             if syntax.name == "Plain Text" {
                 continue;
@@ -937,11 +945,27 @@ impl GrammarRegistry {
                 .unwrap_or(GrammarSource::BuiltIn);
             let entry_index = catalog.len();
             scope_to_index.insert(syntax.scope.to_string(), entry_index);
+
+            // Union syntect's file_extensions with tree-sitter's own
+            // extension list when the entry carries both engines.
+            // tree-sitter-javascript handles `.jsx`/`.mjs`/`.cjs` that
+            // syntect's JS grammar doesn't list, and the old code used to
+            // route those paths to tree-sitter via a separate lookup.
+            let mut extensions = syntax.file_extensions.clone();
+            if let Some(lang) = tree_sitter {
+                for ext in lang.extensions() {
+                    let ext = ext.to_string();
+                    if !extensions.iter().any(|e| e == &ext) {
+                        extensions.push(ext);
+                    }
+                }
+            }
+
             catalog.push(GrammarEntry {
                 display_name: syntax.name.clone(),
                 language_id,
                 short_name,
-                extensions: syntax.file_extensions.clone(),
+                extensions,
                 filenames: Vec::new(),
                 filename_globs: Vec::new(),
                 source,
@@ -1005,6 +1029,12 @@ impl GrammarRegistry {
         }
 
         // Build name / extension / filename indices.
+        //
+        // Every entry in `extensions` gets indexed in BOTH `by_extension`
+        // (lowercased) AND `by_filename` (exact case) — syntect's
+        // `file_extensions` list holds both real extensions ("rb") and bare
+        // filenames ("Gemfile", "Rakefile", "Makefile"). Indexing both ways
+        // matches syntect's own `find_syntax_for_file` semantics.
         let mut by_name: HashMap<String, usize> = HashMap::new();
         let mut by_extension: HashMap<String, usize> = HashMap::new();
         let mut by_filename: HashMap<String, usize> = HashMap::new();
@@ -1016,6 +1046,7 @@ impl GrammarRegistry {
             }
             for ext in &entry.extensions {
                 by_extension.entry(ext.to_lowercase()).or_insert(idx);
+                by_filename.entry(ext.clone()).or_insert(idx);
             }
             for filename in &entry.filenames {
                 by_filename.entry(filename.clone()).or_insert(idx);

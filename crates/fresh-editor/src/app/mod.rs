@@ -1145,8 +1145,17 @@ impl Editor {
         time_source: Option<SharedTimeSource>,
         grammar_registry: Option<Arc<crate::primitives::grammar::GrammarRegistry>>,
     ) -> AnyhowResult<Self> {
-        let grammar_registry =
+        let mut grammar_registry =
             grammar_registry.unwrap_or_else(crate::primitives::grammar::GrammarRegistry::empty);
+        // Merge user `[languages]` config into the catalog — production code
+        // does this at startup and again after the background grammar build,
+        // tests need the same so config-declared grammars/extensions resolve
+        // through `find_by_path`. Both call sites that feed into `for_test`
+        // (`HarnessOptions::with_full_grammar_registry` and the default
+        // `GrammarRegistry::empty()`) hand us the sole Arc owner.
+        std::sync::Arc::get_mut(&mut grammar_registry)
+            .expect("grammar registry Arc must be uniquely owned at for_test entry")
+            .apply_language_config(&config.languages);
         let mut editor = Self::with_options(
             config,
             width,
