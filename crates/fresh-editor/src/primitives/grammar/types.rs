@@ -2048,6 +2048,48 @@ mod tests {
         );
     }
 
+    /// Bare filenames listed by syntect grammars (e.g. "Gemfile", "Makefile",
+    /// "Rakefile") must resolve through `find_by_path`. Syntect stores these
+    /// in each grammar's `file_extensions` field alongside real extensions
+    /// like "rb"; its own `find_syntax_for_file` treats them as either. The
+    /// catalog has to do the same or `HighlightEngine::for_file` breaks for
+    /// every extensionless config file.
+    #[test]
+    fn test_bare_filename_resolves_via_find_by_path() {
+        let registry = GrammarRegistry::default();
+        for (filename, expected_substr) in [
+            ("Gemfile", "ruby"),
+            ("Rakefile", "ruby"),
+            ("Vagrantfile", "ruby"),
+            ("Makefile", "makefile"),
+            ("GNUmakefile", "makefile"),
+        ] {
+            let entry = registry
+                .find_by_path(Path::new(filename))
+                .unwrap_or_else(|| panic!("{} must resolve via catalog", filename));
+            assert!(
+                entry.display_name.to_lowercase().contains(expected_substr),
+                "{} should resolve to {} grammar, got {}",
+                filename,
+                expected_substr,
+                entry.display_name
+            );
+        }
+    }
+
+    /// Languages that have both syntect and tree-sitter (e.g. JavaScript) must
+    /// expose the union of both engines' extensions. Tree-sitter-javascript
+    /// knows `.jsx`; syntect's JavaScript grammar does not. Both should route
+    /// through the JavaScript catalog entry.
+    #[test]
+    fn test_jsx_resolves_to_javascript() {
+        let registry = GrammarRegistry::default();
+        let entry = registry
+            .find_by_path(Path::new("foo.jsx"))
+            .expect("foo.jsx must resolve");
+        assert_eq!(entry.display_name, "JavaScript");
+    }
+
     /// `rebuild_catalog` must replay the last-applied language config so it
     /// can never silently wipe user `[languages]` rules. This is the invariant
     /// that keeps `register_alias`, `populate_built_in_aliases`, and any
