@@ -107,11 +107,12 @@ impl DetectedLanguage {
         let entry = registry.find_by_name(name)?;
         let mut detected = Self::from_entry(entry, registry);
         // Prefer a matching config language ID so LSP lookup works when the
-        // user has declared the language under a different key.
+        // user has declared the language under a different key. `display_name`
+        // keeps the catalog's canonical value ("Bourne Again Shell (bash)"),
+        // not whatever casing the caller typed ("BASH").
         if let Some(id) = resolve_language_id(&entry.display_name, registry, languages) {
             detected.name = id;
         }
-        detected.display_name = name.to_string();
         Some(detected)
     }
 

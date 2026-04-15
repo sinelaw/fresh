@@ -734,12 +734,30 @@ impl GrammarRegistry {
     /// Returns `true` if the alias was registered, `false` if rejected due to
     /// collision or missing target. For built-in aliases, collisions panic
     /// (they indicate a bug). For dynamic aliases, collisions log a warning.
+    ///
+    /// Splices the alias directly into the catalog rather than rebuilding, so
+    /// any user config previously merged via `apply_language_config` is
+    /// preserved. A full rebuild would wipe those entries.
     pub(crate) fn register_alias(&mut self, short_name: &str, full_name: &str) -> bool {
-        let registered = self.register_alias_inner(short_name, full_name, false);
-        if registered {
-            self.rebuild_catalog();
+        if !self.register_alias_inner(short_name, full_name, false) {
+            return false;
         }
-        registered
+        let short_lower = short_name.to_lowercase();
+        let full_lower = full_name.to_lowercase();
+        if let Some(&idx) = self.catalog_by_name.get(&full_lower) {
+            self.catalog_by_name
+                .entry(short_lower.clone())
+                .or_insert(idx);
+            let entry = &mut self.catalog[idx];
+            let replace = match &entry.short_name {
+                None => true,
+                Some(existing) => short_name.len() < existing.len(),
+            };
+            if replace {
+                entry.short_name = Some(short_lower);
+            }
+        }
+        true
     }
 
     fn register_alias_inner(
@@ -997,19 +1015,14 @@ impl GrammarRegistry {
     }
 
     /// Look up a grammar entry by display name, language ID, or short alias
-    /// (case-insensitive). Also resolves aliases via the alias table.
+    /// (case-insensitive). All aliases — built-in and user-config-declared —
+    /// are indexed directly in `catalog_by_name` during `rebuild_catalog` /
+    /// `register_alias` / `apply_language_config`, so a single lookup covers
+    /// every case.
     pub fn find_by_name(&self, name: &str) -> Option<&GrammarEntry> {
-        let lower = name.to_lowercase();
-        if let Some(&idx) = self.catalog_by_name.get(&lower) {
-            return Some(&self.catalog[idx]);
-        }
-        // Fall back to alias table (e.g. "rs" -> "Rust" even if not indexed).
-        if let Some(full) = self.aliases.get(&lower) {
-            if let Some(&idx) = self.catalog_by_name.get(&full.to_lowercase()) {
-                return Some(&self.catalog[idx]);
-            }
-        }
-        None
+        self.catalog_by_name
+            .get(&name.to_lowercase())
+            .map(|&idx| &self.catalog[idx])
     }
 
     /// Look up a grammar entry by file path.
@@ -1102,9 +1115,16 @@ impl GrammarRegistry {
                         source: GrammarSource::BuiltIn,
                         engines: GrammarEngines::default(),
                     });
-                    self.catalog_by_name.insert(lang_id.to_lowercase(), idx);
                     idx
                 });
+
+            // Always index the config key so `find_by_name("mylang")` resolves
+            // even when `mylang` aliases an existing grammar (e.g.
+            // `[languages.mylang] grammar = "Rust"`). `or_insert` preserves
+            // any existing mapping — won't clobber the canonical entry.
+            self.catalog_by_name
+                .entry(lang_id.to_lowercase())
+                .or_insert(idx);
 
             for ext in &lang_cfg.extensions {
                 if !self.catalog[idx].extensions.iter().any(|e| e == ext) {
