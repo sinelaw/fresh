@@ -845,6 +845,166 @@ fn test_search_replace_confirmation_prompt_cancel_leaves_files_untouched() {
     );
 }
 
+/// Bug 1 (upstream) — full manual reproduction: after the replace saves
+/// the file, the auto-revert poller sees a fresh mtime and, if it runs
+/// before the user presses Undo, calls `revert_buffer_by_id` which
+/// resets the event log.  Undo then finds nothing to revert.
+///
+/// We trigger this path deterministically by invoking `handle_file_changed`
+/// explicitly — the production equivalent of the polling tick firing
+/// after the save.  Without the mtime refresh in `handle_replace_in_buffer`
+/// this wipes the BulkEdit and the assertion below fails.
+#[test]
+fn test_search_replace_undo_survives_auto_revert_poll() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    let file = project_root.join("auto_revert.txt");
+    fs::write(&file, "hello one\nhello two\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    enter_search_and_replace(&mut harness, "hello", "XYZ");
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
+        .unwrap();
+    confirm_replace_all(&mut harness);
+
+    // Simulate the auto-revert poller tick firing after our save —
+    // equivalent to the `file_mod_times` mismatch that production sees
+    // when `save_to_file` is followed by a polling cycle.
+    harness
+        .editor_mut()
+        .handle_file_changed(file.to_str().unwrap());
+    harness.render().unwrap();
+
+    // Close the panel.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("*Search/Replace*"))
+        .unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("XYZ one"))
+        .unwrap();
+
+    // Undo via the command palette.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Undo").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Undo the last edit"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("hello one") && s.contains("hello two") && !s.contains("XYZ one")
+        })
+        .unwrap();
+}
+
+/// Bug 1 (upstream) variant: with multiple files already open before the
+/// replace, the `Undo` command must still revert the currently-focused
+/// buffer after a project-wide replace.
+#[test]
+fn test_search_replace_is_undoable_with_multiple_open_buffers() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    fs::write(project_root.join("multi_a.txt"), "hello A1\nhello A2\n").unwrap();
+    fs::write(
+        project_root.join("multi_b.txt"),
+        "hello B1\nhello B2\nhello B3\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+
+    // Open both files; multi_b.txt is active at the end of this setup.
+    harness
+        .open_file(&project_root.join("multi_a.txt"))
+        .unwrap();
+    harness
+        .open_file(&project_root.join("multi_b.txt"))
+        .unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    enter_search_and_replace(&mut harness, "hello", "XYZ");
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
+        .unwrap();
+    confirm_replace_all(&mut harness);
+
+    // Close the panel; focus returns to multi_b.txt (the previously active
+    // file buffer in the source split).
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("*Search/Replace*"))
+        .unwrap();
+
+    // Sanity: multi_b.txt buffer shows the replaced text.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("XYZ B1"))
+        .unwrap();
+
+    // Invoke Undo via the command palette.  Active buffer at this point is
+    // multi_b.txt — its event log must carry the BulkEdit so Undo reverts.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Undo").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Undo the last edit"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // multi_b.txt buffer reverts; multi_a.txt was touched by the replace
+    // but user hasn't focused it yet — its event log should still have the
+    // BulkEdit so focusing it and undoing would revert it too.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("hello B1")
+                && s.contains("hello B2")
+                && s.contains("hello B3")
+                && !s.contains("XYZ B1")
+        })
+        .unwrap();
+}
+
 /// Bug 1 (upstream): after a project-wide replace, the `Undo` command must
 /// actually revert the in-memory buffer for the currently-focused file.
 /// Previously replaceInFile bypassed the event log, so Ctrl+Z / the Undo

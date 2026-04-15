@@ -2495,6 +2495,7 @@ impl Editor {
         // via the standard event log machinery.  Project replace has no
         // meaningful cursor positions to restore on undo, so we pass empty
         // cursor lists.
+        let mut saved_path: Option<std::path::PathBuf> = None;
         let bulk_edit_event = if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let old_snapshot = state.buffer.snapshot_buffer_state();
             let displaced_markers = state.capture_displaced_markers_bulk(&edits_owned);
@@ -2526,7 +2527,12 @@ impl Editor {
 
             let new_snapshot = state.buffer.snapshot_buffer_state();
 
-            // Save the buffer via the FileSystem trait
+            // Save the buffer via the FileSystem trait.  Capture the path
+            // into the outer `saved_path` so we can refresh the watched
+            // mtime after dropping the &mut self borrow on `state` —
+            // otherwise the auto-revert poller sees the new mtime, treats
+            // it as an external change, and reverts the buffer from disk,
+            // wiping the event log we're about to append (see bug #1).
             if let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) {
                 if let Err(e) = state.buffer.save_to_file(&path) {
                     self.plugin_manager.reject_callback(
@@ -2535,6 +2541,7 @@ impl Editor {
                     );
                     return;
                 }
+                saved_path = Some(path);
             }
 
             Some(Event::BulkEdit {
@@ -2553,6 +2560,15 @@ impl Editor {
         } else {
             None
         };
+
+        // Refresh the watched mtime for the just-saved file so the
+        // auto-revert poller does NOT treat our own save as an external
+        // change.  Without this, `handle_file_changed` → `revert_buffer_by_id`
+        // would run and reset the event log we're about to append to,
+        // making the replace silently un-undoable (bug #1).
+        if let Some(ref path) = saved_path {
+            self.watch_file(path);
+        }
 
         // Record the BulkEdit on the buffer's event log so Undo can revert it.
         if let Some(event) = bulk_edit_event {
