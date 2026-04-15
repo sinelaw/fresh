@@ -1722,12 +1722,46 @@ fn serialize_split_node(
     terminal_indices: &HashMap<TerminalId, usize>,
     split_labels: &HashMap<SplitId, String>,
 ) -> SerializedSplitNode {
+    serialize_split_node_pruned(
+        node,
+        buffer_metadata,
+        working_dir,
+        terminal_buffers,
+        terminal_indices,
+        split_labels,
+    )
+    .unwrap_or_else(|| {
+        // Entire tree was virtual buffers — nothing to persist.  Fall back to
+        // an empty [No Name] leaf so the restored workspace is still valid.
+        SerializedSplitNode::Leaf {
+            file_path: None,
+            split_id: 0,
+            label: None,
+            unnamed_recovery_id: None,
+        }
+    })
+}
+
+/// Like `serialize_split_node` but returns `None` for subtrees that only
+/// contain transient virtual buffers (e.g. `*Search/Replace*` panels).
+/// Virtual buffers can't be rebuilt from disk, so persisting their split
+/// would leave an empty or mis-attributed pane on restore (see bug #5).
+/// When one child of a Split prunes away, the surviving child is hoisted in
+/// place of the whole Split node.
+fn serialize_split_node_pruned(
+    node: &SplitNode,
+    buffer_metadata: &HashMap<BufferId, super::types::BufferMetadata>,
+    working_dir: &Path,
+    terminal_buffers: &HashMap<BufferId, TerminalId>,
+    terminal_indices: &HashMap<TerminalId, usize>,
+    split_labels: &HashMap<SplitId, String>,
+) -> Option<SerializedSplitNode> {
     match node {
         SplitNode::Grouped { layout, .. } => {
             // Grouped nodes are rebuilt by plugins on load; serialize just
             // the inner layout so the split tree structure is preserved
             // without the group wrapper.
-            serialize_split_node(
+            serialize_split_node_pruned(
                 layout,
                 buffer_metadata,
                 working_dir,
@@ -1745,15 +1779,23 @@ fn serialize_split_node(
 
             if let Some(terminal_id) = terminal_buffers.get(buffer_id) {
                 if let Some(index) = terminal_indices.get(terminal_id) {
-                    return SerializedSplitNode::Terminal {
+                    return Some(SerializedSplitNode::Terminal {
                         terminal_index: *index,
                         split_id: raw_split_id.0,
                         label,
-                    };
+                    });
                 }
             }
 
             let meta = buffer_metadata.get(buffer_id);
+
+            // Virtual buffers (e.g. the *Search/Replace* panel) have no
+            // persistent identity — drop them and let the parent Split node
+            // collapse to the sibling.
+            if meta.map(|m| m.is_virtual()).unwrap_or(false) {
+                return None;
+            }
+
             let file_path = meta.and_then(|m| m.file_path()).and_then(|abs_path| {
                 if abs_path.as_os_str().is_empty() {
                     None // unnamed buffer
@@ -1773,12 +1815,12 @@ fn serialize_split_node(
                 None
             };
 
-            SerializedSplitNode::Leaf {
+            Some(SerializedSplitNode::Leaf {
                 file_path,
                 split_id: raw_split_id.0,
                 label,
                 unnamed_recovery_id,
-            }
+            })
         }
         SplitNode::Split {
             direction,
@@ -1789,29 +1831,37 @@ fn serialize_split_node(
             ..
         } => {
             let raw_split_id: SplitId = (*split_id).into();
-            SerializedSplitNode::Split {
-                direction: match direction {
-                    SplitDirection::Horizontal => SerializedSplitDirection::Horizontal,
-                    SplitDirection::Vertical => SerializedSplitDirection::Vertical,
-                },
-                first: Box::new(serialize_split_node(
-                    first,
-                    buffer_metadata,
-                    working_dir,
-                    terminal_buffers,
-                    terminal_indices,
-                    split_labels,
-                )),
-                second: Box::new(serialize_split_node(
-                    second,
-                    buffer_metadata,
-                    working_dir,
-                    terminal_buffers,
-                    terminal_indices,
-                    split_labels,
-                )),
-                ratio: *ratio,
-                split_id: raw_split_id.0,
+            let first = serialize_split_node_pruned(
+                first,
+                buffer_metadata,
+                working_dir,
+                terminal_buffers,
+                terminal_indices,
+                split_labels,
+            );
+            let second = serialize_split_node_pruned(
+                second,
+                buffer_metadata,
+                working_dir,
+                terminal_buffers,
+                terminal_indices,
+                split_labels,
+            );
+            match (first, second) {
+                (Some(f), Some(s)) => Some(SerializedSplitNode::Split {
+                    direction: match direction {
+                        SplitDirection::Horizontal => SerializedSplitDirection::Horizontal,
+                        SplitDirection::Vertical => SerializedSplitDirection::Vertical,
+                    },
+                    first: Box::new(f),
+                    second: Box::new(s),
+                    ratio: *ratio,
+                    split_id: raw_split_id.0,
+                }),
+                // One side was a virtual-buffer-only subtree — collapse to
+                // the surviving sibling.
+                (Some(only), None) | (None, Some(only)) => Some(only),
+                (None, None) => None,
             }
         }
     }

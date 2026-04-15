@@ -1,8 +1,10 @@
 //! E2E tests for the Search & Replace plugin (multi-file project-wide search/replace)
 
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
+use fresh::config_io::DirectoryContext;
 use std::fs;
 
 /// Set up a project directory with the search_replace plugin.
@@ -650,6 +652,102 @@ fn test_search_replace_multiple_matches_same_line() {
         content
     );
     eprintln!("[DEBUG {}] test PASSED", elapsed());
+}
+
+/// Bug 5 (upstream): the search/replace split must not persist across an
+/// editor restart.  The `*Search/Replace*` panel is a transient virtual
+/// buffer — the workspace serializer previously remembered the split
+/// shape and, since the virtual buffer itself can't be rebuilt from
+/// disk, the restored split silently showed "some random file" (usually
+/// whichever file was active in the main pane).
+///
+/// Verify by restarting the harness with a shared `DirectoryContext` and
+/// asserting that the only visible file content after restore appears
+/// exactly once — i.e. exactly one split, no orphan duplicate.
+#[test]
+fn test_search_replace_split_not_restored_across_restart() {
+    init_tracing_from_env();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project_root");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let plugins_dir = project_dir.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "search_replace");
+
+    // Use a distinctive content so we can count how many splits show it.
+    let file = project_dir.join("persist.txt");
+    fs::write(
+        &file,
+        "UNIQUEMARKERPERSIST alpha\nUNIQUEMARKERPERSIST beta\n",
+    )
+    .unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Session 1: open file, open the Search/Replace panel, then shutdown.
+    {
+        let mut harness = EditorTestHarness::create(
+            160,
+            40,
+            HarnessOptions::new()
+                .with_config(Config::default())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+
+        open_search_replace_via_palette(&mut harness);
+        harness
+            .wait_until(|h| h.screen_to_string().contains("Search:"))
+            .unwrap();
+
+        harness.shutdown(true).unwrap();
+    }
+
+    // Session 2: restore.  The *Search/Replace* virtual buffer is gone, so
+    // if the split were restored it would end up showing the main file as
+    // a duplicate.  Assert we have exactly one split for persist.txt.
+    {
+        let mut harness = EditorTestHarness::create(
+            160,
+            40,
+            HarnessOptions::new()
+                .with_config(Config::default())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        let restored = harness.startup(true, &[]).unwrap();
+        assert!(restored, "Workspace should have restored");
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        // The search/replace panel must not come back.
+        assert!(
+            !screen.contains("*Search/Replace*"),
+            "*Search/Replace* panel should not be restored after restart.\n\
+             Screen:\n{}",
+            screen
+        );
+        // The file content should appear exactly once — not duplicated as
+        // an orphan "random file" split left behind by the stale layout.
+        let marker_occurrences = screen.matches("UNIQUEMARKERPERSIST alpha").count();
+        assert_eq!(
+            marker_occurrences, 1,
+            "persist.txt content should appear once (single split), not \
+             duplicated by a leftover split from the replaced panel.\n\
+             Screen:\n{}",
+            screen
+        );
+    }
 }
 
 /// Bug 3 (upstream): opening the search/replace panel used to create the
