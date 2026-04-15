@@ -1038,7 +1038,7 @@ impl GrammarRegistry {
 
     /// Look up a grammar entry by file path.
     ///
-    /// Resolution order matches the old `find_syntax_for_file_with_languages`:
+    /// Resolution order:
     /// 1. Exact filename (config-declared filenames and filename_scopes live here)
     /// 2. Glob patterns from user config (e.g. "*.conf", "/etc/**/rc.*")
     /// 3. File extension

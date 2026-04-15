@@ -1480,10 +1480,15 @@ impl Drop for LspManager {
 
 /// Helper function to detect language from file path using the config's languages section.
 ///
-/// Priority order matches the grammar registry (`find_syntax_for_file_with_languages`):
+/// Priority order matches `GrammarRegistry::find_by_path`:
 /// 1. Exact filename match against `filenames` (highest priority)
 /// 2. Glob pattern match against `filenames` entries containing wildcards
 /// 3. File extension match against `extensions` (lowest config-based priority)
+///
+/// Kept separate from `find_by_path` because this returns the user's
+/// config **key** (`[languages.mylang]` → `"mylang"`) rather than the
+/// catalog entry's `language_id`, which is needed for LSP routing when a
+/// user aliases an existing grammar.
 pub fn detect_language(
     path: &std::path::Path,
     languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,

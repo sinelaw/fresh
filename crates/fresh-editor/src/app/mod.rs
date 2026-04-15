@@ -1104,10 +1104,13 @@ impl Editor {
         let start = std::time::Instant::now();
         let mut grammar_registry = crate::primitives::grammar::GrammarRegistry::defaults_only();
         // Merge user config so find_by_path respects user globs/filenames
-        // from the very first lookup.
-        if let Some(r) = std::sync::Arc::get_mut(&mut grammar_registry) {
-            r.apply_language_config(&config.languages);
-        }
+        // from the very first lookup. `defaults_only` just built the Arc, so
+        // we're the sole owner; get_mut is guaranteed to succeed. Assert
+        // rather than silently drop config — a failure here would leave the
+        // user wondering why their `*.conf → bash` rule doesn't highlight.
+        std::sync::Arc::get_mut(&mut grammar_registry)
+            .expect("defaults_only returned a shared Arc")
+            .apply_language_config(&config.languages);
         tracing::info!("Default grammar registry built in {:?}", start.elapsed());
         // Don't start background grammar build here — it's deferred to the
         // first flush_pending_grammars() call so that plugin-registered grammars
@@ -5261,15 +5264,13 @@ impl Editor {
                     );
                     // Merge user `[languages]` config into the catalog so
                     // find_by_path honours user globs/filenames/extensions.
-                    // The background thread just handed us the Arc, so
-                    // get_mut should succeed; fall back gracefully if not.
+                    // The background thread just sent the Arc through the
+                    // channel, so we're the sole owner here. Assert rather
+                    // than silently drop config.
                     let mut registry = registry;
-                    match std::sync::Arc::get_mut(&mut registry) {
-                        Some(r) => r.apply_language_config(&self.config.languages),
-                        None => tracing::warn!(
-                            "grammar registry Arc has other strong refs — skipping apply_language_config"
-                        ),
-                    }
+                    std::sync::Arc::get_mut(&mut registry)
+                        .expect("freshly-received grammar registry Arc must be uniquely owned")
+                        .apply_language_config(&self.config.languages);
                     self.grammar_registry = registry;
                     self.grammar_build_in_progress = false;
 
