@@ -1049,7 +1049,7 @@ fn blog_showcase_fresh_0_2_9_code_folding() {
     // load_config starts at line 17 (0-indexed), process_item at line 22
     {
         let state = h.editor_mut().active_state_mut();
-        state.folding_ranges = vec![
+        let ranges = vec![
             FoldingRange {
                 start_line: 2, // fn main()
                 end_line: 15,
@@ -1075,6 +1075,9 @@ fn blog_showcase_fresh_0_2_9_code_folding() {
                 collapsed_text: None,
             },
         ];
+        state
+            .folding_ranges
+            .set_from_lsp(&state.buffer, &mut state.marker_list, ranges);
     }
 
     let mut s = BlogShowcase::new(

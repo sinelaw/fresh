@@ -4699,14 +4699,18 @@ impl SplitRenderer {
         }
 
         if !state.folding_ranges.is_empty() {
-            // Use LSP-provided folding ranges.
+            // Use LSP-provided folding ranges. Resolve markers to current
+            // line numbers post-edit (issue #1571).
             // Filter to only ranges that start on one of our visible view lines.
             let visible_starts: HashSet<usize> = view_lines
                 .iter()
                 .filter_map(|l| l.source_start_byte)
                 .collect();
 
-            for range in &state.folding_ranges {
+            let resolved = state
+                .folding_ranges
+                .resolved(&state.buffer, &state.marker_list);
+            for range in &resolved {
                 let start_line = range.start_line as usize;
                 let end_line = range.end_line as usize;
                 if end_line <= start_line {
@@ -7058,7 +7062,7 @@ mod tests {
         let mut state = EditorState::new(40, 6, 1024, test_fs());
         state.buffer = Buffer::from_str(content, 1024, test_fs());
 
-        state.folding_ranges = vec![
+        let lsp_ranges = vec![
             FoldingRange {
                 start_line: 0,
                 end_line: 1,
@@ -7076,6 +7080,9 @@ mod tests {
                 collapsed_text: None,
             },
         ];
+        state
+            .folding_ranges
+            .set_from_lsp(&state.buffer, &mut state.marker_list, lsp_ranges);
 
         let start = state.buffer.line_start_offset(1).unwrap();
         let end = state.buffer.line_start_offset(2).unwrap();

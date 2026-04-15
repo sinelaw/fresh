@@ -247,6 +247,127 @@ impl FoldManager {
     }
 }
 
+// ---------------------------------------------------------------------------
+// LSP-provided foldable ranges, stored as markers so they auto-adjust on edits
+// ---------------------------------------------------------------------------
+
+/// One LSP fold range, tracked by byte markers that follow buffer edits.
+#[derive(Debug, Clone)]
+struct LspFoldEntry {
+    /// Marker at the first byte of the fold's header line.
+    /// Right affinity: text inserted at the line start pushes the marker down
+    /// with the content, so line_number(marker) keeps pointing at the code
+    /// that used to be at header_line.
+    start_marker: MarkerId,
+    /// Marker at the first byte of the fold's end line.
+    /// Right affinity for the same reason as start_marker.
+    end_marker: MarkerId,
+    /// Optional kind forwarded from the LSP response (comment, imports, region …).
+    kind: Option<lsp_types::FoldingRangeKind>,
+    /// Optional placeholder text shown when the fold is collapsed.
+    collapsed_text: Option<String>,
+}
+
+/// Store for LSP-provided fold ranges. Ranges are tracked as byte markers on
+/// the shared [`MarkerList`], so inserting or deleting lines around (or
+/// inside) a fold re-aligns its header line number automatically — no manual
+/// shifting required. Fixes the "fold indicator lag" from issue #1571.
+#[derive(Debug, Clone, Default)]
+pub struct LspFoldRanges {
+    ranges: Vec<LspFoldEntry>,
+}
+
+impl LspFoldRanges {
+    /// Create an empty store.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns true if no LSP fold ranges are currently tracked.
+    pub fn is_empty(&self) -> bool {
+        self.ranges.is_empty()
+    }
+
+    /// Number of tracked ranges.
+    pub fn len(&self) -> usize {
+        self.ranges.len()
+    }
+
+    /// Drop every tracked range and release its markers.
+    pub fn clear(&mut self, marker_list: &mut MarkerList) {
+        for range in &self.ranges {
+            marker_list.delete(range.start_marker);
+            marker_list.delete(range.end_marker);
+        }
+        self.ranges.clear();
+    }
+
+    /// Replace the tracked set with fresh LSP-provided ranges (line-based).
+    ///
+    /// Each range's start/end lines are translated to byte offsets via
+    /// [`Buffer::line_start_offset`]; ranges that can't be resolved (e.g. line
+    /// numbers past EOF) are silently dropped.
+    pub fn set_from_lsp(
+        &mut self,
+        buffer: &Buffer,
+        marker_list: &mut MarkerList,
+        ranges: impl IntoIterator<Item = lsp_types::FoldingRange>,
+    ) {
+        self.clear(marker_list);
+        for r in ranges {
+            let Some(start_byte) = buffer.line_start_offset(r.start_line as usize) else {
+                continue;
+            };
+            let Some(end_byte) = buffer.line_start_offset(r.end_line as usize) else {
+                continue;
+            };
+            // Right affinity: text inserted at the line start pushes the marker
+            // down with the content (so it keeps pointing at the same *code*,
+            // not the same *byte offset*).
+            let start_marker = marker_list.create(start_byte, false);
+            let end_marker = marker_list.create(end_byte, false);
+            self.ranges.push(LspFoldEntry {
+                start_marker,
+                end_marker,
+                kind: r.kind,
+                collapsed_text: r.collapsed_text,
+            });
+        }
+    }
+
+    /// Resolve to the current line-based LSP-style ranges (post-edit).
+    ///
+    /// Ranges whose markers have been invalidated (e.g. the header line was
+    /// deleted out from under them such that end comes before start) are
+    /// filtered out.
+    pub fn resolved(
+        &self,
+        buffer: &Buffer,
+        marker_list: &MarkerList,
+    ) -> Vec<lsp_types::FoldingRange> {
+        self.ranges
+            .iter()
+            .filter_map(|r| {
+                let start_byte = marker_list.get_position(r.start_marker)?;
+                let end_byte = marker_list.get_position(r.end_marker)?;
+                let start_line = buffer.get_line_number(start_byte);
+                let end_line = buffer.get_line_number(end_byte);
+                if end_line <= start_line {
+                    return None;
+                }
+                Some(lsp_types::FoldingRange {
+                    start_line: start_line as u32,
+                    end_line: end_line as u32,
+                    start_character: None,
+                    end_character: None,
+                    kind: r.kind.clone(),
+                    collapsed_text: r.collapsed_text.clone(),
+                })
+            })
+            .collect()
+    }
+}
+
 impl Default for FoldManager {
     fn default() -> Self {
         Self::new()

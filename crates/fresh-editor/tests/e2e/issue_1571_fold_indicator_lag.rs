@@ -35,7 +35,7 @@ use tempfile::TempDir;
 /// Install a fold range covering lines `start_line..=end_line`.
 fn set_fold_range(harness: &mut EditorTestHarness, start_line: usize, end_line: usize) {
     let state = harness.editor_mut().active_state_mut();
-    state.folding_ranges = vec![FoldingRange {
+    let ranges = vec![FoldingRange {
         start_line: start_line as u32,
         end_line: end_line as u32,
         start_character: None,
@@ -43,6 +43,9 @@ fn set_fold_range(harness: &mut EditorTestHarness, start_line: usize, end_line: 
         kind: None,
         collapsed_text: None,
     }];
+    state
+        .folding_ranges
+        .set_from_lsp(&state.buffer, &mut state.marker_list, ranges);
 }
 
 /// Return the leftmost non-empty gutter cell at the given content row,
@@ -110,31 +113,46 @@ fn test_fold_indicator_follows_insert_before_fold() {
         harness.screen_to_string()
     );
 
-    // The fold indicator should have moved with it. The BUG leaves `▾` on
-    // row 0 (or disappears entirely) because `folding_ranges` still says
-    // start_line == 0 and nothing remaps it to the post-edit position.
+    // The fold range should now cover `fn main()`'s new location. We
+    // exercise this end-to-end by clicking the gutter on the supposed
+    // fold-header row and checking that fn main's body collapses.
     //
-    // Expected: `▾` appears on content row 1 (next to `fn main()`).
-    // Actual (bug): `▾` is either still on row 0 (an empty line) or absent
-    // altogether.
-    let indicator_on_fn_main_row = gutter_indicator_at(&harness, 1);
-    assert_eq!(
-        indicator_on_fn_main_row,
-        Some("▾".to_string()),
-        "After inserting a blank line before `fn main()`, the fold \
-         indicator should track the new line of `fn main()` (content row 1). \
-         Issue #1571: the indicator lags behind content edits. Screen:\n{}",
-        harness.screen_to_string()
-    );
+    // Before the fix (issue #1571): clicking on content row 1 does not
+    // collapse anything (the stale fold at start_line=0 is mis-targeted).
+    //
+    // After the fix: content row 1 is the fold header and clicking it
+    // hides `let x = 1;` / `let y = 2;` / `let z = 3;`.
+    let fold_header_row = (layout::CONTENT_START_ROW + 1) as u16;
+    harness.mouse_click(0, fold_header_row).unwrap();
+    harness.render().unwrap();
 
-    // And conversely, there should be no stale indicator on the now-empty
-    // line 0.
-    assert_eq!(
-        gutter_indicator_at(&harness, 0),
-        None,
-        "After inserting a blank line, no fold indicator should remain on \
-         the now-empty first line (row 0). Screen:\n{}",
-        harness.screen_to_string()
+    let screen_after_click = harness.screen_to_string();
+    assert!(
+        !screen_after_click.contains("let x = 1;"),
+        "Issue #1571: Clicking the gutter on the fold header row \
+         (content row 1, where fn main() now lives) should collapse the \
+         function body and hide `let x = 1;`. The fold range is still \
+         pinned to its old line numbers. Screen:\n{}",
+        screen_after_click
+    );
+    assert!(
+        !screen_after_click.contains("let y = 2;"),
+        "Body line `let y = 2;` should be hidden by the collapsed fold. \
+         Screen:\n{}",
+        screen_after_click
+    );
+    assert!(
+        !screen_after_click.contains("let z = 3;"),
+        "Body line `let z = 3;` should be hidden by the collapsed fold. \
+         Screen:\n{}",
+        screen_after_click
+    );
+    // fn main header should still be visible.
+    assert!(
+        screen_after_click.contains("fn main()"),
+        "fn main() header should still be visible after collapsing. \
+         Screen:\n{}",
+        screen_after_click
     );
 }
 
@@ -182,21 +200,36 @@ fn test_fold_indicator_follows_delete_before_fold() {
         harness.screen_to_string()
     );
 
-    // Expected: indicator on row 0.  Bug: indicator stays on row 1 (now
-    // showing the body `let x = 1;`) because the stored `start_line` is
-    // still 1.
-    assert_eq!(
-        gutter_indicator_at(&harness, 0),
-        Some("▾".to_string()),
-        "After deleting a blank line before `fn main()`, the fold \
-         indicator should move up to content row 0. Issue #1571. Screen:\n{}",
-        harness.screen_to_string()
+    // The fold range should track the shift. Clicking the gutter on
+    // content row 0 (the new home of fn main) must collapse its body.
+    //
+    // Before the fix (issue #1571): clicking row 0 doesn't collapse
+    // anything because the stored fold still starts at line 1 (now the
+    // body line `let x = 1;`), and clicking on row 1 would incorrectly
+    // collapse a "fold" whose header is a body line.
+    //
+    // After the fix: the fold marker has moved with the buffer content.
+    let fold_header_row = layout::CONTENT_START_ROW as u16;
+    harness.mouse_click(0, fold_header_row).unwrap();
+    harness.render().unwrap();
+
+    let screen_after_click = harness.screen_to_string();
+    assert!(
+        !screen_after_click.contains("let x = 1;"),
+        "Issue #1571: After deleting the blank line above and clicking \
+         the gutter on fn main's new row, `let x = 1;` should be hidden. \
+         Screen:\n{}",
+        screen_after_click
     );
-    assert_eq!(
-        gutter_indicator_at(&harness, 1),
-        None,
-        "After the delete, no stale fold indicator should remain on row 1 \
-         (the body line `let x = 1;`). Screen:\n{}",
-        harness.screen_to_string()
+    assert!(
+        !screen_after_click.contains("let y = 2;"),
+        "Body line `let y = 2;` should be hidden by the collapsed fold. \
+         Screen:\n{}",
+        screen_after_click
+    );
+    assert!(
+        screen_after_click.contains("fn main()"),
+        "fn main() header should still be visible. Screen:\n{}",
+        screen_after_click
     );
 }

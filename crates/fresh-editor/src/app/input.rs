@@ -2489,10 +2489,14 @@ impl Editor {
             return Some(target_position);
         }
 
-        // Check LSP folding ranges first (line-based comparison unavoidable)
+        // Check LSP folding ranges first (line-based comparison unavoidable).
+        // Resolve markers to current line numbers post-edit.
         if !state.folding_ranges.is_empty() {
             let line = state.buffer.get_line_number(target_position);
-            let has_lsp_fold = state.folding_ranges.iter().any(|range| {
+            let resolved = state
+                .folding_ranges
+                .resolved(&state.buffer, &state.marker_list);
+            let has_lsp_fold = resolved.iter().any(|range| {
                 let start_line = range.start_line as usize;
                 let end_line = range.end_line as usize;
                 start_line == line && end_line > start_line

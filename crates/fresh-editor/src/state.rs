@@ -17,6 +17,7 @@ use crate::primitives::reference_highlighter::ReferenceHighlighter;
 use crate::primitives::text_property::TextPropertyManager;
 use crate::view::bracket_highlight_overlay::BracketHighlightOverlay;
 use crate::view::conceal::ConcealManager;
+use crate::view::folding::LspFoldRanges;
 use crate::view::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::view::popup::{
@@ -26,7 +27,6 @@ use crate::view::reference_highlight_overlay::ReferenceHighlightOverlay;
 use crate::view::soft_break::SoftBreakManager;
 use crate::view::virtual_text::VirtualTextManager;
 use anyhow::Result;
-use lsp_types::FoldingRange;
 use ratatui::style::{Color, Style};
 use std::cell::RefCell;
 use std::ops::Range;
@@ -212,8 +212,10 @@ pub struct EditorState {
     /// Cached LSP semantic tokens (converted to buffer byte ranges)
     pub semantic_tokens: Option<SemanticTokenStore>,
 
-    /// Last-known LSP folding ranges for this buffer
-    pub folding_ranges: Vec<FoldingRange>,
+    /// Last-known LSP folding ranges for this buffer, tracked by byte markers
+    /// so they auto-adjust when content is inserted or deleted around them
+    /// (issue #1571).
+    pub folding_ranges: LspFoldRanges,
 
     /// The detected language ID for this buffer (e.g., "rust", "csharp", "text").
     /// Used for LSP config lookup and internal identification.
@@ -300,7 +302,7 @@ impl EditorState {
             reference_highlight_overlay: ReferenceHighlightOverlay::new(),
             bracket_highlight_overlay: BracketHighlightOverlay::new(),
             semantic_tokens: None,
-            folding_ranges: Vec::new(),
+            folding_ranges: LspFoldRanges::new(),
             language: "text".to_string(),
             display_name: "Text".to_string(),
             scrollbar_row_cache: ScrollbarRowCache::default(),

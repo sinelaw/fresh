@@ -358,11 +358,14 @@ impl Editor {
         }
 
         if let Some(state) = self.buffers.get_mut(&request.buffer_id) {
-            state.folding_ranges = self
+            let lsp_ranges = self
                 .stored_folding_ranges
                 .get(&uri)
                 .cloned()
                 .unwrap_or_default();
+            state
+                .folding_ranges
+                .set_from_lsp(&state.buffer, &mut state.marker_list, lsp_ranges);
         }
     }
 

@@ -489,13 +489,17 @@ impl Editor {
         if !state.folding_ranges.is_empty() {
             // --- LSP-provided ranges (line-based) ---
             // LSP ranges use line numbers, so we need get_line_number here.
+            // Resolve marker-backed ranges to current post-edit line numbers.
+            let resolved = state
+                .folding_ranges
+                .resolved(&state.buffer, &state.marker_list);
             let line = state.buffer.get_line_number(byte_pos);
             let mut exact_range: Option<&lsp_types::FoldingRange> = None;
             let mut exact_span = usize::MAX;
             let mut containing_range: Option<&lsp_types::FoldingRange> = None;
             let mut containing_span = usize::MAX;
 
-            for range in &state.folding_ranges {
+            for range in &resolved {
                 let start_line = range.start_line as usize;
                 let range_end = range.end_line as usize;
                 if range_end <= start_line {
@@ -803,7 +807,7 @@ impl Editor {
                 .overlays
                 .clear_namespace(&diagnostic_ns, &mut state.marker_list);
             state.virtual_texts.clear(&mut state.marker_list);
-            state.folding_ranges.clear();
+            state.folding_ranges.clear(&mut state.marker_list);
             for view_state in split_view_states.values_mut() {
                 if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
                     buf_state.folds.clear(&mut state.marker_list);

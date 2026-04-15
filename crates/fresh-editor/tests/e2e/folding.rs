@@ -7,7 +7,7 @@ use lsp_types::FoldingRange;
 
 fn set_fold_range(harness: &mut EditorTestHarness, start_line: usize, end_line: usize) {
     let state = harness.editor_mut().active_state_mut();
-    state.folding_ranges = vec![FoldingRange {
+    let ranges = vec![FoldingRange {
         start_line: start_line as u32,
         end_line: end_line as u32,
         start_character: None,
@@ -15,6 +15,9 @@ fn set_fold_range(harness: &mut EditorTestHarness, start_line: usize, end_line: 
         kind: None,
         collapsed_text: None,
     }];
+    state
+        .folding_ranges
+        .set_from_lsp(&state.buffer, &mut state.marker_list, ranges);
 }
 
 fn set_top_line(harness: &mut EditorTestHarness, line: usize) {
@@ -569,11 +572,10 @@ fn test_unfold_works_after_folding_ranges_cleared() {
     harness.assert_screen_not_contains("line 9");
 
     // Simulate LSP disconnect: clear folding_ranges.
-    harness
-        .editor_mut()
-        .active_state_mut()
-        .folding_ranges
-        .clear();
+    {
+        let state = harness.editor_mut().active_state_mut();
+        state.folding_ranges.clear(&mut state.marker_list);
+    }
 
     // Attempt to unfold — the fold markers still exist in the FoldManager.
     let buffer_id = harness.editor().active_buffer();
