@@ -69,22 +69,10 @@ impl DetectedLanguage {
         languages: &HashMap<String, LanguageConfig>,
         default_language: Option<&str>,
     ) -> Self {
-        // Config-aware match first (filenames/extensions declared in user config).
-        if let Some(syntax) = registry.find_syntax_for_file_with_languages(path, languages) {
-            if let Some(entry) = registry.find_by_name(&syntax.name) {
-                let mut detected = Self::from_entry(entry, registry);
-                // Prefer the config's language ID (e.g. "csharp" vs tree-sitter's
-                // "c_sharp") when it matches the resolved grammar.
-                if let Some(id) = crate::services::lsp::manager::detect_language(path, languages) {
-                    detected.name = id;
-                }
-                return detected;
-            }
-        }
-
-        // Catalog lookup (extension / filename match).
         if let Some(entry) = registry.find_by_path(path) {
             let mut detected = Self::from_entry(entry, registry);
+            // Prefer the config's language ID (e.g. "csharp" vs tree-sitter's
+            // "c_sharp") when the path resolves via a config entry.
             if let Some(id) = crate::services::lsp::manager::detect_language(path, languages) {
                 detected.name = id;
             }
@@ -104,28 +92,6 @@ impl DetectedLanguage {
         }
 
         Self::plain_text()
-    }
-
-    /// Detect language from a file path using only built-in rules (no user config).
-    ///
-    /// Used for virtual buffer names where user config doesn't apply.
-    pub fn from_path_builtin(path: &Path, registry: &GrammarRegistry) -> Self {
-        if let Some(entry) = registry.find_by_path(path) {
-            return Self::from_entry(entry, registry);
-        }
-        // No catalog entry matches — fall back to tree-sitter-only detection so
-        // unknown-to-catalog paths still get a sensible language ID.
-        let ts_language = Language::from_path(path);
-        let name = ts_language
-            .as_ref()
-            .map(|l| l.to_string())
-            .unwrap_or_else(|| "text".to_string());
-        Self {
-            name: name.clone(),
-            display_name: name,
-            highlighter: HighlightEngine::None,
-            ts_language,
-        }
     }
 
     /// Set language by syntax name (user selected from the language palette).
@@ -149,18 +115,6 @@ impl DetectedLanguage {
         Some(detected)
     }
 
-    /// Create a DetectedLanguage for a user-configured language that has no
-    /// matching syntect grammar. No syntax highlighting, but the language ID
-    /// is set correctly for config/LSP purposes.
-    pub fn from_config_language(lang_id: &str) -> Self {
-        Self {
-            name: lang_id.to_string(),
-            display_name: lang_id.to_string(),
-            highlighter: HighlightEngine::None,
-            ts_language: None,
-        }
-    }
-
     /// Plain text — no highlighting.
     pub fn plain_text() -> Self {
         Self {
@@ -182,29 +136,26 @@ impl DetectedLanguage {
         } else {
             cleaned
         };
-        Self::from_path_builtin(Path::new(filename), registry)
+        registry
+            .find_by_path(Path::new(filename))
+            .map(|entry| Self::from_entry(entry, registry))
+            .unwrap_or_else(Self::plain_text)
     }
-
 }
 
 /// Resolve a syntect syntax display name to its canonical config language ID.
 ///
 /// The config `[languages]` section is the single authoritative registry of
 /// language IDs. Each entry has a `grammar` field that is resolved to a
-/// syntect syntax via the grammar registry. This function performs the reverse
-/// lookup: for each config entry, resolve its grammar through the registry
-/// and check whether the resulting syntax matches.
+/// catalog entry; this function performs the reverse lookup.
 pub fn resolve_language_id(
     syntax_name: &str,
     registry: &GrammarRegistry,
     languages: &HashMap<String, LanguageConfig>,
 ) -> Option<String> {
     for (lang_id, lang_config) in languages {
-        // Use find_syntax_for_lang_config which also tries extension fallback,
-        // needed when the grammar name doesn't match syntect's name
-        // (e.g., grammar "c_sharp" → syntect syntax "C#").
-        if let Some(syntax) = registry.find_syntax_for_lang_config(lang_config) {
-            if syntax.name == syntax_name {
+        if let Some(entry) = registry.find_by_name(&lang_config.grammar) {
+            if entry.display_name == syntax_name {
                 return Some(lang_id.clone());
             }
         }

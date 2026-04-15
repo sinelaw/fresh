@@ -355,7 +355,10 @@ impl EditorState {
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
         let buffer = Buffer::load_from_file(path, large_file_threshold, fs)?;
-        let detected = DetectedLanguage::from_path_builtin(path, registry);
+        let detected = registry
+            .find_by_path(path)
+            .map(|entry| DetectedLanguage::from_entry(entry, registry))
+            .unwrap_or_else(DetectedLanguage::plain_text);
         let mut state = Self::new_from_buffer(buffer);
         state.apply_language(detected);
         Ok(state)

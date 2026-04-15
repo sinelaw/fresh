@@ -1102,7 +1102,13 @@ impl Editor {
     ) -> AnyhowResult<Self> {
         tracing::info!("Building default grammar registry...");
         let start = std::time::Instant::now();
-        let grammar_registry = crate::primitives::grammar::GrammarRegistry::defaults_only();
+        let mut grammar_registry =
+            crate::primitives::grammar::GrammarRegistry::defaults_only();
+        // Merge user config so find_by_path respects user globs/filenames
+        // from the very first lookup.
+        if let Some(r) = std::sync::Arc::get_mut(&mut grammar_registry) {
+            r.apply_language_config(&config.languages);
+        }
         tracing::info!("Default grammar registry built in {:?}", start.elapsed());
         // Don't start background grammar build here — it's deferred to the
         // first flush_pending_grammars() call so that plugin-registered grammars
@@ -5254,6 +5260,17 @@ impl Editor {
                         "Background grammar build completed ({} syntaxes)",
                         registry.available_syntaxes().len()
                     );
+                    // Merge user `[languages]` config into the catalog so
+                    // find_by_path honours user globs/filenames/extensions.
+                    // The background thread just handed us the Arc, so
+                    // get_mut should succeed; fall back gracefully if not.
+                    let mut registry = registry;
+                    match std::sync::Arc::get_mut(&mut registry) {
+                        Some(r) => r.apply_language_config(&self.config.languages),
+                        None => tracing::warn!(
+                            "grammar registry Arc has other strong refs — skipping apply_language_config"
+                        ),
+                    }
                     self.grammar_registry = registry;
                     self.grammar_build_in_progress = false;
 

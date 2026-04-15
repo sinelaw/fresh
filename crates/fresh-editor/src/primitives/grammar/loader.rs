@@ -883,7 +883,11 @@ mod tests {
     #[test]
     fn test_find_syntax_with_custom_languages_config() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let registry = GrammarRegistry::for_editor(temp_dir.path().to_path_buf());
+        let mut registry = Arc::try_unwrap(GrammarRegistry::for_editor(
+            temp_dir.path().to_path_buf(),
+        ))
+        .ok()
+        .expect("registry should have refcount 1");
 
         // Create a custom languages config that maps "custom.myext" files to bash
         let mut languages = std::collections::HashMap::new();
@@ -911,35 +915,24 @@ mod tests {
                 word_characters: None,
             },
         );
+        registry.apply_language_config(&languages);
 
-        // Test that custom filename is detected via languages config
-        let path = Path::new("CUSTOMBUILD");
-        let result = registry.find_syntax_for_file_with_languages(path, &languages);
+        // Custom filename resolves to bash via the catalog.
+        let entry = registry.find_by_path(Path::new("CUSTOMBUILD")).unwrap();
         assert!(
-            result.is_some(),
-            "CUSTOMBUILD should be detected via languages config"
-        );
-        let syntax = result.unwrap();
-        assert!(
-            syntax.name.to_lowercase().contains("bash")
-                || syntax.name.to_lowercase().contains("shell"),
-            "CUSTOMBUILD should be detected as shell/bash, got: {}",
-            syntax.name
+            entry.display_name.to_lowercase().contains("bash")
+                || entry.display_name.to_lowercase().contains("shell"),
+            "CUSTOMBUILD should resolve to shell/bash, got: {}",
+            entry.display_name
         );
 
-        // Test that custom extension is detected via languages config
-        let path = Path::new("script.myext");
-        let result = registry.find_syntax_for_file_with_languages(path, &languages);
+        // Custom extension resolves to bash via the catalog.
+        let entry = registry.find_by_path(Path::new("script.myext")).unwrap();
         assert!(
-            result.is_some(),
-            "script.myext should be detected via languages config"
-        );
-        let syntax = result.unwrap();
-        assert!(
-            syntax.name.to_lowercase().contains("bash")
-                || syntax.name.to_lowercase().contains("shell"),
-            "script.myext should be detected as shell/bash, got: {}",
-            syntax.name
+            entry.display_name.to_lowercase().contains("bash")
+                || entry.display_name.to_lowercase().contains("shell"),
+            "script.myext should resolve to shell/bash, got: {}",
+            entry.display_name
         );
     }
 

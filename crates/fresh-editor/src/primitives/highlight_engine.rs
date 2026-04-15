@@ -1050,21 +1050,10 @@ impl HighlightEngine {
 
     /// Create a highlighting engine for a file.
     ///
-    /// Resolves the file to a catalog entry and hands off to `from_entry`.
-    /// When `languages` is provided, user-configured filename/extension
-    /// mappings are consulted before the built-in catalog.
-    pub fn for_file(
-        path: &Path,
-        registry: &GrammarRegistry,
-        languages: Option<&std::collections::HashMap<String, crate::config::LanguageConfig>>,
-    ) -> Self {
-        if let Some(langs) = languages {
-            if let Some(syntax) = registry.find_syntax_for_file_with_languages(path, langs) {
-                if let Some(entry) = registry.find_by_name(&syntax.name) {
-                    return Self::from_entry(entry, registry);
-                }
-            }
-        }
+    /// Thin wrapper around `from_entry` that resolves the path via the catalog.
+    /// User-config-declared filename/extension mappings are honoured as long as
+    /// `GrammarRegistry::apply_language_config` has been called on the registry.
+    pub fn for_file(path: &Path, registry: &GrammarRegistry) -> Self {
         if let Some(entry) = registry.find_by_path(path) {
             return Self::from_entry(entry, registry);
         }
@@ -1074,13 +1063,9 @@ impl HighlightEngine {
     /// Create a highlighting engine for a syntax by name.
     ///
     /// Thin wrapper around `from_entry` that performs the lookup via
-    /// `find_by_name`. The `_ts_language` parameter is ignored — the catalog
-    /// entry already knows which tree-sitter `Language` (if any) serves it.
-    pub fn for_syntax_name(
-        name: &str,
-        registry: &GrammarRegistry,
-        _ts_language: Option<Language>,
-    ) -> Self {
+    /// `find_by_name`. The catalog entry already knows which tree-sitter
+    /// `Language` (if any) serves it, so no separate hint is needed.
+    pub fn for_syntax_name(name: &str, registry: &GrammarRegistry) -> Self {
         if let Some(entry) = registry.find_by_name(name) {
             return Self::from_entry(entry, registry);
         }
@@ -1355,25 +1340,25 @@ mod tests {
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // Languages with TextMate grammars use TextMate for highlighting
-        let engine = HighlightEngine::for_file(Path::new("test.rs"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new("test.rs"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         // Tree-sitter language should still be detected for other features
         assert!(engine.language().is_some());
 
-        let engine = HighlightEngine::for_file(Path::new("test.py"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new("test.py"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.language().is_some());
 
-        let engine = HighlightEngine::for_file(Path::new("test.js"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new("test.js"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.language().is_some());
 
         // TypeScript falls back to tree-sitter (syntect doesn't include TS by default)
-        let engine = HighlightEngine::for_file(Path::new("test.ts"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new("test.ts"), &registry);
         assert_eq!(engine.backend_name(), "tree-sitter");
         assert!(engine.language().is_some());
 
-        let engine = HighlightEngine::for_file(Path::new("test.tsx"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new("test.tsx"), &registry);
         assert_eq!(engine.backend_name(), "tree-sitter");
         assert!(engine.language().is_some());
     }
@@ -1391,7 +1376,7 @@ mod tests {
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // Unknown extension
-        let engine = HighlightEngine::for_file(Path::new("test.unknown_xyz_123"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new("test.unknown_xyz_123"), &registry);
         // Might be none or might find something via syntect
         // Just verify it doesn't panic
         let _ = engine.backend_name();
@@ -1410,7 +1395,7 @@ mod tests {
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
-        let mut engine = HighlightEngine::for_file(Path::new("test.rs"), &registry, None);
+        let mut engine = HighlightEngine::for_file(Path::new("test.rs"), &registry);
 
         // Create empty buffer
         let buffer = Buffer::from_str("", 0, test_fs());
@@ -1434,7 +1419,7 @@ mod tests {
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
-        let mut engine = HighlightEngine::for_file(Path::new("test.java"), &registry, None);
+        let mut engine = HighlightEngine::for_file(Path::new("test.java"), &registry);
 
         // Create CRLF content with keywords on each line
         // Each "public" keyword should be highlighted at byte positions:
@@ -1502,7 +1487,7 @@ mod tests {
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // git-rebase-todo files should use the Git Rebase Todo grammar
-        let engine = HighlightEngine::for_file(Path::new("git-rebase-todo"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new("git-rebase-todo"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.has_highlighting());
     }
@@ -1513,12 +1498,12 @@ mod tests {
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // COMMIT_EDITMSG should use the Git Commit Message grammar
-        let engine = HighlightEngine::for_file(Path::new("COMMIT_EDITMSG"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new("COMMIT_EDITMSG"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.has_highlighting());
 
         // MERGE_MSG should also work
-        let engine = HighlightEngine::for_file(Path::new("MERGE_MSG"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new("MERGE_MSG"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.has_highlighting());
     }
@@ -1529,12 +1514,12 @@ mod tests {
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // .gitignore should use the Gitignore grammar
-        let engine = HighlightEngine::for_file(Path::new(".gitignore"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new(".gitignore"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.has_highlighting());
 
         // .dockerignore should also work
-        let engine = HighlightEngine::for_file(Path::new(".dockerignore"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new(".dockerignore"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.has_highlighting());
     }
@@ -1545,12 +1530,12 @@ mod tests {
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // .gitconfig should use the Git Config grammar
-        let engine = HighlightEngine::for_file(Path::new(".gitconfig"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new(".gitconfig"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.has_highlighting());
 
         // .gitmodules should also work
-        let engine = HighlightEngine::for_file(Path::new(".gitmodules"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new(".gitmodules"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.has_highlighting());
     }
@@ -1561,7 +1546,7 @@ mod tests {
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // .gitattributes should use the Git Attributes grammar
-        let engine = HighlightEngine::for_file(Path::new(".gitattributes"), &registry, None);
+        let engine = HighlightEngine::for_file(Path::new(".gitattributes"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.has_highlighting());
     }

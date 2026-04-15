@@ -3127,12 +3127,9 @@ impl Editor {
         let mut syntax_to_config: std::collections::HashMap<String, (String, &str)> =
             std::collections::HashMap::new();
         for (lang_id, lang_config) in &self.config.languages {
-            if let Some(syntax) = self
-                .grammar_registry
-                .find_syntax_for_lang_config(lang_config)
-            {
+            if let Some(entry) = self.grammar_registry.find_by_name(&lang_config.grammar) {
                 syntax_to_config
-                    .entry(syntax.name.clone())
+                    .entry(entry.display_name.clone())
                     .or_insert((lang_id.clone(), "config"));
             }
         }

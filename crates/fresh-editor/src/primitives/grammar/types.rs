@@ -106,8 +106,10 @@ pub struct GrammarEntry {
     pub short_name: Option<String>,
     /// File extensions (without leading dot).
     pub extensions: Vec<String>,
-    /// Exact filenames or glob-free filename matches (e.g. "Dockerfile").
+    /// Exact filenames that map to this grammar (e.g. "Dockerfile").
     pub filenames: Vec<String>,
+    /// Filename globs from user config (e.g. "*.conf", "/etc/**/rc.*").
+    pub filename_globs: Vec<String>,
     /// Where this grammar was loaded from.
     pub source: GrammarSource,
     /// Highlighters that can serve this entry.
@@ -634,232 +636,39 @@ impl GrammarRegistry {
     /// 3. By filename (custom dotfile mappings like .zshrc)
     /// 4. By filename via syntect (handles Makefile, .bashrc, etc.)
     pub fn find_syntax_for_file(&self, path: &Path) -> Option<&SyntaxReference> {
-        // Try filename-based lookup FIRST for dotfiles, special files, and exact matches
-        // This must come before extension lookup since files like CMakeLists.txt
-        // would otherwise match Plain Text via the .txt extension.
-        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-            if let Some(scope) = self.filename_scopes.get(filename) {
-                if let Some(syntax) = syntect::parsing::Scope::new(scope)
-                    .ok()
-                    .and_then(|s| self.syntax_set.find_syntax_by_scope(s))
-                {
-                    return Some(syntax);
-                }
-            }
+        if let Some(entry) = self.find_by_path(path) {
+            // Return the syntect grammar if one is attached; otherwise bail.
+            // We must NOT fall through to syntect's own detection here — the
+            // catalog match (e.g. a user-declared "fish" or tree-sitter-only
+            // TypeScript) is authoritative, and syntect might misclassify
+            // `.fish` as bash via its built-in heuristics.
+            return entry.engines.syntect.map(|i| &self.syntax_set.syntaxes()[i]);
         }
-
-        // Try extension-based lookup
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            // Check user grammars first (higher priority)
-            if let Some(scope) = self.user_extensions.get(ext) {
-                tracing::info!("[SYNTAX DEBUG] find_syntax_for_file: found ext '{}' in user_extensions -> scope '{}'", ext, scope);
-                if let Some(syntax) = syntect::parsing::Scope::new(scope)
-                    .ok()
-                    .and_then(|s| self.syntax_set.find_syntax_by_scope(s))
-                {
-                    tracing::info!(
-                        "[SYNTAX DEBUG] find_syntax_for_file: found syntax by scope: {}",
-                        syntax.name
-                    );
-                    return Some(syntax);
-                } else {
-                    tracing::info!(
-                        "[SYNTAX DEBUG] find_syntax_for_file: scope '{}' not found in syntax_set",
-                        scope
-                    );
-                }
-            } else {
-                tracing::info!(
-                    "[SYNTAX DEBUG] find_syntax_for_file: ext '{}' NOT in user_extensions",
-                    ext
-                );
-            }
-
-            // Try extension lookup (includes embedded grammars like TOML)
-            if let Some(syntax) = self.syntax_set.find_syntax_by_extension(ext) {
-                tracing::info!(
-                    "[SYNTAX DEBUG] find_syntax_for_file: found by syntect extension: {}",
-                    syntax.name
-                );
-                return Some(syntax);
-            }
-        }
-
-        // Filename-based lookup already done above (before extension lookup)
-
-        // Try syntect's full file detection (handles special filenames like Makefile)
-        // This may do I/O for first-line detection, but handles many cases
-        if let Ok(Some(syntax)) = self.syntax_set.find_syntax_for_file(path) {
-            return Some(syntax);
-        }
-
-        tracing::info!(
-            "[SYNTAX DEBUG] find_syntax_for_file: no syntax found for {:?}",
-            path
-        );
-        None
+        // No catalog match — try syntect's file detection (first-line /
+        // Makefile-style filenames that aren't in filename_scopes).
+        self.syntax_set.find_syntax_for_file(path).ok().flatten()
     }
 
-    /// Find syntax for a file, checking user-configured languages first.
-    ///
-    /// This method extends `find_syntax_for_file` by first checking the provided
-    /// languages configuration for filename and extension matches. This allows
-    /// users to configure custom filename patterns (like PKGBUILD for bash) that
-    /// will be respected for syntax highlighting.
-    ///
-    /// Checks in order:
-    /// 1. User-configured language filenames from config (exact match)
-    /// 2. User-configured language filenames from config (glob patterns)
-    /// 3. User-configured language extensions from config
-    /// 4. Falls back to `find_syntax_for_file` for built-in detection
+    /// Deprecated: use `find_by_path` (which honours user config applied via
+    /// `apply_language_config`). Retained as a thin wrapper for call sites
+    /// still passing the `languages` map around.
+    #[deprecated(note = "use find_by_path after apply_language_config")]
     pub fn find_syntax_for_file_with_languages(
         &self,
         path: &Path,
-        languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
+        _languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
     ) -> Option<&SyntaxReference> {
-        let extension = path.extension().and_then(|e| e.to_str());
-        tracing::info!(
-            "[SYNTAX DEBUG] find_syntax_for_file_with_languages: path={:?}, ext={:?}, languages_config_keys={:?}",
-            path,
-            extension,
-            languages.keys().collect::<Vec<_>>()
-        );
-
-        // Track whether any user config rule matched, even if the grammar
-        // couldn't be resolved to a syntect syntax.  When a config match exists
-        // we must NOT fall through to built-in detection, which may map the
-        // extension to a completely different language (e.g. `.fish` → bash).
-        let mut config_matched = false;
-
-        // Try filename match from languages config first (exact then glob)
-        if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-            // First pass: exact matches only (highest priority)
-            for (lang_name, lang_config) in languages.iter() {
-                if lang_config
-                    .filenames
-                    .iter()
-                    .any(|f| !is_glob_pattern(f) && f == filename)
-                {
-                    tracing::info!(
-                        "[SYNTAX DEBUG] filename match: {} -> grammar '{}'",
-                        lang_name,
-                        lang_config.grammar
-                    );
-                    if let Some(syntax) = self.find_syntax_for_lang_config(lang_config) {
-                        return Some(syntax);
-                    }
-                    config_matched = true;
-                }
-            }
-
-            // Second pass: glob pattern matches
-            // Path patterns (containing `/`) are matched against the full path;
-            // filename-only patterns are matched against just the filename.
-            let path_str = path.to_str().unwrap_or("");
-            for (lang_name, lang_config) in languages.iter() {
-                if lang_config.filenames.iter().any(|f| {
-                    if !is_glob_pattern(f) {
-                        return false;
-                    }
-                    if is_path_pattern(f) {
-                        path_glob_matches(f, path_str)
-                    } else {
-                        filename_glob_matches(f, filename)
-                    }
-                }) {
-                    tracing::info!(
-                        "[SYNTAX DEBUG] filename glob match: {} -> grammar '{}'",
-                        lang_name,
-                        lang_config.grammar
-                    );
-                    if let Some(syntax) = self.find_syntax_for_lang_config(lang_config) {
-                        return Some(syntax);
-                    }
-                    config_matched = true;
-                }
-            }
-        }
-
-        // Try extension match from languages config
-        if let Some(extension) = extension {
-            for (lang_name, lang_config) in languages.iter() {
-                if lang_config.extensions.iter().any(|ext| ext == extension) {
-                    tracing::info!(
-                        "[SYNTAX DEBUG] extension match in config: ext={}, lang={}, grammar='{}'",
-                        extension,
-                        lang_name,
-                        lang_config.grammar
-                    );
-                    // Only try grammar name lookup here (not the extension
-                    // fallback in find_syntax_for_lang_config).  The extension
-                    // fallback would use syntect's built-in mapping which may
-                    // return a wrong language (e.g. .fish → bash).
-                    if let Some(syntax) = self.find_syntax_by_name(&lang_config.grammar) {
-                        tracing::info!(
-                            "[SYNTAX DEBUG] found syntax by grammar name: {}",
-                            syntax.name
-                        );
-                        return Some(syntax);
-                    } else {
-                        tracing::info!(
-                            "[SYNTAX DEBUG] grammar name '{}' not found in registry",
-                            lang_config.grammar
-                        );
-                    }
-                    config_matched = true;
-                }
-            }
-        }
-
-        // Fall back to built-in detection only if no user config rule matched.
-        // When a config rule matched but the grammar couldn't be resolved (e.g.
-        // the user configured a language whose grammar isn't in syntect), we
-        // return None to avoid misdetecting the file as a different language.
-        if config_matched {
-            tracing::info!(
-                "[SYNTAX DEBUG] config matched but grammar not resolved; skipping built-in fallback"
-            );
-            return None;
-        }
-        tracing::info!("[SYNTAX DEBUG] falling back to find_syntax_for_file");
-        let result = self.find_syntax_for_file(path);
-        tracing::info!(
-            "[SYNTAX DEBUG] find_syntax_for_file result: {:?}",
-            result.map(|s| &s.name)
-        );
-        result
+        self.find_syntax_for_file(path)
     }
 
-    /// Given a language config, find the syntax reference for it.
-    ///
-    /// Tries grammar name first, then falls back to extension-based lookup.
-    /// This handles cases where the grammar name doesn't match syntect's name
-    /// (e.g., grammar `"c_sharp"` maps to syntect syntax `"C#"` via `.cs` extension).
+    /// Deprecated: use `find_by_name(&lang_config.grammar)` and read the
+    /// engines field directly.
+    #[deprecated(note = "use find_by_name on the grammar field")]
     pub fn find_syntax_for_lang_config(
         &self,
         lang_config: &crate::config::LanguageConfig,
     ) -> Option<&SyntaxReference> {
-        if let Some(syntax) = self.find_syntax_by_name(&lang_config.grammar) {
-            tracing::info!(
-                "[SYNTAX DEBUG] found syntax by grammar name: {}",
-                syntax.name
-            );
-            return Some(syntax);
-        }
-        // Also try finding by extension if grammar name didn't work
-        // (some grammars are named differently)
-        if !lang_config.extensions.is_empty() {
-            if let Some(ext) = lang_config.extensions.first() {
-                if let Some(syntax) = self.syntax_set.find_syntax_by_extension(ext) {
-                    tracing::info!(
-                        "[SYNTAX DEBUG] found syntax by extension fallback: {}",
-                        syntax.name
-                    );
-                    return Some(syntax);
-                }
-            }
-        }
-        None
+        self.find_syntax_by_name(&lang_config.grammar)
     }
 
     /// Find syntax by first line content (shebang, mode line, etc.)
@@ -878,11 +687,20 @@ impl GrammarRegistry {
     /// Find syntax by name, with alias resolution.
     ///
     /// Thin wrapper around `find_by_name` that returns the associated syntect
-    /// `SyntaxReference` if one exists. Tree-sitter-only entries return `None`.
+    /// `SyntaxReference`. Tree-sitter-only entries return `None`.
+    ///
+    /// Falls back to a direct syntect lookup for "Plain Text", which the
+    /// catalog deliberately omits but syntect still exposes.
     pub fn find_syntax_by_name(&self, name: &str) -> Option<&SyntaxReference> {
-        let entry = self.find_by_name(name)?;
-        let idx = entry.engines.syntect?;
-        Some(&self.syntax_set.syntaxes()[idx])
+        if let Some(entry) = self.find_by_name(name) {
+            if let Some(idx) = entry.engines.syntect {
+                return Some(&self.syntax_set.syntaxes()[idx]);
+            }
+        }
+        // Plain Text is excluded from the catalog (it's not a "grammar" a user
+        // would ever pick), but syntect still stores it and a handful of
+        // callers still ask for it by name.
+        self.syntax_set.find_syntax_by_name(name)
     }
 
     // === Alias management ===
@@ -1059,7 +877,10 @@ impl GrammarRegistry {
     /// 3. Alias short-names attached to their target entry
     /// 4. Filename mappings from `filename_scopes` attached to their scope's entry
     /// 5. Extra extensions from `user_extensions` attached to their scope's entry
-    pub fn rebuild_catalog(&mut self) {
+    ///
+    /// This wipes out anything `apply_language_config` layered on top; callers
+    /// that rebuild must re-apply user config afterward.
+    pub(crate) fn rebuild_catalog(&mut self) {
         // Reverse-map: full_name (lowercase) -> shortest alias.
         //
         // Seed from the built-in alias table as well as the live `aliases`
@@ -1128,6 +949,7 @@ impl GrammarRegistry {
                 short_name,
                 extensions: syntax.file_extensions.clone(),
                 filenames: Vec::new(),
+                filename_globs: Vec::new(),
                 source,
                 engines: GrammarEngines {
                     syntect: Some(idx),
@@ -1180,6 +1002,7 @@ impl GrammarRegistry {
                 short_name,
                 extensions,
                 filenames: Vec::new(),
+                filename_globs: Vec::new(),
                 source: GrammarSource::BuiltIn,
                 engines: GrammarEngines {
                     syntect: None,
@@ -1233,13 +1056,41 @@ impl GrammarRegistry {
         None
     }
 
-    /// Look up a grammar entry by file path (exact filename first, then extension).
+    /// Look up a grammar entry by file path.
+    ///
+    /// Resolution order matches the old `find_syntax_for_file_with_languages`:
+    /// 1. Exact filename (config-declared filenames and filename_scopes live here)
+    /// 2. Glob patterns from user config (e.g. "*.conf", "/etc/**/rc.*")
+    /// 3. File extension
+    ///
+    /// Globs take priority over extension so a user rule like `*.conf → bash`
+    /// wins over any built-in extension match on `.conf`.
     pub fn find_by_path(&self, path: &Path) -> Option<&GrammarEntry> {
-        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-            if let Some(&idx) = self.catalog_by_filename.get(filename) {
+        let filename = path.file_name().and_then(|n| n.to_str());
+        let path_str = path.to_str().unwrap_or("");
+
+        if let Some(name) = filename {
+            if let Some(&idx) = self.catalog_by_filename.get(name) {
                 return Some(&self.catalog[idx]);
             }
         }
+
+        // Glob walk — filenames with globs are rare so linear scan is fine.
+        if let Some(name) = filename {
+            for entry in &self.catalog {
+                for pattern in &entry.filename_globs {
+                    let matched = if is_path_pattern(pattern) {
+                        path_glob_matches(pattern, path_str)
+                    } else {
+                        filename_glob_matches(pattern, name)
+                    };
+                    if matched {
+                        return Some(entry);
+                    }
+                }
+            }
+        }
+
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             return self.find_by_extension(ext);
         }
@@ -1251,6 +1102,78 @@ impl GrammarRegistry {
         self.catalog_by_extension
             .get(&ext.to_lowercase())
             .map(|&idx| &self.catalog[idx])
+    }
+
+    /// Merge user `[languages]` config into the catalog.
+    ///
+    /// For each config entry, resolves its grammar to an existing catalog entry
+    /// (by grammar name or by language id). Extensions are added and override
+    /// the ext→entry index so config wins over built-in mappings. Filenames are
+    /// split into exact matches (indexed) and globs (walked at lookup time).
+    ///
+    /// If no existing entry matches, a new engine-less entry is created so the
+    /// language still appears in the palette (matching the old
+    /// `DetectedLanguage::from_config_language` behaviour).
+    ///
+    /// Safe to call multiple times, but `rebuild_catalog` wipes the results —
+    /// call this after any rebuild.
+    pub fn apply_language_config(
+        &mut self,
+        languages: &HashMap<String, crate::config::LanguageConfig>,
+    ) {
+        for (lang_id, lang_cfg) in languages {
+            let grammar_name = if lang_cfg.grammar.is_empty() {
+                lang_id.as_str()
+            } else {
+                lang_cfg.grammar.as_str()
+            };
+
+            // Resolve to an existing entry; fall back to creating one.
+            let idx = self
+                .catalog_by_name
+                .get(&grammar_name.to_lowercase())
+                .copied()
+                .or_else(|| self.catalog_by_name.get(&lang_id.to_lowercase()).copied())
+                .unwrap_or_else(|| {
+                    let idx = self.catalog.len();
+                    self.catalog.push(GrammarEntry {
+                        display_name: lang_id.clone(),
+                        language_id: lang_id.clone(),
+                        short_name: None,
+                        extensions: Vec::new(),
+                        filenames: Vec::new(),
+                        filename_globs: Vec::new(),
+                        source: GrammarSource::BuiltIn,
+                        engines: GrammarEngines::default(),
+                    });
+                    self.catalog_by_name.insert(lang_id.to_lowercase(), idx);
+                    idx
+                });
+
+            for ext in &lang_cfg.extensions {
+                if !self.catalog[idx].extensions.iter().any(|e| e == ext) {
+                    self.catalog[idx].extensions.push(ext.clone());
+                }
+                // Config-declared extensions override any previous mapping.
+                self.catalog_by_extension.insert(ext.to_lowercase(), idx);
+            }
+            for filename in &lang_cfg.filenames {
+                if is_glob_pattern(filename) {
+                    if !self.catalog[idx]
+                        .filename_globs
+                        .iter()
+                        .any(|f| f == filename)
+                    {
+                        self.catalog[idx].filename_globs.push(filename.clone());
+                    }
+                } else {
+                    if !self.catalog[idx].filenames.iter().any(|f| f == filename) {
+                        self.catalog[idx].filenames.push(filename.clone());
+                    }
+                    self.catalog_by_filename.insert(filename.clone(), idx);
+                }
+            }
+        }
     }
 
     /// Get the underlying syntax set
@@ -1652,7 +1575,7 @@ mod tests {
 
     #[test]
     fn test_find_syntax_with_glob_filenames() {
-        let registry = GrammarRegistry::default();
+        let mut registry = GrammarRegistry::default();
         let mut languages = std::collections::HashMap::new();
         languages.insert(
             "shell-configs".to_string(),
@@ -1678,27 +1601,23 @@ mod tests {
                 word_characters: None,
             },
         );
+        registry.apply_language_config(&languages);
 
-        // *.conf should match
-        let result =
-            registry.find_syntax_for_file_with_languages(Path::new("nftables.conf"), &languages);
-        assert!(result.is_some(), "*.conf should match nftables.conf");
-
-        // *rc should match
-        let result = registry.find_syntax_for_file_with_languages(Path::new("lfrc"), &languages);
-        assert!(result.is_some(), "*rc should match lfrc");
-
-        // Unrelated file should not match via glob
-        let result =
-            registry.find_syntax_for_file_with_languages(Path::new("randomfile"), &languages);
-        // May still match via built-in detection, but not via our config
-        // Just verify it doesn't panic
-        let _ = result;
+        assert!(
+            registry.find_by_path(Path::new("nftables.conf")).is_some(),
+            "*.conf should match nftables.conf"
+        );
+        assert!(
+            registry.find_by_path(Path::new("lfrc")).is_some(),
+            "*rc should match lfrc"
+        );
+        // Unrelated file shouldn't panic.
+        let _ = registry.find_by_path(Path::new("randomfile"));
     }
 
     #[test]
     fn test_find_syntax_with_path_glob_filenames() {
-        let registry = GrammarRegistry::default();
+        let mut registry = GrammarRegistry::default();
         let mut languages = std::collections::HashMap::new();
         languages.insert(
             "shell-configs".to_string(),
@@ -1724,30 +1643,24 @@ mod tests {
                 word_characters: None,
             },
         );
+        registry.apply_language_config(&languages);
 
-        // /etc/**/rc.* should match via full path
-        let result =
-            registry.find_syntax_for_file_with_languages(Path::new("/etc/rc.conf"), &languages);
-        assert!(result.is_some(), "/etc/**/rc.* should match /etc/rc.conf");
-
-        let result = registry
-            .find_syntax_for_file_with_languages(Path::new("/etc/init/rc.local"), &languages);
         assert!(
-            result.is_some(),
+            registry.find_by_path(Path::new("/etc/rc.conf")).is_some(),
+            "/etc/**/rc.* should match /etc/rc.conf"
+        );
+        assert!(
+            registry
+                .find_by_path(Path::new("/etc/init/rc.local"))
+                .is_some(),
             "/etc/**/rc.* should match /etc/init/rc.local"
         );
-
-        // Should NOT match a different root
-        let result =
-            registry.find_syntax_for_file_with_languages(Path::new("/var/rc.conf"), &languages);
-        // /var/rc.conf won't match the path glob, but may match built-in detection
-        // Just verify no panic
-        let _ = result;
+        let _ = registry.find_by_path(Path::new("/var/rc.conf"));
     }
 
     #[test]
     fn test_exact_filename_takes_priority_over_glob() {
-        let registry = GrammarRegistry::default();
+        let mut registry = GrammarRegistry::default();
         let mut languages = std::collections::HashMap::new();
 
         // A language with exact filename "lfrc" -> python grammar
@@ -1802,14 +1715,14 @@ mod tests {
             },
         );
 
+        registry.apply_language_config(&languages);
+
         // "lfrc" should match the exact rule (python), not the glob (bash)
-        let result = registry.find_syntax_for_file_with_languages(Path::new("lfrc"), &languages);
-        assert!(result.is_some());
-        let syntax = result.unwrap();
+        let entry = registry.find_by_path(Path::new("lfrc")).unwrap();
         assert!(
-            syntax.name.to_lowercase().contains("python"),
+            entry.display_name.to_lowercase().contains("python"),
             "exact match should win over glob, got: {}",
-            syntax.name
+            entry.display_name
         );
     }
 
