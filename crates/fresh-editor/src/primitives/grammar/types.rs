@@ -271,6 +271,11 @@ pub struct GrammarRegistry {
     catalog_by_extension: HashMap<String, usize>,
     /// Index from filename to catalog index.
     catalog_by_filename: HashMap<String, usize>,
+    /// The most recent language config handed to `apply_language_config`.
+    /// Retained so `rebuild_catalog` can replay it — otherwise a rebuild
+    /// (triggered by e.g. `populate_built_in_aliases`) silently wipes user
+    /// `[languages]` config that was merged on top.
+    applied_language_config: HashMap<String, crate::config::LanguageConfig>,
 }
 
 impl GrammarRegistry {
@@ -314,6 +319,7 @@ impl GrammarRegistry {
             catalog_by_name: HashMap::new(),
             catalog_by_extension: HashMap::new(),
             catalog_by_filename: HashMap::new(),
+            applied_language_config: HashMap::new(),
         };
         reg.rebuild_catalog();
         reg
@@ -334,6 +340,7 @@ impl GrammarRegistry {
             catalog_by_name: HashMap::new(),
             catalog_by_extension: HashMap::new(),
             catalog_by_filename: HashMap::new(),
+            applied_language_config: HashMap::new(),
         };
         reg.rebuild_catalog();
         Arc::new(reg)
@@ -372,6 +379,7 @@ impl GrammarRegistry {
             catalog_by_name: HashMap::new(),
             catalog_by_extension: HashMap::new(),
             catalog_by_filename: HashMap::new(),
+            applied_language_config: HashMap::new(),
         };
         registry.populate_built_in_aliases();
         registry.rebuild_catalog();
@@ -876,8 +884,8 @@ impl GrammarRegistry {
     /// 4. Filename mappings from `filename_scopes` attached to their scope's entry
     /// 5. Extra extensions from `user_extensions` attached to their scope's entry
     ///
-    /// This wipes out anything `apply_language_config` layered on top; callers
-    /// that rebuild must re-apply user config afterward.
+    /// Automatically replays the last `apply_language_config` at the end, so
+    /// user `[languages]` config survives any rebuild.
     pub(crate) fn rebuild_catalog(&mut self) {
         // Reverse-map: full_name (lowercase) -> shortest alias.
         //
@@ -1018,6 +1026,15 @@ impl GrammarRegistry {
         self.catalog_by_name = by_name;
         self.catalog_by_extension = by_extension;
         self.catalog_by_filename = by_filename;
+
+        // Replay the most recent user config so a rebuild doesn't silently
+        // wipe out user `[languages]` rules. `take` + restore avoids both a
+        // clone and a borrow checker fight with `apply_language_config_inner`.
+        if !self.applied_language_config.is_empty() {
+            let cfg = std::mem::take(&mut self.applied_language_config);
+            self.apply_language_config_inner(&cfg);
+            self.applied_language_config = cfg;
+        }
     }
 
     /// Return the full catalog of grammar entries.
@@ -1092,12 +1109,23 @@ impl GrammarRegistry {
     /// split into exact matches (indexed) and globs (walked at lookup time).
     ///
     /// If no existing entry matches, a new engine-less entry is created so the
-    /// language still appears in the palette (matching the old
-    /// `DetectedLanguage::from_config_language` behaviour).
+    /// language still appears in the palette.
     ///
-    /// Safe to call multiple times, but `rebuild_catalog` wipes the results —
-    /// call this after any rebuild.
+    /// Idempotent. The config is cached on the registry so `rebuild_catalog`
+    /// can replay it — callers don't need to re-apply after a rebuild.
     pub fn apply_language_config(
+        &mut self,
+        languages: &HashMap<String, crate::config::LanguageConfig>,
+    ) {
+        self.applied_language_config = languages.clone();
+        self.apply_language_config_inner(languages);
+    }
+
+    /// Do the actual catalog splicing without touching
+    /// `applied_language_config`. Called from `apply_language_config` (which
+    /// records the input) and from `rebuild_catalog` (which replays the
+    /// cached input after wiping the catalog).
+    fn apply_language_config_inner(
         &mut self,
         languages: &HashMap<String, crate::config::LanguageConfig>,
     ) {
@@ -1344,6 +1372,7 @@ impl GrammarRegistry {
             catalog_by_name: HashMap::new(),
             catalog_by_extension: HashMap::new(),
             catalog_by_filename: HashMap::new(),
+            applied_language_config: HashMap::new(),
         };
         reg.rebuild_catalog();
         Some(reg)
@@ -2016,6 +2045,35 @@ mod tests {
             registry.find_by_extension("js").unwrap().display_name,
             "TypeScript",
             "user-config extension must win over built-in"
+        );
+    }
+
+    /// `rebuild_catalog` must replay the last-applied language config so it
+    /// can never silently wipe user `[languages]` rules. This is the invariant
+    /// that keeps `register_alias`, `populate_built_in_aliases`, and any
+    /// future rebuild callsite safe-by-construction.
+    #[test]
+    fn test_rebuild_catalog_replays_language_config() {
+        let mut registry = GrammarRegistry::default();
+        let mut languages = std::collections::HashMap::new();
+        languages.insert(
+            "myshell".to_string(),
+            lang_cfg("bash", &["myext"], &["*.myglob"]),
+        );
+        registry.apply_language_config(&languages);
+        assert!(registry.find_by_extension("myext").is_some());
+        assert!(registry.find_by_path(Path::new("foo.myglob")).is_some());
+
+        // Force a rebuild — the catalog gets wiped and re-populated from
+        // syntect / tree-sitter, but user config must come back on top.
+        registry.rebuild_catalog();
+        assert!(
+            registry.find_by_extension("myext").is_some(),
+            "rebuild_catalog must replay applied user config"
+        );
+        assert!(
+            registry.find_by_path(Path::new("foo.myglob")).is_some(),
+            "rebuild_catalog must replay user globs"
         );
     }
 
