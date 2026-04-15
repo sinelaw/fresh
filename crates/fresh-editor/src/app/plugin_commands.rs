@@ -2586,6 +2586,15 @@ impl Editor {
         if let Some(event) = bulk_edit_event {
             if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
                 event_log.append(event);
+                // The file on disk is now in the post-replace state, so mark
+                // this position as "saved".  Otherwise `saved_at_index` would
+                // stay at its pre-replace value and undo (which moves
+                // `current_index` backwards) would land on the old saved
+                // position and `update_modified_from_event_log` would clear
+                // the modified flag — leaving the user with a reverted buffer
+                // that looks clean even though disk still has the XYZ
+                // content.  We want the tab to show `a.txt*` after undo.
+                event_log.mark_saved();
             }
             self.invalidate_layouts_for_buffer(buffer_id);
 

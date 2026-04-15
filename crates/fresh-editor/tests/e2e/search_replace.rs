@@ -750,6 +750,95 @@ fn test_search_replace_split_not_restored_across_restart() {
     }
 }
 
+/// Regression: after a project-wide replace + undo, the buffer now
+/// differs from disk (undo only touches in-memory state), so the tab
+/// must show the modified indicator (`*`).  Previously the event log's
+/// `saved_at_index` was left at its pre-replace value, and undo moved
+/// `current_index` back to match, making `update_modified_from_event_log`
+/// clear the modified flag even though disk still had the XYZ content.
+#[test]
+fn test_search_replace_undo_marks_buffer_as_modified() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    fs::write(project_root.join("dirty.txt"), "hello one\nhello two\n").unwrap();
+
+    let start_file = project_root.join("dirty.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    enter_search_and_replace(&mut harness, "hello", "XYZ");
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("[v]")
+        })
+        .unwrap();
+    confirm_replace_all(&mut harness);
+
+    // Close the panel; focus returns to dirty.txt.  Right after the
+    // replace the tab should NOT be dirty — buffer matches disk.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("*Search/Replace*"))
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("XYZ one"))
+        .unwrap();
+    assert!(
+        !harness.screen_to_string().contains("dirty.txt*"),
+        "Right after replace, dirty.txt buffer should match disk (no `*`).\n\
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Undo.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Undo").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Undo the last edit"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Buffer reverted.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("hello one") && s.contains("hello two") && !s.contains("XYZ one")
+        })
+        .unwrap();
+
+    // Disk still has XYZ (undo didn't touch disk).
+    let on_disk = fs::read_to_string(project_root.join("dirty.txt")).unwrap();
+    assert_eq!(
+        on_disk, "XYZ one\nXYZ two\n",
+        "Undo must not modify disk — it only reverts the in-memory buffer."
+    );
+
+    // Tab must show the modified marker because buffer != disk.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("dirty.txt*") || screen.contains("dirty.txt [+]"),
+        "After undo, dirty.txt should be marked modified (buffer != disk).\n\
+         Screen:\n{}",
+        screen
+    );
+}
+
 /// Regression: closing the *Search/Replace* panel via the tab × button
 /// (mouse click) used to leave a stray split behind showing a duplicate
 /// of the original buffer, while the `Close Buffer` command closed the
