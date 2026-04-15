@@ -46,6 +46,7 @@ pub mod issue_1566_arrow_selection;
 pub mod issue_1568_session_fold_restore;
 pub mod issue_1569_explorer_auto_expand;
 pub mod issue_1571_fold_indicator_lag;
+pub mod issue_1577_unicode_width;
 pub mod keybinding_editor;
 pub mod language_features_e2e;
 pub mod large_file_inplace_write_bug;

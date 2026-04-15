@@ -3949,52 +3949,65 @@ impl TextBuffer {
     /// This handles complex scripts like Thai where multiple Unicode code points
     /// form a single visual character (grapheme cluster). For example, Thai "ที่"
     /// is 3 code points but 1 grapheme cluster.
+    ///
+    /// The lookahead window starts at 32 bytes but grows whenever the
+    /// returned boundary sits at the start of the chunk — that is, whenever
+    /// the chunk might not contain the full grapheme. This matters for ZWJ
+    /// emoji sequences and Zalgo strings with many combining marks, which
+    /// can easily exceed 32 bytes.
     pub fn prev_grapheme_boundary(&self, pos: usize) -> usize {
         if pos == 0 {
             return 0;
         }
 
-        // Get enough context before pos to find grapheme boundaries
-        // Thai combining characters can have multiple marks, so get up to 32 bytes
-        // IMPORTANT: Align start to a valid character boundary to avoid invalid UTF-8
-        // when get_text_range starts mid-character
-        let raw_start = pos.saturating_sub(32);
-        let start = if raw_start == 0 {
-            0
-        } else {
-            // Find the character boundary at or before raw_start
-            self.prev_char_boundary(raw_start + 1)
-        };
+        let mut lookback: usize = 32;
+        loop {
+            // IMPORTANT: Align start to a valid character boundary to avoid invalid UTF-8
+            // when get_text_range starts mid-character
+            let raw_start = pos.saturating_sub(lookback);
+            let start = if raw_start == 0 {
+                0
+            } else {
+                // Find the character boundary at or before raw_start
+                self.prev_char_boundary(raw_start + 1)
+            };
 
-        let Some(bytes) = self.get_text_range(start, pos - start) else {
-            // Data unloaded, fall back to char boundary
-            return self.prev_char_boundary(pos);
-        };
+            let Some(bytes) = self.get_text_range(start, pos - start) else {
+                // Data unloaded, fall back to char boundary
+                return self.prev_char_boundary(pos);
+            };
 
-        let text = match std::str::from_utf8(&bytes) {
-            Ok(s) => s,
-            Err(e) => {
-                // Still got invalid UTF-8 (shouldn't happen after alignment)
-                // Try using just the valid portion
-                let valid_bytes = &bytes[..e.valid_up_to()];
-                match std::str::from_utf8(valid_bytes) {
-                    Ok(s) if !s.is_empty() => s,
-                    _ => return self.prev_char_boundary(pos),
+            let text = match std::str::from_utf8(&bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    // Still got invalid UTF-8 (shouldn't happen after alignment)
+                    // Try using just the valid portion
+                    let valid_bytes = &bytes[..e.valid_up_to()];
+                    match std::str::from_utf8(valid_bytes) {
+                        Ok(s) if !s.is_empty() => s,
+                        _ => return self.prev_char_boundary(pos),
+                    }
                 }
+            };
+
+            // Use shared grapheme utility with relative position
+            let rel_pos = pos - start;
+            let new_rel_pos = grapheme::prev_grapheme_boundary(text, rel_pos);
+
+            // If the returned boundary is at the start of our chunk, the
+            // grapheme may extend further back. Only trust the answer when
+            // either we already reached the beginning of the buffer or the
+            // boundary sits strictly inside the chunk.
+            if new_rel_pos > 0 || start == 0 {
+                return start + new_rel_pos;
             }
-        };
 
-        // Use shared grapheme utility with relative position
-        let rel_pos = pos - start;
-        let new_rel_pos = grapheme::prev_grapheme_boundary(text, rel_pos);
-
-        // If we landed at the start of this chunk and there's more before,
-        // we might need to look further back
-        if new_rel_pos == 0 && start > 0 {
-            return self.prev_grapheme_boundary(start);
+            // Expand the lookback window and retry. Cap at the full buffer.
+            if lookback >= pos {
+                return 0;
+            }
+            lookback = lookback.saturating_mul(2);
         }
-
-        start + new_rel_pos
     }
 
     /// Find the next grapheme cluster boundary (for proper cursor movement with combining characters)
@@ -4002,38 +4015,54 @@ impl TextBuffer {
     /// This handles complex scripts like Thai where multiple Unicode code points
     /// form a single visual character (grapheme cluster). For example, Thai "ที่"
     /// is 3 code points but 1 grapheme cluster.
+    ///
+    /// The lookahead window grows whenever the first grapheme reaches the
+    /// end of the chunk — otherwise ZWJ emoji and Zalgo strings whose byte
+    /// length exceeds the initial 32-byte window would be split mid-cluster.
     pub fn next_grapheme_boundary(&self, pos: usize) -> usize {
         let len = self.len();
         if pos >= len {
             return len;
         }
 
-        // Get enough context after pos to find grapheme boundaries
-        // Thai combining characters can have multiple marks, so get up to 32 bytes
-        let end = (pos + 32).min(len);
-        let Some(bytes) = self.get_text_range(pos, end - pos) else {
-            // Data unloaded, fall back to char boundary
-            return self.next_char_boundary(pos);
-        };
+        let mut lookahead: usize = 32;
+        loop {
+            let end = (pos + lookahead).min(len);
+            let Some(bytes) = self.get_text_range(pos, end - pos) else {
+                // Data unloaded, fall back to char boundary
+                return self.next_char_boundary(pos);
+            };
 
-        // Convert to UTF-8 string, handling the case where we might have
-        // grabbed bytes that end mid-character (truncate to valid UTF-8)
-        let text = match std::str::from_utf8(&bytes) {
-            Ok(s) => s,
-            Err(e) => {
-                // The bytes end in an incomplete UTF-8 sequence
-                // Use only the valid portion (which includes at least the first grapheme)
-                let valid_bytes = &bytes[..e.valid_up_to()];
-                match std::str::from_utf8(valid_bytes) {
-                    Ok(s) if !s.is_empty() => s,
-                    _ => return self.next_char_boundary(pos),
+            // Convert to UTF-8 string, handling the case where we might have
+            // grabbed bytes that end mid-character (truncate to valid UTF-8)
+            let text = match std::str::from_utf8(&bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    // The bytes end in an incomplete UTF-8 sequence
+                    // Use only the valid portion (which includes at least the first grapheme)
+                    let valid_bytes = &bytes[..e.valid_up_to()];
+                    match std::str::from_utf8(valid_bytes) {
+                        Ok(s) if !s.is_empty() => s,
+                        _ => return self.next_char_boundary(pos),
+                    }
                 }
-            }
-        };
+            };
 
-        // Use shared grapheme utility
-        let new_rel_pos = grapheme::next_grapheme_boundary(text, 0);
-        pos + new_rel_pos
+            let new_rel_pos = grapheme::next_grapheme_boundary(text, 0);
+
+            // If the first grapheme reaches the end of our chunk and there
+            // is more buffer left beyond it, the grapheme may extend further.
+            // Expand the window and retry.
+            if new_rel_pos == text.len() && end < len {
+                if lookahead >= len - pos {
+                    return len;
+                }
+                lookahead = lookahead.saturating_mul(2);
+                continue;
+            }
+
+            return pos + new_rel_pos;
+        }
     }
 
     /// Find the previous word boundary
