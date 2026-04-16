@@ -1038,3 +1038,140 @@ internal).
 | Methods in one `impl TextBuffer` block | ~120 | ~40 (orchestrators + delegators) |
 | `impl TextBuffer` blocks crate-wide | 1 | 1 (unchanged — Rule 1) |
 | Test blocks | 2 inline monoliths | 8 topic files |
+
+## 10. Success criteria
+
+Mechanically checkable. Each of these must pass before merging the
+final phase.
+
+**A. Single `impl TextBuffer` (Rule 1).**
+
+```
+$ rg -n '^impl TextBuffer\b' crates/fresh-editor/src/
+crates/fresh-editor/src/model/buffer/mod.rs:<line>:impl TextBuffer {
+```
+
+Exactly one line. Nothing else.
+
+**B. No raw-field leakage per extracted sub-struct.**
+
+For each `(field, owner)` pair, the raw field name may appear only
+inside the owner's module:
+
+```
+$ rg -n '\.line_ending\b|\.encoding\b|\.original_line_ending\b|\.original_encoding\b' \
+      crates/fresh-editor/src/model/buffer/ \
+      | rg -v '^crates/fresh-editor/src/model/buffer/format\.rs'
+# → empty
+
+$ rg -n '\.large_file\b|\.line_feeds_scanned\b|\.is_binary\b' \
+      crates/fresh-editor/src/model/buffer/ \
+      | rg -v '^crates/fresh-editor/src/model/buffer/file_kind\.rs'
+# → empty
+
+$ rg -n '\.(fs|file_path|modified|recovery_pending|saved_root|saved_file_size)\b' \
+      crates/fresh-editor/src/model/buffer/ \
+      | rg -v '^crates/fresh-editor/src/model/buffer/persistence/'
+# → empty (except the destructure pattern in mod.rs)
+```
+
+**C. Only `mark_content_modified` writes `modified`, `recovery_pending`,
+`version` (Rule 3).**
+
+```
+$ rg -n '\.modified\s*=|\.recovery_pending\s*=|self\.version\s*(\+=|=)' \
+      crates/fresh-editor/src/model/buffer/
+```
+
+Every hit must be inside `mod.rs::mark_content_modified` or
+`persistence/mod.rs::mark_dirty` (the latter is the only path
+`mark_content_modified` takes). No other hits.
+
+**D. No `TextBuffer` in sub-struct signatures (Rule 2).**
+
+```
+$ rg -n '\bTextBuffer\b' crates/fresh-editor/src/model/buffer/format.rs
+# → empty
+
+$ rg -n '\bTextBuffer\b' crates/fresh-editor/src/model/buffer/file_kind.rs
+# → empty
+
+$ rg -n '\bTextBuffer\b' crates/fresh-editor/src/model/buffer/persistence/
+# → empty
+```
+
+**E. File-size cap.** No file in `model/buffer/` exceeds 700 lines:
+
+```
+$ find crates/fresh-editor/src/model/buffer -name '*.rs' -exec wc -l {} + \
+    | awk '$1 > 700 { print }'
+# → empty
+```
+
+**F. Public API preserved.** Every method that was callable as
+`TextBuffer::foo` / `buffer.foo()` before the refactor is still
+callable with the same signature. The 18 external files under
+`crates/fresh-editor/src/` and the 7 external test files must
+compile without modification.
+
+Acceptance: `cargo check -p fresh-editor && cargo test -p fresh-editor`
+passes without any change outside `crates/fresh-editor/src/model/buffer/`.
+
+**G. Tests green at every phase boundary.** Not just at the end. Each
+phase's final commit must be a green CI run.
+
+## 11. Risks & mitigations
+
+**R1: `consolidate_after_save` silently corrupts recovery state.**
+The current method reconstructs `buffers` and updates `saved_root`
+atomically. If the new `Persistence::promote_to_saved` is split across
+multiple calls or the ordering changes, a crash between calls could
+leave recovery in a torn state. **Mitigation:** keep the method atomic
+— it's one call from `save()` that takes `&mut PieceTree,
+&mut Vec<StringBuffer>` as arguments. Run
+`tests/e2e/recovery.rs` and `tests/e2e/large_file_inplace_write_bug.rs`
+between every commit in Phase 4.
+
+**R2: `mark_content_modified` is skipped by a new path.** Today every
+mutating method explicitly calls it. Post-refactor, if a sub-struct
+gains a setter and forgets the delegator pattern, an edit can land
+without bumping `version` — and LSP change-tracking would go stale.
+**Mitigation:** Rule 3's grep audit. Plus: sub-structs never expose
+public mutators for the flagged fields; only `TextBuffer`'s
+orchestrators mutate them.
+
+**R3: Borrow checker stalls in orchestrators.** Some of the
+edit-with-chunk-load methods need simultaneous `&mut` on three things
+and read on a fourth. **Mitigation:** the destructure-and-free-fn
+pattern (§8.1) is the escape hatch. If it can't be made to work for a
+specific method, convert that method to a free function taking all
+its deps by mutable reference and call it from the orchestrator.
+
+**R4: Tests break silently when split.** Inline `mod tests` can
+reference private fields via `use super::*`. After extraction, a test
+that relied on `buffer.encoding` (field access) instead of
+`buffer.encoding()` (method) will fail to compile. **Mitigation:** run
+tests after each commit in Phase 2-4 and fix any test-side
+field-access on the spot, not in a later phase.
+
+**R5: Line-cache methods are near-no-ops and hide a half-finished
+feature.** The 6 `*_line_cache_*` methods mostly do nothing
+(`populate_line_cache` takes args it doesn't use). Extracting them
+into a file preserves dead code. **Mitigation:** do the extraction
+mechanically in Phase 5 (preserve behaviour), and file a follow-up
+issue "remove or finish line cache" outside this refactor. Don't
+conflate cleanup with restructuring.
+
+**R6: Encoding detection's `detect_encoding_or_binary` sets the
+`is_binary` flag that `BufferFileKind` will own.** Today the caller in
+`from_bytes_raw` sets `self.is_binary` directly. Post-refactor the
+detection is a free function (returns `(Encoding, bool)`), and the
+constructor sets `file_kind.is_binary` from the returned bool.
+**Mitigation:** verified by the binary-detection test suite
+(`test_detect_binary_*`), which must pass after Phase 3.
+
+**R7: The refactor balloons beyond scope.** The `storage::chunks`
+module touches the piece-tree API; it's tempting to "clean up" the
+piece-tree interface while here. **Mitigation:** refuse all grooming.
+If a method's body can be moved byte-for-byte, do that; otherwise
+defer to a follow-up PR.
