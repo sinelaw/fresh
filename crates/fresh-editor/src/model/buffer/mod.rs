@@ -22,8 +22,10 @@ pub use encoding::Encoding;
 
 pub mod file_kind;
 pub mod format;
+pub mod persistence;
 pub use file_kind::BufferFileKind;
 pub use format::{BufferFormat, LineEnding};
+pub use persistence::Persistence;
 
 /// Error returned when a file save operation requires elevated privileges.
 ///
@@ -288,57 +290,34 @@ impl LineNumber {
 /// A text buffer that manages document content using a piece table
 /// with integrated line tracking
 pub struct TextBuffer {
-    /// Filesystem abstraction for file I/O operations.
-    /// Stored internally so methods can access it without threading through call chains.
-    fs: Arc<dyn FileSystem + Send + Sync>,
-
     /// The piece tree for efficient text manipulation with integrated line tracking
     piece_tree: PieceTree,
 
-    /// Snapshot of the piece tree root at last save (shared via Arc)
-    saved_root: Arc<crate::model::piece_tree::PieceTreeNode>,
-
-    /// List of string buffers containing chunks of text data
-    /// Index 0 is typically the original/stored buffer
-    /// Additional buffers are added for modifications
+    /// List of string buffers containing chunks of text data.
+    /// Index 0 is typically the original/stored buffer.
+    /// Additional buffers are added for modifications.
     buffers: Vec<StringBuffer>,
 
-    /// Next buffer ID to assign
+    /// Next buffer ID to assign.
     next_buffer_id: usize,
 
-    /// Optional file path for persistence
-    file_path: Option<PathBuf>,
+    /// Filesystem handle, optional file path, dirty/recovery flags,
+    /// saved-root snapshot, and saved-file size — see
+    /// `persistence.rs`.
+    persistence: Persistence,
 
-    /// Has the buffer been modified since last save?
-    modified: bool,
-
-    /// Does the buffer have unsaved changes for recovery auto-save?
-    /// This is separate from `modified` because recovery auto-save doesn't
-    /// clear `modified` (buffer still differs from on-disk file).
-    recovery_pending: bool,
-
-    /// File-kind flags (large_file, line_feeds_scanned, is_binary)
-    /// composed from the three corresponding former fields. See
-    /// `file_kind.rs`.
+    /// File-kind flags (large_file, line_feeds_scanned, is_binary) —
+    /// see `file_kind.rs`.
     file_kind: BufferFileKind,
 
-    /// The file size on disk after the last save.
-    /// Used for chunked recovery to know the original file size for reconstruction.
-    /// Updated when loading from file or after saving.
-    saved_file_size: Option<usize>,
+    /// Encoding + line-ending state — see `format.rs`.
+    format: BufferFormat,
 
     /// Monotonic version counter for change tracking.
     version: u64,
 
     /// Buffer configuration (estimated line length, etc.)
     config: BufferConfig,
-
-    /// Encoding + line-ending state (composes `line_ending`,
-    /// `original_line_ending`, `encoding`, `original_encoding`).
-    /// Phase 2A of the `model/buffer.rs` refactor introduces this
-    /// alongside the raw fields; subsequent phases route accesses
-    /// through it and finally delete the raw fields.
-    format: BufferFormat,
 }
 
 
@@ -359,20 +338,16 @@ impl TextBuffer {
     /// Note: large_file_threshold is ignored in the new implementation
     pub fn new(_large_file_threshold: usize, fs: Arc<dyn FileSystem + Send + Sync>) -> Self {
         let piece_tree = PieceTree::empty();
+        let saved_root = piece_tree.root();
         let line_ending = LineEnding::default();
         let encoding = Encoding::default();
         TextBuffer {
-            fs,
-            saved_root: piece_tree.root(),
             piece_tree,
             buffers: vec![StringBuffer::new(0, Vec::new())],
             next_buffer_id: 1,
-            file_path: None,
-            modified: false,
-            recovery_pending: false,
+            persistence: Persistence::new(fs, None, saved_root, None),
             file_kind: BufferFileKind::new(false, false),
             format: BufferFormat::new(line_ending, encoding),
-            saved_file_size: None,
             version: 0,
             config: BufferConfig::default(),
         }
@@ -386,7 +361,7 @@ impl TextBuffer {
         path: PathBuf,
     ) -> Self {
         let mut buffer = Self::new(large_file_threshold, fs);
-        buffer.file_path = Some(path);
+        buffer.persistence.set_file_path(path);
         buffer
     }
 
@@ -397,12 +372,12 @@ impl TextBuffer {
 
     /// Get a reference to the filesystem implementation used by this buffer.
     pub fn filesystem(&self) -> &Arc<dyn FileSystem + Send + Sync> {
-        &self.fs
+        self.persistence.fs()
     }
 
     /// Set the filesystem implementation for this buffer.
     pub fn set_filesystem(&mut self, fs: Arc<dyn FileSystem + Send + Sync>) {
-        self.fs = fs;
+        self.persistence.set_fs(fs);
     }
 
     #[inline]
@@ -412,8 +387,7 @@ impl TextBuffer {
 
     #[inline]
     fn mark_content_modified(&mut self) {
-        self.modified = true;
-        self.recovery_pending = true;
+        self.persistence.mark_dirty();
         self.bump_version();
     }
 
@@ -438,17 +412,12 @@ impl TextBuffer {
         let saved_root = piece_tree.root();
 
         TextBuffer {
-            fs,
-            format: BufferFormat::new(line_ending, Encoding::Utf8),
             piece_tree,
-            saved_root,
             buffers: vec![buffer],
             next_buffer_id: 1,
-            file_path: None,
-            modified: false,
-            recovery_pending: false,
+            persistence: Persistence::new(fs, None, saved_root, Some(bytes)),
             file_kind: BufferFileKind::new(false, true),
-            saved_file_size: Some(bytes),
+            format: BufferFormat::new(line_ending, Encoding::Utf8),
             version: 0,
             config: BufferConfig::default(),
         }
@@ -477,17 +446,12 @@ impl TextBuffer {
         let saved_root = piece_tree.root();
 
         TextBuffer {
-            fs,
-            format: BufferFormat::new(line_ending, encoding),
             piece_tree,
-            saved_root,
             buffers: vec![buffer],
             next_buffer_id: 1,
-            file_path: None,
-            modified: false,
-            recovery_pending: false,
+            persistence: Persistence::new(fs, None, saved_root, Some(bytes)),
             file_kind: BufferFileKind::new(false, false),
-            saved_file_size: Some(bytes), // Treat initial content as "saved" state
+            format: BufferFormat::new(line_ending, encoding),
             version: 0,
             config: BufferConfig::default(),
         }
@@ -520,17 +484,12 @@ impl TextBuffer {
         let saved_root = piece_tree.root();
 
         TextBuffer {
-            fs,
-            format: BufferFormat::new(line_ending, encoding),
             piece_tree,
-            saved_root,
             buffers: vec![buffer],
             next_buffer_id: 1,
-            file_path: None,
-            modified: false,
-            recovery_pending: false,
+            persistence: Persistence::new(fs, None, saved_root, Some(bytes)),
             file_kind: BufferFileKind::new(false, false),
-            saved_file_size: Some(bytes),
+            format: BufferFormat::new(line_ending, encoding),
             version: 0,
             config: BufferConfig::default(),
         }
@@ -552,17 +511,12 @@ impl TextBuffer {
         let line_ending = LineEnding::default();
         let encoding = Encoding::default();
         TextBuffer {
-            fs,
             piece_tree,
-            saved_root,
             buffers: vec![StringBuffer::new(0, Vec::new())],
             next_buffer_id: 1,
-            file_path: None,
-            modified: false,
-            recovery_pending: false,
+            persistence: Persistence::new(fs, None, saved_root, None),
             file_kind: BufferFileKind::new(false, false),
             format: BufferFormat::new(line_ending, encoding),
-            saved_file_size: None,
             version: 0,
             config: BufferConfig::default(),
         }
@@ -606,8 +560,8 @@ impl TextBuffer {
         let contents = fs.read_file(path)?;
 
         let mut buffer = Self::from_bytes_with_encoding(contents, encoding, fs);
-        buffer.file_path = Some(path.to_path_buf());
-        buffer.modified = false;
+        buffer.persistence.set_file_path(path.to_path_buf());
+        buffer.persistence.clear_modified();
         buffer.config = config;
         Ok(buffer)
     }
@@ -626,8 +580,8 @@ impl TextBuffer {
             // from_bytes handles encoding detection/conversion and line ending detection
             Self::from_bytes(contents, fs)
         };
-        buffer.file_path = Some(path.to_path_buf());
-        buffer.modified = false;
+        buffer.persistence.set_file_path(path.to_path_buf());
+        buffer.persistence.clear_modified();
         buffer.file_kind.set_large_file(false);
         buffer.file_kind.set_binary(is_binary);
         // For binary files, ensure encoding matches detection
@@ -731,8 +685,8 @@ impl TextBuffer {
             tracing::info!("Large binary file detected, loading without encoding conversion");
             let contents = fs.read_file(path)?;
             let mut buffer = Self::from_bytes_raw(contents, fs);
-            buffer.file_path = Some(path.to_path_buf());
-            buffer.modified = false;
+            buffer.persistence.set_file_path(path.to_path_buf());
+            buffer.persistence.clear_modified();
             buffer.file_kind.set_large_file(true);
             buffer.format.set_default_encoding(encoding);
             return Ok(buffer);
@@ -759,8 +713,8 @@ impl TextBuffer {
             );
             let contents = fs.read_file(path)?;
             let mut buffer = Self::from_bytes(contents, fs);
-            buffer.file_path = Some(path.to_path_buf());
-            buffer.modified = false;
+            buffer.persistence.set_file_path(path.to_path_buf());
+            buffer.persistence.clear_modified();
             buffer.file_kind.set_large_file(true); // Still mark as large file for UI purposes
             buffer.file_kind.set_binary(is_binary);
             return Ok(buffer);
@@ -796,17 +750,17 @@ impl TextBuffer {
         );
 
         Ok(TextBuffer {
-            fs,
             piece_tree,
-            saved_root,
             buffers: vec![buffer],
             next_buffer_id: 1,
-            file_path: Some(path.to_path_buf()),
-            modified: false,
-            recovery_pending: false,
+            persistence: Persistence::new(
+                fs,
+                Some(path.to_path_buf()),
+                saved_root,
+                Some(file_size),
+            ),
             file_kind: BufferFileKind::new(true, is_binary),
             format: BufferFormat::new(line_ending, encoding),
-            saved_file_size: Some(file_size),
             version: 0,
             config: BufferConfig::default(),
         })
@@ -814,8 +768,8 @@ impl TextBuffer {
 
     /// Save the buffer to its associated file
     pub fn save(&mut self) -> anyhow::Result<()> {
-        if let Some(path) = &self.file_path {
-            self.save_to_file(path.clone())
+        if let Some(path) = self.persistence.file_path_owned() {
+            self.save_to_file(path)
         } else {
             anyhow::bail!(io::Error::new(
                 io::ErrorKind::NotFound,
@@ -831,7 +785,7 @@ impl TextBuffer {
     /// would change the file's ownership to the current user. To preserve ownership,
     /// we must write directly to the existing file instead.
     fn should_use_inplace_write(&self, dest_path: &Path) -> bool {
-        !self.fs.is_owner(dest_path)
+        !self.persistence.fs().is_owner(dest_path)
     }
 
     /// Build a write recipe from the piece tree for saving.
@@ -868,7 +822,7 @@ impl TextBuffer {
         let src_path_for_copy: Option<&Path> = if needs_conversion {
             None
         } else {
-            self.file_path.as_deref().filter(|p| self.fs.exists(p))
+            self.persistence.file_path().filter(|p| self.persistence.fs().exists(p))
         };
         let target_ending = self.format.line_ending();
         let target_encoding = self.format.encoding();
@@ -917,7 +871,7 @@ impl TextBuffer {
 
                     // Need to load and send this unloaded region
                     // This happens when: different source file, or conversion needed
-                    let data = self.fs.read_range(
+                    let data = self.persistence.fs().read_range(
                         file_path,
                         (*file_offset + piece_view.buffer_offset) as u64,
                         piece_view.bytes,
@@ -984,13 +938,13 @@ impl TextBuffer {
         dest_path: &Path,
     ) -> io::Result<(PathBuf, Box<dyn crate::model::filesystem::FileWriter>)> {
         // Try creating in same directory first
-        let same_dir_temp = self.fs.temp_path_for(dest_path);
-        match self.fs.create_file(&same_dir_temp) {
+        let same_dir_temp = self.persistence.fs().temp_path_for(dest_path);
+        match self.persistence.fs().create_file(&same_dir_temp) {
             Ok(file) => Ok((same_dir_temp, file)),
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
                 // Fallback to system temp directory
-                let temp_path = self.fs.unique_temp_path(dest_path);
-                let file = self.fs.create_file(&temp_path)?;
+                let temp_path = self.persistence.fs().unique_temp_path(dest_path);
+                let file = self.persistence.fs().create_file(&temp_path)?;
                 Ok((temp_path, file))
             }
             Err(e) => Err(e),
@@ -1009,7 +963,7 @@ impl TextBuffer {
             .unwrap_or_else(|_| std::env::temp_dir());
 
         // Ensure directory exists
-        self.fs.create_dir_all(&recovery_dir)?;
+        self.persistence.fs().create_dir_all(&recovery_dir)?;
 
         // Create unique filename based on destination file and timestamp
         let file_name = dest_path
@@ -1029,7 +983,7 @@ impl TextBuffer {
         );
         let temp_path = recovery_dir.join(temp_name);
 
-        let file = self.fs.create_file(&temp_path)?;
+        let file = self.persistence.fs().create_file(&temp_path)?;
         Ok((temp_path, file))
     }
 
@@ -1044,7 +998,7 @@ impl TextBuffer {
         recovery_dir.join(format!("{}.inplace.json", hash))
     }
 
-    /// Write in-place recovery metadata using self.fs.
+    /// Write in-place recovery metadata using self.persistence.fs().
     /// This is called before the dangerous streaming step so we can recover on crash.
     fn write_inplace_recovery_meta(
         &self,
@@ -1078,7 +1032,7 @@ impl TextBuffer {
         let json = serde_json::to_string_pretty(&recovery)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        self.fs.write_file(meta_path, json.as_bytes())
+        self.persistence.fs().write_file(meta_path, json.as_bytes())
     }
 
     /// Save the buffer to a specific file
@@ -1101,7 +1055,7 @@ impl TextBuffer {
 
         // Handle empty files
         if total == 0 {
-            self.fs.write_file(dest_path, &[])?;
+            self.persistence.fs().write_file(dest_path, &[])?;
             self.finalize_save(dest_path)?;
             return Ok(());
         }
@@ -1112,7 +1066,7 @@ impl TextBuffer {
 
         // Check if we need in-place writing to preserve file ownership (local only)
         // Remote filesystems handle this differently
-        let is_local = self.fs.remote_connection_info().is_none();
+        let is_local = self.persistence.fs().remote_connection_info().is_none();
         let use_inplace = is_local && self.should_use_inplace_write(dest_path);
 
         if use_inplace {
@@ -1121,21 +1075,21 @@ impl TextBuffer {
         } else if !recipe.has_copy_ops() && !is_local {
             // Remote with no Copy ops: use write_file directly (more efficient)
             let data = recipe.flatten_inserts();
-            self.fs.write_file(dest_path, &data)?;
+            self.persistence.fs().write_file(dest_path, &data)?;
         } else if is_local {
             // Local: use write_file or write_patched with sudo fallback
             let write_result = if !recipe.has_copy_ops() {
                 let data = recipe.flatten_inserts();
-                self.fs.write_file(dest_path, &data)
+                self.persistence.fs().write_file(dest_path, &data)
             } else {
                 let src_for_patch = recipe.src_path.as_deref().unwrap_or(dest_path);
-                self.fs.write_patched(src_for_patch, dest_path, &ops)
+                self.persistence.fs().write_patched(src_for_patch, dest_path, &ops)
             };
 
             if let Err(e) = write_result {
                 if e.kind() == io::ErrorKind::PermissionDenied {
                     // Create temp file and return sudo error
-                    let original_metadata = self.fs.metadata_if_exists(dest_path);
+                    let original_metadata = self.persistence.fs().metadata_if_exists(dest_path);
                     let (temp_path, mut temp_file) = self.create_temp_file(dest_path)?;
                     self.write_recipe_to_file(&mut temp_file, &recipe)?;
                     temp_file.sync_all()?;
@@ -1147,7 +1101,7 @@ impl TextBuffer {
         } else {
             // Remote with Copy ops: use write_patched
             let src_for_patch = recipe.src_path.as_deref().unwrap_or(dest_path);
-            self.fs.write_patched(src_for_patch, dest_path, &ops)?;
+            self.persistence.fs().write_patched(src_for_patch, dest_path, &ops)?;
         }
 
         self.finalize_save(dest_path)?;
@@ -1171,7 +1125,7 @@ impl TextBuffer {
         dest_path: &Path,
         recipe: &WriteRecipe,
     ) -> anyhow::Result<()> {
-        let original_metadata = self.fs.metadata_if_exists(dest_path);
+        let original_metadata = self.persistence.fs().metadata_if_exists(dest_path);
 
         // Optimization: if no Copy ops, we can write directly without a temp file
         // (same as the non-inplace path for small files)
@@ -1187,7 +1141,7 @@ impl TextBuffer {
         if let Err(e) = self.write_recipe_to_file(&mut temp_file, recipe) {
             // Best-effort cleanup of temp file on write failure
             #[allow(clippy::let_underscore_must_use)]
-            let _ = self.fs.remove_file(&temp_path);
+            let _ = self.persistence.fs().remove_file(&temp_path);
             return Err(e.into());
         }
         temp_file.sync_all()?;
@@ -1207,7 +1161,7 @@ impl TextBuffer {
 
         // Step 2: Stream temp file content to destination
         // Now it's safe to truncate the destination since all data is in temp
-        match self.fs.open_file_for_write(dest_path) {
+        match self.persistence.fs().open_file_for_write(dest_path) {
             Ok(mut out_file) => {
                 if let Err(e) = self.stream_file_to_writer(&temp_path, &mut out_file) {
                     // Don't delete temp file or recovery metadata - allow recovery
@@ -1216,16 +1170,16 @@ impl TextBuffer {
                 out_file.sync_all()?;
                 // Success! Clean up temp file and recovery metadata (best-effort)
                 #[allow(clippy::let_underscore_must_use)]
-                let _ = self.fs.remove_file(&temp_path);
+                let _ = self.persistence.fs().remove_file(&temp_path);
                 #[allow(clippy::let_underscore_must_use)]
-                let _ = self.fs.remove_file(&recovery_meta_path);
+                let _ = self.persistence.fs().remove_file(&recovery_meta_path);
                 Ok(())
             }
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
                 // Can't write to destination - trigger sudo fallback
                 // Keep temp file for sudo to use, clean up recovery metadata (best-effort)
                 #[allow(clippy::let_underscore_must_use)]
-                let _ = self.fs.remove_file(&recovery_meta_path);
+                let _ = self.persistence.fs().remove_file(&recovery_meta_path);
                 Err(self.make_sudo_error(temp_path, dest_path, original_metadata))
             }
             Err(e) => {
@@ -1242,7 +1196,7 @@ impl TextBuffer {
         data: &[u8],
         original_metadata: Option<FileMetadata>,
     ) -> anyhow::Result<()> {
-        match self.fs.open_file_for_write(dest_path) {
+        match self.persistence.fs().open_file_for_write(dest_path) {
             Ok(mut out_file) => {
                 out_file.write_all(data)?;
                 out_file.sync_all()?;
@@ -1268,13 +1222,13 @@ impl TextBuffer {
     ) -> io::Result<()> {
         const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
 
-        let file_size = self.fs.metadata(src_path)?.size;
+        let file_size = self.persistence.fs().metadata(src_path)?.size;
         let mut offset = 0u64;
 
         while offset < file_size {
             let remaining = file_size - offset;
             let chunk_len = std::cmp::min(remaining, CHUNK_SIZE as u64) as usize;
-            let chunk = self.fs.read_range(src_path, offset, chunk_len)?;
+            let chunk = self.persistence.fs().read_range(src_path, offset, chunk_len)?;
             out_file.write_all(&chunk)?;
             offset += chunk_len as u64;
         }
@@ -1295,7 +1249,7 @@ impl TextBuffer {
                     let src_path = recipe.src_path.as_ref().ok_or_else(|| {
                         io::Error::new(io::ErrorKind::InvalidData, "Copy action without source")
                     })?;
-                    let data = self.fs.read_range(src_path, *offset, *len as usize)?;
+                    let data = self.persistence.fs().read_range(src_path, *offset, *len as usize)?;
                     out_file.write_all(&data)?;
                 }
                 RecipeAction::Insert { index } => {
@@ -1308,14 +1262,14 @@ impl TextBuffer {
 
     /// Finalize save state after successful write.
     fn finalize_save(&mut self, dest_path: &Path) -> anyhow::Result<()> {
-        let new_size = self.fs.metadata(dest_path)?.size as usize;
+        let new_size = self.persistence.fs().metadata(dest_path)?.size as usize;
         tracing::debug!(
             "Buffer::save: updating saved_file_size from {:?} to {}",
-            self.saved_file_size,
+            self.persistence.saved_file_size(),
             new_size
         );
-        self.saved_file_size = Some(new_size);
-        self.file_path = Some(dest_path.to_path_buf());
+        self.persistence.set_saved_file_size(Some(new_size));
+        self.persistence.set_file_path(dest_path.to_path_buf());
 
         // Consolidate the piece tree to synchronize with disk (for large files)
         // or to simplify structure (for small files).
@@ -1330,9 +1284,9 @@ impl TextBuffer {
     ///
     /// This updates the saved snapshot and file size to match the new state on disk.
     pub fn finalize_external_save(&mut self, dest_path: PathBuf) -> anyhow::Result<()> {
-        let new_size = self.fs.metadata(&dest_path)?.size as usize;
-        self.saved_file_size = Some(new_size);
-        self.file_path = Some(dest_path.clone());
+        let new_size = self.persistence.fs().metadata(&dest_path)?.size as usize;
+        self.persistence.set_saved_file_size(Some(new_size));
+        self.persistence.set_file_path(dest_path.clone());
 
         // Consolidate the piece tree to synchronize with disk or simplify structure.
         self.consolidate_after_save(&dest_path, new_size);
@@ -1462,8 +1416,8 @@ impl TextBuffer {
 
     /// Snapshot the current tree as the saved baseline
     pub fn mark_saved_snapshot(&mut self) {
-        self.saved_root = self.piece_tree.root();
-        self.modified = false;
+        self.persistence.set_saved_root(self.piece_tree.root());
+        self.persistence.clear_modified();
     }
 
     /// Refresh the saved root to match the current tree structure without
@@ -1471,8 +1425,8 @@ impl TextBuffer {
     /// (e.g. chunk_split_and_load during search scan) so that
     /// `diff_since_saved()` can take the fast `Arc::ptr_eq` path.
     pub fn refresh_saved_root_if_unmodified(&mut self) {
-        if !self.modified {
-            self.saved_root = self.piece_tree.root();
+        if !self.persistence.is_modified() {
+            self.persistence.set_saved_root(self.piece_tree.root());
         }
     }
 
@@ -1493,7 +1447,7 @@ impl TextBuffer {
         use crate::model::piece_tree::{LeafData, PieceTree};
 
         let mut leaves = Vec::new();
-        self.saved_root.collect_leaves(&mut leaves);
+        self.persistence.saved_root().collect_leaves(&mut leaves);
 
         let mut modified = false;
         let mut new_leaves: Vec<LeafData> = Vec::with_capacity(leaves.len() + 2);
@@ -1551,7 +1505,8 @@ impl TextBuffer {
         }
 
         if modified {
-            self.saved_root = PieceTree::from_leaves(&new_leaves).root();
+            self.persistence
+                .set_saved_root(PieceTree::from_leaves(&new_leaves).root());
         }
     }
 
@@ -1570,7 +1525,7 @@ impl TextBuffer {
         let _span = tracing::info_span!(
             "diff_since_saved",
             large_file = self.file_kind.is_large_file(),
-            modified = self.modified,
+            modified = self.persistence.is_modified(),
             lf_scanned = self.file_kind.has_line_feed_scan()
         )
         .entered();
@@ -1580,7 +1535,7 @@ impl TextBuffer {
         // This avoids an expensive O(num_leaves) structure walk when the tree
         // has been restructured for non-edit reasons (viewport chunk loading,
         // line-scan preparation, search-scan splits).
-        if !self.modified {
+        if !self.persistence.is_modified() {
             tracing::trace!("diff_since_saved: not modified → equal");
             return PieceTreeDiff {
                 equal: true,
@@ -1591,7 +1546,7 @@ impl TextBuffer {
 
         // Quick check: if tree roots are identical (Arc pointer equality),
         // the content is definitely the same.
-        if Arc::ptr_eq(&self.saved_root, &self.piece_tree.root()) {
+        if Arc::ptr_eq(self.persistence.saved_root(), &self.piece_tree.root()) {
             tracing::trace!("diff_since_saved: Arc::ptr_eq fast path → equal");
             return PieceTreeDiff {
                 equal: true,
@@ -1654,7 +1609,7 @@ impl TextBuffer {
     /// Check if the actual byte content differs in the given ranges.
     /// Returns true if content differs, false if content is identical.
     fn verify_content_differs_in_ranges(&self, byte_ranges: &[std::ops::Range<usize>]) -> bool {
-        let saved_bytes = self.tree_total_bytes(&self.saved_root);
+        let saved_bytes = self.tree_total_bytes(self.persistence.saved_root());
         let current_bytes = self.piece_tree.total_bytes();
 
         // Different total sizes means content definitely differs
@@ -1670,7 +1625,7 @@ impl TextBuffer {
 
             // Extract bytes from saved tree for this range
             let saved_slice =
-                self.extract_range_from_tree(&self.saved_root, range.start, range.end);
+                self.extract_range_from_tree(self.persistence.saved_root(), range.start, range.end);
             // Extract bytes from current tree for this range
             let current_slice = self.get_text_range(range.start, range.end);
 
@@ -1779,7 +1734,7 @@ impl TextBuffer {
 
     /// Structure-based diff comparing piece tree leaves
     fn diff_trees_by_structure(&self) -> PieceTreeDiff {
-        crate::model::piece_tree_diff::diff_piece_trees(&self.saved_root, &self.piece_tree.root())
+        crate::model::piece_tree_diff::diff_piece_trees(self.persistence.saved_root(), &self.piece_tree.root())
     }
 
     /// Convert a byte offset to a line/column position
@@ -2301,7 +2256,7 @@ impl TextBuffer {
             self.buffers
                 .get_mut(buffer_id)
                 .context("Buffer not found")?
-                .load(&*self.fs)
+                .load(&**self.persistence.fs())
                 .context("Failed to load buffer")?;
             return Ok(false);
         }
@@ -2370,7 +2325,7 @@ impl TextBuffer {
         self.buffers
             .get_mut(new_buffer_id)
             .context("Chunk buffer not found")?
-            .load(&*self.fs)
+            .load(&**self.persistence.fs())
             .context("Failed to load chunk")?;
 
         // split_at_offset uses compute_line_feeds_static which returns None
@@ -2399,8 +2354,8 @@ impl TextBuffer {
         // When modified, we must apply the same Stored→Added leaf replacement
         // to saved_root so the diff doesn't see loaded-but-unedited regions as
         // changed.
-        if !self.modified {
-            self.saved_root = self.piece_tree.root();
+        if !self.persistence.is_modified() {
+            self.persistence.set_saved_root(self.piece_tree.root());
         } else {
             self.apply_chunk_load_to_saved_root(
                 buffer_id,
@@ -2455,19 +2410,19 @@ impl TextBuffer {
 
     /// Get the file path associated with this buffer
     pub fn file_path(&self) -> Option<&Path> {
-        self.file_path.as_deref()
+        self.persistence.file_path()
     }
 
     /// Update the file path after a rename operation on disk.
     pub fn rename_file_path(&mut self, path: PathBuf) {
-        self.file_path = Some(path);
+        self.persistence.set_file_path(path);
     }
 
     /// Clear the file path (make buffer unnamed)
     /// Note: This does NOT affect Unloaded chunk file_paths used for lazy loading.
     /// Those still point to the original source file for chunk loading.
     pub fn clear_file_path(&mut self) {
-        self.file_path = None;
+        self.persistence.clear_file_path();
     }
 
     /// Extend buffer to include more bytes from a streaming source file.
@@ -2506,28 +2461,28 @@ impl TextBuffer {
 
     /// Check if the buffer has been modified since last save
     pub fn is_modified(&self) -> bool {
-        self.modified
+        self.persistence.is_modified()
     }
 
     /// Clear the modified flag (after save)
     pub fn clear_modified(&mut self) {
-        self.modified = false;
+        self.persistence.clear_modified();
     }
 
     /// Set the modified flag explicitly
     /// Used by undo/redo to restore the correct modified state
     pub fn set_modified(&mut self, modified: bool) {
-        self.modified = modified;
+        self.persistence.set_modified(modified);
     }
 
     /// Check if buffer has pending changes for recovery auto-save
     pub fn is_recovery_pending(&self) -> bool {
-        self.recovery_pending
+        self.persistence.is_recovery_pending()
     }
 
     /// Mark buffer as needing recovery auto-save (call after edits)
     pub fn set_recovery_pending(&mut self, pending: bool) {
-        self.recovery_pending = pending;
+        self.persistence.set_recovery_pending(pending);
     }
 
     /// Ensure the buffer chunk at the given byte offset is loaded.
@@ -2547,7 +2502,7 @@ impl TextBuffer {
                         buf_bytes,
                         offset
                     );
-                    if let Err(e) = buffer.load(&*self.fs) {
+                    if let Err(e) = buffer.load(&**self.persistence.fs()) {
                         tracing::warn!("Failed to load chunk at offset {offset}: {e}");
                     }
                 }
@@ -2768,7 +2723,7 @@ impl TextBuffer {
     /// Returns `None` if the buffer has no file path (caller should fall
     /// back to `search_scan_all`).
     pub fn search_hybrid_plan(&mut self) -> Option<HybridSearchPlan> {
-        let file_path = self.file_path.clone()?;
+        let file_path = self.persistence.file_path_owned()?;
 
         self.piece_tree.split_leaves_to_chunk_size(LOAD_CHUNK_SIZE);
         let leaves = self.piece_tree.get_leaves();
@@ -2872,7 +2827,7 @@ impl TextBuffer {
                 return Ok(state.matches);
             }
         };
-        plan.execute(&*self.fs, pattern, opts, &regex, max_matches, query_len)
+        plan.execute(&**self.persistence.fs(), pattern, opts, &regex, max_matches, query_len)
     }
 
     /// Count `\n` bytes in a single leaf.
@@ -2900,7 +2855,8 @@ impl TextBuffer {
                 ..
             } => {
                 let read_offset = *file_offset as u64 + leaf.offset as u64;
-                self.fs
+                self.persistence
+                    .fs()
                     .count_line_feeds_in_range(file_path, read_offset, leaf.bytes)?
             }
         };
@@ -2946,7 +2902,7 @@ impl TextBuffer {
     /// subtrees. This makes `diff_since_saved()` O(edited regions) instead of
     /// O(file size).
     pub fn rebuild_with_pristine_saved_root(&mut self, scan_updates: &[(usize, usize)]) {
-        let file_size = match self.saved_file_size {
+        let file_size = match self.persistence.saved_file_size() {
             Some(s) => s,
             None => {
                 // Fallback: no saved file size means we can't build a pristine
@@ -3013,7 +2969,7 @@ impl TextBuffer {
         pristine.update_leaf_line_feeds(scan_updates);
 
         // Snapshot the pristine tree as saved_root.
-        self.saved_root = pristine.root();
+        self.persistence.set_saved_root(pristine.root());
 
         // If no edits, the pristine tree IS the current tree.
         if deletions.is_empty() && insertions.is_empty() {
@@ -3097,7 +3053,8 @@ impl TextBuffer {
                 ..
             } => {
                 let read_offset = *file_offset as u64 + piece_offset as u64;
-                self.fs
+                self.persistence
+                    .fs()
                     .read_range(file_path, read_offset, piece_bytes)
                     .ok()?
             }
@@ -3126,7 +3083,7 @@ impl TextBuffer {
     pub fn original_file_size(&self) -> Option<usize> {
         // Return the tracked saved file size - this is updated when the file is
         // loaded or saved, so it always reflects the current file on disk.
-        self.saved_file_size
+        self.persistence.saved_file_size()
     }
 
     /// Get recovery chunks for this buffer (only modified portions)
@@ -6088,17 +6045,12 @@ mod tests {
             };
             let saved_root = piece_tree.root();
             TextBuffer {
-                fs,
                 piece_tree,
-                saved_root,
                 buffers: vec![buffer],
                 next_buffer_id: 1,
-                file_path: None,
-                modified: false,
-                recovery_pending: false,
+                persistence: Persistence::new(fs, None, saved_root, Some(bytes)),
                 file_kind: BufferFileKind::new(true, false),
                 format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
-                saved_file_size: Some(bytes),
                 version: 0,
                 config: BufferConfig::default(),
             }
@@ -6147,7 +6099,10 @@ mod tests {
             assert_eq!(buf.line_count(), Some(expected_lf + 1));
 
             // After rebuild with no edits, roots should be identical (Arc::ptr_eq).
-            assert!(Arc::ptr_eq(&buf.saved_root, &buf.piece_tree.root()));
+            assert!(Arc::ptr_eq(
+                buf.persistence.saved_root(),
+                &buf.piece_tree.root()
+            ));
             let diff = buf.diff_since_saved();
             assert!(diff.equal);
             assert!(buf.file_kind.has_line_feed_scan());
@@ -6334,17 +6289,17 @@ mod tests {
             };
             let saved_root = piece_tree.root();
             TextBuffer {
-                fs,
                 piece_tree,
-                saved_root,
                 buffers: vec![buffer],
                 next_buffer_id: 1,
-                file_path: Some(path.to_path_buf()),
-                modified: false,
-                recovery_pending: false,
+                persistence: Persistence::new(
+                    fs,
+                    Some(path.to_path_buf()),
+                    saved_root,
+                    Some(file_size),
+                ),
                 file_kind: BufferFileKind::new(true, false),
                 format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
-                saved_file_size: Some(file_size),
                 version: 0,
                 config: BufferConfig::default(),
             }
@@ -6619,17 +6574,17 @@ mod tests {
             let piece_tree = PieceTree::new(BufferLocation::Stored(0), 0, file_size, None);
             let saved_root = piece_tree.root();
             let mut buf = TextBuffer {
-                fs,
                 piece_tree,
-                saved_root,
                 buffers: vec![buffer],
                 next_buffer_id: 1,
-                file_path: Some(tmp.path().to_path_buf()),
-                modified: false,
-                recovery_pending: false,
+                persistence: Persistence::new(
+                    fs,
+                    Some(tmp.path().to_path_buf()),
+                    saved_root,
+                    Some(file_size),
+                ),
                 file_kind: BufferFileKind::new(true, false),
                 format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
-                saved_file_size: Some(file_size),
                 version: 0,
                 config: BufferConfig::default(),
             };
@@ -7515,7 +7470,8 @@ mod property_tests {
                 RecipeAction::Copy { offset, len } => {
                     if let Some(src_path) = &recipe.src_path {
                         let data = buffer
-                            .fs
+                            .persistence
+                            .fs()
                             .read_range(src_path, *offset, *len as usize)
                             .expect("read_range should succeed for Copy op");
                         output.extend_from_slice(&data);
