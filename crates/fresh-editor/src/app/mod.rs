@@ -19,6 +19,7 @@ mod event_debug_actions;
 mod file_explorer;
 pub mod file_open;
 mod file_open_input;
+mod file_open_orchestrators;
 mod file_operations;
 mod help;
 mod hover;
