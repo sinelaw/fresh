@@ -22,6 +22,7 @@ mod file_open_input;
 mod file_open_orchestrators;
 mod file_operations;
 mod help;
+mod help_actions;
 mod hover;
 mod input;
 mod input_dispatch;
