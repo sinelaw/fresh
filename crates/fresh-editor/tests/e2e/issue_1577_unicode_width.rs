@@ -101,6 +101,78 @@ fn test_issue_1577_fullwidth_w_cursor_and_row() {
     );
 }
 
+/// Stepping the cursor through a line that starts with a ZWJ family
+/// emoji must advance the cursor by exactly one visual column per
+/// `Right` press through the cluster, and then by one per ASCII char.
+///
+/// Before the fix: `SpanAccumulator::push` and `push_span_with_map`
+/// both emitted `char_width(ch)` visual-column entries per codepoint,
+/// so the `"👨‍👩‍👧‍👦"` cluster contributed 8 entries (2+0+2+0+2+0+2)
+/// instead of 2 (the cluster's real screen width per
+/// `UnicodeWidthStr::width`). `render_line` then walked that
+/// per-visual-column map to find the cursor's screen x, placing the
+/// cursor 6 cells to the right of its visual position. The user
+/// reported this as "moving Right from BOL should put the cursor on
+/// 'a' (col 2) but I see weird artifacts at col 8".
+#[test]
+fn test_issue_1577_cursor_screen_column_advances_by_grapheme_width() {
+    let mut harness = EditorTestHarness::new(WIDTH, HEIGHT).unwrap();
+    let content = format!("{ZWJ_FAMILY}abc\n");
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
+    harness.render().unwrap();
+
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    let (home_x, home_y) = harness.screen_cursor_position();
+
+    // First Right: cursor crosses the whole ZWJ family cluster (a single
+    // grapheme of visual width 2), so the screen column must advance by
+    // exactly 2 — landing on the 'a'.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    let (after1_x, after1_y) = harness.screen_cursor_position();
+    assert_eq!(
+        after1_y, home_y,
+        "cursor must stay on the same screen row after one Right"
+    );
+    assert_eq!(
+        after1_x - home_x,
+        2,
+        "cursor should advance by 2 screen columns (the ZWJ family cluster's \
+         `UnicodeWidthStr::width`), not 8 (the codepoint-sum width that was \
+         being miscounted). home_x={home_x} after_x={after1_x}",
+    );
+
+    // The cell the cursor now sits on must be the 'a'.
+    let a_cell = harness.get_cell(after1_x, after1_y).unwrap_or_default();
+    assert_eq!(
+        a_cell, "a",
+        "after the first Right, the cursor cell should contain 'a'; got {a_cell:?}"
+    );
+
+    // Each subsequent Right through "bc" advances by one ASCII column.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    let (after2_x, _) = harness.screen_cursor_position();
+    assert_eq!(after2_x - after1_x, 1);
+    assert_eq!(
+        harness.get_cell(after2_x, after1_y).unwrap_or_default(),
+        "b"
+    );
+
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    let (after3_x, _) = harness.screen_cursor_position();
+    assert_eq!(after3_x - after2_x, 1);
+    assert_eq!(
+        harness.get_cell(after3_x, after1_y).unwrap_or_default(),
+        "c"
+    );
+}
+
 #[test]
 fn test_issue_1577_zalgo_grapheme_navigation() {
     let mut harness = EditorTestHarness::new(WIDTH, HEIGHT).unwrap();

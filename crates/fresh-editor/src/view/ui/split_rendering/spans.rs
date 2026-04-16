@@ -4,12 +4,13 @@
 //! render-time "mega struct" and only uses ratatui + a narrow set of crate
 //! primitives. Every helper takes typed inputs and returns typed outputs.
 
-use crate::primitives::display_width::char_width;
+use crate::primitives::display_width::{char_width, str_width};
 use crate::primitives::highlighter::HighlightSpan;
 use crate::view::overlay::{Overlay, OverlayFace};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use std::ops::Range;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Compute character-level diff between two strings, returning ranges of changed characters.
 /// Returns a tuple of (old_changed_ranges, new_changed_ranges) where each range indicates
@@ -60,8 +61,14 @@ pub(super) fn compute_inline_diff(
 
 /// Append a styled span to `spans` and mirror visual columns into `map`.
 ///
-/// One map entry is pushed per visual column (not per character): double-width
-/// characters contribute 2 entries, zero-width characters contribute 0.
+/// One map entry is pushed per visual column (not per character). The
+/// visual column count is computed per **grapheme cluster** via
+/// `UnicodeWidthStr::width`, not per codepoint via `char_width`, because
+/// ratatui segments spans by grapheme when placing them on screen and
+/// uses the same cluster width. For ZWJ emoji sequences the two differ:
+/// a family emoji is one grapheme of width 2 but four codepoints of
+/// width 2 each (plus three ZWJs of width 0) — summing per-codepoint
+/// gives 8, which is wrong (issue #1577).
 pub(super) fn push_span_with_map(
     spans: &mut Vec<Span<'static>>,
     map: &mut Vec<Option<usize>>,
@@ -72,8 +79,8 @@ pub(super) fn push_span_with_map(
     if text.is_empty() {
         return;
     }
-    for ch in text.chars() {
-        let width = char_width(ch);
+    for grapheme in text.graphemes(true) {
+        let width = str_width(grapheme);
         for _ in 0..width {
             map.push(source);
         }
@@ -147,11 +154,21 @@ impl SpanAccumulator {
             self.first_source = source;
         }
 
+        // Update map for this character's contribution to the visual
+        // column span. We measure the grapheme-cluster width (via
+        // `UnicodeWidthStr::width`) before and after appending `ch` and
+        // push `delta` entries. This keeps zero-width combining marks
+        // and ZWJ continuation codepoints at 0, widens the base
+        // codepoint of a cluster by exactly the cluster's final width,
+        // and — crucially for ZWJ emoji sequences — does not add 2+2+2+2
+        // for a four-emoji family cluster whose real on-screen width is
+        // 2. `char_width(ch)` summed per codepoint gets that wrong
+        // (issue #1577).
+        let width_before = str_width(&self.text);
         self.text.push(ch);
-
-        // Update map for this character's visual width
-        let width = char_width(ch);
-        for _ in 0..width {
+        let width_after = str_width(&self.text);
+        let delta = width_after.saturating_sub(width_before);
+        for _ in 0..delta {
             map.push(source);
         }
     }
