@@ -233,30 +233,27 @@ at the source level**, so hidden bytes are never tokenised.
    tiny post-pass that operates only on header lines, identified by
    `collapsed_header_bytes`).
 
-### Migration sequence
+### Tear-out
 
-This is the largest change in the plan. Do it in order:
+Single change, no transitional scaffolding:
 
-1. **5a**: Introduce `FoldSkipSet` as a typed input on
-   `ViewLineIterator::new`, plumbed but **empty by default** (no behaviour
-   change). Add unit tests for the iterator that drive it with non-empty
-   skip sets and assert source-byte continuity across skip boundaries.
-
-2. **5b**: Implement the skip logic in the iterator's source-byte advance
-   path. Verify visual equivalence by running with the new path enabled
-   only when `FoldManager::is_empty()` is false; the post-filter remains in
-   place as a belt-and-suspenders correctness check (it should now be a
-   no-op).
-
-3. **5c**: Remove `apply_folding`'s line-filter loop; keep only the
-   header-placeholder application (move it into a small helper that takes
-   only header-byte → placeholder).
-
-4. **5d**: Remove `fold_adjusted_visible_count`; restore the natural
-   `visible_count` plumbing.
-
-5. **5e**: Re-run `perf`. Folded buffers should now show fold-mass-invariant
+1. Add `FoldSkipSet` as a required input on `ViewLineIterator::new`. Derive
+   it once per render from `FoldManager::resolved_ranges`.
+2. Implement skip logic in the iterator's source-byte advance path. When
+   the cursor enters a skip range, jump to `range.end` before producing
+   the next ViewLine.
+3. Move `append_fold_placeholder` into the iterator's header-byte handling
+   (or a tiny post-pass keyed only by `collapsed_header_bytes`).
+4. Delete `apply_folding`'s line-filter loop.
+5. Delete `fold_adjusted_visible_count`; restore natural `visible_count`
+   plumbing at every call site.
+6. Re-run `perf`. Folded buffers should now show fold-mass-invariant
    render cost.
+
+Tests for cursor traversal across collapsed folds (`Down` over the header,
+click into the line below the fold) cover the correctness gate. If they
+pass, the tear-out is correct; if they regress, fix the iterator — don't
+re-introduce the post-filter.
 
 ### Risks (specific to Phase 5)
 
@@ -303,16 +300,15 @@ profile — none individually large, all easy.
 | Active-set update at line transitions miscounts overlay depth | 1 | Unit tests in `char_style.rs` that drive sweep across multi-line overlays. |
 | Selection sweep breaks when ranges are not actually sorted | 2 | Add a debug-build assertion in the renderer; sort defensively if needed (selections are small). |
 | Conceal cursor drifts when a token's bytes don't strictly increase (e.g. virtual tokens) | 3 | Skip cursor update for tokens with `source_offset == None` — same shape as today's closure. |
-| Fold post-filter removed before iterator skip is correct | 5c | Keep post-filter in place during 5a/5b; assert it removes zero lines before deleting in 5c. |
-| Cursor `Down` behaviour over folded ranges regresses | 5 | Add e2e tests for cursor traversal across collapsed folds before any iterator changes; use them as the regression gate. |
-| `fold_indicators_for_viewport` lookahead breaks once budget no longer inflates | 5d | Move indicator detection to operate on buffer directly, decoupled from ViewLine count. |
+| Cursor `Down` behaviour over folded ranges regresses | 5 | Add e2e tests for cursor traversal across collapsed folds before the tear-out; use them as the regression gate. |
+| `fold_indicators_for_viewport` lookahead breaks once budget no longer inflates | 5 | Move indicator detection to operate on buffer directly, decoupled from ViewLine count. |
 
 ## Success criteria
 
 - `render_view_lines` ≤ 8 % of CPU on the same workload (down from 20.77 %).
 - `compute_char_style`'s `Vec<&Overlay>` allocation no longer present in
   flame-graph (zero `RawVec::finish_grow` attributable to `compute_char_style`).
-- All existing tests pass at each phase boundary; per-phase commits.
+- All existing tests pass at each phase boundary; one commit per phase.
 - A heavily-folded benchmark buffer (≥ 80 % bytes inside collapsed ranges)
   shows render time within ~1.5× of the same buffer fully expanded
   (currently it can be far worse because hidden lines are still tokenised).
