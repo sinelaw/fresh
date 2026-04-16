@@ -35,6 +35,7 @@ mod regex_replace;
 mod render;
 mod settings_actions;
 mod shell_command;
+mod smart_home;
 mod split_actions;
 mod tab_drag;
 mod terminal;

@@ -3870,18 +3870,19 @@ impl Editor {
 
     /// Compute the smart-home target for a visual (soft-wrapped) line.
     ///
-    /// On the **first** visual row of a physical line the cursor toggles between
-    /// the first non-whitespace character and position 0 (standard smart-home).
-    ///
-    /// On a **continuation** (wrapped) row the cursor moves to the visual row
-    /// start; if already there it advances to the previous visual row's start
-    /// so that repeated Home presses walk all the way back to position 0.
+    /// Adapter around [`super::smart_home::smart_home_target`]: fetches the
+    /// visual-row boundaries and the first non-whitespace offset, then
+    /// delegates the decision. When the pure helper returns
+    /// [`SmartHomeTarget::PreviousVisualRowStart`] the caller issues the
+    /// extra layout lookup here.
     fn smart_home_visual_line(
         &mut self,
         split_id: LeafId,
         cursor_pos: usize,
         estimated_line_length: usize,
     ) -> Option<usize> {
+        use super::smart_home::{smart_home_target, SmartHomeTarget};
+
         let visual_start = self
             .cached_layout
             .visual_line_start(split_id, cursor_pos, false)?;
@@ -3896,35 +3897,30 @@ impl Editor {
 
         let is_first_visual_row = visual_start == phys_line_start;
 
-        if is_first_visual_row {
-            // First visual row: toggle first-non-ws ↔ physical line start
+        // The first_non_ws offset is only meaningful on the first visual row;
+        // compute it eagerly anyway so the pure helper stays unconditional.
+        let first_non_ws = if is_first_visual_row {
             let visual_end = self
                 .cached_layout
                 .visual_line_end(split_id, cursor_pos, false)
                 .unwrap_or(visual_start);
             let visual_len = visual_end.saturating_sub(visual_start);
-            let first_non_ws = content
+            content
                 .chars()
                 .take(visual_len)
                 .take_while(|c| *c != '\n')
                 .position(|c| !c.is_whitespace())
                 .map(|offset| visual_start + offset)
-                .unwrap_or(visual_start);
-
-            if cursor_pos == first_non_ws {
-                Some(visual_start)
-            } else {
-                Some(first_non_ws)
-            }
+                .unwrap_or(visual_start)
         } else {
-            // Continuation row: go to visual line start, or advance backward
-            if cursor_pos == visual_start {
-                // Already at start – advance to previous visual row's start
-                self.cached_layout
-                    .visual_line_start(split_id, cursor_pos, true)
-            } else {
-                Some(visual_start)
-            }
+            visual_start
+        };
+
+        match smart_home_target(cursor_pos, visual_start, is_first_visual_row, first_non_ws) {
+            SmartHomeTarget::At(pos) => Some(pos),
+            SmartHomeTarget::PreviousVisualRowStart => self
+                .cached_layout
+                .visual_line_start(split_id, cursor_pos, true),
         }
     }
 
