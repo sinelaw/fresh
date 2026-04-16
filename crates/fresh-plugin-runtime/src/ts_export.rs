@@ -807,6 +807,7 @@ mod tests {
             "registerLspServer",
             "reloadGrammars",
             "getConfigDir",
+            "getDataDir",
             "getThemesDir",
             "applyTheme",
             "getThemeSchema",

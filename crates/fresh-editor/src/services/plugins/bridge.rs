@@ -101,6 +101,10 @@ impl PluginServiceBridge for EditorServiceBridge {
         self.dir_context.config_dir.clone()
     }
 
+    fn data_dir(&self) -> PathBuf {
+        self.dir_context.data_dir.clone()
+    }
+
     fn get_theme_data(&self, key_or_name: &str) -> Option<serde_json::Value> {
         let cache = self.theme_cache.read().unwrap();
         // Exact key match

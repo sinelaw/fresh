@@ -84,11 +84,45 @@ interface FileEntry {
  */
 type EmptyStateReason = 'not_git' | 'clean' | null;
 
+/**
+ * Which slice of history the current review-diff session is inspecting.
+ *
+ * - `'worktree'`: the default mode — what `git status` reports right now.
+ *   No single SHA fingerprints this mode (the working tree is volatile), so
+ *   comments are keyed only by repo root and restored on a best-effort basis
+ *   using `file`/`old_line`/`new_line`/`line_content`.
+ * - `'range'`: reviewing a static slice (single commit or `A..B` range).
+ *   The diff is stable, so comments restore 1:1.
+ */
+type ReviewMode = 'worktree' | 'range';
+
+interface ReviewRange {
+  /** `git diff <from>` left-hand-side. */
+  from: string;
+  /** `git diff ... <to>` right-hand-side. */
+  to: string;
+  /** Human-readable label for status bar / layout name. */
+  label: string;
+}
+
 interface ReviewState {
   hunks: Hunk[];
   comments: ReviewComment[];
   note: string;
   reviewBufferId: number | null;
+  /** Review slice: working tree vs. static commit / range. */
+  mode: ReviewMode;
+  /** Populated when `mode === 'range'`. */
+  range: ReviewRange | null;
+  /** Absolute path to the git repo root — stable key for persistence. */
+  repoRoot: string;
+  /**
+   * Persistence key within the repo's review dir:
+   *   `worktree`            — `mode === 'worktree'`
+   *   `range-<from>__<to>`  — `mode === 'range'`
+   * Filename-safe characters only (see `sanitizeKeySegment`).
+   */
+  reviewKey: string;
   // Files with changes (used for section grouping + headers in the
   // unified stream). Order matches the order they appear in the diff.
   files: FileEntry[];
@@ -165,6 +199,10 @@ const state: ReviewState = {
   comments: [],
   note: '',
   reviewBufferId: null,
+  mode: 'worktree',
+  range: null,
+  repoRoot: '',
+  reviewKey: 'worktree',
   files: [],
   emptyState: null,
   viewportWidth: 80,
@@ -269,6 +307,152 @@ function getByteLength(str: string): number {
         } else s += 3;
     }
     return s;
+}
+
+// --- Persistence ---
+//
+// Review comments for a given repo are persisted under:
+//
+//     <data_dir>/audit/<sanitized-repo-root>/<review-key>.json
+//
+// Where:
+//   - `<data_dir>` is the host's `DirectoryContext::data_dir` (exposed via
+//     the `getDataDir()` API added for this feature).
+//   - `<review-key>` captures the *kind* of review — not every git state is
+//     a fingerprint:
+//       - `worktree` for `start_review_diff` (working tree review). There
+//         is no single fingerprint for the working tree so we just reuse a
+//         single slot per repo; line-content + line-number matching on
+//         restore prunes comments that no longer apply.
+//       - `range-<from>__<to>` for `start_review_range` (commit / branch
+//         review). The range is stable, so comments survive re-opening.
+//
+// Design notes / alternatives that were considered:
+//   - Keying worktree comments by the index or HEAD SHA: rejected — the
+//     working tree is volatile so the key would change constantly and you
+//     couldn't get your comments back after a single edit.
+//   - Storing under `.review/` in the working tree: rejected — that bakes
+//     the reviewer's state into the repo, which leaks into `git status`.
+//   - One big JSON with all review keys per repo: rejected — concurrent
+//     edits across review windows could clobber each other. Per-key files
+//     keep each review's writes independent.
+
+interface PersistedReview {
+    version: number;
+    mode: ReviewMode;
+    range: ReviewRange | null;
+    note: string;
+    comments: ReviewComment[];
+    updated_at: string;
+}
+
+const REVIEW_STORAGE_VERSION = 1;
+
+/**
+ * Make a string safe for use as a filename / directory name on all host
+ * OSes. Forbidden characters (`/`, `\`, `:`, etc.) collapse to `_`; long
+ * tails hash-truncate so path length stays sane.
+ */
+function sanitizeKeySegment(raw: string): string {
+    const replaced = raw.replace(/[^A-Za-z0-9._-]+/g, '_');
+    if (replaced.length <= 120) return replaced;
+    // Cheap 32-bit FNV-1a so different long segments don't alias after
+    // truncation.
+    let h = 0x811c9dc5 >>> 0;
+    for (let i = 0; i < raw.length; i++) {
+        h ^= raw.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return replaced.slice(0, 100) + '__' + h.toString(16);
+}
+
+/**
+ * Build the review-key portion of the storage filename (without the
+ * `.json` extension) for the current mode / range.
+ */
+function buildReviewKey(mode: ReviewMode, range: ReviewRange | null): string {
+    if (mode === 'range' && range) {
+        return `range-${sanitizeKeySegment(range.from)}__${sanitizeKeySegment(range.to)}`;
+    }
+    return 'worktree';
+}
+
+/** Directory that stores all review files for a given repo. */
+function reviewStorageDirFor(repoRoot: string): string | null {
+    try {
+        const dataDir = (editor as any).getDataDir?.() as string | undefined;
+        if (!dataDir) return null;
+        return editor.pathJoin(dataDir, "audit", sanitizeKeySegment(repoRoot));
+    } catch {
+        return null;
+    }
+}
+
+/** Absolute path of the JSON file backing a review key. */
+function reviewStoragePathFor(repoRoot: string, reviewKey: string): string | null {
+    const dir = reviewStorageDirFor(repoRoot);
+    if (!dir) return null;
+    return editor.pathJoin(dir, `${reviewKey}.json`);
+}
+
+/**
+ * Resolve the git top-level for `editor.getCwd()`. Returns `''` when the
+ * cwd isn't inside a repo — callers then skip persistence.
+ */
+async function detectRepoRoot(): Promise<string> {
+    try {
+        const result = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"]);
+        if (result.exit_code === 0) {
+            return result.stdout.trim();
+        }
+    } catch {
+        // fall through
+    }
+    return '';
+}
+
+/**
+ * Persist the current `state.comments` / `state.note` to disk. Best-effort:
+ * filesystem errors never surface to the user — the UI is the source of
+ * truth during the session and writes are just a cache for restore.
+ */
+function persistReview(): void {
+    if (!state.repoRoot) return;
+    const path = reviewStoragePathFor(state.repoRoot, state.reviewKey);
+    if (!path) return;
+    const dir = reviewStorageDirFor(state.repoRoot);
+    if (dir) {
+        try { editor.createDir(dir); } catch {}
+    }
+    const payload: PersistedReview = {
+        version: REVIEW_STORAGE_VERSION,
+        mode: state.mode,
+        range: state.range,
+        note: state.note,
+        comments: state.comments,
+        updated_at: new Date().toISOString(),
+    };
+    try {
+        editor.writeFile(path, JSON.stringify(payload, null, 2));
+    } catch {}
+}
+
+/** Read back a persisted review (if any). Returns null on any failure. */
+function loadPersistedReview(repoRoot: string, reviewKey: string): PersistedReview | null {
+    if (!repoRoot) return null;
+    const path = reviewStoragePathFor(repoRoot, reviewKey);
+    if (!path) return null;
+    if (!editor.fileExists(path)) return null;
+    try {
+        const raw = editor.readFile(path);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as PersistedReview;
+        if (!parsed || typeof parsed !== 'object') return null;
+        if (!Array.isArray(parsed.comments)) return null;
+        return parsed;
+    } catch {
+        return null;
+    }
 }
 
 // --- Diff Logic ---
@@ -1744,14 +1928,20 @@ function review_enter_dispatch() {
         review_open_selected_comment();
         return;
     }
-    // Only drill down when the cursor is inside a file's diff content.
-    // Pressing Enter on a section header, file header, blank separator,
-    // or comment row would otherwise navigate to a side-by-side view of
-    // some unrelated file (whichever currentFileFromCursor happens to
-    // resolve to). Quietly no-op instead.
     const props = propsAtCursorRow();
     if (!props) return;
     const t = props["type"];
+    // On a file or section header, Enter doubles as Tab: toggle the
+    // header's collapse state. Matches the intuition that a header is a
+    // disclosure widget — pressing the primary key on it should expand
+    // or fold the thing it owns, not drill down.
+    if (t === 'file-header' || t === 'section-header') {
+        review_toggle_file_collapse();
+        return;
+    }
+    // Inside a file's diff content, drill down to side-by-side view.
+    // Blank separators and comment rows are quietly ignored to avoid
+    // drilling into whatever file the cursor happens to be adjacent to.
     if (t === 'add' || t === 'remove' || t === 'context' || t === 'hunk-header') {
         review_drill_down();
     }
@@ -2291,10 +2481,17 @@ registerHandler("on_review_discard_confirm", on_review_discard_confirm);
  * Refresh file list and diffs using the new git status approach, then re-render.
  */
 async function refreshMagitData() {
-    const status = await getGitStatus();
-    state.files = status.files;
-    state.emptyState = status.emptyReason;
-    state.hunks = await fetchDiffsForFiles(status.files);
+    if (state.mode === 'range' && state.range) {
+        const { hunks, files } = await fetchRangeDiff(state.range);
+        state.hunks = hunks;
+        state.files = files;
+        state.emptyState = null;
+    } else {
+        const status = await getGitStatus();
+        state.files = status.files;
+        state.emptyState = status.emptyReason;
+        state.hunks = await fetchDiffsForFiles(status.files);
+    }
     state.diffCursorRow = 1;
     updateMagitDisplay();
     restoreCursorAfterRebuild();
@@ -3232,6 +3429,7 @@ function on_review_delete_comment_confirm(args: { prompt_type: string; input: st
         } else {
             state.comments = state.comments.filter(c => c.id !== pendingDeleteCommentId);
         }
+        persistReview();
         updateMagitDisplay();
         editor.setStatus("Deleted");
     } else {
@@ -3262,6 +3460,7 @@ function on_review_prompt_confirm(args: { prompt_type: string; input: string }):
             if (existing) {
                 existing.text = args.input.trim();
                 existing.timestamp = new Date().toISOString();
+                persistReview();
                 updateMagitDisplay();
                 jumpDiffCursorToRow(cursorRowBeforeRebuild);
                 editor.setStatus("Comment updated");
@@ -3288,6 +3487,7 @@ function on_review_prompt_confirm(args: { prompt_type: string; input: string }):
             line_type: pendingCommentInfo.lineType
         };
         state.comments.push(comment);
+        persistReview();
         updateMagitDisplay();
         jumpDiffCursorToRow(cursorRowBeforeRebuild);
         let lineRef = 'hunk';
@@ -3339,6 +3539,7 @@ function on_review_edit_note_confirm(args: { prompt_type: string; input: string 
     if (args.prompt_type !== "review-edit-note") return true;
     if (args.input && args.input.trim()) {
         state.note = args.input.trim();
+        persistReview();
         updateMagitDisplay();
         editor.setStatus(state.note ? "Note saved" : "Note cleared");
     } else {
@@ -3435,87 +3636,143 @@ async function review_export_json() {
 }
 registerHandler("review_export_json", review_export_json);
 
-async function start_review_diff() {
-    editor.setStatus(editor.t("status.generating"));
-    editor.setContext("review-mode", true);
-
-    // Get viewport size
-    const viewport = editor.getViewport();
-    if (viewport) {
-        state.viewportWidth = viewport.width;
-        state.viewportHeight = viewport.height;
-    }
-
-    // Fetch data using new git status approach
-    const status = await getGitStatus();
-    state.files = status.files;
-    state.emptyState = status.emptyReason;
-    state.hunks = await fetchDiffsForFiles(status.files);
-    state.comments = [];
-    state.note = '';
+/**
+ * Reset the slice of `state` that tracks per-session cursor / fold / row
+ * indices. Keeps `state.comments` and `state.note` untouched so the
+ * caller can populate them (either freshly, or from disk).
+ */
+function resetPerSessionState(): void {
     state.diffCursorRow = 1;
     state.hunkHeaderRows = [];
     state.diffLineByteOffsets = [];
     state.fileHeaderRows = {};
     state.collapsedFiles = new Set();
+    state.collapsedSections = new Set();
+    state.collapsedHunks = new Set();
     state.commentsByRow = {};
     state.commentsSelectedRow = 0;
     state.focusPanel = 'diff';
+    state.commentsHighlightId = null;
+    state.stickyCurrentFile = null;
+    state.lineSelection = null;
+}
 
-    // Critique-style unified layout:
-    //   toolbar (2 rows fixed)
-    //   ┌──── sticky file header (1 row fixed) ─┬───────────┐
-    //   ├──── diff stream (scrollable) ─────────┤ comments  │
-    //   └───────────────────────────────────────┴───────────┘
-    //
-    // The host requires a `ratio` on every split node, even when one
-    // child is `fixed` — the renderer ignores the ratio for fixed sides
-    // and uses the fixed `height` instead.
-    const layout = JSON.stringify({
+const REVIEW_LAYOUT = JSON.stringify({
+    type: "split",
+    direction: "v",
+    ratio: 0.05,
+    first: { type: "fixed", id: "toolbar", height: 2 },
+    second: {
         type: "split",
-        direction: "v",
-        ratio: 0.05,
-        first: { type: "fixed", id: "toolbar", height: 2 },
-        second: {
+        direction: "h",
+        ratio: 0.75,
+        first: {
             type: "split",
-            direction: "h",
-            ratio: 0.75,
-            first: {
-                type: "split",
-                direction: "v",
-                ratio: 0.05,
-                first: { type: "fixed", id: "sticky", height: 1 },
-                second: { type: "scrollable", id: "diff" },
-            },
-            second: { type: "scrollable", id: "comments" },
+            direction: "v",
+            ratio: 0.05,
+            first: { type: "fixed", id: "sticky", height: 1 },
+            second: { type: "scrollable", id: "diff" },
         },
-    });
+        second: { type: "scrollable", id: "comments" },
+    },
+});
 
-    const groupResult = await editor.createBufferGroup("*Review Diff*", "review-mode", layout);
+/**
+ * Create the review-diff buffer group (toolbar / sticky / diff / comments)
+ * and wire up the standard review-mode event listeners. Returns true if
+ * the panels were created, false on failure.
+ */
+async function openReviewPanels(groupName: string): Promise<boolean> {
+    const viewport = editor.getViewport();
+    if (viewport) {
+        state.viewportWidth = viewport.width;
+        state.viewportHeight = viewport.height;
+    }
+    editor.setContext("review-mode", true);
+    const groupResult = await editor.createBufferGroup(groupName, "review-mode", REVIEW_LAYOUT);
     state.groupId = groupResult.groupId;
     state.panelBuffers = groupResult.panels;
     state.reviewBufferId = groupResult.panels["diff"];
 
-    // Diff panel uses the editor's native cursor for scrolling.
     if (state.panelBuffers["diff"] !== undefined) {
         (editor as any).setBufferShowCursors(state.panelBuffers["diff"], true);
     }
 
-    // Set initial content for all panels
     updateMagitDisplay();
 
-    // Focus the diff panel so review-mode keybindings work immediately.
     editor.focusBufferGroupPanel(state.groupId, "diff");
 
-    // Register resize handler
     editor.on("resize", "onReviewDiffResize");
-
     updateReviewStatus();
     editor.on("buffer_activated", "on_review_buffer_activated");
     editor.on("buffer_closed", "on_review_buffer_closed");
     editor.on("cursor_moved", "on_review_cursor_moved");
     editor.on("viewport_changed", "on_review_viewport_changed");
     editor.on("mouse_click", "on_review_mouse_click");
+    return true;
+}
+
+/**
+ * Drop any comments whose anchor lines can no longer be found in the
+ * current hunks. Applied on restore so stale worktree-mode comments from
+ * a long-since-rewritten file don't pile up. For range mode this is a
+ * no-op because comments should always match.
+ */
+function pruneOrphanComments(comments: ReviewComment[], hunks: Hunk[]): ReviewComment[] {
+    const byHunk = new Map<string, Hunk>();
+    for (const h of hunks) byHunk.set(h.id, h);
+    const fileSet = new Set(hunks.map(h => h.file));
+    return comments.filter(c => {
+        // Keep comments whose hunk still exists or whose file is still
+        // part of the diff and whose anchor line is present in some hunk.
+        if (byHunk.has(c.hunk_id)) return true;
+        if (!fileSet.has(c.file)) return false;
+        const fileHunks = hunks.filter(h => h.file === c.file);
+        for (const h of fileHunks) {
+            const lt = c.line_type;
+            if (!lt) continue;
+            let oldN = h.oldRange.start - 1;
+            let newN = h.range.start - 1;
+            for (const raw of h.lines) {
+                if (raw.startsWith('+')) {
+                    newN++;
+                    if (lt === 'add' && c.new_line === newN) return true;
+                } else if (raw.startsWith('-')) {
+                    oldN++;
+                    if (lt === 'remove' && c.old_line === oldN) return true;
+                } else {
+                    oldN++; newN++;
+                    if (lt === 'context' && c.new_line === newN) return true;
+                }
+            }
+        }
+        return false;
+    });
+}
+
+async function start_review_diff() {
+    editor.setStatus(editor.t("status.generating"));
+
+    // Fetch data using the git status approach.
+    const status = await getGitStatus();
+    state.files = status.files;
+    state.emptyState = status.emptyReason;
+    state.hunks = await fetchDiffsForFiles(status.files);
+
+    // Persistence setup: worktree mode keyed by repo root.
+    state.mode = 'worktree';
+    state.range = null;
+    state.repoRoot = await detectRepoRoot();
+    state.reviewKey = buildReviewKey(state.mode, state.range);
+
+    // Restore persisted comments (if any). We drop orphans so the UI
+    // doesn't display comments that no longer point at visible lines.
+    const loaded = loadPersistedReview(state.repoRoot, state.reviewKey);
+    state.comments = loaded ? pruneOrphanComments(loaded.comments, state.hunks) : [];
+    state.note = loaded?.note ?? '';
+
+    resetPerSessionState();
+    await openReviewPanels("*Review Diff*");
 }
 registerHandler("start_review_diff", start_review_diff);
 
@@ -3536,6 +3793,194 @@ function stop_review_diff() {
     editor.setStatus(editor.t("status.stopped"));
 }
 registerHandler("stop_review_diff", stop_review_diff);
+
+// =============================================================================
+// Range / commit review (Task 2)
+// =============================================================================
+//
+// `start_review_diff` reviews the working tree. `start_review_range` reviews
+// a flattened diff between two git refs — the user types:
+//
+//     HEAD~3..HEAD     (a span of commits)
+//     main..HEAD       (a whole branch)
+//     <sha>            (a single commit — rewritten to `<sha>^..<sha>`)
+//
+// Alternatives considered for the picker UI:
+//   - A dedicated two-panel picker (from / to). Clean but adds a big new
+//     UI surface for a small benefit.
+//   - The existing `start_review_branch` commit list (inline, Enter-to-
+//     select). Rejected because that view is commit-by-commit and we
+//     specifically want a *flattened* diff for batch commenting.
+//   - Single prompt with a small suggestion list. Chosen — matches the
+//     tone of the existing `start_review_branch` prompt and lets power
+//     users type arbitrary revspecs without a multi-step UI.
+
+/**
+ * Parse a range string typed into the picker. Accepts:
+ *   `A..B`, `A...B` — two-dot / three-dot ranges.
+ *   `<ref>`         — single commit, rewritten to `<ref>^..<ref>`.
+ *
+ * Returns `null` on invalid input (empty string).
+ */
+function parseRangeInput(input: string): ReviewRange | null {
+    const raw = input.trim();
+    if (!raw) return null;
+    const threeDot = raw.indexOf("...");
+    if (threeDot > 0) {
+        const from = raw.slice(0, threeDot).trim();
+        const to = raw.slice(threeDot + 3).trim();
+        if (!from || !to) return null;
+        return { from, to, label: `${from}...${to}` };
+    }
+    const twoDot = raw.indexOf("..");
+    if (twoDot > 0) {
+        const from = raw.slice(0, twoDot).trim();
+        const to = raw.slice(twoDot + 2).trim();
+        if (!from || !to) return null;
+        return { from, to, label: `${from}..${to}` };
+    }
+    // Single ref -> single-commit review.
+    return { from: `${raw}^`, to: raw, label: raw };
+}
+
+/**
+ * Fetch a flattened unified diff for the given range and convert it to
+ * the same Hunk + FileEntry shape the worktree path produces. All hunks
+ * are assigned `gitStatus: 'unstaged'` so the existing section grouping
+ * still works; untracked / staged categories are meaningless here.
+ */
+async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; files: FileEntry[] }> {
+    const result = await editor.spawnProcess("git", [
+        "diff", "--unified=3", `${range.from}..${range.to}`,
+    ]);
+    if (result.exit_code !== 0) {
+        return { hunks: [], files: [] };
+    }
+    const hunks = parseDiffOutput(result.stdout, 'unstaged');
+    // Rewrite hunk ids so they include the range — avoids id collisions
+    // when a user opens multiple range reviews in the same session.
+    for (const h of hunks) {
+        h.id = `${range.label}|${h.file}:${h.range.start}`;
+    }
+    // Derive a FileEntry list from the hunks, preserving first-seen order.
+    const seen = new Set<string>();
+    const files: FileEntry[] = [];
+    for (const h of hunks) {
+        if (!seen.has(h.file)) {
+            seen.add(h.file);
+            files.push({ path: h.file, status: 'M', category: 'unstaged' });
+        }
+    }
+    return { hunks, files };
+}
+
+/**
+ * Build a short list of revspec suggestions to prefill the picker. Falls
+ * back gracefully if any of the helper git calls fail — the prompt still
+ * accepts arbitrary input.
+ */
+async function buildRangeSuggestions(): Promise<PromptSuggestion[]> {
+    const suggestions: PromptSuggestion[] = [];
+    // HEAD last commit.
+    suggestions.push({ text: "HEAD", description: "Review last commit", value: "HEAD" });
+    // Current-branch-vs-main style ranges.
+    const tryRange = async (base: string) => {
+        const exists = await editor.spawnProcess("git", ["rev-parse", "--verify", base]);
+        if (exists.exit_code === 0) {
+            suggestions.push({
+                text: `${base}..HEAD`,
+                description: `Review all commits on current branch vs ${base}`,
+                value: `${base}..HEAD`,
+            });
+        }
+    };
+    await tryRange("main");
+    await tryRange("master");
+    // Recent commits for one-off review.
+    try {
+        const log = await editor.spawnProcess("git", [
+            "log", "-n", "5", "--pretty=format:%h %s",
+        ]);
+        if (log.exit_code === 0) {
+            for (const line of log.stdout.split('\n')) {
+                const m = line.match(/^([0-9a-f]+)\s+(.*)$/);
+                if (m) {
+                    suggestions.push({
+                        text: m[1],
+                        description: `Review commit: ${m[2]}`,
+                        value: m[1],
+                    });
+                }
+            }
+        }
+    } catch {}
+    return suggestions;
+}
+
+async function start_review_range(): Promise<void> {
+    // If a review is already open, swap it out rather than stacking two.
+    if (state.groupId !== null) {
+        stop_review_diff();
+    }
+
+    const suggestions = await buildRangeSuggestions();
+    const label = editor.t("prompt.review_range") || "Review range (A..B or commit):";
+    editor.startPromptWithInitial(label, "review-range", "HEAD");
+    if (suggestions.length > 0) {
+        editor.setPromptSuggestions(suggestions);
+    }
+}
+registerHandler("start_review_range", start_review_range);
+
+function on_review_range_confirm(args: { prompt_type: string; input: string }): boolean {
+    if (args.prompt_type !== "review-range") return true;
+    const range = parseRangeInput(args.input);
+    if (!range) {
+        editor.setStatus(editor.t("status.cancelled") || "Cancelled");
+        return true;
+    }
+    // Kick off the async bootstrap; the prompt is already dismissed so we
+    // can return immediately.
+    bootstrapRangeReview(range);
+    return true;
+}
+registerHandler("on_review_range_confirm", on_review_range_confirm);
+editor.on("prompt_confirmed", "on_review_range_confirm");
+
+async function bootstrapRangeReview(range: ReviewRange): Promise<void> {
+    editor.setStatus(editor.t("status.generating") || "Generating diff…");
+    const { hunks, files } = await fetchRangeDiff(range);
+    if (hunks.length === 0) {
+        editor.setStatus(
+            editor.t("status.review_range_empty", { range: range.label }) ||
+                `No changes in ${range.label}`,
+        );
+        return;
+    }
+    state.mode = 'range';
+    state.range = range;
+    state.hunks = hunks;
+    state.files = files;
+    state.emptyState = null;
+    state.repoRoot = await detectRepoRoot();
+    state.reviewKey = buildReviewKey(state.mode, state.range);
+
+    // Load persisted comments for this exact range — the diff is static
+    // so they always line up.
+    const loaded = loadPersistedReview(state.repoRoot, state.reviewKey);
+    state.comments = loaded ? loaded.comments : [];
+    state.note = loaded?.note ?? '';
+
+    resetPerSessionState();
+    await openReviewPanels(`*Review ${range.label}*`);
+}
+
+editor.registerCommand(
+    "%cmd.review_range",
+    "%cmd.review_range_desc",
+    "start_review_range",
+    null,
+);
 
 
 /**

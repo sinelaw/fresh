@@ -53,6 +53,10 @@ pub trait PluginServiceBridge: Send + Sync + 'static {
     /// Get the config directory path
     fn config_dir(&self) -> std::path::PathBuf;
 
+    /// Get the persistent data directory path (DirectoryContext::data_dir).
+    /// Used for long-lived plugin state such as review-diff comment history.
+    fn data_dir(&self) -> std::path::PathBuf;
+
     /// Get theme data (JSON) by name from the in-memory cache.
     fn get_theme_data(&self, _name: &str) -> Option<serde_json::Value> {
         None
@@ -107,5 +111,8 @@ impl PluginServiceBridge for NoopServiceBridge {
     }
     fn config_dir(&self) -> std::path::PathBuf {
         std::path::PathBuf::from("/tmp/config")
+    }
+    fn data_dir(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from("/tmp/data")
     }
 }

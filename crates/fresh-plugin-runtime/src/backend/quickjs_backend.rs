@@ -1825,6 +1825,13 @@ impl JsEditorApi {
         self.services.config_dir().to_string_lossy().to_string()
     }
 
+    /// Get the persistent data directory path (DirectoryContext::data_dir).
+    /// Intended for plugin state that should outlive a single session — e.g.
+    /// review-diff comments keyed off git state.
+    pub fn get_data_dir(&self) -> String {
+        self.services.data_dir().to_string_lossy().to_string()
+    }
+
     /// Get themes directory path
     pub fn get_themes_dir(&self) -> String {
         self.services
@@ -5513,6 +5520,9 @@ mod tests {
         fn config_dir(&self) -> std::path::PathBuf {
             std::path::PathBuf::from("/tmp/config")
         }
+        fn data_dir(&self) -> std::path::PathBuf {
+            std::path::PathBuf::from("/tmp/data")
+        }
         fn get_theme_data(&self, _name: &str) -> Option<serde_json::Value> {
             None
         }
@@ -6973,6 +6983,9 @@ mod tests {
         }
         fn config_dir(&self) -> std::path::PathBuf {
             self.inner.config_dir()
+        }
+        fn data_dir(&self) -> std::path::PathBuf {
+            self.inner.data_dir()
         }
         fn get_theme_data(&self, name: &str) -> Option<serde_json::Value> {
             if name == "test-theme" {

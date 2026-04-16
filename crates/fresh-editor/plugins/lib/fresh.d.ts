@@ -1178,6 +1178,12 @@ interface EditorAPI {
 	*/
 	getConfigDir(): string;
 	/**
+	* Get the persistent data directory path (DirectoryContext::data_dir).
+	* Intended for plugin state that should outlive a single session — e.g.
+	* review-diff comments keyed off git state.
+	*/
+	getDataDir(): string;
+	/**
 	* Get themes directory path
 	*/
 	getThemesDir(): string;
