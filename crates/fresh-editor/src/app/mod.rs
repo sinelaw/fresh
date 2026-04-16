@@ -51,6 +51,7 @@ mod tab_drag;
 mod terminal;
 mod terminal_input;
 mod terminal_mouse;
+mod text_ops;
 mod theme_inspect;
 mod toggle_actions;
 pub mod types;
