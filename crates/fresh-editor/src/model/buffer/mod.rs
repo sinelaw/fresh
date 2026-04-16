@@ -20,7 +20,9 @@ use std::sync::Arc;
 // Re-export Encoding for backward compatibility
 pub use encoding::Encoding;
 
+pub mod file_kind;
 pub mod format;
+pub use file_kind::BufferFileKind;
 pub use format::{BufferFormat, LineEnding};
 
 /// Error returned when a file save operation requires elevated privileges.
@@ -315,18 +317,10 @@ pub struct TextBuffer {
     /// clear `modified` (buffer still differs from on-disk file).
     recovery_pending: bool,
 
-    /// Is this a large file (no line indexing, lazy loading enabled)?
-    large_file: bool,
-
-    /// Has a line feed scan been performed on this large file?
-    /// When true, piece tree leaves have accurate `line_feed_cnt` values,
-    /// and edits will ensure the relevant chunk is loaded before splitting
-    /// so that `compute_line_feeds_static` can recount accurately.
-    line_feeds_scanned: bool,
-
-    /// Is this a binary file? Binary files are opened read-only and render
-    /// unprintable characters as code points.
-    is_binary: bool,
+    /// File-kind flags (large_file, line_feeds_scanned, is_binary)
+    /// composed from the three corresponding former fields. See
+    /// `file_kind.rs`.
+    file_kind: BufferFileKind,
 
     /// The file size on disk after the last save.
     /// Used for chunked recovery to know the original file size for reconstruction.
@@ -376,9 +370,7 @@ impl TextBuffer {
             file_path: None,
             modified: false,
             recovery_pending: false,
-            large_file: false,
-            line_feeds_scanned: false,
-            is_binary: false,
+            file_kind: BufferFileKind::new(false, false),
             format: BufferFormat::new(line_ending, encoding),
             saved_file_size: None,
             version: 0,
@@ -455,9 +447,7 @@ impl TextBuffer {
             file_path: None,
             modified: false,
             recovery_pending: false,
-            large_file: false,
-            line_feeds_scanned: false,
-            is_binary: true,
+            file_kind: BufferFileKind::new(false, true),
             saved_file_size: Some(bytes),
             version: 0,
             config: BufferConfig::default(),
@@ -496,9 +486,7 @@ impl TextBuffer {
             file_path: None,
             modified: false,
             recovery_pending: false,
-            large_file: false,
-            line_feeds_scanned: false,
-            is_binary: false,
+            file_kind: BufferFileKind::new(false, false),
             saved_file_size: Some(bytes), // Treat initial content as "saved" state
             version: 0,
             config: BufferConfig::default(),
@@ -541,9 +529,7 @@ impl TextBuffer {
             file_path: None,
             modified: false,
             recovery_pending: false,
-            large_file: false,
-            line_feeds_scanned: false,
-            is_binary: false,
+            file_kind: BufferFileKind::new(false, false),
             saved_file_size: Some(bytes),
             version: 0,
             config: BufferConfig::default(),
@@ -574,9 +560,7 @@ impl TextBuffer {
             file_path: None,
             modified: false,
             recovery_pending: false,
-            large_file: false,
-            line_feeds_scanned: false,
-            is_binary: false,
+            file_kind: BufferFileKind::new(false, false),
             format: BufferFormat::new(line_ending, encoding),
             saved_file_size: None,
             version: 0,
@@ -644,8 +628,8 @@ impl TextBuffer {
         };
         buffer.file_path = Some(path.to_path_buf());
         buffer.modified = false;
-        buffer.large_file = false;
-        buffer.is_binary = is_binary;
+        buffer.file_kind.set_large_file(false);
+        buffer.file_kind.set_binary(is_binary);
         // For binary files, ensure encoding matches detection
         if is_binary {
             buffer.format.set_default_encoding(encoding);
@@ -749,7 +733,7 @@ impl TextBuffer {
             let mut buffer = Self::from_bytes_raw(contents, fs);
             buffer.file_path = Some(path.to_path_buf());
             buffer.modified = false;
-            buffer.large_file = true;
+            buffer.file_kind.set_large_file(true);
             buffer.format.set_default_encoding(encoding);
             return Ok(buffer);
         }
@@ -777,8 +761,8 @@ impl TextBuffer {
             let mut buffer = Self::from_bytes(contents, fs);
             buffer.file_path = Some(path.to_path_buf());
             buffer.modified = false;
-            buffer.large_file = true; // Still mark as large file for UI purposes
-            buffer.is_binary = is_binary;
+            buffer.file_kind.set_large_file(true); // Still mark as large file for UI purposes
+            buffer.file_kind.set_binary(is_binary);
             return Ok(buffer);
         }
 
@@ -820,9 +804,7 @@ impl TextBuffer {
             file_path: Some(path.to_path_buf()),
             modified: false,
             recovery_pending: false,
-            large_file: true,
-            line_feeds_scanned: false,
-            is_binary,
+            file_kind: BufferFileKind::new(true, is_binary),
             format: BufferFormat::new(line_ending, encoding),
             saved_file_size: Some(file_size),
             version: 0,
@@ -875,7 +857,7 @@ impl TextBuffer {
         // - Either the encoding changed from the original, OR
         // - The target encoding isn't plain UTF-8/ASCII (since internal storage is UTF-8)
         // For example: UTF-8 BOM files are stored as UTF-8, so we need to add BOM on save
-        let needs_encoding_conversion = !self.is_binary
+        let needs_encoding_conversion = !self.file_kind.is_binary()
             && (self.format.encoding_changed_since_load()
                 || !matches!(
                     self.format.encoding(),
@@ -1364,7 +1346,7 @@ impl TextBuffer {
     /// For large files, this creates a reference to the disk file to save memory and sync offsets.
     /// For small files, this flattens all edits into a single in-memory buffer.
     fn consolidate_after_save(&mut self, path: &Path, file_size: usize) {
-        if self.large_file {
+        if self.file_kind.is_large_file() {
             self.consolidate_large_file(path, file_size);
         } else {
             self.consolidate_small_file();
@@ -1376,7 +1358,7 @@ impl TextBuffer {
     /// Preserves total line feed count from the old tree if a scan was previously done.
     fn consolidate_large_file(&mut self, path: &Path, file_size: usize) {
         // Preserve line feed count from the old tree if we had scanned it
-        let preserved_lf = if self.line_feeds_scanned {
+        let preserved_lf = if self.file_kind.has_line_feed_scan() {
             self.piece_tree.line_count().map(|c| c.saturating_sub(1))
         } else {
             None
@@ -1587,9 +1569,9 @@ impl TextBuffer {
     pub fn diff_since_saved(&self) -> PieceTreeDiff {
         let _span = tracing::info_span!(
             "diff_since_saved",
-            large_file = self.large_file,
+            large_file = self.file_kind.is_large_file(),
             modified = self.modified,
-            lf_scanned = self.line_feeds_scanned
+            lf_scanned = self.file_kind.has_line_feed_scan()
         )
         .entered();
 
@@ -1840,7 +1822,7 @@ impl TextBuffer {
 
         // When line feeds have been scanned, ensure the chunk at the insertion
         // point is loaded so compute_line_feeds_static can recount during splits.
-        if self.line_feeds_scanned {
+        if self.file_kind.has_line_feed_scan() {
             self.ensure_chunk_loaded_at(offset);
         }
 
@@ -1945,7 +1927,7 @@ impl TextBuffer {
 
         // When line feeds have been scanned, ensure chunks at delete boundaries
         // are loaded so compute_line_feeds_static can recount during splits.
-        if self.line_feeds_scanned {
+        if self.file_kind.has_line_feed_scan() {
             self.ensure_chunk_loaded_at(offset);
             let end = (offset + bytes).min(self.total_bytes());
             if end > offset {
@@ -2395,7 +2377,7 @@ impl TextBuffer {
         // for unloaded buffers, destroying the scanned line feed counts.
         // Fix up: the loaded chunk is counted from memory, remaining unloaded
         // pieces use the filesystem's count_line_feeds_in_range.
-        if self.line_feeds_scanned {
+        if self.file_kind.has_line_feed_scan() {
             let leaves = self.piece_tree.get_leaves();
             let mut fixups: Vec<(usize, usize)> = Vec::new();
             for (idx, leaf) in leaves.iter().enumerate() {
@@ -2575,13 +2557,13 @@ impl TextBuffer {
 
     /// Check if this is a large file with lazy loading enabled
     pub fn is_large_file(&self) -> bool {
-        self.large_file
+        self.file_kind.is_large_file()
     }
 
     /// Check if line feeds have been scanned for this large file.
     /// When true, `line_count()` returns exact values.
     pub fn has_line_feed_scan(&self) -> bool {
-        self.line_feeds_scanned
+        self.file_kind.has_line_feed_scan()
     }
 
     /// Get the raw piece tree leaves (for storing alongside scan chunks).
@@ -2956,7 +2938,7 @@ impl TextBuffer {
     /// Apply the results of an incremental line scan.
     pub fn apply_scan_updates(&mut self, updates: &[(usize, usize)]) {
         self.piece_tree.update_leaf_line_feeds(updates);
-        self.line_feeds_scanned = true;
+        self.file_kind.mark_line_feed_scan_complete();
     }
 
     /// After an incremental line-feed scan completes, rebuild the tree so that
@@ -3036,7 +3018,7 @@ impl TextBuffer {
         // If no edits, the pristine tree IS the current tree.
         if deletions.is_empty() && insertions.is_empty() {
             self.piece_tree = pristine;
-            self.line_feeds_scanned = true;
+            self.file_kind.mark_line_feed_scan_complete();
             return;
         }
 
@@ -3082,7 +3064,7 @@ impl TextBuffer {
         }
 
         self.piece_tree = tree;
-        self.line_feeds_scanned = true;
+        self.file_kind.mark_line_feed_scan_complete();
     }
 
     /// Resolve the exact byte offset for a given line number (0-indexed).
@@ -3218,7 +3200,7 @@ impl TextBuffer {
 
     /// Check if this buffer contains binary content
     pub fn is_binary(&self) -> bool {
-        self.is_binary
+        self.file_kind.is_binary()
     }
 
     /// Get the line ending format for this buffer
@@ -4930,7 +4912,7 @@ mod tests {
             let buffer = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
 
             // Should be eagerly loaded (not large_file mode)
-            assert!(!buffer.large_file);
+            assert!(!buffer.file_kind.is_large_file());
             assert_eq!(buffer.total_bytes(), test_data.len());
             assert_eq!(buffer.line_count(), Some(2)); // Has line indexing
             assert_eq!(buffer.get_all_text().unwrap(), test_data);
@@ -4955,7 +4937,7 @@ mod tests {
             let buffer = TextBuffer::load_from_file(&file_path, 10, test_fs()).unwrap();
 
             // Should be in large_file mode
-            assert!(buffer.large_file);
+            assert!(buffer.file_kind.is_large_file());
             assert_eq!(buffer.total_bytes(), test_data.len());
 
             // Should NOT have line indexing
@@ -4989,7 +4971,7 @@ mod tests {
             let mut buffer = TextBuffer::load_from_file(&file_path, 10, test_fs()).unwrap();
 
             // Verify we're in large file mode with unloaded buffer
-            assert!(buffer.large_file, "Buffer should be in large file mode");
+            assert!(buffer.file_kind.is_large_file(), "Buffer should be in large file mode");
             assert!(
                 !buffer.buffers[0].is_loaded(),
                 "Buffer should be unloaded initially"
@@ -5034,7 +5016,7 @@ mod tests {
 
             // Load with threshold of 100 bytes - should be large file (>= threshold)
             let buffer = TextBuffer::load_from_file(&file_path, 100, test_fs()).unwrap();
-            assert!(buffer.large_file);
+            assert!(buffer.file_kind.is_large_file());
 
             // Test just below threshold
             let file_path2 = temp_dir.path().join("below_threshold.txt");
@@ -5046,7 +5028,7 @@ mod tests {
 
             // Load with threshold of 100 bytes - should be small file (< threshold)
             let buffer2 = TextBuffer::load_from_file(&file_path2, 100, test_fs()).unwrap();
-            assert!(!buffer2.large_file);
+            assert!(!buffer2.file_kind.is_large_file());
         }
 
         #[test]
@@ -5064,7 +5046,7 @@ mod tests {
             let buffer = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
 
             // 5 bytes < 100MB, so should not be large file
-            assert!(!buffer.large_file);
+            assert!(!buffer.file_kind.is_large_file());
         }
 
         #[test]
@@ -5123,7 +5105,7 @@ mod tests {
             let mut buffer = TextBuffer::load_from_file(&file_path, 10, test_fs()).unwrap();
 
             // Verify it's in large file mode
-            assert!(buffer.large_file);
+            assert!(buffer.file_kind.is_large_file());
             assert_eq!(buffer.line_count(), None); // No line indexing
 
             // Test basic access functions
@@ -5213,7 +5195,7 @@ mod tests {
             let mut buffer = TextBuffer::load_from_file(&file_path, 1, test_fs()).unwrap();
 
             // Verify it's in large file mode
-            assert!(buffer.large_file);
+            assert!(buffer.file_kind.is_large_file());
             assert_eq!(buffer.total_bytes(), file_size);
 
             // Buffer should be unloaded initially
@@ -5319,7 +5301,7 @@ mod tests {
 
             // Load as large file (threshold of 100 bytes)
             let mut buffer = TextBuffer::load_from_file(&file_path, 100, test_fs()).unwrap();
-            assert!(buffer.large_file);
+            assert!(buffer.file_kind.is_large_file());
             assert_eq!(buffer.total_bytes(), file_size);
 
             // Only read from the beginning - this loads only a small region
@@ -5736,7 +5718,7 @@ mod tests {
 
         // Load with small threshold to trigger large file mode
         let mut buffer = TextBuffer::load_from_file(&file_path, 1024, test_fs()).unwrap();
-        assert!(buffer.large_file, "Should be in large file mode");
+        assert!(buffer.file_kind.is_large_file(), "Should be in large file mode");
         assert!(!buffer.buffers[0].is_loaded(), "Buffer should be unloaded");
 
         // Make a small edit
@@ -6114,9 +6096,7 @@ mod tests {
                 file_path: None,
                 modified: false,
                 recovery_pending: false,
-                large_file: true,
-                line_feeds_scanned: false,
-                is_binary: false,
+                file_kind: BufferFileKind::new(true, false),
                 format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
                 saved_file_size: Some(bytes),
                 version: 0,
@@ -6170,7 +6150,7 @@ mod tests {
             assert!(Arc::ptr_eq(&buf.saved_root, &buf.piece_tree.root()));
             let diff = buf.diff_since_saved();
             assert!(diff.equal);
-            assert!(buf.line_feeds_scanned);
+            assert!(buf.file_kind.has_line_feed_scan());
             assert_eq!(buf.get_all_text().unwrap(), content);
         }
 
@@ -6362,9 +6342,7 @@ mod tests {
                 file_path: Some(path.to_path_buf()),
                 modified: false,
                 recovery_pending: false,
-                large_file: true,
-                line_feeds_scanned: false,
-                is_binary: false,
+                file_kind: BufferFileKind::new(true, false),
                 format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
                 saved_file_size: Some(file_size),
                 version: 0,
@@ -6394,7 +6372,7 @@ mod tests {
                 Some(expected_lf + 1),
                 "after rebuild, line_count must be exact"
             );
-            assert!(buf.line_feeds_scanned);
+            assert!(buf.file_kind.has_line_feed_scan());
         }
 
         #[test]
@@ -6422,7 +6400,7 @@ mod tests {
                 Some(expected_lf + 1),
                 "after rebuild with edits, line_count must be exact"
             );
-            assert!(buf.line_feeds_scanned);
+            assert!(buf.file_kind.has_line_feed_scan());
         }
 
         /// After rebuild, diff_since_saved should visit a small number of nodes
@@ -6649,9 +6627,7 @@ mod tests {
                 file_path: Some(tmp.path().to_path_buf()),
                 modified: false,
                 recovery_pending: false,
-                large_file: true,
-                line_feeds_scanned: false,
-                is_binary: false,
+                file_kind: BufferFileKind::new(true, false),
                 format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
                 saved_file_size: Some(file_size),
                 version: 0,
