@@ -234,8 +234,11 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             break;
         };
 
-        // Extract line data
-        let line_content = current_view_line.text.clone();
+        // Extract line data. `line_content` borrows the ViewLine's text
+        // directly — no per-line `String::clone`; the borrow is valid for
+        // the whole per-line body since `current_view_line` is a shared
+        // reference into `view_lines`.
+        let line_content: &str = &current_view_line.text;
         let line_has_newline = current_view_line.ends_with_newline;
         let line_char_source_bytes = &current_view_line.char_source_bytes;
         let line_char_styles = &current_view_line.char_styles;
@@ -245,16 +248,23 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         let line_tab_starts = &current_view_line.tab_starts;
         let _line_start_type = current_view_line.line_start;
 
-        // Pre-compute whitespace position boundaries for this view line.
+        // Pre-compute whitespace position boundaries for this view line in
+        // a single pass — no intermediate `Vec<char>` per line.
         // first_non_ws: index of first non-whitespace char (None if all whitespace)
         // last_non_ws: index of last non-whitespace char (None if all whitespace)
-        let line_chars_for_ws: Vec<char> = line_content.chars().collect();
-        let first_non_ws_idx = line_chars_for_ws
-            .iter()
-            .position(|&c| c != ' ' && c != '\n' && c != '\r');
-        let last_non_ws_idx = line_chars_for_ws
-            .iter()
-            .rposition(|&c| c != ' ' && c != '\n' && c != '\r');
+        let (first_non_ws_idx, last_non_ws_idx) = {
+            let mut first: Option<usize> = None;
+            let mut last: Option<usize> = None;
+            for (i, c) in line_content.chars().enumerate() {
+                if c != ' ' && c != '\n' && c != '\r' {
+                    if first.is_none() {
+                        first = Some(i);
+                    }
+                    last = Some(i);
+                }
+            }
+            (first, last)
+        };
 
         // Helper to get source byte at a visual column using the new O(1) lookup
         let _source_byte_at_col = |vis_col: usize| -> Option<usize> {
@@ -644,8 +654,10 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
                 // Determine display character (tabs already expanded in ViewLineIterator)
                 // Show tab indicator (→) or space indicator (·) based on granular
-                // whitespace visibility settings (leading/inner/trailing positions)
-                let indicator_buf: String;
+                // whitespace visibility settings (leading/inner/trailing positions).
+                // `indicator_buf` holds the UTF-8 bytes of a single char on the
+                // stack — no heap allocation per cell.
+                let mut indicator_buf = [0u8; 4];
                 let mut is_whitespace_indicator = false;
 
                 // Classify whitespace position: leading, inner, or trailing
@@ -695,16 +707,13 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 } else if ws_show_tab {
                     // Visual indicator for tab: show → at the first position
                     is_whitespace_indicator = true;
-                    indicator_buf = "→".to_string();
-                    &indicator_buf
+                    '→'.encode_utf8(&mut indicator_buf)
                 } else if ws_show_space {
                     // Visual indicator for space: show · when enabled
                     is_whitespace_indicator = true;
-                    indicator_buf = "·".to_string();
-                    &indicator_buf
+                    '·'.encode_utf8(&mut indicator_buf)
                 } else {
-                    indicator_buf = ch.to_string();
-                    &indicator_buf
+                    ch.encode_utf8(&mut indicator_buf)
                 };
 
                 // Apply subdued whitespace indicator color from theme
