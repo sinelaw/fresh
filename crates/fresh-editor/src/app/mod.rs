@@ -20,6 +20,7 @@ pub mod keybinding_editor;
 mod keybinding_editor_actions;
 mod lsp_actions;
 mod lsp_requests;
+mod lsp_status;
 mod menu_actions;
 mod menu_context;
 mod mouse_input;
