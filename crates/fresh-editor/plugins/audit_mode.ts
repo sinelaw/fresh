@@ -813,7 +813,12 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
         if (file.category !== lastCategory) {
             lastCategory = file.category;
             let label: string = file.category;
-            if (file.category === 'staged') label = editor.t("section.staged") || "Staged";
+            // Range mode reuses the `unstaged` bucket for every hunk as
+            // an impl shortcut — surface the range label so the user
+            // isn't told their commit review is "Unstaged".
+            if (state.mode === 'range' && state.range) {
+                label = state.range.label;
+            } else if (file.category === 'staged') label = editor.t("section.staged") || "Staged";
             else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Unstaged";
             else if (file.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
             const sectionCount = state.files.filter(f => f.category === file.category).length;
@@ -821,8 +826,12 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             // shown by overlaying a `▸` replacement-conceal on the
             // triangle byte range — the buffer text never changes, so
             // toggling collapse never has to rebuild.
+            // Range labels (e.g. `main..HEAD`) carry case already — don't
+            // mangle them with the section uppercase; worktree category
+            // names are lowercase words and need the uppercase.
+            const displayLabel = state.mode === 'range' ? label : label.toUpperCase();
             lines.push({
-                text: ` ▾ ${label.toUpperCase()}  (${sectionCount})`,
+                text: ` ▾ ${displayLabel}  (${sectionCount})`,
                 type: 'section-header',
                 file: file.category, // store category in 'file' field for reuse
                 filePath: file.category,
@@ -1120,18 +1129,29 @@ function buildToolbarRow(W: number, groups: HintItem[][]): TextPropertyEntry {
  * panel currently has focus (no more files-pane vs diff-pane variants).
  */
 function buildToolbar(W: number): TextPropertyEntry[] {
-    // Row 1: navigation across hunks/comments + per-hunk staging.
-    // Row 2: structural folding + file-level staging + visual + close.
+    // In range mode, stage / unstage / discard are meaningless (there is
+    // no working tree to mutate), so hide them from the hint bar to keep
+    // the toolbar honest. The key-bindings themselves are harmless if
+    // pressed — `review_stage_scope` no-ops on range-mode hunks because
+    // their gitStatus is 'unstaged' and the git commands it invokes
+    // target the working tree, which isn't what the user intended. The
+    // toolbar is the user-facing surface, so pruning here is the
+    // cheapest honest thing to do.
+    const inRange = state.mode === 'range';
     const row1: HintItem[][] = [
         [{ key: "n", label: "next hunk" }, { key: "p", label: "prev hunk" },
          { key: "]", label: "next cmt" }, { key: "[", label: "prev cmt" }],
-        [{ key: "s", label: "stage" }, { key: "u", label: "unstage" }, { key: "d", label: "discard" },
-         { key: "v", label: "select" }, { key: "c", label: "comment" }],
+        inRange
+            ? [{ key: "v", label: "select" }, { key: "c", label: "comment" }]
+            : [{ key: "s", label: "stage" }, { key: "u", label: "unstage" }, { key: "d", label: "discard" },
+               { key: "v", label: "select" }, { key: "c", label: "comment" }],
     ];
     const row2: HintItem[][] = [
         [{ key: "Tab", label: "fold" }, { key: "z a", label: "fold all" }, { key: "z r", label: "unfold all" }],
-        [{ key: "S U D", label: "file-level" }, { key: "Enter", label: "jump" },
-         { key: "e", label: "export" }, { key: "q", label: "close" }],
+        inRange
+            ? [{ key: "Enter", label: "jump" }, { key: "e", label: "export" }, { key: "q", label: "close" }]
+            : [{ key: "S U D", label: "file-level" }, { key: "Enter", label: "jump" },
+               { key: "e", label: "export" }, { key: "q", label: "close" }],
     ];
     return [buildToolbarRow(W, row1), buildToolbarRow(W, row2)];
 }
@@ -1461,13 +1481,21 @@ function refreshStickyHeader(topVisibleRow: number): void {
                 },
                 { added: 0, removed: 0 }
             );
-            text = ` Review Diff — ${state.files.length} files, +${totals.added} / -${totals.removed}`;
+            const rangeSuffix = state.mode === 'range' && state.range
+                ? ` (${state.range.label})`
+                : '';
+            text = ` Review Diff${rangeSuffix} — ${state.files.length} files, +${totals.added} / -${totals.removed}`;
             style = { fg: STYLE_SECTION_HEADER, italic: true };
         }
     } else {
         const counts = fileChangeCounts(bestFile);
         let section: string = bestFile.category;
-        if (bestFile.category === 'staged') section = (editor.t("section.staged") || "Staged").toUpperCase();
+        // In range mode every hunk is bucketed as 'unstaged' as an impl
+        // detail; "UNSTAGED" would be misleading, so display the range
+        // label instead.
+        if (state.mode === 'range' && state.range) {
+            section = state.range.label;
+        } else if (bestFile.category === 'staged') section = (editor.t("section.staged") || "Staged").toUpperCase();
         else if (bestFile.category === 'unstaged') section = (editor.t("section.unstaged") || "Changes").toUpperCase();
         else if (bestFile.category === 'untracked') section = (editor.t("section.untracked") || "Untracked").toUpperCase();
         const filename = bestFile.origPath ? `${bestFile.origPath} → ${bestFile.path}` : bestFile.path;
