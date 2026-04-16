@@ -769,3 +769,126 @@ The inline test mods at L4779–L7866 split roughly as follows. Each
 | `apply_recipe` helper (L7756–L7779) | `tests/mod.rs` as shared helper |
 
 Shared helpers (`test_fs`, fixtures) consolidate into `tests/mod.rs`.
+
+## 8. Handling the realities
+
+Four aspects of the current code need an explicit plan, because a
+naive move will either not compile or will silently break invariants.
+
+### 8.1 Borrow checker
+
+Most orchestrators need `&mut` to two sub-structs at once. Rust's
+split-borrow rules permit this when the outer type is destructured:
+
+```rust
+pub fn save(&mut self) -> Result<()> {
+    let TextBuffer { persistence, piece_tree, buffers,
+                     format, file_kind, config, .. } = self;
+    let recipe = persistence::write_recipe::build(
+        piece_tree, buffers, format, file_kind,
+        persistence.saved_root(), persistence.saved_file_size(),
+    )?;
+    persistence.write_recipe_to_disk(recipe, config)?;
+    persistence.promote_to_saved(piece_tree, file_kind.is_large_file());
+    Ok(())
+}
+```
+
+Two cases where this doesn't work and need extra care:
+
+- **Chunked load during read.** `get_text_range_mut` currently calls
+  `ensure_chunk_loaded_at`, which mutates both `piece_tree` and
+  `buffers` *and* reads `persistence.fs`. It can't be a
+  `Persistence::load_chunk(&mut self, piece_tree: &mut PieceTree,
+  buffers: &mut Vec<StringBuffer>)` because `fs` lives in `Persistence`
+  and the same method needs `&` access to it while mutating two
+  externals. Resolution: `fn load_chunk(fs: &dyn FileSystem,
+  piece_tree: &mut PieceTree, buffers: &mut Vec<StringBuffer>, ...)`
+  as a free function in `persistence/load.rs` — take `fs` as a borrow
+  off the caller's destructured `TextBuffer`.
+- **Consolidate after save.** `consolidate_after_save` both mutates
+  `persistence` (updates `saved_root`, `saved_file_size`, `modified`)
+  and resets `piece_tree` + `buffers`. Same destructure pattern as
+  above.
+
+### 8.2 Cross-cutting orchestrators
+
+Three methods touch several sub-structs and deserve individual
+plans.
+
+**`save` (+ `save_to_file`, `finalize_external_save`).** Current:
+~70 lines; builds `WriteRecipe`, picks inplace vs temp, writes,
+finalises, consolidates. Target shape (§6a): ~15-line orchestrator
+that destructures once and calls four `persistence::*` free functions
+in sequence. Size gain is in the move, not a rewrite.
+
+**`load_from_file` (+ `_with_encoding` variants).** Current:
+`load_from_file` dispatches to `load_small_file` or
+`load_large_file`, both of which construct a `TextBuffer` from
+scratch. Target: `load_from_file` is still a `TextBuffer::`
+constructor that calls `persistence::load::small` or
+`persistence::load::large`, each of which returns a tuple
+`(PieceTree, Vec<StringBuffer>, BufferFormat, BufferFileKind,
+Persistence)` to assemble. No behaviour change.
+
+**`insert_bytes` (and its siblings `insert_at_position`, `delete_bytes`,
+`replace_content`).** Current: mutates `piece_tree`, possibly mutates
+`buffers` (new string-buffer insertion), calls `mark_content_modified`.
+Target: same, but `mark_content_modified` now flips `persistence.*`
+flags (via `Persistence::mark_dirty()`) + bumps `self.version`, and
+the storage-touching part destructures out `piece_tree` and `buffers`.
+
+No method exceeds the complexity of the orchestrators in the
+editor-modules plan. This is the easy part of the refactor.
+
+### 8.3 Implicit invariants that must survive
+
+The monolithic impl holds four invariants implicitly. Each must have
+exactly one named choke-point after the refactor.
+
+- **"Any mutation flips modified + recovery_pending + bumps version."**
+  Today: `mark_content_modified()` (called from 10 sites). Post-refactor:
+  same method, now on `impl TextBuffer` in `mod.rs`, calls
+  `self.persistence.mark_dirty()` + `self.version += 1`. No sub-struct
+  may flip `modified` or `recovery_pending` on its own. Enforced by
+  grep (Rule 3).
+- **"`original_*` formats are snapshots from load time."** Set by
+  `load_*` and `save` (via `consolidate_after_save`). Post-refactor:
+  `BufferFormat::new` takes both the current and original in the
+  initialiser; `consolidate_after_save` calls
+  `format.promote_current_to_original()`. Every other format-setter
+  leaves `original_*` alone.
+- **"`saved_root` + `saved_file_size` + `buffers` are consistent after
+  save."** Today: `consolidate_large_file` / `consolidate_small_file`
+  reconstruct `buffers` atomically. Post-refactor: one method
+  `Persistence::promote_to_saved(&mut piece_tree, &mut buffers,
+  is_large: bool)`, called once from `save()`.
+- **"`version` is monotonic."** Today: `bump_version` is private and
+  only called by `mark_content_modified`. Post-refactor: `version`
+  stays on `TextBuffer` and is touched only by
+  `mark_content_modified`. Enforced by grep.
+
+Make each invariant's choke-point a `#[doc(hidden)]`-style comment
+that names the invariant by name, so a future reader can't
+accidentally duplicate the logic.
+
+### 8.4 Coexistence during migration
+
+Each phase introduces a sub-struct behind delegators before removing
+the old fields. Example within Phase 2 (extract `BufferFormat`):
+
+1. **Commit A.** Add `format: BufferFormat` to `TextBuffer`
+   initialised from the four existing fields. Delegators
+   (`buffer.encoding()`) return `self.format.encoding()`; but the
+   four raw fields also still exist and are kept in sync in the
+   constructor. File compiles, tests pass, behaviour unchanged.
+2. **Commit B.** Move every internal read of
+   `self.encoding`/`self.line_ending`/`self.original_*` to
+   `self.format.encoding()` etc. Still compiles with redundant state.
+3. **Commit C.** Move every internal write of those fields to
+   `self.format.set_*()`. Still redundant.
+4. **Commit D.** Delete the four raw fields from `TextBuffer`.
+   Constructor only initialises `self.format`. Tests pass.
+
+Between commits A and D the two representations coexist on `main`.
+That's the price of not having a flag day.
