@@ -11,6 +11,11 @@
 //! Fix: stream stdin in a background thread and call `wait_with_output`,
 //! which internally drains stdout/stderr in dedicated threads, so none of
 //! the pipes can fill up.
+//!
+//! The repro uses a shell-script formatter, which is inherently POSIX —
+//! these tests are gated to Unix targets.
+
+#![cfg(unix)]
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
