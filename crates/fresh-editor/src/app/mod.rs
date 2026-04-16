@@ -22,6 +22,7 @@ mod keybinding_editor_actions;
 mod lsp_actions;
 mod lsp_requests;
 mod lsp_status;
+mod macros;
 mod menu_actions;
 mod menu_context;
 mod mouse_input;
@@ -131,8 +132,7 @@ pub(crate) use path_utils::normalize_path;
 
 use self::types::{
     Bookmark, CachedLayout, EventLineInfo, InteractiveReplaceState, LspMessageEntry,
-    LspProgressInfo, MacroRecordingState, MouseState, SearchState, TabContextMenu,
-    DEFAULT_BACKGROUND_FILE,
+    LspProgressInfo, MouseState, SearchState, TabContextMenu, DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
 use crate::config_io::{ConfigLayer, ConfigResolver, DirectoryContext};
@@ -752,17 +752,9 @@ pub struct Editor {
     /// Whether to confirm each replacement (interactive/query-replace mode)
     search_confirm_each: bool,
 
-    /// Macro storage (key -> list of recorded actions)
-    macros: HashMap<char, Vec<Action>>,
-
-    /// Macro recording state (Some(key) if recording, None otherwise)
-    macro_recording: Option<MacroRecordingState>,
-
-    /// Last recorded macro register (for F4 to replay)
-    last_macro_register: Option<char>,
-
-    /// Flag to prevent recursive macro playback
-    macro_playing: bool,
+    /// Macro record/playback subsystem (owns `macros`, `recording`,
+    /// `last_register`, and the `playing` guard flag).
+    macros: macros::MacroState,
 
     /// Pending plugin action receivers (for async action execution)
     #[cfg(feature = "plugins")]
@@ -1685,10 +1677,7 @@ impl Editor {
             search_whole_word: false,
             search_use_regex: false,
             search_confirm_each: false,
-            macros: HashMap::new(),
-            macro_recording: None,
-            last_macro_register: None,
-            macro_playing: false,
+            macros: macros::MacroState::default(),
             #[cfg(feature = "plugins")]
             pending_plugin_actions: Vec::new(),
             #[cfg(feature = "plugins")]

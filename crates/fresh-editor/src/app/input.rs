@@ -1098,7 +1098,7 @@ impl Editor {
                 self.start_prompt("Play macro (0-9): ".to_string(), PromptType::PlayMacro);
             }
             Action::PlayLastMacro => {
-                if let Some(key) = self.last_macro_register {
+                if let Some(key) = self.macros.last_register() {
                     self.play_macro(key);
                 } else {
                     self.set_status_message(t!("status.no_macro_recorded").to_string());

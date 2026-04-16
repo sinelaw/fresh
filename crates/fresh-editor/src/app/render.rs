@@ -4403,27 +4403,19 @@ impl Editor {
 
     /// Toggle macro recording for the given register
     pub(super) fn toggle_macro_recording(&mut self, key: char) {
-        if let Some(state) = &self.macro_recording {
-            if state.key == key {
-                // Stop recording
-                self.stop_macro_recording();
-            } else {
-                // Recording to a different key, stop current and start new
+        match self.macros.recording_key() {
+            Some(k) if k == key => self.stop_macro_recording(),
+            Some(_) => {
                 self.stop_macro_recording();
                 self.start_macro_recording(key);
             }
-        } else {
-            // Start recording
-            self.start_macro_recording(key);
+            None => self.start_macro_recording(key),
         }
     }
 
     /// Start recording a macro
     pub(super) fn start_macro_recording(&mut self, key: char) {
-        self.macro_recording = Some(MacroRecordingState {
-            key,
-            actions: Vec::new(),
-        });
+        self.macros.start_recording(key);
 
         // Build the stop hint dynamically from keybindings
         let stop_hint = self.build_macro_stop_hint(key);
@@ -4462,26 +4454,21 @@ impl Editor {
 
     /// Stop recording and save the macro
     pub(super) fn stop_macro_recording(&mut self) {
-        if let Some(state) = self.macro_recording.take() {
-            let action_count = state.actions.len();
-            let key = state.key;
-            self.macros.insert(key, state.actions);
-            self.last_macro_register = Some(key);
-
-            // Build play hint
-            let play_hint = self.build_macro_play_hint();
-            self.set_status_message(
-                t!(
-                    "macro.saved",
-                    key = key,
-                    count = action_count,
-                    play_hint = play_hint
-                )
-                .to_string(),
-            );
-        } else {
+        let Some((key, action_count)) = self.macros.stop_recording() else {
             self.set_status_message(t!("macro.not_recording").to_string());
-        }
+            return;
+        };
+
+        let play_hint = self.build_macro_play_hint();
+        self.set_status_message(
+            t!(
+                "macro.saved",
+                key = key,
+                count = action_count,
+                play_hint = play_hint
+            )
+            .to_string(),
+        );
     }
 
     /// Build a hint message for how to play a macro
@@ -4576,75 +4563,57 @@ impl Editor {
     /// Drawing is deferred until the next render cycle.
     pub(super) fn play_macro(&mut self, key: char) {
         // Prevent recursive macro playback
-        if self.macro_playing {
+        if self.macros.is_playing() {
             return;
         }
 
-        if let Some(actions) = self.macros.get(&key).cloned() {
-            if actions.is_empty() {
-                self.set_status_message(t!("macro.empty", key = key).to_string());
-                return;
-            }
-
-            self.macro_playing = true;
-            let action_count = actions.len();
-            let width = self.cached_layout.last_frame_width;
-            let height = self.cached_layout.last_frame_height;
-            for action in actions {
-                if let Err(e) = self.handle_action(action) {
-                    tracing::warn!("Macro action failed: {}", e);
-                }
-                self.recompute_layout(width, height);
-            }
-            self.macro_playing = false;
-
-            self.set_status_message(
-                t!("macro.played", key = key, count = action_count).to_string(),
-            );
-        } else {
+        let Some(actions) = self.macros.get(key).map(<[_]>::to_vec) else {
             self.set_status_message(t!("macro.not_found", key = key).to_string());
+            return;
+        };
+        if actions.is_empty() {
+            self.set_status_message(t!("macro.empty", key = key).to_string());
+            return;
         }
+
+        self.macros.begin_play();
+        let action_count = actions.len();
+        let width = self.cached_layout.last_frame_width;
+        let height = self.cached_layout.last_frame_height;
+        for action in actions {
+            if let Err(e) = self.handle_action(action) {
+                tracing::warn!("Macro action failed: {}", e);
+            }
+            self.recompute_layout(width, height);
+        }
+        self.macros.end_play();
+
+        self.set_status_message(t!("macro.played", key = key, count = action_count).to_string());
     }
 
-    /// Record an action to the current macro (if recording)
+    /// Record an action to the current macro (if recording).
+    ///
+    /// PromptConfirm is special-cased here because the action itself doesn't
+    /// carry the prompt text — we must snapshot the text now so replay gets
+    /// the user's original input rather than whatever the prompt happens to
+    /// contain at replay time. Everything else is forwarded unchanged to the
+    /// subsystem, which applies its own control-action filter.
     pub(super) fn record_macro_action(&mut self, action: &Action) {
-        // Don't record actions that are being played back from a macro
-        if self.macro_playing {
-            return;
-        }
-        if let Some(state) = &mut self.macro_recording {
-            // Don't record macro control actions themselves
-            match action {
-                Action::StartMacroRecording
-                | Action::StopMacroRecording
-                | Action::PlayMacro(_)
-                | Action::ToggleMacroRecording(_)
-                | Action::ShowMacro(_)
-                | Action::ListMacros
-                | Action::PromptRecordMacro
-                | Action::PromptPlayMacro
-                | Action::PlayLastMacro => {}
-                // When recording PromptConfirm, capture the current prompt text
-                // so it can be replayed correctly
-                Action::PromptConfirm => {
-                    if let Some(prompt) = &self.prompt {
-                        let text = prompt.get_text().to_string();
-                        state.actions.push(Action::PromptConfirmWithText(text));
-                    } else {
-                        state.actions.push(action.clone());
-                    }
-                }
-                _ => {
-                    state.actions.push(action.clone());
-                }
+        if let Action::PromptConfirm = action {
+            if let Some(prompt) = &self.prompt {
+                let text = prompt.get_text().to_string();
+                self.macros
+                    .record_transformed(Action::PromptConfirmWithText(text));
+                return;
             }
         }
+        self.macros.record_if_recording(action);
     }
 
     /// Show a macro in a buffer as JSON
     pub(super) fn show_macro_in_buffer(&mut self, key: char) {
         // Get macro data and cache what we need before any mutable borrows
-        let (json, actions_len) = match self.macros.get(&key) {
+        let (json, actions_len) = match self.macros.get(key) {
             Some(actions) => {
                 let json = match serde_json::to_string_pretty(actions) {
                     Ok(json) => json,
@@ -4732,11 +4701,8 @@ impl Editor {
         let mut content =
             String::from("// Recorded Macros\n// Use ShowMacro(key) to see details\n\n");
 
-        let mut keys: Vec<char> = self.macros.keys().copied().collect();
-        keys.sort();
-
-        for key in keys {
-            if let Some(actions) = self.macros.get(&key) {
+        for key in self.macros.keys_sorted() {
+            if let Some(actions) = self.macros.get(key) {
                 content.push_str(&format!("Macro '{}': {} actions\n", key, actions.len()));
 
                 // Show all actions
@@ -4792,7 +4758,7 @@ impl Editor {
 
         // Switch to the new buffer
         self.set_active_buffer(buffer_id);
-        self.set_status_message(t!("macro.showing", count = self.macros.len()).to_string());
+        self.set_status_message(t!("macro.showing", count = self.macros.count()).to_string());
     }
 
     /// Set a bookmark at the current position

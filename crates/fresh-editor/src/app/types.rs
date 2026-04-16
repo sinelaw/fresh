@@ -1,5 +1,4 @@
 use crate::app::file_open::SortMode;
-use crate::input::keybindings::Action;
 use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection};
 use crate::services::async_bridge::LspMessageType;
 use ratatui::layout::Rect;
@@ -487,15 +486,6 @@ impl BufferMetadata {
         self.lsp_enabled = false;
         self.lsp_disabled_reason = Some(reason);
     }
-}
-
-/// State for macro recording
-#[derive(Debug, Clone)]
-pub(super) struct MacroRecordingState {
-    /// The register key for this macro
-    pub key: char,
-    /// Actions recorded so far
-    pub actions: Vec<Action>,
 }
 
 /// LSP progress information
