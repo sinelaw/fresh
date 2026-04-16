@@ -585,8 +585,13 @@ pub struct Editor {
     /// Each entry is (server_name, action).
     pending_code_actions: Option<Vec<(String, lsp_types::CodeActionOrCommand)>>,
 
-    /// Pending LSP inlay hints request ID (if any)
-    pending_inlay_hints_request: Option<u64>,
+    /// Pending LSP inlay hints request IDs. Tracked as a set so concurrent
+    /// requests across multiple buffers (e.g. after a server-quiescent
+    /// notification or a batch of saves) can each be individually matched
+    /// to their response. A single `Option` here used to silently clobber
+    /// earlier requests, causing only the last-issued response to be
+    /// accepted.
+    pending_inlay_hints_requests: HashSet<u64>,
 
     /// Pending LSP folding range requests keyed by request ID
     pending_folding_range_requests: HashMap<u64, FoldingRangeRequest>,
@@ -1625,7 +1630,7 @@ impl Editor {
             pending_code_actions_requests: HashSet::new(),
             pending_code_actions_server_names: HashMap::new(),
             pending_code_actions: None,
-            pending_inlay_hints_request: None,
+            pending_inlay_hints_requests: HashSet::new(),
             pending_folding_range_requests: HashMap::new(),
             folding_ranges_in_flight: HashMap::new(),
             folding_ranges_debounce: HashMap::new(),

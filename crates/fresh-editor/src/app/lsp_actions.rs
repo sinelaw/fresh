@@ -130,6 +130,8 @@ impl Editor {
             })
             .collect();
 
+        let enable_inlay_hints = self.config.editor.enable_inlay_hints;
+
         for (buffer_id, buf_path) in buffers_for_language {
             let Some(state) = self.buffers.get(&buffer_id) else {
                 continue;
@@ -144,6 +146,7 @@ impl Editor {
             };
 
             let lang_id = state.language.clone();
+            let line_count = state.buffer.line_count().unwrap_or(1000);
 
             if let Some(lsp) = self.lsp.as_mut() {
                 // Respect auto_start setting for this user action
@@ -182,6 +185,35 @@ impl Editor {
                             tracing::warn!("LSP did_open to '{}' failed: {}", name, e);
                         } else if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
                             metadata.lsp_opened_with.insert(handle_id);
+                        }
+                    }
+                }
+            }
+
+            // Kick off inlay hints for this buffer right after (re)opening.
+            // Servers that emit a `serverQuiescent` notification (e.g.
+            // rust-analyzer) will refresh these later once indexing is
+            // done, but servers that don't would otherwise never get a
+            // hints request unless the user edits the buffer.
+            if enable_inlay_hints {
+                if let Some(lsp) = self.lsp.as_mut() {
+                    if let Some(sh) =
+                        lsp.handle_for_feature_mut(&lang_id, crate::types::LspFeature::InlayHints)
+                    {
+                        let request_id = self.next_lsp_request_id;
+                        self.next_lsp_request_id += 1;
+                        let last_line = line_count.saturating_sub(1) as u32;
+                        if let Err(e) =
+                            sh.handle
+                                .inlay_hints(request_id, uri.clone(), 0, 0, last_line, 10000)
+                        {
+                            tracing::debug!(
+                                "Failed to request inlay hints for {}: {}",
+                                uri.as_str(),
+                                e
+                            );
+                        } else {
+                            self.pending_inlay_hints_requests.insert(request_id);
                         }
                     }
                 }
@@ -916,6 +948,8 @@ impl Editor {
             self.next_lsp_request_id += 1;
             if let Err(e) = handle.inlay_hints(request_id, uri, 0, 0, last_line, last_char) {
                 tracing::warn!("LSP inlay_hints request failed: {}", e);
+            } else {
+                self.pending_inlay_hints_requests.insert(request_id);
             }
         }
 

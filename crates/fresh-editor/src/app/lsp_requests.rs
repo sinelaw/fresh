@@ -3055,7 +3055,7 @@ impl Editor {
 
         if sent {
             self.next_lsp_request_id += 1;
-            self.pending_inlay_hints_request = Some(request_id);
+            self.pending_inlay_hints_requests.insert(request_id);
         }
     }
 

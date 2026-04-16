@@ -821,7 +821,6 @@ impl Editor {
                     if enable_inlay_hints {
                         let request_id = self.next_lsp_request_id;
                         self.next_lsp_request_id += 1;
-                        self.pending_inlay_hints_request = Some(request_id);
 
                         if let Err(e) =
                             client.inlay_hints(request_id, uri.clone(), 0, 0, last_line, last_char)
@@ -830,8 +829,8 @@ impl Editor {
                                 "Failed to request inlay hints (server may not support): {}",
                                 e
                             );
-                            self.pending_inlay_hints_request = None;
                         } else {
+                            self.pending_inlay_hints_requests.insert(request_id);
                             tracing::info!(
                                 "Requested inlay hints for {} (request_id={})",
                                 uri.as_str(),

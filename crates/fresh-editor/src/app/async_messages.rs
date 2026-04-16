@@ -286,15 +286,13 @@ impl Editor {
         uri: String,
         hints: Vec<InlayHint>,
     ) {
-        if self.pending_inlay_hints_request != Some(request_id) {
+        if !self.pending_inlay_hints_requests.remove(&request_id) {
             tracing::debug!(
                 "Ignoring stale inlay hints response (request_id={})",
                 request_id
             );
             return;
         }
-
-        self.pending_inlay_hints_request = None;
 
         tracing::info!(
             "Received {} inlay hints for {} (request_id={})",
@@ -738,11 +736,13 @@ impl Editor {
         };
         let client = &mut sh.handle;
 
-        // Request inlay hints for each buffer
+        // Request inlay hints for each buffer. Each request gets its own
+        // id inserted into the pending set so responses across all buffers
+        // are accepted individually (a single Option used to be overwritten
+        // by each iteration, dropping every response except the last).
         for (uri, line_count) in buffer_infos {
             let request_id = self.next_lsp_request_id;
             self.next_lsp_request_id += 1;
-            self.pending_inlay_hints_request = Some(request_id);
 
             let last_line = line_count.saturating_sub(1) as u32;
             if let Err(e) = client.inlay_hints(request_id, uri.clone(), 0, 0, last_line, 10000) {
@@ -752,6 +752,7 @@ impl Editor {
                     e
                 );
             } else {
+                self.pending_inlay_hints_requests.insert(request_id);
                 tracing::info!(
                     "Re-requested inlay hints for {} (request_id={})",
                     uri.as_str(),

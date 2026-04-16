@@ -8560,6 +8560,149 @@ log("STOPPED")
     target_os = "windows",
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
+fn test_inlay_hints_requested_for_every_open_buffer() -> anyhow::Result<()> {
+    // Regression: when the LSP started with multiple buffers already open,
+    // earlier in-flight inlay-hint responses were silently dropped because
+    // the editor only tracked a single pending request id. Only the
+    // last-issued buffer's response was accepted — the others stayed blank
+    // until the user edited them. This test opens two files, waits for
+    // the server to reply to both, and asserts the hint text appears on
+    // each file's tab.
+    use crate::common::harness::HarnessOptions;
+
+    let temp_dir = tempfile::tempdir()?;
+
+    // Fake LSP that tags each didOpen'd URI with a unique hint derived
+    // from the file's basename. It does not parse the buffer — it just
+    // echoes back a hint for every textDocument/inlayHint request so we
+    // can tell which file received a hint on screen.
+    let script = r#"#!/bin/bash
+
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: $length\r\n\r\n%s" "$message"
+}
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    case "$method" in
+        "initialize")
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"capabilities":{"textDocumentSync":1,"inlayHintProvider":true}}}'
+            ;;
+        "initialized")
+            ;;
+        "textDocument/inlayHint")
+            # Extract the request URI, derive a distinct label from the
+            # filename basename (without extension). Return ONE hint at
+            # line 0, col 0 so the editor renders it at the start of the
+            # first line of whichever buffer asked.
+            uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+            basename=${uri##*/}
+            label="[${basename%.*}]"
+            hints='[{"position":{"line":0,"character":0},"label":"'"$label"'","kind":1}]'
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":'"$hints"'}'
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
+            break
+            ;;
+    esac
+done
+"#;
+
+    let script_path = temp_dir.path().join("fake_lsp_multi.sh");
+    std::fs::write(&script_path, script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms)?;
+    }
+
+    // Two distinct C files — we expect hints for BOTH buffers.
+    let file_alpha = temp_dir.path().join("alpha.c");
+    let file_beta = temp_dir.path().join("beta.c");
+    std::fs::write(&file_alpha, "int x = 1;\n")?;
+    std::fs::write(&file_beta, "int y = 2;\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.editor.enable_inlay_hints = true;
+    config.lsp.insert(
+        "c".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(temp_dir.path().to_path_buf()),
+    )?;
+
+    // Open both files (both tabs live concurrently). The hint for the
+    // non-active buffer would be dropped before the fix.
+    harness.open_file(&file_alpha)?;
+    harness.open_file(&file_beta)?;
+    harness.render()?;
+
+    // Wait for the hint of the CURRENTLY visible (beta) buffer.
+    harness.wait_for_screen_contains("[beta]")?;
+
+    // Now switch to alpha — its hint must also be populated. Before the
+    // fix, alpha's response was discarded as "stale" so this would never
+    // appear.
+    harness.open_file(&file_alpha)?;
+    harness.render()?;
+    harness.wait_for_screen_contains("[alpha]")?;
+
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
 fn test_comment_does_not_displace_inlay_hints() -> anyhow::Result<()> {
     use crate::common::harness::HarnessOptions;
 

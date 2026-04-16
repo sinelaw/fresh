@@ -2059,7 +2059,6 @@ impl Editor {
                         if self.config.editor.enable_inlay_hints {
                             let request_id = self.next_lsp_request_id;
                             self.next_lsp_request_id += 1;
-                            self.pending_inlay_hints_request = Some(request_id);
 
                             let last_line = line_count.saturating_sub(1) as u32;
                             let last_char = 10000u32;
@@ -2076,7 +2075,8 @@ impl Editor {
                                     "Failed to request inlay hints (server may not support): {}",
                                     e
                                 );
-                                self.pending_inlay_hints_request = None;
+                            } else {
+                                self.pending_inlay_hints_requests.insert(request_id);
                             }
                         }
                     }
