@@ -59,29 +59,20 @@ mod tests {
     #[test]
     fn first_row_at_line_start_jumps_to_first_non_ws() {
         // Cursor at 0 (== visual_start), non-ws at 4.
-        assert_eq!(
-            smart_home_target(0, 0, true, 4),
-            SmartHomeTarget::At(4)
-        );
+        assert_eq!(smart_home_target(0, 0, true, 4), SmartHomeTarget::At(4));
     }
 
     #[test]
     fn first_row_at_first_non_ws_toggles_back_to_visual_start() {
         // Cursor at 4 (== first_non_ws), toggle back to 0.
-        assert_eq!(
-            smart_home_target(4, 0, true, 4),
-            SmartHomeTarget::At(0)
-        );
+        assert_eq!(smart_home_target(4, 0, true, 4), SmartHomeTarget::At(0));
     }
 
     #[test]
     fn first_row_in_middle_jumps_to_first_non_ws() {
         // Cursor at 7, first_non_ws at 4 — not at either toggle point, so
         // jump to first_non_ws.
-        assert_eq!(
-            smart_home_target(7, 0, true, 4),
-            SmartHomeTarget::At(4)
-        );
+        assert_eq!(smart_home_target(7, 0, true, 4), SmartHomeTarget::At(4));
     }
 
     #[test]
@@ -89,10 +80,7 @@ mod tests {
         // When line is all-whitespace the caller passes first_non_ws == visual_start.
         // Cursor anywhere maps to visual_start (either the toggle branch or
         // equal-to-non-ws branch lands there).
-        assert_eq!(
-            smart_home_target(3, 0, true, 0),
-            SmartHomeTarget::At(0)
-        );
+        assert_eq!(smart_home_target(3, 0, true, 0), SmartHomeTarget::At(0));
     }
 
     #[test]

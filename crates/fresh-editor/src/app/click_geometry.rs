@@ -242,13 +242,9 @@ mod tests {
     fn screen_to_buffer_position_returns_fallback_when_no_mappings() {
         let r = Rect::new(0, 0, 100, 20);
         let pos = screen_to_buffer_position(
-            /* col */ 5,
-            /* row */ 5,
-            /* content_rect */ r,
-            /* gutter_width */ 3,
-            /* cached_mappings */ &None,
-            /* fallback_position */ 42,
-            /* allow_gutter_click */ true,
+            /* col */ 5, /* row */ 5, /* content_rect */ r,
+            /* gutter_width */ 3, /* cached_mappings */ &None,
+            /* fallback_position */ 42, /* allow_gutter_click */ true,
             /* compose_width */ None,
         );
         assert_eq!(pos, Some(42));

@@ -76,7 +76,8 @@ impl Editor {
         let viewport = &self.split_view_states[&active_split].viewport;
         let cursor_rel = viewport.cursor_screen_position(&mut state.buffer, &primary_cursor);
 
-        let adjusted_rect = super::click_geometry::adjust_content_rect_for_compose(content_rect, compose_width);
+        let adjusted_rect =
+            super::click_geometry::adjust_content_rect_for_compose(content_rect, compose_width);
         let screen_col = cursor_rel.0 + adjusted_rect.x + gutter_width;
         let screen_row = cursor_rel.1 + content_rect.y;
 

@@ -52,10 +52,7 @@ fn build_visual_row_map(
 
 /// Pick the `(byte, offset)` at `target_row`, falling back to the last
 /// valid row if the index is out of range.
-fn position_at(
-    visual_row_positions: &[(usize, usize)],
-    target_row: usize,
-) -> (usize, usize) {
+fn position_at(visual_row_positions: &[(usize, usize)], target_row: usize) -> (usize, usize) {
     if target_row < visual_row_positions.len() {
         visual_row_positions[target_row]
     } else {
@@ -134,9 +131,9 @@ pub(crate) fn scrollbar_drag_relative_visual(
         (line_start_visual_row + drag_start_view_line_offset).min(max_scroll_row);
 
     // Thumb size — same formula as the scrollbar renderer.
-    let thumb_size_raw =
-        (viewport_height as f64 / total_visual_rows as f64 * scrollbar_height as f64).ceil()
-            as usize;
+    let thumb_size_raw = (viewport_height as f64 / total_visual_rows as f64
+        * scrollbar_height as f64)
+        .ceil() as usize;
     let max_thumb_size = (scrollbar_height as f64 * 0.8).floor() as usize;
     let thumb_size = thumb_size_raw
         .max(1)

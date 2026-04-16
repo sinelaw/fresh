@@ -77,7 +77,10 @@ impl LineScan {
     /// Immutable view of the leaf list — used by the orchestrator to look
     /// up I/O parameters per chunk.
     pub(crate) fn leaves(&self) -> &[LeafData] {
-        self.active.as_ref().map(|a| a.leaves.as_slice()).unwrap_or(&[])
+        self.active
+            .as_ref()
+            .map(|a| a.leaves.as_slice())
+            .unwrap_or(&[])
     }
 
     // ---- Lifecycle ---------------------------------------------------------
@@ -170,7 +173,11 @@ mod tests {
     #[test]
     fn start_then_take_walks_chunks_in_order() {
         let mut s = empty_scan_of(
-            vec![chunk(0, 100, false), chunk(1, 200, false), chunk(2, 50, true)],
+            vec![
+                chunk(0, 100, false),
+                chunk(1, 200, false),
+                chunk(2, 50, true),
+            ],
             350,
         );
         assert!(s.buffer_id().is_some());

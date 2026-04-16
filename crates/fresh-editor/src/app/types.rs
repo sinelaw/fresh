@@ -109,7 +109,6 @@ impl SearchState {
     pub const MAX_MATCHES: usize = 100_000;
 }
 
-
 /// State for interactive replace (query-replace)
 #[derive(Debug, Clone)]
 pub(super) struct InteractiveReplaceState {

@@ -1528,8 +1528,6 @@ impl Editor {
         }
     }
 
-
-
     /// Recompute the view_line_mappings layout without drawing.
     /// Used during macro replay so that visual-line movements (MoveLineEnd,
     /// MoveUp, MoveDown on wrapped lines) see correct, up-to-date layout
@@ -1626,5 +1624,4 @@ impl Editor {
             }
         }
     }
-
 }

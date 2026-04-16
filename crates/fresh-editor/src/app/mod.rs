@@ -1066,7 +1066,6 @@ impl Editor {
         }
     }
 
-
     /// Get the currently active buffer state
     pub fn active_state(&self) -> &EditorState {
         self.buffers.get(&self.active_buffer()).unwrap()
@@ -1167,11 +1166,7 @@ impl Editor {
             state.buffer.set_modified(!is_at_saved);
         }
     }
-
-
-
 }
-
 
 /// Parse a key string like "RET", "C-n", "M-x", "q" into KeyCode and KeyModifiers
 ///

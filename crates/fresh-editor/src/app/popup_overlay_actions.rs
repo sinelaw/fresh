@@ -472,5 +472,4 @@ impl Editor {
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
     }
-
 }

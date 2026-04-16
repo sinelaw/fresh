@@ -474,5 +474,4 @@ impl Editor {
             self.set_status_message(t!("diagnostics.bracket_no_match").to_string());
         }
     }
-
 }

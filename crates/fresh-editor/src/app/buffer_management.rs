@@ -241,7 +241,6 @@ impl Editor {
         self.preview
     }
 
-
     /// Navigate to a specific line and column in the active buffer.
     ///
     /// Line and column are 1-indexed (matching typical editor conventions).
@@ -508,5 +507,4 @@ impl Editor {
         }
         false
     }
-
 }

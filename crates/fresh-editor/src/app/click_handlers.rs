@@ -171,7 +171,10 @@ impl Editor {
                 compose_width,
             )?;
 
-            let adjusted_rect = super::click_geometry::adjust_content_rect_for_compose(*content_rect, compose_width);
+            let adjusted_rect = super::click_geometry::adjust_content_rect_for_compose(
+                *content_rect,
+                compose_width,
+            );
             let content_col = col.saturating_sub(adjusted_rect.x);
             let state = self.buffers.get(buffer_id)?;
             if let Some(byte_pos) = super::click_geometry::fold_toggle_byte_from_position(
@@ -338,8 +341,10 @@ impl Editor {
                 };
 
                 // Toggle fold on gutter click if this line is foldable/collapsed
-                let adjusted_rect =
-                    super::click_geometry::adjust_content_rect_for_compose(content_rect, compose_width);
+                let adjusted_rect = super::click_geometry::adjust_content_rect_for_compose(
+                    content_rect,
+                    compose_width,
+                );
                 let content_col = col.saturating_sub(adjusted_rect.x);
                 let collapsed_header_bytes = self
                     .split_view_states
@@ -533,5 +538,4 @@ impl Editor {
 
         Ok(())
     }
-
 }

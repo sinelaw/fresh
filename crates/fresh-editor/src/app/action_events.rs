@@ -276,7 +276,4 @@ impl Editor {
             Some(events)
         }
     }
-
-
-
 }

@@ -12,8 +12,8 @@ use rust_i18n::t;
 
 use crate::input::command_registry::CommandRegistry;
 use crate::input::commands::Suggestion;
-use crate::input::keybindings::KeyContext;
 use crate::input::input_history::InputHistory;
+use crate::input::keybindings::KeyContext;
 use crate::input::quick_open::{BufferInfo, QuickOpenContext};
 use crate::services::async_bridge::AsyncMessage;
 use crate::services::plugins::PluginManager;
@@ -680,12 +680,17 @@ impl Editor {
     }
 
     /// Get a prompt history for the given key (immutable)
-    pub(super) fn get_prompt_history(&self, key: &str) -> Option<&crate::input::input_history::InputHistory> {
+    pub(super) fn get_prompt_history(
+        &self,
+        key: &str,
+    ) -> Option<&crate::input::input_history::InputHistory> {
         self.prompt_histories.get(key)
     }
 
     /// Get the history key for a prompt type
-    pub(super) fn prompt_type_to_history_key(prompt_type: &crate::view::prompt::PromptType) -> Option<String> {
+    pub(super) fn prompt_type_to_history_key(
+        prompt_type: &crate::view::prompt::PromptType,
+    ) -> Option<String> {
         use crate::view::prompt::PromptType;
         match prompt_type {
             PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {

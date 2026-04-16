@@ -67,10 +67,7 @@ impl StdinStream {
 
     /// Last observed size in bytes. Returns 0 when no stream is active.
     pub(crate) fn last_known_size(&self) -> usize {
-        self.active
-            .as_ref()
-            .map(|s| s.last_known_size)
-            .unwrap_or(0)
+        self.active.as_ref().map(|s| s.last_known_size).unwrap_or(0)
     }
 
     // ---- Lifecycle ---------------------------------------------------------

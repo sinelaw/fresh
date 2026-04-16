@@ -283,5 +283,4 @@ mod tests {
         m.stop_recording();
         assert_eq!(m.last_register(), Some('b'));
     }
-
 }

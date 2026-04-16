@@ -277,6 +277,11 @@ impl Editor {
             return;
         }
 
-        self.finalize_search(&finished.query, finished.match_ranges, finished.capped, None);
+        self.finalize_search(
+            &finished.query,
+            finished.match_ranges,
+            finished.capped,
+            None,
+        );
     }
 }
