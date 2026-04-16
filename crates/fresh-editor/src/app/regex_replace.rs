@@ -1,5 +1,41 @@
 /// Pure, buffer-agnostic helpers for regex find-and-replace.
 ///
+/// Build a Unicode [`regex::Regex`] for the search/highlight path.
+///
+/// Unlike [`build_regex`] (used for replace), this always produces a regex:
+/// when `use_regex` is false the query is `regex::escape`d so the resulting
+/// pattern matches the literal text.  That lets the caller share one code
+/// path for both regex and plain-text search.
+///
+/// Returns `Err` with a user-facing message when the pattern fails to
+/// compile (regex-mode only; escaped literal patterns never fail).
+pub fn build_search_regex(
+    query: &str,
+    use_regex: bool,
+    whole_word: bool,
+    case_sensitive: bool,
+) -> Result<regex::Regex, String> {
+    let pattern = if use_regex {
+        if whole_word {
+            format!(r"\b{}\b", query)
+        } else {
+            query.to_string()
+        }
+    } else {
+        let escaped = regex::escape(query);
+        if whole_word {
+            format!(r"\b{}\b", escaped)
+        } else {
+            escaped
+        }
+    };
+
+    regex::RegexBuilder::new(&pattern)
+        .case_insensitive(!case_sensitive)
+        .build()
+        .map_err(|e| e.to_string())
+}
+
 /// Build a [`regex::bytes::Regex`] from user-supplied search settings.
 /// Returns `None` when `use_regex` is false.
 pub fn build_regex(
@@ -119,6 +155,48 @@ mod tests {
     #[test]
     fn build_regex_returns_none_when_disabled() {
         assert!(build_regex("foo", false, false, true).is_none());
+    }
+
+    #[test]
+    fn build_search_regex_plain_text_escapes_special_chars() {
+        // Non-regex mode: "a.b" should match "a.b" literally, not "a?b".
+        let re = build_search_regex("a.b", false, false, true).unwrap();
+        assert!(re.is_match("a.b"));
+        assert!(!re.is_match("axb"));
+    }
+
+    #[test]
+    fn build_search_regex_regex_mode_treats_dot_as_wildcard() {
+        let re = build_search_regex("a.b", true, false, true).unwrap();
+        assert!(re.is_match("axb"));
+        assert!(re.is_match("a.b"));
+    }
+
+    #[test]
+    fn build_search_regex_whole_word_wraps_pattern() {
+        let re = build_search_regex("foo", false, true, true).unwrap();
+        assert!(re.is_match("foo bar"));
+        assert!(!re.is_match("foobar"));
+    }
+
+    #[test]
+    fn build_search_regex_case_insensitive_when_flag_off() {
+        let re = build_search_regex("Hello", false, false, false).unwrap();
+        assert!(re.is_match("HELLO"));
+        assert!(re.is_match("hello"));
+    }
+
+    #[test]
+    fn build_search_regex_reports_invalid_pattern_in_regex_mode() {
+        let err = build_search_regex("[unclosed", true, false, true).unwrap_err();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn build_search_regex_plain_mode_never_fails_even_on_regex_metachars() {
+        // Plain-text mode escapes everything, so even a syntactically-bad
+        // regex pattern compiles fine as a literal search.
+        assert!(build_search_regex("[unclosed", false, false, true).is_ok());
     }
 
     #[test]

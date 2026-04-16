@@ -2615,25 +2615,12 @@ impl Editor {
 
     /// Build a compiled regex from the current search settings and query.
     fn build_search_regex(&self, query: &str) -> Result<regex::Regex, String> {
-        let regex_pattern = if self.search_use_regex {
-            if self.search_whole_word {
-                format!(r"\b{}\b", query)
-            } else {
-                query.to_string()
-            }
-        } else {
-            let escaped = regex::escape(query);
-            if self.search_whole_word {
-                format!(r"\b{}\b", escaped)
-            } else {
-                escaped
-            }
-        };
-
-        regex::RegexBuilder::new(&regex_pattern)
-            .case_insensitive(!self.search_case_sensitive)
-            .build()
-            .map_err(|e| e.to_string())
+        super::regex_replace::build_search_regex(
+            query,
+            self.search_use_regex,
+            self.search_whole_word,
+            self.search_case_sensitive,
+        )
     }
 
     /// Perform a search and update search state.
