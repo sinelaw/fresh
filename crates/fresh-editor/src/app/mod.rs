@@ -25,6 +25,7 @@ mod line_scan;
 mod lsp_actions;
 mod lsp_requests;
 mod lsp_status;
+mod macro_actions;
 mod macros;
 mod menu_actions;
 mod menu_context;
