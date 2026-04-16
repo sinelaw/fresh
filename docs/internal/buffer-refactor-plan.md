@@ -308,3 +308,172 @@ passes `cargo test -p fresh-editor`. Sub-structs are introduced
 behind delegators before old fields are removed, so the two
 representations coexist across commits inside a phase until the old
 one is deleted.
+
+## 5. Target shape
+
+### 5.1 Directory layout
+
+```
+crates/fresh-editor/src/model/buffer/
+├── mod.rs                   TextBuffer struct + orchestrators + delegators (~800)
+├── format.rs                BufferFormat + detect_* free fns               (~450)
+├── file_kind.rs             BufferFileKind + is_binary static helpers      (~100)
+├── persistence/
+│   ├── mod.rs               Persistence struct + save-state transitions    (~250)
+│   ├── load.rs              load_from_file, load_small/large, encoding ck  (~500)
+│   ├── save.rs              save, save_to_file, finalize_*, consolidate_*  (~550)
+│   ├── write_recipe.rs      WriteRecipe + build/stream/write_recipe_*      (~450)
+│   ├── inplace.rs           should_use_inplace_write, write_data_inplace,
+│   │                        recovery-meta, stream_file_to_writer           (~350)
+│   └── snapshot.rs          saved_root management, diff_since_saved,
+│                            rebuild_with_pristine_saved_root               (~450)
+├── edits.rs                 insert_bytes/insert_at_position/delete*/replace_content,
+│                            apply_bulk_edits, restore/snapshot_buffer_state (~450)
+├── storage/
+│   ├── mod.rs               get_text_range/_mut, slice_bytes, get_all_text,
+│   │                        len, is_empty, to_string                       (~250)
+│   ├── chunks.rs            prepare_viewport, chunk_split_and_load,
+│   │                        ensure_chunk_loaded_at, OverlappingChunks,
+│   │                        ChunkInfo, extend_streaming                    (~500)
+│   └── line_scan.rs         prepare_line_scan, apply_scan_updates,
+│                            piece_tree_leaves, scan_leaf, leaf_io_params,
+│                            LineScanChunk                                  (~300)
+├── search.rs                find_next*, find_regex*, find_pattern,
+│                            search_scan_*, search_hybrid*, HybridSearchPlan,
+│                            ChunkedSearchState, search_boundary_overlap    (~700)
+├── replace.rs               replace_range/next/all/all_regex               (~130)
+├── position.rs              offset_to_position, position_to_offset,
+│                            position_to_line_col, line_col_to_position,
+│                            lsp position ↔ byte, char/grapheme/word
+│                            boundary, snap_to_char_boundary                (~550)
+├── lines.rs                 get_line, line_start_offset, piece_info_at_offset,
+│                            stats, resolve_line_byte_offset, line_iterator,
+│                            iter_lines_from, get_line_number,
+│                            estimated_line_length, LineNumber, LineData,
+│                            TextBufferLineIterator                         (~400)
+├── line_cache.rs            populate/get_cached/invalidate/handle_/clear   (~60)
+└── tests/
+    ├── mod.rs               shared fixtures: test_fs, text_with_newlines
+    ├── edits.rs
+    ├── position.rs
+    ├── save_load.rs
+    ├── search_replace.rs
+    ├── line_endings.rs
+    ├── binary_detection.rs
+    └── property.rs          proptest scenarios (the Operation strategy)
+```
+
+17 new source files plus 8 test modules. No file exceeds ~700 lines.
+The old monolithic `model/buffer.rs` no longer exists.
+
+### 5.2 `TextBuffer` after composition
+
+```rust
+// model/buffer/mod.rs — the ONLY file with `impl TextBuffer`
+pub struct TextBuffer {
+    piece_tree:     PieceTree,
+    buffers:        Vec<StringBuffer>,
+    next_buffer_id: usize,
+
+    persistence:    Persistence,
+    format:         BufferFormat,
+    file_kind:      BufferFileKind,
+
+    version:        u64,
+    config:         BufferConfig,
+}
+
+impl TextBuffer {
+    // Construction (delegated to Persistence::load_* + small wrapping)
+    pub fn new(_large_file_threshold: usize, fs: Arc<dyn FileSystem + ...>) -> Self { ... }
+    pub fn from_bytes(content: Vec<u8>, fs: Arc<dyn FileSystem + ...>) -> Self { ... }
+    pub fn load_from_file<P: AsRef<Path>>(path: P, fs: ...) -> Result<Self> { ... }
+
+    // Orchestrators (touch 2+ sub-structs)
+    pub fn save(&mut self) -> Result<()> { ... }
+    pub fn insert_bytes(&mut self, offset: usize, text: Vec<u8>) -> Cursor { ... }
+    pub fn apply_bulk_edits(&mut self, edits: &[(usize, usize, &str)]) -> isize { ... }
+
+    // The one invariant choke-point
+    fn mark_content_modified(&mut self) {
+        self.persistence.mark_dirty();          // sets modified + recovery_pending
+        self.version += 1;
+    }
+
+    // Delegators (public API preserved; one line each)
+    pub fn encoding(&self) -> Encoding                { self.format.encoding() }
+    pub fn set_encoding(&mut self, e: Encoding)       { self.mark_content_modified(); self.format.set_encoding(e) }
+    pub fn is_modified(&self) -> bool                 { self.persistence.is_modified() }
+    pub fn file_path(&self) -> Option<&Path>          { self.persistence.file_path() }
+    pub fn is_binary(&self) -> bool                   { self.file_kind.is_binary() }
+    // ... ~40 more one-line delegators
+}
+```
+
+### 5.3 A representative sub-struct
+
+```rust
+// model/buffer/format.rs
+pub struct BufferFormat {
+    line_ending: LineEnding,
+    original_line_ending: LineEnding,
+    encoding: Encoding,
+    original_encoding: Encoding,
+}
+
+impl BufferFormat {
+    pub fn new(line_ending: LineEnding, encoding: Encoding) -> Self {
+        Self { line_ending, original_line_ending: line_ending,
+               encoding, original_encoding: encoding }
+    }
+    pub fn encoding(&self) -> Encoding { self.encoding }
+    pub fn line_ending(&self) -> LineEnding { self.line_ending }
+    pub fn set_encoding(&mut self, e: Encoding) { self.encoding = e; }
+    pub fn set_line_ending(&mut self, le: LineEnding) { self.line_ending = le; }
+    pub fn set_default_encoding(&mut self, e: Encoding) {
+        self.encoding = e;
+        self.original_encoding = e;
+    }
+    pub fn set_default_line_ending(&mut self, le: LineEnding) {
+        self.line_ending = le;
+        self.original_line_ending = le;
+    }
+    pub fn encoding_changed_since_load(&self) -> bool {
+        self.encoding != self.original_encoding
+    }
+    pub fn line_ending_changed_since_load(&self) -> bool {
+        self.line_ending != self.original_line_ending
+    }
+}
+
+// Pure helpers — free functions, Rule 4
+pub fn detect_line_ending(bytes: &[u8]) -> LineEnding { ... }
+pub fn detect_encoding(bytes: &[u8]) -> Encoding { ... }
+pub fn detect_encoding_or_binary(bytes: &[u8], truncated: bool) -> (Encoding, bool) { ... }
+pub fn detect_and_convert_encoding(bytes: &[u8]) -> (Encoding, Vec<u8>) { ... }
+pub fn convert_to_encoding(utf8: &[u8], target: Encoding) -> Vec<u8> { ... }
+pub fn normalize_line_endings(bytes: Vec<u8>) -> Vec<u8> { ... }
+pub(super) fn convert_line_endings_to(bytes: &[u8], target: LineEnding) -> Vec<u8> { ... }
+```
+
+No `TextBuffer` in any signature. All four `*_changed_since_load`
+semantics, previously expressed inline in `build_write_recipe`, become
+named methods on `BufferFormat`. Unit-testable without a filesystem.
+
+### 5.4 Visibility table
+
+| File set | May import | May NOT import |
+|---|---|---|
+| `format.rs`, `file_kind.rs` | stdlib, encoding crate | `TextBuffer`, `Persistence`, `PieceTree` |
+| `persistence/*` | stdlib, `FileSystem` trait, `PieceTree` (only for `saved_root` type), `format` (read-only) | `TextBuffer` |
+| `storage/*`, `search.rs`, `lines.rs`, `position.rs`, `replace.rs`, `line_cache.rs` | `PieceTree`, `StringBuffer`, the top-level struct fields they need as `&mut` args | `Persistence` mutation methods |
+| `edits.rs` | everything above | — |
+| `mod.rs` | everything under `model/buffer/` | — |
+
+Enforced by one grep per row:
+
+```
+rg 'TextBuffer' crates/fresh-editor/src/model/buffer/format.rs  # → 0 hits
+rg 'TextBuffer' crates/fresh-editor/src/model/buffer/persistence/  # → 0 hits
+rg 'persistence::' crates/fresh-editor/src/model/buffer/storage/  # → 0 hits
+```
