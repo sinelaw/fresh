@@ -355,21 +355,6 @@ pub struct TextBuffer {
     /// unprintable characters as code points.
     is_binary: bool,
 
-    /// Line ending format detected from the file (or default for new files)
-    line_ending: LineEnding,
-
-    /// Original line ending format when file was loaded (used for conversion on save)
-    /// This tracks what the file had when loaded, so we can detect if the user
-    /// changed the line ending format and needs conversion on save.
-    original_line_ending: LineEnding,
-
-    /// Text encoding format detected from the file (or default for new files)
-    encoding: Encoding,
-
-    /// Original encoding when file was loaded (used for conversion on save)
-    /// Similar to original_line_ending, tracks what the file had when loaded.
-    original_encoding: Encoding,
-
     /// The file size on disk after the last save.
     /// Used for chunked recovery to know the original file size for reconstruction.
     /// Updated when loading from file or after saving.
@@ -489,10 +474,6 @@ impl TextBuffer {
             large_file: false,
             line_feeds_scanned: false,
             is_binary: false,
-            line_ending,
-            original_line_ending: line_ending,
-            encoding,
-            original_encoding: encoding,
             format: BufferFormat::new(line_ending, encoding),
             saved_file_size: None,
             version: 0,
@@ -561,10 +542,6 @@ impl TextBuffer {
 
         TextBuffer {
             fs,
-            line_ending,
-            original_line_ending: line_ending,
-            encoding: Encoding::Utf8, // Binary files treated as raw bytes (no conversion)
-            original_encoding: Encoding::Utf8,
             format: BufferFormat::new(line_ending, Encoding::Utf8),
             piece_tree,
             saved_root,
@@ -606,10 +583,6 @@ impl TextBuffer {
 
         TextBuffer {
             fs,
-            line_ending,
-            original_line_ending: line_ending,
-            encoding,
-            original_encoding: encoding,
             format: BufferFormat::new(line_ending, encoding),
             piece_tree,
             saved_root,
@@ -655,10 +628,6 @@ impl TextBuffer {
 
         TextBuffer {
             fs,
-            line_ending,
-            original_line_ending: line_ending,
-            encoding,
-            original_encoding: encoding,
             format: BufferFormat::new(line_ending, encoding),
             piece_tree,
             saved_root,
@@ -703,10 +672,6 @@ impl TextBuffer {
             large_file: false,
             line_feeds_scanned: false,
             is_binary: false,
-            line_ending,
-            original_line_ending: line_ending,
-            encoding,
-            original_encoding: encoding,
             format: BufferFormat::new(line_ending, encoding),
             saved_file_size: None,
             version: 0,
@@ -778,8 +743,7 @@ impl TextBuffer {
         buffer.is_binary = is_binary;
         // For binary files, ensure encoding matches detection
         if is_binary {
-            buffer.encoding = encoding;
-            buffer.original_encoding = encoding;
+            buffer.format.set_default_encoding(encoding);
         }
         // Note: line_ending and encoding are already set by from_bytes/from_bytes_raw
         Ok(buffer)
@@ -881,8 +845,7 @@ impl TextBuffer {
             buffer.file_path = Some(path.to_path_buf());
             buffer.modified = false;
             buffer.large_file = true;
-            buffer.encoding = encoding;
-            buffer.original_encoding = encoding;
+            buffer.format.set_default_encoding(encoding);
             return Ok(buffer);
         }
 
@@ -955,10 +918,6 @@ impl TextBuffer {
             large_file: true,
             line_feeds_scanned: false,
             is_binary,
-            line_ending,
-            original_line_ending: line_ending,
-            encoding,
-            original_encoding: encoding,
             format: BufferFormat::new(line_ending, encoding),
             saved_file_size: Some(file_size),
             version: 0,
@@ -1005,15 +964,18 @@ impl TextBuffer {
         // 2. The source file exists
         // 3. No line ending conversion is needed
         // 4. No encoding conversion is needed
-        let needs_line_ending_conversion = self.line_ending != self.original_line_ending;
+        let needs_line_ending_conversion = self.format.line_ending_changed_since_load();
         // We need encoding conversion if:
         // - NOT a binary file (binary files preserve raw bytes), AND
         // - Either the encoding changed from the original, OR
         // - The target encoding isn't plain UTF-8/ASCII (since internal storage is UTF-8)
         // For example: UTF-8 BOM files are stored as UTF-8, so we need to add BOM on save
         let needs_encoding_conversion = !self.is_binary
-            && (self.encoding != self.original_encoding
-                || !matches!(self.encoding, Encoding::Utf8 | Encoding::Ascii));
+            && (self.format.encoding_changed_since_load()
+                || !matches!(
+                    self.format.encoding(),
+                    Encoding::Utf8 | Encoding::Ascii
+                ));
         let needs_conversion = needs_line_ending_conversion || needs_encoding_conversion;
 
         let src_path_for_copy: Option<&Path> = if needs_conversion {
@@ -1021,8 +983,8 @@ impl TextBuffer {
         } else {
             self.file_path.as_deref().filter(|p| self.fs.exists(p))
         };
-        let target_ending = self.line_ending;
-        let target_encoding = self.encoding;
+        let target_ending = self.format.line_ending();
+        let target_encoding = self.format.encoding();
 
         let mut insert_data: Vec<Vec<u8>> = Vec::new();
         let mut actions: Vec<RecipeAction> = Vec::new();
@@ -1473,8 +1435,7 @@ impl TextBuffer {
         self.consolidate_after_save(dest_path, new_size);
 
         self.mark_saved_snapshot();
-        self.original_line_ending = self.line_ending;
-        self.original_encoding = self.encoding;
+        self.format.promote_current_to_original();
         Ok(())
     }
 
@@ -1490,8 +1451,7 @@ impl TextBuffer {
         self.consolidate_after_save(&dest_path, new_size);
 
         self.mark_saved_snapshot();
-        self.original_line_ending = self.line_ending;
-        self.original_encoding = self.encoding;
+        self.format.promote_current_to_original();
         Ok(())
     }
 
@@ -3358,7 +3318,7 @@ impl TextBuffer {
 
     /// Get the line ending format for this buffer
     pub fn line_ending(&self) -> LineEnding {
-        self.line_ending
+        self.format.line_ending()
     }
 
     /// Set the line ending format for this buffer
@@ -3366,7 +3326,7 @@ impl TextBuffer {
     /// This marks the buffer as modified since the line ending format has changed.
     /// On save, the buffer content will be converted to the new format.
     pub fn set_line_ending(&mut self, line_ending: LineEnding) {
-        self.line_ending = line_ending;
+        self.format.set_line_ending(line_ending);
         self.mark_content_modified();
     }
 
@@ -3375,13 +3335,12 @@ impl TextBuffer {
     /// Unlike `set_line_ending`, this does NOT mark the buffer as modified.
     /// This should be used when initializing a new buffer with a configured default.
     pub fn set_default_line_ending(&mut self, line_ending: LineEnding) {
-        self.line_ending = line_ending;
-        self.original_line_ending = line_ending;
+        self.format.set_default_line_ending(line_ending);
     }
 
     /// Get the encoding format for this buffer
     pub fn encoding(&self) -> Encoding {
-        self.encoding
+        self.format.encoding()
     }
 
     /// Set the encoding format for this buffer
@@ -3389,7 +3348,7 @@ impl TextBuffer {
     /// This marks the buffer as modified since the encoding format has changed.
     /// On save, the buffer content will be converted to the new encoding.
     pub fn set_encoding(&mut self, encoding: Encoding) {
-        self.encoding = encoding;
+        self.format.set_encoding(encoding);
         self.mark_content_modified();
     }
 
@@ -3398,8 +3357,7 @@ impl TextBuffer {
     /// Unlike `set_encoding`, this does NOT mark the buffer as modified.
     /// This should be used when initializing a new buffer with a configured default.
     pub fn set_default_encoding(&mut self, encoding: Encoding) {
-        self.encoding = encoding;
-        self.original_encoding = encoding;
+        self.format.set_default_encoding(encoding);
     }
 
     /// Detect the line ending format from a sample of bytes
@@ -6411,10 +6369,6 @@ mod tests {
                 large_file: true,
                 line_feeds_scanned: false,
                 is_binary: false,
-                line_ending: LineEnding::LF,
-                original_line_ending: LineEnding::LF,
-                encoding: Encoding::Utf8,
-                original_encoding: Encoding::Utf8,
                 format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
                 saved_file_size: Some(bytes),
                 version: 0,
@@ -6663,10 +6617,6 @@ mod tests {
                 large_file: true,
                 line_feeds_scanned: false,
                 is_binary: false,
-                line_ending: LineEnding::LF,
-                original_line_ending: LineEnding::LF,
-                encoding: Encoding::Utf8,
-                original_encoding: Encoding::Utf8,
                 format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
                 saved_file_size: Some(file_size),
                 version: 0,
@@ -6954,10 +6904,6 @@ mod tests {
                 large_file: true,
                 line_feeds_scanned: false,
                 is_binary: false,
-                line_ending: LineEnding::LF,
-                original_line_ending: LineEnding::LF,
-                encoding: Encoding::Utf8,
-                original_encoding: Encoding::Utf8,
                 format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
                 saved_file_size: Some(file_size),
                 version: 0,
