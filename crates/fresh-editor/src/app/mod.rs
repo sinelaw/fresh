@@ -1,3 +1,4 @@
+mod action_events;
 mod async_messages;
 mod bookmark_actions;
 mod bookmarks;
