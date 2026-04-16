@@ -2347,180 +2347,6 @@ impl Editor {
         }
     }
 
-    /// Calculate buffer byte position from screen coordinates
-    ///
-    /// When `compose_width` is set and narrower than the content area, the
-    /// content is centered with left padding.  View-line mappings are built
-    /// relative to that compose render area, so the same offset must be
-    /// applied here when converting screen coordinates.
-    ///
-    /// Returns None if the position cannot be determined (e.g., click in gutter for click handler)
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn screen_to_buffer_position(
-        col: u16,
-        row: u16,
-        content_rect: ratatui::layout::Rect,
-        gutter_width: u16,
-        cached_mappings: &Option<Vec<crate::app::types::ViewLineMapping>>,
-        fallback_position: usize,
-        allow_gutter_click: bool,
-        compose_width: Option<u16>,
-    ) -> Option<usize> {
-        // Adjust content_rect for compose layout centering
-        let content_rect = Self::adjust_content_rect_for_compose(content_rect, compose_width);
-
-        // Calculate relative position in content area
-        let content_col = col.saturating_sub(content_rect.x);
-        let content_row = row.saturating_sub(content_rect.y);
-
-        tracing::trace!(
-            col,
-            row,
-            ?content_rect,
-            gutter_width,
-            content_col,
-            content_row,
-            num_mappings = cached_mappings.as_ref().map(|m| m.len()),
-            "screen_to_buffer_position"
-        );
-
-        // Handle gutter clicks
-        let text_col = if content_col < gutter_width {
-            if !allow_gutter_click {
-                return None; // Click handler skips gutter clicks
-            }
-            0 // Drag handler uses position 0 of the line
-        } else {
-            content_col.saturating_sub(gutter_width) as usize
-        };
-
-        // Use cached view line mappings for accurate position lookup
-        let visual_row = content_row as usize;
-
-        // Helper to get position from a line mapping at a given visual column
-        let position_from_mapping =
-            |line_mapping: &crate::app::types::ViewLineMapping, col: usize| -> usize {
-                if col < line_mapping.visual_to_char.len() {
-                    // Use O(1) lookup: visual column -> char index -> source byte
-                    if let Some(byte_pos) = line_mapping.source_byte_at_visual_col(col) {
-                        return byte_pos;
-                    }
-                    // Column maps to virtual/injected content - find nearest real position
-                    for c in (0..col).rev() {
-                        if let Some(byte_pos) = line_mapping.source_byte_at_visual_col(c) {
-                            return byte_pos;
-                        }
-                    }
-                    line_mapping.line_end_byte
-                } else {
-                    // Click is past end of visible content
-                    // For empty lines (only a newline), return the line start position
-                    // to keep cursor on this line rather than jumping to the next line
-                    if line_mapping.visual_to_char.len() <= 1 {
-                        // Empty or newline-only line - return first source byte if available
-                        if let Some(Some(first_byte)) = line_mapping.char_source_bytes.first() {
-                            return *first_byte;
-                        }
-                    }
-                    line_mapping.line_end_byte
-                }
-            };
-
-        let position = cached_mappings
-            .as_ref()
-            .and_then(|mappings| {
-                if let Some(line_mapping) = mappings.get(visual_row) {
-                    // Click is on a visible line
-                    Some(position_from_mapping(line_mapping, text_col))
-                } else if !mappings.is_empty() {
-                    // Click is below last visible line - use the last line at the clicked column
-                    let last_mapping = mappings.last().unwrap();
-                    Some(position_from_mapping(last_mapping, text_col))
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(fallback_position);
-
-        Some(position)
-    }
-
-    pub(super) fn adjust_content_rect_for_compose(
-        content_rect: ratatui::layout::Rect,
-        compose_width: Option<u16>,
-    ) -> ratatui::layout::Rect {
-        if let Some(cw) = compose_width {
-            let clamped = cw.min(content_rect.width).max(1);
-            if clamped < content_rect.width {
-                let pad_total = content_rect.width - clamped;
-                let left_pad = pad_total / 2;
-                ratatui::layout::Rect::new(
-                    content_rect.x + left_pad,
-                    content_rect.y,
-                    clamped,
-                    content_rect.height,
-                )
-            } else {
-                content_rect
-            }
-        } else {
-            content_rect
-        }
-    }
-
-    /// Check whether a gutter click at `target_position` should toggle a fold.
-    /// Returns `Some(target_position)` (the byte to fold at) or `None`.
-    fn fold_toggle_byte_from_position(
-        state: &crate::state::EditorState,
-        collapsed_header_bytes: &std::collections::BTreeMap<usize, Option<String>>,
-        target_position: usize,
-        content_col: u16,
-        gutter_width: u16,
-    ) -> Option<usize> {
-        if content_col >= gutter_width {
-            return None;
-        }
-
-        use crate::view::folding::indent_folding;
-        let line_start = indent_folding::find_line_start_byte(&state.buffer, target_position);
-
-        // Already collapsed → allow toggling (unfold)
-        if collapsed_header_bytes.contains_key(&line_start) {
-            return Some(target_position);
-        }
-
-        // Check LSP folding ranges first (line-based comparison unavoidable).
-        // Resolve markers to current line numbers post-edit.
-        if !state.folding_ranges.is_empty() {
-            let line = state.buffer.get_line_number(target_position);
-            let resolved = state
-                .folding_ranges
-                .resolved(&state.buffer, &state.marker_list);
-            let has_lsp_fold = resolved.iter().any(|range| {
-                let start_line = range.start_line as usize;
-                let end_line = range.end_line as usize;
-                start_line == line && end_line > start_line
-            });
-            if has_lsp_fold {
-                return Some(target_position);
-            }
-        }
-
-        // Fallback: indent-based foldable detection on bytes when LSP ranges are empty
-        if state.folding_ranges.is_empty() {
-            let tab_size = state.buffer_settings.tab_size;
-            let max_scan = crate::config::INDENT_FOLD_INDICATOR_MAX_SCAN;
-            let max_bytes = max_scan * state.buffer.estimated_line_length();
-            if indent_folding::indent_fold_end_byte(&state.buffer, line_start, tab_size, max_bytes)
-                .is_some()
-            {
-                return Some(target_position);
-            }
-        }
-
-        None
-    }
-
     pub(super) fn fold_toggle_line_at_screen_position(
         &self,
         col: u16,
@@ -2565,7 +2391,7 @@ impl Editor {
                 .get(split_id)
                 .and_then(|vs| vs.compose_width);
 
-            let target_position = Self::screen_to_buffer_position(
+            let target_position = super::click_geometry::screen_to_buffer_position(
                 col,
                 row,
                 *content_rect,
@@ -2576,10 +2402,10 @@ impl Editor {
                 compose_width,
             )?;
 
-            let adjusted_rect = Self::adjust_content_rect_for_compose(*content_rect, compose_width);
+            let adjusted_rect = super::click_geometry::adjust_content_rect_for_compose(*content_rect, compose_width);
             let content_col = col.saturating_sub(adjusted_rect.x);
             let state = self.buffers.get(buffer_id)?;
-            if let Some(byte_pos) = Self::fold_toggle_byte_from_position(
+            if let Some(byte_pos) = super::click_geometry::fold_toggle_byte_from_position(
                 state,
                 &collapsed_header_bytes,
                 target_position,
@@ -2638,7 +2464,7 @@ impl Editor {
                     .get(&buffer_id)
                     .map(|s| s.margins.left_total_width() as u16)
                     .unwrap_or(0);
-                let target = Self::screen_to_buffer_position(
+                let target = super::click_geometry::screen_to_buffer_position(
                     col,
                     row,
                     content_rect,
@@ -2729,7 +2555,7 @@ impl Editor {
             if let Some(state) = self.buffers.get(&buffer_id) {
                 let gutter_width = state.margins.left_total_width() as u16;
 
-                let Some(target_position) = Self::screen_to_buffer_position(
+                let Some(target_position) = super::click_geometry::screen_to_buffer_position(
                     col,
                     row,
                     content_rect,
@@ -2744,7 +2570,7 @@ impl Editor {
 
                 // Toggle fold on gutter click if this line is foldable/collapsed
                 let adjusted_rect =
-                    Self::adjust_content_rect_for_compose(content_rect, compose_width);
+                    super::click_geometry::adjust_content_rect_for_compose(content_rect, compose_width);
                 let content_col = col.saturating_sub(adjusted_rect.x);
                 let collapsed_header_bytes = self
                     .split_view_states
@@ -2754,7 +2580,7 @@ impl Editor {
                             .collapsed_header_bytes(&state.buffer, &state.marker_list)
                     })
                     .unwrap_or_default();
-                let toggle_fold_byte = Self::fold_toggle_byte_from_position(
+                let toggle_fold_byte = super::click_geometry::fold_toggle_byte_from_position(
                     state,
                     &collapsed_header_bytes,
                     target_position,

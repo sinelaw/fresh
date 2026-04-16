@@ -628,7 +628,7 @@ impl Editor {
             .and_then(|vs| vs.compose_width);
 
         // Convert screen position to buffer byte position
-        let Some(byte_pos) = Self::screen_to_buffer_position(
+        let Some(byte_pos) = super::click_geometry::screen_to_buffer_position(
             col,
             row,
             content_rect,
@@ -1140,7 +1140,7 @@ impl Editor {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let gutter_width = state.margins.left_total_width() as u16;
 
-            let Some(target_position) = Self::screen_to_buffer_position(
+            let Some(target_position) = super::click_geometry::screen_to_buffer_position(
                 col,
                 row,
                 content_rect,
@@ -1283,7 +1283,7 @@ impl Editor {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let gutter_width = state.margins.left_total_width() as u16;
 
-            let Some(target_position) = Self::screen_to_buffer_position(
+            let Some(target_position) = super::click_geometry::screen_to_buffer_position(
                 col,
                 row,
                 content_rect,
@@ -2264,7 +2264,7 @@ impl Editor {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let gutter_width = state.margins.left_total_width() as u16;
 
-            let Some(target_position) = Self::screen_to_buffer_position(
+            let Some(target_position) = super::click_geometry::screen_to_buffer_position(
                 col,
                 row,
                 content_rect,

@@ -4,6 +4,7 @@ mod buffer_groups;
 mod buffer_management;
 mod calibration_actions;
 pub mod calibration_wizard;
+mod click_geometry;
 mod clipboard;
 mod composite_buffer_actions;
 mod dabbrev_actions;
