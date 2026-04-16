@@ -1177,14 +1177,22 @@ fn test_issue_1574_crlf_fixture_down_jump_lands_on_paragraph_start() {
     init_tracing_from_env();
 
     // Write a CRLF version of the encodings fixture to a tempfile.
+    // Normalize to LF first so the test produces correct CRLF regardless
+    // of whether the checkout's fixture has LF (Linux/macOS) or CRLF
+    // (Windows with default core.autocrlf=true).  Without normalization,
+    // double-replacement would yield `\r\r\n` on Windows — visible in
+    // the editor as lone `<0D>` characters at the start of every line,
+    // which breaks the test's "Down lands on empty separator" setup.
     let original = std::fs::read_to_string(encodings_fixture_path())
         .expect("failed to read encodings fixture");
-    let crlf: String = original.replace('\n', "\r\n");
+    let crlf: String = original.replace("\r\n", "\n").replace('\n', "\r\n");
     let dir = tempfile::TempDir::new().expect("tempdir");
     let crlf_path = dir.path().join("issue_1574_encodings_crlf.md");
     std::fs::write(&crlf_path, crlf.as_bytes()).expect("write crlf fixture");
 
-    // Sanity: confirm the tempfile has \r\n line endings.
+    // Sanity: confirm the tempfile has clean \r\n line endings — no
+    // bare LFs and no `\r\r` sequences (the latter being the symptom
+    // of the double-replacement bug this normalization guards against).
     let written = std::fs::read(&crlf_path).expect("reread tempfile");
     let crlf_count = written.windows(2).filter(|w| w == b"\r\n").count();
     let bare_lf_count = written
@@ -1192,6 +1200,7 @@ fn test_issue_1574_crlf_fixture_down_jump_lands_on_paragraph_start() {
         .enumerate()
         .filter(|(i, &b)| b == b'\n' && (*i == 0 || written[i - 1] != b'\r'))
         .count();
+    let crcr_count = written.windows(2).filter(|w| w == b"\r\r").count();
     assert!(
         crlf_count > 0,
         "CRLF fixture has no \\r\\n sequences; test setup is broken"
@@ -1199,6 +1208,10 @@ fn test_issue_1574_crlf_fixture_down_jump_lands_on_paragraph_start() {
     assert_eq!(
         bare_lf_count, 0,
         "CRLF fixture has bare \\n not preceded by \\r; test setup is broken"
+    );
+    assert_eq!(
+        crcr_count, 0,
+        "CRLF fixture has `\\r\\r` sequences; LF normalization failed"
     );
 
     // Run the Down-jump scenario against the CRLF fixture at the widths
@@ -1248,12 +1261,19 @@ fn test_issue_1574_crlf_fixture_down_jump_lands_on_paragraph_start() {
 fn test_issue_1574_crlf_fixture_up_jump_lands_on_paragraph_end() {
     init_tracing_from_env();
 
+    // Normalize to LF first; see the Down counterpart above for why.
     let original = std::fs::read_to_string(encodings_fixture_path())
         .expect("failed to read encodings fixture");
-    let crlf: String = original.replace('\n', "\r\n");
+    let crlf: String = original.replace("\r\n", "\n").replace('\n', "\r\n");
     let dir = tempfile::TempDir::new().expect("tempdir");
     let crlf_path = dir.path().join("issue_1574_encodings_crlf.md");
     std::fs::write(&crlf_path, crlf.as_bytes()).expect("write crlf fixture");
+    let written = std::fs::read(&crlf_path).expect("reread tempfile");
+    assert_eq!(
+        written.windows(2).filter(|w| w == b"\r\r").count(),
+        0,
+        "CRLF fixture has `\\r\\r` sequences; LF normalization failed"
+    );
 
     let widths_seen_failing: [u16; 8] = [33, 36, 42, 45, 48, 51, 60, 90];
     let mut failures: Vec<String> = Vec::new();
