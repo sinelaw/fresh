@@ -3754,6 +3754,64 @@ fn test_inlay_hints_position_tracking() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Regression test: deleting a text range that contains an inlay hint's
+/// anchor must remove the hint from screen immediately. Without the fix
+/// the hint lingered because the underlying marker just snapped to the
+/// deletion start, leaving stale virtual text visible until the next LSP
+/// refresh (which itself wasn't happening — see the debounced re-request
+/// wired in alongside this fix).
+#[test]
+fn test_inlay_hint_cleared_when_range_deleted() -> anyhow::Result<()> {
+    use fresh::view::virtual_text::VirtualTextPosition;
+    use ratatui::style::{Color, Style};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Seed buffer content.
+    harness.type_text("let x = 5;")?;
+    harness.render()?;
+
+    // Inject an inlay hint at byte 5 (between "let x" and " = 5;").
+    let state = harness.editor_mut().active_state_mut();
+    let buf_len = state.buffer.len();
+    if buf_len > 0 {
+        state.marker_list.adjust_for_insert(0, buf_len);
+    }
+    let hint_style = Style::default().fg(Color::Rgb(128, 128, 128));
+    state.virtual_texts.add(
+        &mut state.marker_list,
+        5,
+        ": i32".to_string(),
+        hint_style,
+        VirtualTextPosition::AfterChar,
+        0,
+    );
+    harness.render()?;
+
+    let screen_before = harness.screen_to_string();
+    assert!(
+        screen_before.contains(": i32"),
+        "hint should be visible before deletion, screen:\n{}",
+        screen_before
+    );
+
+    // Select the entire buffer content and delete it. Every hint anchor
+    // byte is inside the selection, so every hint must be removed.
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?;
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL | KeyModifiers::SHIFT)?;
+    harness.send_key(KeyCode::Delete, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    let screen_after = harness.screen_to_string();
+    assert!(
+        !screen_after.contains(": i32"),
+        "inlay hint should vanish once its anchor range is deleted, screen:\n{}",
+        screen_after
+    );
+
+    Ok(())
+}
+
 /// Test that stopped LSP server does not auto-restart when typing
 ///
 /// This test verifies that when a user explicitly stops an LSP server via the "stop lsp"

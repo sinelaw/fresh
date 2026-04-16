@@ -194,6 +194,53 @@ impl VirtualTextManager {
         id
     }
 
+    /// Add an inline virtual text entry whose foreground/background colours
+    /// are stored as theme keys (resolved at render time so theme changes
+    /// apply live).
+    ///
+    /// `style` is the fallback used when a theme key fails to resolve;
+    /// `fg_theme_key` / `bg_theme_key` are the keys passed to
+    /// `Theme::resolve_theme_key` (e.g. `"editor.line_number_fg"`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_with_theme_keys(
+        &mut self,
+        marker_list: &mut MarkerList,
+        position: usize,
+        text: String,
+        style: Style,
+        fg_theme_key: Option<String>,
+        bg_theme_key: Option<String>,
+        vtext_position: VirtualTextPosition,
+        priority: i32,
+    ) -> VirtualTextId {
+        debug_assert!(
+            vtext_position.is_inline(),
+            "add_with_theme_keys requires BeforeChar or AfterChar"
+        );
+
+        let marker_id = marker_list.create(position, false);
+
+        let id = VirtualTextId(self.next_id);
+        self.next_id += 1;
+
+        self.texts.insert(
+            id,
+            VirtualText {
+                marker_id,
+                text,
+                style,
+                fg_theme_key,
+                bg_theme_key,
+                position: vtext_position,
+                priority,
+                string_id: None,
+                namespace: None,
+            },
+        );
+
+        id
+    }
+
     /// Add a virtual text entry with a string identifier
     ///
     /// This is useful for plugins that need to track and remove virtual texts by name.
@@ -379,6 +426,49 @@ impl VirtualTextManager {
             marker_list.delete(vtext.marker_id);
         }
         self.texts.clear();
+    }
+
+    /// Remove all virtual text entries whose marker position lies within the
+    /// half-open byte range `[start, end)`.
+    ///
+    /// This must be called BEFORE the underlying buffer/marker list is
+    /// adjusted for a deletion, otherwise the affected markers will already
+    /// have been clamped to the deletion start and appear to fall outside
+    /// the range. Used by the editor to drop stale inlay hints whose
+    /// anchors have been erased by the user (a fresh LSP response will
+    /// repopulate them if still applicable).
+    ///
+    /// Returns the number of entries removed.
+    pub fn remove_in_range(
+        &mut self,
+        marker_list: &mut MarkerList,
+        start: usize,
+        end: usize,
+    ) -> usize {
+        if start >= end {
+            return 0;
+        }
+
+        let to_remove: Vec<VirtualTextId> = self
+            .texts
+            .iter()
+            .filter_map(|(id, vtext)| {
+                let pos = marker_list.get_position(vtext.marker_id)?;
+                if pos >= start && pos < end {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let count = to_remove.len();
+        for id in to_remove {
+            if let Some(vtext) = self.texts.remove(&id) {
+                marker_list.delete(vtext.marker_id);
+            }
+        }
+        count
     }
 
     /// Get the number of virtual text entries

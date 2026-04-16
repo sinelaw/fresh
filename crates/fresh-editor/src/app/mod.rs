@@ -99,6 +99,7 @@ pub fn editor_tick(
         needs_render = true;
     }
     editor.check_diagnostic_pull_timer();
+    editor.check_inlay_hints_timer();
     if editor.check_warning_log() {
         needs_render = true;
     }
@@ -729,6 +730,10 @@ pub struct Editor {
     /// Scheduled diagnostic pull time per buffer (debounced after didChange)
     /// When set, diagnostics will be re-pulled when this instant is reached
     scheduled_diagnostic_pull: Option<(BufferId, Instant)>,
+
+    /// Scheduled inlay hints refresh time per buffer (debounced after didChange)
+    /// When set, inlay hints will be re-requested when this instant is reached
+    scheduled_inlay_hints_request: Option<(BufferId, Instant)>,
 
     /// Stored LSP diagnostics per URI, per server (push model - publishDiagnostics)
     /// Outer key: URI string, Inner key: server name
@@ -1679,6 +1684,7 @@ impl Editor {
             lsp_log_messages: Vec::new(),
             diagnostic_result_ids: HashMap::new(),
             scheduled_diagnostic_pull: None,
+            scheduled_inlay_hints_request: None,
             stored_push_diagnostics: HashMap::new(),
             stored_pull_diagnostics: HashMap::new(),
             stored_diagnostics: HashMap::new(),
@@ -2439,6 +2445,28 @@ impl Editor {
         }
 
         false // no immediate redraw needed; diagnostics arrive asynchronously
+    }
+
+    /// Check if the inlay hints refresh timer has expired and trigger a
+    /// re-request if so.
+    ///
+    /// Debounced inlay hints refresh after document changes — waits
+    /// INLAY_HINTS_DEBOUNCE_MS after the last edit before asking the LSP
+    /// server for fresh hints. Without this, stale hints persist (including
+    /// hints anchored inside ranges the user has since deleted) because we
+    /// only requested hints at didOpen / toggle time.
+    pub fn check_inlay_hints_timer(&mut self) -> bool {
+        let Some((buffer_id, trigger_time)) = self.scheduled_inlay_hints_request else {
+            return false;
+        };
+
+        if Instant::now() < trigger_time {
+            return false;
+        }
+
+        self.scheduled_inlay_hints_request = None;
+        self.request_inlay_hints_for_buffer(buffer_id);
+        false // no immediate redraw; hints arrive asynchronously
     }
 
     /// Check if completion trigger timer has expired and trigger completion if so

@@ -62,6 +62,11 @@ const SEMANTIC_TOKENS_FULL_DEBOUNCE_MS: u64 = 500;
 const SEMANTIC_TOKENS_RANGE_DEBOUNCE_MS: u64 = 50;
 const SEMANTIC_TOKENS_RANGE_PADDING_LINES: usize = 10;
 const FOLDING_RANGES_DEBOUNCE_MS: u64 = 300;
+/// Debounce window between the last buffer edit and the next inlay hints
+/// re-request. Matches the diagnostic-pull debounce to keep network chatter
+/// low while still refreshing hints after brief editing pauses (including
+/// saves, which naturally follow an edit).
+const INLAY_HINTS_DEBOUNCE_MS: u64 = 500;
 
 impl Editor {
     /// Handle LSP completion response.
@@ -1160,8 +1165,13 @@ impl Editor {
             return;
         }
 
-        // Style for inlay hints - dimmed to not distract from actual code
+        // Fallback style for inlay hints - dimmed to not distract from actual
+        // code. The actual on-screen color is resolved from the theme key
+        // below (`editor.line_number_fg`) so the hints follow the active
+        // theme. This fallback only applies when the theme doesn't define
+        // the key.
         let hint_style = Style::default().fg(Color::Rgb(128, 128, 128));
+        let hint_fg_theme_key = Some("editor.line_number_fg".to_string());
 
         for hint in hints {
             // Convert LSP position to byte offset
@@ -1200,11 +1210,13 @@ impl Editor {
             // Use the hint text as-is - spacing is handled during rendering
             let display_text = text;
 
-            state.virtual_texts.add(
+            state.virtual_texts.add_with_theme_keys(
                 &mut state.marker_list,
                 byte_offset,
                 display_text,
                 hint_style,
+                hint_fg_theme_key.clone(),
+                None,
                 position,
                 0, // Default priority
             );
@@ -2769,6 +2781,18 @@ impl Editor {
                 buffer_id,
                 std::time::Instant::now() + std::time::Duration::from_millis(1000),
             ));
+
+            // Schedule debounced inlay hints refresh. Without this, hints
+            // computed before the edit remain anchored to stale byte offsets
+            // (including inside ranges the user just deleted), and new hints
+            // that the server would now produce never arrive.
+            if self.config.editor.enable_inlay_hints {
+                self.scheduled_inlay_hints_request = Some((
+                    buffer_id,
+                    std::time::Instant::now()
+                        + std::time::Duration::from_millis(INLAY_HINTS_DEBOUNCE_MS),
+                ));
+            }
         }
     }
 
@@ -2988,11 +3012,15 @@ impl Editor {
 
     /// Request inlay hints for the active buffer (if enabled and LSP available)
     pub(crate) fn request_inlay_hints_for_active_buffer(&mut self) {
+        let buffer_id = self.active_buffer();
+        self.request_inlay_hints_for_buffer(buffer_id);
+    }
+
+    /// Request inlay hints for a specific buffer (if enabled and LSP available)
+    pub(crate) fn request_inlay_hints_for_buffer(&mut self, buffer_id: BufferId) {
         if !self.config.editor.enable_inlay_hints {
             return;
         }
-
-        let buffer_id = self.active_buffer();
 
         // Get line count from buffer state
         let line_count = if let Some(state) = self.buffers.get(&buffer_id) {
@@ -3568,6 +3596,93 @@ mod tests {
         Editor::apply_inlay_hints_to_state(&mut state, &hints);
 
         assert!(state.virtual_texts.is_empty());
+    }
+
+    #[test]
+    fn test_inlay_hint_uses_theme_key_for_foreground() {
+        // Verify that apply_inlay_hints_to_state stores the theme key so
+        // hints follow the active theme rather than a hardcoded color.
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        state.buffer = Buffer::from_str_test("ab");
+
+        if !state.buffer.is_empty() {
+            state.marker_list.adjust_for_insert(0, state.buffer.len());
+        }
+
+        let hints = vec![make_hint(0, 1, ": i32", Some(InlayHintKind::TYPE))];
+        Editor::apply_inlay_hints_to_state(&mut state, &hints);
+
+        let lookup = state
+            .virtual_texts
+            .build_lookup(&state.marker_list, 0, state.buffer.len());
+        let vtexts = lookup.get(&1).expect("expected hint at byte offset 1");
+        assert_eq!(
+            vtexts[0].fg_theme_key.as_deref(),
+            Some("editor.line_number_fg")
+        );
+        assert_eq!(vtexts[0].bg_theme_key, None);
+    }
+
+    #[test]
+    fn test_inlay_hint_removed_when_its_range_is_deleted() {
+        // Regression: deleting a range that covers the anchor byte of an
+        // inlay hint used to leave the hint visible (the marker snapped to
+        // the deletion start). apply_delete now calls
+        // virtual_texts.remove_in_range before adjusting markers, so the
+        // hint vanishes immediately. A future LSP refresh can repopulate
+        // hints elsewhere.
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        state.buffer = Buffer::from_str_test("let x = 42;");
+        state.marker_list.adjust_for_insert(0, state.buffer.len());
+
+        // Hint anchored at byte 5 (after "let x" -> rendered before '=').
+        let hints = vec![make_hint(0, 5, ": i32", Some(InlayHintKind::TYPE))];
+        Editor::apply_inlay_hints_to_state(&mut state, &hints);
+        assert_eq!(state.virtual_texts.len(), 1);
+
+        // Simulate user deleting "x = 42" (bytes 4..10, half-open) — the
+        // hint anchor at byte 5 is inside this range.
+        let removed = state
+            .virtual_texts
+            .remove_in_range(&mut state.marker_list, 4, 10);
+        assert_eq!(removed, 1, "hint inside deleted range must be removed");
+        assert!(state.virtual_texts.is_empty());
+    }
+
+    #[test]
+    fn test_inlay_hint_outside_deletion_survives() {
+        // Anchors outside the deleted range must not be collateral damage.
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        state.buffer = Buffer::from_str_test("let x = 42; let y = 0;");
+        state.marker_list.adjust_for_insert(0, state.buffer.len());
+
+        let hints = vec![
+            make_hint(0, 5, ": i32", Some(InlayHintKind::TYPE)), // byte 5 - inside deletion
+            make_hint(0, 17, ": i32", Some(InlayHintKind::TYPE)), // byte 17 - outside
+        ];
+        Editor::apply_inlay_hints_to_state(&mut state, &hints);
+        assert_eq!(state.virtual_texts.len(), 2);
+
+        let removed = state
+            .virtual_texts
+            .remove_in_range(&mut state.marker_list, 4, 10);
+        assert_eq!(removed, 1);
+        assert_eq!(state.virtual_texts.len(), 1);
     }
 
     #[test]

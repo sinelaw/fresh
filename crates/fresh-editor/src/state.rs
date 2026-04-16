@@ -468,6 +468,14 @@ impl EditorState {
             0
         };
 
+        // Drop virtual texts whose anchors are being erased. This is what
+        // makes inlay hints disappear immediately when the range containing
+        // them is deleted; without this the marker would just clamp to
+        // range.start and the hint would linger at the wrong position until
+        // the next LSP refresh.
+        self.virtual_texts
+            .remove_in_range(&mut self.marker_list, range.start, range.end);
+
         // CRITICAL: Adjust markers BEFORE modifying buffer
         self.marker_list.adjust_for_delete(range.start, len);
         self.margins.adjust_for_delete(range.start, len);

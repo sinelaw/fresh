@@ -794,6 +794,13 @@ impl Editor {
             }
         }
 
+        // Cancel scheduled inlay hints refresh if it targets this buffer
+        if let Some((scheduled_buf, _)) = &self.scheduled_inlay_hints_request {
+            if *scheduled_buf == buffer_id {
+                self.scheduled_inlay_hints_request = None;
+            }
+        }
+
         self.folding_ranges_in_flight.remove(&buffer_id);
         self.folding_ranges_debounce.remove(&buffer_id);
         self.pending_folding_range_requests
