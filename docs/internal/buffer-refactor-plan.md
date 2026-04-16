@@ -568,3 +568,204 @@ responsibility. Sub-structs do not reach.
 No `Rc<RefCell<TextBuffer>>`, no event bus, no `&mut self` where
 `self` is the outer `TextBuffer` appearing inside a sub-struct method
 signature. That's the shortlist.
+
+## 7. Method-by-method mapping
+
+Every method currently on `impl TextBuffer` appears in exactly one
+row. Top-level types and free fns appear at the end of their section.
+
+### 7.1 → `format.rs` (BufferFormat)
+
+| Currently | Moves to |
+|---|---|
+| `line_ending`, `set_line_ending`, `set_default_line_ending` | `impl BufferFormat` methods |
+| `encoding`, `set_encoding`, `set_default_encoding` | `impl BufferFormat` methods |
+| `detect_line_ending` | free `pub fn` |
+| `detect_encoding`, `detect_encoding_or_binary`, `detect_and_convert_encoding` | free `pub fn` |
+| `convert_to_encoding`, `normalize_line_endings` | free `pub fn` |
+| `convert_line_endings_to` | free `pub(super) fn` |
+| `LineEnding` enum (currently L187–L215) | moves here |
+| `set_encoding` / `set_line_ending` callers of `mark_content_modified` | delegator on `TextBuffer` flips the flag before/after |
+
+### 7.2 → `file_kind.rs` (BufferFileKind)
+
+| Currently | Moves to |
+|---|---|
+| `is_binary` | `impl BufferFileKind` |
+| `is_large_file` | `impl BufferFileKind` |
+| `has_line_feed_scan` | `impl BufferFileKind` |
+| Internal setters for these three flags during load | `impl BufferFileKind` (`pub(super)`) |
+
+### 7.3 → `persistence/` (Persistence sub-struct and its submodules)
+
+**`persistence/mod.rs`** — struct + small state methods:
+
+| Currently | Moves to |
+|---|---|
+| `filesystem`, `set_filesystem` | `impl Persistence` |
+| `file_path`, `rename_file_path`, `clear_file_path` | `impl Persistence` |
+| `is_modified`, `clear_modified`, `set_modified` | `impl Persistence` |
+| `is_recovery_pending`, `set_recovery_pending` | `impl Persistence` |
+| `original_file_size` | `impl Persistence` |
+| `mark_dirty` (new — flips modified + recovery_pending) | `impl Persistence` |
+
+**`persistence/load.rs`**:
+
+| Currently | Moves to |
+|---|---|
+| `from_bytes_raw`, `from_bytes`, `from_bytes_with_encoding`, `from_str`, `empty` | `impl TextBuffer` constructors that call `persistence::load::*` helpers |
+| `load_from_file`, `load_from_file_with_encoding` | `impl TextBuffer` (public) that call `persistence::load::*` helpers |
+| `load_small_file` | free `pub(super) fn load_small_file(...)` |
+| `load_large_file`, `load_large_file_confirmed`, `load_large_file_internal` | free `pub(super) fn` in `persistence/load.rs` |
+| `check_large_file_encoding` | free `pub fn` (used by app layer) |
+| `LargeFileEncodingConfirmation` type | moves here |
+
+**`persistence/save.rs`**:
+
+| Currently | Moves to |
+|---|---|
+| `save`, `save_to_file`, `finalize_external_save` | `impl TextBuffer` orchestrators (mechanism a) |
+| `finalize_save` | `impl Persistence` |
+| `consolidate_after_save`, `consolidate_large_file`, `consolidate_small_file` | `impl Persistence` (take `&mut PieceTree, &mut Vec<StringBuffer>` as args — mechanism b) |
+| `make_sudo_error`, `SudoSaveRequired` | moves here |
+
+**`persistence/write_recipe.rs`**:
+
+| Currently | Moves to |
+|---|---|
+| `WriteRecipe`, `RecipeAction`, `to_write_ops`, `has_copy_ops`, `flatten_inserts` | moves here verbatim |
+| `build_write_recipe` | free `pub(super) fn build_write_recipe(piece_tree, buffers, format, file_kind, saved_*)` |
+| `write_recipe_to_file` | free `pub(super) fn` |
+
+**`persistence/inplace.rs`**:
+
+| Currently | Moves to |
+|---|---|
+| `should_use_inplace_write` | free `pub(super) fn` |
+| `create_temp_file`, `create_recovery_temp_file` | free `pub(super) fn` |
+| `inplace_recovery_meta_path`, `write_inplace_recovery_meta` | free `pub(super) fn` |
+| `save_with_inplace_write`, `write_data_inplace`, `stream_file_to_writer` | free `pub(super) fn` |
+
+**`persistence/snapshot.rs`**:
+
+| Currently | Moves to |
+|---|---|
+| `mark_saved_snapshot`, `refresh_saved_root_if_unmodified` | `impl Persistence` (take `&PieceTree` arg) |
+| `apply_chunk_load_to_saved_root` | `impl Persistence` |
+| `diff_since_saved`, `verify_content_differs_in_ranges`, `extract_range_from_tree`, `collect_range_from_node`, `tree_total_bytes`, `diff_trees_by_structure` | `impl Persistence` (read-only, take `&PieceTree`) |
+| `get_recovery_chunks` | `impl Persistence` |
+| `rebuild_with_pristine_saved_root` | `impl TextBuffer` orchestrator (touches `Persistence` + `piece_tree` + `buffers`) |
+
+### 7.4 → `edits.rs`
+
+`edits.rs` contains orchestrators on `impl TextBuffer` (mechanism a).
+Every edit calls `mark_content_modified`.
+
+| Currently | Moves to |
+|---|---|
+| `insert_bytes`, `try_append_to_existing_buffer`, `insert`, `insert_at_position` | `impl TextBuffer` (orchestrators) |
+| `delete_bytes`, `delete`, `delete_range` | `impl TextBuffer` |
+| `replace_content` | `impl TextBuffer` |
+| `apply_bulk_edits` | `impl TextBuffer` |
+| `restore_buffer_state`, `snapshot_buffer_state` | `impl TextBuffer` (touches storage + persistence) |
+| `BufferSnapshot` struct | stays near, in `edits.rs` or moves to `mod.rs` |
+
+### 7.5 → `storage/`
+
+**`storage/mod.rs`**:
+
+| Currently | Moves to |
+|---|---|
+| `get_text_range` | `impl TextBuffer` (`pub(crate)` or delegator) |
+| `get_text_range_mut` | `impl TextBuffer` (orchestrator — may need `chunk_split_and_load`) |
+| `get_all_text`, `get_all_text_string`, `slice_bytes`, `to_string` | `impl TextBuffer` (all pure reads over `piece_tree`+`buffers`) |
+| `len`, `is_empty`, `total_bytes`, `line_count` | `impl TextBuffer` |
+| `buffer_slice` | `impl TextBuffer` |
+
+**`storage/chunks.rs`**:
+
+| Currently | Moves to |
+|---|---|
+| `prepare_viewport`, `chunk_split_and_load`, `ensure_chunk_loaded_at` | `impl TextBuffer` (orchestrators — touch persistence for `fs`) |
+| `extend_streaming` | `impl TextBuffer` orchestrator |
+| `ChunkInfo`, `OverlappingChunks` (L4293–L4540) | moves here |
+
+**`storage/line_scan.rs`**:
+
+| Currently | Moves to |
+|---|---|
+| `prepare_line_scan`, `piece_tree_leaves`, `scan_leaf`, `leaf_io_params`, `apply_scan_updates` | `impl TextBuffer` |
+| `LineScanChunk` type | moves here |
+
+### 7.6 → `search.rs`
+
+| Currently | Moves to |
+|---|---|
+| `find_next`, `find_next_in_range`, `find_pattern`, `find_in_bytes` | `impl TextBuffer` + free `find_in_bytes` |
+| `find_next_regex`, `find_next_regex_in_range`, `find_regex` | `impl TextBuffer` |
+| `search_scan_init`, `search_scan_next_chunk`, `search_scan_all` | `impl TextBuffer` |
+| `search_hybrid_plan`, `search_hybrid` | `impl TextBuffer` |
+| `HybridSearchPlan`, `HybridSearchPlan::execute` | moves here |
+| `ChunkedSearchState` | moves here |
+| free `search_boundary_overlap` (L4722) | moves here |
+
+### 7.7 → `replace.rs`
+
+| Currently | Moves to |
+|---|---|
+| `replace_range`, `replace_next`, `replace_all`, `replace_all_regex` | `impl TextBuffer` orchestrators (delete + insert, bump modified) |
+
+### 7.8 → `position.rs`
+
+| Currently | Moves to |
+|---|---|
+| `offset_to_position`, `position_to_offset` | `impl TextBuffer` |
+| `position_to_line_col`, `line_col_to_position` | `impl TextBuffer` |
+| `position_to_lsp_position`, `lsp_position_to_byte` | `impl TextBuffer` |
+| `prev_char_boundary`, `next_char_boundary`, `snap_to_char_boundary`, `is_utf8_continuation_byte` | `impl TextBuffer` + one free pure fn |
+| `prev_grapheme_boundary`, `next_grapheme_boundary` | `impl TextBuffer` |
+| `prev_word_boundary`, `next_word_boundary` | `impl TextBuffer` |
+
+### 7.9 → `lines.rs`
+
+| Currently | Moves to |
+|---|---|
+| `get_line`, `line_start_offset`, `piece_info_at_offset`, `stats` | `impl TextBuffer` |
+| `resolve_line_byte_offset` | `impl TextBuffer` |
+| `line_iterator`, `iter_lines_from` | `impl TextBuffer` |
+| `get_line_number`, `estimated_line_length` | `impl TextBuffer` |
+| `LineNumber` enum (L276–L313) | moves here |
+| `LineData` (L7867), `TextBufferLineIterator` (L7880–end) | moves here |
+
+### 7.10 → `line_cache.rs`
+
+| Currently | Moves to |
+|---|---|
+| `populate_line_cache`, `get_cached_byte_offset_for_line`, `invalidate_line_cache_from`, `handle_line_cache_insertion`, `handle_line_cache_deletion`, `clear_line_cache` | `impl TextBuffer` — these are ~all no-ops today (remnants of an earlier cache). Consider a follow-up to delete them outright, but not in this refactor. |
+
+### 7.11 → `mod.rs` (stays on `TextBuffer`)
+
+| Currently | Stays on `impl TextBuffer` |
+|---|---|
+| `new`, `new_with_path` | Constructor (composes all sub-structs) |
+| `version`, `bump_version` | Top-level counter (§3.2) |
+| `mark_content_modified` | Invariant choke-point (Rule 3) |
+| `from_str_test`, `new_test` | Test helpers, stay near struct |
+| `BufferConfig`, `Default for BufferConfig` | stays (or moves to `mod.rs`) |
+
+### 7.12 Tests
+
+The inline test mods at L4779–L7866 split roughly as follows. Each
+`tests/<topic>.rs` is `#[cfg(test)] mod <topic>` with `use super::*;`:
+
+| Current test range | New file |
+|---|---|
+| Buffer-empty / multiline / insert / delete basics (L4790–L5600 area) | `tests/edits.rs` |
+| Offset↔position, LSP position, line iterator cross-ref (L5638–L5904 area) | `tests/position.rs` |
+| Line-ending detect / normalize (L5904–L5940 area) | `tests/line_endings.rs` |
+| `get_all_text` returns empty for unloaded (L5940 area) | `tests/save_load.rs` |
+| Proptest `operation_strategy`, `text_with_newlines` (L7443 onward) | `tests/property.rs` (+ shared helpers in `tests/mod.rs`) |
+| Binary detection (L7780–L7866) | `tests/binary_detection.rs` |
+| `apply_recipe` helper (L7756–L7779) | `tests/mod.rs` as shared helper |
+
+Shared helpers (`test_fs`, fixtures) consolidate into `tests/mod.rs`.
