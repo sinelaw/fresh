@@ -1416,8 +1416,7 @@ impl TextBuffer {
 
     /// Snapshot the current tree as the saved baseline
     pub fn mark_saved_snapshot(&mut self) {
-        self.persistence.set_saved_root(self.piece_tree.root());
-        self.persistence.clear_modified();
+        self.persistence.mark_saved_snapshot(&self.piece_tree);
     }
 
     /// Refresh the saved root to match the current tree structure without
@@ -1425,102 +1424,13 @@ impl TextBuffer {
     /// (e.g. chunk_split_and_load during search scan) so that
     /// `diff_since_saved()` can take the fast `Arc::ptr_eq` path.
     pub fn refresh_saved_root_if_unmodified(&mut self) {
-        if !self.persistence.is_modified() {
-            self.persistence.set_saved_root(self.piece_tree.root());
-        }
-    }
-
-    /// Apply a chunk-load buffer replacement to `saved_root`.
-    ///
-    /// When viewport loading converts a `Stored(buffer_id)` piece to
-    /// `Added(new_buffer_id)` in the current tree and the buffer is already
-    /// modified, we must apply the same transformation to `saved_root` so
-    /// that `diff_since_saved()` can match loaded-but-unedited regions by
-    /// `(location, offset)` identity.
-    fn apply_chunk_load_to_saved_root(
-        &mut self,
-        old_buffer_id: usize,
-        chunk_offset_in_buffer: usize,
-        chunk_bytes: usize,
-        new_buffer_id: usize,
-    ) {
-        use crate::model::piece_tree::{LeafData, PieceTree};
-
-        let mut leaves = Vec::new();
-        self.persistence.saved_root().collect_leaves(&mut leaves);
-
-        let mut modified = false;
-        let mut new_leaves: Vec<LeafData> = Vec::with_capacity(leaves.len() + 2);
-
-        for leaf in &leaves {
-            if leaf.location.buffer_id() != old_buffer_id {
-                new_leaves.push(*leaf);
-                continue;
-            }
-
-            let leaf_start = leaf.offset;
-            let leaf_end = leaf.offset + leaf.bytes;
-            let chunk_start = chunk_offset_in_buffer;
-            let chunk_end = chunk_offset_in_buffer + chunk_bytes;
-
-            // Check if this leaf overlaps the chunk range
-            if chunk_start >= leaf_end || chunk_end <= leaf_start {
-                // No overlap — keep as-is
-                new_leaves.push(*leaf);
-                continue;
-            }
-
-            modified = true;
-
-            // Prefix: portion of this leaf before the chunk
-            if chunk_start > leaf_start {
-                new_leaves.push(LeafData::new(
-                    leaf.location,
-                    leaf.offset,
-                    chunk_start - leaf_start,
-                    None, // line feed count unknown after split
-                ));
-            }
-
-            // The chunk itself — replaced with Added(new_buffer_id)
-            let actual_start = chunk_start.max(leaf_start);
-            let actual_end = chunk_end.min(leaf_end);
-            let offset_in_chunk = actual_start - chunk_start;
-            new_leaves.push(LeafData::new(
-                BufferLocation::Added(new_buffer_id),
-                offset_in_chunk,
-                actual_end - actual_start,
-                None,
-            ));
-
-            // Suffix: portion of this leaf after the chunk
-            if chunk_end < leaf_end {
-                new_leaves.push(LeafData::new(
-                    leaf.location,
-                    chunk_end,
-                    leaf_end - chunk_end,
-                    None,
-                ));
-            }
-        }
-
-        if modified {
-            self.persistence
-                .set_saved_root(PieceTree::from_leaves(&new_leaves).root());
-        }
+        self.persistence
+            .refresh_saved_root_if_unmodified(&self.piece_tree);
     }
 
     /// Diff the current piece tree against the last saved snapshot.
     ///
-    /// This compares actual byte content, not just tree structure. This means
-    /// that if you delete text and then paste it back, the diff will correctly
-    /// show no changes (even though the tree structure differs).
-    ///
-    /// Uses a two-phase algorithm for efficiency:
-    /// - Phase 1: Fast structure-based diff to find changed byte ranges (O(num_leaves))
-    /// - Phase 2: Only compare actual content within changed ranges (O(edit_size))
-    ///
-    /// This is O(edit_size) instead of O(file_size) for small edits in large files.
+    /// See `Persistence::diff_since_saved` for the algorithm.
     pub fn diff_since_saved(&self) -> PieceTreeDiff {
         let _span = tracing::info_span!(
             "diff_since_saved",
@@ -1530,211 +1440,8 @@ impl TextBuffer {
         )
         .entered();
 
-        // Fast path: if the buffer hasn't been modified since loading/saving,
-        // the content is identical to the saved version by definition.
-        // This avoids an expensive O(num_leaves) structure walk when the tree
-        // has been restructured for non-edit reasons (viewport chunk loading,
-        // line-scan preparation, search-scan splits).
-        if !self.persistence.is_modified() {
-            tracing::trace!("diff_since_saved: not modified → equal");
-            return PieceTreeDiff {
-                equal: true,
-                byte_ranges: Vec::new(),
-                nodes_visited: 0,
-            };
-        }
-
-        // Quick check: if tree roots are identical (Arc pointer equality),
-        // the content is definitely the same.
-        if Arc::ptr_eq(self.persistence.saved_root(), &self.piece_tree.root()) {
-            tracing::trace!("diff_since_saved: Arc::ptr_eq fast path → equal");
-            return PieceTreeDiff {
-                equal: true,
-                byte_ranges: Vec::new(),
-                nodes_visited: 0,
-            };
-        }
-
-        // Phase 1: Fast structure-based diff to find which byte ranges differ
-        // This is O(number of leaves) - very fast even for large files
-        let structure_diff = self.diff_trees_by_structure();
-
-        // If structure says trees are equal (same pieces in same order), we're done
-        if structure_diff.equal {
-            tracing::trace!("diff_since_saved: structure equal");
-            return structure_diff;
-        }
-
-        // Phase 2: For small changed regions, verify with actual content comparison
-        // This handles the case where different pieces contain identical content
-        // (e.g., delete text then paste it back)
-        let total_changed_bytes: usize = structure_diff
-            .byte_ranges
-            .iter()
-            .map(|r| r.end.saturating_sub(r.start))
-            .sum();
-
-        // Only do content verification if the changed region is reasonably small
-        // For large changes, trust the structure-based diff
-        const MAX_VERIFY_BYTES: usize = 64 * 1024; // 64KB threshold for verification
-
-        if total_changed_bytes <= MAX_VERIFY_BYTES && !structure_diff.byte_ranges.is_empty() {
-            // Check if content in the changed ranges is actually different
-            if self.verify_content_differs_in_ranges(&structure_diff.byte_ranges) {
-                tracing::trace!(
-                    "diff_since_saved: content differs, byte_ranges={}",
-                    structure_diff.byte_ranges.len(),
-                );
-                // Content actually differs - return the structure diff result
-                return structure_diff;
-            } else {
-                // Content is the same despite structure differences (rare case: undo/redo)
-                return PieceTreeDiff {
-                    equal: true,
-                    byte_ranges: Vec::new(),
-                    nodes_visited: structure_diff.nodes_visited,
-                };
-            }
-        }
-
-        tracing::info!(
-            "diff_since_saved: large change, byte_ranges={}, nodes_visited={}",
-            structure_diff.byte_ranges.len(),
-            structure_diff.nodes_visited
-        );
-        // For large changes or when we can't verify, trust the structure diff
-        structure_diff
-    }
-
-    /// Check if the actual byte content differs in the given ranges.
-    /// Returns true if content differs, false if content is identical.
-    fn verify_content_differs_in_ranges(&self, byte_ranges: &[std::ops::Range<usize>]) -> bool {
-        let saved_bytes = self.tree_total_bytes(self.persistence.saved_root());
-        let current_bytes = self.piece_tree.total_bytes();
-
-        // Different total sizes means content definitely differs
-        if saved_bytes != current_bytes {
-            return true;
-        }
-
-        // For each changed range, compare the actual bytes
-        for range in byte_ranges {
-            if range.start >= range.end {
-                continue;
-            }
-
-            // Extract bytes from saved tree for this range
-            let saved_slice =
-                self.extract_range_from_tree(self.persistence.saved_root(), range.start, range.end);
-            // Extract bytes from current tree for this range
-            let current_slice = self.get_text_range(range.start, range.end);
-
-            match (saved_slice, current_slice) {
-                (Some(saved), Some(current)) => {
-                    if saved != current {
-                        return true; // Content differs
-                    }
-                }
-                _ => {
-                    // Couldn't read content, assume it differs to be safe
-                    return true;
-                }
-            }
-        }
-
-        // All ranges have identical content
-        false
-    }
-
-    /// Extract a byte range from a saved tree root
-    fn extract_range_from_tree(
-        &self,
-        root: &Arc<crate::model::piece_tree::PieceTreeNode>,
-        start: usize,
-        end: usize,
-    ) -> Option<Vec<u8>> {
-        let mut result = Vec::with_capacity(end.saturating_sub(start));
-        self.collect_range_from_node(root, start, end, 0, &mut result)?;
-        Some(result)
-    }
-
-    /// Recursively collect bytes from a range within a tree node
-    fn collect_range_from_node(
-        &self,
-        node: &Arc<crate::model::piece_tree::PieceTreeNode>,
-        range_start: usize,
-        range_end: usize,
-        node_offset: usize,
-        result: &mut Vec<u8>,
-    ) -> Option<()> {
-        use crate::model::piece_tree::PieceTreeNode;
-
-        match node.as_ref() {
-            PieceTreeNode::Internal {
-                left_bytes,
-                left,
-                right,
-                ..
-            } => {
-                let left_end = node_offset + left_bytes;
-
-                // Check if range overlaps with left subtree
-                if range_start < left_end {
-                    self.collect_range_from_node(
-                        left,
-                        range_start,
-                        range_end,
-                        node_offset,
-                        result,
-                    )?;
-                }
-
-                // Check if range overlaps with right subtree
-                if range_end > left_end {
-                    self.collect_range_from_node(right, range_start, range_end, left_end, result)?;
-                }
-            }
-            PieceTreeNode::Leaf {
-                location,
-                offset,
-                bytes,
-                ..
-            } => {
-                let node_end = node_offset + bytes;
-
-                // Check if this leaf overlaps with our range
-                if range_start < node_end && range_end > node_offset {
-                    let buf = self.buffers.get(location.buffer_id())?;
-                    let data = buf.get_data()?;
-
-                    // Calculate the slice within this leaf
-                    let leaf_start = range_start.saturating_sub(node_offset);
-                    let leaf_end = (range_end - node_offset).min(*bytes);
-
-                    if leaf_start < leaf_end {
-                        let slice = data.get(*offset + leaf_start..*offset + leaf_end)?;
-                        result.extend_from_slice(slice);
-                    }
-                }
-            }
-        }
-        Some(())
-    }
-
-    /// Helper to get total bytes from a tree root
-    fn tree_total_bytes(&self, root: &Arc<crate::model::piece_tree::PieceTreeNode>) -> usize {
-        use crate::model::piece_tree::PieceTreeNode;
-        match root.as_ref() {
-            PieceTreeNode::Internal {
-                left_bytes, right, ..
-            } => left_bytes + self.tree_total_bytes(right),
-            PieceTreeNode::Leaf { bytes, .. } => *bytes,
-        }
-    }
-
-    /// Structure-based diff comparing piece tree leaves
-    fn diff_trees_by_structure(&self) -> PieceTreeDiff {
-        crate::model::piece_tree_diff::diff_piece_trees(self.persistence.saved_root(), &self.piece_tree.root())
+        self.persistence
+            .diff_since_saved(&self.piece_tree, &self.buffers)
     }
 
     /// Convert a byte offset to a line/column position
@@ -2357,7 +2064,7 @@ impl TextBuffer {
         if !self.persistence.is_modified() {
             self.persistence.set_saved_root(self.piece_tree.root());
         } else {
-            self.apply_chunk_load_to_saved_root(
+            self.persistence.apply_chunk_load_to_saved_root(
                 buffer_id,
                 chunk_start_in_buffer,
                 chunk_bytes,
