@@ -20,53 +20,34 @@ use crate::state::EditorState;
 use crate::view::prompt::PromptType;
 use crate::view::split::SplitViewState;
 
+use super::buffer_config_resolve;
 use super::help;
 use super::Editor;
 
 impl Editor {
     /// Resolve the effective line_wrap setting for a buffer, considering language overrides.
-    ///
-    /// Returns the language-specific `line_wrap` if set, otherwise the global `editor.line_wrap`.
     pub(super) fn resolve_line_wrap_for_buffer(&self, buffer_id: BufferId) -> bool {
-        if let Some(state) = self.buffers.get(&buffer_id) {
-            if let Some(lang_config) = self.config.languages.get(&state.language) {
-                if let Some(line_wrap) = lang_config.line_wrap {
-                    return line_wrap;
-                }
-            }
+        match self.buffers.get(&buffer_id) {
+            Some(state) => buffer_config_resolve::line_wrap(&state.language, &self.config),
+            None => self.config.editor.line_wrap,
         }
-        self.config.editor.line_wrap
     }
 
     /// Resolve page view settings for a buffer from its language config.
-    ///
-    /// Returns `Some((page_width))` if page_view is enabled for this buffer's language,
-    /// `None` otherwise.
     pub(super) fn resolve_page_view_for_buffer(
         &self,
         buffer_id: BufferId,
     ) -> Option<Option<usize>> {
         let state = self.buffers.get(&buffer_id)?;
-        let lang_config = self.config.languages.get(&state.language)?;
-        if lang_config.page_view == Some(true) {
-            Some(lang_config.page_width.or(self.config.editor.page_width))
-        } else {
-            None
-        }
+        buffer_config_resolve::page_view(&state.language, &self.config)
     }
 
     /// Resolve the effective wrap_column for a buffer, considering language overrides.
-    ///
-    /// Returns the language-specific `wrap_column` if set, otherwise the global `editor.wrap_column`.
     pub(super) fn resolve_wrap_column_for_buffer(&self, buffer_id: BufferId) -> Option<usize> {
-        if let Some(state) = self.buffers.get(&buffer_id) {
-            if let Some(lang_config) = self.config.languages.get(&state.language) {
-                if lang_config.wrap_column.is_some() {
-                    return lang_config.wrap_column;
-                }
-            }
+        match self.buffers.get(&buffer_id) {
+            Some(state) => buffer_config_resolve::wrap_column(&state.language, &self.config),
+            None => self.config.editor.wrap_column,
         }
-        self.config.editor.wrap_column
     }
 
     /// Get the preferred split for opening a file.

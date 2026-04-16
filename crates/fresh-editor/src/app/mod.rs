@@ -1,4 +1,5 @@
 mod async_messages;
+mod buffer_config_resolve;
 mod buffer_groups;
 mod buffer_management;
 mod calibration_actions;
