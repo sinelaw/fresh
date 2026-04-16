@@ -21,6 +21,7 @@ mod input;
 mod input_dispatch;
 pub mod keybinding_editor;
 mod keybinding_editor_actions;
+mod line_scan;
 mod lsp_actions;
 mod lsp_requests;
 mod lsp_status;
@@ -958,7 +959,7 @@ pub struct Editor {
     stdin_stream: stdin_stream::StdinStream,
 
     /// Incremental line scan state (for non-blocking progress during Go to Line)
-    line_scan_state: Option<LineScanState>,
+    line_scan: line_scan::LineScan,
 
     /// Incremental search scan state (for non-blocking search on large files)
     search_scan_state: Option<SearchScanState>,
@@ -1006,23 +1007,6 @@ struct SearchScanState {
     case_sensitive: bool,
     whole_word: bool,
     use_regex: bool,
-}
-
-/// State for an incremental line-feed scan (non-blocking Go to Line)
-struct LineScanState {
-    buffer_id: BufferId,
-    /// Snapshot of the (pre-split) leaves, needed for `scan_leaf`.
-    leaves: Vec<crate::model::piece_tree::LeafData>,
-    /// One work item per leaf (each ≤ LOAD_CHUNK_SIZE bytes).
-    chunks: Vec<crate::model::buffer::LineScanChunk>,
-    next_chunk: usize,
-    total_bytes: usize,
-    scanned_bytes: usize,
-    /// Completed per-leaf updates: (leaf_index, lf_count).
-    updates: Vec<(usize, usize)>,
-    /// Whether to open the Go to Line prompt after the scan completes.
-    /// True when triggered from the Go to Line flow, false from the command palette.
-    open_goto_line_on_complete: bool,
 }
 
 impl Editor {
@@ -1710,7 +1694,7 @@ impl Editor {
             wait_tracking: HashMap::new(),
             completed_waits: Vec::new(),
             stdin_stream: stdin_stream::StdinStream::default(),
-            line_scan_state: None,
+            line_scan: line_scan::LineScan::default(),
             search_scan_state: None,
             search_overlay_top_byte: None,
             review_hunks: Vec::new(),

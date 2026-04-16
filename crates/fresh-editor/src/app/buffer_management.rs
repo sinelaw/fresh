@@ -3151,7 +3151,7 @@ impl Editor {
     /// Start an incremental line-feed scan for the active buffer.
     ///
     /// Shared by the `Action::ScanLineIndex` command and the Go to Line scan
-    /// confirmation prompt. Sets up `LineScanState` so that `process_line_scan`
+    /// confirmation prompt. Seeds `LineScan` so that `process_line_scan`
     /// will advance the scan one batch per frame.
     ///
     /// When `open_goto_line` is true (Go to Line flow), the Go to Line prompt
@@ -3161,16 +3161,8 @@ impl Editor {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let (chunks, total_bytes) = state.buffer.prepare_line_scan();
             let leaves = state.buffer.piece_tree_leaves();
-            self.line_scan_state = Some(super::LineScanState {
-                buffer_id,
-                leaves,
-                chunks,
-                next_chunk: 0,
-                total_bytes,
-                scanned_bytes: 0,
-                updates: Vec::new(),
-                open_goto_line_on_complete: open_goto_line,
-            });
+            self.line_scan
+                .start(buffer_id, leaves, chunks, total_bytes, open_goto_line);
             self.set_status_message(t!("goto.scanning_progress", percent = 0).to_string());
         }
     }
@@ -3179,12 +3171,10 @@ impl Editor {
     /// Returns `true` if the UI should re-render (progress updated or scan finished).
     pub fn process_line_scan(&mut self) -> bool {
         let _span = tracing::info_span!("process_line_scan").entered();
-        let scan = match self.line_scan_state.as_mut() {
-            Some(s) => s,
-            None => return false,
-        };
 
-        let buffer_id = scan.buffer_id;
+        let Some(buffer_id) = self.line_scan.buffer_id() else {
+            return false;
+        };
 
         if let Err(e) = self.process_line_scan_batch(buffer_id) {
             tracing::warn!("Line scan error: {e}");
@@ -3192,15 +3182,10 @@ impl Editor {
             return true;
         }
 
-        let scan = self.line_scan_state.as_ref().unwrap();
-        if scan.next_chunk >= scan.chunks.len() {
+        if self.line_scan.is_done() {
             self.finish_line_scan_ok();
         } else {
-            let pct = if scan.total_bytes > 0 {
-                (scan.scanned_bytes * 100) / scan.total_bytes
-            } else {
-                100
-            };
+            let pct = self.line_scan.progress_percent();
             self.set_status_message(t!("goto.scanning_progress", percent = pct).to_string());
         }
         true
@@ -3218,26 +3203,32 @@ impl Editor {
         let concurrency = self.config.editor.read_concurrency.max(1);
 
         let state = self.buffers.get(&buffer_id);
-        let scan = self.line_scan_state.as_mut().unwrap();
 
         let mut results: Vec<(usize, usize)> = Vec::new();
         let mut io_work: Vec<(usize, std::path::PathBuf, u64, usize)> = Vec::new();
 
-        while scan.next_chunk < scan.chunks.len() && (results.len() + io_work.len()) < concurrency {
-            let chunk = scan.chunks[scan.next_chunk].clone();
-            scan.next_chunk += 1;
-            scan.scanned_bytes += chunk.byte_len;
-
-            if chunk.already_known {
-                continue;
+        // Pull chunks up to the concurrency budget, skipping already-known
+        // leaves. The budget is in terms of actual work items, so we keep
+        // asking for more chunks until we fill it or run out.
+        'outer: while results.len() + io_work.len() < concurrency {
+            let batch = self
+                .line_scan
+                .take_next_chunks(concurrency - (results.len() + io_work.len()));
+            if batch.is_empty() {
+                break;
             }
 
-            if let Some(state) = state {
-                let leaf = &scan.leaves[chunk.leaf_index];
+            for chunk in batch {
+                if chunk.already_known {
+                    continue;
+                }
 
-                // Use scan_leaf for loaded buffers (shared counting logic with
-                // the TextBuffer-level scan). For unloaded buffers, collect I/O
-                // parameters for concurrent filesystem access.
+                let Some(state) = state else {
+                    break 'outer;
+                };
+
+                let leaf = &self.line_scan.leaves()[chunk.leaf_index];
+
                 match state.buffer.leaf_io_params(leaf) {
                     None => {
                         // Loaded: count in-memory via scan_leaf
@@ -3287,7 +3278,7 @@ impl Editor {
         }
 
         for (leaf_idx, count) in results {
-            scan.updates.push((leaf_idx, count));
+            self.line_scan.append_update(leaf_idx, count);
         }
 
         Ok(())
@@ -3295,28 +3286,32 @@ impl Editor {
 
     fn finish_line_scan_ok(&mut self) {
         let _span = tracing::info_span!("finish_line_scan_ok").entered();
-        let scan = self.line_scan_state.take().unwrap();
-        let open_goto = scan.open_goto_line_on_complete;
-        if let Some(state) = self.buffers.get_mut(&scan.buffer_id) {
+        let Some(finished) = self.line_scan.take_finished() else {
+            return;
+        };
+        if let Some(state) = self.buffers.get_mut(&finished.buffer_id) {
             let _span = tracing::info_span!(
                 "rebuild_with_pristine_saved_root",
-                updates = scan.updates.len()
+                updates = finished.updates.len()
             )
             .entered();
-            state.buffer.rebuild_with_pristine_saved_root(&scan.updates);
+            state
+                .buffer
+                .rebuild_with_pristine_saved_root(&finished.updates);
         }
         self.set_status_message(t!("goto.scan_complete").to_string());
-        if open_goto {
-            self.open_goto_line_if_active(scan.buffer_id);
+        if finished.open_goto_line {
+            self.open_goto_line_if_active(finished.buffer_id);
         }
     }
 
     fn finish_line_scan_with_error(&mut self, e: std::io::Error) {
-        let scan = self.line_scan_state.take().unwrap();
-        let open_goto = scan.open_goto_line_on_complete;
+        let Some(finished) = self.line_scan.take_finished() else {
+            return;
+        };
         self.set_status_message(t!("goto.scan_failed", error = e.to_string()).to_string());
-        if open_goto {
-            self.open_goto_line_if_active(scan.buffer_id);
+        if finished.open_goto_line {
+            self.open_goto_line_if_active(finished.buffer_id);
         }
     }
 
