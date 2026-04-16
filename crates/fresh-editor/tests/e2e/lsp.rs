@@ -8891,14 +8891,19 @@ done
     // Sanity: before the delete, hint 0 follows "alpha".
     check_hint_position(&screen_before, "alpha", "<EOL-L0>", "before-delete");
 
-    // Put cursor on line 2 (bravo) — with wrapping enabled, Down
-    // navigates view rows, so 4 presses traverse alpha's four wrapped
-    // rows and land on bravo. We delete bravo to trigger the delete
-    // path under test.
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?;
-    for _ in 0..4 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
-    }
+    // The user-reported bug is about hints on lines ABOVE the delete.
+    // Move cursor down onto a line FAR below the hints we'll check —
+    // "foxtrot" (6th source line). With wrapping, every source line
+    // takes 4 view rows, so 5*4 = 20 Down presses should land us on
+    // foxtrot. We use Goto Line via the palette instead to be robust
+    // to exact wrap math.
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.wait_for_screen_contains(">command")?;
+    // Remove the ">" prefix so we can type a line number (Quick Open
+    // uses `:N` for line jump after backspacing the command prefix).
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
+    harness.type_text(":6")?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Invoke "Delete Line" via the command palette so we don't depend
@@ -8909,16 +8914,9 @@ done
     harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
     harness.render()?;
 
-    // The screen IMMEDIATELY after delete (before the LSP refresh) is
-    // what the user sees and complains about — hints on lines below
-    // the deletion appear at the start of their wrapped line instead
-    // of the end. The shifted old markers encode this mis-position
-    // directly in the marker tree, so even `save` doesn't restore
-    // them. Check that the hint for every surviving line still
-    // renders AFTER its line's text.
     harness.wait_until(|h| {
         h.get_buffer_content()
-            .map(|c| !c.contains("bravo"))
+            .map(|c| !c.contains("foxtrot"))
             .unwrap_or(false)
     })?;
 
@@ -8928,14 +8926,22 @@ done
         screen_after_delete
     );
 
-    // Expected: labels L0, L2, L3 (line 4 echo skipped by fake LSP,
-    // L1 was on the deleted bravo so it's gone), L5, L6, each at end
-    // of their surviving line.
+    // The user-reported bug: an inlay hint that was positioned right
+    // at the end of its line (e.g. a closing-brace function-name hint
+    // in Rust) flips from `} <hint-name>` to `<hint-name> }` after a
+    // nearby line is deleted. Each affected hint is anchored to the
+    // trailing \n of its source line — i.e. rendered BeforeChar on
+    // the \n byte — and its byte offset should either stay put (for
+    // lines above the delete) or shift by exactly the deleted byte
+    // count (for lines below).
+    //
+    // Check each surviving end-of-line hint STILL renders after its
+    // line's distinguishing word.
     for (word, label) in [
         ("alpha", "<EOL-L0>"),
+        ("bravo", "<EOL-L1>"),
         ("charlie", "<EOL-L2>"),
         ("delta", "<EOL-L3>"),
-        ("foxtrot", "<EOL-L5>"),
         ("golf", "<EOL-L6>"),
     ] {
         check_hint_position(
