@@ -202,12 +202,25 @@ pub(crate) fn compute_buffer_layout(
 
     // Ensure cursor is visible using Layout-aware check (handles virtual lines)
     let primary = *cursors.primary();
+    let top_byte_before_scroll = viewport.top_byte;
     let scrolled = viewport.ensure_visible_in_layout(&view_data.lines, &primary, gutter_width);
 
-    // If we scrolled, rebuild view_data from the new top_byte and then re-run
-    // the layout-aware check so that top_view_line_offset is correct for the
-    // rebuilt data.
-    let view_data = if scrolled {
+    // If we scrolled AND `top_byte` changed, rebuild view_data from the new
+    // top_byte (the old view_data no longer matches what's visible).  We
+    // also reset `top_view_line_offset` to 0 and re-run the layout-aware
+    // check so that the offset is correct for the rebuilt view_data — the
+    // absolute indices from the old view_data don't map directly to the
+    // new one.
+    //
+    // When `top_byte` did NOT change (e.g. `snap_to_logical_line_start`
+    // kept `top_byte` at the current logical line's start and only
+    // shifted `top_view_line_offset` to a wrap-segment offset), the
+    // existing view_data already matches and
+    // `top_view_line_offset` is authoritative — resetting it here would
+    // erase the scroll that `ensure_visible_in_layout` just applied
+    // (issue #1574, Up-arrow jumpy variant: cy 5→7 at step 13 of the
+    // width-sweep).
+    let view_data = if scrolled && viewport.top_byte != top_byte_before_scroll {
         if let Some(vt) = view_transform_for_rebuild {
             viewport.top_view_line_offset = 0;
             let rebuilt = build_view_data(

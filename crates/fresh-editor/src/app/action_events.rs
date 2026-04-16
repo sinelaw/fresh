@@ -218,7 +218,29 @@ impl Editor {
                         *direction,
                     ) {
                         Some(result) => result,
-                        None => continue, // At boundary, skip this cursor
+                        None => {
+                            // Target visual row is past the cached view-line
+                            // mappings — the destination row isn't in the
+                            // currently-rendered viewport slice.  In wrap mode
+                            // that means the next visual row belongs to a
+                            // logical line (or wrapped segment) that is
+                            // off-screen.  Compute its position directly from
+                            // the buffer + wrap config so we don't fall
+                            // through to the byte-based MoveDown handler,
+                            // which would treat `goal_visual_col` as a
+                            // *logical* column on the whole next logical
+                            // line and teleport the cursor deep into a
+                            // wrapped paragraph (issue #1574, jump variant).
+                            match self.compute_wrap_aware_visual_move_fallback(
+                                from_pos,
+                                goal_visual_col,
+                                *direction,
+                                _estimated_line_length,
+                            ) {
+                                Some(result) => result,
+                                None => continue, // Genuinely at buffer boundary
+                            }
+                        }
                     }
                 }
                 VisualAction::LineEnd { .. } => {
@@ -276,4 +298,184 @@ impl Editor {
             Some(events)
         }
     }
+
+    /// Compute a wrap-aware target position when the cached view-line
+    /// mappings don't cover the requested direction.
+    ///
+    /// `move_visual_line` returns `None` when the target visual row is
+    /// past the currently-rendered viewport — typically because the
+    /// destination line wraps off-screen below (for Down) or above (for
+    /// Up).  The generic MoveDown/MoveUp fallback that normally kicks in
+    /// when the intercept returns None treats `goal_visual_col` as a
+    /// column on the whole next logical line, which is wrong for wrap
+    /// mode: if the next logical line is a long wrapped paragraph, the
+    /// cursor lands several visual rows deep (issue #1574, jump variant).
+    ///
+    /// This helper uses the current row's `line_end_byte` (which the
+    /// cached layout does know) to find the byte position just past the
+    /// current visual row, and lands the cursor at the *start* of the
+    /// next visual row.  That's conservative (the sticky visual column
+    /// from the previous row isn't preserved across an off-screen jump)
+    /// but it reliably places the cursor on the first visual row of
+    /// the next logical line / wrapped segment instead of somewhere
+    /// deep inside it.  Preserving sticky precisely when the target row
+    /// is off-screen would require re-running the full token-based
+    /// wrapping pipeline for the target line, which the editor doesn't
+    /// currently expose outside of the render pipeline.
+    ///
+    /// Returns `Some((new_position, new_sticky))` on success, or `None`
+    /// if wrap mode is off (delegate to caller default) or we're at a
+    /// genuine buffer boundary.
+    fn compute_wrap_aware_visual_move_fallback(
+        &mut self,
+        from_pos: usize,
+        goal_visual_col: usize,
+        direction: i8,
+        estimated_line_length: usize,
+    ) -> Option<(usize, usize)> {
+        if !self.config.editor.line_wrap {
+            // Non-wrap mode: the byte-based fallback is correct, let it run.
+            return None;
+        }
+
+        let active_split = self.effective_active_split();
+        let active_buffer = self.active_buffer();
+
+        if direction > 0 {
+            // Find current row's end byte via cached layout — this is the
+            // authoritative "end of current visual row" position that the
+            // renderer itself uses.
+            let cur_row_line_end = {
+                let mappings = self.cached_layout.view_line_mappings.get(&active_split)?;
+                let row_idx = self.cached_layout.find_visual_row(active_split, from_pos)?;
+                mappings.get(row_idx)?.line_end_byte
+            };
+
+            let state = self.buffers.get_mut(&active_buffer)?;
+            let buffer = &mut state.buffer;
+            let buffer_len = buffer.len();
+            if cur_row_line_end >= buffer_len {
+                return None; // Genuine end of buffer
+            }
+
+            // Step past the newline at `cur_row_line_end`, mirroring the
+            // tokenization logic in `build_base_tokens`: CRLF (`\r\n`) is a
+            // SINGLE logical line break and the next logical line starts two
+            // bytes past the `\r`, not one.  Falling back to `+ 1` lands the
+            // cursor on the `\n` inside the CRLF pair, which
+            // `find_view_line_for_byte` resolves back to the SAME row — so
+            // pressing Down from an empty separator line on a CRLF file
+            // appears to jump the cursor to the wrong visual row (issue
+            // #1574, Windows-CRLF variant).  When `cur_row_line_end` isn't a
+            // newline the current row is a wrapped continuation and the
+            // next visual row starts at the same byte position.
+            let target_pos = step_past_line_break(buffer, cur_row_line_end, buffer_len);
+            if target_pos > buffer_len {
+                return None;
+            }
+
+            // Preserve goal_visual_col as the new sticky column so if the
+            // user keeps pressing Down the normal cached-layout path will
+            // honor it once the target row is rendered.
+            let _ = estimated_line_length;
+            Some((target_pos, goal_visual_col))
+        } else {
+            // Up-direction fallback: mirror the Down logic.  Use the
+            // cached layout to locate the current visual row's "anchor"
+            // byte (the row start for rows with visible content, or
+            // `line_end_byte` for empty rows which have no source
+            // mapping), then step back one byte so the cursor lands on
+            // the *end* of the preceding visual row.
+            //
+            // For a row whose start is a logical-line-start, stepping
+            // back one byte lands on the trailing newline of the
+            // previous logical line — the renderer shows this as the
+            // end of the last visual row of that line, which is exactly
+            // where the cursor should land when walking Up.
+            //
+            // For a wrapped continuation row, the "start" is already a
+            // byte within the same logical line; stepping back one byte
+            // keeps us inside the line on the previous wrapped segment.
+            //
+            // For empty rows (no char_source_bytes, common at paragraph
+            // separators), `line_end_byte` is the empty line's newline;
+            // stepping back one byte lands on the previous line's
+            // trailing newline — again the end of its last visual row.
+            let (cur_row_anchor, row_is_empty) = {
+                let mappings = self.cached_layout.view_line_mappings.get(&active_split)?;
+                let row_idx = self.cached_layout.find_visual_row(active_split, from_pos)?;
+                let row = mappings.get(row_idx)?;
+                match row.char_source_bytes.iter().find_map(|b| *b) {
+                    Some(start) => (start, false),
+                    None => (row.line_end_byte, true),
+                }
+            };
+
+            if cur_row_anchor == 0 {
+                return None; // At the very beginning of the buffer
+            }
+
+            // Step back across the newline preceding `cur_row_anchor`,
+            // mirroring the tokenization logic in `build_base_tokens`:
+            // CRLF is a SINGLE logical line break so we must step back
+            // two bytes over it, not one.  Blindly subtracting 1 on a
+            // CRLF file lands the cursor on the `\n` INSIDE the CRLF
+            // pair, which `find_view_line_for_byte` resolves to a row
+            // the user wouldn't expect (issue #1574, Windows-CRLF
+            // variant).  For LF or a lone CR the byte arithmetic falls
+            // through to a one-byte step.
+            let state = self.buffers.get_mut(&active_buffer)?;
+            let buffer = &mut state.buffer;
+            let _ = row_is_empty;
+            let target_pos = step_before_line_break(buffer, cur_row_anchor);
+            let _ = estimated_line_length;
+            Some((target_pos, goal_visual_col))
+        }
+    }
+}
+
+/// Advance past the line break at `pos`, matching the CRLF handling in
+/// `build_base_tokens` (where `\r\n` is a single logical line break
+/// represented by one `Newline` token at the `\r`).  When `pos` is on a
+/// `\r` immediately followed by `\n` we step two bytes; on a lone `\n`
+/// or `\r` we step one; otherwise (`pos` isn't on a newline, i.e. a
+/// wrapped-continuation boundary) we return `pos` unchanged so the next
+/// visual row starts at the same byte.  Without this, pressing Down
+/// across a CRLF newline lands the cursor on the `\n` inside the pair,
+/// which `find_view_line_for_byte` resolves back to the *same* row
+/// (issue #1574, Windows-CRLF variant).
+fn step_past_line_break(
+    buffer: &crate::model::buffer::Buffer,
+    pos: usize,
+    buffer_len: usize,
+) -> usize {
+    if pos >= buffer_len {
+        return pos;
+    }
+    let end = (pos + 2).min(buffer_len);
+    let bytes = buffer.slice_bytes(pos..end);
+    match (bytes.first(), bytes.get(1)) {
+        (Some(b'\r'), Some(b'\n')) => pos + 2,
+        (Some(b'\r'), _) | (Some(b'\n'), _) => pos + 1,
+        _ => pos,
+    }
+}
+
+/// Step back across the line break immediately preceding `pos`, mirror
+/// of [`step_past_line_break`].  Two bytes for CRLF (`\r\n`), one for
+/// LF or a lone CR, zero if `pos == 0`.  Callers use this to land the
+/// cursor at the *end* of the previous visual row when moving Up across
+/// a newline — landing mid-CRLF would place the cursor on the `\n` and
+/// re-resolve to the same row (issue #1574, Windows-CRLF variant).
+fn step_before_line_break(buffer: &crate::model::buffer::Buffer, pos: usize) -> usize {
+    if pos == 0 {
+        return pos;
+    }
+    if pos >= 2 {
+        let bytes = buffer.slice_bytes((pos - 2)..pos);
+        if bytes.first() == Some(&b'\r') && bytes.get(1) == Some(&b'\n') {
+            return pos - 2;
+        }
+    }
+    pos - 1
 }
