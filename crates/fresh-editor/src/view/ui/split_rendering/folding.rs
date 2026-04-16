@@ -90,10 +90,13 @@ pub(super) fn apply_folding(
         return lines;
     }
 
-    let collapsed_ranges = folds.resolved_ranges(buffer, marker_list);
+    let mut collapsed_ranges = folds.resolved_ranges(buffer, marker_list);
     if collapsed_ranges.is_empty() {
         return lines;
     }
+    // Sort by `start_byte` so `is_hidden_byte` can be a monotonic cursor
+    // over the sorted list instead of a linear scan per ViewLine.
+    collapsed_ranges.sort_by_key(|r| r.start_byte);
 
     let collapsed_header_bytes = folds.collapsed_header_bytes(buffer, marker_list);
 
@@ -108,11 +111,12 @@ pub(super) fn apply_folding(
     }
 
     let mut filtered = Vec::with_capacity(lines.len());
+    let mut fold_cursor: usize = 0;
     for (idx, mut line) in lines.into_iter().enumerate() {
         let source_byte = view_line_source_byte(&line);
 
         if let Some(byte) = source_byte {
-            if is_hidden_byte(byte, &collapsed_ranges) {
+            if is_hidden_byte(byte, &collapsed_ranges, &mut fold_cursor) {
                 continue;
             }
 
@@ -132,7 +136,7 @@ pub(super) fn apply_folding(
                 }
             }
         } else if let Some(next_byte) = next_source_byte[idx] {
-            if is_hidden_byte(next_byte, &collapsed_ranges) {
+            if is_hidden_byte(next_byte, &collapsed_ranges, &mut fold_cursor) {
                 continue;
             }
         }
@@ -148,11 +152,20 @@ fn view_line_source_byte(line: &ViewLine) -> Option<usize> {
     line.char_source_bytes.iter().find_map(|m| *m)
 }
 
-/// Check if a byte offset falls within any collapsed fold range.
-fn is_hidden_byte(byte: usize, ranges: &[ResolvedFoldRange]) -> bool {
-    ranges
-        .iter()
-        .any(|range| byte >= range.start_byte && byte < range.end_byte)
+/// Check if a byte offset falls within any collapsed fold range, advancing
+/// `cursor` past ranges ending before `byte`. Expects `ranges` sorted by
+/// `start_byte` and `byte` values to arrive non-decreasing across calls
+/// sharing the same cursor (true of the `apply_folding` line walk). Only
+/// the current cursor range is inspected — collapsed fold ranges do not
+/// overlap in practice.
+fn is_hidden_byte(byte: usize, ranges: &[ResolvedFoldRange], cursor: &mut usize) -> bool {
+    while *cursor < ranges.len() && ranges[*cursor].end_byte <= byte {
+        *cursor += 1;
+    }
+    match ranges.get(*cursor) {
+        Some(range) => byte >= range.start_byte && byte < range.end_byte,
+        None => false,
+    }
 }
 
 /// Build the per-line fold indicator map for the current viewport.
