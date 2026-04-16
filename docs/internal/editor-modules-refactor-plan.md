@@ -215,3 +215,162 @@ opaque.
 (c) for "write-mostly with side effects", (d) only for truly broadcast
 lifecycle events. If a method needs *none* of these, it belongs entirely
 inside one subsystem and is self-contained.
+
+## 5. What each big file becomes
+
+### 5.1 `mod.rs` (9 605 lines) → `app/editor.rs` (~600 lines) + ~25 subsystem dirs
+
+`app/editor.rs` keeps:
+
+- The `Editor` struct definition (subsystem composition).
+- `Editor::new`, `with_working_dir`, `for_test`.
+- `editor_tick` (the per-frame tick — calls `self.lsp.tick(&mut self.buffers)`,
+  `self.async_io.drain(...)`, etc.).
+- The named cross-subsystem orchestrators: `save_active`, `open_file`,
+  `close_buffer`, `set_active_buffer`, `apply_event_to_active_buffer`,
+  `process_async_message` — each one a short coordinator using mechanism (a).
+
+Everything else moves into a subsystem directory under `app/`. Concretely,
+the 11 currently-defined types in `mod.rs`:
+
+| Currently in `mod.rs`                                                                    | Moves to                                   |
+|------------------------------------------------------------------------------------------|--------------------------------------------|
+| `PendingGrammar`                                                                         | `app/grammar/mod.rs` (private)             |
+| `SemanticTokenRangeRequest`, `SemanticTokensFullRequestKind`, `SemanticTokenFullRequest` | `app/semantic/mod.rs` (private)            |
+| `FoldingRangeRequest`                                                                    | `app/lsp/folding.rs`                       |
+| `DabbrevCycleState`                                                                      | `app/completion/dabbrev.rs`                |
+| `PendingFileOpen`                                                                        | `app/async_io/file_opens.rs`               |
+| `SearchScanState`, `LineScanState`                                                       | `app/search/scan.rs` and `app/buffers/line_scan.rs` |
+| `StdinStreamingState`                                                                    | `app/stdin_stream/mod.rs`                  |
+| `Editor`                                                                                 | `app/editor.rs`                            |
+| `editor_tick`, `normalize_path`                                                          | `editor.rs` and `app/fs/path.rs` respectively |
+
+The ~158 methods in the giant `impl Editor` redistribute by which subsystem
+owns the data they touch. Methods that touch one subsystem become methods
+on that subsystem. Methods that touch two or three become orchestrators on
+`Editor`. Methods that are actually pure (e.g. `normalize_path`) become free
+functions.
+
+### 5.2 `render.rs` (5 394 lines) → `app/view/` (~3 500 lines, split four ways)
+
+The structural mistake in the current `render.rs` is that it both *gathers*
+state and *draws* it in the same 1 105-line method, while also containing
+search-navigation logic, scroll synchronization, and overlay/popup mutation.
+Those don't belong together.
+
+Split along Rule 5:
+
+```
+app/view/
+    mod.rs              // pub fn render(ctx: &RenderCtx, frame: &mut Frame)
+    model.rs            // pure data: ViewModel, PaneModel, GutterModel, StatusModel
+    build.rs            // ViewModel::build(ctx: &RenderCtx) -> ViewModel    (pure)
+    panes.rs            // free fn render_pane(model: &PaneModel, area, frame)
+    gutter.rs           //         render_gutter(...)
+    status_bar.rs       //         render_status_bar(...) + compose_lsp_status (pure)
+    tabs.rs             //         render_tabs, render_tab_context_menu, render_drop_zone
+    popups.rs           //         render_popups(model: &[PopupModel], ...)
+    prompt_overlay.rs   //         render_prompt_popups(...)
+    hover_overlay.rs    //         render_hover_highlights(...)
+    file_explorer.rs    //         render_explorer (it already exists separately)
+```
+
+Render functions take **only** what they draw — `RenderCtx` for fan-in
+reads, never `&Editor`. They contain no mutation. They're testable by
+handing in a constructed `ViewModel`.
+
+The mutating logic currently buried in `render.rs` extracts to its rightful
+subsystem:
+
+| Current `render.rs` content                                                                                                     | Moves to                                                                |
+|---------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
+| `add_overlay`, `remove_overlay*`, `clear_overlays`                                                                              | `app/buffers/overlays.rs` (overlays live on buffers)                    |
+| `show_popup`, `hide_popup`, `dismiss_transient_popups`, `scroll_popup`, `clear_popups`, popup nav                               | `app/menu/popups.rs`                                                    |
+| `show_lsp_confirmation_popup`, `handle_lsp_confirmation_response`, `notify_lsp_current_file_opened`                             | `app/lsp/confirmation.rs`                                               |
+| `build_search_regex`, `move_cursor_to_match`, `find_next/previous`, `find_match_in_direction`, `expand_regex_replacement` (~600 lines, pure) | `app/search/{regex.rs,navigation.rs,replace.rs}` — pure ones as free fns |
+| `action_to_events`, `handle_visual_line_movement`, `collect_lsp_changes`, `calculate_line_info_for_event`                       | `app/editor.rs` (orchestrators) and `app/view/visual_movement.rs` (pure ones) |
+| `sync_scroll_groups`, `pre_sync_ensure_visible`                                                                                 | `app/splits/scroll_sync.rs`                                             |
+| `notify_lsp_save`                                                                                                               | `app/lsp/notifications.rs`                                              |
+| `recompute_layout` (mirrors `render` for macro replay)                                                                          | call `ViewModel::build` from the macro path; one less duplicate         |
+
+### 5.3 `input.rs` (4 138 lines) → `app/input/` (~800 lines) + redistributed handlers
+
+The current `handle_action` is 1 162 lines and 204 arms because each arm is
+a mini-implementation. Under Rule 6 each arm should be one line.
+
+```
+app/input/
+    mod.rs              // KeyDispatcher::dispatch(key, ctx) -> Option<Action>
+    context.rs          // get_key_context (pure)
+    key_to_action.rs    // resolve key+chord+mode -> Action
+    chord.rs            // chord state (currently a field on Editor)
+    scrollbar.rs        // scrollbar drag math (PURE FNS, see below)
+    mouse_geometry.rs   // screen_to_buffer_position, fold_toggle_byte_from_position (pure)
+    settings_prompt.rs  // SettingsPromptBuilder used by all 14 settings prompts
+```
+
+`handle_action` itself moves to `app/editor.rs` and becomes a flat
+dispatcher:
+
+```rust
+impl Editor {
+    pub fn handle_action(&mut self, action: Action) -> Result<()> {
+        match action {
+            Action::Save             => self.save_active(),
+            Action::Cut              => self.clipboard.cut(&mut self.buffers, &self.splits),
+            Action::Search           => self.search.start_prompt(&mut self.prompt),
+            Action::CompletionAccept => self.completion.accept(&mut self.buffers, &self.splits),
+            Action::SetTheme         => self.theme.start_select_prompt(&mut self.prompt),
+            // ... 200 more single-line arms
+        }
+    }
+}
+```
+
+**No arm contains logic.** All 1 162 lines of inline work distribute to the
+subsystems they belong to. The settings-prompt cluster (14 nearly-identical
+`start_*_prompt` / `apply_*` / `save_to_config` triples, ~850 lines)
+collapses onto a `SettingsPromptBuilder<T>` parametrized over the option
+type.
+
+The scrollbar code (~900 lines, 7 methods) is currently `&mut self` because
+it's lazy — it actually only needs
+`(buffer_lines, viewport, click_position) -> new_viewport`. Rewrite as pure
+functions in `app/input/scrollbar.rs`; the 900 lines collapse to maybe 400.
+
+`screen_to_buffer_position` and friends are *already* effectively static —
+they just happen to be `&self` for convenience. Promote to free functions
+taking `(layout, click) -> Position`; this immediately decouples them.
+
+### 5.4 `buffer_management.rs` (3 464 lines) → `app/buffers/` (~1 200 lines) + redistributed
+
+The misnomer is that this file isn't really "buffer management" — it's a
+grab bag of every operation that *touches* a buffer. Split by the actual
+owner of the state:
+
+```
+app/buffers/
+    mod.rs              // BufferRegistry: open/close/lookup/serialize, owns buffers map
+    config_resolve.rs   // resolve_line_wrap_for_buffer etc. (pure)
+    navigation.rs       // goto_line_col, select_range, goto_byte_offset (on registry)
+    line_scan.rs        // LineScanManager owns line_scan_state
+```
+
+Then redirect everything else to its rightful module:
+
+| Currently in `buffer_management.rs`                                                                                                     | Moves to                                                             |
+|-----------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------|
+| `open_file_preview`, `is_buffer_preview`, `current_preview`                                                                             | `app/preview/mod.rs` (new, owns the preview field)                   |
+| `open_stdin_buffer`, `poll_stdin_streaming`, `complete_stdin_streaming`, `is_stdin_streaming`, `create_virtual_buffer`                  | `app/stdin_stream/mod.rs`                                            |
+| `process_search_scan`, `process_search_scan_batch`, `finish_search_scan`                                                                | `app/search/scan.rs`                                                 |
+| `show_warnings_popup`, `show_lsp_status_popup`, `build_and_show_lsp_status_popup` (315 lines)                                           | `app/lsp/status_popup.rs` — extract `LspStatusPopupBuilder` that takes `(&LspConfig, &LspServerStatuses, &LspProgress, &Theme)` and *returns* a `PopupModel`. No `Editor` access. |
+| `schedule_hot_exit_recovery`, `queue_file_open`, `process_pending_file_opens`, `take_completed_waits`, `remove_wait_tracking`           | `app/async_io/file_opens.rs`                                         |
+| `open_help_manual`, `open_keyboard_shortcuts`                                                                                           | `app/help/mod.rs`                                                    |
+| `open_file`, `open_local_file`, `open_file_with_encoding`, `reload_with_encoding`, `restore_global_file_state`, `save_file_state_on_close` | `app/editor.rs` orchestrator (mechanism a) — buffers + splits + lsp + grammar + plugins + filesystem |
+| `close_buffer`, `force_close_buffer`, `close_buffer_internal`, the six `close_*_tab*` variants                                          | Same — orchestrators in `editor.rs`, each broken into named sub-steps (terminal cleanup, focus history adjust, LSP token cleanup, preview adjust) |
+| `switch_buffer`, `next_buffer`, `prev_buffer`, `cycle_tab`, `navigate_back`, `navigate_forward`                                         | `app/splits/navigation.rs` (these change focus, which is owned by SplitState) |
+| `get_mouse_hover_state`, `has_transient_popup`, `force_check_mouse_hover`                                                               | `app/hover/mod.rs`                                                   |
+
+What's left in `app/buffers/` is what genuinely belongs to "the registry of
+open buffers": create, lookup, serialize, basic navigation. ~1 200 lines,
+with clear ownership.
