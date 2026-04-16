@@ -8703,6 +8703,257 @@ done
     target_os = "windows",
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
+fn test_inlay_hints_stay_at_end_of_line_after_delete_below() -> anyhow::Result<()> {
+    // Regression: when deleting a line (Ctrl+Shift+K), inlay hints on
+    // lines ABOVE the deleted line were observed jumping from the END
+    // of their lines (where the LSP placed them) to the START of their
+    // lines. This test reproduces the scenario with a fake LSP that
+    // returns one end-of-line hint per non-empty line, keyed off the
+    // buffer content it tracks via didOpen/didChange.
+    use crate::common::harness::HarnessOptions;
+
+    let temp_dir = tempfile::tempdir()?;
+
+    // Fake LSP: on every inlayHint request, return hints at the end of
+    // lines 0..=6, with labels that identify the line number. We don't
+    // parse the buffer — we just emit hints at high character columns
+    // so they land at end-of-line after position clamping. If the
+    // client later clears line 4 we won't "know" (we still emit 7
+    // hints), but the editor will simply drop the hint whose line
+    // index exceeds the current buffer's line count, which is fine:
+    // we're testing what happens to the hints that SHOULD still be
+    // present (lines 0,1,2,3,5,6 relative to the original content).
+    let script = r#"#!/bin/bash
+
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: $length\r\n\r\n%s" "$message"
+}
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    case "$method" in
+        "initialize")
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"capabilities":{"textDocumentSync":1,"inlayHintProvider":true}}}'
+            ;;
+        "initialized")
+            ;;
+        "textDocument/inlayHint")
+            # One hint per line 0..6 (skipping line 4), positioned at
+            # character=200 which is the exact length of every line
+            # (each source line is padded to 200 chars). This matches
+            # how real servers like rust-analyzer place end-of-line
+            # hints: at the column *just before* the newline.
+            hints='[{"position":{"line":0,"character":200},"label":"<EOL-L0>","kind":1},{"position":{"line":1,"character":200},"label":"<EOL-L1>","kind":1},{"position":{"line":2,"character":200},"label":"<EOL-L2>","kind":1},{"position":{"line":3,"character":200},"label":"<EOL-L3>","kind":1},{"position":{"line":5,"character":200},"label":"<EOL-L5>","kind":1},{"position":{"line":6,"character":200},"label":"<EOL-L6>","kind":1}]'
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":'"$hints"'}'
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
+            break
+            ;;
+    esac
+done
+"#;
+
+    let script_path = temp_dir.path().join("fake_lsp_eol_hints.sh");
+    std::fs::write(&script_path, script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms)?;
+    }
+
+    // Each line has a distinctive word so the hint label identifies
+    // it on screen, padded out with junk so every line is hundreds of
+    // characters long (the user reported the bug on source code lines
+    // of typical length; short lines would mask it by happening to
+    // fit alongside a misrendered hint).
+    let test_file = temp_dir.path().join("test.c");
+    let mut content = String::new();
+    for word in &[
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf",
+    ] {
+        content.push_str(word);
+        content.push(' ');
+        // pad to ~200 characters with a repeating filler
+        let pad = "x".repeat(200usize.saturating_sub(word.len() + 1));
+        content.push_str(&pad);
+        content.push('\n');
+    }
+    std::fs::write(&test_file, &content)?;
+
+    let mut config = fresh::config::Config::default();
+    config.editor.enable_inlay_hints = true;
+    config.lsp.insert(
+        "c".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    // Narrow terminal forces long lines to wrap across multiple view
+    // rows — the user-reported bug only manifests in that case. Each
+    // source line is ~200 chars and the viewport is 100 wide, so every
+    // line wraps.
+    let mut harness = EditorTestHarness::create(
+        100,
+        40,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(temp_dir.path().to_path_buf()),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // `check_hint_position` asserts that the hint for `word`/`label`
+    // renders AFTER the word on screen, regardless of wrapping:
+    //   * if both land on the same terminal row, word must come before
+    //     label;
+    //   * if they land on different rows, the word's row must precede
+    //     the label's row (the line wraps, label sits on a later row
+    //     near the end).
+    // With the bug we're hunting, the label would render at the START
+    // of the first wrapped row of the source line — i.e. before the
+    // word on the same row — which both checks reject.
+    let check_hint_position = |screen: &str, word: &str, label: &str, tag: &str| {
+        let rows: Vec<&str> = screen.lines().collect();
+        let word_row = rows
+            .iter()
+            .position(|l| l.contains(word))
+            .unwrap_or_else(|| panic!("[{tag}] word {word:?} not on screen:\n{screen}"));
+        let label_row = rows
+            .iter()
+            .position(|l| l.contains(label))
+            .unwrap_or_else(|| panic!("[{tag}] label {label:?} not on screen:\n{screen}"));
+        if word_row == label_row {
+            let row = rows[word_row];
+            let w = row.find(word).unwrap();
+            let l = row.find(label).unwrap();
+            assert!(
+                w < l,
+                "[{tag}] same row: word {word:?} at col {w} must precede hint {label:?} at col {l}. Row: {row:?}"
+            );
+        } else {
+            assert!(
+                word_row < label_row,
+                "[{tag}] word {word:?} on row {word_row} must come before hint {label:?} on row {label_row}.\nScreen:\n{screen}"
+            );
+        }
+    };
+
+    // The fake LSP skips line 4 (echo), so we don't expect <EOL-L4>.
+    // Wait until the first and last of our expected hint labels land.
+    harness.wait_for_screen_contains("<EOL-L0>")?;
+    harness.wait_for_screen_contains("<EOL-L6>")?;
+
+    let screen_before = harness.screen_to_string();
+    eprintln!("=== Before delete ===\n{}", screen_before);
+
+    // Sanity: before the delete, hint 0 follows "alpha".
+    check_hint_position(&screen_before, "alpha", "<EOL-L0>", "before-delete");
+
+    // Put cursor on line 2 (bravo) — with wrapping enabled, Down
+    // navigates view rows, so 4 presses traverse alpha's four wrapped
+    // rows and land on bravo. We delete bravo to trigger the delete
+    // path under test.
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?;
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    }
+    harness.render()?;
+
+    // Invoke "Delete Line" via the command palette so we don't depend
+    // on any particular keybinding.
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.wait_for_screen_contains(">command")?;
+    harness.type_text("Delete Line")?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // The screen IMMEDIATELY after delete (before the LSP refresh) is
+    // what the user sees and complains about — hints on lines below
+    // the deletion appear at the start of their wrapped line instead
+    // of the end. The shifted old markers encode this mis-position
+    // directly in the marker tree, so even `save` doesn't restore
+    // them. Check that the hint for every surviving line still
+    // renders AFTER its line's text.
+    harness.wait_until(|h| {
+        h.get_buffer_content()
+            .map(|c| !c.contains("bravo"))
+            .unwrap_or(false)
+    })?;
+
+    let screen_after_delete = harness.screen_to_string();
+    eprintln!(
+        "=== After delete (pre-refresh) ===\n{}",
+        screen_after_delete
+    );
+
+    // Expected: labels L0, L2, L3 (line 4 echo skipped by fake LSP,
+    // L1 was on the deleted bravo so it's gone), L5, L6, each at end
+    // of their surviving line.
+    for (word, label) in [
+        ("alpha", "<EOL-L0>"),
+        ("charlie", "<EOL-L2>"),
+        ("delta", "<EOL-L3>"),
+        ("foxtrot", "<EOL-L5>"),
+        ("golf", "<EOL-L6>"),
+    ] {
+        check_hint_position(
+            &screen_after_delete,
+            word,
+            label,
+            &format!("post-delete-{word}"),
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
 fn test_comment_does_not_displace_inlay_hints() -> anyhow::Result<()> {
     use crate::common::harness::HarnessOptions;
 
