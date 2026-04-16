@@ -1439,10 +1439,21 @@ fn test_git_log_open_file_works_after_closing_previous_file_view() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // Wait for the file-view virtual buffer to actually open. The earlier
+    // `contains("println!(\"second\");")` condition was racy: the detail
+    // panel already contains `+    println!("second");` from the diff, so
+    // the wait returned before `createVirtualBuffer` finished and before
+    // focus moved into the file-view mode. The subsequent `q` then hit
+    // the detail panel's `git-log` mode, which binds `q` to `git_log_q`
+    // (closes the whole buffer group), wrecking the rest of the test.
+    // The `*<hash>:src/main.rs*` tab title is only produced by
+    // `createVirtualBuffer` in git_log.ts and cannot be matched by the
+    // diff, so it's the safe completion signal.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("println!(\"second\");") && !s.contains("Move cursor to a diff line")
+            s.contains(":src/main.rs*")
+                || s.contains("Move cursor to a diff line with file context")
         })
         .unwrap();
 
