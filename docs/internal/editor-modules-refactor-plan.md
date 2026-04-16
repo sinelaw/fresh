@@ -474,3 +474,190 @@ Make these explicit before splitting:
 These invariants used to hold because one struct owned everything and could
 enforce discipline ad hoc. Post-refactor they hold because there is exactly
 one named choke-point per invariant, in a named file, covered by a test.
+
+## 7. Sequencing without a flag day
+
+The end state above is structural — you don't get there in one PR. But you
+can get there incrementally without ever leaving `main` in a broken state,
+by going subsystem-by-subsystem in this order. Each phase lands as one or
+more commits; each commit compiles, passes tests, and is individually
+revertable.
+
+### Phase 1 — Free pure helpers (no state extraction)
+
+Extract the functions that are already effectively pure but happen to be
+`&self` methods for convenience. No new types, no new state ownership.
+
+Candidates (from the survey):
+
+- `compose_lsp_status` (render.rs L30–146) — already pure, just move.
+- `expand_regex_replacement` (render.rs L3432–4019, ~600 lines) — pure
+  backreference expansion.
+- `build_search_regex`, `build_replace_regex`, `get_regex_match_len`.
+- `screen_to_buffer_position`, `adjust_content_rect_for_compose`,
+  `fold_toggle_byte_from_position` (input.rs L2359–2596).
+- `smart_home_visual_line` (render.rs L4022–4072).
+- `normalize_path` (mod.rs L126–154).
+- Scrollbar math helpers: `calculate_scrollbar_jump_visual`,
+  `calculate_scrollbar_drag_relative_visual`.
+- `resolve_line_wrap_for_buffer`, `resolve_page_view_for_buffer`,
+  `resolve_wrap_column_for_buffer` (buffer_management.rs L26–73).
+- `byte_to_2d` (currently in clipboard.rs).
+
+Each of these becomes a free function in an appropriate module file. ~1 500
+lines decoupled with effectively zero risk. This phase also *proves* the
+pure-function pattern and surfaces any hidden state dependencies before
+touching real structs.
+
+**Risk:** trivial. **Blast radius:** each call site changes from
+`self.foo(...)` to `module::foo(...)`.
+
+### Phase 2 — Leaf subsystems
+
+Extract the smallest state clusters that are touched by ≤ 5 call sites.
+These establish the subsystem pattern before tackling anything cross-cutting.
+
+In order of increasing complexity:
+
+1. `MacroState` (4 fields: `macros`, `macro_recording`, `last_macro_register`,
+   `macro_playing`). Record/replay cluster.
+2. `BookmarkState` (2 fields: `bookmarks`, `active_custom_contexts`).
+3. `HoverState` (~4 fields: `hover_symbol_range`, `hover_symbol_overlay`,
+   `mouse_hover_screen_position`, `pending_hover_request`).
+4. `ClipboardState` (just `clipboard`, already externally-typed).
+5. `StdinStreamingState` (1 field, plus the 5 methods in buffer_management.rs).
+6. `LineScanManager` (1 field, 6 methods).
+7. `SearchScanManager` (1 field, 3 methods).
+8. `UpdateChecker` (1 field, a couple of methods).
+9. `BackgroundFade` + `ThemeCache` into `ThemeState`.
+
+Each lands as its own commit. Template for each:
+
+1. Create `app/<name>/mod.rs` with the state struct and moved methods.
+2. Add the field to `Editor`.
+3. Remove the old fields and the `impl Editor` methods that operated on them.
+4. Update call sites (typically `self.foo` → `self.<name>.foo`).
+5. `cargo build && cargo test` green.
+
+**Risk:** low per subsystem. **Blast radius:** ≤ 10 call sites each.
+
+### Phase 3 — Render: ViewModel + split into `app/view/`
+
+Introduce `ViewModel` as pure data. Build it inside the current `render`
+method, then progressively move each sub-render (gutter, tabs, status bar,
+popups) to take only its slice of the model. Each sub-render move is a
+separate commit.
+
+Order within the phase:
+
+1. Define `ViewModel`, `PaneModel`, `GutterModel`, `StatusModel`,
+   `TabModel`, `PopupModel` in `app/view/model.rs`. No behaviour change.
+2. Introduce `RenderCtx<'a>` read-only bundle.
+3. Move `compose_lsp_status` into `status_bar.rs` (free fn).
+4. Extract `render_status_bar(model: &StatusModel, theme: &ThemeState, ...)`
+   to `app/view/status_bar.rs`.
+5. Extract `render_gutter`.
+6. Extract `render_tabs`, `render_tab_context_menu`, `render_tab_drop_zone`.
+7. Extract `render_popups`, popup nav.
+8. Extract `render_prompt_popups`.
+9. Extract `render_hover_highlights`.
+10. Delete `recompute_layout` — call `ViewModel::build` from the macro replay
+    path instead.
+
+**Risk:** medium. The main render method is the single biggest hotspot; do
+it step-by-step with visual regression tests running between each commit.
+The existing `visual-regression` harness (under `docs/visual-regression`) is
+the safety net.
+
+### Phase 4 — Flatten `handle_action`
+
+Not a single commit — one commit per arm group. Each commit absorbs ~10–20
+`Action::*` arms into their respective subsystem, shrinking the giant match
+by that much.
+
+Order: easy groups first (clipboard, macros, bookmarks, theme selection) to
+establish the pattern, then the harder ones (search, LSP, completion,
+prompt lifecycle).
+
+**Risk:** low per commit. Each arm is isolated; regressions surface as
+single broken actions. **Blast radius:** one action per commit.
+
+### Phase 5 — Input subsystem extraction
+
+With `handle_action` already thin, extract the remaining input code:
+
+1. Move scrollbar pure fns to `app/input/scrollbar.rs`.
+2. Move `mouse_geometry` pure fns.
+3. Extract `SettingsPromptBuilder<T>` and collapse the 14 settings-prompt
+   triples into it.
+4. Move `get_key_context` and `handle_key` to `app/input/dispatch.rs`.
+5. Move chord state into `app/input/chord.rs` (own field on Editor).
+
+**Risk:** low-medium.
+
+### Phase 6 — Buffer-management redistribution
+
+With subsystems in place, redirect the contents of `buffer_management.rs`
+to their rightful owners:
+
+1. `PreviewState` (owns preview promotion invariant).
+2. Move the 5 stdin streaming methods to `app/stdin_stream/`.
+3. Move `LspStatusPopupBuilder` to `app/lsp/status_popup.rs` as a pure
+   builder returning a `PopupModel`.
+4. Move tab-navigation methods to `app/splits/navigation.rs`.
+5. Rewrite `open_file` / `close_buffer` as named orchestrators in
+   `app/editor.rs` with sub-steps (terminal cleanup, focus history, LSP
+   cleanup, preview adjust).
+
+**Risk:** medium. `close_buffer_internal` is 234 lines with 10+ field
+touches — break into named local helpers on `Editor` first, then move each
+helper's body onto the subsystem that owns the state it manipulates.
+
+### Phase 7 — Cross-cutting subsystems
+
+The remaining big state clusters, tackled last because they are read by
+many orchestrators:
+
+1. `SearchState` (consolidates both the search prompt and the scan manager).
+2. `CompletionState` + `SemanticTokensState`.
+3. `PromptState` + `FileOpenState` (consolidate existing `prompt_actions.rs`,
+   `file_open*.rs`).
+4. `PluginState` (large — last).
+5. `LspState` (largest — very last; ~25 fields, read by render, async
+   messages, save orchestrator).
+
+**Risk:** medium-high. These are cross-cutting and will surface the most
+`&mut`/borrow rearrangement work. Phases 1–6 have already built up the
+machinery (Effects, RenderCtx, named orchestrators) so by this point the
+pattern is well-established.
+
+### Phase 8 — Structural cleanup
+
+- Delete `app/*_actions.rs` files that have been fully absorbed.
+- Move `mod.rs` content to `app/editor.rs`; leave `mod.rs` as a module
+  index (`pub mod editor; pub use editor::Editor;` plus sub-module
+  re-exports).
+- Audit: `rg "impl Editor" crates/fresh-editor/src/app/` must return only
+  `app/editor.rs`. This is the acceptance criterion for Rule 1.
+- Audit: no subsystem file contains `use super::Editor` (only
+  `app/editor.rs` imports subsystem types, not the other way round).
+
+### Expected outcome
+
+After all phases:
+
+| File / directory     | Before  | After    |
+|----------------------|--------:|---------:|
+| `app/mod.rs`         | 9 605   | ~50 (re-exports) |
+| `app/editor.rs`      | —       | ~600 (struct + orchestrators) |
+| `app/view/`          | 5 394   | ~3 500 (split ~11 ways) |
+| `app/input/`         | 4 138   | ~800 (split ~7 ways) |
+| `app/buffers/`       | 3 464   | ~1 200 |
+| `app/lsp/`           | existing| ~2 800 absorbs scattered logic |
+| `app/search/`, etc.  | —       | each subsystem 200–800 |
+| **Total `app/`**     | ~45 flat files, 22 601 LoC in 4 mega-files | ~28 subsystem dirs, largest single file ~800 LoC |
+
+Acceptance criteria: Rule 1 audit passes; each subsystem has unit tests
+that construct only its own state; the render fns are pure and testable
+against a hand-constructed `ViewModel`; `handle_action`'s body fits on one
+screen.
