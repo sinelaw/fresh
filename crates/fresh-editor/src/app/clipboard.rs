@@ -10,22 +10,13 @@ use rust_i18n::t;
 use crate::input::multi_cursor::{
     add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult,
 };
-use crate::model::buffer::Buffer;
-use crate::model::cursor::Position2D;
+use crate::model::buffer_position::byte_to_2d;
 use crate::model::event::{CursorId, Event};
 use crate::primitives::word_navigation::{
     find_vi_word_end, find_word_start_left, find_word_start_right,
 };
 
 use super::Editor;
-
-/// Convert byte offset to 2D position (line, column)
-fn byte_to_2d(buffer: &Buffer, byte_pos: usize) -> Position2D {
-    let line = buffer.get_line_number(byte_pos);
-    let line_start = buffer.line_start_offset(line).unwrap_or(0);
-    let column = byte_pos.saturating_sub(line_start);
-    Position2D { line, column }
-}
 
 // These are the clipboard and multi-cursor operations on Editor.
 //

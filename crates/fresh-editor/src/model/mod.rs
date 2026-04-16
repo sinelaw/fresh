@@ -3,6 +3,7 @@
 //! This module contains pure data structures with minimal external dependencies.
 
 pub mod buffer;
+pub mod buffer_position;
 pub mod composite_buffer;
 pub mod control_event;
 pub mod cursor;

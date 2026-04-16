@@ -3,6 +3,7 @@
 use crate::input::keybindings::Action;
 use crate::input::line_move::{move_lines, LineMoveDirection};
 use crate::model::buffer::{Buffer, LineEnding};
+use crate::model::buffer_position::{byte_to_2d, pos_2d_to_byte};
 use crate::model::cursor::{Cursors, Position2D, SelectionMode};
 use crate::model::event::{CursorId, Event};
 use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
@@ -22,29 +23,6 @@ enum BlockDirection {
     Right,
     Up,
     Down,
-}
-
-/// Convert byte offset to 2D position (line, column)
-fn byte_to_2d(buffer: &Buffer, byte_pos: usize) -> Position2D {
-    let line = buffer.get_line_number(byte_pos);
-    let line_start = buffer.line_start_offset(line).unwrap_or(0);
-    let column = byte_pos.saturating_sub(line_start);
-    Position2D { line, column }
-}
-
-/// Convert 2D position to byte offset
-fn pos_2d_to_byte(buffer: &Buffer, pos: Position2D) -> usize {
-    let line_start = buffer.line_start_offset(pos.line).unwrap_or(0);
-    // Get line content to check bounds
-    let line_content = buffer.get_line(pos.line).unwrap_or_default();
-    // Clamp column to line length (excluding newline)
-    let line_len = if line_content.last() == Some(&b'\n') {
-        line_content.len().saturating_sub(1)
-    } else {
-        line_content.len()
-    };
-    let clamped_col = pos.column.min(line_len);
-    line_start + clamped_col
 }
 
 /// Calculate the visual column (display width) at the cursor position.
