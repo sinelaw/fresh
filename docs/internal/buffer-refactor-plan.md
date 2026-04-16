@@ -768,92 +768,96 @@ row. Top-level types and free fns appear at the end of their section.
 | `get_recovery_chunks` | `impl Persistence` |
 | `rebuild_with_pristine_saved_root` | `impl TextBuffer` orchestrator (touches `Persistence` + `piece_tree` + `buffers`) |
 
-### 7.4 → `edits.rs`
+### 7.4 → `edits.rs` (free-fn module)
 
-`edits.rs` contains orchestrators on `impl TextBuffer` (mechanism a).
-Every edit calls `mark_content_modified`.
-
-| Currently | Moves to |
-|---|---|
-| `insert_bytes`, `try_append_to_existing_buffer`, `insert`, `insert_at_position` | `impl TextBuffer` (orchestrators) |
-| `delete_bytes`, `delete`, `delete_range` | `impl TextBuffer` |
-| `replace_content` | `impl TextBuffer` |
-| `apply_bulk_edits` | `impl TextBuffer` |
-| `restore_buffer_state`, `snapshot_buffer_state` | `impl TextBuffer` (touches storage + persistence) |
-| `BufferSnapshot` struct | stays near, in `edits.rs` or moves to `mod.rs` |
-
-### 7.5 → `storage/`
-
-**`storage/mod.rs`**:
+Free functions taking `&mut PieceTree, &mut Vec<StringBuffer>,
+&mut usize` for the id counter. `TextBuffer` orchestrators call them
+and then call `mark_content_modified`.
 
 | Currently | Moves to |
 |---|---|
-| `get_text_range` | `impl TextBuffer` (`pub(crate)` or delegator) |
-| `get_text_range_mut` | `impl TextBuffer` (orchestrator — may need `chunk_split_and_load`) |
-| `get_all_text`, `get_all_text_string`, `slice_bytes`, `to_string` | `impl TextBuffer` (all pure reads over `piece_tree`+`buffers`) |
-| `len`, `is_empty`, `total_bytes`, `line_count` | `impl TextBuffer` |
-| `buffer_slice` | `impl TextBuffer` |
+| `insert_bytes`, `try_append_to_existing_buffer`, `insert`, `insert_at_position` | free `pub fn` in `edits.rs`; `TextBuffer` delegator bumps modified |
+| `delete_bytes`, `delete`, `delete_range` | free `pub fn` + delegator |
+| `replace_content` | free `pub fn` + delegator |
+| `apply_bulk_edits` | free `pub fn` + delegator |
+| `restore_buffer_state`, `snapshot_buffer_state` | `impl TextBuffer` in `mod.rs` (touches `Persistence`) |
+| `BufferSnapshot` struct | moves to `edits.rs` |
 
-**`storage/chunks.rs`**:
+### 7.5 → `storage/` (free-fn modules)
+
+**`storage/mod.rs`** — pure reads over storage core:
 
 | Currently | Moves to |
 |---|---|
-| `prepare_viewport`, `chunk_split_and_load`, `ensure_chunk_loaded_at` | `impl TextBuffer` (orchestrators — touch persistence for `fs`) |
-| `extend_streaming` | `impl TextBuffer` orchestrator |
+| `get_text_range`, `get_all_text`, `get_all_text_string`, `slice_bytes`, `to_string` | free `pub fn` over `(&PieceTree, &[StringBuffer])`; `TextBuffer` delegators |
+| `len`, `is_empty`, `total_bytes`, `line_count` | free `pub fn` over `&PieceTree`; delegators |
+| `buffer_slice` | free `pub fn` over `&[StringBuffer]`; delegator |
+
+**`storage/chunks.rs`** — chunk loading:
+
+| Currently | Moves to |
+|---|---|
+| `get_text_range_mut` | free `pub fn get_text_range_mut(pt, bufs, fs, offset, bytes)` (reads `fs` borrowed); `TextBuffer` delegator destructures |
+| `prepare_viewport`, `chunk_split_and_load`, `ensure_chunk_loaded_at` | free `pub fn` taking `(&mut PieceTree, &mut Vec<StringBuffer>, &dyn FileSystem, ...)` |
+| `extend_streaming` | free `pub fn` + `TextBuffer` delegator that also calls `persistence.update_after_stream()` |
 | `ChunkInfo`, `OverlappingChunks` (L4293–L4540) | moves here |
 
-**`storage/line_scan.rs`**:
+**`storage/line_scan.rs`** — free fns over borrowed storage:
 
 | Currently | Moves to |
 |---|---|
-| `prepare_line_scan`, `piece_tree_leaves`, `scan_leaf`, `leaf_io_params`, `apply_scan_updates` | `impl TextBuffer` |
+| `prepare_line_scan`, `piece_tree_leaves`, `scan_leaf`, `leaf_io_params`, `apply_scan_updates` | free `pub fn`; `TextBuffer` delegators |
 | `LineScanChunk` type | moves here |
 
-### 7.6 → `search.rs`
+### 7.6 → `search.rs` (free-fn module)
 
 | Currently | Moves to |
 |---|---|
-| `find_next`, `find_next_in_range`, `find_pattern`, `find_in_bytes` | `impl TextBuffer` + free `find_in_bytes` |
-| `find_next_regex`, `find_next_regex_in_range`, `find_regex` | `impl TextBuffer` |
-| `search_scan_init`, `search_scan_next_chunk`, `search_scan_all` | `impl TextBuffer` |
-| `search_hybrid_plan`, `search_hybrid` | `impl TextBuffer` |
-| `HybridSearchPlan`, `HybridSearchPlan::execute` | moves here |
+| `find_next`, `find_next_in_range`, `find_pattern` | free `pub fn find_*(pt, bufs, pattern, …)` + `TextBuffer` delegators |
+| `find_in_bytes` | free `pub fn` (pure over `&[u8]`) |
+| `find_next_regex`, `find_next_regex_in_range`, `find_regex` | free `pub fn` + delegators |
+| `search_scan_init`, `search_scan_next_chunk`, `search_scan_all` | free `pub fn`; state passed explicitly |
+| `search_hybrid_plan`, `search_hybrid` | free `pub fn` + delegators |
+| `HybridSearchPlan` (struct + `execute`) | moves here; `execute` takes `(&PieceTree, &[StringBuffer], &dyn FileSystem)` |
 | `ChunkedSearchState` | moves here |
-| free `search_boundary_overlap` (L4722) | moves here |
+| free `search_boundary_overlap` (L4722) | moves here, stays private |
 
-### 7.7 → `replace.rs`
-
-| Currently | Moves to |
-|---|---|
-| `replace_range`, `replace_next`, `replace_all`, `replace_all_regex` | `impl TextBuffer` orchestrators (delete + insert, bump modified) |
-
-### 7.8 → `position.rs`
+### 7.7 → `replace.rs` (free-fn module)
 
 | Currently | Moves to |
 |---|---|
-| `offset_to_position`, `position_to_offset` | `impl TextBuffer` |
-| `position_to_line_col`, `line_col_to_position` | `impl TextBuffer` |
-| `position_to_lsp_position`, `lsp_position_to_byte` | `impl TextBuffer` |
-| `prev_char_boundary`, `next_char_boundary`, `snap_to_char_boundary`, `is_utf8_continuation_byte` | `impl TextBuffer` + one free pure fn |
-| `prev_grapheme_boundary`, `next_grapheme_boundary` | `impl TextBuffer` |
-| `prev_word_boundary`, `next_word_boundary` | `impl TextBuffer` |
+| `replace_range`, `replace_next`, `replace_all`, `replace_all_regex` | free `pub fn` doing the range/pattern search + splice; `TextBuffer` delegator wraps with `mark_content_modified` |
 
-### 7.9 → `lines.rs`
+### 7.8 → `position.rs` (free-fn module)
 
 | Currently | Moves to |
 |---|---|
-| `get_line`, `line_start_offset`, `piece_info_at_offset`, `stats` | `impl TextBuffer` |
-| `resolve_line_byte_offset` | `impl TextBuffer` |
-| `line_iterator`, `iter_lines_from` | `impl TextBuffer` |
-| `get_line_number`, `estimated_line_length` | `impl TextBuffer` |
-| `LineNumber` enum (L276–L313) | moves here |
-| `LineData` (L7867), `TextBufferLineIterator` (L7880–end) | moves here |
+| `offset_to_position`, `position_to_offset` | free `pub fn` over `&PieceTree` |
+| `position_to_line_col`, `line_col_to_position` | free `pub fn` |
+| `position_to_lsp_position`, `lsp_position_to_byte` | free `pub fn` (lsp_position_to_byte also needs `&[StringBuffer]`) |
+| `prev_char_boundary`, `next_char_boundary`, `snap_to_char_boundary` | free `pub fn` |
+| `is_utf8_continuation_byte` | free `pub fn` (pure over `u8`) |
+| `prev_grapheme_boundary`, `next_grapheme_boundary` | free `pub fn` |
+| `prev_word_boundary`, `next_word_boundary` | free `pub fn` |
 
-### 7.10 → `line_cache.rs`
+All eventually surfaced as `TextBuffer` delegators.
+
+### 7.9 → `lines.rs` (free-fn module)
 
 | Currently | Moves to |
 |---|---|
-| `populate_line_cache`, `get_cached_byte_offset_for_line`, `invalidate_line_cache_from`, `handle_line_cache_insertion`, `handle_line_cache_deletion`, `clear_line_cache` | `impl TextBuffer` — these are ~all no-ops today (remnants of an earlier cache). Consider a follow-up to delete them outright, but not in this refactor. |
+| `get_line`, `line_start_offset`, `piece_info_at_offset`, `stats` | free `pub fn` + `TextBuffer` delegators |
+| `resolve_line_byte_offset` | free `pub fn` (takes `&mut PieceTree` — it currently calls `ensure_chunk_loaded_at`) |
+| `line_iterator`, `iter_lines_from` | free `pub fn` returning `TextBufferLineIterator` |
+| `get_line_number`, `estimated_line_length` | free `pub fn` |
+| `LineNumber` enum | moves here |
+| `LineData`, `TextBufferLineIterator` | move here (iterator becomes `pub(crate)`) |
+
+### 7.10 → `line_cache.rs` (free-fn module)
+
+| Currently | Moves to |
+|---|---|
+| `populate_line_cache`, `get_cached_byte_offset_for_line`, `invalidate_line_cache_from`, `handle_line_cache_insertion`, `handle_line_cache_deletion`, `clear_line_cache` | free `pub fn` (all near-no-ops today). `TextBuffer` delegators. Follow-up PR to delete outright. |
 
 ### 7.11 → `mod.rs` (stays on `TextBuffer`)
 
