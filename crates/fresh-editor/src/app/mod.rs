@@ -48,6 +48,7 @@ mod scrollbar_math;
 mod search_ops;
 mod search_scan;
 mod settings_actions;
+mod settings_prompts;
 mod shell_command;
 mod smart_home;
 mod split_actions;
