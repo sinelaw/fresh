@@ -25,6 +25,7 @@ pub mod keybinding_editor;
 mod keybinding_editor_actions;
 mod line_scan;
 mod lsp_actions;
+mod lsp_event_notify;
 mod lsp_requests;
 mod lsp_status;
 mod macro_actions;
