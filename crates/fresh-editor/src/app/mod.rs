@@ -23,6 +23,7 @@ mod menu_actions;
 mod menu_context;
 mod mouse_input;
 mod on_save_actions;
+mod path_utils;
 mod plugin_commands;
 mod popup_actions;
 mod prompt_actions;
@@ -46,7 +47,6 @@ pub mod workspace;
 
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
-use std::path::Component;
 
 /// Shared per-tick housekeeping: process async messages, check timers, auto-save, etc.
 /// Returns true if a render is needed. The `clear_terminal` callback handles full-redraw
@@ -122,37 +122,7 @@ pub fn editor_tick(
     Ok(needs_render)
 }
 
-/// Normalize a path by resolving `.` and `..` components without requiring the path to exist.
-/// This is similar to canonicalize but works on paths that don't exist yet.
-pub(crate) fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
-    let mut components = Vec::new();
-
-    for component in path.components() {
-        match component {
-            Component::CurDir => {
-                // Skip "." components
-            }
-            Component::ParentDir => {
-                // Pop the last component if it's a normal component
-                if let Some(Component::Normal(_)) = components.last() {
-                    components.pop();
-                } else {
-                    // Keep ".." if we can't go up further (for relative paths)
-                    components.push(component);
-                }
-            }
-            _ => {
-                components.push(component);
-            }
-        }
-    }
-
-    if components.is_empty() {
-        std::path::PathBuf::from(".")
-    } else {
-        components.iter().collect()
-    }
-}
+pub(crate) use path_utils::normalize_path;
 
 use self::types::{
     Bookmark, CachedLayout, EventLineInfo, InteractiveReplaceState, LspMessageEntry,
