@@ -892,3 +892,149 @@ the old fields. Example within Phase 2 (extract `BufferFormat`):
 
 Between commits A and D the two representations coexist on `main`.
 That's the price of not having a flag day.
+
+## 9. Phased execution
+
+Nine phases. Each lands as a single PR. Every commit within a phase
+compiles and passes `cargo test -p fresh-editor`. Phases can be
+reordered slightly, but Phase 1 must come first and Phase 9 must
+come last.
+
+### Phase 1 — Convert file to directory; no behaviour change
+
+- `git mv crates/fresh-editor/src/model/buffer.rs
+         crates/fresh-editor/src/model/buffer/mod.rs`
+- Verify build + tests green.
+
+**Risk:** trivial. **Blast radius:** module resolution only.
+
+### Phase 2 — Extract `BufferFormat` (easiest cluster)
+
+4 fields, 24 accesses, minimal coupling. Establishes the
+sub-struct + delegator pattern.
+
+- Commit A: Add `format: BufferFormat` field, initialised to same
+  values; keep the four raw fields in sync in the constructor.
+- Commit B: Route internal reads of `self.{line_ending, encoding,
+  original_*}` through `self.format.*()`.
+- Commit C: Route internal writes through `self.format.set_*()`.
+- Commit D: Delete the four raw fields.
+- Commit E: Move `detect_line_ending`, `detect_encoding*`,
+  `convert_*`, `normalize_line_endings`, `convert_line_endings_to`,
+  `LineEnding` enum to `model/buffer/format.rs` as free fns.
+- Commit F: Move the `BufferFormat` struct + delegators into
+  `model/buffer/format.rs`.
+
+**Risk:** low. **Blast radius:** none external (accessors preserved).
+**Test coverage:** existing `test_detect_crlf`, `test_detect_lf`,
+`test_normalize_*`.
+
+### Phase 3 — Extract `BufferFileKind`
+
+3 fields, 14 accesses. Same A-through-F shape as Phase 2 but smaller.
+
+**Risk:** trivial. **Blast radius:** none external.
+
+### Phase 4 — Extract `Persistence` (largest cluster)
+
+6 fields, 78 accesses, plus the `mark_content_modified` invariant.
+Do this one field at a time:
+
+- Commit A: Introduce `Persistence` with only `fs`. Route accesses.
+  Delete raw `fs`.
+- Commit B: Add `file_path`. Route. Delete raw.
+- Commit C: Add `modified` + `recovery_pending` together (they move
+  as a unit because `mark_dirty` touches both). Introduce
+  `Persistence::mark_dirty`. Route `mark_content_modified` to it.
+  Delete raw.
+- Commit D: Add `saved_root` + `saved_file_size` together. Route.
+  Delete raw.
+- Commit E: Now that all six fields live on `Persistence`, split the
+  impl across `persistence/{mod,load,save,write_recipe,inplace,
+  snapshot}.rs`. Free fns where they belong; methods where they
+  belong. Orchestrators stay on `impl TextBuffer`.
+
+**Risk:** medium. **Blast radius:** internal only — but the biggest
+internal move in the plan. **Test coverage:** recovery integration
+tests (`tests/e2e/recovery.rs`), large-file tests
+(`tests/e2e/large_file_*.rs`). Run these between every commit.
+
+### Phase 5 — Split leaf concerns (no new sub-structs)
+
+With the three sub-structs in place, carve off the pure-storage-core
+concerns into their own files. These stay as `impl TextBuffer`
+methods but in dedicated files:
+
+- Commit A: `position.rs` (position/boundary methods; largest cluster
+  that's self-contained).
+- Commit B: `lines.rs` + move `LineNumber`, `LineData`,
+  `TextBufferLineIterator`.
+- Commit C: `replace.rs` (4 methods).
+- Commit D: `line_cache.rs` (6 near-no-op methods).
+- Commit E: `search.rs` + move `HybridSearchPlan`, `ChunkedSearchState`,
+  `search_boundary_overlap`.
+
+Each commit moves one file's worth of methods and re-runs tests.
+
+**Risk:** low. **Blast radius:** internal only. Public API preserved
+since these are still methods on `TextBuffer`.
+
+### Phase 6 — Split storage concerns
+
+- Commit A: `storage/mod.rs` — pure reads (`get_all_text`, `len`, etc.).
+- Commit B: `storage/chunks.rs` + move `ChunkInfo`,
+  `OverlappingChunks`, `extend_streaming`.
+- Commit C: `storage/line_scan.rs` + move `LineScanChunk`.
+
+**Risk:** low-medium. `chunk_split_and_load` is the trickiest method
+in the file (~155 lines). **Test coverage:**
+`tests/e2e/large_file_inplace_write_bug.rs` is the canary.
+
+### Phase 7 — Consolidate edits
+
+- Commit: Move edit orchestrators (`insert_bytes`, `insert_at_position`,
+  `delete_bytes`, `delete`, `delete_range`, `replace_content`,
+  `apply_bulk_edits`, `restore_buffer_state`, `snapshot_buffer_state`,
+  `BufferSnapshot`) into `edits.rs`.
+
+**Risk:** low. **Blast radius:** internal — but edits are the hottest
+path, so run the property-based tests.
+
+### Phase 8 — Redistribute tests
+
+Inline tests move to `tests/` submodules in the order below. Each
+commit moves one topic and its fixtures:
+
+- Commit A: `tests/mod.rs` with shared helpers (`test_fs`, `apply_recipe`,
+  fixture generators).
+- Commit B: `tests/edits.rs` (largest topic).
+- Commit C: `tests/position.rs`.
+- Commit D: `tests/save_load.rs`.
+- Commit E: `tests/line_endings.rs`.
+- Commit F: `tests/binary_detection.rs`.
+- Commit G: `tests/property.rs` (proptest).
+- Commit H: Delete the now-empty inline `mod tests` blocks.
+
+**Risk:** trivial per commit. **Blast radius:** none (tests are
+internal).
+
+### Phase 9 — Audit and cleanup
+
+- Run each grep audit from §4 and §5.4; fix any stragglers.
+- Confirm every file is under 700 lines.
+- Delete any `pub` that should be `pub(super)` after the move.
+- Consider following up on the near-no-op `line_cache` methods in a
+  separate PR (not in this refactor).
+
+**Risk:** trivial. **Blast radius:** none.
+
+### Expected outcome
+
+| | Before | After |
+|---|---:|---:|
+| Files in `model/buffer*` | 1 (buffer.rs) | ~17 source + 8 test |
+| Largest single source file | 8,029 | ≤ 700 |
+| `TextBuffer` field count | 17 flat | 8 composed |
+| Methods in one `impl TextBuffer` block | ~120 | ~40 (orchestrators + delegators) |
+| `impl TextBuffer` blocks crate-wide | 1 | 1 (unchanged — Rule 1) |
+| Test blocks | 2 inline monoliths | 8 topic files |
