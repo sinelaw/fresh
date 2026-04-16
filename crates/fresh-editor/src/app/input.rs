@@ -1719,7 +1719,7 @@ impl Editor {
             if buffer_len <= large_file_threshold {
                 // When line wrapping is enabled, use visual row calculations
                 if line_wrap_enabled {
-                    Self::calculate_scrollbar_drag_relative_visual(
+                    super::scrollbar_math::scrollbar_drag_relative_visual(
                         &mut state.buffer,
                         row,
                         scrollbar_rect.y,
@@ -1900,7 +1900,7 @@ impl Editor {
                 if line_wrap_enabled {
                     // calculate_scrollbar_jump_visual already handles max scroll limiting
                     // and returns both byte position and view line offset
-                    Self::calculate_scrollbar_jump_visual(
+                    super::scrollbar_math::scrollbar_jump_visual(
                         &mut state.buffer,
                         ratio,
                         viewport_height,
@@ -2174,177 +2174,6 @@ impl Editor {
         }
 
         max_byte_pos
-    }
-
-    /// Calculate scrollbar jump position using visual rows (for line-wrapped content)
-    /// Returns the byte position to scroll to based on the scroll ratio
-    /// Calculate scroll position for visual-row-aware scrollbar jump.
-    /// Returns (byte_position, view_line_offset) for proper positioning within wrapped lines.
-    fn calculate_scrollbar_jump_visual(
-        buffer: &mut crate::model::buffer::Buffer,
-        ratio: f64,
-        viewport_height: usize,
-        viewport_width: usize,
-    ) -> (usize, usize) {
-        use crate::primitives::line_wrapping::{wrap_line, WrapConfig};
-
-        let buffer_len = buffer.len();
-        if buffer_len == 0 || viewport_height == 0 {
-            return (0, 0);
-        }
-
-        // Calculate gutter width (estimate based on line count)
-        let line_count = buffer.line_count().unwrap_or(1);
-        let digits = (line_count as f64).log10().floor() as usize + 1;
-        let gutter_width = 1 + digits.max(4) + 3; // indicator + digits + separator
-
-        let wrap_config = WrapConfig::new(viewport_width, gutter_width, true, true);
-
-        // Count total visual rows and build a map of visual row -> (line_byte, offset_in_line)
-        let mut total_visual_rows = 0;
-        let mut visual_row_positions: Vec<(usize, usize)> = Vec::new(); // (line_start_byte, visual_row_offset)
-
-        let mut iter = buffer.line_iterator(0, 80);
-        while let Some((line_start, content)) = iter.next_line() {
-            let line_content = content.trim_end_matches(['\n', '\r']).to_string();
-            let segments = wrap_line(&line_content, &wrap_config);
-            let visual_rows_in_line = segments.len().max(1);
-
-            for offset in 0..visual_rows_in_line {
-                visual_row_positions.push((line_start, offset));
-            }
-            total_visual_rows += visual_rows_in_line;
-        }
-
-        if total_visual_rows == 0 {
-            return (0, 0);
-        }
-
-        // Calculate max scroll visual row (leave viewport_height rows visible at bottom)
-        let max_scroll_row = total_visual_rows.saturating_sub(viewport_height);
-
-        if max_scroll_row == 0 {
-            // Content fits in viewport, no scrolling needed
-            return (0, 0);
-        }
-
-        // Map ratio to target visual row
-        let target_row = (ratio * max_scroll_row as f64).round() as usize;
-        let target_row = target_row.min(max_scroll_row);
-
-        // Get the byte position and offset for this visual row
-        if target_row < visual_row_positions.len() {
-            visual_row_positions[target_row]
-        } else {
-            // Fallback to last position
-            visual_row_positions.last().copied().unwrap_or((0, 0))
-        }
-    }
-
-    /// Calculate scroll position for visual-row-aware scrollbar drag.
-    /// The thumb follows the mouse position, accounting for where on the thumb the user clicked.
-    /// Returns (byte_position, view_line_offset) for proper positioning within wrapped lines.
-    #[allow(clippy::too_many_arguments)]
-    fn calculate_scrollbar_drag_relative_visual(
-        buffer: &mut crate::model::buffer::Buffer,
-        current_row: u16,
-        scrollbar_y: u16,
-        scrollbar_height: usize,
-        drag_start_row: u16,
-        drag_start_top_byte: usize,
-        drag_start_view_line_offset: usize,
-        viewport_height: usize,
-        viewport_width: usize,
-    ) -> (usize, usize) {
-        use crate::primitives::line_wrapping::{wrap_line, WrapConfig};
-
-        let buffer_len = buffer.len();
-        if buffer_len == 0 || viewport_height == 0 || scrollbar_height <= 1 {
-            return (0, 0);
-        }
-
-        // Calculate gutter width (estimate based on line count)
-        let line_count = buffer.line_count().unwrap_or(1);
-        let digits = (line_count as f64).log10().floor() as usize + 1;
-        let gutter_width = 1 + digits.max(4) + 3; // indicator + digits + separator
-
-        let wrap_config = WrapConfig::new(viewport_width, gutter_width, true, true);
-
-        // Build visual row positions map
-        let mut total_visual_rows = 0;
-        let mut visual_row_positions: Vec<(usize, usize)> = Vec::new();
-
-        let mut iter = buffer.line_iterator(0, 80);
-        while let Some((line_start, content)) = iter.next_line() {
-            let line_content = content.trim_end_matches(['\n', '\r']).to_string();
-            let segments = wrap_line(&line_content, &wrap_config);
-            let visual_rows_in_line = segments.len().max(1);
-
-            for offset in 0..visual_rows_in_line {
-                visual_row_positions.push((line_start, offset));
-            }
-            total_visual_rows += visual_rows_in_line;
-        }
-
-        if total_visual_rows == 0 {
-            return (0, 0);
-        }
-
-        let max_scroll_row = total_visual_rows.saturating_sub(viewport_height);
-        if max_scroll_row == 0 {
-            return (0, 0);
-        }
-
-        // Find the visual row corresponding to drag_start_top_byte + view_line_offset
-        // First find the line start, then add the offset for wrapped lines
-        let line_start_visual_row = visual_row_positions
-            .iter()
-            .position(|(byte, _)| *byte >= drag_start_top_byte)
-            .unwrap_or(0);
-        let start_visual_row =
-            (line_start_visual_row + drag_start_view_line_offset).min(max_scroll_row);
-
-        // Calculate thumb size (same formula as scrollbar rendering)
-        let thumb_size_raw = (viewport_height as f64 / total_visual_rows as f64
-            * scrollbar_height as f64)
-            .ceil() as usize;
-        let max_thumb_size = (scrollbar_height as f64 * 0.8).floor() as usize;
-        let thumb_size = thumb_size_raw
-            .max(1)
-            .min(max_thumb_size)
-            .min(scrollbar_height);
-
-        // Calculate max thumb start position (same as scrollbar rendering)
-        let max_thumb_start = scrollbar_height.saturating_sub(thumb_size);
-
-        // Calculate where the thumb was (in scrollbar coordinates) at drag start
-        // Using the same formula as scrollbar rendering: thumb_start = scroll_ratio * max_thumb_start
-        let start_scroll_ratio = start_visual_row as f64 / max_scroll_row as f64;
-        let thumb_row_at_start = scrollbar_y as f64 + start_scroll_ratio * max_thumb_start as f64;
-
-        // Calculate click offset (where on the thumb we clicked)
-        let click_offset = drag_start_row as f64 - thumb_row_at_start;
-
-        // Calculate target thumb position based on current mouse position
-        let target_thumb_row = current_row as f64 - click_offset;
-
-        // Map target thumb position to scroll ratio (inverse of thumb_start formula)
-        let target_scroll_ratio = if max_thumb_start > 0 {
-            ((target_thumb_row - scrollbar_y as f64) / max_thumb_start as f64).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-
-        // Map scroll ratio to visual row
-        let target_row = (target_scroll_ratio * max_scroll_row as f64).round() as usize;
-        let target_row = target_row.min(max_scroll_row);
-
-        // Get the byte position and offset for this visual row
-        if target_row < visual_row_positions.len() {
-            visual_row_positions[target_row]
-        } else {
-            visual_row_positions.last().copied().unwrap_or((0, 0))
-        }
     }
 
     pub(super) fn fold_toggle_line_at_screen_position(

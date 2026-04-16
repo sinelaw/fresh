@@ -33,6 +33,7 @@ mod prompt_actions;
 mod recovery_actions;
 mod regex_replace;
 mod render;
+mod scrollbar_math;
 mod settings_actions;
 mod shell_command;
 mod smart_home;
