@@ -23,6 +23,7 @@ mod help;
 mod hover;
 mod input;
 mod input_dispatch;
+mod input_helpers;
 pub mod keybinding_editor;
 mod keybinding_editor_actions;
 mod line_scan;
