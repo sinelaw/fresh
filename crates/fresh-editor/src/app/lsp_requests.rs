@@ -3687,6 +3687,116 @@ mod tests {
     }
 
     #[test]
+    fn test_marker_delete_after_repeat_clear_recreate() {
+        // Regression: simulates what apply_inlay_hints_to_state does on
+        // every LSP refresh — clear every virtual_text's marker then
+        // recreate markers at fresh positions. After a few rounds,
+        // delete one marker and adjust for a deletion and check the
+        // remaining markers' positions.
+        use crate::model::marker::MarkerList;
+        use crate::view::virtual_text::{VirtualTextManager, VirtualTextPosition};
+        use ratatui::style::Style;
+
+        let mut markers = MarkerList::new();
+        let mut vtexts = VirtualTextManager::new();
+
+        // Initial marker layout at six positions (same as the e2e test).
+        let positions = [200usize, 401, 602, 803, 1205, 1406];
+        let mut ids = Vec::new();
+        for &p in &positions {
+            let id = vtexts.add(
+                &mut markers,
+                p,
+                format!("hint-at-{p}"),
+                Style::default(),
+                VirtualTextPosition::BeforeChar,
+                0,
+            );
+            ids.push(id);
+        }
+
+        // Simulate a couple of clear/recreate cycles (each LSP refresh
+        // goes through this exact path via apply_inlay_hints_to_state).
+        for _ in 0..3 {
+            vtexts.clear(&mut markers);
+            let mut new_ids = Vec::new();
+            for &p in &positions {
+                let id = vtexts.add(
+                    &mut markers,
+                    p,
+                    format!("hint-at-{p}"),
+                    Style::default(),
+                    VirtualTextPosition::BeforeChar,
+                    0,
+                );
+                new_ids.push(id);
+            }
+            ids = new_ids;
+        }
+
+        // remove_in_range + adjust_for_delete equivalent to apply_delete.
+        let removed = vtexts.remove_in_range(&mut markers, 1005, 1206);
+        assert_eq!(
+            removed, 1,
+            "exactly one marker inside [1005, 1206) should be removed"
+        );
+        markers.adjust_for_delete(1005, 201);
+
+        let lookup = vtexts.build_lookup(&markers, 0, 10_000);
+        let mut positions: Vec<usize> = lookup.keys().copied().collect();
+        positions.sort();
+        assert_eq!(
+            positions,
+            vec![200, 401, 602, 803, 1205],
+            "after delete+adjust, expected marker byte positions {:?}, got {:?}",
+            vec![200, 401, 602, 803, 1205],
+            positions
+        );
+    }
+
+    #[test]
+    fn test_marker_delete_then_adjust_preserves_last_marker_position() {
+        // Regression for the user-observed flip of an end-of-line inlay
+        // hint to the start of its line after a nearby line is deleted.
+        //
+        // Scenario (real numbers from the failing e2e test): six markers
+        // at byte offsets that correspond to the `\n` of each line,
+        // then delete-one-marker (simulating remove_in_range on the
+        // line being deleted) followed by adjust_for_delete on the
+        // remaining markers.
+        //
+        // The last marker (at byte 1406) should end up at byte 1205
+        // after subtracting the 201-byte deleted range. Observed bug:
+        // it ends up at byte 1005 (the deletion start) — exactly as
+        // though the delta were applied twice.
+        use crate::model::marker::MarkerList;
+
+        let mut markers = MarkerList::new();
+        let m0 = markers.create(200, false);
+        let m1 = markers.create(401, false);
+        let m2 = markers.create(602, false);
+        let m3 = markers.create(803, false);
+        let m5 = markers.create(1205, false);
+        let m6 = markers.create(1406, false);
+
+        // Simulate remove_in_range removing marker m5 inside [1005, 1206).
+        markers.delete(m5);
+
+        // Now simulate adjust_for_delete over that range.
+        markers.adjust_for_delete(1005, 201);
+
+        assert_eq!(markers.get_position(m0), Some(200), "m0 unchanged");
+        assert_eq!(markers.get_position(m1), Some(401), "m1 unchanged");
+        assert_eq!(markers.get_position(m2), Some(602), "m2 unchanged");
+        assert_eq!(markers.get_position(m3), Some(803), "m3 unchanged");
+        assert_eq!(
+            markers.get_position(m6),
+            Some(1205),
+            "m6 must shift from 1406 to 1205 (1406 - 201), not be clamped to delete-start 1005"
+        );
+    }
+
+    #[test]
     fn test_inlay_hint_outside_deletion_survives() {
         // Anchors outside the deleted range must not be collateral damage.
         let mut state = EditorState::new(

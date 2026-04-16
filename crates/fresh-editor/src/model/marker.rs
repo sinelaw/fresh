@@ -650,6 +650,113 @@ mod tests {
                     }
                 }
             }
+
+            /// Shadow-model property test: for every sequence of
+            /// create / delete / adjust_for_insert / adjust_for_delete
+            /// operations, the positions reported by MarkerList for
+            /// each still-live marker must match the positions a naïve
+            /// `Vec<(MarkerId, usize)>` would compute by independently
+            /// shifting/clamping on each edit.
+            ///
+            /// This catches bugs where the interval-tree's own
+            /// bookkeeping (e.g. lazy_delta propagation, BST-delete
+            /// node swaps, marker_map staleness) diverges from the
+            /// straightforward "markers are points that slide with
+            /// the buffer" semantics. The inlay-hint-jumps-to-start
+            /// regression on line delete was exactly this kind of
+            /// divergence, and was invisible to every other invariant
+            /// check in this file.
+            #[test]
+            fn prop_shadow_model_matches_tree(
+                initial_positions in prop::collection::vec(0..1000usize, 1..20),
+                ops in prop::collection::vec(arb_edit_op(1000), 1..30),
+                delete_indices in prop::collection::vec(0..20usize, 0..5),
+            ) {
+                let mut list = MarkerList::new();
+
+                let mut unique_positions: Vec<usize> = initial_positions;
+                unique_positions.sort_unstable();
+                unique_positions.dedup();
+
+                // Shadow: Vec<(MarkerId, Option<usize>)>. None means deleted.
+                let mut shadow: Vec<(MarkerId, Option<usize>)> = Vec::new();
+                for (i, &p) in unique_positions.iter().enumerate() {
+                    let id = list.create(p, i % 2 == 0);
+                    shadow.push((id, Some(p)));
+                }
+
+                // Delete some markers (by shadow index modulo len).
+                for idx in delete_indices {
+                    if shadow.is_empty() {
+                        break;
+                    }
+                    let i = idx % shadow.len();
+                    if let (id, Some(_)) = shadow[i] {
+                        list.delete(id);
+                        shadow[i].1 = None;
+                    }
+                }
+
+                // Apply edits to both the tree and the shadow.
+                for op in ops {
+                    match op {
+                        EditOp::Insert { position, length } => {
+                            list.adjust_for_insert(position, length);
+                            for (_id, pos) in shadow.iter_mut() {
+                                if let Some(p) = pos {
+                                    if *p >= position {
+                                        *p += length;
+                                    }
+                                }
+                            }
+                        }
+                        EditOp::Delete { position, length } => {
+                            if length == 0 {
+                                continue;
+                            }
+                            list.adjust_for_delete(position, length);
+                            for (_id, pos) in shadow.iter_mut() {
+                                if let Some(p) = pos {
+                                    // Markers inside the deleted range
+                                    // clamp to the deletion start in
+                                    // MarkerList's semantics (see
+                                    // adjust_recursive's `.max(pos)`),
+                                    // so mirror that in the shadow.
+                                    if *p >= position + length {
+                                        *p -= length;
+                                    } else if *p > position {
+                                        *p = position;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Every live marker's tree position must match its
+                    // shadow position after every operation.
+                    for (id, shadow_pos) in &shadow {
+                        match shadow_pos {
+                            Some(expected) => {
+                                let actual = list.get_position(*id);
+                                prop_assert_eq!(
+                                    actual,
+                                    Some(*expected),
+                                    "marker {:?} expected at {} but tree says {:?}",
+                                    id,
+                                    expected,
+                                    actual
+                                );
+                            }
+                            None => {
+                                // Deleted markers: get_position may
+                                // return None OR the tree may leak the
+                                // underlying storage — accept either,
+                                // but never a stale live position.
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

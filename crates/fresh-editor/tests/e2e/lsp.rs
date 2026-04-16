@@ -8921,10 +8921,6 @@ done
     })?;
 
     let screen_after_delete = harness.screen_to_string();
-    eprintln!(
-        "=== After delete (pre-refresh) ===\n{}",
-        screen_after_delete
-    );
 
     // The user-reported bug: an inlay hint that was positioned right
     // at the end of its line (e.g. a closing-brace function-name hint
