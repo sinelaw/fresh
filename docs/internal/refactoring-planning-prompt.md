@@ -13,6 +13,53 @@ They are the contract; this prompt is the scaffolding.
 
 ---
 
+## The primary anti-pattern this codebase is fighting
+
+**A single big struct with dozens of flat fields, touched by `impl`
+blocks scattered across many files.**
+
+The symptom: `impl Editor { … }` appears in `lsp_actions.rs`,
+`popup_actions.rs`, `clipboard.rs`, `buffer_management.rs`, and a dozen
+more. It looks modular. It isn't: every one of those methods can read
+and write *any* of `Editor`'s ~67 fields. The files are partitioned;
+the *state* is not. A unit test for clipboard still needs a full
+`Editor`. Renaming a buffer field still ripples everywhere.
+
+**The refactor is fundamentally about grouping fields.** Not about
+moving `impl` blocks into new directories — that's cosmetic. The job is:
+
+1. **Find the god struct** — one with dozens of fields and many scattered
+   `impl` blocks across the codebase.
+2. **Cluster its fields by concern.** Which fields are read/written
+   together? Which `impl`-file implicitly "owns" a cluster (even though
+   it can touch all fields)? Those clusters are the latent subsystems.
+3. **Extract each cluster into its own struct** (e.g. `MacroState`,
+   `BookmarkState`, `LspState`, `ClipboardState`) in its own file, with
+   `impl` blocks on *that new struct*.
+4. **Replace the raw fields on the god struct with a single field per
+   new sub-struct.** The god struct no longer holds
+   `macros: Vec<Macro>, macro_recording: bool, last_macro_register:
+   Option<char>, macro_playing: bool` — it holds `macros: MacroState`.
+   It is now a composition of ~25 owned subsystems, not a flat bag of
+   ~67 fields.
+5. **Migrate each scattered `impl Editor` method** to `impl <SubStruct>`
+   on the struct that owns the fields it touches. Only methods that
+   genuinely need to combine multiple subsystems stay as
+   `impl <GodStruct>` orchestrators.
+
+The god struct doesn't need to contain those fields directly — that's
+the whole point. After the refactor, it contains sub-structs that
+contain those fields. The consequence — the observable success criterion
+— is that only one file contains `impl <GodStruct>`. But the *mechanism*
+is the field clustering and composition, not the `impl`-move. A plan
+that describes new directories without naming the field clusters being
+extracted is missing the actual work.
+
+If your plan ends with `impl Editor` blocks still scattered across many
+files, or with the god struct still holding the same flat fields under
+a new directory layout, your plan is wrong. Everything else in this
+document serves this transformation.
+
 ## Role
 
 You are planning a structural refactoring of a specific file, module, or
@@ -42,21 +89,52 @@ than a plan that covers "the editor".
 ## Before you write anything: measure
 
 A plan that can't cite numbers is a wishlist. Do the measuring yourself
-using `Grep`, `Glob`, and `Read`. Gather:
+using `Grep`, `Glob`, and `Read`. The measurements directly feed the
+field-clustering work in §3 of your plan.
 
-- Lines per relevant file (`wc -l` via Bash, or the Read line count).
-- Counts and sizes of the largest methods / `impl` blocks in the target.
-- Count of fields on any struct that looks like a god object.
-- Count of methods on each `impl` block.
-- Which files contain `impl <TargetType>` (use Grep). If more than one,
-  that's a smell — note it.
-- Any obvious shared "mega-struct" types (contexts with >10 fields passed
-  around between functions).
-- External call sites of the module's public API (so you know the blast
-  radius of signature changes).
+1. **Field inventory on the god struct.** Read the struct definition and
+   list every field. Cite the total count. This is your universe — every
+   field must end up in exactly one sub-struct (or stay on the god struct
+   because it's genuinely shared).
 
-Put the raw measurements in a table in §1 of your plan. If you can't
-measure something cheaply, say so — don't guess.
+2. **Scattered-`impl` audit.** Run
+   `rg -l "impl <TargetType>\b" <target-dir>` and list every file that
+   matches. In this codebase that is a long list, and that is exactly the
+   problem. Cite the count.
+
+3. **Field-access matrix (the core measurement).** For each file in the
+   scattered-`impl` list, which fields of the god struct does it read or
+   write? Use Grep with patterns like `self\.<field>` per field per file.
+   You don't need a full matrix — you need to identify clusters:
+
+   - Fields touched only by `macro_actions.rs` → `MacroState` cluster.
+   - Fields touched only by `bookmark_actions.rs` → `BookmarkState`.
+   - Fields touched by 3+ unrelated files → candidates to stay on the god
+     struct or to become a shared read-only context.
+   - Fields touched by one file that *also* touches 20 other fields → the
+     file has mixed concerns; look at sub-groups of its methods.
+
+4. **Method distribution.** How many methods live in each scattered-`impl`
+   file? How many fields does each file's methods touch? A file whose
+   methods collectively touch >50% of the god struct's fields is doing
+   orchestration disguised as a concern.
+
+5. **Largest methods.** A 1,000+ line `handle_action`, `render`, or
+   `process_async_messages` is its own category — call these out
+   separately, as they will need individual plans in §7.
+
+6. **Shared "mega-struct" contexts.** Types with >10 fields that are
+   passed between functions (e.g. `SelectionContext`,
+   `LineRenderInput`). These are the same anti-pattern at a smaller
+   scale and should appear in the measurements table.
+
+7. **External call sites** of the module's public API (so you know the
+   blast radius of any signature changes).
+
+Put the raw measurements in tables in §1 of your plan. The headline
+tables are (a) the scattered-`impl` file list and (b) the proposed
+field clusters. If you can't measure something cheaply, say so — don't
+guess.
 
 ## Principles the plan must uphold
 
@@ -64,14 +142,18 @@ These are the same principles the two reference plans are built on. Apply
 them — and, where a principle is already well-stated in one of the
 reference plans, quote it by reference rather than re-deriving it.
 
-1. **State ownership.** Each subsystem owns its own data in its own type.
-   Other subsystems cannot reach in.
-2. **Explicit dependencies.** When A needs something from B, it appears in
+1. **Single `impl` file per god type (the load-bearing rule).** Only one
+   file may contain `impl <GodType>`. Everywhere else, you own a
+   subsystem struct and put methods on *that*. This is not an aesthetic
+   preference — it is the keystone. Without it, every other rule gets
+   eroded the next time someone needs "just one quick field". Enforce it
+   with a grep audit in the success criteria.
+2. **State ownership.** Each subsystem owns its own data in its own type.
+   Other subsystems cannot reach in. A subsystem method takes
+   `&mut self` meaning the subsystem — never `&mut Editor`.
+3. **Explicit dependencies.** When A needs something from B, it appears in
    the function signature. Not `self.b_field`. Not `Rc<RefCell<B>>`. Not a
    back-pointer. A function signature.
-3. **Single `impl` file per type.** Only one file may contain
-   `impl <GodType>`. Enforce it with a grep audit listed in the success
-   criteria.
 4. **Pure helpers are free functions.** Regex building, coordinate math,
    layout math, colour computation, path normalisation: these are not
    methods. They take inputs and return outputs.
@@ -115,7 +197,7 @@ prose without numbers in this section.
 One to three paragraphs. What specifically makes the current code hard to
 work with? Options include:
 
-- God-object coupling (every method can touch every field).
+- God-object coupling (every method in every file can touch every field).
 - Mixed concerns (one function both gathers state and renders it).
 - A mega-struct passed between files, hiding dependencies.
 - Scattered `impl` blocks that look modular but aren't.
@@ -125,19 +207,44 @@ Name the specific instances (with line numbers or method names). Avoid
 generic "it's big" diagnoses — a 5000-line file isn't automatically a
 problem; five different concerns fused in a 5000-line file is.
 
-### 3. Architectural principles (the hard rules)
+### 3. Proposed field clusters (the core of the plan)
+
+**This is the heart of the refactor.** List every proposed sub-struct,
+and for each: which fields of the god struct it absorbs, which scattered
+`impl` files today are its implicit home, and a one-line description of
+its concern. Example row shape from the editor-modules plan:
+
+```
+| New sub-struct | God-struct fields absorbed | Current impl home | Concern |
+| MacroState     | macros, macro_recording, last_macro_register, macro_playing | macro_actions.rs | Macro record/replay |
+| BookmarkState  | bookmarks, active_custom_contexts | (scattered in mod.rs) | Bookmark navigation |
+| LspState       | lsp_config, lsp_servers, lsp_progress, … (25 fields) | lsp_*.rs files | Language-server lifecycle |
+```
+
+Every field on the current god struct must appear in exactly one row
+(or be explicitly called out as "remains on the god struct" with a
+reason). That exhaustiveness is what makes the plan real.
+
+Show the before/after struct definitions side by side. Before: 67 flat
+fields. After: ~25 fields, each a sub-struct. The diff is the
+deliverable.
+
+### 4. Architectural principles (the hard rules)
 
 Pick 3–6 principles from the list above (or your target's equivalents) and
 state them as numbered "Rule N" clauses. Make at least one rule a hard
 invariant that can be mechanically checked (grep audit, file-size cap, etc.).
+Rule 1 should always be the single-`impl`-file rule for the god type.
 
-### 4. Target shape
+### 5. Target shape
 
-Show — in code — what the end state looks like. This is the most important
-section. Minimum content:
+Show — in code — what the end state looks like. Minimum content:
 
 - The directory layout after the refactor (`tree`-style).
-- The key struct(s) with their fields.
+- The god struct after composition (~25 sub-struct fields, not ~67 raw
+  fields).
+- A representative sub-struct in full, with its `impl` block, to
+  establish the pattern.
 - For each coordination pattern you'll use, a 5-line code example.
 - A visibility table: which modules may import what (ideally phrased so a
   grep can verify it).
@@ -145,7 +252,7 @@ section. Minimum content:
 If the plan doesn't show the target shape concretely enough that a
 contributor could start today, it's not detailed enough.
 
-### 5. Coordination mechanisms
+### 6. Coordination mechanisms
 
 Enumerate the small, fixed set of patterns you will use to cross subsystem
 boundaries. The editor-modules plan names four: orchestrator with split
@@ -155,7 +262,7 @@ bus. The split-rendering plan names one (quarantined shared carriers).
 **Name them, and don't add a fifth mid-refactor.** Decision rules for
 "which mechanism for which case" go here.
 
-### 6. File-by-file / method-by-method mapping
+### 7. File-by-file / method-by-method mapping
 
 A table (or tables) mapping "currently here" → "moves to". Every non-trivial
 piece of logic in the target must appear in a row. If you haven't surveyed
@@ -168,7 +275,7 @@ Example row shapes from the references:
 | `SearchScanState`, `LineScanState` | `app/search/scan.rs` and `app/buffers/line_scan.rs` |
 ```
 
-### 7. Handling the realities
+### 8. Handling the realities
 
 Every refactor has 2–4 genuinely hard cases that a naive plan glosses over.
 Name them explicitly and describe how you'll handle each. Common categories:
@@ -187,7 +294,7 @@ Name them explicitly and describe how you'll handle each. Common categories:
   on `main` between phases? (Usually: old methods become thin delegators
   until the last phase deletes them.)
 
-### 8. Phased execution
+### 9. Phased execution
 
 One phase per PR-sized unit of work. Every phase must:
 - Compile and pass tests on its own.
@@ -211,19 +318,22 @@ Canonical phase ordering (adapt as needed):
 For each phase: list the exact steps, cite the risk, and name the test
 coverage you'll rely on (unit tests, visual-regression harness, etc.).
 
-### 9. Success criteria
+### 10. Success criteria
 
 Measurable, mechanically-checkable criteria. Minimum:
 
-- A grep audit that must return an expected set (often empty) of results.
-  Example from the references: `rg "impl Editor" crates/fresh-editor/src/app/`
-  must return only `app/editor.rs`.
+- **`impl` audit.** `rg "impl <GodType>"` across the target returns only
+  the single expected file. Non-negotiable.
+- **Field count on the god struct drops to the sub-struct count.** State
+  the target: e.g. "from 67 flat fields to ≤28 sub-struct fields".
+- **No raw-field leakage.** For each extracted sub-struct, a grep for
+  `self\.<old_field_name>` outside the owning module returns zero hits.
 - File-size cap (no file >N lines in the refactored module).
 - Public-API preservation claim (or an explicit list of signature changes
   and their call-site updates).
 - All existing tests green at each phase boundary.
 
-### 10. Risks & mitigations (optional, include if non-trivial)
+### 11. Risks & mitigations (optional, include if non-trivial)
 
 A short list of "this could go wrong, here's what saves us". Local
 bookkeeping that's easy to silently break (cursor placement, ANSI parser
@@ -260,15 +370,21 @@ state, undo boundaries) belongs here. If a risk has no mitigation beyond
 
 Ask yourself these questions. If the answer to any of them is no, revise.
 
-- Did I measure before I planned?
+- Did I measure before I planned — specifically, did I list every field
+  on the god struct and identify which scattered-`impl` file touches
+  which fields?
+- Does §3 (field clusters) account for **every** field on the god
+  struct? Is every field either assigned to a sub-struct or explicitly
+  kept on the god struct with a stated reason?
 - Can every claim in §2 (diagnosis) be grounded in a line number or
   method name?
-- Does §4 (target shape) contain at least one code block showing the end
-  state of the key type?
-- Does §6 (mapping table) account for every method/type over ~50 lines in
+- Does §5 (target shape) show both the shrunken god struct (~25
+  sub-struct fields) and at least one representative sub-struct in full?
+- Does §7 (mapping table) account for every method over ~50 lines in
   the target?
-- Does each phase in §8 compile on its own?
-- Is at least one success criterion in §9 mechanically checkable?
+- Does each phase in §9 compile on its own?
+- Does §10 include a grep audit that makes "only one file has
+  `impl <GodType>`" mechanically verifiable?
 - If I handed this plan to a contributor who doesn't know the history,
   could they start on Phase 1 today without asking me a question?
 
