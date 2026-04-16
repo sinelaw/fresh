@@ -62,8 +62,12 @@ pub fn handle_completion_input(
             InputResult::Consumed
         }
 
-        // Backspace removes last filter character
-        KeyCode::Backspace if event.modifiers.is_empty() => {
+        // Backspace removes last filter character.
+        // Shift+Backspace is treated the same as plain Backspace so an
+        // accidentally-held Shift key doesn't dismiss the popup.
+        KeyCode::Backspace
+            if event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT =>
+        {
             ctx.defer(DeferredAction::PopupBackspace);
             InputResult::Consumed
         }
@@ -127,8 +131,12 @@ pub fn handle_completion_input_with_popup(
             InputResult::Consumed
         }
 
-        // Backspace removes last filter character
-        KeyCode::Backspace if event.modifiers.is_empty() => {
+        // Backspace removes last filter character.
+        // Shift+Backspace is treated the same as plain Backspace so an
+        // accidentally-held Shift key doesn't dismiss the popup.
+        KeyCode::Backspace
+            if event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT =>
+        {
             ctx.defer(DeferredAction::PopupBackspace);
             InputResult::Consumed
         }

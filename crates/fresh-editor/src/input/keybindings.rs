@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Terminals vary in how they report certain keys:
 /// - BackTab already encodes Shift+Tab, but some terminals also set SHIFT —
 ///   strip the redundant SHIFT so bindings defined as "BackTab" match.
+/// - Shift+Backspace has no distinct semantics from plain Backspace — strip
+///   the redundant SHIFT so bindings defined as "Backspace" match both.
 /// - Uppercase letters may arrive as `Char('P')` + SHIFT (real Shift press)
 ///   or `Char('A')` without SHIFT (CapsLock on, kitty keyboard protocol).
 ///   In both cases, lowercase the character and preserve the existing
@@ -16,6 +18,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 ///   while Shift+P still matches the `Shift+P` binding.
 fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
     if code == KeyCode::BackTab {
+        return (code, modifiers.difference(KeyModifiers::SHIFT));
+    }
+    if code == KeyCode::Backspace {
         return (code, modifiers.difference(KeyModifiers::SHIFT));
     }
     if let KeyCode::Char(c) = code {
@@ -2487,6 +2492,54 @@ mod tests {
         assert_eq!(
             resolver.resolve(&event, KeyContext::Normal),
             Action::InsertChar('a')
+        );
+    }
+
+    #[test]
+    fn test_shift_backspace_matches_backspace() {
+        // Regression test for https://github.com/sinelaw/fresh/issues/1588
+        // Shift+Backspace should resolve to the same action as plain Backspace
+        // in every context where Backspace has a binding.
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        let backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::empty());
+        let shift_backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::SHIFT);
+
+        // Normal context: backspace deletes backward
+        assert_eq!(
+            resolver.resolve(&backspace, KeyContext::Normal),
+            Action::DeleteBackward,
+            "Backspace should resolve to DeleteBackward in Normal context"
+        );
+        assert_eq!(
+            resolver.resolve(&shift_backspace, KeyContext::Normal),
+            Action::DeleteBackward,
+            "Shift+Backspace should resolve to DeleteBackward (same as Backspace) in Normal context"
+        );
+
+        // Prompt context: prompt_backspace
+        assert_eq!(
+            resolver.resolve(&backspace, KeyContext::Prompt),
+            Action::PromptBackspace,
+            "Backspace should resolve to PromptBackspace in Prompt context"
+        );
+        assert_eq!(
+            resolver.resolve(&shift_backspace, KeyContext::Prompt),
+            Action::PromptBackspace,
+            "Shift+Backspace should resolve to PromptBackspace (same as Backspace) in Prompt context"
+        );
+
+        // FileExplorer context: file_explorer_search_backspace
+        assert_eq!(
+            resolver.resolve(&backspace, KeyContext::FileExplorer),
+            Action::FileExplorerSearchBackspace,
+            "Backspace should resolve to FileExplorerSearchBackspace in FileExplorer context"
+        );
+        assert_eq!(
+            resolver.resolve(&shift_backspace, KeyContext::FileExplorer),
+            Action::FileExplorerSearchBackspace,
+            "Shift+Backspace should resolve to FileExplorerSearchBackspace (same as Backspace) in FileExplorer context"
         );
     }
 
