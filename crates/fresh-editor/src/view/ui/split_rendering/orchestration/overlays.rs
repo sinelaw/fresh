@@ -27,7 +27,7 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
         };
     }
 
-    let ranges: Vec<Range<usize>> = cursors
+    let mut ranges: Vec<Range<usize>> = cursors
         .iter()
         .filter_map(|(_, cursor)| {
             // Don't include normal selection for cursors in block selection mode;
@@ -39,8 +39,11 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
             }
         })
         .collect();
+    // Sort by start byte so the render loop can sweep an active cursor
+    // over selections in monotonic byte order.
+    ranges.sort_by_key(|r| r.start);
 
-    let block_rects: Vec<(usize, usize, usize, usize)> = cursors
+    let mut block_rects: Vec<(usize, usize, usize, usize)> = cursors
         .iter()
         .filter_map(|(_, cursor)| {
             if cursor.selection_mode == SelectionMode::Block {
@@ -63,6 +66,8 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
             }
         })
         .collect();
+    // Sort by start_line for the render loop's per-line active-set sweep.
+    block_rects.sort_by_key(|(start_line, _, _, _)| *start_line);
 
     let cursor_positions: Vec<usize> = cursors.iter().map(|(_, cursor)| cursor.position).collect();
 
