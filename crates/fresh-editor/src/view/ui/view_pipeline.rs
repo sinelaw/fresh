@@ -24,6 +24,7 @@ use crate::primitives::ansi::AnsiParser;
 use crate::primitives::display_width::str_width;
 use fresh_core::api::{ViewTokenStyle, ViewTokenWire, ViewTokenWireKind};
 use std::collections::HashSet;
+use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// A display line built from tokens, preserving token-level information
@@ -135,6 +136,13 @@ pub struct ViewLineIterator<'a> {
     /// When true, a trailing empty line is emitted after a final source newline
     /// (representing the empty line after a file's trailing '\n').
     at_buffer_end: bool,
+    /// Sorted, non-overlapping source-byte ranges whose tokens should be
+    /// skipped at the source level (collapsed folds). Empty slice disables
+    /// skipping. Set via [`ViewLineIterator::with_fold_skip`].
+    fold_skip: &'a [Range<usize>],
+    /// Advances monotonically through `fold_skip` as token source offsets
+    /// advance. Lets the per-token skip check run in O(1) amortised.
+    fold_cursor: usize,
 }
 
 impl<'a> ViewLineIterator<'a> {
@@ -167,13 +175,55 @@ impl<'a> ViewLineIterator<'a> {
             ansi_aware,
             tab_size,
             at_buffer_end,
+            fold_skip: &[],
+            fold_cursor: 0,
         }
+    }
+
+    /// Configure source-byte ranges to skip during iteration. `skip` must be
+    /// sorted by `start` ascending and non-overlapping; caller is responsible
+    /// (derived once per render from `FoldManager::resolved_ranges`). Tokens
+    /// whose `source_offset` lies inside a skip range are consumed without
+    /// contributing to a ViewLine, so folded content is never materialised.
+    pub fn with_fold_skip(mut self, skip: &'a [Range<usize>]) -> Self {
+        self.fold_skip = skip;
+        self.fold_cursor = 0;
+        self
     }
 
     /// Expand a tab to spaces based on current column and configured tab_size
     #[inline]
     fn tab_expansion_width(&self, col: usize) -> usize {
         self.tab_size - (col % self.tab_size)
+    }
+
+    /// Advance past tokens whose `source_offset` is inside a fold skip range.
+    /// Monotonic in source offsets, so `fold_cursor` only moves forward.
+    /// Tokens with `source_offset == None` (injected / virtual) are never
+    /// skipped. Line-start transitions are NOT updated: the next emitted
+    /// ViewLine's `line_start` continues to reflect the *last emitted*
+    /// line's terminator (typically the fold header's source newline).
+    #[inline]
+    fn skip_folded_tokens(&mut self) {
+        while self.token_idx < self.tokens.len() {
+            let token = &self.tokens[self.token_idx];
+            let Some(offset) = token.source_offset else {
+                return;
+            };
+            while self.fold_cursor < self.fold_skip.len()
+                && self.fold_skip[self.fold_cursor].end <= offset
+            {
+                self.fold_cursor += 1;
+            }
+            let in_skip = self
+                .fold_skip
+                .get(self.fold_cursor)
+                .is_some_and(|r| r.start <= offset && offset < r.end);
+            if !in_skip {
+                return;
+            }
+            self.token_idx += 1;
+        }
     }
 }
 
@@ -205,6 +255,10 @@ impl<'a> Iterator for ViewLineIterator<'a> {
     type Item = ViewLine;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // Fold skip: advance past any tokens whose source bytes live inside
+        // a collapsed fold range before inspecting the next visible token.
+        self.skip_folded_tokens();
+
         if self.token_idx >= self.tokens.len() {
             // All tokens consumed.  If the previous line ended with a source
             // newline there is one more real (empty) document line to emit —
@@ -279,6 +333,12 @@ impl<'a> Iterator for ViewLineIterator<'a> {
 
         // Process tokens until we hit a line break
         while self.token_idx < self.tokens.len() {
+            // Skip tokens that fall inside a collapsed fold before
+            // touching the current line's accumulators.
+            self.skip_folded_tokens();
+            if self.token_idx >= self.tokens.len() {
+                break;
+            }
             let token = &self.tokens[self.token_idx];
             let token_style = token.style.clone();
 
@@ -577,7 +637,6 @@ pub fn should_show_line_number(line: &ViewLine) -> bool {
 // ============================================================================
 
 use std::collections::BTreeMap;
-use std::ops::Range;
 
 /// The Layout represents the computed display state for a view.
 ///

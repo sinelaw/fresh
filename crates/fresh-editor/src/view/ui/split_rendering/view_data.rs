@@ -6,7 +6,7 @@
 //! (also self-contained) sibling modules and a few editor state types.
 
 use super::base_tokens::build_base_tokens;
-use super::folding::{apply_folding, fold_adjusted_visible_count};
+use super::folding::{apply_folding, fold_adjusted_visible_count, fold_skip_set};
 use super::style::fold_placeholder_style;
 use super::transforms::{
     apply_conceal_ranges, apply_soft_breaks, apply_wrapping_transform, inject_virtual_lines,
@@ -138,6 +138,10 @@ pub(super) fn build_view_data(
             .unwrap_or(0);
         max_source_offset + 2 >= state.buffer.len()
     };
+    // Skip folded source ranges at the iterator level so hidden content
+    // never materialises as a ViewLine (no text clone, no char_source_bytes,
+    // no char_styles, etc.).
+    let fold_skip = fold_skip_set(&state.buffer, &state.marker_list, folds);
     let source_lines: Vec<ViewLine> = ViewLineIterator::new(
         &tokens,
         is_binary,
@@ -145,6 +149,7 @@ pub(super) fn build_view_data(
         state.buffer_settings.tab_size,
         at_buffer_end,
     )
+    .with_fold_skip(&fold_skip)
     .collect();
 
     // Inject virtual lines (LineAbove/LineBelow) from VirtualTextManager.

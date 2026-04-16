@@ -10,7 +10,7 @@ use super::style::append_fold_placeholder;
 use crate::model::buffer::Buffer;
 use crate::model::marker::MarkerList;
 use crate::state::EditorState;
-use crate::view::folding::{FoldManager, ResolvedFoldRange};
+use crate::view::folding::FoldManager;
 use crate::view::margin::LineIndicator;
 use crate::view::ui::view_pipeline::ViewLine;
 use fresh_core::api::ViewTokenStyle;
@@ -77,8 +77,31 @@ pub(super) fn fold_adjusted_visible_count(
     total
 }
 
-/// Hide collapsed fold ranges from the view line stream and append placeholder
-/// text to collapsed fold headers.
+/// Build the sorted, non-overlapping list of source-byte ranges for the
+/// currently-collapsed folds. Feed into
+/// [`ViewLineIterator::with_fold_skip`] so hidden content is never
+/// materialised as a ViewLine.
+pub(super) fn fold_skip_set(
+    buffer: &Buffer,
+    marker_list: &MarkerList,
+    folds: &FoldManager,
+) -> Vec<std::ops::Range<usize>> {
+    if folds.is_empty() {
+        return Vec::new();
+    }
+    let mut ranges: Vec<std::ops::Range<usize>> = folds
+        .resolved_ranges(buffer, marker_list)
+        .into_iter()
+        .map(|r| r.start_byte..r.end_byte)
+        .collect();
+    ranges.sort_by_key(|r| r.start);
+    ranges
+}
+
+/// Append placeholder text to the last visual segment of each collapsed
+/// fold's header line. Hidden-line filtering is handled upstream by the
+/// iterator's fold-skip sweep (see [`fold_skip_set`]), so this pass only
+/// mutates header ViewLines — it no longer drops any.
 pub(super) fn apply_folding(
     lines: Vec<ViewLine>,
     buffer: &Buffer,
@@ -90,15 +113,10 @@ pub(super) fn apply_folding(
         return lines;
     }
 
-    let mut collapsed_ranges = folds.resolved_ranges(buffer, marker_list);
-    if collapsed_ranges.is_empty() {
+    let collapsed_header_bytes = folds.collapsed_header_bytes(buffer, marker_list);
+    if collapsed_header_bytes.is_empty() {
         return lines;
     }
-    // Sort by `start_byte` so `is_hidden_byte` can be a monotonic cursor
-    // over the sorted list instead of a linear scan per ViewLine.
-    collapsed_ranges.sort_by_key(|r| r.start_byte);
-
-    let collapsed_header_bytes = folds.collapsed_header_bytes(buffer, marker_list);
 
     // Pre-compute: for each line, what is the source byte of the next line?
     let mut next_source_byte: Vec<Option<usize>> = vec![None; lines.len()];
@@ -110,62 +128,36 @@ pub(super) fn apply_folding(
         }
     }
 
-    let mut filtered = Vec::with_capacity(lines.len());
-    let mut fold_cursor: usize = 0;
-    for (idx, mut line) in lines.into_iter().enumerate() {
-        let source_byte = view_line_source_byte(&line);
-
-        if let Some(byte) = source_byte {
-            if is_hidden_byte(byte, &collapsed_ranges, &mut fold_cursor) {
-                continue;
-            }
-
-            if let Some(placeholder) = collapsed_header_bytes.get(&byte) {
-                // Only append placeholder on the last visual segment of the line
-                if next_source_byte[idx] != Some(byte) {
-                    let raw_text = placeholder
-                        .as_deref()
-                        .filter(|s| !s.trim().is_empty())
-                        .unwrap_or("...");
-                    let text = if raw_text.starts_with(' ') {
-                        raw_text.to_string()
-                    } else {
-                        format!(" {}", raw_text)
-                    };
-                    append_fold_placeholder(&mut line, &text, placeholder_style);
-                }
-            }
-        } else if let Some(next_byte) = next_source_byte[idx] {
-            if is_hidden_byte(next_byte, &collapsed_ranges, &mut fold_cursor) {
-                continue;
-            }
+    let mut out = lines;
+    for idx in 0..out.len() {
+        let Some(byte) = view_line_source_byte(&out[idx]) else {
+            continue;
+        };
+        let Some(placeholder) = collapsed_header_bytes.get(&byte) else {
+            continue;
+        };
+        // Only append placeholder on the last visual segment of the line.
+        if next_source_byte[idx] == Some(byte) {
+            continue;
         }
-
-        filtered.push(line);
+        let raw_text = placeholder
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("...");
+        let text = if raw_text.starts_with(' ') {
+            raw_text.to_string()
+        } else {
+            format!(" {}", raw_text)
+        };
+        append_fold_placeholder(&mut out[idx], &text, placeholder_style);
     }
 
-    filtered
+    out
 }
 
 /// Get the source byte offset of a view line (first `Some` in char_source_bytes).
 fn view_line_source_byte(line: &ViewLine) -> Option<usize> {
     line.char_source_bytes.iter().find_map(|m| *m)
-}
-
-/// Check if a byte offset falls within any collapsed fold range, advancing
-/// `cursor` past ranges ending before `byte`. Expects `ranges` sorted by
-/// `start_byte` and `byte` values to arrive non-decreasing across calls
-/// sharing the same cursor (true of the `apply_folding` line walk). Only
-/// the current cursor range is inspected — collapsed fold ranges do not
-/// overlap in practice.
-fn is_hidden_byte(byte: usize, ranges: &[ResolvedFoldRange], cursor: &mut usize) -> bool {
-    while *cursor < ranges.len() && ranges[*cursor].end_byte <= byte {
-        *cursor += 1;
-    }
-    match ranges.get(*cursor) {
-        Some(range) => byte >= range.start_byte && byte < range.end_byte,
-        None => false,
-    }
 }
 
 /// Build the per-line fold indicator map for the current viewport.
