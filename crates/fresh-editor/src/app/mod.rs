@@ -40,6 +40,7 @@ mod prompt_actions;
 mod recovery_actions;
 mod regex_replace;
 mod render;
+mod scroll_sync;
 mod scrollbar_math;
 mod search_ops;
 mod search_scan;
