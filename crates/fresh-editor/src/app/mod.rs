@@ -40,6 +40,7 @@ mod on_save_actions;
 mod path_utils;
 mod plugin_commands;
 mod popup_actions;
+mod popup_dialogs;
 mod popup_overlay_actions;
 mod prompt_actions;
 mod recovery_actions;
