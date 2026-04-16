@@ -2,6 +2,7 @@ mod action_events;
 mod async_messages;
 mod bookmark_actions;
 mod bookmarks;
+mod buffer_close;
 mod buffer_config_resolve;
 mod buffer_groups;
 mod buffer_management;
