@@ -10,6 +10,7 @@ mod click_geometry;
 mod clipboard;
 mod composite_buffer_actions;
 mod dabbrev_actions;
+mod diagnostic_jumps;
 pub mod event_debug;
 mod event_debug_actions;
 mod file_explorer;
