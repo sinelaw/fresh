@@ -38,6 +38,7 @@ mod recovery_actions;
 mod regex_replace;
 mod render;
 mod scrollbar_math;
+mod search_scan;
 mod settings_actions;
 mod shell_command;
 mod smart_home;
@@ -962,7 +963,7 @@ pub struct Editor {
     line_scan: line_scan::LineScan,
 
     /// Incremental search scan state (for non-blocking search on large files)
-    search_scan_state: Option<SearchScanState>,
+    search_scan: search_scan::SearchScan,
 
     /// Viewport top_byte when search overlays were last refreshed.
     /// Used to detect viewport scrolling so overlays can be updated.
@@ -986,27 +987,6 @@ pub struct PendingFileOpen {
     pub message: Option<String>,
     /// Wait ID for --wait tracking (if the CLI is blocking until done)
     pub wait_id: Option<u64>,
-}
-
-/// State for an incremental chunked search on large files.
-/// Mirrors the `LineScanState` pattern: the piece tree is pre-split into
-/// ≤1 MB leaves and processed a few leaves per render frame so the UI stays
-/// responsive.
-#[allow(dead_code)] // Fields are used across module files via self.search_scan_state
-struct SearchScanState {
-    buffer_id: BufferId,
-    /// Snapshot of the (pre-split) leaves (needed for refresh_saved_root).
-    leaves: Vec<crate::model::piece_tree::LeafData>,
-    /// The chunked search state (lives on TextBuffer, driven from here).
-    scan: crate::model::buffer::ChunkedSearchState,
-    /// The original query string.
-    query: String,
-    /// Search range restriction (from selection search).
-    search_range: Option<std::ops::Range<usize>>,
-    /// Search settings captured at scan start.
-    case_sensitive: bool,
-    whole_word: bool,
-    use_regex: bool,
 }
 
 impl Editor {
@@ -1695,7 +1675,7 @@ impl Editor {
             completed_waits: Vec::new(),
             stdin_stream: stdin_stream::StdinStream::default(),
             line_scan: line_scan::LineScan::default(),
-            search_scan_state: None,
+            search_scan: search_scan::SearchScan::default(),
             search_overlay_top_byte: None,
             review_hunks: Vec::new(),
             active_action_popup: None,
@@ -8780,45 +8760,47 @@ mod tests {
             },
         ];
 
-        editor.search_scan_state = Some(SearchScanState {
+        let chunked = crate::model::buffer::ChunkedSearchState {
+            chunks: fake_chunks,
+            next_chunk: 1, // Only processed 1 of 2 chunks
+            next_doc_offset: 100,
+            total_bytes: 200,
+            scanned_bytes: 100,
+            regex,
+            matches: vec![
+                crate::model::buffer::SearchMatch {
+                    byte_offset: 10,
+                    length: 4,
+                    line: 1,
+                    column: 11,
+                    context: String::new(),
+                },
+                crate::model::buffer::SearchMatch {
+                    byte_offset: 50,
+                    length: 4,
+                    line: 1,
+                    column: 51,
+                    context: String::new(),
+                },
+            ],
+            overlap_tail: Vec::new(),
+            overlap_doc_offset: 0,
+            max_matches: 10_000,
+            capped: true, // Capped early — this is the key condition
+            query_len: 4,
+            running_line: 1,
+        };
+
+        editor.search_scan.start(
             buffer_id,
-            leaves: Vec::new(),
-            scan: crate::model::buffer::ChunkedSearchState {
-                chunks: fake_chunks,
-                next_chunk: 1, // Only processed 1 of 2 chunks
-                next_doc_offset: 100,
-                total_bytes: 200,
-                scanned_bytes: 100,
-                regex,
-                matches: vec![
-                    crate::model::buffer::SearchMatch {
-                        byte_offset: 10,
-                        length: 4,
-                        line: 1,
-                        column: 11,
-                        context: String::new(),
-                    },
-                    crate::model::buffer::SearchMatch {
-                        byte_offset: 50,
-                        length: 4,
-                        line: 1,
-                        column: 51,
-                        context: String::new(),
-                    },
-                ],
-                overlap_tail: Vec::new(),
-                overlap_doc_offset: 0,
-                max_matches: 10_000,
-                capped: true, // Capped early — this is the key condition
-                query_len: 4,
-                running_line: 1,
-            },
-            query: "test".to_string(),
-            search_range: None,
-            case_sensitive: false,
-            whole_word: false,
-            use_regex: false,
-        });
+            Vec::new(),
+            chunked,
+            "test".to_string(),
+            None,
+            false,
+            false,
+            false,
+        );
 
         // process_search_scan should finalize the search (not loop forever)
         let result = editor.process_search_scan();
@@ -8827,10 +8809,11 @@ mod tests {
             "process_search_scan should return true (needs render)"
         );
 
-        // The scan state should be consumed (taken)
-        assert!(
-            editor.search_scan_state.is_none(),
-            "search_scan_state should be None after capped scan completes"
+        // The scan state should be consumed (drained)
+        assert_eq!(
+            editor.search_scan.buffer_id(),
+            None,
+            "search_scan should be drained after capped scan completes"
         );
 
         // Search state should be set with the accumulated matches

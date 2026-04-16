@@ -3329,26 +3329,22 @@ impl Editor {
     /// Process chunks for the incremental search scan.
     /// Returns `true` if the UI should re-render (progress updated or scan finished).
     pub fn process_search_scan(&mut self) -> bool {
-        let scan = match self.search_scan_state.as_mut() {
-            Some(s) => s,
-            None => return false,
+        let Some(buffer_id) = self.search_scan.buffer_id() else {
+            return false;
         };
-
-        let buffer_id = scan.buffer_id;
 
         if let Err(e) = self.process_search_scan_batch(buffer_id) {
             tracing::warn!("Search scan error: {e}");
-            let _scan = self.search_scan_state.take().unwrap();
+            self.search_scan.abandon();
             self.set_status_message(format!("Search failed: {e}"));
             return true;
         }
 
-        let scan = self.search_scan_state.as_ref().unwrap();
-        if scan.scan.is_done() {
+        if self.search_scan.is_done() {
             self.finish_search_scan();
         } else {
-            let pct = scan.scan.progress_percent();
-            let match_count = scan.scan.matches.len();
+            let pct = self.search_scan.progress_percent();
+            let match_count = self.search_scan.match_count();
             self.set_status_message(format!(
                 "Searching... {}% ({} matches so far)",
                 pct, match_count
@@ -3366,26 +3362,23 @@ impl Editor {
         let concurrency = self.config.editor.read_concurrency.max(1);
 
         for _ in 0..concurrency {
-            let is_done = {
-                let scan_state = match self.search_scan_state.as_ref() {
-                    Some(s) => s,
-                    None => return Ok(()),
-                };
-                scan_state.scan.is_done()
-            };
-            if is_done {
+            if self.search_scan.is_done() {
                 break;
             }
 
             // Extract the ChunkedSearchState, run one chunk on the buffer,
-            // then put it back.  This avoids double-mutable-borrow of self.
-            let mut scan = self.search_scan_state.take().unwrap();
+            // then put it back. This is the same take/restore dance the
+            // previous `Option<SearchScanState>` code did, now wrapped in
+            // the subsystem's API so we're not poking its internals.
+            let Some(mut chunked) = self.search_scan.take_chunked() else {
+                return Ok(());
+            };
             let result = if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                state.buffer.search_scan_next_chunk(&mut scan.scan)
+                state.buffer.search_scan_next_chunk(&mut chunked)
             } else {
                 Ok(false)
             };
-            self.search_scan_state = Some(scan);
+            self.search_scan.restore_chunked(chunked);
 
             match result {
                 Ok(false) => break, // scan complete
@@ -3401,30 +3394,23 @@ impl Editor {
     /// and hand them to `finalize_search()` which sets search_state, moves
     /// the cursor, and creates viewport overlays.
     fn finish_search_scan(&mut self) {
-        let scan = self.search_scan_state.take().unwrap();
-        let buffer_id = scan.buffer_id;
-        let match_ranges: Vec<(usize, usize)> = scan
-            .scan
-            .matches
-            .iter()
-            .map(|m| (m.byte_offset, m.length))
-            .collect();
-        let capped = scan.scan.capped;
-        let query = scan.query;
+        let Some(finished) = self.search_scan.take_finished() else {
+            return;
+        };
 
         // The search scan loaded chunks via chunk_split_and_load, which
         // restructures the piece tree.  Refresh saved_root so that
         // diff_since_saved() can take the fast Arc::ptr_eq path.
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self.buffers.get_mut(&finished.buffer_id) {
             state.buffer.refresh_saved_root_if_unmodified();
         }
 
-        if match_ranges.is_empty() {
+        if finished.match_ranges.is_empty() {
             self.search_state = None;
-            self.set_status_message(format!("No matches found for '{}'", query));
+            self.set_status_message(format!("No matches found for '{}'", finished.query));
             return;
         }
 
-        self.finalize_search(&query, match_ranges, capped, None);
+        self.finalize_search(&finished.query, finished.match_ranges, finished.capped, None);
     }
 }

@@ -2937,16 +2937,16 @@ impl Editor {
                 super::SearchState::MAX_MATCHES,
                 query.len(),
             );
-            self.search_scan_state = Some(super::SearchScanState {
+            self.search_scan.start(
                 buffer_id,
                 leaves,
                 scan,
-                query: query.to_string(),
-                search_range: None,
-                case_sensitive: self.search_case_sensitive,
-                whole_word: self.search_whole_word,
-                use_regex: self.search_use_regex,
-            });
+                query.to_string(),
+                None,
+                self.search_case_sensitive,
+                self.search_whole_word,
+                self.search_use_regex,
+            );
             self.set_status_message(t!("goto.scanning_progress", percent = 0).to_string());
         }
     }
