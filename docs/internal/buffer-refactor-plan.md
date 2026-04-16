@@ -311,60 +311,84 @@ one is deleted.
 
 ## 5. Target shape
 
+Two kinds of file under `model/buffer/`:
+
+- **Sub-struct modules** own fields and hold `impl <SubStruct>`. Three
+  of these: `format.rs`, `file_kind.rs`, `persistence/mod.rs`.
+- **Free-fn modules** own no state. They export `pub fn` operations
+  over borrowed storage (`&PieceTree`, `&[StringBuffer]`, …). They
+  hold no `impl` blocks on `TextBuffer` or any other struct they
+  don't define. Every other file.
+
+Only `mod.rs` contains `impl TextBuffer`. Everywhere else, either a
+sub-struct owns the methods or the file is a namespace of free
+functions.
+
 ### 5.1 Directory layout
 
 ```
 crates/fresh-editor/src/model/buffer/
-├── mod.rs                   TextBuffer struct + orchestrators + delegators (~800)
-├── format.rs                BufferFormat + detect_* free fns               (~450)
-├── file_kind.rs             BufferFileKind + is_binary static helpers      (~100)
+├── mod.rs                   TextBuffer struct + orchestrators + delegators (~1,100)
+│                            THE ONLY file with `impl TextBuffer`
+│
+├── ── sub-struct modules (own fields) ──
+├── format.rs                pub struct BufferFormat; impl BufferFormat;
+│                            free detect_* / convert_* helpers               (~450)
+├── file_kind.rs             pub struct BufferFileKind; impl BufferFileKind  (~100)
 ├── persistence/
-│   ├── mod.rs               Persistence struct + save-state transitions    (~250)
-│   ├── load.rs              load_from_file, load_small/large, encoding ck  (~500)
-│   ├── save.rs              save, save_to_file, finalize_*, consolidate_*  (~550)
-│   ├── write_recipe.rs      WriteRecipe + build/stream/write_recipe_*      (~450)
-│   ├── inplace.rs           should_use_inplace_write, write_data_inplace,
-│   │                        recovery-meta, stream_file_to_writer           (~350)
-│   └── snapshot.rs          saved_root management, diff_since_saved,
-│                            rebuild_with_pristine_saved_root               (~450)
-├── edits.rs                 insert_bytes/insert_at_position/delete*/replace_content,
-│                            apply_bulk_edits, restore/snapshot_buffer_state (~450)
+│   ├── mod.rs               pub struct Persistence; impl Persistence        (~250)
+│   ├── snapshot.rs          impl Persistence (saved_root mgmt + diff)       (~450)
+│   ├── load.rs              free fns: load_small, load_large, check_*       (~500)
+│   ├── save.rs              free fns: finalize, consolidate_*, make_sudo    (~400)
+│   ├── write_recipe.rs      pub struct WriteRecipe; free build/stream       (~450)
+│   └── inplace.rs           free fns: should_use_inplace_write,
+│                            write_data_inplace, recovery-meta I/O           (~350)
+│
+├── ── free-fn modules (no state) ──
+├── edits.rs                 free fns operating on (&mut PieceTree,
+│                            &mut Vec<StringBuffer>, &mut usize) for
+│                            insert/delete/replace_content/apply_bulk_edits  (~450)
 ├── storage/
-│   ├── mod.rs               get_text_range/_mut, slice_bytes, get_all_text,
-│   │                        len, is_empty, to_string                       (~250)
-│   ├── chunks.rs            prepare_viewport, chunk_split_and_load,
-│   │                        ensure_chunk_loaded_at, OverlappingChunks,
-│   │                        ChunkInfo, extend_streaming                    (~500)
-│   └── line_scan.rs         prepare_line_scan, apply_scan_updates,
-│                            piece_tree_leaves, scan_leaf, leaf_io_params,
-│                            LineScanChunk                                  (~300)
-├── search.rs                find_next*, find_regex*, find_pattern,
-│                            search_scan_*, search_hybrid*, HybridSearchPlan,
-│                            ChunkedSearchState, search_boundary_overlap    (~700)
-├── replace.rs               replace_range/next/all/all_regex               (~130)
-├── position.rs              offset_to_position, position_to_offset,
-│                            position_to_line_col, line_col_to_position,
-│                            lsp position ↔ byte, char/grapheme/word
-│                            boundary, snap_to_char_boundary                (~550)
-├── lines.rs                 get_line, line_start_offset, piece_info_at_offset,
-│                            stats, resolve_line_byte_offset, line_iterator,
-│                            iter_lines_from, get_line_number,
-│                            estimated_line_length, LineNumber, LineData,
-│                            TextBufferLineIterator                         (~400)
-├── line_cache.rs            populate/get_cached/invalidate/handle_/clear   (~60)
-└── tests/
-    ├── mod.rs               shared fixtures: test_fs, text_with_newlines
-    ├── edits.rs
-    ├── position.rs
-    ├── save_load.rs
-    ├── search_replace.rs
-    ├── line_endings.rs
-    ├── binary_detection.rs
-    └── property.rs          proptest scenarios (the Operation strategy)
+│   ├── mod.rs               free fns: slice_bytes, get_all_text, len,
+│   │                        total_bytes over (&PieceTree, &[StringBuffer]) (~250)
+│   ├── chunks.rs            free fns: chunk_split_and_load,
+│   │                        ensure_chunk_loaded_at (take &dyn FileSystem,
+│   │                        &mut PieceTree, &mut Vec<StringBuffer>);
+│   │                        OverlappingChunks, ChunkInfo                    (~500)
+│   └── line_scan.rs         free fns: prepare_line_scan, apply_scan_updates,
+│                            piece_tree_leaves, scan_leaf, leaf_io_params;
+│                            LineScanChunk                                   (~300)
+├── search.rs                free fns over (&PieceTree, &[StringBuffer]):
+│                            find_next*, find_regex*, search_scan_*,
+│                            search_hybrid*; HybridSearchPlan,
+│                            ChunkedSearchState                              (~700)
+├── replace.rs               free fns: replace_* (delete + insert under
+│                            the hood; callers on TextBuffer bump modified)  (~130)
+├── position.rs              free fns: offset_to_position, position_to_*,
+│                            lsp_position_to_byte, *_char/grapheme/
+│                            word_boundary, snap_to_char_boundary            (~550)
+├── lines.rs                 free fns: get_line, line_start_offset,
+│                            piece_info_at_offset, stats,
+│                            resolve_line_byte_offset, line_iterator,
+│                            iter_lines_from, estimated_line_length;
+│                            LineNumber, LineData, TextBufferLineIterator    (~400)
+└── line_cache.rs            free fns: the 6 near-no-ops (candidate for
+                             deletion in follow-up)                          (~60)
+
+tests/
+├── mod.rs                   shared: test_fs, fixtures, proptest strategies
+├── edits.rs
+├── position.rs
+├── save_load.rs
+├── search_replace.rs
+├── line_endings.rs
+├── binary_detection.rs
+└── property.rs              proptest Operation scenarios
 ```
 
-17 new source files plus 8 test modules. No file exceeds ~700 lines.
-The old monolithic `model/buffer.rs` no longer exists.
+**3 sub-struct modules + 12 free-fn modules + `mod.rs` + 8 test
+modules.** Every file ≤ ~700 lines. Every `impl TextBuffer` in
+`mod.rs`.
 
 ### 5.2 `TextBuffer` after composition
 
@@ -384,98 +408,186 @@ pub struct TextBuffer {
 }
 
 impl TextBuffer {
-    // Construction (delegated to Persistence::load_* + small wrapping)
-    pub fn new(_large_file_threshold: usize, fs: Arc<dyn FileSystem + ...>) -> Self { ... }
-    pub fn from_bytes(content: Vec<u8>, fs: Arc<dyn FileSystem + ...>) -> Self { ... }
-    pub fn load_from_file<P: AsRef<Path>>(path: P, fs: ...) -> Result<Self> { ... }
-
-    // Orchestrators (touch 2+ sub-structs)
-    pub fn save(&mut self) -> Result<()> { ... }
-    pub fn insert_bytes(&mut self, offset: usize, text: Vec<u8>) -> Cursor { ... }
-    pub fn apply_bulk_edits(&mut self, edits: &[(usize, usize, &str)]) -> isize { ... }
-
-    // The one invariant choke-point
-    fn mark_content_modified(&mut self) {
-        self.persistence.mark_dirty();          // sets modified + recovery_pending
-        self.version += 1;
+    // Construction (composes sub-structs; calls persistence::load helpers)
+    pub fn new(...) -> Self { ... }
+    pub fn from_bytes(...) -> Self { ... }
+    pub fn load_from_file<P>(path: P, fs: ...) -> Result<Self> {
+        let (pt, bufs, fmt, kind, pers) = persistence::load::from_file(path, fs)?;
+        Ok(Self { piece_tree: pt, buffers: bufs, next_buffer_id: /*…*/,
+                  persistence: pers, format: fmt, file_kind: kind,
+                  version: 0, config: BufferConfig::default() })
     }
 
-    // Delegators (public API preserved; one line each)
-    pub fn encoding(&self) -> Encoding                { self.format.encoding() }
-    pub fn set_encoding(&mut self, e: Encoding)       { self.mark_content_modified(); self.format.set_encoding(e) }
-    pub fn is_modified(&self) -> bool                 { self.persistence.is_modified() }
-    pub fn file_path(&self) -> Option<&Path>          { self.persistence.file_path() }
-    pub fn is_binary(&self) -> bool                   { self.file_kind.is_binary() }
-    // ... ~40 more one-line delegators
+    // Cross-sub-struct orchestrators (mechanism a — destructure + call)
+    pub fn save(&mut self) -> Result<()> {
+        let TextBuffer { piece_tree, buffers, format, file_kind,
+                         persistence, config, .. } = self;
+        let recipe = persistence::write_recipe::build(
+            piece_tree, buffers, format, file_kind,
+            persistence.saved_root(), persistence.saved_file_size(),
+        )?;
+        persistence::save::finalize(persistence, piece_tree, buffers,
+                                    recipe, config, file_kind)?;
+        self.version += 1;
+        Ok(())
+    }
+
+    pub fn insert_bytes(&mut self, offset: usize, text: Vec<u8>) -> Cursor {
+        let cursor = edits::insert_bytes(
+            &mut self.piece_tree, &mut self.buffers,
+            &mut self.next_buffer_id, offset, text,
+        );
+        self.mark_content_modified();
+        cursor
+    }
+
+    // Read-only delegators to free-fn modules (no flags to flip)
+    pub fn offset_to_position(&self, o: usize) -> Option<Position> {
+        position::offset_to_position(&self.piece_tree, o)
+    }
+    pub fn find_next(&self, pat: &str, start: usize) -> Option<usize> {
+        search::find_next(&self.piece_tree, &self.buffers, pat, start)
+    }
+    pub fn get_line(&self, line: usize) -> Option<Vec<u8>> {
+        lines::get_line(&self.piece_tree, &self.buffers, line)
+    }
+    pub fn len(&self) -> usize {
+        storage::total_bytes(&self.piece_tree)
+    }
+
+    // Sub-struct delegators (§5.3 shows BufferFormat)
+    pub fn encoding(&self) -> Encoding      { self.format.encoding() }
+    pub fn is_modified(&self) -> bool       { self.persistence.is_modified() }
+    pub fn file_path(&self) -> Option<&Path> { self.persistence.file_path() }
+    pub fn is_binary(&self) -> bool         { self.file_kind.is_binary() }
+
+    // The invariant choke-point (Rule 3)
+    fn mark_content_modified(&mut self) {
+        self.persistence.mark_dirty();
+        self.version += 1;
+    }
 }
 ```
 
-### 5.3 A representative sub-struct
+`mod.rs` holds the struct, the three orchestrators from §8.2, and
+~60 thin delegators. All method bodies are one or two lines. The
+logic lives in the topic files as free functions.
+
+### 5.3 Representative sub-struct module (`format.rs`)
 
 ```rust
 // model/buffer/format.rs
 pub struct BufferFormat {
-    line_ending: LineEnding,
+    line_ending:          LineEnding,
     original_line_ending: LineEnding,
-    encoding: Encoding,
-    original_encoding: Encoding,
+    encoding:             Encoding,
+    original_encoding:    Encoding,
 }
 
 impl BufferFormat {
-    pub fn new(line_ending: LineEnding, encoding: Encoding) -> Self {
-        Self { line_ending, original_line_ending: line_ending,
-               encoding, original_encoding: encoding }
-    }
+    pub fn new(line_ending: LineEnding, encoding: Encoding) -> Self { ... }
     pub fn encoding(&self) -> Encoding { self.encoding }
     pub fn line_ending(&self) -> LineEnding { self.line_ending }
     pub fn set_encoding(&mut self, e: Encoding) { self.encoding = e; }
     pub fn set_line_ending(&mut self, le: LineEnding) { self.line_ending = le; }
-    pub fn set_default_encoding(&mut self, e: Encoding) {
-        self.encoding = e;
-        self.original_encoding = e;
-    }
-    pub fn set_default_line_ending(&mut self, le: LineEnding) {
-        self.line_ending = le;
-        self.original_line_ending = le;
-    }
     pub fn encoding_changed_since_load(&self) -> bool {
         self.encoding != self.original_encoding
     }
     pub fn line_ending_changed_since_load(&self) -> bool {
         self.line_ending != self.original_line_ending
     }
+    pub(super) fn promote_current_to_original(&mut self) {
+        self.original_encoding = self.encoding;
+        self.original_line_ending = self.line_ending;
+    }
 }
 
-// Pure helpers — free functions, Rule 4
+// Pure helpers — Rule 4, not methods
 pub fn detect_line_ending(bytes: &[u8]) -> LineEnding { ... }
 pub fn detect_encoding(bytes: &[u8]) -> Encoding { ... }
 pub fn detect_encoding_or_binary(bytes: &[u8], truncated: bool) -> (Encoding, bool) { ... }
-pub fn detect_and_convert_encoding(bytes: &[u8]) -> (Encoding, Vec<u8>) { ... }
 pub fn convert_to_encoding(utf8: &[u8], target: Encoding) -> Vec<u8> { ... }
 pub fn normalize_line_endings(bytes: Vec<u8>) -> Vec<u8> { ... }
-pub(super) fn convert_line_endings_to(bytes: &[u8], target: LineEnding) -> Vec<u8> { ... }
 ```
 
-No `TextBuffer` in any signature. All four `*_changed_since_load`
-semantics, previously expressed inline in `build_write_recipe`, become
-named methods on `BufferFormat`. Unit-testable without a filesystem.
+### 5.4 Representative free-fn module (`search.rs`)
 
-### 5.4 Visibility table
+```rust
+// model/buffer/search.rs — no struct owned by this file
+use crate::model::piece_tree::PieceTree;
+use crate::model::buffer::StringBuffer;
+
+pub fn find_next(
+    piece_tree: &PieceTree,
+    buffers: &[StringBuffer],
+    pattern: &str,
+    start: usize,
+) -> Option<usize> { ... }
+
+pub fn find_next_in_range(
+    piece_tree: &PieceTree,
+    buffers: &[StringBuffer],
+    pattern: &str,
+    range: Range<usize>,
+) -> Option<usize> { ... }
+
+pub fn find_next_regex(
+    piece_tree: &PieceTree,
+    buffers: &[StringBuffer],
+    regex: &Regex,
+    start: usize,
+) -> Option<usize> { ... }
+
+pub fn search_scan_init(...) -> ChunkedSearchState { ... }
+pub fn search_scan_next_chunk(
+    state: &mut ChunkedSearchState,
+    piece_tree: &PieceTree,
+    buffers: &[StringBuffer],
+    fs: &dyn FileSystem,
+) -> ScanProgress { ... }
+
+pub struct HybridSearchPlan { ... }
+impl HybridSearchPlan {
+    pub fn execute(
+        &self,
+        piece_tree: &PieceTree,
+        buffers: &[StringBuffer],
+        fs: &dyn FileSystem,
+    ) -> Option<usize> { ... }
+}
+
+pub struct ChunkedSearchState { ... }
+
+// private
+fn search_boundary_overlap(...) -> usize { ... }
+```
+
+No `impl TextBuffer` in this file. Every function's dependencies are
+visible in its signature. Unit-testable by constructing a `PieceTree`
+and `Vec<StringBuffer>` directly — no `Persistence`, no filesystem
+mocks for the pure-regex paths.
+
+### 5.5 Visibility table
 
 | File set | May import | May NOT import |
 |---|---|---|
 | `format.rs`, `file_kind.rs` | stdlib, encoding crate | `TextBuffer`, `Persistence`, `PieceTree` |
-| `persistence/*` | stdlib, `FileSystem` trait, `PieceTree` (only for `saved_root` type), `format` (read-only) | `TextBuffer` |
-| `storage/*`, `search.rs`, `lines.rs`, `position.rs`, `replace.rs`, `line_cache.rs` | `PieceTree`, `StringBuffer`, the top-level struct fields they need as `&mut` args | `Persistence` mutation methods |
-| `edits.rs` | everything above | — |
+| `persistence/*` | stdlib, `FileSystem` trait, `PieceTree` + `StringBuffer` (by reference only), `BufferFormat` + `BufferFileKind` (read-only) | `TextBuffer` |
+| `edits.rs`, `storage/*`, `search.rs`, `replace.rs`, `position.rs`, `lines.rs`, `line_cache.rs` | `PieceTree`, `StringBuffer`, `FileSystem` for chunk-loading paths | `Persistence`, `BufferFormat`, `BufferFileKind`, `TextBuffer` |
 | `mod.rs` | everything under `model/buffer/` | — |
 
 Enforced by one grep per row:
 
 ```
-rg 'TextBuffer' crates/fresh-editor/src/model/buffer/format.rs  # → 0 hits
-rg 'TextBuffer' crates/fresh-editor/src/model/buffer/persistence/  # → 0 hits
-rg 'persistence::' crates/fresh-editor/src/model/buffer/storage/  # → 0 hits
+rg 'TextBuffer|Persistence|BufferFormat|BufferFileKind' \
+   crates/fresh-editor/src/model/buffer/search.rs \
+   crates/fresh-editor/src/model/buffer/position.rs \
+   crates/fresh-editor/src/model/buffer/lines.rs \
+   crates/fresh-editor/src/model/buffer/edits.rs \
+   crates/fresh-editor/src/model/buffer/replace.rs \
+   crates/fresh-editor/src/model/buffer/storage/ \
+   crates/fresh-editor/src/model/buffer/line_cache.rs
+# → 0 hits
 ```
 
 ## 6. Coordination mechanisms
