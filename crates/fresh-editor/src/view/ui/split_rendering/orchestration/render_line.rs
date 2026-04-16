@@ -20,6 +20,7 @@ use crate::app::types::ViewLineMapping;
 use crate::primitives::ansi::AnsiParser;
 use crate::primitives::display_width::char_width;
 use crate::state::EditorState;
+use crate::view::overlay::Overlay;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{should_show_line_number, LineStart, ViewLine};
 use crate::view::virtual_text::VirtualTextPosition;
@@ -149,6 +150,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     let highlight_spans = &decorations.highlight_spans;
     let semantic_token_spans = &decorations.semantic_token_spans;
     let viewport_overlays = &decorations.viewport_overlays;
+    let overlay_position_index = &decorations.overlay_position_index;
     let virtual_text_lookup = &decorations.virtual_text_lookup;
     let diagnostic_lines = &decorations.diagnostic_lines;
     let line_indicators = &decorations.line_indicators;
@@ -156,6 +158,26 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     // Cursors for O(1) amortized span lookups (spans are sorted by byte range)
     let mut hl_cursor = 0usize;
     let mut sem_cursor = 0usize;
+
+    // Overlay sweep: O(1) amortised per cell, zero allocation per cell.
+    // `active` holds `(range_end, &Overlay)` for overlays whose range
+    // currently covers `last_active_bp`, kept in priority-ascending order so
+    // the apply loop in `compute_char_style` produces the correct
+    // "last write wins" z-order. `active_refs` mirrors `active` as the
+    // `&[&Overlay]` slice passed into `compute_char_style`; it is rebuilt
+    // only when the active set actually changes. `next_overlay_in_pos`
+    // advances through `overlay_position_index` (sorted by `range.start`),
+    // letting us find newly-entering overlays without rescanning.
+    let mut active: Vec<(usize, &Overlay)> = Vec::new();
+    let mut active_refs: Vec<&Overlay> = Vec::new();
+    let mut next_overlay_in_pos: usize = 0;
+    let mut last_active_bp: Option<usize> = None;
+    // Overlay indices that have been in the active set at any point while
+    // rendering the current visible line. Used only by the
+    // extend_to_line_end fill so overlays which ended mid-line are still
+    // considered for tail-fill bg (parity with pre-sweep behaviour). Reset
+    // per visible line; `Vec` reused across lines.
+    let mut line_touched_overlays: Vec<usize> = Vec::new();
 
     let mut lines = Vec::new();
     let mut view_line_mappings = Vec::new();
@@ -364,6 +386,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         // Track byte positions for extend_to_line_end feature
         let mut first_line_byte_pos: Option<usize> = None;
         let mut last_line_byte_pos: Option<usize> = None;
+        line_touched_overlays.clear();
 
         let chars_iterator = line_content.chars().peekable();
         for ch in chars_iterator {
@@ -380,6 +403,51 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     first_line_byte_pos = Some(bp);
                 }
                 last_line_byte_pos = Some(bp);
+            }
+
+            // Advance overlay active-set sweep for this cell. Monotonic in
+            // `bp`, so state persists across view-line transitions within
+            // one render call.
+            if let Some(bp) = byte_pos {
+                if last_active_bp != Some(bp) {
+                    let mut dirty = false;
+                    if active.iter().any(|(end, _)| *end <= bp) {
+                        active.retain(|(end, _)| *end > bp);
+                        dirty = true;
+                    }
+                    while next_overlay_in_pos < overlay_position_index.len() {
+                        let idx = overlay_position_index[next_overlay_in_pos];
+                        let (overlay, range) = &viewport_overlays[idx];
+                        if range.start > bp {
+                            break;
+                        }
+                        // Include only if [start, end) is non-empty and bp
+                        // is inside. Zero-width overlays (start == end) are
+                        // filtered out, matching the prior
+                        // `Range::contains` semantics.
+                        if range.end > bp {
+                            let pri = overlay.priority;
+                            let pos = active
+                                .iter()
+                                .position(|(_, o)| o.priority > pri)
+                                .unwrap_or(active.len());
+                            active.insert(pos, (range.end, overlay));
+                            dirty = true;
+                            // Record for extend_to_line_end consideration.
+                            // `line_touched_overlays` is typically small,
+                            // so linear contains check is cheap.
+                            if !line_touched_overlays.contains(&idx) {
+                                line_touched_overlays.push(idx);
+                            }
+                        }
+                        next_overlay_in_pos += 1;
+                    }
+                    if dirty {
+                        active_refs.clear();
+                        active_refs.extend(active.iter().map(|(_, o)| *o));
+                    }
+                    last_active_bp = Some(bp);
+                }
             }
 
             // Process character through ANSI parser first (if line has ANSI)
@@ -485,6 +553,16 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     None => None,
                 };
 
+                // Pre-resolved active overlays for this cell. Empty slice
+                // when byte_pos is None (ANSI continuation / virtual cells)
+                // — matches pre-sweep behaviour where `bp = None`
+                // short-circuited overlay filtering.
+                let cell_overlays: &[&Overlay] = if byte_pos.is_some() {
+                    &active_refs
+                } else {
+                    &[]
+                };
+
                 let CharStyleOutput {
                     mut style,
                     is_secondary_cursor,
@@ -501,7 +579,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     highlight_color,
                     highlight_theme_key,
                     semantic_token_color,
-                    viewport_overlays,
+                    active_overlays: cell_overlays,
                     primary_cursor_position,
                     is_active,
                     skip_primary_cursor_reverse: session_mode,
@@ -965,16 +1043,19 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 // not `>=`. With `>=`, an overlay covering the previous
                 // line's content + trailing newline would bleed its bg
                 // onto this line's trailing fill.
-                let fill_style: Option<Style> = if let (Some(start), Some(end)) =
-                    (first_line_byte_pos, last_line_byte_pos)
+                // Scan only overlays that were active at some point during
+                // this visible line (from the sweep) — bounded size vs. the
+                // full `viewport_overlays` slice. Highest priority with
+                // `extend_to_line_end` wins.
+                let fill_style: Option<Style> = if first_line_byte_pos.is_some()
+                    && last_line_byte_pos.is_some()
                 {
-                    viewport_overlays
+                    line_touched_overlays
                         .iter()
-                        .filter(|(overlay, range)| {
-                            overlay.extend_to_line_end && range.start <= end && range.end > start
-                        })
-                        .max_by_key(|(o, _)| o.priority)
-                        .and_then(|(overlay, _)| {
+                        .map(|&idx| &viewport_overlays[idx].0)
+                        .filter(|overlay| overlay.extend_to_line_end)
+                        .max_by_key(|o| o.priority)
+                        .and_then(|overlay| {
                             match &overlay.face {
                                 crate::view::overlay::OverlayFace::Background { color } => {
                                     // Set both fg and bg to ensure ANSI codes are output

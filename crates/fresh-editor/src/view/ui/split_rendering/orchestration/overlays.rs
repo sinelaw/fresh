@@ -167,6 +167,12 @@ pub(crate) fn decoration_context(
     // applied last in the rendering loop.
     viewport_overlays.sort_by_key(|(overlay, _)| overlay.priority);
 
+    // Build a parallel index sorted by `range.start`. The render loop uses
+    // this to drive an active-set sweep (overlays entering) while priority
+    // order is preserved inside the active set via insertion sort.
+    let mut overlay_position_index: Vec<usize> = (0..viewport_overlays.len()).collect();
+    overlay_position_index.sort_by_key(|&i| viewport_overlays[i].1.start);
+
     // Use the lsp-diagnostic namespace to identify diagnostic overlays.
     let diagnostic_ns = crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
     let diagnostic_lines: HashSet<usize> = viewport_overlays
@@ -238,6 +244,7 @@ pub(crate) fn decoration_context(
         highlight_spans,
         semantic_token_spans,
         viewport_overlays,
+        overlay_position_index,
         virtual_text_lookup,
         diagnostic_lines,
         diagnostic_inline_texts,

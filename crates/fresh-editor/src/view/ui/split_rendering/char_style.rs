@@ -10,7 +10,6 @@ use crate::view::overlay::{Overlay, OverlayFace};
 use crate::view::theme::Theme;
 use fresh_core::api::ViewTokenStyle;
 use ratatui::style::{Color, Modifier, Style};
-use std::ops::Range;
 
 /// Context for computing the style of a single character.
 pub(super) struct CharStyleContext<'a> {
@@ -26,7 +25,9 @@ pub(super) struct CharStyleContext<'a> {
     pub highlight_theme_key: Option<&'static str>,
     /// Pre-resolved semantic token color for this byte position.
     pub semantic_token_color: Option<Color>,
-    pub viewport_overlays: &'a [(Overlay, Range<usize>)],
+    /// Overlays currently active at `byte_pos`, already in priority-ascending
+    /// order ("last write wins"). Empty when `byte_pos` is `None`.
+    pub active_overlays: &'a [&'a Overlay],
     pub primary_cursor_position: usize,
     pub is_active: bool,
     /// Skip REVERSED style on the primary cursor cell. True when a hardware
@@ -61,17 +62,6 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     let mut fg_theme_key: Option<&'static str> = None;
     let mut bg_theme_key: Option<&'static str> = Some("editor.bg");
     let mut region: &'static str = "Editor Content";
-
-    // Find overlays for this byte position
-    let overlays: Vec<&Overlay> = if let Some(bp) = ctx.byte_pos {
-        ctx.viewport_overlays
-            .iter()
-            .filter(|(_, range)| range.contains(&bp))
-            .map(|(overlay, _)| overlay)
-            .collect()
-    } else {
-        Vec::new()
-    };
 
     // Start with token style if present (for injected content like annotation headers)
     // Otherwise use ANSI/syntax/theme default
@@ -144,7 +134,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     }
 
     // Apply overlay styles — last overlay wins for each attribute
-    for overlay in &overlays {
+    for overlay in ctx.active_overlays {
         match &overlay.face {
             OverlayFace::Underline {
                 color,

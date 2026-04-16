@@ -27,6 +27,10 @@ pub(crate) struct DecorationContext {
     pub highlight_spans: Vec<HighlightSpan>,
     pub semantic_token_spans: Vec<HighlightSpan>,
     pub viewport_overlays: Vec<(Overlay, Range<usize>)>,
+    /// Indices into `viewport_overlays` sorted by `range.start` (ascending).
+    /// Used by the per-cell sweep in `render_view_lines` to advance an
+    /// active set without re-scanning the full overlay list each cell.
+    pub overlay_position_index: Vec<usize>,
     pub virtual_text_lookup: HashMap<usize, Vec<VirtualText>>,
     /// Diagnostic lines indexed by line-start byte offset.
     pub diagnostic_lines: HashSet<usize>,
