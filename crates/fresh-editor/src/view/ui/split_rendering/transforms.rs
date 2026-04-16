@@ -410,9 +410,7 @@ pub(super) fn apply_conceal_ranges(
         cursor: &mut usize,
         byte_offset: usize,
     ) -> Option<usize> {
-        while *cursor < sorted.len()
-            && conceal_ranges[sorted[*cursor]].0.end <= byte_offset
-        {
+        while *cursor < sorted.len() && conceal_ranges[sorted[*cursor]].0.end <= byte_offset {
             *cursor += 1;
         }
         let orig_idx = sorted.get(*cursor).copied()?;
@@ -438,7 +436,9 @@ pub(super) fn apply_conceal_ranges(
                 for ch in text.chars() {
                     let ch_len = ch.len_utf8();
 
-                    if let Some(cidx) = is_concealed(conceal_ranges, &sorted, &mut conceal_cursor, current_byte) {
+                    if let Some(cidx) =
+                        is_concealed(conceal_ranges, &sorted, &mut conceal_cursor, current_byte)
+                    {
                         if !visible_chars.is_empty() {
                             output.push(ViewTokenWire {
                                 source_offset: visible_start,

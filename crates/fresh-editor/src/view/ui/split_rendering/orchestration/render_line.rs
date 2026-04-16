@@ -1092,43 +1092,42 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 // this visible line (from the sweep) — bounded size vs. the
                 // full `viewport_overlays` slice. Highest priority with
                 // `extend_to_line_end` wins.
-                let fill_style: Option<Style> = if first_line_byte_pos.is_some()
-                    && last_line_byte_pos.is_some()
-                {
-                    line_touched_overlays
-                        .iter()
-                        .map(|&idx| &viewport_overlays[idx].0)
-                        .filter(|overlay| overlay.extend_to_line_end)
-                        .max_by_key(|o| o.priority)
-                        .and_then(|overlay| {
-                            match &overlay.face {
-                                crate::view::overlay::OverlayFace::Background { color } => {
-                                    // Set both fg and bg to ensure ANSI codes are output
-                                    Some(Style::default().fg(*color).bg(*color))
+                let fill_style: Option<Style> =
+                    if first_line_byte_pos.is_some() && last_line_byte_pos.is_some() {
+                        line_touched_overlays
+                            .iter()
+                            .map(|&idx| &viewport_overlays[idx].0)
+                            .filter(|overlay| overlay.extend_to_line_end)
+                            .max_by_key(|o| o.priority)
+                            .and_then(|overlay| {
+                                match &overlay.face {
+                                    crate::view::overlay::OverlayFace::Background { color } => {
+                                        // Set both fg and bg to ensure ANSI codes are output
+                                        Some(Style::default().fg(*color).bg(*color))
+                                    }
+                                    crate::view::overlay::OverlayFace::Style { style } => {
+                                        // Extract background from style if present
+                                        // Set fg to same as bg for invisible text
+                                        style.bg.map(|bg| Style::default().fg(bg).bg(bg))
+                                    }
+                                    crate::view::overlay::OverlayFace::ThemedStyle {
+                                        fallback_style,
+                                        bg_theme,
+                                        ..
+                                    } => {
+                                        // Try theme key first, fall back to style's bg
+                                        let bg = bg_theme
+                                            .as_ref()
+                                            .and_then(|key| theme.resolve_theme_key(key))
+                                            .or(fallback_style.bg);
+                                        bg.map(|bg| Style::default().fg(bg).bg(bg))
+                                    }
+                                    _ => None,
                                 }
-                                crate::view::overlay::OverlayFace::Style { style } => {
-                                    // Extract background from style if present
-                                    // Set fg to same as bg for invisible text
-                                    style.bg.map(|bg| Style::default().fg(bg).bg(bg))
-                                }
-                                crate::view::overlay::OverlayFace::ThemedStyle {
-                                    fallback_style,
-                                    bg_theme,
-                                    ..
-                                } => {
-                                    // Try theme key first, fall back to style's bg
-                                    let bg = bg_theme
-                                        .as_ref()
-                                        .and_then(|key| theme.resolve_theme_key(key))
-                                        .or(fallback_style.bg);
-                                    bg.map(|bg| Style::default().fg(bg).bg(bg))
-                                }
-                                _ => None,
-                            }
-                        })
-                } else {
-                    None
-                };
+                            })
+                    } else {
+                        None
+                    };
 
                 if let Some(fill_bg) = fill_style {
                     let fill_text = " ".repeat(remaining_cols);
