@@ -374,3 +374,103 @@ Then redirect everything else to its rightful module:
 What's left in `app/buffers/` is what genuinely belongs to "the registry of
 open buffers": create, lookup, serialize, basic navigation. ~1 200 lines,
 with clear ownership.
+
+## 6. Handling the realities
+
+Three aspects of the current code make the refactor non-trivial: Rust's
+borrow-checker, three orchestrator methods that touch almost everything,
+and the coexistence of the old and new patterns during migration.
+
+### 6.1 Borrow-checker
+
+Subsystem methods take `&mut self` (the subsystem). Cross-subsystem
+orchestrators look like `editor.x.foo(&mut editor.y)`. Rust's split-borrow
+rules permit this **as long as the orchestrator destructures** — the
+typical form:
+
+```rust
+let Editor { ref mut buffers, ref mut lsp, ref splits, .. } = *self;
+buffers.do_a(splits);
+lsp.do_b(buffers);
+```
+
+This works and is the standard pattern. There are two cases where it
+doesn't:
+
+- A subsystem method needs to call back into the orchestrator. **Don't** —
+  return an `Effect` (mechanism c).
+- A subsystem method needs a third subsystem only conditionally. Pass it
+  through a `Ctx` (mechanism b) or split into two methods.
+
+A related pitfall: *don't* make subsystems hold back-references to each
+other (no `Rc<RefCell<...>>` cycles, no `Arc<Editor>` on any subsystem).
+All cross-subsystem access must be visible in a function signature. That's
+the whole point of Rule 2.
+
+### 6.2 The three cross-cutting orchestrators
+
+Three methods in today's code touch almost every field. They are the hard
+cases — attempting to "move" them atomically is where refactors of this
+shape typically break. Plan each one explicitly.
+
+**`process_async_messages` (mod.rs L4760, ~909 lines, ~20 fields).**
+Becomes a `match` over message kind where each arm calls one subsystem:
+
+```rust
+fn handle_async(&mut self, msg: AsyncMessage) {
+    match msg {
+        AsyncMessage::LspResponse(r)    => self.lsp.handle_response(r, &mut self.buffers),
+        AsyncMessage::FileOpened(o)     => self.open_file_from_async(o),
+        AsyncMessage::PluginCommand(c)  => self.plugins.handle_command(c, /* ctx */),
+        AsyncMessage::SearchProgress(p) => self.search.advance_scan(p),
+        AsyncMessage::FsPoll(p)         => self.auto_revert.apply_poll(p, &mut self.buffers),
+        // ...
+    }
+}
+```
+
+Each arm is one line. The 900 lines of inline handling distribute to the
+subsystem that owns the response type. `AsyncMessage` itself becomes an
+enum in `app/async_io/messages.rs` with one variant per subsystem that can
+receive async work.
+
+**`render` (render.rs L150, ~1 105 lines).** Becomes "build a `ViewModel`
+(pure fan-in read, ~200 lines), then walk the model (each render fn ~50
+lines, no mutation)". A new contributor can read `gutter.rs` understanding
+only `GutterModel`. This is the transformation described in §5.2 — the key
+insight is that today's `render` is an *assembler* and a *drawer* fused
+together; split them.
+
+**`handle_action` (input.rs L285, ~1 162 lines, 204 arms).** Becomes a flat
+dispatcher (shown in §5.3). All inline logic moves to subsystem methods.
+If even 200 one-liners becomes unwieldy later, consider a `phf::Map<
+ActionKind, fn(&mut Editor)>` — but only after the per-subsystem APIs are
+sized correctly. Premature table-dispatch is its own anti-pattern.
+
+### 6.3 Invariants that must survive the refactor
+
+Some of the god-object behaviour currently holds invariants implicitly.
+Make these explicit before splitting:
+
+- **Active-buffer consistency.** Several methods set `active_buffer`,
+  adjust viewport, update position history, and notify LSP in one atomic
+  sequence. Under the new design this becomes `Editor::set_active_buffer`,
+  a named orchestrator. Any subsystem that wants to change focus goes
+  through it.
+- **Preview promotion.** Opening a file with preview, then doing anything
+  "committing" (splitting, editing, explicit save), promotes the preview
+  into a real tab. Today this is scattered as `promote_current_preview()`
+  calls at the top of ~15 methods. Under the new design, `PreviewState`
+  owns this and `Editor` orchestrators call `self.preview.promote_if_any(
+  &mut self.buffers, &mut self.splits)` as a named prelude.
+- **Undo batching.** `apply_action_as_events` currently wraps a sequence
+  of events in an undo boundary. The new design moves this wrapping into
+  `BufferRegistry::apply_events_as_batch(events)` — the transactional
+  shape is explicit.
+- **Event logging.** Every buffer mutation goes through `log_and_apply_event`
+  so the event stream can be replayed. The new `BufferRegistry::apply_event`
+  is the single choke-point that logs.
+
+These invariants used to hold because one struct owned everything and could
+enforce discipline ad hoc. Post-refactor they hold because there is exactly
+one named choke-point per invariant, in a named file, covered by a test.
