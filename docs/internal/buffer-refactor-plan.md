@@ -114,3 +114,56 @@ fn mark_content_modified(&mut self) {
 Called from 10 sites, all of which mutate buffer content. This is the
 template for the post-refactor orchestrator shape — keep it and make it
 the *only* path that flips these flags.
+
+## 2. Why the current shape is wrong (diagnosis)
+
+The file's problem is not scale per se (4,940 production lines isn't
+enormous) but **concern fusion inside a single namespace**.
+
+**Ten distinct concerns share the `impl TextBuffer` namespace.** A
+reader looking for "how does save work" and a reader looking for "how
+does search-scan resume across chunks" navigate the same ~120-method
+list. The concerns are genuinely independent:
+
+1. Construction / loading (~15 methods, L400–L887)
+2. Saving + write-recipe building (~18 methods, L888–L1521)
+3. Snapshot / diff-vs-saved (~10 methods, L1535–L1856)
+4. Edits (~10 methods, L1870–L2136)
+5. Viewport preparation and chunk loading (~5 methods, L2308–L2608)
+6. Flag / metadata accessors (~25 methods, L2528–L3326)
+7. Encoding & line-ending detection (~7 static methods, L3327–L3480)
+8. Line operations (~10 methods, L3481–L3504, L4144–L4265)
+9. Search (~12 methods, L2677–L2952, L3512–L3682)
+10. Replace (~4 methods, L3683–L3772)
+11. Position / boundary conversions (~15 methods, L1857–L1869, L3774–L4142)
+12. Line cache (~7 no-op or near-no-op methods, L4232–L4265)
+
+A search-concern change and an encoding-concern change land in the same
+file, the same struct, and the same free-for-all mutable view of 17
+fields. Code review has no way to assert "this PR touches only
+persistence".
+
+**The 17 fields are two clean clusters plus one hot core plus two
+leftovers.** §3 makes this precise. Crucially, the "hot core"
+(`piece_tree`, `buffers`, `next_buffer_id` — 110 of 230 field
+accesses) is what most methods *actually* need; the rest is ambient
+context most methods ignore. Splitting format and persistence off
+shrinks what the majority of methods have to see.
+
+**Tests are 3,090 lines in two blocks.** Inline tests multiply the
+cost of any re-organisation because moving a method requires moving its
+tests. The tests mirror the concern split above (search tests, save
+tests, line-ending tests, binary detection tests) but are currently
+fused into two monolithic `mod tests` blocks.
+
+**External surface is wide but shallow.** 112 call sites across 18
+files, but nearly all are simple accessors (`buffer.len()`,
+`buffer.file_path()`, `buffer.insert(...)`). Signature preservation is
+achievable; the refactor is internal.
+
+**What this is not.** It is not a god-object refactor in the
+editor-modules sense. There is no scattered `impl TextBuffer` to
+consolidate. The mechanism (extract field clusters into sub-structs;
+move methods to the struct that owns the fields they touch) is the
+same, but the motivating measurement is the method-count-per-namespace
+(~120), not the impl-files-per-type (1).
