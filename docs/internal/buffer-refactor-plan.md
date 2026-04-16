@@ -264,3 +264,47 @@ crates/fresh-editor/src/model/buffer/
 Outside `model/buffer/`, callers still see `TextBuffer` with accessor
 methods (`buffer.encoding()`, `buffer.is_modified()`, `buffer.file_path()`).
 The public API is preserved; the internal ownership is not.
+
+## 4. Architectural principles (the hard rules)
+
+**Rule 1 (hard, grep-enforceable).** Only `model/buffer/mod.rs` may
+contain `impl TextBuffer`. Every other file in `model/buffer/` puts
+methods on *its own* sub-struct (`impl Persistence`, `impl BufferFormat`,
+`impl BufferFileKind`). Audit:
+
+```
+$ rg -n '^impl TextBuffer\b' crates/fresh-editor/src/model/buffer/
+crates/fresh-editor/src/model/buffer/mod.rs:<line>:impl TextBuffer {
+```
+
+must return exactly one line. This rule prevents the next refactor from
+re-scattering the god-object into sibling files.
+
+**Rule 2 (hard).** A sub-struct method takes `&mut self` meaning the
+sub-struct. No sub-struct method signature contains `TextBuffer`. If a
+method needs `piece_tree` plus `format`, it becomes a `TextBuffer`
+orchestrator, not a sub-struct method with a back-pointer.
+
+**Rule 3 (hard).** `mark_content_modified` (and any future equivalent)
+is the only path that flips `modified` / `recovery_pending` / `version`.
+Post-refactor it lives on `TextBuffer` (since it touches both
+`Persistence` and the top-level `version`); sub-structs never mutate
+those flags directly. Audit: `rg 'persistence\.modified\s*=' model/`
+returns only lines inside `mark_content_modified`.
+
+**Rule 4.** Static/pure helpers (`detect_line_ending`, `detect_encoding*`,
+`convert_to_encoding`, `normalize_line_endings`, `is_utf8_continuation_byte`,
+`find_in_bytes`) are **free functions**, not methods. They take bytes,
+return bytes; they never touch a struct.
+
+**Rule 5.** Public API surface is preserved. Every method currently
+callable as `buffer.foo()` remains callable as `buffer.foo()`. If a
+method moves to `Persistence`, `TextBuffer` gains a one-line delegator
+(`pub fn foo(&self) -> ... { self.persistence.foo() }`). Delegators are
+cheap; call-site churn across 18 external files is expensive.
+
+**Rule 6.** No flag days. Every commit compiles and every commit
+passes `cargo test -p fresh-editor`. Sub-structs are introduced
+behind delegators before old fields are removed, so the two
+representations coexist across commits inside a phase until the old
+one is deleted.
