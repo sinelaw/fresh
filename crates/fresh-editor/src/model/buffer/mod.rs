@@ -20,6 +20,9 @@ use std::sync::Arc;
 // Re-export Encoding for backward compatibility
 pub use encoding::Encoding;
 
+pub mod format;
+pub use format::{BufferFormat, LineEnding};
+
 /// Error returned when a file save operation requires elevated privileges.
 ///
 /// This error contains all the information needed to perform the save via sudo
@@ -183,36 +186,6 @@ impl Default for BufferConfig {
 }
 
 /// Line ending format used in the file
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum LineEnding {
-    /// Unix/Linux/Mac format (\n)
-    #[default]
-    LF,
-    /// Windows format (\r\n)
-    CRLF,
-    /// Old Mac format (\r) - rare but supported
-    CR,
-}
-
-impl LineEnding {
-    /// Get the string representation of this line ending
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::LF => "\n",
-            Self::CRLF => "\r\n",
-            Self::CR => "\r",
-        }
-    }
-
-    /// Get the display name for status bar
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Self::LF => "LF",
-            Self::CRLF => "CRLF",
-            Self::CR => "CR",
-        }
-    }
-}
 
 /// A write recipe built from the piece tree for saving
 struct WriteRecipe {
@@ -374,74 +347,6 @@ pub struct TextBuffer {
     format: BufferFormat,
 }
 
-/// Encoding and line-ending state. Owned by `TextBuffer` as the
-/// `format` field. During the in-progress Phase 2 refactor this is
-/// defined inline; Phase 2D moves it to `format.rs`.
-#[derive(Debug, Clone, Copy)]
-pub struct BufferFormat {
-    line_ending: LineEnding,
-    original_line_ending: LineEnding,
-    encoding: Encoding,
-    original_encoding: Encoding,
-}
-
-impl BufferFormat {
-    pub fn new(line_ending: LineEnding, encoding: Encoding) -> Self {
-        Self {
-            line_ending,
-            original_line_ending: line_ending,
-            encoding,
-            original_encoding: encoding,
-        }
-    }
-
-    pub fn line_ending(&self) -> LineEnding {
-        self.line_ending
-    }
-
-    pub fn encoding(&self) -> Encoding {
-        self.encoding
-    }
-
-    pub fn original_line_ending(&self) -> LineEnding {
-        self.original_line_ending
-    }
-
-    pub fn original_encoding(&self) -> Encoding {
-        self.original_encoding
-    }
-
-    pub fn set_line_ending(&mut self, le: LineEnding) {
-        self.line_ending = le;
-    }
-
-    pub fn set_encoding(&mut self, e: Encoding) {
-        self.encoding = e;
-    }
-
-    pub fn set_default_line_ending(&mut self, le: LineEnding) {
-        self.line_ending = le;
-        self.original_line_ending = le;
-    }
-
-    pub fn set_default_encoding(&mut self, e: Encoding) {
-        self.encoding = e;
-        self.original_encoding = e;
-    }
-
-    pub fn line_ending_changed_since_load(&self) -> bool {
-        self.line_ending != self.original_line_ending
-    }
-
-    pub fn encoding_changed_since_load(&self) -> bool {
-        self.encoding != self.original_encoding
-    }
-
-    pub(super) fn promote_current_to_original(&mut self) {
-        self.original_line_ending = self.line_ending;
-        self.original_encoding = self.encoding;
-    }
-}
 
 /// Snapshot of a TextBuffer's piece tree and associated string buffers.
 ///
@@ -526,7 +431,7 @@ impl TextBuffer {
         let bytes = content.len();
 
         // For binary files, detect line ending but don't convert encoding
-        let line_ending = Self::detect_line_ending(&content);
+        let line_ending = format::detect_line_ending(&content);
 
         // Create initial StringBuffer with ID 0
         let buffer = StringBuffer::new(0, content);
@@ -562,12 +467,12 @@ impl TextBuffer {
     /// Create a text buffer from initial content with the given filesystem.
     pub fn from_bytes(content: Vec<u8>, fs: Arc<dyn FileSystem + Send + Sync>) -> Self {
         // Auto-detect encoding and convert to UTF-8 if needed
-        let (encoding, utf8_content) = Self::detect_and_convert_encoding(&content);
+        let (encoding, utf8_content) = format::detect_and_convert_encoding(&content);
 
         let bytes = utf8_content.len();
 
         // Auto-detect line ending format from content
-        let line_ending = Self::detect_line_ending(&utf8_content);
+        let line_ending = format::detect_line_ending(&utf8_content);
 
         // Create initial StringBuffer with ID 0
         let buffer = StringBuffer::new(0, utf8_content);
@@ -612,7 +517,7 @@ impl TextBuffer {
         let bytes = utf8_content.len();
 
         // Auto-detect line ending format from content
-        let line_ending = Self::detect_line_ending(&utf8_content);
+        let line_ending = format::detect_line_ending(&utf8_content);
 
         // Create initial StringBuffer with ID 0
         let buffer = StringBuffer::new(0, utf8_content);
@@ -728,7 +633,7 @@ impl TextBuffer {
         let contents = fs.read_file(path)?;
 
         // Use unified encoding/binary detection
-        let (encoding, is_binary) = Self::detect_encoding_or_binary(&contents, false);
+        let (encoding, is_binary) = format::detect_encoding_or_binary(&contents, false);
 
         // For binary files, skip encoding conversion to preserve raw bytes
         let mut buffer = if is_binary {
@@ -774,7 +679,7 @@ impl TextBuffer {
         let sample_size = file_size.min(8 * 1024);
         let sample = fs.read_range(path, 0, sample_size)?;
         let (encoding, is_binary) =
-            Self::detect_encoding_or_binary(&sample, file_size > sample_size);
+            format::detect_encoding_or_binary(&sample, file_size > sample_size);
 
         // Binary files don't need confirmation (loaded as-is)
         if is_binary {
@@ -835,7 +740,7 @@ impl TextBuffer {
 
         // Use unified encoding/binary detection
         let (encoding, is_binary) =
-            Self::detect_encoding_or_binary(&sample, file_size > sample_size);
+            format::detect_encoding_or_binary(&sample, file_size > sample_size);
 
         // Binary files skip encoding conversion to preserve raw bytes
         if is_binary {
@@ -878,7 +783,7 @@ impl TextBuffer {
         }
 
         // UTF-8/ASCII files can use lazy loading
-        let line_ending = Self::detect_line_ending(&sample);
+        let line_ending = format::detect_line_ending(&sample);
 
         // Create an unloaded buffer that references the entire file
         let buffer = StringBuffer {
@@ -1037,14 +942,14 @@ impl TextBuffer {
                     )?;
 
                     let data = if needs_line_ending_conversion {
-                        Self::convert_line_endings_to(&data, target_ending)
+                        format::convert_line_endings_to(&data, target_ending)
                     } else {
                         data
                     };
 
                     // Convert encoding if needed
                     let data = if needs_encoding_conversion {
-                        Self::convert_to_encoding(&data, target_encoding)
+                        format::convert_to_encoding(&data, target_encoding)
                     } else {
                         data
                     };
@@ -1061,14 +966,14 @@ impl TextBuffer {
                     let chunk = &data[start..end];
 
                     let chunk = if needs_line_ending_conversion {
-                        Self::convert_line_endings_to(chunk, target_ending)
+                        format::convert_line_endings_to(chunk, target_ending)
                     } else {
                         chunk.to_vec()
                     };
 
                     // Convert encoding if needed
                     let chunk = if needs_encoding_conversion {
-                        Self::convert_to_encoding(&chunk, target_encoding)
+                        format::convert_to_encoding(&chunk, target_encoding)
                     } else {
                         chunk
                     };
@@ -3358,163 +3263,6 @@ impl TextBuffer {
     /// This should be used when initializing a new buffer with a configured default.
     pub fn set_default_encoding(&mut self, encoding: Encoding) {
         self.format.set_default_encoding(encoding);
-    }
-
-    /// Detect the line ending format from a sample of bytes
-    ///
-    /// Uses majority voting: counts CRLF, LF-only, and CR-only occurrences
-    /// and returns the most common format.
-    pub fn detect_line_ending(bytes: &[u8]) -> LineEnding {
-        // Only check the first 8KB for line ending detection (same as binary detection)
-        let check_len = bytes.len().min(8 * 1024);
-        let sample = &bytes[..check_len];
-
-        let mut crlf_count = 0;
-        let mut lf_only_count = 0;
-        let mut cr_only_count = 0;
-
-        let mut i = 0;
-        while i < sample.len() {
-            if sample[i] == b'\r' {
-                // Check if this is CRLF
-                if i + 1 < sample.len() && sample[i + 1] == b'\n' {
-                    crlf_count += 1;
-                    i += 2; // Skip both \r and \n
-                    continue;
-                } else {
-                    // CR only (old Mac format)
-                    cr_only_count += 1;
-                }
-            } else if sample[i] == b'\n' {
-                // LF only (Unix format)
-                lf_only_count += 1;
-            }
-            i += 1;
-        }
-
-        // Use majority voting to determine line ending
-        if crlf_count > lf_only_count && crlf_count > cr_only_count {
-            LineEnding::CRLF
-        } else if cr_only_count > lf_only_count && cr_only_count > crlf_count {
-            LineEnding::CR
-        } else {
-            // Default to LF if no clear winner or if LF wins
-            LineEnding::LF
-        }
-    }
-
-    /// Detect the text encoding from a sample of bytes
-    ///
-    /// Delegates to the encoding module. Use `detect_encoding_or_binary`
-    /// when you need to know if the content should be treated as binary.
-    pub fn detect_encoding(bytes: &[u8]) -> Encoding {
-        encoding::detect_encoding(bytes)
-    }
-
-    /// Detect the text encoding and whether content is binary.
-    ///
-    /// Returns (Encoding, is_binary) where:
-    /// - Encoding is the detected encoding (or default if binary)
-    /// - is_binary is true if the content should be treated as raw binary
-    ///
-    /// Delegates to the encoding module for detection logic.
-    pub fn detect_encoding_or_binary(bytes: &[u8], truncated: bool) -> (Encoding, bool) {
-        encoding::detect_encoding_or_binary(bytes, truncated)
-    }
-
-    /// Detect encoding and convert bytes to UTF-8
-    ///
-    /// Returns the detected encoding and the UTF-8 converted content.
-    /// This is the core function for normalizing file content to UTF-8 on load.
-    pub fn detect_and_convert_encoding(bytes: &[u8]) -> (Encoding, Vec<u8>) {
-        encoding::detect_and_convert(bytes)
-    }
-
-    /// Convert UTF-8 content to the specified encoding for saving
-    ///
-    /// Used when saving files to convert internal UTF-8 representation
-    /// back to the original (or user-selected) encoding.
-    /// Note: This does NOT add BOM - the BOM is handled separately in build_write_recipe.
-    pub fn convert_to_encoding(utf8_bytes: &[u8], target_encoding: Encoding) -> Vec<u8> {
-        encoding::convert_from_utf8(utf8_bytes, target_encoding)
-    }
-
-    /// Normalize line endings in the given bytes to LF only
-    ///
-    /// Converts CRLF (\r\n) and CR (\r) to LF (\n) for internal representation.
-    /// This makes editing and cursor movement simpler while preserving the
-    /// original format for saving.
-    #[allow(dead_code)] // Kept for tests and potential future use
-    pub fn normalize_line_endings(bytes: Vec<u8>) -> Vec<u8> {
-        let mut normalized = Vec::with_capacity(bytes.len());
-        let mut i = 0;
-
-        while i < bytes.len() {
-            if bytes[i] == b'\r' {
-                // Check if this is CRLF
-                if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
-                    // CRLF -> LF
-                    normalized.push(b'\n');
-                    i += 2; // Skip both \r and \n
-                    continue;
-                } else {
-                    // CR only -> LF
-                    normalized.push(b'\n');
-                }
-            } else {
-                // Copy byte as-is
-                normalized.push(bytes[i]);
-            }
-            i += 1;
-        }
-
-        normalized
-    }
-
-    /// Convert line endings from any source format to any target format
-    ///
-    /// This first normalizes all line endings to LF, then converts to the target format.
-    /// Used when saving files after the user has changed the line ending format.
-    fn convert_line_endings_to(bytes: &[u8], target_ending: LineEnding) -> Vec<u8> {
-        // First pass: normalize everything to LF
-        let mut normalized = Vec::with_capacity(bytes.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i] == b'\r' {
-                // Check if this is CRLF
-                if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
-                    // CRLF -> LF
-                    normalized.push(b'\n');
-                    i += 2;
-                    continue;
-                } else {
-                    // CR only -> LF
-                    normalized.push(b'\n');
-                }
-            } else {
-                normalized.push(bytes[i]);
-            }
-            i += 1;
-        }
-
-        // If target is LF, we're done
-        if target_ending == LineEnding::LF {
-            return normalized;
-        }
-
-        // Second pass: convert LF to target format
-        let replacement = target_ending.as_str().as_bytes();
-        let mut result = Vec::with_capacity(normalized.len() + normalized.len() / 10);
-
-        for byte in normalized {
-            if byte == b'\n' {
-                result.extend_from_slice(replacement);
-            } else {
-                result.push(byte);
-            }
-        }
-
-        result
     }
 
     /// Get text for a specific line
@@ -5943,7 +5691,7 @@ mod tests {
     #[test]
     fn test_detect_crlf() {
         assert_eq!(
-            TextBuffer::detect_line_ending(b"hello\r\nworld\r\n"),
+            super::format::detect_line_ending(b"hello\r\nworld\r\n"),
             LineEnding::CRLF
         );
     }
@@ -5951,7 +5699,7 @@ mod tests {
     #[test]
     fn test_detect_lf() {
         assert_eq!(
-            TextBuffer::detect_line_ending(b"hello\nworld\n"),
+            super::format::detect_line_ending(b"hello\nworld\n"),
             LineEnding::LF
         );
     }
@@ -5959,14 +5707,14 @@ mod tests {
     #[test]
     fn test_normalize_crlf() {
         let input = b"hello\r\nworld\r\n".to_vec();
-        let output = TextBuffer::normalize_line_endings(input);
+        let output = super::format::normalize_line_endings(input);
         assert_eq!(output, b"hello\nworld\n");
     }
 
     #[test]
     fn test_normalize_empty() {
         let input = Vec::new();
-        let output = TextBuffer::normalize_line_endings(input);
+        let output = super::format::normalize_line_endings(input);
         assert_eq!(output, Vec::<u8>::new());
     }
 
@@ -6029,21 +5777,21 @@ mod tests {
         #[test]
         fn test_convert_lf_to_crlf() {
             let input = b"Line 1\nLine 2\nLine 3\n";
-            let result = TextBuffer::convert_line_endings_to(input, LineEnding::CRLF);
+            let result = super::format::convert_line_endings_to(input, LineEnding::CRLF);
             assert_eq!(result, b"Line 1\r\nLine 2\r\nLine 3\r\n");
         }
 
         #[test]
         fn test_convert_crlf_to_lf() {
             let input = b"Line 1\r\nLine 2\r\nLine 3\r\n";
-            let result = TextBuffer::convert_line_endings_to(input, LineEnding::LF);
+            let result = super::format::convert_line_endings_to(input, LineEnding::LF);
             assert_eq!(result, b"Line 1\nLine 2\nLine 3\n");
         }
 
         #[test]
         fn test_convert_cr_to_lf() {
             let input = b"Line 1\rLine 2\rLine 3\r";
-            let result = TextBuffer::convert_line_endings_to(input, LineEnding::LF);
+            let result = super::format::convert_line_endings_to(input, LineEnding::LF);
             assert_eq!(result, b"Line 1\nLine 2\nLine 3\n");
         }
 
@@ -6051,28 +5799,28 @@ mod tests {
         fn test_convert_mixed_to_crlf() {
             // Mixed line endings: LF, CRLF, CR
             let input = b"Line 1\nLine 2\r\nLine 3\r";
-            let result = TextBuffer::convert_line_endings_to(input, LineEnding::CRLF);
+            let result = super::format::convert_line_endings_to(input, LineEnding::CRLF);
             assert_eq!(result, b"Line 1\r\nLine 2\r\nLine 3\r\n");
         }
 
         #[test]
         fn test_convert_lf_to_lf_is_noop() {
             let input = b"Line 1\nLine 2\nLine 3\n";
-            let result = TextBuffer::convert_line_endings_to(input, LineEnding::LF);
+            let result = super::format::convert_line_endings_to(input, LineEnding::LF);
             assert_eq!(result, input.to_vec());
         }
 
         #[test]
         fn test_convert_empty_content() {
             let input = b"";
-            let result = TextBuffer::convert_line_endings_to(input, LineEnding::CRLF);
+            let result = super::format::convert_line_endings_to(input, LineEnding::CRLF);
             assert_eq!(result, b"".to_vec());
         }
 
         #[test]
         fn test_convert_no_line_endings() {
             let input = b"No line endings here";
-            let result = TextBuffer::convert_line_endings_to(input, LineEnding::CRLF);
+            let result = super::format::convert_line_endings_to(input, LineEnding::CRLF);
             assert_eq!(result, b"No line endings here".to_vec());
         }
 
@@ -7809,7 +7557,7 @@ mod property_tests {
 
     /// Helper to check if bytes are detected as binary
     fn is_detected_as_binary(bytes: &[u8]) -> bool {
-        TextBuffer::detect_encoding_or_binary(bytes, false).1
+        super::format::detect_encoding_or_binary(bytes, false).1
     }
 
     #[test]
