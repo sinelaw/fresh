@@ -390,14 +390,35 @@ pub(super) fn apply_conceal_ranges(
     let mut output = Vec::with_capacity(tokens.len());
     let mut emitted_replacements: HashSet<usize> = HashSet::new();
 
-    let is_concealed = |byte_offset: usize| -> Option<usize> {
-        for (idx, (range, _)) in conceal_ranges.iter().enumerate() {
-            if byte_offset >= range.start && byte_offset < range.end {
-                return Some(idx);
-            }
+    // Sort a parallel index by `range.start` so the concealment lookup can
+    // be a monotonic cursor instead of a per-byte linear scan. Conceals
+    // rarely overlap (typically markdown syntax markers); the cursor walks
+    // the sorted list as tokens advance through source bytes.
+    let mut sorted: Vec<usize> = (0..conceal_ranges.len()).collect();
+    sorted.sort_by_key(|&i| conceal_ranges[i].0.start);
+    let mut conceal_cursor: usize = 0;
+
+    // Advance `conceal_cursor` past ranges ending before `byte_offset`,
+    // then check if the current range contains `byte_offset`. Returns the
+    // *original* conceal index (so `emitted_replacements` keys stay
+    // stable). Monotonic: caller must invoke with non-decreasing
+    // `byte_offset` within the token stream.
+    #[inline]
+    fn is_concealed(
+        conceal_ranges: &[(std::ops::Range<usize>, Option<&str>)],
+        sorted: &[usize],
+        cursor: &mut usize,
+        byte_offset: usize,
+    ) -> Option<usize> {
+        while *cursor < sorted.len()
+            && conceal_ranges[sorted[*cursor]].0.end <= byte_offset
+        {
+            *cursor += 1;
         }
-        None
-    };
+        let orig_idx = sorted.get(*cursor).copied()?;
+        let range = &conceal_ranges[orig_idx].0;
+        (range.start <= byte_offset && byte_offset < range.end).then_some(orig_idx)
+    }
 
     for token in tokens {
         let offset = match token.source_offset {
@@ -417,7 +438,7 @@ pub(super) fn apply_conceal_ranges(
                 for ch in text.chars() {
                     let ch_len = ch.len_utf8();
 
-                    if let Some(cidx) = is_concealed(current_byte) {
+                    if let Some(cidx) = is_concealed(conceal_ranges, &sorted, &mut conceal_cursor, current_byte) {
                         if !visible_chars.is_empty() {
                             output.push(ViewTokenWire {
                                 source_offset: visible_start,
@@ -472,14 +493,14 @@ pub(super) fn apply_conceal_ranges(
                 }
             }
             ViewTokenWireKind::Space | ViewTokenWireKind::Newline | ViewTokenWireKind::Break => {
-                if is_concealed(offset).is_some() {
+                if is_concealed(conceal_ranges, &sorted, &mut conceal_cursor, offset).is_some() {
                     // Skip concealed single-byte tokens
                 } else {
                     output.push(token);
                 }
             }
             ViewTokenWireKind::BinaryByte(_) => {
-                if is_concealed(offset).is_some() {
+                if is_concealed(conceal_ranges, &sorted, &mut conceal_cursor, offset).is_some() {
                     // Skip concealed binary byte
                 } else {
                     output.push(token);
