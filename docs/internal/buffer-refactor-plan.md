@@ -1075,46 +1075,61 @@ internal move in the plan. **Test coverage:** recovery integration
 tests (`tests/e2e/recovery.rs`), large-file tests
 (`tests/e2e/large_file_*.rs`). Run these between every commit.
 
-### Phase 5 — Split leaf concerns (no new sub-structs)
+### Phase 5 — Extract read-only concerns as free-fn modules
 
-With the three sub-structs in place, carve off the pure-storage-core
-concerns into their own files. These stay as `impl TextBuffer`
-methods but in dedicated files:
+With the three sub-structs in place, convert the pure-read concerns
+from `impl TextBuffer` methods into free fns taking borrowed
+`(&PieceTree, &[StringBuffer], …)`. `mod.rs` gains a thin delegator
+per method; the old method body moves to the topic file. Two commits
+per module (convert to free fn; move file); each commit green.
 
-- Commit A: `position.rs` (position/boundary methods; largest cluster
-  that's self-contained).
-- Commit B: `lines.rs` + move `LineNumber`, `LineData`,
+- Commit A-B: `position.rs` — position/boundary methods. Largest
+  self-contained read-only cluster.
+- Commit C-D: `lines.rs` + move `LineNumber`, `LineData`,
   `TextBufferLineIterator`.
-- Commit C: `replace.rs` (4 methods).
-- Commit D: `line_cache.rs` (6 near-no-op methods).
-- Commit E: `search.rs` + move `HybridSearchPlan`, `ChunkedSearchState`,
-  `search_boundary_overlap`.
+- Commit E-F: `search.rs` + move `HybridSearchPlan`,
+  `ChunkedSearchState`, `search_boundary_overlap`.
+- Commit G-H: `line_cache.rs` (trivial since the methods are no-ops).
 
-Each commit moves one file's worth of methods and re-runs tests.
+**Risk:** low. **Blast radius:** internal only — public
+`TextBuffer::offset_to_position(...)` etc. preserved via delegator.
 
-**Risk:** low. **Blast radius:** internal only. Public API preserved
-since these are still methods on `TextBuffer`.
+### Phase 6 — Extract storage concerns
 
-### Phase 6 — Split storage concerns
+`storage/*` is mostly read-only but `chunks.rs` mutates through
+`&mut PieceTree, &mut Vec<StringBuffer>, &dyn FileSystem`.
 
-- Commit A: `storage/mod.rs` — pure reads (`get_all_text`, `len`, etc.).
-- Commit B: `storage/chunks.rs` + move `ChunkInfo`,
-  `OverlappingChunks`, `extend_streaming`.
-- Commit C: `storage/line_scan.rs` + move `LineScanChunk`.
+- Commit A: `storage/mod.rs` — free fns for pure reads
+  (`total_bytes`, `is_empty`, `get_all_text`, `slice_bytes`,
+  `to_string`, `buffer_slice`).
+- Commit B: `storage/chunks.rs` — free fns that take `fs` by borrow
+  (from the caller's destructured `TextBuffer`). Includes
+  `chunk_split_and_load` (~155 lines), `ensure_chunk_loaded_at`,
+  `prepare_viewport`, `extend_streaming`; plus `ChunkInfo` and
+  `OverlappingChunks`.
+- Commit C: `storage/line_scan.rs` — free fns + `LineScanChunk`.
 
-**Risk:** low-medium. `chunk_split_and_load` is the trickiest method
-in the file (~155 lines). **Test coverage:**
-`tests/e2e/large_file_inplace_write_bug.rs` is the canary.
+**Risk:** low-medium. `chunk_split_and_load` is the trickiest single
+function in the file. **Test coverage:**
+`tests/e2e/large_file_inplace_write_bug.rs`.
 
-### Phase 7 — Consolidate edits
+### Phase 7 — Extract edits and replace as free-fn modules
 
-- Commit: Move edit orchestrators (`insert_bytes`, `insert_at_position`,
-  `delete_bytes`, `delete`, `delete_range`, `replace_content`,
-  `apply_bulk_edits`, `restore_buffer_state`, `snapshot_buffer_state`,
-  `BufferSnapshot`) into `edits.rs`.
+Edits mutate `(&mut PieceTree, &mut Vec<StringBuffer>, &mut usize)`.
+The `mark_content_modified` call stays in the `TextBuffer` delegator,
+not in the free fn.
 
-**Risk:** low. **Blast radius:** internal — but edits are the hottest
-path, so run the property-based tests.
+- Commit A: `edits.rs` — free fns for `insert_bytes`,
+  `insert_at_position`, `delete_bytes`, `delete`, `delete_range`,
+  `replace_content`, `apply_bulk_edits`, `try_append_to_existing_buffer`;
+  `BufferSnapshot` struct.
+- Commit B: `replace.rs` — free fns for `replace_range`,
+  `replace_next`, `replace_all`, `replace_all_regex`.
+- Commit C: Move `restore_buffer_state`, `snapshot_buffer_state` into
+  `mod.rs`'s orchestrator block (they touch `Persistence`).
+
+**Risk:** low-medium. Edits are the hottest path — run the proptest
+suite between every commit.
 
 ### Phase 8 — Redistribute tests
 
@@ -1148,11 +1163,12 @@ internal).
 
 | | Before | After |
 |---|---:|---:|
-| Files in `model/buffer*` | 1 (buffer.rs) | ~17 source + 8 test |
+| Files in `model/buffer*` | 1 (`buffer.rs`) | 3 sub-struct + 12 free-fn + `mod.rs` + 8 test |
 | Largest single source file | 8,029 | ≤ 700 |
 | `TextBuffer` field count | 17 flat | 8 composed |
-| Methods in one `impl TextBuffer` block | ~120 | ~40 (orchestrators + delegators) |
-| `impl TextBuffer` blocks crate-wide | 1 | 1 (unchanged — Rule 1) |
+| Methods in the one `impl TextBuffer` block (`mod.rs`) | ~120 (mix of logic + delegators) | ~60–80 (orchestrators + one-line delegators; no method body > ~10 lines) |
+| `impl TextBuffer` blocks in the crate | 1 | 1 (unchanged — Rule 1) |
+| Free-fn modules containing zero `impl` blocks on buffer types | 0 | 12 |
 | Test blocks | 2 inline monoliths | 8 topic files |
 
 ## 10. Success criteria
@@ -1167,7 +1183,30 @@ $ rg -n '^impl TextBuffer\b' crates/fresh-editor/src/
 crates/fresh-editor/src/model/buffer/mod.rs:<line>:impl TextBuffer {
 ```
 
-Exactly one line. Nothing else.
+Exactly one line. Nothing else — in particular, none of the 12
+free-fn topic modules (`search.rs`, `position.rs`, `lines.rs`,
+`edits.rs`, `replace.rs`, `line_cache.rs`, `storage/*.rs`,
+`persistence/{load,save,write_recipe,inplace}.rs`) may contain
+`impl TextBuffer`:
+
+```
+$ rg -n '^impl\b' crates/fresh-editor/src/model/buffer/search.rs \
+                  crates/fresh-editor/src/model/buffer/position.rs \
+                  crates/fresh-editor/src/model/buffer/lines.rs \
+                  crates/fresh-editor/src/model/buffer/edits.rs \
+                  crates/fresh-editor/src/model/buffer/replace.rs \
+                  crates/fresh-editor/src/model/buffer/line_cache.rs \
+                  crates/fresh-editor/src/model/buffer/storage/ \
+                  crates/fresh-editor/src/model/buffer/persistence/load.rs \
+                  crates/fresh-editor/src/model/buffer/persistence/save.rs \
+                  crates/fresh-editor/src/model/buffer/persistence/write_recipe.rs \
+                  crates/fresh-editor/src/model/buffer/persistence/inplace.rs
+```
+
+Every hit must be on a type **defined in that same file** (e.g.
+`impl HybridSearchPlan` in `search.rs`, `impl OverlappingChunks` in
+`storage/chunks.rs`). No `impl TextBuffer`, `impl Persistence`,
+`impl BufferFormat`, or `impl BufferFileKind` in any of these files.
 
 **B. No raw-field leakage per extracted sub-struct.**
 
