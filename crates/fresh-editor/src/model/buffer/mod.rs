@@ -380,6 +380,82 @@ pub struct TextBuffer {
 
     /// Buffer configuration (estimated line length, etc.)
     config: BufferConfig,
+
+    /// Encoding + line-ending state (composes `line_ending`,
+    /// `original_line_ending`, `encoding`, `original_encoding`).
+    /// Phase 2A of the `model/buffer.rs` refactor introduces this
+    /// alongside the raw fields; subsequent phases route accesses
+    /// through it and finally delete the raw fields.
+    format: BufferFormat,
+}
+
+/// Encoding and line-ending state. Owned by `TextBuffer` as the
+/// `format` field. During the in-progress Phase 2 refactor this is
+/// defined inline; Phase 2D moves it to `format.rs`.
+#[derive(Debug, Clone, Copy)]
+pub struct BufferFormat {
+    line_ending: LineEnding,
+    original_line_ending: LineEnding,
+    encoding: Encoding,
+    original_encoding: Encoding,
+}
+
+impl BufferFormat {
+    pub fn new(line_ending: LineEnding, encoding: Encoding) -> Self {
+        Self {
+            line_ending,
+            original_line_ending: line_ending,
+            encoding,
+            original_encoding: encoding,
+        }
+    }
+
+    pub fn line_ending(&self) -> LineEnding {
+        self.line_ending
+    }
+
+    pub fn encoding(&self) -> Encoding {
+        self.encoding
+    }
+
+    pub fn original_line_ending(&self) -> LineEnding {
+        self.original_line_ending
+    }
+
+    pub fn original_encoding(&self) -> Encoding {
+        self.original_encoding
+    }
+
+    pub fn set_line_ending(&mut self, le: LineEnding) {
+        self.line_ending = le;
+    }
+
+    pub fn set_encoding(&mut self, e: Encoding) {
+        self.encoding = e;
+    }
+
+    pub fn set_default_line_ending(&mut self, le: LineEnding) {
+        self.line_ending = le;
+        self.original_line_ending = le;
+    }
+
+    pub fn set_default_encoding(&mut self, e: Encoding) {
+        self.encoding = e;
+        self.original_encoding = e;
+    }
+
+    pub fn line_ending_changed_since_load(&self) -> bool {
+        self.line_ending != self.original_line_ending
+    }
+
+    pub fn encoding_changed_since_load(&self) -> bool {
+        self.encoding != self.original_encoding
+    }
+
+    pub(super) fn promote_current_to_original(&mut self) {
+        self.original_line_ending = self.line_ending;
+        self.original_encoding = self.encoding;
+    }
 }
 
 /// Snapshot of a TextBuffer's piece tree and associated string buffers.
@@ -417,6 +493,7 @@ impl TextBuffer {
             original_line_ending: line_ending,
             encoding,
             original_encoding: encoding,
+            format: BufferFormat::new(line_ending, encoding),
             saved_file_size: None,
             version: 0,
             config: BufferConfig::default(),
@@ -488,6 +565,7 @@ impl TextBuffer {
             original_line_ending: line_ending,
             encoding: Encoding::Utf8, // Binary files treated as raw bytes (no conversion)
             original_encoding: Encoding::Utf8,
+            format: BufferFormat::new(line_ending, Encoding::Utf8),
             piece_tree,
             saved_root,
             buffers: vec![buffer],
@@ -532,6 +610,7 @@ impl TextBuffer {
             original_line_ending: line_ending,
             encoding,
             original_encoding: encoding,
+            format: BufferFormat::new(line_ending, encoding),
             piece_tree,
             saved_root,
             buffers: vec![buffer],
@@ -580,6 +659,7 @@ impl TextBuffer {
             original_line_ending: line_ending,
             encoding,
             original_encoding: encoding,
+            format: BufferFormat::new(line_ending, encoding),
             piece_tree,
             saved_root,
             buffers: vec![buffer],
@@ -627,6 +707,7 @@ impl TextBuffer {
             original_line_ending: line_ending,
             encoding,
             original_encoding: encoding,
+            format: BufferFormat::new(line_ending, encoding),
             saved_file_size: None,
             version: 0,
             config: BufferConfig::default(),
@@ -878,6 +959,7 @@ impl TextBuffer {
             original_line_ending: line_ending,
             encoding,
             original_encoding: encoding,
+            format: BufferFormat::new(line_ending, encoding),
             saved_file_size: Some(file_size),
             version: 0,
             config: BufferConfig::default(),
@@ -6333,6 +6415,7 @@ mod tests {
                 original_line_ending: LineEnding::LF,
                 encoding: Encoding::Utf8,
                 original_encoding: Encoding::Utf8,
+                format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
                 saved_file_size: Some(bytes),
                 version: 0,
                 config: BufferConfig::default(),
@@ -6584,6 +6667,7 @@ mod tests {
                 original_line_ending: LineEnding::LF,
                 encoding: Encoding::Utf8,
                 original_encoding: Encoding::Utf8,
+                format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
                 saved_file_size: Some(file_size),
                 version: 0,
                 config: BufferConfig::default(),
@@ -6874,6 +6958,7 @@ mod tests {
                 original_line_ending: LineEnding::LF,
                 encoding: Encoding::Utf8,
                 original_encoding: Encoding::Utf8,
+                format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
                 saved_file_size: Some(file_size),
                 version: 0,
                 config: BufferConfig::default(),
