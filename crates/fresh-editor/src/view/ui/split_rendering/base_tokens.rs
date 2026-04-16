@@ -31,7 +31,11 @@ pub(super) fn build_base_tokens(
     let max_lines = visible_count.saturating_add(4);
     let mut lines_seen = 0usize;
     let buffer_len = buffer.len();
-    let mut cursor = top_byte.min(buffer_len);
+    // Don't clamp `cursor` to buffer_len: `LineIterator::new` clamps
+    // internally and uses a backward scan to locate the line containing
+    // `top_byte`, so a `top_byte >= buffer_len` (post-scroll past EOF on a
+    // single very long line) still produces tokens for that final line.
+    let mut cursor = top_byte;
     let mut fold_idx = 0usize;
     // Fast-forward past folds already ending at/before the cursor.
     while fold_idx < fold_skip.len() && fold_skip[fold_idx].end <= cursor {
@@ -40,7 +44,7 @@ pub(super) fn build_base_tokens(
     // If the cursor landed inside a fold, jump past it before reading anything.
     if let Some(r) = fold_skip.get(fold_idx) {
         if r.start <= cursor && cursor < r.end {
-            cursor = r.end.min(buffer_len);
+            cursor = r.end;
             fold_idx += 1;
         }
     }
@@ -49,22 +53,23 @@ pub(super) fn build_base_tokens(
     // `LineIterator` is constructed per segment so source bytes covered by
     // a collapsed fold are never read, never decoded, and never tokenised.
     'segments: loop {
-        if lines_seen >= max_lines || cursor >= buffer_len {
+        if lines_seen >= max_lines {
             break;
         }
-        let segment_end = fold_skip
-            .get(fold_idx)
-            .map(|r| r.start)
-            .unwrap_or(buffer_len);
-        // Zero-length segment (adjacent folds, or fold starting exactly at
-        // cursor): skip the fold and continue.
-        if cursor >= segment_end {
-            if let Some(r) = fold_skip.get(fold_idx) {
-                cursor = r.end.min(buffer_len);
+        let next_fold_start = fold_skip.get(fold_idx).map(|r| r.start);
+        let segment_end = next_fold_start.unwrap_or(buffer_len);
+        // Zero-length segment between adjacent folds (or fold starting
+        // exactly at cursor): jump past the fold and try again. Only fires
+        // when there's actually a fold ahead — without one, segment_end
+        // is `buffer_len`, but `cursor >= buffer_len` is fine: `LineIterator`
+        // handles the past-EOF case via internal clamping.
+        if next_fold_start.is_some() {
+            if cursor >= segment_end {
+                let r = &fold_skip[fold_idx];
+                cursor = r.end;
                 fold_idx += 1;
                 continue;
             }
-            break;
         }
 
         let mut iter = buffer.line_iterator(cursor, estimated_line_length);
@@ -72,7 +77,11 @@ pub(super) fn build_base_tokens(
             let Some((line_start, line_content)) = iter.next_line() else {
                 break 'segments;
             };
-            if line_start >= segment_end {
+            // Stop the inner loop when the next line crosses into the
+            // upcoming fold. Without a fold ahead, `next_fold_start` is
+            // `None` and we keep tokenising until the iterator reports EOF
+            // — preserving the trailing-empty-line behaviour at buffer end.
+            if next_fold_start.is_some_and(|s| line_start >= s) {
                 break;
             }
             let mut byte_offset = 0usize;
@@ -183,7 +192,7 @@ pub(super) fn build_base_tokens(
         // Jump past the fold at fold_idx (which drove segment_end). If we
         // ran out of folds, we've finished the last segment.
         if let Some(r) = fold_skip.get(fold_idx) {
-            cursor = r.end.min(buffer_len);
+            cursor = r.end;
             fold_idx += 1;
         } else {
             break;
