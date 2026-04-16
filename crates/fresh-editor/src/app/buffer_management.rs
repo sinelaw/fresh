@@ -3017,7 +3017,7 @@ impl Editor {
     pub fn force_check_mouse_hover(&mut self) -> bool {
         if let Some((byte_pos, _, screen_x, screen_y)) = self.mouse_state.lsp_hover_state {
             if !self.mouse_state.lsp_hover_request_sent {
-                self.mouse_hover_screen_position = Some((screen_x, screen_y));
+                self.hover.set_screen_position((screen_x, screen_y));
                 match self.request_hover_at_position(byte_pos) {
                     Ok(true) => {
                         self.mouse_state.lsp_hover_request_sent = true;

@@ -802,8 +802,8 @@ impl Editor {
 
         if sent {
             self.next_lsp_request_id += 1;
-            self.pending_hover_request = Some(request_id);
-            self.pending_hover_position = Some((line as u32, character as u32));
+            self.hover
+                .record_request(request_id, line as u32, character as u32);
         }
 
         Ok(())
@@ -853,8 +853,8 @@ impl Editor {
 
         if sent {
             self.next_lsp_request_id += 1;
-            self.pending_hover_request = Some(request_id);
-            self.pending_hover_position = Some((line as u32, character as u32));
+            self.hover
+                .record_request(request_id, line as u32, character as u32);
         }
 
         Ok(sent)
@@ -868,14 +868,14 @@ impl Editor {
         is_markdown: bool,
         range: Option<((u32, u32), (u32, u32))>,
     ) {
-        // Check if this response is for the current pending request
-        if self.pending_hover_request != Some(request_id) {
+        // Check if this response is for the current pending request.
+        // `claim_pending` also drains the stored LSP position, which we keep
+        // around for diagnostic correlation below.
+        let Some(position) = self.hover.claim_pending(request_id) else {
             tracing::debug!("Ignoring stale hover response: {}", request_id);
             return;
-        }
-
-        self.pending_hover_request = None;
-        let hover_lsp_position = self.pending_hover_position.take();
+        };
+        let hover_lsp_position = Some(position);
 
         // Gather any diagnostics whose range overlaps the hover position so
         // they can be fused into the top of the hover card. Without this the
@@ -887,7 +887,7 @@ impl Editor {
 
         if contents.is_empty() && diagnostic_lines.is_empty() {
             self.set_status_message(t!("lsp.no_hover").to_string());
-            self.hover_symbol_range = None;
+            self.hover.set_symbol_range(None);
             return;
         }
 
@@ -907,7 +907,7 @@ impl Editor {
             let end_byte = state
                 .buffer
                 .lsp_position_to_byte(end_line as usize, end_char as usize);
-            self.hover_symbol_range = Some((start_byte, end_byte));
+            self.hover.set_symbol_range(Some((start_byte, end_byte)));
             tracing::debug!(
                 "Hover symbol range: {}..{} (LSP {}:{}..{}:{})",
                 start_byte,
@@ -919,7 +919,7 @@ impl Editor {
             );
 
             // Remove previous hover overlay if any
-            if let Some(old_handle) = self.hover_symbol_overlay.take() {
+            if let Some(old_handle) = self.hover.take_symbol_overlay() {
                 let remove_event = crate::model::event::Event::RemoveOverlay { handle: old_handle };
                 self.apply_event_to_active_buffer(&remove_event);
             }
@@ -939,28 +939,32 @@ impl Editor {
             self.apply_event_to_active_buffer(&event);
             // Store the handle for later removal
             if let Some(state) = self.buffers.get(&self.active_buffer()) {
-                self.hover_symbol_overlay = state.overlays.all().last().map(|o| o.handle.clone());
+                if let Some(handle) = state.overlays.all().last().map(|o| o.handle.clone()) {
+                    self.hover.set_symbol_overlay(handle);
+                }
             }
         } else {
             // No range provided by LSP - compute word boundaries at hover position
             // This prevents the popup from following the mouse within the same word
-            if let Some((hover_byte_pos, _, _, _)) = self.mouse_state.lsp_hover_state {
-                let state = self.active_state();
-                let start_byte = find_word_start(&state.buffer, hover_byte_pos);
-                let end_byte = find_word_end(&state.buffer, hover_byte_pos);
-                if start_byte < end_byte {
-                    self.hover_symbol_range = Some((start_byte, end_byte));
-                    tracing::debug!(
-                        "Hover symbol range (computed from word boundaries): {}..{}",
-                        start_byte,
-                        end_byte
-                    );
+            let computed_range =
+                if let Some((hover_byte_pos, _, _, _)) = self.mouse_state.lsp_hover_state {
+                    let state = self.active_state();
+                    let start_byte = find_word_start(&state.buffer, hover_byte_pos);
+                    let end_byte = find_word_end(&state.buffer, hover_byte_pos);
+                    if start_byte < end_byte {
+                        tracing::debug!(
+                            "Hover symbol range (computed from word boundaries): {}..{}",
+                            start_byte,
+                            end_byte
+                        );
+                        Some((start_byte, end_byte))
+                    } else {
+                        None
+                    }
                 } else {
-                    self.hover_symbol_range = None;
-                }
-            } else {
-                self.hover_symbol_range = None;
-            }
+                    None
+                };
+            self.hover.set_symbol_range(computed_range);
         }
 
         // Create a popup with the hover contents.
@@ -1040,7 +1044,7 @@ impl Editor {
         popup.content = PopupContent::Markdown(all_lines);
         popup.title = Some(t!("lsp.popup_hover").to_string());
         popup.transient = true;
-        popup.position = if let Some((x, y)) = self.mouse_hover_screen_position.take() {
+        popup.position = if let Some((x, y)) = self.hover.take_screen_position() {
             PopupPosition::Fixed { x, y: y + 1 }
         } else {
             PopupPosition::BelowCursor

@@ -16,6 +16,7 @@ pub mod file_open;
 mod file_open_input;
 mod file_operations;
 mod help;
+mod hover;
 mod input;
 mod input_dispatch;
 pub mod keybinding_editor;
@@ -539,14 +540,6 @@ pub struct Editor {
     /// Pending LSP go-to-definition request ID (if any)
     pending_goto_definition_request: Option<u64>,
 
-    /// Pending LSP hover request ID (if any)
-    pending_hover_request: Option<u64>,
-
-    /// LSP position (line, UTF-16 character) of the pending hover request.
-    /// Retained so `handle_hover_response` can look up diagnostics whose
-    /// range overlaps this position and fuse them into the hover card.
-    pending_hover_position: Option<(u32, u32)>,
-
     /// Pending LSP find references request ID (if any)
     pending_references_request: Option<u64>,
 
@@ -609,16 +602,9 @@ pub struct Editor {
     /// Next time a full semantic token refresh is allowed for a buffer
     semantic_tokens_full_debounce: HashMap<BufferId, Instant>,
 
-    /// Hover symbol range (byte offsets) - for highlighting the symbol under hover
-    /// Format: (start_byte_offset, end_byte_offset)
-    hover_symbol_range: Option<(usize, usize)>,
-
-    /// Hover symbol overlay handle (for removal)
-    hover_symbol_overlay: Option<crate::view::overlay::OverlayHandle>,
-
-    /// Mouse hover screen position for popup placement
-    /// Set when a mouse-triggered hover request is sent
-    mouse_hover_screen_position: Option<(u16, u16)>,
+    /// Hover subsystem (pending LSP request correlation, highlighted-symbol
+    /// range + overlay handle, popup screen position).
+    hover: hover::HoverState,
 
     /// Search state (if search is active)
     search_state: Option<SearchState>,
@@ -1600,8 +1586,7 @@ impl Editor {
             completion_service: crate::services::completion::CompletionService::new(),
             dabbrev_state: None,
             pending_goto_definition_request: None,
-            pending_hover_request: None,
-            pending_hover_position: None,
+            hover: hover::HoverState::default(),
             pending_references_request: None,
             pending_references_symbol: String::new(),
             pending_signature_help_request: None,
@@ -1619,9 +1604,6 @@ impl Editor {
             semantic_tokens_range_last_request: HashMap::new(),
             semantic_tokens_range_applied: HashMap::new(),
             semantic_tokens_full_debounce: HashMap::new(),
-            hover_symbol_range: None,
-            hover_symbol_overlay: None,
-            mouse_hover_screen_position: None,
             search_state: None,
             search_namespace: crate::view::overlay::OverlayNamespace::from_string(
                 "search".to_string(),
@@ -2340,7 +2322,7 @@ impl Editor {
         };
 
         // Store mouse position for popup positioning
-        self.mouse_hover_screen_position = Some((screen_x, screen_y));
+        self.hover.set_screen_position((screen_x, screen_y));
 
         // Request hover at the byte position — only mark as sent if dispatched
         match self.request_hover_at_position(byte_pos) {

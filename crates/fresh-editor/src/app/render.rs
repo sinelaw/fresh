@@ -1607,11 +1607,11 @@ impl Editor {
         }
 
         // Clear hover symbol highlight if present
-        if let Some(handle) = self.hover_symbol_overlay.take() {
+        if let Some(handle) = self.hover.take_symbol_overlay() {
             let remove_overlay_event = crate::model::event::Event::RemoveOverlay { handle };
             self.apply_event_to_active_buffer(&remove_overlay_event);
         }
-        self.hover_symbol_range = None;
+        self.hover.set_symbol_range(None);
     }
 
     /// Dismiss transient popups if present
@@ -1656,15 +1656,14 @@ impl Editor {
         // Clear hover state
         self.mouse_state.lsp_hover_state = None;
         self.mouse_state.lsp_hover_request_sent = false;
-        self.pending_hover_request = None;
-        self.pending_hover_position = None;
+        self.hover.clear_pending();
 
         // Clear hover symbol highlight if present
-        if let Some(handle) = self.hover_symbol_overlay.take() {
+        if let Some(handle) = self.hover.take_symbol_overlay() {
             let remove_overlay_event = crate::model::event::Event::RemoveOverlay { handle };
             self.apply_event_to_active_buffer(&remove_overlay_event);
         }
-        self.hover_symbol_range = None;
+        self.hover.set_symbol_range(None);
     }
 
     /// Clear all popups
