@@ -398,8 +398,11 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         } else {
             None
         };
-        // Track visible characters separately from byte position for ANSI handling
+        // visible_char_count: all chars stepped over (for long-line break check).
+        // rendered_cols: chars that landed on screen (for fill width — so full-line
+        // bg fills reach the viewport edge under horizontal scroll).
         let mut visible_char_count = 0usize;
+        let mut rendered_cols = 0usize;
 
         // Debug mode: track active highlight/overlay spans for WordPerfect-style reveal codes
         let mut debug_tracker = if state.debug_highlight_mode {
@@ -867,8 +870,14 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 .copied()
                 .unwrap_or(line_total_visual_width);
             let ch_width = next_col_for_char.saturating_sub(col_offset);
+            // `\n` gets visual width 1 from the view pipeline but renders as
+            // empty — don't count it as an on-screen cell.
+            let was_rendered = col_offset >= left_col && ch != '\n';
             col_offset = next_col_for_char;
             visible_char_count += ch_width;
+            if was_rendered {
+                rendered_cols += ch_width;
+            }
         }
 
         // Flush any remaining accumulated text at end of line
@@ -1017,7 +1026,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         if let Some(lsb) = line_start_byte {
             if let Some((message, diag_style)) = decorations.diagnostic_inline_texts.get(&lsb) {
                 let content_width = render_area.width.saturating_sub(gutter_width as u16) as usize;
-                let used = visible_char_count;
+                let used = rendered_cols;
                 let available = content_width.saturating_sub(used);
                 let gap = 2usize;
                 let min_text = 10usize;
@@ -1051,7 +1060,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                             pad_style,
                             None,
                         );
-                        visible_char_count += padding;
+                        rendered_cols += padding;
                     }
 
                     // Apply current line background to diagnostic text when on cursor line
@@ -1067,7 +1076,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                         effective_diag_style,
                         None,
                     );
-                    visible_char_count += display_width;
+                    rendered_cols += display_width;
                 }
             }
         }
@@ -1077,7 +1086,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         if !line_wrap {
             // Calculate the content area width (total width minus gutter)
             let content_width = render_area.width.saturating_sub(gutter_width as u16) as usize;
-            let remaining_cols = content_width.saturating_sub(visible_char_count);
+            let remaining_cols = content_width.saturating_sub(rendered_cols);
 
             if remaining_cols > 0 {
                 // Find the highest priority background color from overlays with extend_to_line_end
@@ -1147,7 +1156,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         // line_view_map, which would break mouse click byte mapping.
         if is_on_cursor_line && highlight_current_line && is_active {
             let content_width = render_area.width.saturating_sub(gutter_width as u16) as usize;
-            let remaining_cols = content_width.saturating_sub(visible_char_count);
+            let remaining_cols = content_width.saturating_sub(rendered_cols);
             if remaining_cols > 0 {
                 span_acc.flush(&mut line_spans, &mut line_view_map);
                 line_spans.push(Span::styled(
