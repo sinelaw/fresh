@@ -167,3 +167,100 @@ consolidate. The mechanism (extract field clusters into sub-structs;
 move methods to the struct that owns the fields they touch) is the
 same, but the motivating measurement is the method-count-per-namespace
 (~120), not the impl-files-per-type (1).
+
+## 3. Proposed field clusters (the core of the plan)
+
+Every one of `TextBuffer`'s 17 fields is accounted for below. Three
+new sub-structs absorb 14 fields; three fields remain on `TextBuffer`
+with a stated reason.
+
+### 3.1 New sub-structs
+
+| Sub-struct | Fields absorbed | Field accesses today | Concern |
+|---|---|---:|---|
+| `BufferFormat` | `line_ending`, `original_line_ending`, `encoding`, `original_encoding` | 24 | Text encoding + line-ending tracking and conversion |
+| `BufferFileKind` | `large_file`, `line_feeds_scanned`, `is_binary` | 14 | Is-this-a-large/binary-file-and-has-its-line-scan-run |
+| `Persistence` | `fs`, `file_path`, `modified`, `recovery_pending`, `saved_root`, `saved_file_size` | 78 | Filesystem handle, save-state tracking, saved-root snapshot |
+
+### 3.2 Fields that remain on `TextBuffer`
+
+| Field | Accesses | Why it stays |
+|---|---:|---|
+| `piece_tree` | 51 | The core storage. Every edit, read, search, and line-op touches it; extracting it into a wrapper adds indirection for zero gain. |
+| `buffers` | 43 | String-buffer pool is piece-tree-coupled (the pieces reference these buffers by id). Must stay colocated with `piece_tree`. |
+| `next_buffer_id` | 16 | Allocates ids for `buffers`. Trivially coupled to `buffers`. |
+| `version` | 2 | Top-level monotonic counter. Read by external callers (change tracking, LSP). Belongs at the outer type for the same reason a database has one sequence. |
+| `config` | 2 | Top-level tuning knobs (`estimated_line_length`). Already its own `BufferConfig` type; just a field. |
+
+The three "stays" fields `piece_tree` / `buffers` / `next_buffer_id`
+are the **storage core** (110 of 230 accesses). They do not deserve
+a sub-struct of their own — they *are* the buffer. Wrapping them in
+`BufferStorage` would create a pass-through struct with no distinct
+concern. Leave them flat.
+
+### 3.3 Before / after struct diff
+
+**Before (17 flat fields):**
+
+```rust
+pub struct TextBuffer {
+    fs: Arc<dyn FileSystem + Send + Sync>,
+    piece_tree: PieceTree,
+    saved_root: Arc<PieceTreeNode>,
+    buffers: Vec<StringBuffer>,
+    next_buffer_id: usize,
+    file_path: Option<PathBuf>,
+    modified: bool,
+    recovery_pending: bool,
+    large_file: bool,
+    line_feeds_scanned: bool,
+    is_binary: bool,
+    line_ending: LineEnding,
+    original_line_ending: LineEnding,
+    encoding: Encoding,
+    original_encoding: Encoding,
+    saved_file_size: Option<usize>,
+    version: u64,
+    config: BufferConfig,
+}
+```
+
+**After (8 fields, composed):**
+
+```rust
+pub struct TextBuffer {
+    // Storage core — stays flat, see §3.2
+    piece_tree:     PieceTree,
+    buffers:        Vec<StringBuffer>,
+    next_buffer_id: usize,
+
+    // Extracted sub-structs (§3.1)
+    persistence:    Persistence,
+    format:         BufferFormat,
+    file_kind:      BufferFileKind,
+
+    // Top-level trackers (§3.2)
+    version:        u64,
+    config:         BufferConfig,
+}
+```
+
+17 flat fields → 8 top-level fields, 3 of which are sub-structs
+composing the remaining 13 fields. The shrinkage isn't the point; the
+point is that a method touching `encoding` cannot accidentally touch
+`modified`, and vice versa.
+
+### 3.4 Where each sub-struct lives
+
+```
+crates/fresh-editor/src/model/buffer/
+    mod.rs              // pub struct TextBuffer + orchestrators (save, load, edits)
+    format.rs           // pub struct BufferFormat + detection free fns
+    file_kind.rs        // pub struct BufferFileKind
+    persistence.rs      // pub struct Persistence + save-state transitions
+    ...                 // concern modules (see §7)
+```
+
+Outside `model/buffer/`, callers still see `TextBuffer` with accessor
+methods (`buffer.encoding()`, `buffer.is_modified()`, `buffer.file_path()`).
+The public API is preserved; the internal ownership is not.
