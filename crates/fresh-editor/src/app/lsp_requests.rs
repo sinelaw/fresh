@@ -1486,6 +1486,27 @@ impl Editor {
     /// Request LSP code actions at current cursor position.
     /// Sends code action requests to all eligible servers for merged results.
     pub(crate) fn request_code_actions(&mut self) -> AnyhowResult<()> {
+        // A new invocation starts a fresh batch. Cancel any previous
+        // in-flight code-action requests so their late responses are
+        // ignored (handle_code_actions_response drops responses whose
+        // request_id isn't in pending_code_actions_requests). Without
+        // this, actions from a prior cursor position would be merged
+        // into the new popup — same bug class we already avoid for
+        // completion (sinelaw/fresh#1514) and inlay hints (multi-buffer
+        // quiescent).
+        if !self.pending_code_actions_requests.is_empty() {
+            let ids: Vec<u64> = self.pending_code_actions_requests.drain().collect();
+            for request_id in ids {
+                tracing::debug!(
+                    "Canceling previous pending LSP code actions request {}",
+                    request_id
+                );
+                self.send_lsp_cancel_request(request_id);
+            }
+        }
+        self.pending_code_actions_server_names.clear();
+        self.pending_code_actions = None;
+
         // Get the current buffer and cursor position
         let cursor_pos = self.active_cursors().primary().position;
         let selection_range = self.active_cursors().primary().selection_range();
@@ -1556,8 +1577,8 @@ impl Editor {
         self.next_lsp_request_id = base_request_id + results.len() as u64;
 
         if !sent_ids.is_empty() {
-            // Clear any previously accumulated actions for a fresh merge
-            self.pending_code_actions = None;
+            // pending_code_actions was already cleared above alongside the
+            // cancel-previous-requests logic.
             self.pending_code_actions_requests.extend(sent_ids);
         }
 
@@ -3022,9 +3043,14 @@ impl Editor {
             return;
         }
 
-        // Get line count from buffer state
-        let line_count = if let Some(state) = self.buffers.get(&buffer_id) {
-            state.buffer.line_count().unwrap_or(1000)
+        // Get line count and version from buffer state — both are needed so
+        // the response handler can drop stale data if the buffer has moved
+        // on by the time hints arrive.
+        let (line_count, version) = if let Some(state) = self.buffers.get(&buffer_id) {
+            (
+                state.buffer.line_count().unwrap_or(1000),
+                state.buffer.version(),
+            )
         } else {
             return;
         };
@@ -3055,7 +3081,8 @@ impl Editor {
 
         if sent {
             self.next_lsp_request_id += 1;
-            self.pending_inlay_hints_requests.insert(request_id);
+            self.pending_inlay_hints_requests
+                .insert(request_id, super::InlayHintsRequest { buffer_id, version });
         }
     }
 

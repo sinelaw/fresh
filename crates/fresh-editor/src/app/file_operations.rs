@@ -755,15 +755,19 @@ impl Editor {
         let enable_inlay_hints = self.config.editor.enable_inlay_hints;
         let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
 
-        // Get buffer line count for inlay hints
-        let (last_line, last_char) = self
+        // Get buffer line count and version for inlay hints
+        let (last_line, last_char, buffer_version) = self
             .buffers
             .get(&buffer_id)
             .map(|state| {
                 let line_count = state.buffer.line_count().unwrap_or(1000);
-                (line_count.saturating_sub(1) as u32, 10000u32)
+                (
+                    line_count.saturating_sub(1) as u32,
+                    10000u32,
+                    state.buffer.version(),
+                )
             })
-            .unwrap_or((999, 10000));
+            .unwrap_or((999, 10000, 0));
 
         // Now borrow lsp and do all LSP operations
         let Some(lsp) = &mut self.lsp else {
@@ -830,7 +834,13 @@ impl Editor {
                                 e
                             );
                         } else {
-                            self.pending_inlay_hints_requests.insert(request_id);
+                            self.pending_inlay_hints_requests.insert(
+                                request_id,
+                                super::InlayHintsRequest {
+                                    buffer_id,
+                                    version: buffer_version,
+                                },
+                            );
                             tracing::info!(
                                 "Requested inlay hints for {} (request_id={})",
                                 uri.as_str(),

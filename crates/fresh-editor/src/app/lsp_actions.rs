@@ -147,6 +147,7 @@ impl Editor {
 
             let lang_id = state.language.clone();
             let line_count = state.buffer.line_count().unwrap_or(1000);
+            let buffer_version = state.buffer.version();
 
             if let Some(lsp) = self.lsp.as_mut() {
                 // Respect auto_start setting for this user action
@@ -213,7 +214,13 @@ impl Editor {
                                 e
                             );
                         } else {
-                            self.pending_inlay_hints_requests.insert(request_id);
+                            self.pending_inlay_hints_requests.insert(
+                                request_id,
+                                super::InlayHintsRequest {
+                                    buffer_id,
+                                    version: buffer_version,
+                                },
+                            );
                         }
                     }
                 }
@@ -837,6 +844,10 @@ impl Editor {
         self.folding_ranges_debounce.remove(&buffer_id);
         self.pending_folding_range_requests
             .retain(|_, req| req.buffer_id != buffer_id);
+        // Drop any in-flight inlay hint requests for this buffer so
+        // their eventual responses don't repopulate the cleared overlay.
+        self.pending_inlay_hints_requests
+            .retain(|_, req| req.buffer_id != buffer_id);
 
         // Clear all LSP-related overlays for this buffer (diagnostics + inlay hints)
         let diagnostic_ns = crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
@@ -935,21 +946,31 @@ impl Editor {
 
         // Request inlay hints if enabled
         if self.config.editor.enable_inlay_hints {
-            let (last_line, last_char) = self
+            let (last_line, last_char, buffer_version) = self
                 .buffers
                 .get(&buffer_id)
                 .map(|state| {
                     let line_count = state.buffer.line_count().unwrap_or(1000);
-                    (line_count.saturating_sub(1) as u32, 10000u32)
+                    (
+                        line_count.saturating_sub(1) as u32,
+                        10000u32,
+                        state.buffer.version(),
+                    )
                 })
-                .unwrap_or((999, 10000));
+                .unwrap_or((999, 10000, 0));
 
             let request_id = self.next_lsp_request_id;
             self.next_lsp_request_id += 1;
             if let Err(e) = handle.inlay_hints(request_id, uri, 0, 0, last_line, last_char) {
                 tracing::warn!("LSP inlay_hints request failed: {}", e);
             } else {
-                self.pending_inlay_hints_requests.insert(request_id);
+                self.pending_inlay_hints_requests.insert(
+                    request_id,
+                    super::InlayHintsRequest {
+                        buffer_id,
+                        version: buffer_version,
+                    },
+                );
             }
         }
 

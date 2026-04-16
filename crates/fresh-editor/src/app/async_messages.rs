@@ -286,11 +286,31 @@ impl Editor {
         uri: String,
         hints: Vec<InlayHint>,
     ) {
-        if !self.pending_inlay_hints_requests.remove(&request_id) {
+        let Some(request) = self.pending_inlay_hints_requests.remove(&request_id) else {
             tracing::debug!(
                 "Ignoring stale inlay hints response (request_id={})",
                 request_id
             );
+            return;
+        };
+
+        // Drop responses that raced behind a local edit — the hint
+        // positions reference stale byte offsets and would render at
+        // the wrong place. A fresh request was (or will be) scheduled
+        // by the debounced inlay-hints timer on every didChange.
+        if let Some(state) = self.buffers.get(&request.buffer_id) {
+            if state.buffer.version() != request.version {
+                tracing::debug!(
+                    "Ignoring stale inlay hints for {} (request_id={}, version={}, current={})",
+                    uri,
+                    request_id,
+                    request.version,
+                    state.buffer.version()
+                );
+                return;
+            }
+        } else {
+            // Buffer was closed before the response arrived.
             return;
         }
 
@@ -301,17 +321,13 @@ impl Editor {
             request_id
         );
 
-        if let Some(buffer_id) = self.find_buffer_by_uri(&uri) {
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                Self::apply_inlay_hints_to_state(state, &hints);
-                tracing::info!(
-                    "Applied {} inlay hints as virtual text to buffer {:?}",
-                    hints.len(),
-                    buffer_id
-                );
-            }
-        } else {
-            tracing::warn!("No buffer found for inlay hints URI: {}", uri);
+        if let Some(state) = self.buffers.get_mut(&request.buffer_id) {
+            Self::apply_inlay_hints_to_state(state, &hints);
+            tracing::info!(
+                "Applied {} inlay hints as virtual text to buffer {:?}",
+                hints.len(),
+                request.buffer_id
+            );
         }
     }
 
@@ -716,12 +732,12 @@ impl Editor {
             .buffers_for_language(&language)
             .into_iter()
             .map(|(buffer_id, uri)| {
-                let line_count = self
+                let (line_count, version) = self
                     .buffers
                     .get(&buffer_id)
-                    .and_then(|s| s.buffer.line_count())
-                    .unwrap_or(1000);
-                (uri, line_count)
+                    .map(|s| (s.buffer.line_count().unwrap_or(1000), s.buffer.version()))
+                    .unwrap_or((1000, 0));
+                (buffer_id, uri, line_count, version)
             })
             .collect();
 
@@ -736,11 +752,12 @@ impl Editor {
         };
         let client = &mut sh.handle;
 
-        // Request inlay hints for each buffer. Each request gets its own
-        // id inserted into the pending set so responses across all buffers
-        // are accepted individually (a single Option used to be overwritten
-        // by each iteration, dropping every response except the last).
-        for (uri, line_count) in buffer_infos {
+        // Request inlay hints for each buffer. Each request is keyed in
+        // the pending map by its own id (and carries buffer_id + version)
+        // so responses across all buffers are matched individually — a
+        // single Option used to be overwritten by each iteration, dropping
+        // every response except the last.
+        for (buffer_id, uri, line_count, version) in buffer_infos {
             let request_id = self.next_lsp_request_id;
             self.next_lsp_request_id += 1;
 
@@ -752,7 +769,8 @@ impl Editor {
                     e
                 );
             } else {
-                self.pending_inlay_hints_requests.insert(request_id);
+                self.pending_inlay_hints_requests
+                    .insert(request_id, super::InlayHintsRequest { buffer_id, version });
                 tracing::info!(
                     "Re-requested inlay hints for {} (request_id={})",
                     uri.as_str(),

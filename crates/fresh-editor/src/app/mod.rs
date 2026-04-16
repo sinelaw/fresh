@@ -259,6 +259,12 @@ struct FoldingRangeRequest {
     version: u64,
 }
 
+#[derive(Clone, Debug)]
+struct InlayHintsRequest {
+    buffer_id: BufferId,
+    version: u64,
+}
+
 /// State for the dabbrev cycling session (Alt+/ style).
 ///
 /// When the user presses Alt+/ repeatedly, we cycle through candidates
@@ -585,13 +591,17 @@ pub struct Editor {
     /// Each entry is (server_name, action).
     pending_code_actions: Option<Vec<(String, lsp_types::CodeActionOrCommand)>>,
 
-    /// Pending LSP inlay hints request IDs. Tracked as a set so concurrent
-    /// requests across multiple buffers (e.g. after a server-quiescent
-    /// notification or a batch of saves) can each be individually matched
-    /// to their response. A single `Option` here used to silently clobber
-    /// earlier requests, causing only the last-issued response to be
-    /// accepted.
-    pending_inlay_hints_requests: HashSet<u64>,
+    /// Pending LSP inlay hints requests keyed by request id. Each entry
+    /// carries the originating buffer and the buffer version at dispatch
+    /// time so:
+    ///   * Responses for multiple concurrent buffer requests (quiescent,
+    ///     manual restart, batched saves) are each accepted individually
+    ///     instead of clobbering a single shared slot.
+    ///   * Responses that race behind a local edit (buffer version moved
+    ///     past what we asked about) are dropped rather than applied at
+    ///     the wrong offsets. Same pattern as `pending_folding_range_requests`
+    ///     and `pending_semantic_token_requests`.
+    pending_inlay_hints_requests: HashMap<u64, InlayHintsRequest>,
 
     /// Pending LSP folding range requests keyed by request ID
     pending_folding_range_requests: HashMap<u64, FoldingRangeRequest>,
@@ -1630,7 +1640,7 @@ impl Editor {
             pending_code_actions_requests: HashSet::new(),
             pending_code_actions_server_names: HashMap::new(),
             pending_code_actions: None,
-            pending_inlay_hints_requests: HashSet::new(),
+            pending_inlay_hints_requests: HashMap::new(),
             pending_folding_range_requests: HashMap::new(),
             folding_ranges_in_flight: HashMap::new(),
             folding_ranges_debounce: HashMap::new(),
