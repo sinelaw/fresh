@@ -38,6 +38,7 @@ mod recovery_actions;
 mod regex_replace;
 mod render;
 mod scrollbar_math;
+mod search_ops;
 mod search_scan;
 mod settings_actions;
 mod shell_command;
