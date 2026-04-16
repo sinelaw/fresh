@@ -882,5 +882,6 @@ pub(crate) fn build_base_tokens_for_hook(
         visible_count,
         is_binary,
         line_ending,
+        &[],
     )
 }

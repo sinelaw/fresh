@@ -18,6 +18,7 @@ pub(super) fn build_base_tokens(
     visible_count: usize,
     is_binary: bool,
     line_ending: LineEnding,
+    fold_skip: &[std::ops::Range<usize>],
 ) -> Vec<ViewTokenWire> {
     let mut tokens = Vec::new();
 
@@ -27,12 +28,53 @@ pub(super) fn build_base_tokens(
         return build_base_tokens_binary(buffer, top_byte, estimated_line_length, visible_count);
     }
 
-    let mut iter = buffer.line_iterator(top_byte, estimated_line_length);
-    let mut lines_seen = 0usize;
     let max_lines = visible_count.saturating_add(4);
+    let mut lines_seen = 0usize;
+    let buffer_len = buffer.len();
+    let mut cursor = top_byte.min(buffer_len);
+    let mut fold_idx = 0usize;
+    // Fast-forward past folds already ending at/before the cursor.
+    while fold_idx < fold_skip.len() && fold_skip[fold_idx].end <= cursor {
+        fold_idx += 1;
+    }
+    // If the cursor landed inside a fold, jump past it before reading anything.
+    if let Some(r) = fold_skip.get(fold_idx) {
+        if r.start <= cursor && cursor < r.end {
+            cursor = r.end.min(buffer_len);
+            fold_idx += 1;
+        }
+    }
 
-    while lines_seen < max_lines {
-        if let Some((line_start, line_content)) = iter.next_line() {
+    // Outer loop: one iteration per visible segment between folds. A fresh
+    // `LineIterator` is constructed per segment so source bytes covered by
+    // a collapsed fold are never read, never decoded, and never tokenised.
+    'segments: loop {
+        if lines_seen >= max_lines || cursor >= buffer_len {
+            break;
+        }
+        let segment_end = fold_skip
+            .get(fold_idx)
+            .map(|r| r.start)
+            .unwrap_or(buffer_len);
+        // Zero-length segment (adjacent folds, or fold starting exactly at
+        // cursor): skip the fold and continue.
+        if cursor >= segment_end {
+            if let Some(r) = fold_skip.get(fold_idx) {
+                cursor = r.end.min(buffer_len);
+                fold_idx += 1;
+                continue;
+            }
+            break;
+        }
+
+        let mut iter = buffer.line_iterator(cursor, estimated_line_length);
+        while lines_seen < max_lines {
+            let Some((line_start, line_content)) = iter.next_line() else {
+                break 'segments;
+            };
+            if line_start >= segment_end {
+                break;
+            }
             let mut byte_offset = 0usize;
             let content_bytes = line_content.as_bytes();
             let mut skip_next_lf = false; // Track if we should skip \n after \r in CRLF
@@ -133,6 +175,16 @@ pub(super) fn build_base_tokens(
                 byte_offset += ch_len;
             }
             lines_seen += 1;
+        }
+
+        if lines_seen >= max_lines {
+            break;
+        }
+        // Jump past the fold at fold_idx (which drove segment_end). If we
+        // ran out of folds, we've finished the last segment.
+        if let Some(r) = fold_skip.get(fold_idx) {
+            cursor = r.end.min(buffer_len);
+            fold_idx += 1;
         } else {
             break;
         }

@@ -53,7 +53,13 @@ pub(super) fn build_view_data(
     let is_binary = state.buffer.is_binary();
     let line_ending = state.buffer.line_ending();
 
-    // Build base token stream from source
+    // Compute fold skip set once — reused by base token build (to avoid
+    // reading/tokenising hidden ranges) and by ViewLineIterator (defence in
+    // depth for any tokens produced by plugin view transforms).
+    let fold_skip = fold_skip_set(&state.buffer, &state.marker_list, folds);
+
+    // Build base token stream from source, skipping any source-byte range
+    // that falls inside a collapsed fold.
     let base_tokens = build_base_tokens(
         &mut state.buffer,
         viewport.top_byte,
@@ -61,6 +67,7 @@ pub(super) fn build_view_data(
         adjusted_visible_count,
         is_binary,
         line_ending,
+        &fold_skip,
     );
 
     // Use plugin transform if available, otherwise use base tokens
@@ -138,10 +145,10 @@ pub(super) fn build_view_data(
             .unwrap_or(0);
         max_source_offset + 2 >= state.buffer.len()
     };
-    // Skip folded source ranges at the iterator level so hidden content
-    // never materialises as a ViewLine (no text clone, no char_source_bytes,
-    // no char_styles, etc.).
-    let fold_skip = fold_skip_set(&state.buffer, &state.marker_list, folds);
+    // Skip folded source ranges at the iterator level. Most folded content
+    // is already absent from `tokens` (pre-skipped in `build_base_tokens`);
+    // this handles plugin view transforms whose token stream predates the
+    // skip.
     let source_lines: Vec<ViewLine> = ViewLineIterator::new(
         &tokens,
         is_binary,
