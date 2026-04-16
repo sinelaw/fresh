@@ -477,3 +477,94 @@ rg 'TextBuffer' crates/fresh-editor/src/model/buffer/format.rs  # → 0 hits
 rg 'TextBuffer' crates/fresh-editor/src/model/buffer/persistence/  # → 0 hits
 rg 'persistence::' crates/fresh-editor/src/model/buffer/storage/  # → 0 hits
 ```
+
+## 6. Coordination mechanisms
+
+Pick one of these three patterns per cross-sub-struct case. Don't add
+a fourth.
+
+### (a) Orchestrator with split borrows
+
+For the handful of operations whose *whole purpose* is to combine
+sub-structs. Lives on `TextBuffer`:
+
+```rust
+impl TextBuffer {
+    pub fn save(&mut self) -> anyhow::Result<()> {
+        let bytes = storage::serialize_all(
+            &self.piece_tree, &self.buffers,
+            self.format.line_ending(), self.format.encoding(),
+        );
+        let path = self.persistence.require_file_path()?;
+        self.persistence.save_bytes(&path, bytes, &self.config)?;
+        self.persistence.promote_to_saved(
+            &self.piece_tree, self.file_kind.is_large_file(),
+        );
+        Ok(())
+    }
+}
+```
+
+Each line reads one sub-struct; the orchestrator is the only place
+that touches several. Use this for: `save`, `load_from_file`,
+`insert_bytes`, `delete`, `replace_content`, `apply_bulk_edits`,
+`mark_content_modified`, `extend_streaming`, `restore_buffer_state`,
+`snapshot_buffer_state`, `rebuild_with_pristine_saved_root`.
+
+### (b) Borrowed parameters for read-many paths
+
+When a sub-struct method needs *read-only* knowledge of another
+sub-struct's state — common in save/load paths that need to know the
+encoding and line-ending. Pass by `&`:
+
+```rust
+impl Persistence {
+    pub fn build_write_recipe(
+        &self,
+        piece_tree: &PieceTree,
+        buffers: &[StringBuffer],
+        format: &BufferFormat,
+        large_file: bool,
+    ) -> io::Result<WriteRecipe> {
+        // ...inline branches on format.line_ending_changed_since_load()...
+    }
+}
+```
+
+No back-pointer; every dependency visible in the signature. Use this
+for every save/load helper that needs format/file-kind context.
+
+### (c) Post-mutation notifications
+
+When a sub-struct finishes work that implies a top-level invariant
+change — e.g. `Persistence::save_bytes` completed, so the version
+should bump. The sub-struct does not touch the flag; the orchestrator
+does, *after* the sub-struct method returns:
+
+```rust
+pub fn save(&mut self) -> Result<()> {
+    self.persistence.save_bytes(...)?;
+    // Persistence has already updated its own modified/recovery_pending flags
+    // internally; TextBuffer bumps version because that's a top-level concern.
+    self.version += 1;
+    Ok(())
+}
+```
+
+Cross-sub-struct side-effects are always the orchestrator's
+responsibility. Sub-structs do not reach.
+
+### Decision rule
+
+- Two or more sub-structs' **mutable** state involved → mechanism (a),
+  an orchestrator on `TextBuffer`.
+- One sub-struct mutates, another contributes **read-only** context →
+  mechanism (b), `&` parameter.
+- A sub-struct mutates and the top-level struct needs to react →
+  mechanism (c), the orchestrator reacts after the call.
+- Only one sub-struct's state involved → it's not cross-cutting; put
+  the method on that sub-struct.
+
+No `Rc<RefCell<TextBuffer>>`, no event bus, no `&mut self` where
+`self` is the outer `TextBuffer` appearing inside a sub-struct method
+signature. That's the shortlist.
