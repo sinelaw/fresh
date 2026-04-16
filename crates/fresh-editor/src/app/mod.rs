@@ -20,6 +20,7 @@ mod file_explorer;
 pub mod file_open;
 mod file_open_input;
 mod file_open_orchestrators;
+mod file_open_queue;
 mod file_operations;
 mod help;
 mod help_actions;
