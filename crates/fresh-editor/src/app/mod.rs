@@ -41,6 +41,7 @@ mod settings_actions;
 mod shell_command;
 mod smart_home;
 mod split_actions;
+mod stdin_stream;
 mod tab_drag;
 mod terminal;
 mod terminal_input;
@@ -954,7 +955,7 @@ pub struct Editor {
     completed_waits: Vec<u64>,
 
     /// Stdin streaming state (if reading from stdin)
-    stdin_streaming: Option<StdinStreamingState>,
+    stdin_stream: stdin_stream::StdinStream,
 
     /// Incremental line scan state (for non-blocking progress during Go to Line)
     line_scan_state: Option<LineScanState>,
@@ -1022,20 +1023,6 @@ struct LineScanState {
     /// Whether to open the Go to Line prompt after the scan completes.
     /// True when triggered from the Go to Line flow, false from the command palette.
     open_goto_line_on_complete: bool,
-}
-
-/// State for tracking stdin streaming in background
-pub struct StdinStreamingState {
-    /// Path to temp file where stdin is being written
-    pub temp_path: PathBuf,
-    /// Buffer ID for the stdin buffer
-    pub buffer_id: BufferId,
-    /// Last known file size (for detecting growth)
-    pub last_known_size: usize,
-    /// Whether streaming is complete (background thread finished)
-    pub complete: bool,
-    /// Background thread handle (for checking completion)
-    pub thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
 }
 
 impl Editor {
@@ -1722,7 +1709,7 @@ impl Editor {
             pending_hot_exit_recovery: false,
             wait_tracking: HashMap::new(),
             completed_waits: Vec::new(),
-            stdin_streaming: None,
+            stdin_stream: stdin_stream::StdinStream::default(),
             line_scan_state: None,
             search_scan_state: None,
             search_overlay_top_byte: None,

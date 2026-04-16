@@ -1377,16 +1377,11 @@ impl Editor {
 
         self.set_active_buffer(buffer_id);
 
-        // Set up stdin streaming state for polling
-        // If no thread handle, it means data is already complete (testing scenario)
-        let complete = thread_handle.is_none();
-        self.stdin_streaming = Some(super::StdinStreamingState {
-            temp_path: temp_path.to_path_buf(),
-            buffer_id,
-            last_known_size: file_size,
-            complete,
-            thread_handle,
-        });
+        // Set up stdin streaming state for polling.
+        // If no thread handle, the subsystem starts already-complete — used
+        // by tests and the "stdin was fully drained before we started" case.
+        self.stdin_stream
+            .start(temp_path.to_path_buf(), buffer_id, file_size, thread_handle);
 
         // Status will be updated by poll_stdin_streaming
         self.status_message = Some(t!("stdin.streaming").to_string());
@@ -1397,61 +1392,52 @@ impl Editor {
     /// Poll stdin streaming state and extend buffer if file grew.
     /// Returns true if the status changed (needs render).
     pub fn poll_stdin_streaming(&mut self) -> bool {
-        let Some(ref mut stream_state) = self.stdin_streaming else {
-            return false;
-        };
+        use super::stdin_stream::ThreadOutcome;
 
-        if stream_state.complete {
+        if !self.stdin_stream.is_active() {
             return false;
         }
+
+        let Some(buffer_id) = self.stdin_stream.buffer_id() else {
+            return false;
+        };
+        let temp_path = self.stdin_stream.temp_path().unwrap().to_path_buf();
+        let last_known = self.stdin_stream.last_known_size();
 
         let mut changed = false;
 
         // Check current file size
         let current_size = self
             .filesystem
-            .metadata(&stream_state.temp_path)
+            .metadata(&temp_path)
             .map(|m| m.size as usize)
-            .unwrap_or(stream_state.last_known_size);
+            .unwrap_or(last_known);
 
         // If file grew, extend the buffer
-        if current_size > stream_state.last_known_size {
-            if let Some(editor_state) = self.buffers.get_mut(&stream_state.buffer_id) {
+        if self.stdin_stream.record_growth(current_size) {
+            if let Some(editor_state) = self.buffers.get_mut(&buffer_id) {
                 editor_state
                     .buffer
-                    .extend_streaming(&stream_state.temp_path, current_size);
+                    .extend_streaming(&temp_path, current_size);
             }
-            stream_state.last_known_size = current_size;
-
-            // Update status message with current progress
             self.status_message =
                 Some(t!("stdin.streaming_bytes", bytes = current_size).to_string());
             changed = true;
         }
 
-        // Check if background thread has finished
-        let thread_finished = stream_state
-            .thread_handle
-            .as_ref()
-            .map(|h| h.is_finished())
-            .unwrap_or(true);
-
-        if thread_finished {
-            // Take ownership of handle to join it
-            if let Some(handle) = stream_state.thread_handle.take() {
-                match handle.join() {
-                    Ok(Ok(())) => {
-                        tracing::info!("Stdin streaming completed successfully");
-                    }
-                    Ok(Err(e)) => {
-                        tracing::warn!("Stdin streaming error: {}", e);
-                        self.status_message =
-                            Some(t!("stdin.read_error", error = e.to_string()).to_string());
-                    }
-                    Err(_) => {
-                        tracing::warn!("Stdin streaming thread panicked");
-                        self.status_message = Some(t!("stdin.read_error_panic").to_string());
-                    }
+        // Drain a just-finished thread and surface its outcome to the user.
+        if let Some(outcome) = self.stdin_stream.take_finished_thread_outcome() {
+            match outcome {
+                ThreadOutcome::Success => {
+                    tracing::info!("Stdin streaming completed successfully");
+                }
+                ThreadOutcome::Error(msg) => {
+                    tracing::warn!("Stdin streaming error: {}", msg);
+                    self.status_message = Some(t!("stdin.read_error", error = msg).to_string());
+                }
+                ThreadOutcome::Panic => {
+                    tracing::warn!("Stdin streaming thread panicked");
+                    self.status_message = Some(t!("stdin.read_error_panic").to_string());
                 }
             }
             self.complete_stdin_streaming();
@@ -1464,36 +1450,40 @@ impl Editor {
     /// Mark stdin streaming as complete.
     /// Called when the background thread finishes.
     pub fn complete_stdin_streaming(&mut self) {
-        if let Some(ref mut stream_state) = self.stdin_streaming {
-            stream_state.complete = true;
+        let Some(buffer_id) = self.stdin_stream.buffer_id() else {
+            return;
+        };
+        let Some(temp_path) = self.stdin_stream.temp_path().map(Path::to_path_buf) else {
+            return;
+        };
 
-            // Final poll to get any remaining data
-            let final_size = self
-                .filesystem
-                .metadata(&stream_state.temp_path)
-                .map(|m| m.size as usize)
-                .unwrap_or(stream_state.last_known_size);
+        self.stdin_stream.mark_complete();
 
-            if final_size > stream_state.last_known_size {
-                if let Some(editor_state) = self.buffers.get_mut(&stream_state.buffer_id) {
-                    editor_state
-                        .buffer
-                        .extend_streaming(&stream_state.temp_path, final_size);
-                }
-                stream_state.last_known_size = final_size;
+        // Final poll to get any remaining data
+        let final_size = self
+            .filesystem
+            .metadata(&temp_path)
+            .map(|m| m.size as usize)
+            .unwrap_or(self.stdin_stream.last_known_size());
+
+        if self.stdin_stream.record_growth(final_size) {
+            if let Some(editor_state) = self.buffers.get_mut(&buffer_id) {
+                editor_state.buffer.extend_streaming(&temp_path, final_size);
             }
-
-            self.status_message =
-                Some(t!("stdin.read_complete", bytes = stream_state.last_known_size).to_string());
         }
+
+        self.status_message = Some(
+            t!(
+                "stdin.read_complete",
+                bytes = self.stdin_stream.last_known_size()
+            )
+            .to_string(),
+        );
     }
 
     /// Check if stdin streaming is active (not complete).
     pub fn is_stdin_streaming(&self) -> bool {
-        self.stdin_streaming
-            .as_ref()
-            .map(|s| !s.complete)
-            .unwrap_or(false)
+        self.stdin_stream.is_active()
     }
 
     /// Create a new virtual buffer (not backed by a file)
