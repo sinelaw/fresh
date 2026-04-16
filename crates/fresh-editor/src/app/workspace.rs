@@ -40,7 +40,7 @@ use crate::workspace::{
     WorkspaceHistories, WORKSPACE_VERSION,
 };
 
-use super::types::Bookmark;
+use super::bookmarks::{Bookmark, BookmarkState};
 use super::Editor;
 
 /// Resolve a saved fold's header_line against the current buffer, using
@@ -1056,7 +1056,7 @@ impl Editor {
                 // Verify position is valid
                 if let Some(buffer) = self.buffers.get(&buffer_id) {
                     let pos = bookmark.position.min(buffer.buffer.len());
-                    self.bookmarks.insert(
+                    self.bookmarks.set(
                         *key,
                         Bookmark {
                             buffer_id,
@@ -2034,7 +2034,7 @@ fn serialize_split_view_state(
 }
 
 fn serialize_bookmarks(
-    bookmarks: &HashMap<char, Bookmark>,
+    bookmarks: &BookmarkState,
     buffer_metadata: &HashMap<BufferId, super::types::BufferMetadata>,
     working_dir: &Path,
 ) -> HashMap<char, SerializedBookmark> {
@@ -2047,7 +2047,7 @@ fn serialize_bookmarks(
                 .and_then(|abs_path| {
                     abs_path.strip_prefix(working_dir).ok().map(|rel_path| {
                         (
-                            *key,
+                            key,
                             SerializedBookmark {
                                 file_path: rel_path.to_path_buf(),
                                 position: bookmark.position,

@@ -1,4 +1,5 @@
 mod async_messages;
+mod bookmarks;
 mod buffer_config_resolve;
 mod buffer_groups;
 mod buffer_management;
@@ -131,8 +132,8 @@ pub fn editor_tick(
 pub(crate) use path_utils::normalize_path;
 
 use self::types::{
-    Bookmark, CachedLayout, EventLineInfo, InteractiveReplaceState, LspMessageEntry,
-    LspProgressInfo, MouseState, SearchState, TabContextMenu, DEFAULT_BACKGROUND_FILE,
+    CachedLayout, EventLineInfo, InteractiveReplaceState, LspMessageEntry, LspProgressInfo,
+    MouseState, SearchState, TabContextMenu, DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
 use crate::config_io::{ConfigLayer, ConfigResolver, DirectoryContext};
@@ -743,7 +744,7 @@ pub struct Editor {
     event_broadcaster: crate::model::control_event::EventBroadcaster,
 
     /// Bookmarks (character key -> bookmark)
-    bookmarks: HashMap<char, Bookmark>,
+    bookmarks: bookmarks::BookmarkState,
 
     /// Global search options (persist across searches)
     search_case_sensitive: bool,
@@ -1672,7 +1673,7 @@ impl Editor {
             stored_diagnostics: HashMap::new(),
             stored_folding_ranges: HashMap::new(),
             event_broadcaster: crate::model::control_event::EventBroadcaster::default(),
-            bookmarks: HashMap::new(),
+            bookmarks: bookmarks::BookmarkState::default(),
             search_case_sensitive: true,
             search_whole_word: false,
             search_use_regex: false,
@@ -8927,8 +8928,7 @@ mod tests {
 
         // Set bookmark '1'
         editor.set_bookmark('1');
-        assert!(editor.bookmarks.contains_key(&'1'));
-        assert_eq!(editor.bookmarks.get(&'1').unwrap().position, 7);
+        assert_eq!(editor.bookmarks.get('1').map(|b| b.position), Some(7));
 
         // Move cursor elsewhere
         editor.apply_event_to_active_buffer(&Event::MoveCursor {
@@ -8947,7 +8947,7 @@ mod tests {
 
         // Clear bookmark
         editor.clear_bookmark('1');
-        assert!(!editor.bookmarks.contains_key(&'1'));
+        assert_eq!(editor.bookmarks.get('1'), None);
     }
 
     #[test]

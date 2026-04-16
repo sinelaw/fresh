@@ -109,14 +109,6 @@ impl SearchState {
     pub const MAX_MATCHES: usize = 100_000;
 }
 
-/// A bookmark in the editor (position in a specific buffer)
-#[derive(Debug, Clone)]
-pub(super) struct Bookmark {
-    /// Buffer ID where the bookmark is set
-    pub buffer_id: BufferId,
-    /// Byte offset position in the buffer
-    pub position: usize,
-}
 
 /// State for interactive replace (query-replace)
 #[derive(Debug, Clone)]
