@@ -1,6 +1,6 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::primitives::display_width::char_width;
+use fresh::primitives::display_width::str_width;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use unicode_segmentation::UnicodeSegmentation;
@@ -1336,10 +1336,15 @@ fn test_all_operations_on_multibyte_fixture() {
             line_idx
         );
 
-        // Calculate expected visual width by summing char_width per character
-        // This matches how the rendering code calculates width (char by char, not via str_width)
-        // Note: str_width may differ for ZWJ sequences due to unicode-width handling
-        let expected_visual_width: usize = line.chars().map(char_width).sum();
+        // Calculate expected visual width per grapheme cluster via
+        // `UnicodeWidthStr::width`. This matches what ratatui's
+        // `set_stringn` uses when placing spans on screen and what
+        // `render_line`'s per-visual-column map counts for cursor
+        // positioning. Summing `char_width` per codepoint gives the
+        // wrong answer for ZWJ emoji sequences: e.g.
+        // "👩‍💻" sums to 2+0+2=4 but the cluster's real screen width
+        // is 2 (one visible glyph).
+        let expected_visual_width: usize = line.graphemes(true).map(str_width).sum();
 
         // Screen X = gutter_width + visual_content_width
         // Get gutter width by checking cursor X at Home position
@@ -1381,12 +1386,12 @@ fn test_all_operations_on_multibyte_fixture() {
             .chain(std::iter::once(line_len))
             .collect();
 
-        // Calculate visual width for each grapheme cluster by summing char widths
-        // This matches how the rendering code calculates width
-        let grapheme_widths: Vec<usize> = line
-            .graphemes(true)
-            .map(|g| g.chars().map(char_width).sum())
-            .collect();
+        // Visual width for each grapheme cluster is
+        // `UnicodeWidthStr::width(grapheme)` — the same width ratatui
+        // assigns when placing the span on screen. Summing per-codepoint
+        // `char_width` over a ZWJ emoji cluster gives an inflated
+        // value (see the note above `expected_visual_width`).
+        let grapheme_widths: Vec<usize> = line.graphemes(true).map(str_width).collect();
 
         let mut positions_visited = vec![0usize];
         let mut prev_pos = 0;
