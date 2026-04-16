@@ -1,4 +1,5 @@
 mod async_messages;
+mod bookmark_actions;
 mod bookmarks;
 mod buffer_config_resolve;
 mod buffer_groups;
