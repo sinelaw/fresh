@@ -917,7 +917,9 @@ mod tests {
         registry.apply_language_config(&languages);
 
         // Custom filename resolves to bash via the catalog.
-        let entry = registry.find_by_path(Path::new("CUSTOMBUILD")).unwrap();
+        let entry = registry
+            .find_by_path(Path::new("CUSTOMBUILD"), None)
+            .unwrap();
         assert!(
             entry.display_name.to_lowercase().contains("bash")
                 || entry.display_name.to_lowercase().contains("shell"),
@@ -926,7 +928,9 @@ mod tests {
         );
 
         // Custom extension resolves to bash via the catalog.
-        let entry = registry.find_by_path(Path::new("script.myext")).unwrap();
+        let entry = registry
+            .find_by_path(Path::new("script.myext"), None)
+            .unwrap();
         assert!(
             entry.display_name.to_lowercase().contains("bash")
                 || entry.display_name.to_lowercase().contains("shell"),

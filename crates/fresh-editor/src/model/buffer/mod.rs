@@ -2363,6 +2363,17 @@ impl TextBuffer {
         self.format.set_default_encoding(encoding);
     }
 
+    /// Get the first line of the buffer as a lossy UTF-8 string, suitable
+    /// for shebang / first-line grammar detection. Returns `None` for an
+    /// empty buffer. Non-UTF-8 bytes are replaced with U+FFFD.
+    pub fn first_line_lossy(&self) -> Option<String> {
+        let bytes = self.get_line(0)?;
+        if bytes.is_empty() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
     /// Get text for a specific line
     pub fn get_line(&self, line: usize) -> Option<Vec<u8>> {
         let (start, end) = self.piece_tree.line_range(line, &self.buffers)?;

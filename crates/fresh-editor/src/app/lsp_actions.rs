@@ -1052,9 +1052,11 @@ impl Editor {
 
                 // Set buffer language to TypeScript so LSP requests use the right handle
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let first_line = state.buffer.first_line_lossy();
                     let detected =
                         crate::primitives::detected_language::DetectedLanguage::from_path(
                             &plugin_file,
+                            first_line.as_deref(),
                             &self.grammar_registry,
                             &self.config.languages,
                         );

@@ -662,26 +662,15 @@ impl GrammarRegistry {
 
     /// Find syntax for a file by path/extension/filename.
     ///
-    /// Checks in order:
-    /// 1. User-configured grammar extensions (by scope)
-    /// 2. By extension (includes built-in + embedded grammars)
-    /// 3. By filename (custom dotfile mappings like .zshrc)
-    /// 4. By filename via syntect (handles Makefile, .bashrc, etc.)
+    /// Purely metadata-based — does not read the file. For first-line
+    /// (shebang) fallback, use [`find_by_path`] with a `first_line` argument
+    /// and resolve the returned entry's syntect index.
     pub fn find_syntax_for_file(&self, path: &Path) -> Option<&SyntaxReference> {
-        if let Some(entry) = self.find_by_path(path) {
-            // Return the syntect grammar if one is attached; otherwise bail.
-            // We must NOT fall through to syntect's own detection here — the
-            // catalog match (e.g. a user-declared "fish" or tree-sitter-only
-            // TypeScript) is authoritative, and syntect might misclassify
-            // `.fish` as bash via its built-in heuristics.
-            return entry
-                .engines
-                .syntect
-                .map(|i| &self.syntax_set.syntaxes()[i]);
-        }
-        // No catalog match — try syntect's file detection (first-line /
-        // Makefile-style filenames that aren't in filename_scopes).
-        self.syntax_set.find_syntax_for_file(path).ok().flatten()
+        let entry = self.find_by_path(path, None)?;
+        entry
+            .engines
+            .syntect
+            .map(|i| &self.syntax_set.syntaxes()[i])
     }
 
     /// Find syntax by name, with alias resolution.
@@ -1084,16 +1073,27 @@ impl GrammarRegistry {
             .map(|&idx| &self.catalog[idx])
     }
 
-    /// Look up a grammar entry by file path.
+    /// Look up a grammar entry by file path, with optional first-line content
+    /// for shebang / `first_line_match` detection.
     ///
     /// Resolution order:
     /// 1. Exact filename (config-declared filenames and filename_scopes live here)
     /// 2. Glob patterns from user config (e.g. "*.conf", "/etc/**/rc.*")
     /// 3. File extension
+    /// 4. Shebang / first-line regex match on `first_line` if supplied
     ///
     /// Globs take priority over extension so a user rule like `*.conf → bash`
-    /// wins over any built-in extension match on `.conf`.
-    pub fn find_by_path(&self, path: &Path) -> Option<&GrammarEntry> {
+    /// wins over any built-in extension match on `.conf`. The first-line
+    /// fallback (#4) is last so catalog matches stay authoritative — syntect
+    /// might otherwise misclassify `.fish` as bash via its first-line
+    /// regexes.
+    ///
+    /// The first-line fallback is pure: it runs syntect's
+    /// `find_syntax_by_first_line` regex cache against the caller-supplied
+    /// string. The registry never touches the filesystem — the caller (who
+    /// already loaded the buffer via the `FileSystem` trait) must extract
+    /// the first line and pass it in.
+    pub fn find_by_path(&self, path: &Path, first_line: Option<&str>) -> Option<&GrammarEntry> {
         let filename = path.file_name().and_then(|n| n.to_str());
         let path_str = path.to_str().unwrap_or("");
 
@@ -1120,9 +1120,18 @@ impl GrammarRegistry {
         }
 
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            return self.find_by_extension(ext);
+            if let Some(entry) = self.find_by_extension(ext) {
+                return Some(entry);
+            }
         }
-        None
+
+        // Last resort: shebang / first-line regex match against the
+        // caller-supplied content. Map the matched syntect grammar back to a
+        // catalog entry by name — every syntect syntax has a catalog entry,
+        // so this round-trip preserves tree-sitter attachment.
+        let line = first_line?;
+        let syntax = self.syntax_set.find_syntax_by_first_line(line)?;
+        self.find_by_name(&syntax.name)
     }
 
     /// Look up a grammar entry by file extension (case-insensitive, without dot).
@@ -1623,15 +1632,17 @@ mod tests {
         registry.apply_language_config(&languages);
 
         assert!(
-            registry.find_by_path(Path::new("nftables.conf")).is_some(),
+            registry
+                .find_by_path(Path::new("nftables.conf"), None)
+                .is_some(),
             "*.conf should match nftables.conf"
         );
         assert!(
-            registry.find_by_path(Path::new("lfrc")).is_some(),
+            registry.find_by_path(Path::new("lfrc"), None).is_some(),
             "*rc should match lfrc"
         );
         // Unrelated file shouldn't panic.
-        let _ = registry.find_by_path(Path::new("randomfile"));
+        let _ = registry.find_by_path(Path::new("randomfile"), None);
     }
 
     #[test]
@@ -1665,16 +1676,18 @@ mod tests {
         registry.apply_language_config(&languages);
 
         assert!(
-            registry.find_by_path(Path::new("/etc/rc.conf")).is_some(),
+            registry
+                .find_by_path(Path::new("/etc/rc.conf"), None)
+                .is_some(),
             "/etc/**/rc.* should match /etc/rc.conf"
         );
         assert!(
             registry
-                .find_by_path(Path::new("/etc/init/rc.local"))
+                .find_by_path(Path::new("/etc/init/rc.local"), None)
                 .is_some(),
             "/etc/**/rc.* should match /etc/init/rc.local"
         );
-        let _ = registry.find_by_path(Path::new("/var/rc.conf"));
+        let _ = registry.find_by_path(Path::new("/var/rc.conf"), None);
     }
 
     #[test]
@@ -1737,7 +1750,7 @@ mod tests {
         registry.apply_language_config(&languages);
 
         // "lfrc" should match the exact rule (python), not the glob (bash)
-        let entry = registry.find_by_path(Path::new("lfrc")).unwrap();
+        let entry = registry.find_by_path(Path::new("lfrc"), None).unwrap();
         assert!(
             entry.display_name.to_lowercase().contains("python"),
             "exact match should win over glob, got: {}",
@@ -1930,7 +1943,7 @@ mod tests {
     fn test_catalog_find_by_path_and_extension() {
         let registry = GrammarRegistry::default();
         let ts = registry
-            .find_by_path(Path::new("foo.ts"))
+            .find_by_path(Path::new("foo.ts"), None)
             .expect("foo.ts should resolve");
         assert_eq!(ts.display_name, "TypeScript");
         let rs = registry.find_by_extension("rs").expect("rs should resolve");
@@ -1998,7 +2011,9 @@ mod tests {
         // Sanity: config applied.
         assert!(registry.find_by_extension("myconf").is_some());
         assert!(
-            registry.find_by_path(Path::new("foo.myconf")).is_some(),
+            registry
+                .find_by_path(Path::new("foo.myconf"), None)
+                .is_some(),
             "glob should match before register_alias"
         );
 
@@ -2010,7 +2025,9 @@ mod tests {
             "config extension must survive register_alias"
         );
         assert!(
-            registry.find_by_path(Path::new("foo.myconf")).is_some(),
+            registry
+                .find_by_path(Path::new("foo.myconf"), None)
+                .is_some(),
             "glob must survive register_alias"
         );
     }
@@ -2096,7 +2113,7 @@ mod tests {
             ("GNUmakefile", "makefile"),
         ] {
             let entry = registry
-                .find_by_path(Path::new(filename))
+                .find_by_path(Path::new(filename), None)
                 .unwrap_or_else(|| panic!("{} must resolve via catalog", filename));
             assert!(
                 entry.display_name.to_lowercase().contains(expected_substr),
@@ -2116,7 +2133,7 @@ mod tests {
     fn test_jsx_resolves_to_javascript() {
         let registry = GrammarRegistry::default();
         let entry = registry
-            .find_by_path(Path::new("foo.jsx"))
+            .find_by_path(Path::new("foo.jsx"), None)
             .expect("foo.jsx must resolve");
         assert_eq!(entry.display_name, "JavaScript");
     }
@@ -2135,7 +2152,9 @@ mod tests {
         );
         registry.apply_language_config(&languages);
         assert!(registry.find_by_extension("myext").is_some());
-        assert!(registry.find_by_path(Path::new("foo.myglob")).is_some());
+        assert!(registry
+            .find_by_path(Path::new("foo.myglob"), None)
+            .is_some());
 
         // Force a rebuild — the catalog gets wiped and re-populated from
         // syntect / tree-sitter, but user config must come back on top.
@@ -2145,7 +2164,9 @@ mod tests {
             "rebuild_catalog must replay applied user config"
         );
         assert!(
-            registry.find_by_path(Path::new("foo.myglob")).is_some(),
+            registry
+                .find_by_path(Path::new("foo.myglob"), None)
+                .is_some(),
             "rebuild_catalog must replay user globs"
         );
     }

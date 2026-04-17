@@ -67,11 +67,14 @@ impl TextMateEngine {
         }
     }
 
-    /// Create a TextMate engine for a file path
+    /// Create a TextMate engine for a file path.
+    ///
+    /// Purely metadata-based: resolves the grammar by filename/extension via
+    /// the catalog. Shebang / first-line detection is not applied here —
+    /// callers with buffer content should go through
+    /// `DetectedLanguage::from_path`, which handles that fallback.
     pub fn for_file(path: &Path, registry: &GrammarRegistry) -> Option<Self> {
         let syntax_set = registry.syntax_set_arc();
-
-        // Find syntax by file extension
         let syntax = registry.find_syntax_for_file(path)?;
 
         // Find the index of this syntax in the set

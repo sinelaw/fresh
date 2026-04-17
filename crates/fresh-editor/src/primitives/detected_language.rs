@@ -51,13 +51,21 @@ impl DetectedLanguage {
     /// 2. Glob pattern match in user config
     /// 3. Extension match in user config
     /// 4. Built-in detection (catalog lookup)
-    /// 5. Fallback config (if set and no other match found)
+    /// 5. Shebang / first-line regex against `first_line` (catalog lookup)
+    /// 6. Fallback config (if set and no other match found)
+    ///
+    /// `first_line` is the literal first line of the file (including any
+    /// trailing newline). The caller — which has already loaded the buffer
+    /// via the `FileSystem` trait — supplies it so the registry never does
+    /// its own I/O. Pass `None` when there is no content to inspect (e.g.,
+    /// virtual buffers, unsaved files).
     pub fn from_path(
         path: &Path,
+        first_line: Option<&str>,
         registry: &GrammarRegistry,
         languages: &HashMap<String, LanguageConfig>,
     ) -> Self {
-        Self::from_path_with_fallback(path, registry, languages, None)
+        Self::from_path_with_fallback(path, first_line, registry, languages, None)
     }
 
     /// Like `from_path`, but also accepts an optional default language name
@@ -65,6 +73,7 @@ impl DetectedLanguage {
     /// The `default_language` must reference a key in the `languages` map.
     pub fn from_path_with_fallback(
         path: &Path,
+        first_line: Option<&str>,
         registry: &GrammarRegistry,
         languages: &HashMap<String, LanguageConfig>,
         default_language: Option<&str>,
@@ -82,7 +91,7 @@ impl DetectedLanguage {
             d
         };
 
-        if let Some(entry) = registry.find_by_path(path) {
+        if let Some(entry) = registry.find_by_path(path, first_line) {
             return override_name(Self::from_entry(entry, registry));
         }
 
@@ -147,7 +156,7 @@ impl DetectedLanguage {
             cleaned
         };
         registry
-            .find_by_path(Path::new(filename))
+            .find_by_path(Path::new(filename), None)
             .map(|entry| Self::from_entry(entry, registry))
             .unwrap_or_else(Self::plain_text)
     }

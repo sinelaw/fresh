@@ -97,9 +97,11 @@ impl Editor {
         if let Some(ref p) = path {
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 if state.language == "text" {
+                    let first_line = state.buffer.first_line_lossy();
                     let detected =
                         crate::primitives::detected_language::DetectedLanguage::from_path(
                             p,
+                            first_line.as_deref(),
                             &self.grammar_registry,
                             &self.config.languages,
                         );

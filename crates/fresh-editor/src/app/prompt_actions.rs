@@ -559,9 +559,11 @@ impl Editor {
                 let mut new_language = String::new();
                 if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
                     if state.language == "text" {
+                        let first_line = state.buffer.first_line_lossy();
                         let detected =
                             crate::primitives::detected_language::DetectedLanguage::from_path(
                                 &full_path,
+                                first_line.as_deref(),
                                 &self.grammar_registry,
                                 &self.config.languages,
                             );

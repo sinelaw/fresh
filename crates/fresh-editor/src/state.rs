@@ -355,8 +355,9 @@ impl EditorState {
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
         let buffer = Buffer::load_from_file(path, large_file_threshold, fs)?;
+        let first_line = buffer.first_line_lossy();
         let detected = registry
-            .find_by_path(path)
+            .find_by_path(path, first_line.as_deref())
             .map(|entry| DetectedLanguage::from_entry(entry, registry))
             .unwrap_or_else(DetectedLanguage::plain_text);
         let mut state = Self::new_from_buffer(buffer);
@@ -381,7 +382,9 @@ impl EditorState {
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
         let buffer = Buffer::load_from_file(path, large_file_threshold, fs)?;
-        let detected = DetectedLanguage::from_path(path, registry, languages);
+        let first_line = buffer.first_line_lossy();
+        let detected =
+            DetectedLanguage::from_path(path, first_line.as_deref(), registry, languages);
         let mut state = Self::new_from_buffer(buffer);
         state.apply_language(detected);
         Ok(state)

@@ -5076,9 +5076,11 @@ impl Editor {
 
                     for (buf_id, path) in buffers_to_update {
                         if let Some(state) = self.buffers.get_mut(&buf_id) {
+                            let first_line = state.buffer.first_line_lossy();
                             let detected =
                                 crate::primitives::detected_language::DetectedLanguage::from_path(
                                     &path,
+                                    first_line.as_deref(),
                                     &self.grammar_registry,
                                     &self.config.languages,
                                 );
