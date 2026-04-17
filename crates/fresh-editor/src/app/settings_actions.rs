@@ -96,10 +96,10 @@ impl Editor {
         };
 
         // Apply the new config
-        self.config = new_config.clone();
+        self.set_config(new_config.clone());
 
         // Refresh cached raw user config for plugins
-        self.user_config_raw = Config::read_user_config_raw(&self.working_dir);
+        self.set_user_config_raw(Config::read_user_config_raw(&self.working_dir));
 
         // Apply runtime changes
         if old_theme != self.config.theme {

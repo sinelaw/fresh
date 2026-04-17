@@ -470,12 +470,26 @@ impl Editor {
         // Cache raw user config at startup (to avoid re-reading file every frame)
         let user_config_raw = Config::read_user_config_raw(&working_dir);
 
+        // Wrap config in Arc and pre-seed the snapshot mirror + JSON cache.
+        // Doing this at construction means the strong count of the live
+        // `config` Arc starts at 2 and stays there: every `Arc::make_mut`
+        // call on `config` is forced to CoW, so no mutation path (direct or
+        // via `config_mut()`) can leave `config_cached_json` referring to
+        // stale memory.
+        let config_arc = Arc::new(config);
+        let config_cached_json = Arc::new(
+            serde_json::to_value(&*config_arc).unwrap_or(serde_json::Value::Null),
+        );
+        let config_snapshot_anchor = Arc::clone(&config_arc);
+
         let mut editor = Editor {
             buffers,
             event_logs,
             next_buffer_id: 2,
-            config,
-            user_config_raw,
+            config: config_arc,
+            config_snapshot_anchor,
+            config_cached_json,
+            user_config_raw: Arc::new(user_config_raw),
             dir_context: dir_context.clone(),
             grammar_registry,
             pending_grammars: scan_result
@@ -625,8 +639,8 @@ impl Editor {
             scheduled_inlay_hints_request: None,
             stored_push_diagnostics: HashMap::new(),
             stored_pull_diagnostics: HashMap::new(),
-            stored_diagnostics: HashMap::new(),
-            stored_folding_ranges: HashMap::new(),
+            stored_diagnostics: Arc::new(HashMap::new()),
+            stored_folding_ranges: Arc::new(HashMap::new()),
             event_broadcaster: crate::model::control_event::EventBroadcaster::default(),
             bookmarks: bookmarks::BookmarkState::default(),
             search_case_sensitive: true,

@@ -1730,7 +1730,9 @@ impl Editor {
             }),
             ..Default::default()
         };
-        self.config.languages.insert(language.clone(), lang_config);
+        self.config_mut()
+            .languages
+            .insert(language.clone(), lang_config);
         tracing::info!("Language config registered for '{}'", language);
     }
 
@@ -1766,7 +1768,7 @@ impl Editor {
             lsp.set_language_config(language.clone(), lsp_config.clone());
         }
         // Also update runtime config
-        self.config.lsp.insert(
+        self.config_mut().lsp.insert(
             language.clone(),
             crate::types::LspLanguageConfig::Multi(vec![lsp_config]),
         );
@@ -1822,7 +1824,11 @@ impl Editor {
                 ..
             } in &additional
             {
-                let lang_config = self.config.languages.entry(language.clone()).or_default();
+                let lang_config = self
+                    .config_mut()
+                    .languages
+                    .entry(language.clone())
+                    .or_default();
                 for ext in extensions {
                     if !lang_config.extensions.contains(ext) {
                         lang_config.extensions.push(ext.clone());
@@ -1923,7 +1929,11 @@ impl Editor {
             ..
         } in &additional
         {
-            let lang_config = self.config.languages.entry(language.clone()).or_default();
+            let lang_config = self
+                .config_mut()
+                .languages
+                .entry(language.clone())
+                .or_default();
             for ext in extensions {
                 if !lang_config.extensions.contains(ext) {
                     lang_config.extensions.push(ext.clone());

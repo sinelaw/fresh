@@ -678,19 +678,19 @@ impl Editor {
 
         // 1. Apply config overrides
         if let Some(line_numbers) = workspace.config_overrides.line_numbers {
-            self.config.editor.line_numbers = line_numbers;
+            self.config_mut().editor.line_numbers = line_numbers;
         }
         if let Some(relative_line_numbers) = workspace.config_overrides.relative_line_numbers {
-            self.config.editor.relative_line_numbers = relative_line_numbers;
+            self.config_mut().editor.relative_line_numbers = relative_line_numbers;
         }
         if let Some(line_wrap) = workspace.config_overrides.line_wrap {
-            self.config.editor.line_wrap = line_wrap;
+            self.config_mut().editor.line_wrap = line_wrap;
         }
         if let Some(syntax_highlighting) = workspace.config_overrides.syntax_highlighting {
-            self.config.editor.syntax_highlighting = syntax_highlighting;
+            self.config_mut().editor.syntax_highlighting = syntax_highlighting;
         }
         if let Some(enable_inlay_hints) = workspace.config_overrides.enable_inlay_hints {
-            self.config.editor.enable_inlay_hints = enable_inlay_hints;
+            self.config_mut().editor.enable_inlay_hints = enable_inlay_hints;
         }
         if let Some(mouse_enabled) = workspace.config_overrides.mouse_enabled {
             self.mouse_enabled = mouse_enabled;

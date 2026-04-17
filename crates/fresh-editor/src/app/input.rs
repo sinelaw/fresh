@@ -532,7 +532,8 @@ impl Editor {
                 self.start_quick_open();
             }
             Action::ToggleLineWrap => {
-                self.config.editor.line_wrap = !self.config.editor.line_wrap;
+                let new_value = !self.config.editor.line_wrap;
+                self.config_mut().editor.line_wrap = new_value;
 
                 // Update all viewports to reflect the new line wrap setting,
                 // respecting per-language overrides
@@ -559,8 +560,8 @@ impl Editor {
                 self.set_status_message(t!("view.line_wrap_state", state = state).to_string());
             }
             Action::ToggleCurrentLineHighlight => {
-                self.config.editor.highlight_current_line =
-                    !self.config.editor.highlight_current_line;
+                let new_value = !self.config.editor.highlight_current_line;
+                self.config_mut().editor.highlight_current_line = new_value;
 
                 // Update all splits
                 let leaf_ids: Vec<_> = self.split_view_states.keys().copied().collect();
@@ -925,7 +926,7 @@ impl Editor {
 
                 if is_builtin || is_user_defined {
                     // Update the active keybinding map in config
-                    self.config.active_keybinding_map = map_name.clone().into();
+                    self.config_mut().active_keybinding_map = map_name.clone().into();
 
                     // Reload the keybinding resolver with the new map
                     *self.keybindings.write().unwrap() =

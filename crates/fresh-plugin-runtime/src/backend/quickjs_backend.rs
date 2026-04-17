@@ -1639,27 +1639,32 @@ impl JsEditorApi {
 
     // === Config ===
 
-    /// Get current config as JS object
+    /// Get current config as JS object.
+    ///
+    /// The snapshot holds an `Arc<serde_json::Value>` that was serialized
+    /// on the editor side the last time the underlying `Arc<Config>`
+    /// changed. Cloning the Arc inside the read lock is a refcount bump;
+    /// the actual walk into the JS runtime happens outside the lock.
     pub fn get_config<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-        let config: serde_json::Value = self
+        let config = self
             .state_snapshot
             .read()
-            .map(|s| s.config.clone())
-            .unwrap_or_else(|_| serde_json::json!({}));
+            .map(|s| std::sync::Arc::clone(&s.config))
+            .unwrap_or_else(|_| std::sync::Arc::new(serde_json::json!({})));
 
-        rquickjs_serde::to_value(ctx, &config)
+        rquickjs_serde::to_value(ctx, &*config)
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
-    /// Get user config as JS object
+    /// Get user config as JS object. Same Arc-clone pattern as `get_config`.
     pub fn get_user_config<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-        let config: serde_json::Value = self
+        let config = self
             .state_snapshot
             .read()
-            .map(|s| s.user_config.clone())
-            .unwrap_or_else(|_| serde_json::json!({}));
+            .map(|s| std::sync::Arc::clone(&s.user_config))
+            .unwrap_or_else(|_| std::sync::Arc::new(serde_json::json!({})));
 
-        rquickjs_serde::to_value(ctx, &config)
+        rquickjs_serde::to_value(ctx, &*config)
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
@@ -3295,7 +3300,7 @@ impl JsEditorApi {
         let diagnostics = if let Ok(s) = self.state_snapshot.read() {
             // Convert to JsDiagnostic format for JS
             let mut result: Vec<JsDiagnostic> = Vec::new();
-            for (uri, diags) in &s.diagnostics {
+            for (uri, diags) in s.diagnostics.iter() {
                 for diag in diags {
                     result.push(JsDiagnostic {
                         uri: uri.clone(),

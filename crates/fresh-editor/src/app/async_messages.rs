@@ -111,9 +111,9 @@ impl Editor {
 
         // Update the merged view
         if merged.is_empty() {
-            self.stored_diagnostics.remove(uri);
+            self.stored_diagnostics_mut().remove(uri);
         } else {
-            self.stored_diagnostics
+            self.stored_diagnostics_mut()
                 .insert(uri.to_string(), merged.clone());
         }
 
@@ -366,9 +366,9 @@ impl Editor {
         }
 
         if ranges.is_empty() {
-            self.stored_folding_ranges.remove(&uri);
+            self.stored_folding_ranges_mut().remove(&uri);
         } else {
-            self.stored_folding_ranges.insert(uri.clone(), ranges);
+            self.stored_folding_ranges_mut().insert(uri.clone(), ranges);
         }
 
         if let Some(state) = self.buffers.get_mut(&request.buffer_id) {

@@ -669,7 +669,7 @@ impl Editor {
 
     /// Set terminal jump_to_end_on_output config option (for testing)
     pub fn set_terminal_jump_to_end_on_output(&mut self, value: bool) {
-        self.config.terminal.jump_to_end_on_output = value;
+        self.config_mut().terminal.jump_to_end_on_output = value;
     }
 
     /// Get read-only access to the terminal manager (for testing)

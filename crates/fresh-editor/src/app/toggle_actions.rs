@@ -124,7 +124,8 @@ impl Editor {
 
     /// Toggle vertical scrollbar visibility
     pub fn toggle_vertical_scrollbar(&mut self) {
-        self.config.editor.show_vertical_scrollbar = !self.config.editor.show_vertical_scrollbar;
+        let new_value = !self.config.editor.show_vertical_scrollbar;
+        self.config_mut().editor.show_vertical_scrollbar = new_value;
         let status = if self.config.editor.show_vertical_scrollbar {
             t!("toggle.vertical_scrollbar_shown")
         } else {
@@ -135,8 +136,8 @@ impl Editor {
 
     /// Toggle horizontal scrollbar visibility
     pub fn toggle_horizontal_scrollbar(&mut self) {
-        self.config.editor.show_horizontal_scrollbar =
-            !self.config.editor.show_horizontal_scrollbar;
+        let new_value = !self.config.editor.show_horizontal_scrollbar;
+        self.config_mut().editor.show_horizontal_scrollbar = new_value;
         let status = if self.config.editor.show_horizontal_scrollbar {
             t!("toggle.horizontal_scrollbar_shown")
         } else {
@@ -220,7 +221,8 @@ impl Editor {
     /// On Windows, this also switches the mouse tracking mode: mode 1003
     /// (all motion) when enabled, mode 1002 (cell motion) when disabled.
     pub fn toggle_mouse_hover(&mut self) {
-        self.config.editor.mouse_hover_enabled = !self.config.editor.mouse_hover_enabled;
+        let new_value = !self.config.editor.mouse_hover_enabled;
+        self.config_mut().editor.mouse_hover_enabled = new_value;
 
         if self.config.editor.mouse_hover_enabled {
             self.set_status_message(t!("toggle.mouse_hover_enabled").to_string());
@@ -261,7 +263,8 @@ impl Editor {
 
     /// Toggle inlay hints visibility
     pub fn toggle_inlay_hints(&mut self) {
-        self.config.editor.enable_inlay_hints = !self.config.editor.enable_inlay_hints;
+        let new_value = !self.config.editor.enable_inlay_hints;
+        self.config_mut().editor.enable_inlay_hints = new_value;
 
         if self.config.editor.enable_inlay_hints {
             // Re-request inlay hints for the active buffer
@@ -344,10 +347,13 @@ impl Editor {
     /// Uses the layered config system to properly merge with defaults.
     pub fn reload_config(&mut self) {
         let old_theme = self.config.theme.clone();
-        self.config = Config::load_with_layers(&self.dir_context, &self.working_dir);
+        self.set_config(Config::load_with_layers(
+            &self.dir_context,
+            &self.working_dir,
+        ));
 
         // Refresh cached raw user config for plugins
-        self.user_config_raw = Config::read_user_config_raw(&self.working_dir);
+        self.set_user_config_raw(Config::read_user_config_raw(&self.working_dir));
 
         // Apply theme change if needed
         if old_theme != self.config.theme {

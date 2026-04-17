@@ -819,11 +819,11 @@ impl Editor {
             .map(|u| u.as_str().to_string());
 
         if let Some(uri_str) = uri {
-            self.stored_diagnostics.remove(&uri_str);
+            self.stored_diagnostics_mut().remove(&uri_str);
             self.stored_push_diagnostics.remove(&uri_str);
             self.stored_pull_diagnostics.remove(&uri_str);
             self.diagnostic_result_ids.remove(&uri_str);
-            self.stored_folding_ranges.remove(&uri_str);
+            self.stored_folding_ranges_mut().remove(&uri_str);
         }
 
         // Cancel scheduled diagnostic pull if it targets this buffer

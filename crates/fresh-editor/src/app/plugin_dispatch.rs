@@ -217,18 +217,32 @@ impl Editor {
             // Update working directory (for spawning processes in correct directory)
             snapshot.working_dir = self.working_dir.clone();
 
-            // Update LSP diagnostics
-            snapshot.diagnostics = self.stored_diagnostics.clone();
+            // Update LSP diagnostics: Arc refcount bump; no clone.
+            snapshot.diagnostics = Arc::clone(&self.stored_diagnostics);
 
-            // Update LSP folding ranges
-            snapshot.folding_ranges = self.stored_folding_ranges.clone();
+            // Update LSP folding ranges: Arc refcount bump; no clone.
+            snapshot.folding_ranges = Arc::clone(&self.stored_folding_ranges);
 
-            // Update config (serialize the runtime config for plugins)
-            snapshot.config = serde_json::to_value(&self.config).unwrap_or(serde_json::Value::Null);
+            // Update config. Reserialize only when the underlying
+            // `Arc<Config>` pointer has actually moved since the last
+            // refresh — `Arc::ptr_eq` vs `config_snapshot_anchor` is a
+            // sound cache key because the anchor keeps `self.config`'s
+            // strong count at ≥ 2, forcing every `Arc::make_mut` on the
+            // editor side to CoW into a new allocation. On idle (no
+            // config mutation), this branch is skipped entirely and the
+            // snapshot update is a refcount bump.
+            if !Arc::ptr_eq(&self.config, &self.config_snapshot_anchor) {
+                let json = serde_json::to_value(&*self.config)
+                    .unwrap_or(serde_json::Value::Null);
+                self.config_cached_json = Arc::new(json);
+                self.config_snapshot_anchor = Arc::clone(&self.config);
+            }
+            snapshot.config = Arc::clone(&self.config_cached_json);
 
-            // Update user config (cached raw file contents, not merged with defaults)
-            // This allows plugins to distinguish between user-set and default values
-            snapshot.user_config = self.user_config_raw.clone();
+            // Update user config (cached raw file contents, not merged with defaults).
+            // This allows plugins to distinguish between user-set and default values.
+            // Arc refcount bump; no clone.
+            snapshot.user_config = Arc::clone(&self.user_config_raw);
 
             // Update editor mode (for vi mode and other modal editing)
             snapshot.editor_mode = self.editor_mode.clone();
@@ -1463,7 +1477,7 @@ impl Editor {
                 }
 
                 // 2. Update the config to disable the language
-                if let Some(lsp_configs) = self.config.lsp.get_mut(&language) {
+                if let Some(lsp_configs) = self.config_mut().lsp.get_mut(&language) {
                     for c in lsp_configs.as_mut_slice() {
                         c.enabled = false;
                         c.auto_start = false;

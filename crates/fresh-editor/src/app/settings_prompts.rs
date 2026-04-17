@@ -414,7 +414,7 @@ impl Editor {
                     .resolve_key(key_or_name)
                     .unwrap_or(key_or_name)
                     .to_string();
-                self.config.theme = resolved.into();
+                self.config_mut().theme = resolved.into();
 
                 // Persist to config file
                 self.save_theme_to_config();
@@ -600,7 +600,7 @@ impl Editor {
 
         if is_builtin || is_user_defined {
             // Update the active keybinding map in config
-            self.config.active_keybinding_map = map_name.to_string().into();
+            self.config_mut().active_keybinding_map = map_name.to_string().into();
 
             // Reload the keybinding resolver with the new map
             *self.keybindings.write().unwrap() =
@@ -685,7 +685,7 @@ impl Editor {
 
         if let Some(style) = CursorStyle::parse(style_name) {
             // Update the config in memory
-            self.config.editor.cursor_style = style;
+            self.config_mut().editor.cursor_style = style;
 
             // Apply the cursor style to the terminal
             if self.session_mode {
@@ -843,7 +843,7 @@ impl Editor {
             crate::i18n::set_locale(locale_name);
 
             // Update the config in memory
-            self.config.locale = crate::config::LocaleName(Some(locale_name.to_string()));
+            self.config_mut().locale = crate::config::LocaleName(Some(locale_name.to_string()));
 
             // Regenerate menus with the new locale
             self.menus = crate::config::MenuConfig::translated();

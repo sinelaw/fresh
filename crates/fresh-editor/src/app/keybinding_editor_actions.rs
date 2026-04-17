@@ -64,7 +64,7 @@ impl Editor {
 
         // Remove deleted custom bindings from config
         for remove in editor.get_pending_removes() {
-            self.config.keybindings.retain(|kb| {
+            self.config_mut().keybindings.retain(|kb| {
                 !(kb.action == remove.action
                     && kb.key == remove.key
                     && kb.modifiers == remove.modifiers
@@ -75,7 +75,7 @@ impl Editor {
         // Add new custom bindings
         let new_bindings = editor.get_custom_bindings();
         for binding in new_bindings {
-            self.config.keybindings.push(binding);
+            self.config_mut().keybindings.push(binding);
         }
 
         // Rebuild the keybinding resolver

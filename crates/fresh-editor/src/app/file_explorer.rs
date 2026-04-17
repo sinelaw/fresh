@@ -797,7 +797,7 @@ impl Editor {
         self.set_status_message(msg.to_string());
 
         // Persist to config so the setting survives across sessions
-        self.config.file_explorer.show_hidden = show_hidden;
+        self.config_mut().file_explorer.show_hidden = show_hidden;
         self.persist_config_change(
             "/file_explorer/show_hidden",
             serde_json::Value::Bool(show_hidden),
@@ -820,7 +820,7 @@ impl Editor {
         self.set_status_message(msg.to_string());
 
         // Persist to config so the setting survives across sessions
-        self.config.file_explorer.show_gitignored = show_gitignored;
+        self.config_mut().file_explorer.show_gitignored = show_gitignored;
         self.persist_config_change(
             "/file_explorer/show_gitignored",
             serde_json::Value::Bool(show_gitignored),

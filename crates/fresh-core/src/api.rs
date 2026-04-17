@@ -750,22 +750,47 @@ pub struct EditorStateSnapshot {
     pub clipboard: String,
     /// Editor's working directory (for file operations and spawning processes)
     pub working_dir: PathBuf,
-    /// LSP diagnostics per file URI
-    /// Maps file URI string to Vec of diagnostics for that file
+    /// LSP diagnostics per file URI.
+    /// Maps file URI string to Vec of diagnostics for that file.
+    ///
+    /// Wrapped in `Arc` so snapshot refresh is a refcount bump rather than
+    /// a deep clone. The editor only mutates its own map through
+    /// `Arc::make_mut`, which CoW-clones while this snapshot still holds
+    /// a reference — a reader can never observe an in-place mutation.
+    ///
+    /// `#[serde(skip)]`: serde out-of-the-box can't serialize `Arc<T>`
+    /// (behind the `rc` cargo feature we don't enable). We never serialize
+    /// the snapshot as a whole — plugin readers pull out these Arcs and
+    /// serialize the *inner* value directly (e.g. `get_all_diagnostics`).
+    #[serde(skip)]
     #[ts(type = "any")]
-    pub diagnostics: HashMap<String, Vec<lsp_types::Diagnostic>>,
-    /// LSP folding ranges per file URI
-    /// Maps file URI string to Vec of folding ranges for that file
+    pub diagnostics: Arc<HashMap<String, Vec<lsp_types::Diagnostic>>>,
+    /// LSP folding ranges per file URI.
+    /// Maps file URI string to Vec of folding ranges for that file.
+    /// Arc-wrapped for the same CoW invariant as `diagnostics`; see that
+    /// field for why this is `#[serde(skip)]`.
+    #[serde(skip)]
     #[ts(type = "any")]
-    pub folding_ranges: HashMap<String, Vec<lsp_types::FoldingRange>>,
-    /// Runtime config as serde_json::Value (merged user config + defaults)
-    /// This is the runtime config, not just the user's config file
+    pub folding_ranges: Arc<HashMap<String, Vec<lsp_types::FoldingRange>>>,
+    /// Runtime config as serde_json::Value (merged user config + defaults).
+    /// This is the runtime config, not just the user's config file.
+    ///
+    /// Wrapped in `Arc` so the snapshot update is a refcount bump. The
+    /// editor reserializes its source `Config` only when the underlying
+    /// `Arc<Config>` pointer has moved (i.e., after a real mutation), and
+    /// swaps the whole `Arc<Value>` atomically — callers never see a
+    /// partially-updated blob. `#[serde(skip)]` for the same reason as
+    /// `diagnostics`.
+    #[serde(skip)]
     #[ts(type = "any")]
-    pub config: serde_json::Value,
-    /// User config as serde_json::Value (only what's in the user's config file)
-    /// Fields not present here are using default values
+    pub config: Arc<serde_json::Value>,
+    /// User config as serde_json::Value (only what's in the user's config file).
+    /// Fields not present here are using default values.
+    /// Arc-wrapped; swapped as a whole when the user's file is reloaded.
+    /// `#[serde(skip)]` for the same reason as `diagnostics`.
+    #[serde(skip)]
     #[ts(type = "any")]
-    pub user_config: serde_json::Value,
+    pub user_config: Arc<serde_json::Value>,
     /// Available grammars with provenance info, updated when grammar registry changes
     #[ts(type = "GrammarInfo[]")]
     pub available_grammars: Vec<GrammarInfoSnapshot>,
@@ -816,10 +841,10 @@ impl EditorStateSnapshot {
             selected_text: None,
             clipboard: String::new(),
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            diagnostics: HashMap::new(),
-            folding_ranges: HashMap::new(),
-            config: serde_json::Value::Null,
-            user_config: serde_json::Value::Null,
+            diagnostics: Arc::new(HashMap::new()),
+            folding_ranges: Arc::new(HashMap::new()),
+            config: Arc::new(serde_json::Value::Null),
+            user_config: Arc::new(serde_json::Value::Null),
             available_grammars: Vec::new(),
             editor_mode: None,
             plugin_view_states: HashMap::new(),

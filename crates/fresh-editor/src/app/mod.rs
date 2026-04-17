@@ -303,11 +303,51 @@ pub struct Editor {
     /// Next buffer ID to assign
     next_buffer_id: usize,
 
-    /// Configuration
-    config: Config,
+    /// Configuration.
+    ///
+    /// Stored as `Arc<Config>` so that mutations go through `Arc::make_mut`
+    /// (via `config_mut()`), which clone-on-writes when any other holder
+    /// references the same value. `Arc<T>` has no `DerefMut`, so direct
+    /// field assignment through `self.config` is a compile error — every
+    /// mutation must route through the CoW-aware accessor.
+    ///
+    /// **Freshness invariant**: `config_snapshot_anchor` below is set to
+    /// `Arc::clone(&self.config)` on every plugin-snapshot refresh. That
+    /// guarantees the first `Arc::make_mut(&mut self.config)` after each
+    /// refresh *always* CoW-clones (strong count ≥ 2), so `self.config`
+    /// moves to a new pointer and stops being `ptr_eq` with the anchor.
+    /// Subsequent mutations in the same refresh cycle may mutate the new
+    /// pointer in place, but the anchor still points at the *pre-refresh*
+    /// value — so the next refresh's `ptr_eq(self.config, anchor)` check
+    /// still detects that serialization is out of date. In no scenario
+    /// can `config_cached_json` go stale relative to `*self.config`.
+    config: Arc<Config>,
 
-    /// Cached raw user config (for plugins, avoids re-reading file on every frame)
-    user_config_raw: serde_json::Value,
+    /// Clone of `config` captured at the last plugin-snapshot refresh.
+    /// The only writer is `update_plugin_state_snapshot` (see
+    /// `plugin_dispatch.rs`), which keeps it in lock-step with
+    /// `config_cached_json`. Two roles:
+    ///
+    /// 1. Forces the first post-refresh `Arc::make_mut` on `self.config`
+    ///    to CoW, so any mutation produces a new pointer distinguishable
+    ///    by `Arc::ptr_eq` from the anchor.
+    /// 2. Acts as the cache key for `config_cached_json`:
+    ///    `Arc::ptr_eq(&self.config, &self.config_snapshot_anchor)` is
+    ///    true iff the cached JSON is still valid.
+    config_snapshot_anchor: Arc<Config>,
+
+    /// Serialized JSON of `*self.config` as of the last time
+    /// `ptr_eq(&self.config, &self.config_snapshot_anchor)` was false.
+    /// This is the value the plugin snapshot hands to `getConfig()`.
+    /// Recomputed only when the config pointer actually moves, so idle
+    /// ticks do zero serialization work.
+    config_cached_json: Arc<serde_json::Value>,
+
+    /// Cached raw user config (for plugins, avoids re-reading file on every frame).
+    /// Wrapped in `Arc` so the plugin snapshot refresh is a refcount bump
+    /// and mutation is funneled through `set_user_config_raw()`, which
+    /// replaces the whole `Arc`.
+    user_config_raw: Arc<serde_json::Value>,
 
     /// Directory context for editor state paths
     dir_context: DirectoryContext,
@@ -749,12 +789,15 @@ pub struct Editor {
     /// Stored LSP diagnostics per URI (pull model - native RA diagnostics)
     stored_pull_diagnostics: HashMap<String, Vec<lsp_types::Diagnostic>>,
 
-    /// Merged view of push + pull diagnostics per URI (for plugin access)
-    stored_diagnostics: HashMap<String, Vec<lsp_types::Diagnostic>>,
+    /// Merged view of push + pull diagnostics per URI (for plugin access).
+    /// `Arc` wrapper: snapshot refresh is a refcount bump, and mutation is
+    /// forced through `Arc::make_mut` which CoW-clones while the snapshot
+    /// still references the previous map.
+    stored_diagnostics: Arc<HashMap<String, Vec<lsp_types::Diagnostic>>>,
 
     /// Stored LSP folding ranges per URI
     /// Maps file URI string to Vec of folding ranges for that file
-    stored_folding_ranges: HashMap<String, Vec<lsp_types::FoldingRange>>,
+    stored_folding_ranges: Arc<HashMap<String, Vec<lsp_types::FoldingRange>>>,
 
     /// Event broadcaster for control events (observable by external systems)
     event_broadcaster: crate::model::control_event::EventBroadcaster,

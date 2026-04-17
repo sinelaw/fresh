@@ -24,11 +24,47 @@ impl Editor {
     }
 
     /// Get a mutable reference to the config.
-    /// Intended for tests and in-process settings UIs that update the
-    /// live editor configuration. Not all config fields take effect
-    /// immediately — some are read only at startup or on buffer open.
+    ///
+    /// Routes through `Arc::make_mut`: if the plugin state snapshot (or any
+    /// other reader) still holds an `Arc` to the current value, this
+    /// CoW-clones so existing readers observe a stable value and the next
+    /// snapshot refresh sees a new pointer. `Arc<T>` has no `DerefMut`, so
+    /// the only way to mutate through `self.config` is via this accessor —
+    /// there is no code path that can silently leave a reader with stale
+    /// data.
     pub fn config_mut(&mut self) -> &mut Config {
-        &mut self.config
+        Arc::make_mut(&mut self.config)
+    }
+
+    /// Replace the config wholesale. Used by the "reload config" path and
+    /// by tests that want to swap in a freshly-parsed file. Constructs a
+    /// fresh `Arc`, so any snapshot that still holds the old value sees
+    /// the pointer move and will reserialize on the next refresh.
+    pub fn set_config(&mut self, new_config: Config) {
+        self.config = Arc::new(new_config);
+    }
+
+    /// Replace the cached raw user config. Like `set_config`, constructs
+    /// a fresh `Arc` so the plugin snapshot notices the change.
+    pub(crate) fn set_user_config_raw(&mut self, value: serde_json::Value) {
+        self.user_config_raw = Arc::new(value);
+    }
+
+    /// Mutable access to the merged diagnostics map. Routes through
+    /// `Arc::make_mut`, which CoW-clones while the plugin snapshot still
+    /// holds the old map — readers never observe an in-place mutation.
+    pub(crate) fn stored_diagnostics_mut(
+        &mut self,
+    ) -> &mut HashMap<String, Vec<lsp_types::Diagnostic>> {
+        Arc::make_mut(&mut self.stored_diagnostics)
+    }
+
+    /// Mutable access to the folding-ranges map. CoW-clones through
+    /// `Arc::make_mut` for the same reason as `stored_diagnostics_mut`.
+    pub(crate) fn stored_folding_ranges_mut(
+        &mut self,
+    ) -> &mut HashMap<String, Vec<lsp_types::FoldingRange>> {
+        Arc::make_mut(&mut self.stored_folding_ranges)
     }
 
     /// Get a reference to the key translator (for input calibration)
