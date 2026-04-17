@@ -51,6 +51,7 @@ pub mod issue_1573_format_buffer;
 pub mod issue_1574_compose_scroll;
 pub mod issue_1574_wrapped_down_scroll;
 pub mod issue_1577_unicode_width;
+pub mod issue_1598_shebang_detection;
 
 pub mod keybinding_editor;
 pub mod language_features_e2e;
