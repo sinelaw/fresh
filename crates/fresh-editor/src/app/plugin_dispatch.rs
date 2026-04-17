@@ -232,8 +232,7 @@ impl Editor {
             // config mutation), this branch is skipped entirely and the
             // snapshot update is a refcount bump.
             if !Arc::ptr_eq(&self.config, &self.config_snapshot_anchor) {
-                let json = serde_json::to_value(&*self.config)
-                    .unwrap_or(serde_json::Value::Null);
+                let json = serde_json::to_value(&*self.config).unwrap_or(serde_json::Value::Null);
                 self.config_cached_json = Arc::new(json);
                 self.config_snapshot_anchor = Arc::clone(&self.config);
             }

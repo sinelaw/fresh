@@ -477,9 +477,8 @@ impl Editor {
         // via `config_mut()`) can leave `config_cached_json` referring to
         // stale memory.
         let config_arc = Arc::new(config);
-        let config_cached_json = Arc::new(
-            serde_json::to_value(&*config_arc).unwrap_or(serde_json::Value::Null),
-        );
+        let config_cached_json =
+            Arc::new(serde_json::to_value(&*config_arc).unwrap_or(serde_json::Value::Null));
         let config_snapshot_anchor = Arc::clone(&config_arc);
 
         let mut editor = Editor {
