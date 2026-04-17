@@ -4,12 +4,12 @@
 //! Free fns: `build_write_recipe`, save-to-disk helpers that only
 //! need `&dyn FileSystem` + local arguments.
 
+use super::file_kind::BufferFileKind;
+use super::format::{self, BufferFormat};
+use super::persistence::Persistence;
 use crate::model::encoding::Encoding;
 use crate::model::filesystem::{FileMetadata, FileSystem, FileWriter, WriteOp};
 use crate::model::piece_tree::{BufferData, BufferLocation, PieceTree, StringBuffer};
-use super::format::{self, BufferFormat};
-use super::file_kind::BufferFileKind;
-use super::persistence::Persistence;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -156,16 +156,15 @@ pub(super) fn build_write_recipe(
     // For example: UTF-8 BOM files are stored as UTF-8, so we need to add BOM on save
     let needs_encoding_conversion = !file_kind.is_binary()
         && (format.encoding_changed_since_load()
-            || !matches!(
-                format.encoding(),
-                Encoding::Utf8 | Encoding::Ascii
-            ));
+            || !matches!(format.encoding(), Encoding::Utf8 | Encoding::Ascii));
     let needs_conversion = needs_line_ending_conversion || needs_encoding_conversion;
 
     let src_path_for_copy: Option<&Path> = if needs_conversion {
         None
     } else {
-        persistence.file_path().filter(|p| persistence.fs().exists(p))
+        persistence
+            .file_path()
+            .filter(|p| persistence.fs().exists(p))
     };
     let target_ending = format.line_ending();
     let target_encoding = format.encoding();

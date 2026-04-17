@@ -329,12 +329,8 @@ impl Persistence {
                 continue;
             }
 
-            let saved_slice = extract_range_from_tree(
-                &self.saved_root,
-                range.start,
-                range.end,
-                buffers,
-            );
+            let saved_slice =
+                extract_range_from_tree(&self.saved_root, range.start, range.end, buffers);
             let current_slice = get_text_range(piece_tree, buffers, range.start, range.len());
 
             match (saved_slice, current_slice) {
@@ -396,7 +392,14 @@ fn collect_range_from_node(
             let left_end = node_offset + left_bytes;
 
             if range_start < left_end {
-                collect_range_from_node(left, range_start, range_end, node_offset, buffers, result)?;
+                collect_range_from_node(
+                    left,
+                    range_start,
+                    range_end,
+                    node_offset,
+                    buffers,
+                    result,
+                )?;
             }
 
             if range_end > left_end {

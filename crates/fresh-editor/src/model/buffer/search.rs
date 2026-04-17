@@ -3,7 +3,6 @@
 /// - `ChunkedSearchState` — mutable state for incremental chunked search
 /// - `HybridSearchPlan` + `SearchRegion` — plan for hybrid (unloaded + loaded) search
 /// - `search_boundary_overlap` — overlap-zone regex matching across region boundaries
-
 use crate::model::filesystem::{FileSearchCursor, FileSearchOptions, FileSystem, SearchMatch};
 use regex::bytes::Regex;
 use std::io;

@@ -1,9 +1,7 @@
 /// Text buffer that uses PieceTree with integrated line tracking
 /// Architecture where the tree is the single source of truth for text and line information
 use crate::model::encoding;
-use crate::model::filesystem::{
-    FileSearchOptions, FileSystem,
-};
+use crate::model::filesystem::{FileSearchOptions, FileSystem};
 use crate::model::piece_tree::{
     BufferData, BufferLocation, Cursor, PieceInfo, PieceRangeIter, PieceTree, PieceView, Position,
     StringBuffer, TreeStats,
@@ -30,13 +28,12 @@ pub use file_kind::BufferFileKind;
 pub use format::{BufferFormat, LineEnding};
 pub use persistence::Persistence;
 pub use save::SudoSaveRequired;
-pub use search::{ChunkedSearchState, HybridSearchPlan};
-use search::SearchRegion;
-#[cfg(test)]
-use search::search_boundary_overlap;
 #[cfg(test)]
 pub(crate) use save::{RecipeAction, WriteRecipe};
-
+#[cfg(test)]
+use search::search_boundary_overlap;
+use search::SearchRegion;
+pub use search::{ChunkedSearchState, HybridSearchPlan};
 
 /// Error returned when a large file has a non-resynchronizable encoding
 /// and requires user confirmation before loading the entire file into memory.
@@ -112,8 +109,6 @@ impl Default for BufferConfig {
 
 /// Line ending format used in the file
 
-
-
 /// Represents a line number (simplified for new implementation)
 /// Legacy enum kept for backwards compatibility - always Absolute now
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,7 +181,6 @@ pub struct TextBuffer {
     /// Buffer configuration (estimated line length, etc.)
     config: BufferConfig,
 }
-
 
 /// Snapshot of a TextBuffer's piece tree and associated string buffers.
 ///
@@ -659,9 +653,6 @@ impl TextBuffer {
         )
     }
 
-
-
-
     /// Save the buffer to a specific file
     ///
     /// Uses the write recipe approach for both local and remote filesystems:
@@ -728,7 +719,11 @@ impl TextBuffer {
                     save::write_recipe_to_file(fs, &mut temp_file, &recipe)?;
                     temp_file.sync_all()?;
                     drop(temp_file);
-                    return Err(save::make_sudo_error(temp_path, dest_path, original_metadata));
+                    return Err(save::make_sudo_error(
+                        temp_path,
+                        dest_path,
+                        original_metadata,
+                    ));
                 }
                 return Err(e.into());
             }
@@ -741,10 +736,6 @@ impl TextBuffer {
         self.finalize_save(dest_path)?;
         Ok(())
     }
-
-
-
-
 
     /// Finalize save state after successful write.
     fn finalize_save(&mut self, dest_path: &Path) -> anyhow::Result<()> {
@@ -853,7 +844,6 @@ impl TextBuffer {
             );
         }
     }
-
 
     /// Get the total number of bytes in the document
     pub fn total_bytes(&self) -> usize {
@@ -1987,7 +1977,14 @@ impl TextBuffer {
                 return Ok(state.matches);
             }
         };
-        plan.execute(&**self.persistence.fs(), pattern, opts, &regex, max_matches, query_len)
+        plan.execute(
+            &**self.persistence.fs(),
+            pattern,
+            opts,
+            &regex,
+            max_matches,
+            query_len,
+        )
     }
 
     /// Count `\n` bytes in a single leaf.
@@ -2015,9 +2012,11 @@ impl TextBuffer {
                 ..
             } => {
                 let read_offset = *file_offset as u64 + leaf.offset as u64;
-                self.persistence
-                    .fs()
-                    .count_line_feeds_in_range(file_path, read_offset, leaf.bytes)?
+                self.persistence.fs().count_line_feeds_in_range(
+                    file_path,
+                    read_offset,
+                    leaf.bytes,
+                )?
             }
         };
         Ok(count)
@@ -3402,7 +3401,6 @@ impl<'a> Iterator for OverlappingChunks<'a> {
         })
     }
 }
-
 
 #[cfg(test)]
 mod tests;
