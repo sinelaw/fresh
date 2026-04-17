@@ -184,7 +184,7 @@ pub(super) fn build_write_recipe(
         let buffer = buffers.get(buffer_id).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                std::format!("Buffer {} not found", buffer_id),
+                format!("Buffer {} not found", buffer_id),
             )
         })?;
 
