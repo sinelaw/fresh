@@ -1129,11 +1129,16 @@ interface EditorAPI {
 	*/
 	getTempDir(): string;
 	/**
-	* Get current config as JS object
+	* Get current config as JS object.
+	* 
+	* The snapshot holds an `Arc<serde_json::Value>` that was serialized
+	* on the editor side the last time the underlying `Arc<Config>`
+	* changed. Cloning the Arc inside the read lock is a refcount bump;
+	* the actual walk into the JS runtime happens outside the lock.
 	*/
 	getConfig(): unknown;
 	/**
-	* Get user config as JS object
+	* Get user config as JS object. Same Arc-clone pattern as `get_config`.
 	*/
 	getUserConfig(): unknown;
 	/**
