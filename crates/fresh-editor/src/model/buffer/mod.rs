@@ -2,7 +2,7 @@
 /// Architecture where the tree is the single source of truth for text and line information
 use crate::model::encoding;
 use crate::model::filesystem::{
-    FileSearchCursor, FileSearchOptions, FileSystem,
+    FileSearchOptions, FileSystem,
 };
 use crate::model::piece_tree::{
     BufferData, BufferLocation, Cursor, PieceInfo, PieceRangeIter, PieceTree, PieceView, Position,
@@ -31,7 +31,9 @@ pub use format::{BufferFormat, LineEnding};
 pub use persistence::Persistence;
 pub use save::SudoSaveRequired;
 pub use search::{ChunkedSearchState, HybridSearchPlan};
-use search::{SearchRegion, search_boundary_overlap};
+use search::SearchRegion;
+#[cfg(test)]
+use search::search_boundary_overlap;
 #[cfg(test)]
 pub(crate) use save::{RecipeAction, WriteRecipe};
 
