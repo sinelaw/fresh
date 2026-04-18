@@ -163,23 +163,20 @@ pub fn editor_tick(
 pub(crate) use path_utils::normalize_path;
 
 use self::types::{
-    CachedLayout, EventLineInfo, InteractiveReplaceState, LspMessageEntry, LspProgressInfo,
-    MouseState, SearchState, TabContextMenu, DEFAULT_BACKGROUND_FILE,
+    CachedLayout, InteractiveReplaceState, LspMessageEntry, LspProgressInfo, MouseState,
+    SearchState, TabContextMenu, DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
-use crate::config_io::{ConfigLayer, ConfigResolver, DirectoryContext};
-use crate::input::actions::action_to_events as convert_action_to_events;
+use crate::config_io::DirectoryContext;
 use crate::input::buffer_mode::ModeRegistry;
 use crate::input::command_registry::CommandRegistry;
-use crate::input::commands::Suggestion;
 use crate::input::keybindings::{Action, KeyContext, KeybindingResolver};
 use crate::input::position_history::PositionHistory;
 use crate::input::quick_open::{
-    BufferInfo, BufferProvider, CommandProvider, FileProvider, GotoLineProvider, QuickOpenContext,
-    QuickOpenRegistry,
+    BufferProvider, CommandProvider, FileProvider, GotoLineProvider, QuickOpenRegistry,
 };
 use crate::model::cursor::Cursors;
-use crate::model::event::{Event, EventLog, LeafId, SplitDirection, SplitId};
+use crate::model::event::{Event, EventLog, LeafId, SplitDirection};
 use crate::model::filesystem::FileSystem;
 use crate::services::async_bridge::{AsyncBridge, AsyncMessage};
 use crate::services::fs::FsManager;
@@ -197,12 +194,6 @@ use crate::view::ui::{
     FileExplorerRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
 };
 use crossterm::event::{KeyCode, KeyModifiers};
-#[cfg(feature = "plugins")]
-use fresh_core::api::BufferSavedDiff;
-#[cfg(feature = "plugins")]
-use fresh_core::api::JsCallbackId;
-use fresh_core::api::PluginCommand;
-use lsp_types::{Position, Range as LspRange, TextDocumentContentChangeEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     Frame,
@@ -1286,6 +1277,7 @@ fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lsp_types::{Position, Range as LspRange, TextDocumentContentChangeEvent};
     use tempfile::TempDir;
 
     /// Create a test DirectoryContext with temp directories

@@ -9,8 +9,6 @@
 //!   anchor.
 
 use crate::model::event::{BufferId, LeafId, SplitId};
-use crate::view::folding::CollapsedFoldLineRange;
-use crate::view::split::SplitViewState;
 
 use super::Editor;
 

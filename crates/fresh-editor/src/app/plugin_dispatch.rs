@@ -11,16 +11,13 @@
 //!   lifecycle management, and view-control commands callable from
 //!   plugin code.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
 
 use fresh_core::api::{BufferSavedDiff, JsCallbackId, PluginCommand};
 
-use crate::input::keybindings::Action;
-use crate::model::event::{BufferId, Event, LeafId, SplitId};
+use crate::model::event::{BufferId, LeafId, SplitId};
 use crate::services::async_bridge::AsyncMessage;
 use crate::view::split::SplitViewState;
 

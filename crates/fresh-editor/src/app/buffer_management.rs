@@ -8,20 +8,15 @@
 //! - Navigate back/forward in position history
 //! - Buffer state persistence
 
-use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
-use crate::app::warning_domains::WarningDomain;
 use crate::model::event::{BufferId, Event, LeafId};
 use crate::state::EditorState;
-use crate::view::prompt::PromptType;
-use crate::view::split::SplitViewState;
 
 use super::buffer_config_resolve;
-use super::help;
 use super::Editor;
 
 impl Editor {

@@ -16,9 +16,7 @@
 //! handle_recenter_event. And a small invalidate_layouts_for_buffer
 //! helper.
 
-use anyhow::Result as AnyhowResult;
-
-use lsp_types::{Position, Range as LspRange, TextDocumentContentChangeEvent};
+use lsp_types::TextDocumentContentChangeEvent;
 
 use crate::model::event::{BufferId, Event, LeafId};
 

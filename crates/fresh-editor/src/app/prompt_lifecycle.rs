@@ -7,12 +7,10 @@
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 use crate::input::command_registry::CommandRegistry;
 use crate::input::commands::Suggestion;
-use crate::input::input_history::InputHistory;
 use crate::input::keybindings::KeyContext;
 use crate::input::quick_open::{BufferInfo, QuickOpenContext};
 use crate::services::async_bridge::AsyncMessage;

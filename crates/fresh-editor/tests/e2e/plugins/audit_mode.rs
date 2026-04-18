@@ -2658,14 +2658,11 @@ fn test_review_diff_new_symlink() {
         screen
     );
 
-    // Navigate to find symlink and regular file
-    let mut found_symlink = false;
+    // Navigate to find the regular file. Symlinks may or may not show (git
+    // may list them as regular files); the key assertion is no errors.
     let mut found_newfile = false;
     for _ in 0..10 {
         let s = harness.screen_to_string();
-        if s.contains("link_to_main") {
-            found_symlink = true;
-        }
         if s.contains("newfile.txt") {
             found_newfile = true;
         }
@@ -2673,14 +2670,11 @@ fn test_review_diff_new_symlink() {
         harness.render().unwrap();
     }
 
-    // Both should appear in the untracked section
     assert!(
         found_newfile,
         "Should find newfile.txt in review diff. Final screen:\n{}",
         harness.screen_to_string()
     );
-    // Symlink may or may not show (git may list it as a regular file)
-    // The key assertion is no errors occurred
 }
 
 /// Test that staged type changes (file replaced with directory) are handled.

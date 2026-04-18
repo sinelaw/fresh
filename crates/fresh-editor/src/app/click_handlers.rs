@@ -14,8 +14,7 @@
 use anyhow::Result as AnyhowResult;
 
 use crate::input::keybindings::Action;
-use crate::model::cursor::SelectionMode;
-use crate::model::event::{BufferId, Event, LeafId};
+use crate::model::event::{BufferId, LeafId};
 use crate::services::plugins::hooks::HookArgs;
 
 use super::Editor;

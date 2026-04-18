@@ -8,7 +8,7 @@
 
 use fresh::services::remote::{
     spawn_local_agent_transport, spawn_reconnect_task_with, AgentChannel, AgentResponse,
-    ReconnectConfig, SshError,
+    ReconnectConfig,
 };
 use std::sync::Arc;
 use std::time::Duration;

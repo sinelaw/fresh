@@ -5,7 +5,6 @@
 //! initialization/errors, plugin commands, filesystem polling, etc.
 //! ~650 lines of `match`-armed dispatch.
 
-use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 use crate::services::async_bridge::AsyncMessage;

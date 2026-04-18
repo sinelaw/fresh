@@ -391,7 +391,7 @@ fn test_initial_focus_hunk_is_consumed_after_first_render() {
 fn test_flush_layout_enables_hunk_nav_before_render() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     let (old_content, new_content, hunks) = generate_multi_hunk_content();
-    let composite_id = setup_diff(&mut harness, &old_content, &new_content, &hunks);
+    let _composite_id = setup_diff(&mut harness, &old_content, &new_content, &hunks);
 
     // At this point setup_diff already rendered once, so view state exists.
     // To test flushLayout properly, we need to simulate the case where

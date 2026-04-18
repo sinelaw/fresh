@@ -1,6 +1,4 @@
 use super::*;
-use crate::model::event::LeafId;
-use crate::services::plugins::hooks::HookArgs;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 impl Editor {

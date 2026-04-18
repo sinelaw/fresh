@@ -7,10 +7,8 @@
 //! mutating viewports and split state.
 
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
 
-use crate::model::cursor::SelectionMode;
-use crate::model::event::{BufferId, Event, LeafId};
+use crate::model::event::{BufferId, LeafId};
 
 use super::Editor;
 

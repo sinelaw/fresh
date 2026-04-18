@@ -4,11 +4,6 @@
 //! virtual buffers populated with the manual text or keybinding listing.
 //! Both check for an existing help buffer first to avoid duplicates.
 
-use rust_i18n::t;
-
-use crate::model::event::{BufferId, EventLog};
-use crate::state::EditorState;
-
 use super::help;
 use super::Editor;
 

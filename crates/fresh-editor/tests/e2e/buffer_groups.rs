@@ -197,7 +197,7 @@ fn test_group_panel_separator_drag_resizes_inner_split() {
     // hit-test cache. Before the fix this vec was empty for grouped
     // inner splits.
     let separators = harness.editor().get_separator_areas().to_vec();
-    let (split_id, direction, sep_x, sep_y, sep_length) = separators
+    let (split_id, _direction, sep_x, sep_y, sep_length) = separators
         .iter()
         .copied()
         .find(|(_, dir, _, _, _)| *dir == SplitDirection::Vertical)

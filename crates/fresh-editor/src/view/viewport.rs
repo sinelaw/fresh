@@ -1606,7 +1606,6 @@ impl Viewport {
                             let rows_from_this_line =
                                 target_visual_rows.saturating_sub(visual_rows_counted);
                             top_offset_in_landing_line = added.saturating_sub(rows_from_this_line);
-                            visual_rows_counted = new_total;
                             iter.prev();
                             break;
                         }

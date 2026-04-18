@@ -14,7 +14,7 @@ use std::sync::Arc;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
-use crate::model::event::{BufferId, EventLog};
+use crate::model::event::BufferId;
 use crate::state::EditorState;
 use crate::view::split::SplitViewState;
 

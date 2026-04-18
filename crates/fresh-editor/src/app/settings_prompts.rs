@@ -11,13 +11,10 @@
 //! sibling impl Editor block. A future phase will collapse the
 //! boilerplate into a single SettingsPromptBuilder<T>.
 
-use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 use crate::config_io::{ConfigLayer, ConfigResolver};
-use crate::input::commands::Suggestion;
-use crate::input::keybindings::Action;
-use crate::view::prompt::{Prompt, PromptType};
+use crate::view::prompt::PromptType;
 
 use super::Editor;
 

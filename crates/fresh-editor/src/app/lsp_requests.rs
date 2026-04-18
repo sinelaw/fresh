@@ -3730,9 +3730,8 @@ mod tests {
 
         // Initial marker layout at six positions (same as the e2e test).
         let positions = [200usize, 401, 602, 803, 1205, 1406];
-        let mut ids = Vec::new();
         for &p in &positions {
-            let id = vtexts.add(
+            vtexts.add(
                 &mut markers,
                 p,
                 format!("hint-at-{p}"),
@@ -3740,16 +3739,14 @@ mod tests {
                 VirtualTextPosition::BeforeChar,
                 0,
             );
-            ids.push(id);
         }
 
         // Simulate a couple of clear/recreate cycles (each LSP refresh
         // goes through this exact path via apply_inlay_hints_to_state).
         for _ in 0..3 {
             vtexts.clear(&mut markers);
-            let mut new_ids = Vec::new();
             for &p in &positions {
-                let id = vtexts.add(
+                vtexts.add(
                     &mut markers,
                     p,
                     format!("hint-at-{p}"),
@@ -3757,9 +3754,7 @@ mod tests {
                     VirtualTextPosition::BeforeChar,
                     0,
                 );
-                new_ids.push(id);
             }
-            ids = new_ids;
         }
 
         // remove_in_range + adjust_for_delete equivalent to apply_delete.

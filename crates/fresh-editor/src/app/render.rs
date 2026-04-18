@@ -1,6 +1,5 @@
 use super::lsp_status::compose_lsp_status;
 use super::*;
-use rust_i18n::t;
 
 impl Editor {
     /// Render the editor to the terminal
