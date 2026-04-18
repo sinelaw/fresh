@@ -796,6 +796,12 @@ impl GrammarRegistry {
             .iter()
             .any(|s| s.name.eq_ignore_ascii_case(full_name));
         if !target_exists {
+            // Tree-sitter-only targets (e.g. TypeScript) are expected to be
+            // absent from the syntect set. `rebuild_catalog` attaches their
+            // short names via a separate pass over `built_in_aliases()`.
+            if tree_sitter_for_syntect_name(full_name).is_some() {
+                return false;
+            }
             if is_built_in {
                 // Built-in alias targets should always exist; warn but don't panic
                 // (grammar might have been removed from syntect upstream)
