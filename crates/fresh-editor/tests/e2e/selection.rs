@@ -1501,8 +1501,7 @@ fn test_select_page_down() {
     }
     std::fs::write(&file_path, &content).unwrap();
 
-    // Use smaller height to make page behavior predictable
-    let mut harness = EditorTestHarness::new(80, 10).unwrap();
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
     harness.open_file(&file_path).unwrap();
 
     // Cursor starts at beginning
@@ -1521,7 +1520,6 @@ fn test_select_page_down() {
     );
 
     let selected = harness.get_selected_text();
-    // With height 10, viewport height varies based on status bars
     // Selection should include multiple lines (at least 4)
     let selected_lines = selected.lines().count();
     assert!(
@@ -1547,8 +1545,7 @@ fn test_select_page_up() {
     }
     std::fs::write(&file_path, &content).unwrap();
 
-    // Use smaller height to make page behavior predictable
-    let mut harness = EditorTestHarness::new(80, 10).unwrap();
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
     harness.open_file(&file_path).unwrap();
 
     // Move down several pages first

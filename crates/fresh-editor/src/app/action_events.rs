@@ -105,7 +105,13 @@ impl Editor {
             _ => return None,
         };
 
-        let delta = (viewport_height as isize).saturating_sub(1).max(1) * direction;
+        // Keep a few rows of overlap between the old and new page so the
+        // reader retains context across the jump, matching vim/less/most
+        // editors.  The overlap shrinks for very small viewports so every
+        // press still makes meaningful progress.
+        const PAGE_OVERLAP: u16 = 3;
+        let overlap = PAGE_OVERLAP.min(viewport_height.saturating_sub(1));
+        let delta = (viewport_height.saturating_sub(overlap).max(1) as isize) * direction;
 
         let old_top_byte = self.split_view_states.get(&split_id)?.viewport.top_byte;
         self.handle_scroll_event(delta);

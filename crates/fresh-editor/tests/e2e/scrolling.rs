@@ -2672,6 +2672,28 @@ fn content_area_snapshot(harness: &EditorTestHarness) -> String {
         .join("\n")
 }
 
+/// Generate a paged-scroll-test fixture where each logical line carries a
+/// `Line NNNN:` marker that survives wrapping — continuation rows of a wrapped
+/// line never repeat the marker, so a snapshot's marker set tells us exactly
+/// which logical lines have their head visible. Includes a heavy dose of long
+/// lines that wrap to multiple view rows so the wrap-aware scroll path is
+/// exercised on most view rows of most pages, not just occasionally.
+fn paged_fixture(lines: usize) -> String {
+    // `long` is designed to wrap in an 80-col terminal with a small gutter.
+    // Repeating padding so it reliably spans 2 view rows at 80 wide.
+    let long = ".".repeat(90);
+    let extra_long = ".".repeat(180);
+    let mut out = String::new();
+    for i in 1..=lines {
+        match i % 4 {
+            0 => out.push_str(&format!("Line {i:04}: xlong {extra_long} end\n")),
+            1 => out.push_str(&format!("Line {i:04}: short\n")),
+            _ => out.push_str(&format!("Line {i:04}: long {long} end\n")),
+        }
+    }
+    out
+}
+
 /// Assert the primary cursor appears inside the rendered content area.
 /// PageUp / PageDown must never leave the cursor off-screen — callers invoke
 /// this after every press.
@@ -2690,18 +2712,61 @@ fn assert_cursor_visible(harness: &mut EditorTestHarness, context: &str) {
     );
 }
 
+/// Assert consecutive pages retain at least `min_overlap` view rows of shared
+/// context: the last N rows of `prev` must appear as the first N rows of
+/// `cur`. Counts view rows (raw rendered row strings) rather than logical
+/// lines — what the user actually sees on screen — because `viewport_height
+/// - 3` scroll is defined in view rows, and with wrap a single overlapping
+/// logical line can correspond to multiple shared view rows and vice versa.
+fn assert_pages_overlap(prev: &str, cur: &str, min_overlap: usize, context: &str) {
+    let prev_rows: Vec<&str> = prev.lines().collect();
+    let cur_rows: Vec<&str> = cur.lines().collect();
+    let mut overlap = 0;
+    for k in 1..=prev_rows.len().min(cur_rows.len()) {
+        let prev_tail = &prev_rows[prev_rows.len() - k..];
+        let cur_head = &cur_rows[..k];
+        if prev_tail == cur_head {
+            overlap = k;
+        }
+    }
+    assert!(
+        overlap >= min_overlap,
+        "expected at least {min_overlap} view rows of overlap between \
+         consecutive pages ({context}); got {overlap}.\n\
+         prev last 6:\n{}\ncur first 6:\n{}",
+        prev_rows
+            .iter()
+            .rev()
+            .take(6)
+            .rev()
+            .copied()
+            .collect::<Vec<_>>()
+            .join("\n"),
+        cur_rows
+            .iter()
+            .take(6)
+            .copied()
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+}
+
 /// Every PageDown must change what the content area displays until the bottom
-/// of the file is reached; after that, additional PageDowns are no-ops. Also
-/// asserts the cursor is rendered inside the content area after every press.
-/// Uses a real-world shell-script fixture (contains ASCII US bytes, 0x1f) so
-/// the check guards against regressions on files with unusual bytes.
+/// of the buffer is reached; after that, additional PageDowns are no-ops.
+/// Asserts after every press: (1) cursor stays inside the content area, and
+/// (2) consecutive pages overlap by at least 2 logical lines (the ~3-line
+/// overlap budget minus 1 line of slack for wrap-segment edges).
 #[test]
 fn test_page_down_changes_view_until_bottom() {
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    let content = include_str!("../fixtures/sff-extfunc.sh");
+    const TOTAL_LINES: usize = 500;
+    let content = paged_fixture(TOTAL_LINES);
+    let last_marker = format!("Line {TOTAL_LINES:04}:");
+    let first_marker = "Line 0001:";
+
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    let _fixture = harness.load_buffer_from_text(content).unwrap();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
@@ -2709,8 +2774,8 @@ fn test_page_down_changes_view_until_bottom() {
     harness.render().unwrap();
 
     assert!(
-        content_area_snapshot(&harness).contains("#!/bin/sh"),
-        "expected to start at the top showing the fixture's first line"
+        content_area_snapshot(&harness).contains(first_marker),
+        "expected to start at the top showing '{first_marker}'"
     );
 
     let initial = content_area_snapshot(&harness);
@@ -2733,6 +2798,7 @@ fn test_page_down_changes_view_until_bottom() {
         if cur == prev {
             break;
         }
+        assert_pages_overlap(&prev, &cur, 3, &format!("after PageDown #{pages}"));
         prev = cur;
     }
 
@@ -2745,8 +2811,8 @@ fn test_page_down_changes_view_until_bottom() {
         "fixture too short to meaningfully exercise PageDown (stopped after {pages})"
     );
     assert!(
-        prev.contains("Press 'q' to leave this page"),
-        "after hitting bottom the fixture's last line should be visible; got:\n{prev}"
+        prev.contains(&last_marker),
+        "after hitting bottom the fixture's last line '{last_marker}' should be visible; got:\n{prev}"
     );
 
     for i in 0..3 {
@@ -2766,16 +2832,21 @@ fn test_page_down_changes_view_until_bottom() {
 }
 
 /// Every PageUp from the bottom must change what the content area displays
-/// until the top of the file is reached; after that, additional PageUps are
-/// no-ops. Also asserts the cursor stays rendered inside the content area
-/// after every press. Counterpart to test_page_down_changes_view_until_bottom.
+/// until the top of the buffer is reached; after that, additional PageUps are
+/// no-ops. Asserts after every press: (1) cursor stays inside the content
+/// area, and (2) consecutive pages overlap by at least 2 logical lines.
+/// Counterpart to test_page_down_changes_view_until_bottom.
 #[test]
 fn test_page_up_changes_view_until_top() {
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    let content = include_str!("../fixtures/sff-extfunc.sh");
+    const TOTAL_LINES: usize = 500;
+    let content = paged_fixture(TOTAL_LINES);
+    let last_marker = format!("Line {TOTAL_LINES:04}:");
+    let first_marker = "Line 0001:";
+
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    let _fixture = harness.load_buffer_from_text(content).unwrap();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     harness
         .send_key(KeyCode::End, KeyModifiers::CONTROL)
@@ -2783,8 +2854,8 @@ fn test_page_up_changes_view_until_top() {
     harness.render().unwrap();
 
     assert!(
-        content_area_snapshot(&harness).contains("Press 'q' to leave this page"),
-        "expected to start at the bottom showing the fixture's last line"
+        content_area_snapshot(&harness).contains(&last_marker),
+        "expected to start at the bottom showing '{last_marker}'"
     );
 
     let initial = content_area_snapshot(&harness);
@@ -2807,6 +2878,9 @@ fn test_page_up_changes_view_until_top() {
         if cur == prev {
             break;
         }
+        // For PageUp, cur is earlier in the file (smaller line numbers) —
+        // swap args so the helper sees old-page first.
+        assert_pages_overlap(&cur, &prev, 3, &format!("after PageUp #{pages}"));
         prev = cur;
     }
 
@@ -2819,8 +2893,8 @@ fn test_page_up_changes_view_until_top() {
         "fixture too short to meaningfully exercise PageUp (stopped after {pages})"
     );
     assert!(
-        prev.contains("#!/bin/sh"),
-        "after hitting top the fixture's first line should be visible; got:\n{prev}"
+        prev.contains(first_marker),
+        "after hitting top the fixture's first line '{first_marker}' should be visible; got:\n{prev}"
     );
 
     for i in 0..3 {
