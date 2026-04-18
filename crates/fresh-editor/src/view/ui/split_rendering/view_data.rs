@@ -118,12 +118,22 @@ pub(super) fn build_view_data(
     // wrap_column if set). When line_wrap is off: wrap at
     // MAX_SAFE_LINE_WIDTH to prevent memory exhaustion from extremely long
     // lines.
+    //
+    // When wrapping is on, reserve the last content column so the
+    // end-of-line cursor never lands on top of the vertical scrollbar.
+    // The cursor sits one column past the last rendered character, so
+    // a row that fills `content_width` exactly would place the EOL
+    // cursor on the scrollbar track (which is drawn in the column
+    // immediately to the right of the content area).  `saturating_sub`
+    // keeps this safe at very small widths where the guard inside
+    // `apply_wrapping_transform` will short-circuit anyway.
     let effective_width = if line_wrap_enabled {
-        if let Some(col) = viewport.wrap_column {
+        let base = if let Some(col) = viewport.wrap_column {
             col.min(content_width)
         } else {
             content_width
-        }
+        };
+        base.saturating_sub(1).max(1)
     } else {
         MAX_SAFE_LINE_WIDTH
     };
