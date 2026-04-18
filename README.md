@@ -187,6 +187,12 @@ See [flatpak/README.md](flatpak/README.md) for building from source.
 
 Download the latest release for your platform from the [releases page](https://github.com/sinelaw/fresh/releases).
 
+### Using mise
+
+```bash
+mise use github:sinelaw/fresh
+```
+
 ### npm
 
 ```bash
