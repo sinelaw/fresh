@@ -3902,9 +3902,11 @@ fn test_compose_mode_set_width_via_command_palette() {
     println!("x-line lengths: {:?}", w40_lengths);
     println!("{}", screen_40);
 
+    // One content column is reserved at wrap time so the EOL cursor can't
+    // overlap the vertical scrollbar, so "width 40" renders 39 content cols.
     assert_eq!(
-        w40_lengths[0], 40,
-        "With compose width 40, first x-line should be 40 chars, got {:?}",
+        w40_lengths[0], 39,
+        "With compose width 40, first x-line should be 39 chars (1 col reserved for cursor), got {:?}",
         w40_lengths,
     );
 
@@ -3925,8 +3927,8 @@ fn test_compose_mode_set_width_via_command_palette() {
     println!("{}", screen_reconfirm);
 
     assert_eq!(
-        reconfirm_lengths[0], 40,
-        "After re-confirming without changes, width should still be 40, got {:?}",
+        reconfirm_lengths[0], 39,
+        "After re-confirming without changes, width should still be 39 (40 minus reserved col), got {:?}",
         reconfirm_lengths,
     );
 
@@ -3947,8 +3949,8 @@ fn test_compose_mode_set_width_via_command_palette() {
     println!("{}", screen_60);
 
     assert_eq!(
-        w60_lengths[0], 60,
-        "With compose width 60, first x-line should be 60 chars, got {:?}",
+        w60_lengths[0], 59,
+        "With compose width 60, first x-line should be 59 chars (1 col reserved for cursor), got {:?}",
         w60_lengths,
     );
 }
@@ -4069,8 +4071,8 @@ fn test_compose_mode_width_survives_session_restore() {
         println!("x-line lengths: {:?}", lengths);
         println!("{}", screen);
         assert_eq!(
-            lengths[0], 40,
-            "Session 1: width should be 40, got {:?}",
+            lengths[0], 39,
+            "Session 1: width should render 39 (40 minus 1 col reserved for EOL cursor), got {:?}",
             lengths,
         );
 
@@ -4102,8 +4104,8 @@ fn test_compose_mode_width_survives_session_restore() {
             screen_restored,
         );
         assert_eq!(
-            restored_lengths[0], 40,
-            "After restore, compose width should still be 40, got {:?}.\nScreen:\n{}",
+            restored_lengths[0], 39,
+            "After restore, compose width should still render 39 (40 minus reserved col), got {:?}.\nScreen:\n{}",
             restored_lengths, screen_restored,
         );
 
@@ -4139,8 +4141,8 @@ fn test_compose_mode_width_survives_session_restore() {
         println!("x-line lengths: {:?}", w60_lengths);
         println!("{}", screen_60);
         assert_eq!(
-            w60_lengths[0], 60,
-            "After changing width to 60 in restored session, got {:?}",
+            w60_lengths[0], 59,
+            "After changing width to 60 in restored session, expected 59 (60 minus reserved col), got {:?}",
             w60_lengths,
         );
     }

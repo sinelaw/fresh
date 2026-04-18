@@ -84,8 +84,14 @@ fn test_issue_1502_wrap_indent_squished_on_narrow_terminal() {
     // With the bug, it shows only about 6-7 chars (available - 2*indent ≈ 7).
     //
     // We assert that continuations show at least 10 chars — enough to distinguish
-    // correct wrapping from squished wrapping.
-    for (i, &width) in continuation_content_widths.iter().enumerate() {
+    // correct wrapping from squished wrapping.  The final continuation holds
+    // the leftover after the last full wrap and can be arbitrarily short; skip
+    // it so this stays an "is-it-squished" check.
+    let check_up_to = continuation_content_widths.len().saturating_sub(1);
+    for (i, &width) in continuation_content_widths[..check_up_to]
+        .iter()
+        .enumerate()
+    {
         assert!(
             width >= 10,
             "Issue #1502: Continuation line {} has only {} visible characters — \
