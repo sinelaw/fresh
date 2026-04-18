@@ -22,15 +22,21 @@ use std::collections::HashSet;
 /// lines should wrap, optionally with a hanging indent for continuation
 /// lines.
 ///
-/// TODO(wrap): preferred break points are currently only inter-token
-/// whitespace.  For code, a long identifier chain like
-/// `dialog.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener`
-/// gets char-split mid-word when it overflows, even though breaking at
-/// the `.` before `setOnClickListener` would be a cleaner wrap.  A
-/// syntax-aware (or at least UAX #29 word-boundary aware) pass that
-/// prefers non-word-to-word transitions as break points before falling
-/// back to grapheme splits would improve wrapped-code readability
-/// without changing which characters are shown.
+/// The wrap algorithm:
+///   1. Inter-token breaks (classic word-wrap) kick in when a Text
+///      token wouldn't fit on the current row.
+///   2. When a Text token is too wide to fit even on a fresh row,
+///      char-wrap (grapheme-split) fills the remaining columns.
+///   3. Inside the grapheme-split path, each chunk prefers to end at a
+///      UAX #29 word boundary within a lookback window defined by
+///      `MAX_LOOKBACK`.  This turns e.g.
+///      `dialog.getButton(...).setOnClickListener` into
+///      `dialog.getButton(...)` / `.setOnClickListener` rather than a
+///      mid-identifier char-split.
+///   4. Falls back to the grapheme-level hard cap when no word
+///      boundary qualifies — guaranteeing forward progress and, as a
+///      post-condition, that no row is ever emitted wider than
+///      `eff_width`.
 pub(super) fn apply_wrapping_transform(
     tokens: Vec<ViewTokenWire>,
     content_width: usize,
@@ -41,6 +47,14 @@ pub(super) fn apply_wrapping_transform(
 
     /// Minimum content width for continuation lines when hanging indent is active.
     const MIN_CONTINUATION_CONTENT_WIDTH: usize = 10;
+
+    /// How many columns before the hard cap a word-boundary split is still
+    /// considered acceptable.  The row floor is
+    /// `max(eff_width - MAX_LOOKBACK, eff_width / 2)` — the `/2` tightens
+    /// the window at very narrow widths so boundary splits don't leave
+    /// half the row empty.  Matches the constant used by the wrap
+    /// property test in `split_rendering::tests::wrap_boundary_property`.
+    const MAX_LOOKBACK: usize = 16;
 
     // Calculate available width (accounting for gutter on first line only)
     let available_width = content_width.saturating_sub(gutter_width);
@@ -146,16 +160,25 @@ pub(super) fn apply_wrapping_transform(
                 let eff_width = effective_width(available_width, line_indent, on_continuation);
                 let text_visual_width = visual_width(text, current_line_width);
 
-                // Word-wrap: break before the token only when it won't fit on
-                // the current line AND will fit on a fresh continuation line
-                // (after the hanging indent is applied).  If hanging indent
-                // would leave it overflowing anyway, don't break here — fall
-                // through to the grapheme-split path below, which char-wraps
-                // from the current position and fills the available space.
+                // Break before the token whenever it overflows the
+                // current row AND either
+                //   (a) the token will fit on a fresh continuation line
+                //       (classic word-wrap), or
+                //   (b) the row already holds at least `row_floor`
+                //       columns of content.  Every Text token begins at
+                //       a UAX #29 word boundary (tokens are split on
+                //       spaces by the tokenizer), so ending the current
+                //       row here lands on a boundary — which beats
+                //       pushing one straggler grapheme mid-word just to
+                //       reach `eff_width`.  When the row is still below
+                //       the floor, don't break: the grapheme-split path
+                //       below will fill the remaining columns.
                 let fresh_line_capacity = eff_width.saturating_sub(line_indent);
+                let row_floor = eff_width.saturating_sub(MAX_LOOKBACK).max(eff_width / 2);
                 if current_line_width > 0
                     && current_line_width + text_visual_width > eff_width
-                    && text_visual_width <= fresh_line_capacity
+                    && (text_visual_width <= fresh_line_capacity
+                        || current_line_width >= row_floor)
                 {
                     on_continuation = true;
                     emit_break_with_indent(
@@ -241,6 +264,87 @@ pub(super) fn apply_wrapping_transform(
                             };
                         }
 
+                        // Prefer a UAX #29 word boundary as the split
+                        // point.  Word boundaries depend on context
+                        // (e.g. an 'A' followed by '_' is part of the
+                        // same word segment), so we compute them on
+                        // the FULL token text and then constrain to
+                        // the window `[floor, hard_cap]` relative to
+                        // the current grapheme cursor.  The floor is
+                        // computed ROW-relative (not chunk-relative)
+                        // because the invariant is about where the
+                        // visual row ends — if the row already has
+                        // content from earlier tokens or an indent,
+                        // the chunk's minimum length is proportionally
+                        // smaller.  If a qualified boundary exists,
+                        // shrink the chunk to end there AND force a
+                        // break immediately after push — otherwise
+                        // the next iteration would refill the space
+                        // we freed and undo the shrink.  Falls back to
+                        // the hard cap when no boundary qualifies.
+                        let mut force_break_after_push = false;
+                        if chunk_grapheme_count > 1 {
+                            let slice_start = graphemes[grapheme_idx].0;
+                            let slice_end_hard =
+                                if grapheme_idx + chunk_grapheme_count < graphemes.len() {
+                                    graphemes[grapheme_idx + chunk_grapheme_count].0
+                                } else {
+                                    text.len()
+                                };
+                            let row_floor = eff_width
+                                .saturating_sub(MAX_LOOKBACK)
+                                .max(eff_width / 2);
+                            let chunk_floor_from_cursor =
+                                row_floor.saturating_sub(current_line_width);
+                            let floor_byte = if chunk_floor_from_cursor < chunk_grapheme_count {
+                                graphemes[grapheme_idx + chunk_floor_from_cursor].0
+                            } else {
+                                slice_end_hard
+                            };
+
+                            // Include `slice_end_hard` in the window
+                            // and treat `text.len()` as a virtual
+                            // boundary.  `split_word_bound_indices`
+                            // only yields positions at which a new
+                            // segment starts, not at end-of-string,
+                            // so without this a chunk that happens to
+                            // end at the token's end would be shrunk
+                            // to the nearest earlier boundary and
+                            // leak characters onto the next row.
+                            let best_target_byte = text
+                                .split_word_bound_indices()
+                                .map(|(b, _)| b)
+                                .chain(std::iter::once(text.len()))
+                                .filter(|&b| b > slice_start)
+                                .filter(|&b| b >= floor_byte)
+                                .filter(|&b| b <= slice_end_hard)
+                                .next_back();
+
+                            if let Some(target_byte) = best_target_byte {
+                                let new_count = graphemes[grapheme_idx..]
+                                    .iter()
+                                    .position(|(b, _)| *b == target_byte)
+                                    .unwrap_or(chunk_grapheme_count);
+                                if new_count > 0 && new_count < chunk_grapheme_count {
+                                    chunk_grapheme_count = new_count;
+                                    let mut col = current_line_width;
+                                    chunk_visual_width = 0;
+                                    for &(_b, g) in
+                                        &graphemes[grapheme_idx..grapheme_idx + new_count]
+                                    {
+                                        let w = if g == "\t" {
+                                            visual_layout::tab_expansion_width(col)
+                                        } else {
+                                            display_width::str_width(g)
+                                        };
+                                        chunk_visual_width += w;
+                                        col += w;
+                                    }
+                                    force_break_after_push = true;
+                                }
+                            }
+                        }
+
                         let chunk_start_byte = graphemes[grapheme_idx].0;
                         let chunk_end_byte =
                             if grapheme_idx + chunk_grapheme_count < graphemes.len() {
@@ -262,7 +366,7 @@ pub(super) fn apply_wrapping_transform(
 
                         let eff_width =
                             effective_width(available_width, line_indent, on_continuation);
-                        if current_line_width >= eff_width {
+                        if force_break_after_push || current_line_width >= eff_width {
                             on_continuation = true;
                             emit_break_with_indent(
                                 &mut wrapped,

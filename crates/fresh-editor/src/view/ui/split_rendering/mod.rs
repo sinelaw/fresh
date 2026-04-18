@@ -1473,6 +1473,254 @@ mod tests {
         );
     }
 
+    /// Property test encoding the wrap-boundary invariant that the
+    /// char-split path of [`apply_wrapping_transform`] must satisfy.
+    ///
+    /// The invariant is scoped to **char-split** row endings — rows
+    /// whose last emitted grapheme falls strictly INSIDE a source Text
+    /// token.  Word-wrap breaks (where the row ends at whitespace
+    /// between tokens) are outside the scope of the char-split
+    /// improvement and pass through unchecked; they land at a token
+    /// boundary by construction.
+    ///
+    /// For every non-final visual row whose end is mid-Text-token:
+    ///
+    /// 1. **No overflow.** The row's visual width is at most
+    ///    `content_width`.
+    /// 2. **No loss.** Concatenating every emitted row in order yields
+    ///    exactly the original input.
+    /// 3. **Prefer UAX #29 word boundaries.** Let `hard_cap` be the
+    ///    largest char position where the row could still fit, and
+    ///    `floor = max(hard_cap - MAX_LOOKBACK, hard_cap / 2)`, both
+    ///    measured in characters from the start of this row inside the
+    ///    input.  If any `split_word_bound_indices()` boundary lies in
+    ///    `[floor, hard_cap]`, the split must land at the LARGEST such
+    ///    boundary.
+    /// 4. **Fall back to hard cap.** If no word boundary lies in that
+    ///    window, the split lands at `hard_cap` exactly (char split).
+    #[cfg(test)]
+    mod wrap_boundary_property {
+        use super::apply_wrapping_transform;
+        use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+        use proptest::prelude::*;
+        use unicode_segmentation::UnicodeSegmentation;
+
+        /// Matches the constant used by the implementation.  Defined
+        /// here as well so the property test can compute the same
+        /// window without reaching into the module internals.
+        const MAX_LOOKBACK: usize = 16;
+
+        fn tokens_from_input(input: &str) -> Vec<ViewTokenWire> {
+            let mut tokens: Vec<ViewTokenWire> = Vec::new();
+            let mut buf = String::new();
+            let mut buf_start = 0usize;
+            for (i, c) in input.char_indices() {
+                if c == ' ' {
+                    if !buf.is_empty() {
+                        tokens.push(ViewTokenWire {
+                            kind: ViewTokenWireKind::Text(std::mem::take(&mut buf)),
+                            source_offset: Some(buf_start),
+                            style: None,
+                        });
+                    }
+                    tokens.push(ViewTokenWire {
+                        kind: ViewTokenWireKind::Space,
+                        source_offset: Some(i),
+                        style: None,
+                    });
+                    buf_start = i + 1;
+                } else {
+                    if buf.is_empty() {
+                        buf_start = i;
+                    }
+                    buf.push(c);
+                }
+            }
+            if !buf.is_empty() {
+                tokens.push(ViewTokenWire {
+                    kind: ViewTokenWireKind::Text(buf.clone()),
+                    source_offset: Some(buf_start),
+                    style: None,
+                });
+            }
+            tokens.push(ViewTokenWire {
+                kind: ViewTokenWireKind::Newline,
+                source_offset: Some(input.len()),
+                style: None,
+            });
+            tokens
+        }
+
+        /// Reconstruct the sequence of visual rows from the wrapped
+        /// token stream.  Each entry is the row's rendered content
+        /// (Text + Space, with Break separating rows; Newline ends the
+        /// last row).
+        fn visual_rows(wrapped: &[ViewTokenWire]) -> Vec<String> {
+            let mut rows: Vec<String> = vec![String::new()];
+            for t in wrapped {
+                match &t.kind {
+                    ViewTokenWireKind::Text(s) => {
+                        rows.last_mut().unwrap().push_str(s);
+                    }
+                    ViewTokenWireKind::Space => {
+                        rows.last_mut().unwrap().push(' ');
+                    }
+                    ViewTokenWireKind::Break => {
+                        rows.push(String::new());
+                    }
+                    ViewTokenWireKind::Newline => {
+                        // End of logical line — ignore for wrap row
+                        // purposes; we don't wrap across Newline here.
+                    }
+                    _ => {}
+                }
+            }
+            rows
+        }
+
+        proptest! {
+            // A handful of cases per run is plenty — wrapping is
+            // deterministic, but the input space is large and we want
+            // shrinking to work.
+            #![proptest_config(ProptestConfig {
+                cases: 256,
+                .. ProptestConfig::default()
+            })]
+
+            /// Core property: the four invariants stated on the module
+            /// docstring above.
+            #[test]
+            fn prop_wrap_respects_boundaries(
+                input in "[a-zA-Z0-9().,:;/_=+ \\-]{1,120}",
+                content_width in 5usize..40,
+            ) {
+                // Hanging indent off and gutter 0 — we want to isolate
+                // the Text char-split logic from the indent path.
+                let tokens = tokens_from_input(&input);
+                let wrapped = apply_wrapping_transform(tokens, content_width, 0, false);
+                let rows = visual_rows(&wrapped);
+
+                // Invariant 1: no row exceeds content_width.
+                for (i, row) in rows.iter().enumerate() {
+                    prop_assert!(
+                        row.chars().count() <= content_width,
+                        "row {i} {:?} has width {} > content_width {content_width}",
+                        row,
+                        row.chars().count(),
+                    );
+                }
+
+                // Invariant 2: lossless reconstruction.
+                let reconstructed: String = rows.concat();
+                prop_assert_eq!(
+                    &reconstructed,
+                    &input,
+                    "reconstruction differs from input"
+                );
+
+                // Invariants 3 + 4: every non-final split lands at
+                // either the largest word boundary in the lookback
+                // window or the hard cap.
+                let boundaries: std::collections::BTreeSet<usize> = input
+                    .split_word_bound_indices()
+                    .map(|(i, _)| i)
+                    .chain(std::iter::once(input.len()))
+                    .collect();
+
+                let mut cursor_bytes = 0usize;
+                let mut cursor_chars = 0usize;
+                for (i, row) in rows.iter().enumerate() {
+                    let row_bytes = row.len();
+                    let row_chars = row.chars().count();
+                    let row_end_bytes = cursor_bytes + row_bytes;
+                    let row_end_chars = cursor_chars + row_chars;
+                    let is_last = i + 1 == rows.len();
+
+                    if !is_last {
+                        // Only apply the boundary invariant to char-
+                        // splits — row endings that fall strictly
+                        // inside a Text token.  When the row ends at
+                        // or adjacent to a space, it's a word-wrap
+                        // break, which is outside this invariant.
+                        let input_bytes = input.as_bytes();
+                        let prev_is_space =
+                            row_end_bytes > 0 && input_bytes[row_end_bytes - 1] == b' ';
+                        let next_is_space = row_end_bytes < input_bytes.len()
+                            && input_bytes[row_end_bytes] == b' ';
+                        let is_mid_text = !prev_is_space && !next_is_space;
+                        if !is_mid_text {
+                            cursor_bytes = row_end_bytes;
+                            cursor_chars = row_end_chars;
+                            continue;
+                        }
+
+                        // The hard cap is the last char position this row
+                        // could have reached: current cursor + content_width.
+                        let hard_cap_chars = cursor_chars + content_width;
+                        let hard_cap_bytes = char_index_to_byte(&input, hard_cap_chars);
+                        let floor_chars = cursor_chars
+                            + content_width.saturating_sub(MAX_LOOKBACK).max(content_width / 2);
+                        let floor_bytes = char_index_to_byte(&input, floor_chars);
+
+                        // Invariant 3 + 4: either the chosen split is
+                        // the largest word boundary in [floor,
+                        // hard_cap] (when any such boundary exists) or
+                        // it's the hard cap itself (char-split
+                        // fallback).  Do not exempt "row is exactly
+                        // content_width" from the check — that's the
+                        // case the improvement is supposed to change.
+                        let max_in_window = boundaries
+                            .range(floor_bytes..=hard_cap_bytes)
+                            .next_back()
+                            .copied();
+                        match max_in_window {
+                            Some(max_b) => {
+                                prop_assert_eq!(
+                                    row_end_bytes,
+                                    max_b,
+                                    "split at byte {} but largest word boundary in \
+                                     [floor={}, hard_cap={}] is {}; row={:?}, input={:?}",
+                                    row_end_bytes,
+                                    floor_bytes,
+                                    hard_cap_bytes,
+                                    max_b,
+                                    row,
+                                    input,
+                                );
+                            }
+                            None => {
+                                prop_assert_eq!(
+                                    row_end_bytes,
+                                    hard_cap_bytes,
+                                    "no word boundary in [floor={}, hard_cap={}], so \
+                                     char-split must land at hard_cap, but split is at \
+                                     byte {}; row={:?}, input={:?}",
+                                    floor_bytes,
+                                    hard_cap_bytes,
+                                    row_end_bytes,
+                                    row,
+                                    input,
+                                );
+                            }
+                        }
+                    }
+
+                    cursor_bytes = row_end_bytes;
+                    cursor_chars = row_end_chars;
+                }
+            }
+        }
+
+        /// Translate a char index into a byte index for ASCII-ish
+        /// inputs; clamps to input length.
+        fn char_index_to_byte(s: &str, char_idx: usize) -> usize {
+            s.char_indices()
+                .nth(char_idx)
+                .map(|(b, _)| b)
+                .unwrap_or(s.len())
+        }
+    }
+
     /// Test that normal-length lines are not affected by safety wrapping.
     #[test]
     fn test_apply_wrapping_transform_preserves_short_lines() {
