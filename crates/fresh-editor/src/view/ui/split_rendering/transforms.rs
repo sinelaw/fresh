@@ -21,6 +21,16 @@ use std::collections::HashSet;
 /// leading gutter on the first visual line). Emits `Break` tokens where
 /// lines should wrap, optionally with a hanging indent for continuation
 /// lines.
+///
+/// TODO(wrap): preferred break points are currently only inter-token
+/// whitespace.  For code, a long identifier chain like
+/// `dialog.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener`
+/// gets char-split mid-word when it overflows, even though breaking at
+/// the `.` before `setOnClickListener` would be a cleaner wrap.  A
+/// syntax-aware (or at least UAX #29 word-boundary aware) pass that
+/// prefers non-word-to-word transitions as break points before falling
+/// back to grapheme splits would improve wrapped-code readability
+/// without changing which characters are shown.
 pub(super) fn apply_wrapping_transform(
     tokens: Vec<ViewTokenWire>,
     content_width: usize,
@@ -136,7 +146,17 @@ pub(super) fn apply_wrapping_transform(
                 let eff_width = effective_width(available_width, line_indent, on_continuation);
                 let text_visual_width = visual_width(text, current_line_width);
 
-                if current_line_width > 0 && current_line_width + text_visual_width > eff_width {
+                // Word-wrap: break before the token only when it won't fit on
+                // the current line AND will fit on a fresh continuation line
+                // (after the hanging indent is applied).  If hanging indent
+                // would leave it overflowing anyway, don't break here — fall
+                // through to the grapheme-split path below, which char-wraps
+                // from the current position and fills the available space.
+                let fresh_line_capacity = eff_width.saturating_sub(line_indent);
+                if current_line_width > 0
+                    && current_line_width + text_visual_width > eff_width
+                    && text_visual_width <= fresh_line_capacity
+                {
                     on_continuation = true;
                     emit_break_with_indent(
                         &mut wrapped,
@@ -148,7 +168,15 @@ pub(super) fn apply_wrapping_transform(
                 let eff_width = effective_width(available_width, line_indent, on_continuation);
                 let text_visual_width = visual_width(text, current_line_width);
 
-                if text_visual_width > eff_width && !ansi::contains_ansi_codes(text) {
+                // Char-split whenever the token still won't fit on the
+                // current line — including the post-break case where the
+                // hanging indent alone already leaves no room for the whole
+                // token.  Using `current_line_width + text_visual_width`
+                // (rather than just `text_visual_width`) is what keeps the
+                // transform from writing past `eff_width`.
+                if current_line_width + text_visual_width > eff_width
+                    && !ansi::contains_ansi_codes(text)
+                {
                     use unicode_segmentation::UnicodeSegmentation;
 
                     let graphemes: Vec<(usize, &str)> = text.grapheme_indices(true).collect();
@@ -160,17 +188,25 @@ pub(super) fn apply_wrapping_transform(
                             effective_width(available_width, line_indent, on_continuation);
                         let remaining_width = eff_width.saturating_sub(current_line_width);
                         if remaining_width == 0 {
-                            if on_continuation && current_line_width >= eff_width {
-                                // Force one grapheme onto this line to avoid infinite loop
-                            } else {
-                                on_continuation = true;
-                                emit_break_with_indent(
-                                    &mut wrapped,
-                                    &mut current_line_width,
-                                    &cached_indent_string,
-                                );
-                                continue;
-                            }
+                            // No room left on the current line — emit a
+                            // break and retry.  `line_indent` is clamped
+                            // above to leave at least
+                            // MIN_CONTINUATION_CONTENT_WIDTH of usable
+                            // space on every continuation, so this can't
+                            // loop forever.  The earlier "force one
+                            // grapheme" fallback here wrote past
+                            // `eff_width`, which the renderer then
+                            // clipped — the source of the missing chars
+                            // seen when a Text token landed on a line
+                            // whose hanging indent had consumed all of
+                            // `eff_width`.
+                            on_continuation = true;
+                            emit_break_with_indent(
+                                &mut wrapped,
+                                &mut current_line_width,
+                                &cached_indent_string,
+                            );
+                            continue;
                         }
 
                         let mut chunk_visual_width = 0;
