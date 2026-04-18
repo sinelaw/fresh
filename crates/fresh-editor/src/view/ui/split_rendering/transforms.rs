@@ -177,8 +177,7 @@ pub(super) fn apply_wrapping_transform(
                 let row_floor = eff_width.saturating_sub(MAX_LOOKBACK).max(eff_width / 2);
                 if current_line_width > 0
                     && current_line_width + text_visual_width > eff_width
-                    && (text_visual_width <= fresh_line_capacity
-                        || current_line_width >= row_floor)
+                    && (text_visual_width <= fresh_line_capacity || current_line_width >= row_floor)
                 {
                     on_continuation = true;
                     emit_break_with_indent(
@@ -291,9 +290,8 @@ pub(super) fn apply_wrapping_transform(
                                 } else {
                                     text.len()
                                 };
-                            let row_floor = eff_width
-                                .saturating_sub(MAX_LOOKBACK)
-                                .max(eff_width / 2);
+                            let row_floor =
+                                eff_width.saturating_sub(MAX_LOOKBACK).max(eff_width / 2);
                             let chunk_floor_from_cursor =
                                 row_floor.saturating_sub(current_line_width);
                             let floor_byte = if chunk_floor_from_cursor < chunk_grapheme_count {
