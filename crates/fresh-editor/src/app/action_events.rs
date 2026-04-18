@@ -42,6 +42,22 @@ impl Editor {
             return Some(events);
         }
 
+        // Page motion: drive the viewport via the same view-line-aware
+        // scroll primitive the ScrollUp/ScrollDown actions use, then land
+        // the cursor at the new viewport top so it stays visible.
+        //
+        // `Viewport::scroll_down` / `scroll_up` already walk view rows in
+        // wrap mode and logical lines in no-wrap mode, so one code path
+        // handles both: the cursor advance matches whatever the viewport
+        // just did, page-for-page.  Doing this here (rather than appending
+        // an `Event::Scroll` to the normal MovePageDown MoveCursor event)
+        // avoids a stall where the logical-line cursor move lands inside
+        // the current viewport and `ensure_visible` has no reason to
+        // scroll.
+        if let Some(events) = self.handle_page_motion(&action, active_split, viewport_height) {
+            return Some(events);
+        }
+
         let buffer_id = self.active_buffer();
         let state = self.buffers.get_mut(&buffer_id).unwrap();
 
@@ -66,6 +82,71 @@ impl Editor {
             estimated_line_length,
             viewport_height,
         )
+    }
+
+    /// Handle PageUp/PageDown (and their select variants) by scrolling the
+    /// viewport a page of view rows and landing the cursor at the new top.
+    ///
+    /// Returns `None` for non-page actions, or when the viewport couldn't
+    /// scroll at all (buffer shorter than a page and already at the edge) —
+    /// in that case the caller falls through to the default handler which
+    /// still moves the cursor to the buffer boundary.
+    fn handle_page_motion(
+        &mut self,
+        action: &Action,
+        split_id: LeafId,
+        viewport_height: u16,
+    ) -> Option<Vec<Event>> {
+        let (direction, is_select) = match action {
+            Action::MovePageDown => (1isize, false),
+            Action::MovePageUp => (-1isize, false),
+            Action::SelectPageDown => (1isize, true),
+            Action::SelectPageUp => (-1isize, true),
+            _ => return None,
+        };
+
+        let delta = (viewport_height as isize).saturating_sub(1).max(1) * direction;
+
+        let old_top_byte = self.split_view_states.get(&split_id)?.viewport.top_byte;
+        self.handle_scroll_event(delta);
+        let new_top_byte = self.split_view_states.get(&split_id)?.viewport.top_byte;
+
+        if new_top_byte == old_top_byte {
+            // Viewport couldn't move (already at top/bottom of buffer).  Fall
+            // back to the default cursor-only handler so PageDown at EOF
+            // still clamps the cursor to the last line (and PageUp at BOF
+            // clamps to byte 0), matching the historical behaviour.
+            return None;
+        }
+
+        // Emit a MoveCursor event placing each cursor at the new viewport
+        // top.  The cursor is guaranteed visible (it's at row 0 of the new
+        // viewport) and each press advances by exactly a full page of view
+        // rows — the same way it does when line wrap is off.
+        let cursors = &self.split_view_states.get(&split_id)?.cursors;
+        let events: Vec<Event> = cursors
+            .iter()
+            .map(|(cursor_id, cursor)| {
+                let new_anchor = if is_select {
+                    Some(cursor.anchor.unwrap_or(cursor.position))
+                } else if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
+                Event::MoveCursor {
+                    cursor_id,
+                    old_position: cursor.position,
+                    new_position: new_top_byte,
+                    old_anchor: cursor.anchor,
+                    new_anchor,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: cursor.sticky_column,
+                }
+            })
+            .collect();
+
+        Some(events)
     }
 
     /// Handle visual line movement actions using the cached layout

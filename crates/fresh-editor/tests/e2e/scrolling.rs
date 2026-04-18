@@ -2660,3 +2660,178 @@ fn test_vertical_scroll_margin_up() {
         );
     }
 }
+
+/// Snapshot of the editor content area as it would appear on screen, joining
+/// each visible row into a single string. Excludes status/tab/menu bars so the
+/// snapshot reflects only the scrolled view.
+fn content_area_snapshot(harness: &EditorTestHarness) -> String {
+    let (first, last) = harness.content_area_rows();
+    (first..=last)
+        .map(|r| harness.get_screen_row(r))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Assert the primary cursor appears inside the rendered content area.
+/// PageUp / PageDown must never leave the cursor off-screen — callers invoke
+/// this after every press.
+fn assert_cursor_visible(harness: &mut EditorTestHarness, context: &str) {
+    let cursors = harness.find_all_cursors();
+    assert!(
+        !cursors.is_empty(),
+        "cursor not rendered on screen ({context})"
+    );
+    let (content_first, content_last) = harness.content_area_rows();
+    let (_, cy, _, _) = cursors[0];
+    let cy = cy as usize;
+    assert!(
+        cy >= content_first && cy <= content_last,
+        "cursor row {cy} is outside content area ({content_first}..={content_last}) ({context})"
+    );
+}
+
+/// Every PageDown must change what the content area displays until the bottom
+/// of the file is reached; after that, additional PageDowns are no-ops. Also
+/// asserts the cursor is rendered inside the content area after every press.
+/// Uses a real-world shell-script fixture (contains ASCII US bytes, 0x1f) so
+/// the check guards against regressions on files with unusual bytes.
+#[test]
+fn test_page_down_changes_view_until_bottom() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let content = include_str!("../fixtures/sff-extfunc.sh");
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let _fixture = harness.load_buffer_from_text(content).unwrap();
+
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        content_area_snapshot(&harness).contains("#!/bin/sh"),
+        "expected to start at the top showing the fixture's first line"
+    );
+
+    let initial = content_area_snapshot(&harness);
+    let mut prev = initial.clone();
+
+    let max_pages = 1000;
+    let mut pages = 0;
+    loop {
+        pages += 1;
+        assert!(
+            pages <= max_pages,
+            "PageDown loop did not terminate within {max_pages} iterations"
+        );
+
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+        assert_cursor_visible(&mut harness, &format!("after PageDown #{pages}"));
+        let cur = content_area_snapshot(&harness);
+        if cur == prev {
+            break;
+        }
+        prev = cur;
+    }
+
+    assert_ne!(
+        prev, initial,
+        "PageDown should have changed the displayed view at least once"
+    );
+    assert!(
+        pages >= 2,
+        "fixture too short to meaningfully exercise PageDown (stopped after {pages})"
+    );
+    assert!(
+        prev.contains("Press 'q' to leave this page"),
+        "after hitting bottom the fixture's last line should be visible; got:\n{prev}"
+    );
+
+    for i in 0..3 {
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+        assert_cursor_visible(
+            &mut harness,
+            &format!("after bottom-pin PageDown #{}", i + 1),
+        );
+        assert_eq!(
+            content_area_snapshot(&harness),
+            prev,
+            "PageDown at bottom must not change the displayed view"
+        );
+    }
+}
+
+/// Every PageUp from the bottom must change what the content area displays
+/// until the top of the file is reached; after that, additional PageUps are
+/// no-ops. Also asserts the cursor stays rendered inside the content area
+/// after every press. Counterpart to test_page_down_changes_view_until_bottom.
+#[test]
+fn test_page_up_changes_view_until_top() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let content = include_str!("../fixtures/sff-extfunc.sh");
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let _fixture = harness.load_buffer_from_text(content).unwrap();
+
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        content_area_snapshot(&harness).contains("Press 'q' to leave this page"),
+        "expected to start at the bottom showing the fixture's last line"
+    );
+
+    let initial = content_area_snapshot(&harness);
+    let mut prev = initial.clone();
+
+    let max_pages = 1000;
+    let mut pages = 0;
+    loop {
+        pages += 1;
+        assert!(
+            pages <= max_pages,
+            "PageUp loop did not terminate within {max_pages} iterations"
+        );
+
+        harness
+            .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+            .unwrap();
+        assert_cursor_visible(&mut harness, &format!("after PageUp #{pages}"));
+        let cur = content_area_snapshot(&harness);
+        if cur == prev {
+            break;
+        }
+        prev = cur;
+    }
+
+    assert_ne!(
+        prev, initial,
+        "PageUp should have changed the displayed view at least once"
+    );
+    assert!(
+        pages >= 2,
+        "fixture too short to meaningfully exercise PageUp (stopped after {pages})"
+    );
+    assert!(
+        prev.contains("#!/bin/sh"),
+        "after hitting top the fixture's first line should be visible; got:\n{prev}"
+    );
+
+    for i in 0..3 {
+        harness
+            .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+            .unwrap();
+        assert_cursor_visible(&mut harness, &format!("after top-pin PageUp #{}", i + 1));
+        assert_eq!(
+            content_area_snapshot(&harness),
+            prev,
+            "PageUp at top must not change the displayed view"
+        );
+    }
+}

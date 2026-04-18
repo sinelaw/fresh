@@ -649,7 +649,7 @@ impl Editor {
     /// View events (like Scroll) go to SplitViewState, not EditorState.
     /// This correctly handles scroll limits when view transforms inject headers.
     /// Also syncs to EditorState.viewport for the active split (used in rendering).
-    fn handle_scroll_event(&mut self, line_offset: isize) {
+    pub(super) fn handle_scroll_event(&mut self, line_offset: isize) {
         use crate::view::ui::view_pipeline::ViewLineIterator;
 
         let active_split = self.split_manager.active_split();
