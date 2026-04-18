@@ -749,17 +749,10 @@ mod tests {
             chunk_count
         );
 
-        // Verify sequential markers are all present and in order
-        for i in 1..=num_markers {
-            let marker = format!("[{:05}]", i);
-            assert!(
-                all_content.contains(&marker),
-                "Missing marker {} in reconstructed content",
-                marker
-            );
-        }
-
-        // Verify markers are in correct order by checking a sample
+        // The assert_eq!(all_content, content) above already proves byte-for-byte
+        // equality, which implies every marker is present and in order. Per-marker
+        // contains() scans would be O(n²) over 20k markers × 140KB and cause the
+        // test to time out; just sanity-check a few positions at O(1).
         let pos_1000 = all_content.find("[01000]").unwrap();
         let pos_2000 = all_content.find("[02000]").unwrap();
         let pos_10000 = all_content.find("[10000]").unwrap();
