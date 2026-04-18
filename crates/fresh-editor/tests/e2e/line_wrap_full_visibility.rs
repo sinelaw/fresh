@@ -192,6 +192,19 @@ fn verify_all_chars_rendered(
             digits_rev.chars().rev().collect::<String>().parse().ok()
         };
 
+        // Skip empty-buffer marker rows.  With the sidebar open, a row
+        // beyond the last buffer line renders as `│<sidebar>│~   `,
+        // so `rfind('│')` finds the sidebar's right border and the `~`
+        // marker ends up in `body`.  Real content rows always have a
+        // separator space after the gutter `│`, so a body that starts
+        // with `~` directly (no separator) is unambiguously the vim-
+        // style empty-buffer marker and must not be merged into the
+        // preceding fixture line.
+        if body.starts_with('~') && ln_opt.is_none() {
+            last_group_had_number = false;
+            continue;
+        }
+
         if let Some(ln) = ln_opt {
             groups.push((ln, body.to_string()));
             last_group_had_number = true;
