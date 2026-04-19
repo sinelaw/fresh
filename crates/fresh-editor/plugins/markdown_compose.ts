@@ -967,6 +967,23 @@ function concealedText(text: string): string {
 const MIN_COL_W = 3;
 
 /**
+ * Return the effective compose width for layout: the configured compose
+ * width clamped to the available viewport width.
+ *
+ * When `config.composeWidth` is explicitly set (e.g. 80) but the editor
+ * content area is smaller (e.g. after the File Explorer sidebar opens),
+ * using the configured value verbatim overflows the viewport. The Rust
+ * render layer already clamps the compose area the same way in
+ * `calculate_compose_layout`; plugin-side computations (table column
+ * allocation, soft-wrap width) need to match.
+ */
+function effectiveComposeWidth(viewportWidth: number): number {
+  const cw = config.composeWidth;
+  if (cw == null) return viewportWidth;
+  return Math.min(cw, viewportWidth);
+}
+
+/**
  * W3C-inspired column width distribution.
  * Constrains columns to fit within `available` width, distributing space
  * proportionally to each column's natural (max) width.
@@ -1320,7 +1337,7 @@ function processLineSoftBreaks(
 
   const viewport = editor.getViewport();
   if (!viewport) return;
-  const width = config.composeWidth ?? viewport.width;
+  const width = effectiveComposeWidth(viewport.width);
 
   // Parse this single line to get block structure
   const blocks = parseMarkdownBlocks(lineContent);
@@ -1544,9 +1561,12 @@ function processTableAlignment(
       mergeWith(widthMap.get(ln)!.maxW);
     }
 
-    // Compute allocated widths constrained to viewport
+    // Compute allocated widths constrained to viewport. Clamp the
+    // configured compose width to the actual viewport — otherwise a
+    // large configured width overflows when the editor area shrinks
+    // (e.g. when the File Explorer sidebar opens).
     const viewport = editor.getViewport();
-    const composeW = config.composeWidth ?? (viewport ? viewport.width : 80);
+    const composeW = effectiveComposeWidth(viewport ? viewport.width : 80);
     const numCols = merged.length;
     const available = composeW - (numCols + 1); // subtract pipe/box-drawing characters
     const allocated = distributeColumnWidths(merged, available);
@@ -1716,7 +1736,7 @@ function onMarkdownViewportChanged(data: {
   // Recompute allocated table column widths for new viewport width
   const bufWidths = getTableWidths(data.buffer_id);
   if (bufWidths) {
-    const composeW = config.composeWidth ?? data.width;
+    const composeW = effectiveComposeWidth(data.width);
     const seen = new Set<string>(); // Track by JSON key to deduplicate shared TableWidthInfo
     for (const [lineNum, info] of bufWidths) {
       const key = info.maxW.join(",");

@@ -4528,3 +4528,133 @@ fn separator_row_fits(screen: &str) -> bool {
     }
     any
 }
+
+/// Regression test: when an explicit compose width is set that's wider
+/// than the available editor area (e.g. compose width 80 in a terminal
+/// where the File Explorer sidebar leaves only ~60 cols for the editor),
+/// the table must clamp its column allocation to the editor area and
+/// not overflow into the sidebar.
+#[test]
+fn test_compose_mode_table_width_clamped_when_sidebar_opens() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    init_tracing_from_env();
+
+    let md_content = "\
+# Compose Width Clamp
+
+| ColumnA                          | ColumnB                          | ColumnC                          | ColumnD                          |
+|----------------------------------|----------------------------------|----------------------------------|----------------------------------|
+| alphaaaaaaaaaaaaaaaaaaaaaaaaaaaa | bravooooooooooooooooooooooooooo  | charlieeeeeeeeeeeeeeeeeeeeeeeee  | deltaaaaaaaaaaaaaaaaaaaaaaaaaa   |
+| echooooooooooooooooooooooooooo   | foxtrotttttttttttttttttttttttttt | golffffffffffffffffffffffffffff  | hoteleleleleeeeeeeeeeeeeeeeeeeee |
+";
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("clamp.md");
+    std::fs::write(&md_path, &md_content).unwrap();
+
+    // Terminal just slightly wider than the compose width we'll set (80).
+    // After the sidebar takes ~30 cols, the editor area will be much
+    // narrower than 80 — the plugin must clamp.
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(90, 30, Default::default(), project_root)
+            .unwrap();
+
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    // Enable compose mode
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("│") && s.contains("─")
+        })
+        .unwrap();
+
+    // Set compose width explicitly to 80
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Set Compose Width").unwrap();
+    harness
+        .wait_for_screen_contains("Set Compose Width")
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    // The prompt comes up pre-filled (e.g. with "None"); clear then type.
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("80").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Let the new compose width settle.
+    let mut prev = String::new();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            let stable = s == prev;
+            prev = s;
+            stable
+        })
+        .unwrap();
+
+    // Open File Explorer
+    harness.editor_mut().toggle_file_explorer();
+    harness
+        .wait_until_stable(|h| h.editor().file_explorer_visible())
+        .unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+
+    let mut prev = String::new();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            let stable = s == prev;
+            prev = s;
+            stable
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // The table must fit on a single line — no separator row should wrap.
+    assert!(
+        separator_row_fits(&screen),
+        "With compose width=80 and the File Explorer sidebar open on a \
+         90-col terminal, the table separator row overflows the editor \
+         content area and wraps. The plugin is using the configured \
+         compose width (80) instead of clamping it to the smaller \
+         editor area.\nScreen:\n{}",
+        screen,
+    );
+}
