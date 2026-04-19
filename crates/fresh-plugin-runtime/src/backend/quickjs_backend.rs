@@ -3846,8 +3846,12 @@ impl JsEditorApi {
                 .insert(id, self.plugin_name.clone());
             id
         };
-        // Use provided cwd, or fall back to snapshot's working_dir
-        let effective_cwd = cwd.0.or_else(|| {
+        // Use provided cwd, or fall back to snapshot's working_dir.
+        // An explicit empty string is treated the same as omitting the
+        // argument — the TS declaration says `cwd?: string`, so scripts
+        // that don't know a cwd can pass "" without tripping the
+        // QuickJS-side `undefined → String` coercion.
+        let effective_cwd = cwd.0.filter(|s| !s.is_empty()).or_else(|| {
             self.state_snapshot
                 .read()
                 .ok()
@@ -4188,13 +4192,14 @@ impl JsEditorApi {
             .or_default()
             .background_process_ids
             .push(process_id);
+        // Match `spawn_process_start`: empty-string cwd == omitted.
         let _ = self
             .command_sender
             .send(PluginCommand::SpawnBackgroundProcess {
                 process_id,
                 command,
                 args,
-                cwd: cwd.0,
+                cwd: cwd.0.filter(|s| !s.is_empty()),
                 callback_id: JsCallbackId::new(id),
             });
         id
