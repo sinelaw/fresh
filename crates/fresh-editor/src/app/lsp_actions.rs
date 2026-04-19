@@ -798,6 +798,29 @@ impl Editor {
             self.clear_diagnostics_for_server(name);
         }
 
+        // Clear any in-flight `$/progress` entries for this language
+        // if the language has no surviving handles. The dead server
+        // will never send the matching `end` notifications, so
+        // without this cleanup `compose_lsp_status` would keep
+        // winning the spinner branch over `(off)` — the indicator
+        // would stay stuck on a rotating braille glyph that doesn't
+        // actually rotate (no async events fire to re-render).
+        //
+        // We defer the check to after the shutdown so handle
+        // enumeration reflects the new state. Keyed by language
+        // because `LspProgressInfo` doesn't carry a server name —
+        // safe: if any handle for the language survives, progress
+        // on that language is still the surviving server's business
+        // and we leave it alone.
+        let any_handle_left = self
+            .lsp
+            .as_ref()
+            .is_some_and(|lsp| lsp.has_handles(language));
+        if !any_handle_left {
+            self.lsp_progress
+                .retain(|_, info| info.language != language);
+        }
+
         true
     }
 
