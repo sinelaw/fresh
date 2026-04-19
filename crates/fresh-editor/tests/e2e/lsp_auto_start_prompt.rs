@@ -698,3 +698,103 @@ fn test_disable_action_persists_enabled_false() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// The popup must expose its own "Dismiss" affordance as a selectable
+/// row — not rely on the user to know Esc closes it — and the row
+/// label must advertise the current keybinding so the UI stays
+/// truthful when the user has rebound things.
+///
+/// Specifically:
+///   1. A row with data `cancel_popup` is present, actionable, and
+///      sits at the end of the popup (after all the server-specific
+///      and language-level actions).
+///   2. The row label reads "Dismiss (<key>)" where <key> is the
+///      currently-bound key for `Action::PopupCancel` in the Popup
+///      key context — looked up via the keybinding resolver, not
+///      hardcoded. On a stock keymap that's "Esc".
+///   3. Invoking the row (via `handle_popup_confirm`, the same path
+///      the Enter key goes through) closes the popup.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_popup_offers_dismiss_row_with_dynamic_keybinding() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let file = temp.path().join("hello.rs");
+    std::fs::write(&file, "fn main() {}\n")?;
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_config(make_config_with_dormant_rust_lsp())
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    harness.open_file(&file)?;
+    harness.render()?;
+
+    let items = popup_items(&harness);
+
+    // (1) Row present, actionable, and last.
+    let dismiss_idx = items
+        .iter()
+        .position(|(_, data, _)| data.as_deref() == Some("cancel_popup"))
+        .unwrap_or_else(|| {
+            panic!(
+                "popup should offer a 'cancel_popup' row so users can dismiss \
+                 via selection, not only via Esc. Items: {:#?}",
+                items
+            )
+        });
+    let (label, _, disabled) = &items[dismiss_idx];
+    assert!(
+        !disabled,
+        "the Dismiss row must be actionable. Label: {:?}",
+        label
+    );
+    assert_eq!(
+        dismiss_idx,
+        items.len() - 1,
+        "Dismiss should be the LAST row — it's a fallback out, not a \
+         server-specific action. Items: {:#?}",
+        items
+    );
+
+    // (2) Label mentions Dismiss + the bound key looked up dynamically
+    //     from the keymap system. On the default keymap PopupCancel is
+    //     bound to Esc, which is what `format_keybinding` stringifies
+    //     for `KeyCode::Esc`.
+    assert!(
+        label.contains("Dismiss"),
+        "label should mention 'Dismiss'. Label: {:?}",
+        label
+    );
+    assert!(
+        label.contains("Esc"),
+        "label should include the dynamically-resolved keybinding for \
+         Action::PopupCancel (default: Esc). Hardcoding 'Esc' here is a \
+         smell, but the test pins the default; a keymap change would \
+         flip the label and this assertion would guide the update. \
+         Label: {:?}",
+        label
+    );
+
+    // (3) Invoking the row closes the popup. `show_lsp_status_popup`
+    //     toggles based on `pending_lsp_status_popup`, so after
+    //     confirm the popup should be gone.
+    harness
+        .editor_mut()
+        .active_state_mut()
+        .popups
+        .top_mut()
+        .expect("popup visible")
+        .select_index(dismiss_idx);
+    harness.editor_mut().handle_popup_confirm();
+    harness.render()?;
+
+    assert!(
+        harness.editor().active_state().popups.top().is_none(),
+        "selecting the Dismiss row should close the popup"
+    );
+
+    Ok(())
+}
