@@ -812,10 +812,14 @@ async function devcontainer_rebuild(): Promise<void> {
     return;
   }
 
-  // Open a terminal to stream the rebuild output live
+  // Open a terminal to stream the rebuild output live.
+  // Wrap the whole thing in `exec sh -c '...'` so the host shell is replaced
+  // by the rebuild pipeline — once it finishes (success or failure) the
+  // terminal split closes instead of leaving the user at a host prompt.
   const cwd = editor.getCwd();
   const term = await editor.createTerminal({ direction: "horizontal", ratio: 0.4, focus: true });
-  const rebuildCmd = `devcontainer up --remove-existing-container --workspace-folder ${JSON.stringify(cwd)}; echo ""; echo "--- Rebuild finished (exit: $?) ---"\n`;
+  const innerCmd = `devcontainer up --remove-existing-container --workspace-folder ${JSON.stringify(cwd)}; rc=$?; echo ""; echo "--- Rebuild finished (exit: $rc) ---"; exit $rc`;
+  const rebuildCmd = `exec sh -c ${JSON.stringify(innerCmd)}\n`;
   editor.sendTerminalInput(term.terminalId, rebuildCmd);
   editor.setStatus(editor.t("status.rebuilding"));
 }
