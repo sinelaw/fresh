@@ -432,3 +432,76 @@ fn test_auto_prompt_respects_user_dismissal() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Regression: when a session (re)opens multiple buffers of the same
+/// language back-to-back — the common shape of a session restore —
+/// the auto-prompt must end up on whichever buffer the user is
+/// looking at, not stuck on the first one that happened to be active
+/// when the prompt fired.
+///
+/// Today the prompt fires inside `notify_lsp_file_opened` and the
+/// popup attaches to `active_buffer()` at that instant. The
+/// once-per-session guard then suppresses subsequent fires for the
+/// same language, so if the active buffer flips after the first open
+/// (as it does when a later file is opened and takes focus) the popup
+/// is orphaned on a background buffer and the user sees nothing.
+///
+/// The test opens two `.rs` files in sequence — the second one wins
+/// focus, so if you imagine this as a session restore, the user lands
+/// on `b.rs`. The active buffer at that point must have the prompt;
+/// otherwise the auto-prompt is effectively invisible for anyone
+/// with more than one buffer open.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_auto_prompt_follows_active_buffer_on_session_restore() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let first = temp.path().join("a.rs");
+    let second = temp.path().join("b.rs");
+    std::fs::write(&first, "fn main() {}\n")?;
+    std::fs::write(&second, "fn other() {}\n")?;
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_config(make_config_with_dormant_rust_lsp())
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    // Simulate a session restore that reopens two rust buffers in a
+    // row. Each call's `notify_lsp_file_opened` runs with that file
+    // already the active buffer — but only the first open will fire
+    // the prompt (per the once-per-session guard), and it attaches
+    // the popup to `a.rs`. The second open flips active → `b.rs`.
+    harness.open_file(&first)?;
+    harness.render()?;
+    harness.open_file(&second)?;
+    harness.render()?;
+
+    // Sanity: the last opened file is what the user is looking at.
+    // Asserted via the rendered tab bar rather than internal state
+    // so the test speaks the user's language ("what's on my
+    // screen") — not the editor's.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("b.rs"),
+        "precondition: active tab should be b.rs. Screen:\n{}",
+        screen
+    );
+
+    // The user is on `b.rs` with a dormant rust LSP. The auto-prompt
+    // must be visible here — not stuck on `a.rs` in the background.
+    // `active_state().popups.top()` returns the popup stack for the
+    // currently-visible buffer only, so a `None` here means the
+    // popup exists elsewhere (or not at all) and the user sees
+    // nothing.
+    assert!(
+        harness.editor().active_state().popups.top().is_some(),
+        "auto-prompt should be visible on whichever rust buffer is currently \
+         active, not orphaned on a background buffer the user may never visit. \
+         Screen:\n{}",
+        screen
+    );
+
+    Ok(())
+}
