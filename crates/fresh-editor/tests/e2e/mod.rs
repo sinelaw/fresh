@@ -74,6 +74,7 @@ pub mod lsp_completion_french_locale;
 pub mod lsp_completion_popup_behavior;
 pub mod lsp_completion_resolve_and_formatting;
 pub mod lsp_config;
+pub mod lsp_crash_loop;
 pub mod lsp_cross_language_diagnostic_pull;
 pub mod lsp_diagnostic_flow;
 pub mod lsp_env;
