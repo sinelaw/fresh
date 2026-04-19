@@ -27,8 +27,11 @@ pub fn daemonize() -> io::Result<()> {
 ///
 /// This is used when the client starts and no server is running.
 /// The server inherits the current working directory.
+/// `ssh_url`, when set, is forwarded as `--ssh-url <URL>` so the
+/// spawned daemon boots into an SSH authority instead of the default
+/// `Authority::local()` (see `EditorServerConfig.startup_authority`).
 /// Returns the PID of the spawned server.
-pub fn spawn_server_detached(session_name: Option<&str>) -> io::Result<u32> {
+pub fn spawn_server_detached(session_name: Option<&str>, ssh_url: Option<&str>) -> io::Result<u32> {
     let exe = std::env::current_exe()?;
 
     let mut cmd = std::process::Command::new(&exe);
@@ -36,6 +39,10 @@ pub fn spawn_server_detached(session_name: Option<&str>) -> io::Result<u32> {
 
     if let Some(name) = session_name {
         cmd.arg("--session-name").arg(name);
+    }
+
+    if let Some(url) = ssh_url {
+        cmd.arg("--ssh-url").arg(url);
     }
 
     cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);

@@ -149,6 +149,13 @@ struct Cli {
     #[arg(long, hide = true, value_name = "NAME")]
     session_name: Option<String>,
 
+    /// Remote SSH URL for server mode (internal, used by spawn_server_detached
+    /// when the client was launched with `ssh://…` or `user@host:path`).  The
+    /// server parses this, connects, and installs the result as
+    /// `EditorServerConfig.startup_authority`.
+    #[arg(long, hide = true, value_name = "URL")]
+    ssh_url: Option<String>,
+
     // === Deprecated flags from pre-subcommand CLI (hidden, with warnings) ===
     /// [deprecated: use `fresh config show`]
     #[arg(long, hide = true)]
@@ -193,6 +200,10 @@ struct Args {
     check_plugin: Option<PathBuf>,
     init: Option<Option<String>>,
     server: bool,
+    /// Forwarded to the detached daemon by `spawn_server_detached`
+    /// when the client saw an `ssh://` / scp-style remote in
+    /// `files`.  Populated only for the daemon side.
+    ssh_url: Option<String>,
     // Session-related fields (set via subcommands or -a shortcut)
     attach: bool,
     list_sessions: bool,
@@ -438,6 +449,7 @@ impl From<Cli> for Args {
             check_plugin: cli.check_plugin,
             init,
             server: cli.server,
+            ssh_url: cli.ssh_url,
             attach,
             list_sessions,
             session_name,
@@ -1145,6 +1157,83 @@ fn parse_ssh_url_rest(rest: &str) -> Option<RemoteLocation> {
         line,
         column,
     })
+}
+
+/// Render a `RemoteLocation` back into the canonical `ssh://` URL
+/// form (no line/column — that's per-file metadata, not part of the
+/// authority).  Used to forward a client-side remote spec to the
+/// detached daemon via `spawn_server_detached`.
+fn remote_location_to_ssh_url(remote: &RemoteLocation) -> String {
+    // Paths on the remote are absolute by convention; if someone
+    // gave us a relative one (scp-style allows this) preserve it by
+    // dropping any leading `/` duplication.
+    let path = remote.path.trim_start_matches('/');
+    match remote.port {
+        Some(port) => format!("ssh://{}@{}:{}/{}", remote.user, remote.host, port, path),
+        None => format!("ssh://{}@{}/{}", remote.user, remote.host, path),
+    }
+}
+
+/// Scan CLI `files` for remote specs.  Returns `Ok(Some(url))` when
+/// every remote entry agrees on user/host/port (passed as
+/// `--ssh-url` to the detached daemon), `Ok(None)` when no file is
+/// remote, or an error when files straddle hosts.  The check mirrors
+/// `initialize_app` in standalone mode so both entry points reject
+/// the same bad inputs with the same message.
+fn extract_ssh_url_from_files(files: &[String]) -> AnyhowResult<Option<String>> {
+    let parsed: Vec<ParsedLocation> = files
+        .iter()
+        .filter(|f| *f != "-")
+        .map(|f| parse_location(f))
+        .collect();
+
+    let remotes: Vec<&RemoteLocation> = parsed
+        .iter()
+        .filter_map(|loc| match loc {
+            ParsedLocation::Remote(r) => Some(r),
+            ParsedLocation::Local(_) => None,
+        })
+        .collect();
+
+    if remotes.is_empty() {
+        return Ok(None);
+    }
+
+    let first = remotes[0];
+    for r in &remotes[1..] {
+        if r.user != first.user || r.host != first.host || r.port != first.port {
+            anyhow::bail!(
+                "Cannot open files from multiple remote hosts. First: {}@{}, found: {}@{}",
+                first.user,
+                first.host,
+                r.user,
+                r.host
+            );
+        }
+    }
+    if parsed
+        .iter()
+        .any(|loc| matches!(loc, ParsedLocation::Local(_)))
+    {
+        anyhow::bail!(
+            "Cannot mix local and remote files. Use either local paths or remote paths (ssh:// or user@host:path)."
+        );
+    }
+
+    Ok(Some(remote_location_to_ssh_url(first)))
+}
+
+/// Parse a standalone `ssh://…` URL passed via the internal
+/// `--ssh-url` flag.  Accepts only the URL form (not scp-style) and
+/// the URL must carry a path; anything else is a hard error because
+/// this input comes from our own `spawn_server_detached` and a
+/// malformed URL there means we corrupted it on the way over.
+fn parse_ssh_url_arg(url: &str) -> AnyhowResult<RemoteLocation> {
+    let rest = url
+        .strip_prefix("ssh://")
+        .ok_or_else(|| anyhow::anyhow!("--ssh-url expects an ssh:// URL, got {:?}", url))?;
+    parse_ssh_url_rest(rest)
+        .ok_or_else(|| anyhow::anyhow!("--ssh-url is not a valid ssh:// URL: {:?}", url))
 }
 
 /// Parse a location that may be local, scp-style remote, or an
@@ -2527,7 +2616,29 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
         args.session_name
     );
 
-    let working_dir = std::env::current_dir()?;
+    // Parse the optional `--ssh-url` the client forwarded via
+    // `spawn_server_detached`.  If present, we connect here — before
+    // building any editor config — so config loading can key off the
+    // remote working directory.
+    let remote_info = match args.ssh_url.as_deref() {
+        Some(url) => Some(parse_ssh_url_arg(url)?),
+        None => None,
+    };
+
+    let StartupAuthority {
+        authority,
+        remote_session,
+    } = create_startup_authority(&remote_info)?;
+
+    // Working directory: local cwd by default; remote path when the
+    // daemon was spawned with an `--ssh-url`.  Config layering is
+    // always keyed off the local cwd (the remote host doesn't have
+    // our config layout), matching the standalone path.
+    let working_dir = match &remote_info {
+        Some(remote) => PathBuf::from(&remote.path),
+        None => std::env::current_dir()?,
+    };
+    let config_dir = std::env::current_dir()?;
     eprintln!("[server] Working directory: {:?}", working_dir);
 
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
@@ -2537,9 +2648,17 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
     let editor_config = if let Some(config_path) = &args.config {
         config::Config::load_from_file(config_path)?
     } else {
-        config::Config::load_with_layers(&dir_context, &working_dir)
+        config::Config::load_with_layers(&dir_context, &config_dir)
     };
     eprintln!("[server] Editor config loaded");
+
+    let session_keepalive: Option<Box<dyn std::any::Any + Send>> =
+        remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
+    let startup_authority = if remote_info.is_some() {
+        Some(authority)
+    } else {
+        None
+    };
 
     let config = EditorServerConfig {
         working_dir: working_dir.clone(),
@@ -2549,11 +2668,8 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
         dir_context,
         plugins_enabled: !args.no_plugins,
         init_enabled: !args.no_init,
-        // Detached daemons don't yet receive a remote spec from
-        // `spawn_server_detached`, so startup is local here. Tests
-        // and future callers exercise the SSH path directly.
-        startup_authority: None,
-        session_keepalive: None,
+        startup_authority,
+        session_keepalive,
     };
 
     eprintln!("[server] Creating EditorServer...");
@@ -2627,8 +2743,26 @@ fn run_open_files_command(
         return Ok(());
     }
 
+    // Strip any `ssh://` / `user@host:path` specs off the file list
+    // before they reach `build_file_requests` — those entries become
+    // the daemon's authority, not local path requests.  An existing
+    // server keeps its authority; we don't re-attach through a
+    // remote URL after the fact.
+    let ssh_url = extract_ssh_url_from_files(files)?;
+    let local_files: Vec<String> = if ssh_url.is_some() {
+        files
+            .iter()
+            .filter_map(|f| match parse_location(f) {
+                ParsedLocation::Remote(r) => Some(r.path),
+                ParsedLocation::Local(_) => None,
+            })
+            .collect()
+    } else {
+        files.to_vec()
+    };
+
     let working_dir = std::env::current_dir()?;
-    let file_requests = build_file_requests(files, &working_dir);
+    let file_requests = build_file_requests(&local_files, &working_dir);
 
     if file_requests.is_empty() {
         eprintln!("No files to open (only directories were specified).");
@@ -2643,7 +2777,7 @@ fn run_open_files_command(
 
     // Start server if not running (like nvr does by default)
     let server_was_started = if !socket_paths.is_server_alive() {
-        let _pid = spawn_server_detached(session_name)?;
+        let _pid = spawn_server_detached(session_name, ssh_url.as_deref())?;
 
         // Wait for server to be ready
         loop {
@@ -2773,6 +2907,13 @@ fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> 
 
     let working_dir = std::env::current_dir()?;
 
+    // If the user passed any remote specs, the URL becomes the
+    // daemon's startup authority — and any subsequent `OpenFiles`
+    // carries only the path components (see filtering below).  We
+    // only consume the URL when *starting* a server; attaching to
+    // an existing session ignores it.
+    let ssh_url = extract_ssh_url_from_files(files)?;
+
     // Determine socket paths based on session name or working directory
     let socket_paths = resolve_session(session_name)?;
 
@@ -2786,7 +2927,7 @@ fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> 
         eprintln!("Starting server...");
 
         // Spawn server in background
-        let _pid = spawn_server_detached(session_name)?;
+        let _pid = spawn_server_detached(session_name, ssh_url.as_deref())?;
         true
     } else {
         false
@@ -2864,9 +3005,23 @@ fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> 
         }
     }
 
-    // Send file open requests if any files were specified on the command line
+    // Send file open requests if any files were specified on the
+    // command line.  When `ssh_url` was extracted above the file
+    // list carried remote specs; strip them to bare paths so the
+    // daemon opens them through its (SSH) authority.
     if !files.is_empty() {
-        let file_requests = build_file_requests(files, &working_dir);
+        let local_files: Vec<String> = if ssh_url.is_some() {
+            files
+                .iter()
+                .filter_map(|f| match parse_location(f) {
+                    ParsedLocation::Remote(r) => Some(r.path),
+                    ParsedLocation::Local(_) => None,
+                })
+                .collect()
+        } else {
+            files.to_vec()
+        };
+        let file_requests = build_file_requests(&local_files, &working_dir);
         if !file_requests.is_empty() {
             let msg = serde_json::to_string(&ClientControl::OpenFiles {
                 files: file_requests,
@@ -4060,6 +4215,109 @@ mod tests {
             }
             ParsedLocation::Remote(_) => panic!("Expected local, got remote"),
         }
+    }
+
+    // Tests for the client→daemon plumbing: a remote spec on the
+    // command line becomes a `--ssh-url` forwarded to
+    // `spawn_server_detached`, and the server side parses it back
+    // into the same shape the standalone path uses.
+
+    #[test]
+    fn test_remote_location_to_ssh_url_with_port() {
+        let remote = RemoteLocation {
+            user: "alice".into(),
+            host: "host.example".into(),
+            port: Some(2222),
+            path: "/etc/hosts".into(),
+            line: Some(10),
+            column: None,
+        };
+        // Line/column are per-file, not authority — they must not
+        // appear in the URL we hand to the daemon.
+        assert_eq!(
+            remote_location_to_ssh_url(&remote),
+            "ssh://alice@host.example:2222/etc/hosts"
+        );
+    }
+
+    #[test]
+    fn test_remote_location_to_ssh_url_no_port() {
+        let remote = RemoteLocation {
+            user: "bob".into(),
+            host: "server".into(),
+            port: None,
+            path: "/home/bob".into(),
+            line: None,
+            column: None,
+        };
+        assert_eq!(
+            remote_location_to_ssh_url(&remote),
+            "ssh://bob@server/home/bob"
+        );
+    }
+
+    #[test]
+    fn test_extract_ssh_url_none_for_local_only() {
+        let files = vec!["foo.txt".to_string(), "bar:42".to_string()];
+        assert_eq!(extract_ssh_url_from_files(&files).unwrap(), None);
+    }
+
+    #[test]
+    fn test_extract_ssh_url_from_ssh_urls() {
+        let files = vec![
+            "ssh://alice@host/a".to_string(),
+            "ssh://alice@host/b:10".to_string(),
+        ];
+        assert_eq!(
+            extract_ssh_url_from_files(&files).unwrap(),
+            Some("ssh://alice@host/a".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_ssh_url_from_scp_style() {
+        let files = vec!["alice@host:/etc/hosts".to_string()];
+        assert_eq!(
+            extract_ssh_url_from_files(&files).unwrap(),
+            Some("ssh://alice@host/etc/hosts".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_ssh_url_rejects_mismatched_hosts() {
+        let files = vec![
+            "ssh://alice@host1/a".to_string(),
+            "ssh://alice@host2/b".to_string(),
+        ];
+        assert!(extract_ssh_url_from_files(&files).is_err());
+    }
+
+    #[test]
+    fn test_extract_ssh_url_rejects_mixed_local_and_remote() {
+        let files = vec!["ssh://alice@host/a".to_string(), "local.txt".to_string()];
+        assert!(extract_ssh_url_from_files(&files).is_err());
+    }
+
+    #[test]
+    fn test_parse_ssh_url_arg_accepts_valid_url() {
+        let rl = parse_ssh_url_arg("ssh://alice@host:2222/path").unwrap();
+        assert_eq!(rl.user, "alice");
+        assert_eq!(rl.host, "host");
+        assert_eq!(rl.port, Some(2222));
+        assert_eq!(rl.path, "/path");
+    }
+
+    #[test]
+    fn test_parse_ssh_url_arg_rejects_scp_style() {
+        // The `--ssh-url` flag is URL-form only; scp-style is an
+        // error (we'd never send it over this flag).
+        assert!(parse_ssh_url_arg("alice@host:/path").is_err());
+    }
+
+    #[test]
+    fn test_parse_ssh_url_arg_rejects_malformed() {
+        assert!(parse_ssh_url_arg("ssh://host").is_err()); // no path
+        assert!(parse_ssh_url_arg("ssh://alice@host:bad/path").is_err()); // bad port
     }
 
     // Tests for range selection and message parsing

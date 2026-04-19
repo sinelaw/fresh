@@ -176,12 +176,39 @@ the daemon to boot into something other than local:
   would tear the remote session down, so the server just holds the
   bundle until shutdown. Local authorities leave it `None`.
 
-Actually wiring the CLI `ssh://` / scp-style remote forms into a
-detached daemon spawn still requires forwarding the remote spec
-through `spawn_server_detached` — the slots are in place but the
-`--server` launcher does not yet parse and pass a remote URL. That's
-a separate piece of plumbing; tests exercise the slots directly
-(`test_server_boots_with_startup_authority_and_keeps_keepalive`).
+### CLI → detached daemon plumbing
+
+When a client command (`fresh -a <files>` or
+`fresh --cmd session open-file <name> <files>`) sees any remote spec
+in the file list, `extract_ssh_url_from_files`:
+
+1. Parses every file through `parse_location`.
+2. Validates that all remote entries agree on user/host/port
+   (error otherwise) and that remote and local paths are not mixed.
+3. Re-renders the shared authority as a canonical `ssh://` URL via
+   `remote_location_to_ssh_url` (line/column are per-file and stay
+   out of the authority URL).
+
+That URL is forwarded to the detached child as
+`--ssh-url <URL>` (a hidden internal flag) by
+`spawn_server_detached(session_name, ssh_url)`.  The file list sent
+to the daemon over the `OpenFiles` control message is stripped to
+bare paths — the daemon's active authority already knows the host.
+
+On the daemon side, `run_server_command` uses `parse_ssh_url_arg`
+(URL-form only, hard error on anything else) to build a
+`RemoteLocation`, calls the same `create_startup_authority` /
+`connect_remote` used by standalone mode, and wraps the resulting
+`RemoteSession` in the `session_keepalive` slot.  The remote path
+becomes the daemon's `working_dir`; local cwd keeps its role as the
+config-layering key.
+
+Existing servers are not re-attached through a remote URL: a URL
+passed to `fresh -a` is only consumed when the client starts a new
+daemon. If a local-authority session is already running under the
+target key, the URL is ignored. Callers wanting isolation should
+pass `--session-name` (or equivalent) so the new SSH daemon gets a
+distinct socket.
 
 ### Related: `change_working_dir`
 
