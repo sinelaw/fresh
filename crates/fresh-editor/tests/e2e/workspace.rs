@@ -1790,3 +1790,137 @@ fn test_tab_order_preserved_across_restore() {
         );
     }
 }
+
+/// Skip the test body if no PTY is available in the current environment.
+/// Plugin-created terminals go through the same PTY pipeline as user
+/// terminals, so the harness needs a working `/dev/ptmx` to exercise the
+/// ephemeral/persistent distinction. On sandboxed CI we early-return
+/// instead of marking the test as failed.
+fn pty_available() -> bool {
+    use portable_pty::{native_pty_system, PtySize};
+    native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_ok()
+}
+
+/// A plugin-created terminal with `persistent: false` (the default for the
+/// plugin API) must not leak into the serialized workspace. Before this
+/// change, every plugin `createTerminal` call added a SerializedTerminalWorkspace
+/// entry whose backing file was then re-read on the next startup, so the
+/// "new" terminal came up with the previous run's scrollback.
+#[test]
+fn test_plugin_ephemeral_terminal_excluded_from_workspace() {
+    use fresh::services::plugins::api::PluginCommand;
+
+    if !pty_available() {
+        eprintln!("Skipping ephemeral terminal workspace test: PTY not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Config::default(), project_dir)
+            .unwrap();
+
+    // Create a plugin-initiated terminal with persistent = false. Using
+    // request_id = 0 is fine here: no one is waiting on the callback, and
+    // the resolve/reject of request 0 is benign for a test harness that
+    // isn't running the plugin runtime.
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::CreateTerminal {
+            cwd: None,
+            direction: None,
+            ratio: None,
+            focus: Some(false),
+            persistent: false,
+            request_id: 0,
+        })
+        .unwrap();
+
+    let workspace = harness.editor().capture_workspace();
+    assert!(
+        workspace.terminals.is_empty(),
+        "Ephemeral plugin terminal must not appear in the serialized workspace. \
+         Found {} terminal(s): {:?}",
+        workspace.terminals.len(),
+        workspace.terminals,
+    );
+}
+
+/// A plugin-created terminal with `persistent: true` (opt-in) behaves like
+/// a user-opened terminal: it is serialized into the workspace so it can
+/// be restored across editor restarts. This is the escape hatch for
+/// plugins that genuinely own a long-lived terminal.
+#[test]
+fn test_plugin_persistent_terminal_included_in_workspace() {
+    use fresh::services::plugins::api::PluginCommand;
+
+    if !pty_available() {
+        eprintln!("Skipping persistent terminal workspace test: PTY not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Config::default(), project_dir)
+            .unwrap();
+
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::CreateTerminal {
+            cwd: None,
+            direction: None,
+            ratio: None,
+            focus: Some(false),
+            persistent: true,
+            request_id: 0,
+        })
+        .unwrap();
+
+    let workspace = harness.editor().capture_workspace();
+    assert_eq!(
+        workspace.terminals.len(),
+        1,
+        "Persistent plugin terminal should be serialized exactly once",
+    );
+}
+
+/// User-opened terminals (via `Editor::open_terminal`, the command-palette /
+/// keybind path) must continue to persist — the ephemeral distinction is a
+/// plugin-facing concern, not a regression of the existing behavior.
+#[test]
+fn test_user_opened_terminal_still_persists_in_workspace() {
+    if !pty_available() {
+        eprintln!("Skipping user terminal workspace test: PTY not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Config::default(), project_dir)
+            .unwrap();
+
+    harness.editor_mut().open_terminal();
+
+    let workspace = harness.editor().capture_workspace();
+    assert_eq!(
+        workspace.terminals.len(),
+        1,
+        "User-opened terminal should still be serialized (no regression)",
+    );
+}

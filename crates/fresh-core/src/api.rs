@@ -1838,6 +1838,12 @@ pub enum PluginCommand {
         ratio: Option<f32>,
         /// Whether to focus the new terminal split (default true)
         focus: Option<bool>,
+        /// Whether this terminal survives editor restarts. When false, the
+        /// terminal is excluded from workspace serialization and its backing
+        /// file is kept unique-per-spawn so no scrollback from a prior run
+        /// leaks in. Plugin-created terminals default to `false` since they
+        /// are typically one-off tool UIs (rebuilds, exec shells, etc.).
+        persistent: bool,
         /// Callback ID for async response
         request_id: u64,
     },
@@ -2367,6 +2373,15 @@ pub struct CreateTerminalOptions {
     #[serde(default)]
     #[ts(optional)]
     pub focus: Option<bool>,
+    /// Whether this terminal is part of the user's persisted workspace.
+    /// Defaults to `false` for plugin-created terminals — they are typically
+    /// one-off tool UIs (rebuilds, exec shells, build output) and should
+    /// start with empty scrollback on each invocation. Set to `true` only
+    /// when the plugin owns a terminal that the user should see restored
+    /// across editor restarts.
+    #[serde(default)]
+    #[ts(optional)]
+    pub persistent: Option<bool>,
 }
 
 /// Result of getTextPropertiesAtCursor - array of property objects

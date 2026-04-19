@@ -1703,6 +1703,7 @@ impl Editor {
                 direction,
                 ratio,
                 focus,
+                persistent,
                 request_id,
             } => {
                 let (cols, rows) = self.get_terminal_dimensions();
@@ -1723,10 +1724,23 @@ impl Editor {
                     tracing::warn!("Failed to create terminal directory: {}", e);
                 }
                 let predicted_terminal_id = self.terminal_manager.next_terminal_id();
-                let log_path =
-                    terminal_root.join(format!("fresh-terminal-{}.log", predicted_terminal_id.0));
-                let backing_path =
-                    terminal_root.join(format!("fresh-terminal-{}.txt", predicted_terminal_id.0));
+                // Ephemeral terminals get a per-spawn suffix on their backing
+                // files so there is no possibility of picking up the scrollback
+                // that a previous run (with the same numeric terminal ID) wrote
+                // to `fresh-terminal-N.{txt,log}`. Persistent terminals keep
+                // the stable `fresh-terminal-N.*` name so workspace restore
+                // can still find them.
+                let name_stem = if persistent {
+                    format!("fresh-terminal-{}", predicted_terminal_id.0)
+                } else {
+                    let nanos = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    format!("fresh-terminal-eph-{}-{}", predicted_terminal_id.0, nanos)
+                };
+                let log_path = terminal_root.join(format!("{}.log", name_stem));
+                let backing_path = terminal_root.join(format!("{}.txt", name_stem));
                 self.terminal_backing_files
                     .insert(predicted_terminal_id, backing_path);
                 let backing_path_for_spawn = self
@@ -1745,13 +1759,28 @@ impl Editor {
                         // Track log file path
                         self.terminal_log_files
                             .insert(terminal_id, log_path.clone());
-                        // Fix up backing path if predicted ID differs
+                        // Fix up backing path if the predicted ID didn't match
+                        // the one the terminal manager handed out. Persistent
+                        // terminals re-derive the stable `fresh-terminal-N.txt`
+                        // name so the workspace restore path can find them;
+                        // ephemeral terminals just keep the already-spawned
+                        // file (it has a nanos-unique name either way) and
+                        // rebind the HashMap key to the real ID.
                         if terminal_id != predicted_terminal_id {
-                            self.terminal_backing_files.remove(&predicted_terminal_id);
-                            let backing_path =
-                                terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0));
+                            let existing =
+                                self.terminal_backing_files.remove(&predicted_terminal_id);
+                            let fixed_backing = if persistent {
+                                terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
+                            } else {
+                                existing.unwrap_or_else(|| {
+                                    terminal_root.join(format!("{}.txt", name_stem))
+                                })
+                            };
                             self.terminal_backing_files
-                                .insert(terminal_id, backing_path);
+                                .insert(terminal_id, fixed_backing);
+                        }
+                        if !persistent {
+                            self.ephemeral_terminals.insert(terminal_id);
                         }
 
                         // Create buffer attached to the active split

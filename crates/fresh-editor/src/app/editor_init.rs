@@ -689,6 +689,7 @@ impl Editor {
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),
+            ephemeral_terminals: std::collections::HashSet::new(),
             terminal_mode: false,
             keyboard_capture: false,
             terminal_mode_resume: std::collections::HashSet::new(),

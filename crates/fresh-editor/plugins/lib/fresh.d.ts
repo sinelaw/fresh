@@ -497,6 +497,15 @@ type CreateTerminalOptions = {
 	* Whether to focus the new terminal split (default: true)
 	*/
 	focus?: boolean;
+	/**
+	* Whether this terminal is part of the user's persisted workspace.
+	* Defaults to `false` for plugin-created terminals — they are typically
+	* one-off tool UIs (rebuilds, exec shells, build output) and should
+	* start with empty scrollback on each invocation. Set to `true` only
+	* when the plugin owns a terminal that the user should see restored
+	* across editor restarts.
+	*/
+	persistent?: boolean;
 };
 type CursorInfo = {
 	/**

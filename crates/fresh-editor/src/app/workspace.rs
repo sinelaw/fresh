@@ -158,6 +158,15 @@ impl Editor {
         let mut seen = HashSet::new();
         for terminal_id in self.terminal_buffers.values().copied() {
             if seen.insert(terminal_id) {
+                // Ephemeral terminals (plugin-created tool UIs — rebuilds,
+                // exec shells, build output) do not belong in the persisted
+                // workspace. Skipping them here prevents their backing files
+                // from being serialized, which is what used to cause a newly
+                // spawned plugin terminal to come back with scrollback from
+                // the prior run.
+                if self.ephemeral_terminals.contains(&terminal_id) {
+                    continue;
+                }
                 let idx = terminals.len();
                 terminal_indices.insert(terminal_id, idx);
                 let handle = self.terminal_manager.get(terminal_id);

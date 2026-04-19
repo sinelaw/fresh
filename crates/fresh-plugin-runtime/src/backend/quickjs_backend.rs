@@ -3994,6 +3994,7 @@ impl JsEditorApi {
             direction: None,
             ratio: None,
             focus: None,
+            persistent: None,
         });
 
         // Track request_id → plugin_name for async resource tracking
@@ -4005,6 +4006,10 @@ impl JsEditorApi {
             direction: opts.direction,
             ratio: opts.ratio,
             focus: opts.focus,
+            // Plugin-created terminals default to ephemeral. Opt in explicitly
+            // by passing `persistent: true` in the options if the plugin wants
+            // the terminal to survive workspace save/restore.
+            persistent: opts.persistent.unwrap_or(false),
             request_id: id,
         });
         Ok(id)

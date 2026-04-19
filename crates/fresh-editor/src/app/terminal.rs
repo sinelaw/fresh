@@ -254,6 +254,7 @@ impl Editor {
             // Close the terminal
             self.terminal_manager.close(terminal_id);
             self.terminal_buffers.remove(&buffer_id);
+            self.ephemeral_terminals.remove(&terminal_id);
 
             // Clean up backing/rendering file
             let backing_file = self.terminal_backing_files.remove(&terminal_id);

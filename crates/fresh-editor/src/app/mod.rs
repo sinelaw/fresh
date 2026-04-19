@@ -947,6 +947,13 @@ pub struct Editor {
     /// Maps terminal ID to raw log file path (full PTY capture)
     terminal_log_files: HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
 
+    /// Terminals that should not be persisted to the workspace session file.
+    /// A terminal is in this set iff it was created with `persistent = false`
+    /// (the default for plugin-created terminals). On workspace save these
+    /// terminals are skipped; on close their backing/log files are removed.
+    /// User-opened terminals are absent from this set and persist as before.
+    ephemeral_terminals: std::collections::HashSet<crate::services::terminal::TerminalId>,
+
     /// Whether terminal mode is active (input goes to terminal)
     terminal_mode: bool,
 
