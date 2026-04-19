@@ -880,6 +880,7 @@ impl Editor {
                 self.tab_bar_visible = self.config.editor.show_tab_bar;
                 self.status_bar_visible = self.config.editor.show_status_bar;
                 self.prompt_line_visible = self.config.editor.show_prompt_line;
+                #[cfg(feature = "plugins")]
                 self.update_plugin_state_snapshot();
             }
             Err(e) => {

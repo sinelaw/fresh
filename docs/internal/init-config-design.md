@@ -69,9 +69,8 @@ dialect. The three `EditorAPI` additions in §6 cover what's missing.
 Mechanically, `init.ts` **is a plugin** named `init.ts`, loaded via
 the existing `load_plugin_from_source` pipeline (the same one behind
 the "Load Plugin from Buffer" command). The only differences from a
-normal plugin: it auto-loads at startup from a fixed path, runs
-before registry plugins, and any setting writes (§6.1) it makes go
-into a runtime config layer scoped to the `init.ts` plugin name.
+normal plugin: it auto-loads at startup from a fixed path and runs
+before registry plugins.
 
 ### 3.3 Lifecycle — three phases
 
@@ -97,12 +96,14 @@ Project `config.json` always wins over `init.ts` writes. A teammate's
 shared repo config is authoritative, regardless of the user's
 `init.ts`.
 
-### 3.4 Config layering
+### 3.4 Config writes
 
-Init.ts writes go to a runtime layer between User and Project
-`config.json`. Settings UI gains an `(init)` source badge that names
-the originating file:line. **No init.ts write persists to disk** —
-removing the file is a complete undo.
+`setSetting(path, value)` mutates Config directly — fire-and-forget,
+same model as Neovim (`vim.opt`), VS Code (`update(Memory)`), Emacs
+(`setq`), and Sublime (`view.settings().set`). No per-plugin
+tracking, no overlay, no revert on unload. Writes persist in the
+session until overwritten or the editor restarts. Removing init.ts
+prevents its writes from being re-applied on the next launch.
 
 ### 3.5 Plugin configuration plane
 
@@ -145,21 +146,17 @@ The editor must always reach a usable state. Required, in order:
 - **Crash inside `init.ts`** three times within a short window — next
   launch enters safe mode automatically. Resets after one good launch.
 
-**Reload semantics.** Reload is the existing plugin hot-reload path:
-read the file, call `load_plugin_from_source(content, "init.ts",
-true)`. The runtime already unloads the prior `init.ts` plugin
+**Reload semantics.** Reload re-runs init.ts via the existing plugin
+hot-reload path. The runtime unloads the prior `init.ts` plugin
 (dropping its commands, handlers, event subs, LSP registrations,
-runtime config layer) and loads the new one. Plugins init.ts touched
-via `getPluginApi` are also reloaded so their `configure` state
-resets. If re-evaluation throws, state may be half-applied; the user
-sees a banner pointing at the failure and re-runs reload after fixing.
+exported APIs) and evaluates the new source. `setSetting` writes
+from the prior run persist (fire-and-forget) — the new init.ts
+overwrites whatever it still sets; removed lines' values stay.
+This matches the Neovim model.
 
 The "Load Plugin from Buffer" command, when invoked on the open
 init.ts buffer, goes through the same code path with the same plugin
-name — it *is* `init: Reload`, just discovered through a different
-palette entry. `init: Reload` and `init: Revert` are thin wrappers
-that find/open the init.ts file (or use the cached source) so the
-user doesn't have to have it open. No new mechanism.
+name — it *is* `init: Reload`. No new mechanism.
 
 The user can always start with `--safe` (skip init.ts and plugins) or
 `--no-init` (skip init.ts only). Safe-mode startup must not require
@@ -195,17 +192,12 @@ plugin.
 
 | # | Addition | Purpose | Priority |
 |---|---|---|---|
-| 6.1 | `setSetting(path, value)` | Runtime per-setting writes — the only blocker | **P0** |
+| 6.1 | `setSetting(path, value)` | Fire-and-forget config mutation (Neovim/VS Code model) | **P0** |
 | 6.2 | `exportPluginApi(name, api)` / `getPluginApi<T>(name)` | Plugin-configuration plane (§3.5) | P1 |
 | 6.3 | Closure overload for `editor.on(event, fn)`; new event names `plugins_loaded` and `ready` | Lifecycle phases (§3.3) without dedicated APIs | P1 |
 
 §6.1 is the only blocker; §6.2 unlocks code-configurable plugins;
 §6.3 unlocks the two-phase model.
-
-Reload (§4) does not need a dedicated API. It reuses the existing
-per-source registration tagging the plugin runtime already has —
-init.ts becomes one more source name, and reload drops everything
-tagged with that name before re-running.
 
 **Deliberately not added** — the alternative in each case is good
 enough that a new method would just inflate the surface:
@@ -217,18 +209,14 @@ enough that a new method would just inflate the surface:
   Fresh sets `FRESH_INTERACTIVE=1` on its own process env for the
   one case (TTY/normal-mode detection) that needs editor-internal
   knowledge.
-- `setPluginEnabled(id, enabled)` — `setSetting("plugins.<id>.enabled",
-  false)` does the same thing through the same mechanism. The plugin
-  loader reads the runtime layer before plugins start.
 - `onceConfigured(fn)` / `onceReady(fn)` — the closure overload on
   `editor.on` plus the two new event names cover this without a
   second API surface.
 - `getProjectRoot()` — a short loop using existing `editor.fileExists`
   / `pathDirname` / `pathJoin` covers it.
-- Effect-tracking proxy on `editor.*` — per-source registration
-  tagging (already used by plugins) plus dropping the init.ts runtime
-  config layer is enough. Reload is "drop tagged + reload touched
-  plugins + re-evaluate."
+- Per-plugin setting tracking / overlay — research across Neovim,
+  VS Code, Emacs, Zed, and Sublime shows no editor tracks per-plugin
+  setting writes. All use fire-and-forget. We match the ecosystem.
 
 ## 7. Open questions
 
@@ -237,19 +225,11 @@ implementation choices (CLI command names, dry-run output format,
 scaffolder UX, file watcher behaviour) are deliberately omitted —
 implementer chooses.
 
-- **Project-config override.** Current proposal: project always wins
-  over init.ts. Should there be an explicit `forceSetting` for the
-  "I personally hate trailing whitespace, regardless of the project"
-  case? If yes, surface a distinct badge in Settings UI.
-- **Secrets in effect logs.** `getEnv("GITHUB_TOKEN")` flows into
-  `setSetting` / `registerLspServer` writes that get serialised into
-  reload effect logs and dry-run output. Either taint-track env reads
-  or add an opaque `getSecret(name)` handle that never serialises.
 - **Plugin-API resolution.** Lookup-style (`getPluginApi("name")`)
   ships immediately with no module loader work. ESM imports
   (`import { … } from "@fresh/plugin-name"`) is nicer but needs a real
   resolver. Lean toward the former for v1.
-- **Settings UI interaction with `(init)` writes.** Toggling an
-  init-written value either silently reverts on next launch
-  (confusing) or pops a "controlled by init.ts:42 — open?" dialog.
-  Lean toward the dialog.
+- **Type scaffolding.** On first run, copy `fresh.d.ts` to
+  `~/.config/fresh/types/` and write a `tsconfig.json` so the user
+  gets IntelliSense when editing init.ts in any TS-aware editor. Not
+  yet implemented.
