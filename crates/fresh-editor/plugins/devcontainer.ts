@@ -511,7 +511,6 @@ function updateInfoPanel(): void {
 
 editor.defineMode(
   "devcontainer-info",
-  "normal",
   [
     ["Tab", "devcontainer_next_button"],
     ["S-Tab", "devcontainer_prev_button"],
@@ -522,38 +521,50 @@ editor.defineMode(
     ["q", "devcontainer_close_info"],
     ["Escape", "devcontainer_close_info"],
   ],
-  true // read-only
+  true, // read-only
+  false, // allow_text_input
+  true, // inherit Normal-context bindings so arrow keys / page nav still work
 );
 
 // =============================================================================
 // Info Panel Button Navigation
 // =============================================================================
 
-globalThis.devcontainer_next_button = function (): void {
+// Plugin code runs inside an IIFE, so `function foo() {}` declarations don't
+// land on globalThis on their own. Register each handler explicitly so it can
+// be referenced by string name from defineMode bindings, registerCommand, and
+// event handlers (see also pkg.ts).
+
+function devcontainer_next_button(): void {
   if (!infoPanelOpen) return;
   infoFocus = { type: "button", index: (infoFocus.index + 1) % infoButtons.length };
   updateInfoPanel();
-};
+}
+registerHandler("devcontainer_next_button", devcontainer_next_button);
 
-globalThis.devcontainer_prev_button = function (): void {
+function devcontainer_prev_button(): void {
   if (!infoPanelOpen) return;
   infoFocus = { type: "button", index: (infoFocus.index - 1 + infoButtons.length) % infoButtons.length };
   updateInfoPanel();
-};
+}
+registerHandler("devcontainer_prev_button", devcontainer_prev_button);
 
-globalThis.devcontainer_activate_button = function (): void {
+function devcontainer_activate_button(): void {
   if (!infoPanelOpen) return;
   const btn = infoButtons[infoFocus.index];
-  if (btn && globalThis[btn.command]) {
-    globalThis[btn.command]();
+  if (!btn) return;
+  const handler = (globalThis as Record<string, unknown>)[btn.command];
+  if (typeof handler === "function") {
+    (handler as () => void)();
   }
-};
+}
+registerHandler("devcontainer_activate_button", devcontainer_activate_button);
 
 // =============================================================================
 // Commands
 // =============================================================================
 
-globalThis.devcontainer_show_info = async function (): Promise<void> {
+async function devcontainer_show_info(): Promise<void> {
   if (!config) {
     editor.setStatus(editor.t("status.no_config"));
     return;
@@ -589,9 +600,10 @@ globalThis.devcontainer_show_info = async function (): Promise<void> {
     applyInfoHighlighting();
     editor.setStatus(editor.t("status.panel_opened"));
   }
-};
+}
+registerHandler("devcontainer_show_info", devcontainer_show_info);
 
-globalThis.devcontainer_close_info = function (): void {
+function devcontainer_close_info(): void {
   if (!infoPanelOpen) return;
 
   if (infoPanelSplitId !== null) {
@@ -605,17 +617,19 @@ globalThis.devcontainer_close_info = function (): void {
   infoPanelBufferId = null;
   infoPanelSplitId = null;
   editor.setStatus(editor.t("status.panel_closed"));
-};
+}
+registerHandler("devcontainer_close_info", devcontainer_close_info);
 
-globalThis.devcontainer_open_config = function (): void {
+function devcontainer_open_config(): void {
   if (configPath) {
     editor.openFile(configPath, null, null);
   } else {
     editor.setStatus(editor.t("status.no_config"));
   }
-};
+}
+registerHandler("devcontainer_open_config", devcontainer_open_config);
 
-globalThis.devcontainer_run_lifecycle = function (): void {
+function devcontainer_run_lifecycle(): void {
   if (!config) {
     editor.setStatus(editor.t("status.no_config"));
     return;
@@ -643,9 +657,10 @@ globalThis.devcontainer_run_lifecycle = function (): void {
 
   editor.startPrompt(editor.t("prompt.run_lifecycle"), "devcontainer-lifecycle");
   editor.setPromptSuggestions(suggestions);
-};
+}
+registerHandler("devcontainer_run_lifecycle", devcontainer_run_lifecycle);
 
-globalThis.devcontainer_on_lifecycle_confirmed = async function (data: {
+async function devcontainer_on_lifecycle_confirmed(data: {
   prompt_type: string;
   value: string;
 }): Promise<void> {
@@ -694,9 +709,10 @@ globalThis.devcontainer_on_lifecycle_confirmed = async function (data: {
     }
     editor.setStatus(editor.t("status.completed", { name: cmdName }));
   }
-};
+}
+registerHandler("devcontainer_on_lifecycle_confirmed", devcontainer_on_lifecycle_confirmed);
 
-globalThis.devcontainer_show_features = function (): void {
+function devcontainer_show_features(): void {
   if (!config || !config.features || Object.keys(config.features).length === 0) {
     editor.setStatus(editor.t("status.no_features"));
     return;
@@ -716,9 +732,10 @@ globalThis.devcontainer_show_features = function (): void {
 
   editor.startPrompt(editor.t("prompt.features"), "devcontainer-features");
   editor.setPromptSuggestions(suggestions);
-};
+}
+registerHandler("devcontainer_show_features", devcontainer_show_features);
 
-globalThis.devcontainer_show_ports = function (): void {
+function devcontainer_show_ports(): void {
   if (!config || !config.forwardPorts || config.forwardPorts.length === 0) {
     editor.setStatus(editor.t("status.no_ports"));
     return;
@@ -735,7 +752,8 @@ globalThis.devcontainer_show_ports = function (): void {
 
   editor.startPrompt(editor.t("prompt.ports"), "devcontainer-ports");
   editor.setPromptSuggestions(suggestions);
-};
+}
+registerHandler("devcontainer_show_ports", devcontainer_show_ports);
 
 const INSTALL_COMMAND = "npm i -g @devcontainers/cli";
 
@@ -756,9 +774,7 @@ function showCliNotFoundPopup(): void {
   });
 }
 
-globalThis.devcontainer_on_action_result = function (
-  data: ActionPopupResultData,
-): void {
+function devcontainer_on_action_result(data: ActionPopupResultData): void {
   if (data.popup_id === "devcontainer-cli-help") {
     switch (data.action_id) {
       case "copy_install":
@@ -772,23 +788,24 @@ globalThis.devcontainer_on_action_result = function (
   } else if (data.popup_id === "devcontainer-activate") {
     switch (data.action_id) {
       case "rebuild":
-        globalThis.devcontainer_rebuild();
+        devcontainer_rebuild();
         break;
       case "copy_install":
         editor.setClipboard(INSTALL_COMMAND);
         editor.setStatus(editor.t("status.copied_install", { cmd: INSTALL_COMMAND }));
         break;
       case "show_info":
-        globalThis.devcontainer_show_info();
+        devcontainer_show_info();
         break;
       case "dismiss":
       case "dismissed":
         break;
     }
   }
-};
+}
+registerHandler("devcontainer_on_action_result", devcontainer_on_action_result);
 
-globalThis.devcontainer_rebuild = async function (): Promise<void> {
+async function devcontainer_rebuild(): Promise<void> {
   const result = await editor.spawnProcess("which", ["devcontainer"]);
   if (result.exit_code !== 0) {
     showCliNotFoundPopup();
@@ -801,9 +818,10 @@ globalThis.devcontainer_rebuild = async function (): Promise<void> {
   const rebuildCmd = `devcontainer up --remove-existing-container --workspace-folder ${JSON.stringify(cwd)}; echo ""; echo "--- Rebuild finished (exit: $?) ---"\n`;
   editor.sendTerminalInput(term.terminalId, rebuildCmd);
   editor.setStatus(editor.t("status.rebuilding"));
-};
+}
+registerHandler("devcontainer_rebuild", devcontainer_rebuild);
 
-globalThis.devcontainer_open_terminal = async function (): Promise<void> {
+async function devcontainer_open_terminal(): Promise<void> {
   const cliCheck = await editor.spawnProcess("which", ["devcontainer"]);
   if (cliCheck.exit_code !== 0) {
     showCliNotFoundPopup();
@@ -827,7 +845,8 @@ globalThis.devcontainer_open_terminal = async function (): Promise<void> {
   const execCmd = `devcontainer exec --workspace-folder ${JSON.stringify(cwd)} /bin/sh -c 'exec \${SHELL:-/bin/sh}'\n`;
   editor.sendTerminalInput(term.terminalId, execCmd);
   editor.setStatus(editor.t("status.terminal_opened"));
-};
+}
+registerHandler("devcontainer_open_terminal", devcontainer_open_terminal);
 
 // =============================================================================
 // Event Handlers
