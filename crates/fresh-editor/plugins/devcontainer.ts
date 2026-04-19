@@ -77,57 +77,6 @@ interface MountConfig {
 }
 
 // =============================================================================
-// JSONC Parser
-// =============================================================================
-
-/**
- * Strip JSON with Comments (JSONC) to plain JSON.
- * Handles single-line comments (//), multi-line comments, and trailing commas.
- */
-function stripJsonc(text: string): string {
-  let result = "";
-  let i = 0;
-  let inString = false;
-
-  while (i < text.length) {
-    if (inString) {
-      if (text[i] === "\\" && i + 1 < text.length) {
-        result += text[i] + text[i + 1];
-        i += 2;
-        continue;
-      }
-      if (text[i] === '"') {
-        inString = false;
-      }
-      result += text[i];
-    } else if (text[i] === '"') {
-      inString = true;
-      result += text[i];
-    } else if (text[i] === "/" && i + 1 < text.length && text[i + 1] === "/") {
-      // Single-line comment: skip to end of line
-      while (i < text.length && text[i] !== "\n") {
-        i++;
-      }
-      continue;
-    } else if (text[i] === "/" && i + 1 < text.length && text[i + 1] === "*") {
-      // Multi-line comment: skip to closing */
-      i += 2;
-      while (i < text.length - 1 && !(text[i] === "*" && text[i + 1] === "/")) {
-        i++;
-      }
-      i += 2;
-      continue;
-    } else {
-      result += text[i];
-    }
-    i++;
-  }
-
-  // Remove trailing commas before } or ]
-  return result.replace(/,\s*([}\]])/g, "$1");
-}
-
-// =============================================================================
 // State
 // =============================================================================
 
@@ -184,7 +133,7 @@ function findConfig(): boolean {
   const primaryContent = editor.readFile(primary);
   if (primaryContent !== null) {
     try {
-      config = JSON.parse(stripJsonc(primaryContent));
+      config = editor.parseJsonc(primaryContent) as DevContainerConfig;
       configPath = primary;
       return true;
     } catch {
@@ -197,7 +146,7 @@ function findConfig(): boolean {
   const secondaryContent = editor.readFile(secondary);
   if (secondaryContent !== null) {
     try {
-      config = JSON.parse(stripJsonc(secondaryContent));
+      config = editor.parseJsonc(secondaryContent) as DevContainerConfig;
       configPath = secondary;
       return true;
     } catch {
@@ -215,7 +164,7 @@ function findConfig(): boolean {
         const subContent = editor.readFile(subConfig);
         if (subContent !== null) {
           try {
-            config = JSON.parse(stripJsonc(subContent));
+            config = editor.parseJsonc(subContent) as DevContainerConfig;
             configPath = subConfig;
             return true;
           } catch {

@@ -1129,6 +1129,17 @@ interface EditorAPI {
 	*/
 	getTempDir(): string;
 	/**
+	* Parse a JSONC (JSON with comments) string into a JS value.
+	* 
+	* Accepts the JSONC superset: line and block comments, trailing
+	* commas, single-quoted strings, and unquoted object keys — matching
+	* devcontainer.json / tsconfig.json / VS Code settings.json.
+	* 
+	* Throws a JS error (catchable with try/catch) when the input is not
+	* valid JSONC, like `JSON.parse` does for invalid JSON.
+	*/
+	parseJsonc(text: string): unknown;
+	/**
 	* Get current config as JS object.
 	* 
 	* The snapshot holds an `Arc<serde_json::Value>` that was serialized

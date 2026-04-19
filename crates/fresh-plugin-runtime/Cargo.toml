@@ -12,6 +12,7 @@ description = "JavaScript plugin runtime for Fresh editor"
 rquickjs.workspace = true
 rquickjs-serde.workspace = true
 serde_json.workspace = true
+jsonc-parser.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

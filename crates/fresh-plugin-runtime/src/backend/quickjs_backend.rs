@@ -1637,6 +1637,30 @@ impl JsEditorApi {
         std::env::temp_dir().to_string_lossy().to_string()
     }
 
+    // === JSONC Parsing ===
+
+    /// Parse a JSONC (JSON with comments) string into a JS value.
+    ///
+    /// Accepts the JSONC superset: line and block comments, trailing
+    /// commas, single-quoted strings, and unquoted object keys — matching
+    /// devcontainer.json / tsconfig.json / VS Code settings.json.
+    ///
+    /// Throws a JS error (catchable with try/catch) when the input is not
+    /// valid JSONC, like `JSON.parse` does for invalid JSON.
+    #[plugin_api(ts_return = "unknown")]
+    pub fn parse_jsonc<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        text: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        let value: serde_json::Value =
+            jsonc_parser::parse_to_serde_value(&text, &Default::default()).map_err(|e| {
+                rquickjs::Error::new_from_js_message("parseJsonc", "", &e.to_string())
+            })?;
+        rquickjs_serde::to_value(ctx, &value)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
     // === Config ===
 
     /// Get current config as JS object.
@@ -7314,6 +7338,59 @@ mod tests {
                 let global = ctx.globals();
                 let result: bool = global.get("_exists").unwrap();
                 assert!(result);
+            });
+    }
+
+    #[test]
+    fn test_api_parse_jsonc() {
+        let (mut backend, _rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            // Comments, trailing commas, and nested structures should all parse.
+            const parsed = editor.parseJsonc(`{
+                // name of the container
+                "name": "test",
+                "features": {
+                    "docker-in-docker": {},
+                },
+                /* forwarded port list */
+                "forwardPorts": [3000, 8080,],
+            }`);
+            globalThis._name = parsed.name;
+            globalThis._featureCount = Object.keys(parsed.features).length;
+            globalThis._portCount = parsed.forwardPorts.length;
+
+            // Invalid JSONC should throw.
+            try {
+                editor.parseJsonc("{ broken");
+                globalThis._threw = false;
+            } catch (_e) {
+                globalThis._threw = true;
+            }
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let name: String = global.get("_name").unwrap();
+                let feature_count: u32 = global.get("_featureCount").unwrap();
+                let port_count: u32 = global.get("_portCount").unwrap();
+                let threw: bool = global.get("_threw").unwrap();
+                assert_eq!(name, "test");
+                assert_eq!(feature_count, 1);
+                assert_eq!(port_count, 2);
+                assert!(threw, "Invalid JSONC should throw");
             });
     }
 
