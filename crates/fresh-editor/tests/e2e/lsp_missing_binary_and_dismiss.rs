@@ -89,8 +89,10 @@ fn test_missing_binary_popup_shows_advisory_and_dismiss() -> anyhow::Result<()> 
     // because the real issue is upstream.
     harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
 
-    // Open the popup the same way the status-bar click handler would.
-    harness.editor_mut().show_lsp_status_popup();
+    // The LSP auto-prompt already opens the popup on the first
+    // file open for a language with enabled+auto_start=false
+    // configured, so we don't need to invoke show_lsp_status_popup
+    // ourselves — doing so would toggle the popup closed.
 
     let items = popup_items(&harness);
     assert!(!items.is_empty(), "LSP status popup should have items");
@@ -139,17 +141,20 @@ fn test_missing_binary_popup_shows_advisory_and_dismiss() -> anyhow::Result<()> 
     });
     assert!(
         dismiss_row.is_some(),
-        "expected a 'Disable LSP pill for rust' row. Items: {:#?}",
+        "expected a 'Disable LSP for rust' row. Items: {:#?}",
         items
     );
 
     Ok(())
 }
 
-/// Dismissing a language transitions the indicator to the muted
-/// `OffDismissed` variant and surfaces an "Enable LSP pill for …"
-/// action in the popup. Re-enabling restores the yellow `Off` variant
-/// and the original "Disable …" action.
+/// Disable → Enable round-trips through the popup: "Disable LSP for
+/// <lang>" flips `enabled = false` in the live config (persisted via
+/// `save_config`, so the choice survives a restart), and the
+/// complementary "Enable LSP for <lang>" restores `enabled = true`.
+/// The status-bar pill disappears while disabled (because
+/// `compose_lsp_status` gates on `enabled && !command.is_empty()`)
+/// and comes back on re-enable.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_dismiss_then_enable_round_trip() -> anyhow::Result<()> {
@@ -168,66 +173,64 @@ fn test_dismiss_then_enable_round_trip() -> anyhow::Result<()> {
     harness.open_file(&file)?;
     harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
 
-    // Precondition: not dismissed.
+    // Precondition: enabled=true in config.
+    let enabled_initial = harness
+        .editor()
+        .config()
+        .lsp
+        .get("rust")
+        .map(|cfg| cfg.as_slice()[0].enabled)
+        .expect("rust config present");
     assert!(
-        !harness.editor().is_lsp_language_user_dismissed("rust"),
-        "precondition: should not be dismissed"
+        enabled_initial,
+        "precondition: rust LSP should start enabled=true"
     );
 
-    // Dismiss directly through the action handler — this is what the
-    // popup dispatches when the user picks the "Disable LSP pill" row.
+    // Disable via the action handler — the path the popup dispatches
+    // when the user picks the "Disable LSP for rust" row.
     harness
         .editor_mut()
         .handle_lsp_status_action("dismiss:rust");
+    let enabled_after_disable = harness
+        .editor()
+        .config()
+        .lsp
+        .get("rust")
+        .map(|cfg| cfg.as_slice()[0].enabled)
+        .unwrap();
     assert!(
-        harness.editor().is_lsp_language_user_dismissed("rust"),
-        "after dismiss, language should be marked dismissed"
+        !enabled_after_disable,
+        "Disable LSP for rust must flip enabled=false in config so the \
+         choice persists across restarts"
     );
 
-    // Text of the pill stays `LSP (off)` — only the style changes,
-    // which is carried by `LspIndicatorState::OffDismissed` inside the
-    // render path (not observable from plain text).
-    let _ = harness.render();
+    // Pill should disappear: no configured-and-enabled server means
+    // `compose_lsp_status` yields an empty indicator, so neither
+    // `(off)` nor `(on)` should be on the status bar.
+    harness.render()?;
     assert!(
-        harness.get_status_bar().contains("LSP (off)"),
-        "text does not change on dismiss. status bar: {}",
+        !harness.get_status_bar().contains("LSP (off)"),
+        "after disable, the pill text should be gone (not shown in any state). \
+         Status bar: {}",
         harness.get_status_bar()
     );
 
-    // Re-enable round-trips cleanly.
+    // Re-enable via the symmetric action.
     harness.editor_mut().handle_lsp_status_action("enable:rust");
+    let enabled_after_reenable = harness
+        .editor()
+        .config()
+        .lsp
+        .get("rust")
+        .map(|cfg| cfg.as_slice()[0].enabled)
+        .unwrap();
     assert!(
-        !harness.editor().is_lsp_language_user_dismissed("rust"),
-        "after enable, language should no longer be dismissed"
+        enabled_after_reenable,
+        "Enable LSP for rust must flip enabled=true in config"
     );
 
-    // Open the popup and confirm the action row text flipped back to
-    // the "Disable" form.
-    harness.editor_mut().show_lsp_status_popup();
-    let items = popup_items(&harness);
-    assert!(
-        items
-            .iter()
-            .any(|(_, data, _)| data.as_deref() == Some("dismiss:rust")),
-        "re-enabled state should show the Disable action again. Items: {:#?}",
-        items
-    );
-
-    // Dismiss once more and verify the popup now offers Enable.
-    // `show_lsp_status_popup` toggles, so call it to close first.
-    harness.editor_mut().show_lsp_status_popup();
-    harness
-        .editor_mut()
-        .handle_lsp_status_action("dismiss:rust");
-    harness.editor_mut().show_lsp_status_popup();
-    let items = popup_items(&harness);
-    assert!(
-        items
-            .iter()
-            .any(|(_, data, _)| data.as_deref() == Some("enable:rust")),
-        "dismissed state should offer Enable action. Items: {:#?}",
-        items
-    );
+    // Pill should come back.
+    harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
 
     Ok(())
 }

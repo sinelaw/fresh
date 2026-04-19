@@ -496,14 +496,72 @@ impl Editor {
                 self.status_message = Some(format!("No log file found for {}", language));
             }
         } else if let Some(language) = action_key.strip_prefix("dismiss:") {
-            self.dismiss_lsp_language(language);
-            self.status_message = Some(format!(
-                "LSP pill dimmed for {}. Click it to re-enable.",
-                language
-            ));
+            // Persist `enabled = false` for every configured server
+            // under this language so the decision survives a restart
+            // — the old behaviour (just marking the language
+            // dismissed in-memory) meant the next editor session
+            // re-prompted the user. We keep the session-level
+            // `user_dismissed_lsp_languages` flag updated too so
+            // anything that still reads it (dimmed pill style, the
+            // popup's Enable/Disable toggle) stays consistent with
+            // the persisted state until the in-memory cache next
+            // re-reads config.
+            let lang = language.to_string();
+            self.dismiss_lsp_language(&lang);
+            let mut changed = false;
+            if let Some(lsp_configs) = self.config_mut().lsp.get_mut(&lang) {
+                for c in lsp_configs.as_mut_slice() {
+                    if c.enabled {
+                        c.enabled = false;
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                if let Err(e) = self.save_config() {
+                    tracing::warn!("Failed to save config after disabling LSP: {}", e);
+                } else {
+                    let config_path = self.dir_context.config_path();
+                    self.emit_event(
+                        "config_changed",
+                        serde_json::json!({
+                            "path": config_path.to_string_lossy(),
+                        }),
+                    );
+                }
+            }
+            self.status_message = Some(format!("LSP disabled for {}.", lang));
         } else if let Some(language) = action_key.strip_prefix("enable:") {
-            self.undismiss_lsp_language(language);
-            self.status_message = Some(format!("LSP pill restored for {}.", language));
+            // Symmetric re-enable: flip `enabled = true` on every
+            // configured server for this language and persist. The
+            // popup's "Enable LSP for <lang>" row is the inverse of
+            // the disable action, so it must undo both halves —
+            // session dismissal and the on-disk flag.
+            let lang = language.to_string();
+            self.undismiss_lsp_language(&lang);
+            let mut changed = false;
+            if let Some(lsp_configs) = self.config_mut().lsp.get_mut(&lang) {
+                for c in lsp_configs.as_mut_slice() {
+                    if !c.enabled {
+                        c.enabled = true;
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                if let Err(e) = self.save_config() {
+                    tracing::warn!("Failed to save config after enabling LSP: {}", e);
+                } else {
+                    let config_path = self.dir_context.config_path();
+                    self.emit_event(
+                        "config_changed",
+                        serde_json::json!({
+                            "path": config_path.to_string_lossy(),
+                        }),
+                    );
+                }
+            }
+            self.status_message = Some(format!("LSP enabled for {}.", lang));
         }
     }
 

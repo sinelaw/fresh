@@ -456,30 +456,25 @@ impl Editor {
             }
         }
 
-        // Dismiss / Enable row — shown whenever the language has at
-        // least one configured server.  Gives the user a surface to
-        // mute the pill (dim style) and, later, to restore it.  We
-        // reuse `all_servers.is_empty()` as the "nothing here" signal
+        // Disable / Enable row — shown whenever the language has at
+        // least one configured server. Persisted in config so the
+        // choice survives an editor restart (see the `dismiss:` /
+        // `enable:` branches in `handle_lsp_status_action`). We reuse
+        // `all_servers.is_empty()` as the "nothing here" signal
         // since languages with zero configured-or-running servers
         // already bailed out above.
         if user_dismissed {
             let enable_key = format!("enable:{}", language);
             items.push(
-                crate::view::popup::PopupListItem::new(format!(
-                    "    Enable LSP pill for {}",
-                    language
-                ))
-                .with_data(enable_key.clone()),
+                crate::view::popup::PopupListItem::new(format!("    Enable LSP for {}", language))
+                    .with_data(enable_key.clone()),
             );
             action_keys.push((enable_key, format!("Enable LSP for {}", language)));
         } else {
             let dismiss_key = format!("dismiss:{}", language);
             items.push(
-                crate::view::popup::PopupListItem::new(format!(
-                    "    Disable LSP pill for {}",
-                    language
-                ))
-                .with_data(dismiss_key.clone()),
+                crate::view::popup::PopupListItem::new(format!("    Disable LSP for {}", language))
+                    .with_data(dismiss_key.clone()),
             );
             action_keys.push((dismiss_key, format!("Disable LSP for {}", language)));
         }
