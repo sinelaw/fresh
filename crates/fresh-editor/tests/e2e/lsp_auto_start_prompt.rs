@@ -813,3 +813,88 @@ fn test_popup_offers_dismiss_row_with_dynamic_keybinding() -> anyhow::Result<()>
 
     Ok(())
 }
+
+/// Pressing the popup-cancel key on the auto-prompt must dismiss it
+/// for good — not just hide it for a frame. Before the fix the
+/// keymap's `popup_cancel` binding routed through
+/// `DeferredAction::ClosePopup` which only called `hide_popup()`,
+/// leaving `pending_auto_start_prompts` and the once-per-session
+/// guard untouched. The render-time drain would then re-open the
+/// popup on the very next frame, making the key look broken from
+/// the user's perspective.
+///
+/// Resolves the bound key dynamically from the keymap system rather
+/// than hardcoding `KeyCode::Esc`; a rebind of `popup_cancel` (e.g.
+/// under the emacs keymap, or a user's config) would otherwise make
+/// this test lie about which path it exercises.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_popup_cancel_key_dismisses_auto_prompt_and_does_not_reopen() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let file = temp.path().join("hello.rs");
+    std::fs::write(&file, "fn main() {}\n")?;
+
+    let mut harness = harness_with_auto_prompt(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_config(make_config_with_dormant_rust_lsp())
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    harness.open_file(&file)?;
+    harness.render()?;
+
+    assert!(
+        harness.editor().active_state().popups.top().is_some(),
+        "precondition: auto-prompt popup should be visible after opening a \
+         dormant-LSP file"
+    );
+
+    // Look up the popup-cancel key the resolver would route to
+    // `Action::PopupCancel`. Keeps the test honest across keymap
+    // changes: whatever the user has bound, that's what the test
+    // sends. Default keymap binds this to Esc; emacs keymap binds it
+    // to Ctrl+G — both must work.
+    let (cancel_code, cancel_mods) = harness
+        .editor()
+        .keybinding_event_for_action(
+            &fresh::input::keybindings::Action::PopupCancel,
+            fresh::input::keybindings::KeyContext::Popup,
+        )
+        .expect("popup_cancel must have a binding in the Popup context");
+
+    harness.send_key(cancel_code, cancel_mods)?;
+    harness.render()?;
+
+    assert!(
+        harness.editor().active_state().popups.top().is_none(),
+        "popup_cancel on the auto-prompt should close it. If the popup \
+         is still visible here, the render-time drain has re-opened it \
+         because ClosePopup failed to mark the language as prompted."
+    );
+
+    // Re-rendering (and re-opening the same-language file) must not
+    // bring the popup back. This is the stronger assertion — the
+    // original bug was a same-frame reopen, but a weaker fix (clear
+    // pending_auto_start_prompts but forget to mark as prompted)
+    // would regress on the next file-open.
+    harness.render()?;
+    assert!(
+        harness.editor().active_state().popups.top().is_none(),
+        "a subsequent render must not re-pop the auto-prompt"
+    );
+
+    let second = temp.path().join("b.rs");
+    std::fs::write(&second, "fn other() {}\n")?;
+    harness.open_file(&second)?;
+    harness.render()?;
+
+    assert!(
+        harness.editor().active_state().popups.top().is_none(),
+        "after popup_cancel, opening another rust file in the same \
+         session must not re-prompt — the user already said 'no, not now'"
+    );
+
+    Ok(())
+}

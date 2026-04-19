@@ -289,7 +289,12 @@ impl Editor {
 
             // Popup actions
             DeferredAction::ClosePopup => {
-                self.hide_popup();
+                // Route through handle_popup_cancel so popup-specific
+                // cleanup runs (e.g. the LSP auto-prompt needs to mark
+                // the language as prompted and drop the pending queue
+                // entry — otherwise the render-time drain would just
+                // re-open the popup on the next frame, defeating Esc).
+                self.handle_popup_cancel();
             }
             DeferredAction::ConfirmPopup => {
                 self.handle_action(Action::PopupConfirm)?;

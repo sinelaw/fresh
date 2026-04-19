@@ -2357,6 +2357,21 @@ impl KeybindingResolver {
         action: &Action,
         context: KeyContext,
     ) -> Option<String> {
+        self.get_keybinding_event_for_action(action, context)
+            .map(|(k, m)| format_keybinding(&k, &m))
+    }
+
+    /// Raw-event counterpart to `get_keybinding_for_action`: returns the
+    /// `(KeyCode, KeyModifiers)` pair bound to `action` in `context` — or
+    /// falls through to the same Normal-context chain the string version
+    /// does — so callers (notably tests simulating user input) can feed
+    /// the bound key through the editor's key dispatcher without
+    /// hardcoding a default that a rebind would invalidate.
+    pub fn get_keybinding_event_for_action(
+        &self,
+        action: &Action,
+        context: KeyContext,
+    ) -> Option<(KeyCode, KeyModifiers)> {
         // Helper to collect all matching keybindings from a map and pick the best one
         fn find_best_keybinding(
             bindings: &HashMap<(KeyCode, KeyModifiers), Action>,
@@ -2395,15 +2410,15 @@ impl KeybindingResolver {
 
         // Check custom bindings first (higher priority)
         if let Some(context_bindings) = self.bindings.get(&context) {
-            if let Some((keycode, modifiers)) = find_best_keybinding(context_bindings, action) {
-                return Some(format_keybinding(&keycode, &modifiers));
+            if let Some(hit) = find_best_keybinding(context_bindings, action) {
+                return Some(hit);
             }
         }
 
         // Check default bindings for this context
         if let Some(context_bindings) = self.default_bindings.get(&context) {
-            if let Some((keycode, modifiers)) = find_best_keybinding(context_bindings, action) {
-                return Some(format_keybinding(&keycode, &modifiers));
+            if let Some(hit) = find_best_keybinding(context_bindings, action) {
+                return Some(hit);
             }
         }
 
@@ -2413,15 +2428,15 @@ impl KeybindingResolver {
         {
             // Check custom normal bindings
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
-                if let Some((keycode, modifiers)) = find_best_keybinding(normal_bindings, action) {
-                    return Some(format_keybinding(&keycode, &modifiers));
+                if let Some(hit) = find_best_keybinding(normal_bindings, action) {
+                    return Some(hit);
                 }
             }
 
             // Check default normal bindings
             if let Some(normal_bindings) = self.default_bindings.get(&KeyContext::Normal) {
-                if let Some((keycode, modifiers)) = find_best_keybinding(normal_bindings, action) {
-                    return Some(format_keybinding(&keycode, &modifiers));
+                if let Some(hit) = find_best_keybinding(normal_bindings, action) {
+                    return Some(hit);
                 }
             }
         }
