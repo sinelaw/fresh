@@ -5,10 +5,9 @@
 > treesitter, animation timers) are tracked in #1529 and do not block
 > the MVP here.
 
-The work splits into seven milestones. **M0 → M1 → M5 → M7** is the MVP
+The work splits into six milestones. **M0 → M1 → M5 → M6** is the MVP
 path that delivers a useful init.ts. **M2 → M3 → M4** unlocks the
-plugin-configuration plane. **M6** is convenience. Each milestone is a
-shippable unit.
+plugin-configuration plane. Each milestone is a shippable unit.
 
 ## M0 — Loader & safety plumbing
 
@@ -57,43 +56,47 @@ prior value on next launch (nothing persisted).
 
 **Depends on.** M0.
 
-## M2 — Lifecycle callbacks (§6.5)
+## M2 — Lifecycle events (§6.3)
 
 **Goal.** Init.ts code can opt into running after plugins load or
-after session restore.
+after session restore, without a dedicated API surface.
 
-- Add to `EditorAPI`: `onceConfigured(fn)`, `onceReady(fn)`.
-- Runtime fires `onceConfigured` callbacks between §3.3 steps 4 and
-  6, `onceReady` after step 8.
-- Calling these from outside the init.ts phase is a no-op with a
-  warning. Calling them from a plugin is permitted.
+- Add closure overload to existing `editor.on`: alongside the current
+  `on(event, handlerName: string)`, accept `on(event, fn: Function)`.
+  String form continues to work; closure form removes the
+  `registerHandler` dance for one-shot callbacks.
+- Add two new event names emitted by the runtime: `plugins_loaded`
+  (fires between §3.3 steps 4 and 6) and `ready` (after step 8).
+- Plugins may also subscribe to these events.
 
-**Verifies.** A callback in `onceConfigured` sees plugins loaded; one
-in `onceReady` sees the active buffer.
+**Verifies.** A closure registered via `editor.on("plugins_loaded",
+fn)` sees plugins loaded; one for `ready` sees the active buffer.
+Existing string-handler form still works on the new events.
 
 **Depends on.** M0.
 
-## M3 — Plugin gating & plugin-API plane (§6.3, §6.4)
+## M3 — Plugin-API plane (§6.2)
 
-**Goal.** Init.ts can decide which plugins load, and configure
-plugins that expose imperative-config APIs.
+**Goal.** Init.ts can configure plugins that expose imperative-config
+APIs. Plugin gating reuses §6.1 — no separate API.
 
-- Add to `EditorAPI`: `setPluginEnabled(id, enabled)` — valid only in
-  phase 1, affects auto-load before plugins start.
 - Add to `EditorAPI`: `exportPluginApi(name, api)` (called from a
   plugin at load time) and `getPluginApi<T>(name)` (called from
-  init.ts in `onceConfigured`).
+  init.ts in the `plugins_loaded` callback).
+- Plugin loader reads `setSetting("plugins.<id>.enabled", false)` from
+  the runtime layer before starting plugins, so init.ts can gate
+  loading via the existing `setSetting` mechanism.
 - Per-plugin types: when a plugin ships `types.d.ts`, copy to
   `~/.config/fresh/types/plugins/<name>.d.ts` on install/update;
   auto-add to tsconfig `include`.
 
-**Verifies.** `setPluginEnabled("vi_mode", false)` from init.ts top
-level prevents `vi_mode` loading. A plugin calling
+**Verifies.** `setSetting("plugins.vi_mode.enabled", false)` from
+init.ts top level prevents `vi_mode` loading. A plugin calling
 `exportPluginApi("foo", {…})` is reachable via
 `getPluginApi<FooApi>("foo")`; type-check succeeds against the
 shipped `.d.ts`.
 
-**Depends on.** M0, M2.
+**Depends on.** M0, M1, M2.
 
 ## M4 — Reload & effect tracking (§6.7)
 
@@ -128,41 +131,28 @@ indicator surfaces the diagnostic.
 dotfiles repo.
 
 - `fresh --cmd init check`: oxc parse + scope-discipline lints.
-- Lints walk the AST: a `setSetting` / `setPluginEnabled` /
-  `loadPlugin` / `applyTheme` call must have a data-flow dependency
-  on `getEnv` / `getCwd` / `getStartupContext` / a `getPluginApi`
-  call. If not, emit `unconditional-preference` /
+- Lints walk the AST: a `setSetting` / `loadPlugin` / `applyTheme`
+  call must have a data-flow dependency on `getEnv` / `getCwd` /
+  `getPluginApi`. If not, emit `unconditional-preference` /
   `unconditional-plugin-load` warnings.
 - Per-line escape: `// fresh-init: allow-unconditional`.
 - Optional `--strict` runs `tsc --noEmit` when `tsc` is on PATH; warn
   once and fall back to parse mode otherwise.
 - At startup, if check fails, init.ts is skipped and a status
   indicator surfaces the diagnostic.
+- Fresh sets `FRESH_INTERACTIVE=1` on its own process env when
+  starting in normal interactive mode, so init.ts can branch on
+  `editor.getEnv("FRESH_INTERACTIVE")` without a dedicated API.
 
 **Verifies.** A typo (`editor.tab_siz`) and an unconditional
 `setSetting` both surface as diagnostics. Strict mode catches
-schema-typed errors when `tsc` is available.
+schema-typed errors when `tsc` is available. `FRESH_INTERACTIVE` is
+present under normal launch and absent under `$GIT_EDITOR`-style
+invocations.
 
 **Depends on.** M1 (so `setSetting` exists to lint).
 
-## M6 — Convenience APIs (§6.2, §6.6)
-
-**Goal.** Reduce boilerplate; same code shorter and less
-error-prone.
-
-- Add to `EditorAPI`: `getStartupContext()` returning
-  `{platform, hostname, isSsh, isInteractive, isDark, term,
-  colorterm, termProgram}`.
-- Add to `EditorAPI`: `getProjectRoot()` surfacing the same
-  resolution Fresh already uses for `.fresh/config.json`.
-
-**Verifies.** `getStartupContext().isSsh` matches `$SSH_TTY`
-presence. `getProjectRoot()` matches existing `.fresh/config.json`
-discovery.
-
-**Depends on.** M0.
-
-## M7 — Discoverability & scaffolding
+## M6 — Discoverability & scaffolding
 
 **Goal.** Users find init.ts and have a starting point.
 

@@ -68,21 +68,22 @@ dialect. Five `EditorAPI` additions (§6) cover what's missing.
 
 ### 3.3 Lifecycle — three phases
 
-`init.ts` is loaded once, but executes in three phases the runtime
-provides via callbacks. The user mostly doesn't have to think about
-the split — gating sits at the top, plugin configuration in
-`onceConfigured`, anything that touches buffers in `onceReady`.
+`init.ts` is loaded once, but executes in three phases. Phase 1 is
+top-level code; phases 2 and 3 are `editor.on("plugins_loaded", fn)`
+and `editor.on("ready", fn)` callbacks. The user mostly doesn't think
+about the split — gating sits at the top, plugin configuration in the
+`plugins_loaded` callback, buffer/UI work in `ready`.
 
 ```
 1. Built-in defaults
 2. User config.json
-3. init.ts top-level                ← phase 1: env-gated decisions
+3. init.ts top-level              ← phase 1: env-gated decisions
 4. Plugins load
-5. init.ts onceConfigured callbacks ← phase 2: configure plugins
-6. Project config.json              (still wins; collaboration guarantee)
+5. on("plugins_loaded") fires     ← phase 2: configure plugins
+6. Project config.json            (still wins; collaboration guarantee)
 7. Session overrides
 8. UI opens, session restored
-9. init.ts onceReady callbacks      ← phase 3: touch buffers / dashboards
+9. on("ready") fires              ← phase 3: touch buffers / dashboards
 ```
 
 Project `config.json` always wins over `init.ts` writes. A teammate's
@@ -110,7 +111,7 @@ editor.exportPluginApi("welcome-dashboard", {
 User code:
 
 ```ts
-editor.onceConfigured(() => {
+editor.on("plugins_loaded", () => {
   const dash = editor.getPluginApi<DashboardApi>("welcome-dashboard");
   dash.configure({ /* … */ });
 });
@@ -173,16 +174,32 @@ plugin.
 
 | # | Addition | Purpose | Priority |
 |---|---|---|---|
-| 6.1 | `setSetting(path, value)`, `applyConfigPatch(partial)`, `getSetting(path)` | Runtime per-setting writes; without these, init.ts is limited to LSP / theme / plugin gating | **P0 (blocker)** |
-| 6.2 | `getStartupContext(): { platform, hostname, isSsh, isInteractive, isDark, term, … }` | One reliable read instead of five `getEnv` heuristics | P1 |
-| 6.3 | `setPluginEnabled(id, enabled)` (phase 1 only) | Pre-load plugin gating; race-free | P1 |
-| 6.4 | `exportPluginApi(name, api)` / `getPluginApi<T>(name)` | Plugin-configuration plane (§3.5) | P1 |
-| 6.5 | `onceConfigured(fn)`, `onceReady(fn)` | Two-phase lifecycle (§3.3) | P1 |
-| 6.6 | `getProjectRoot()` | Removes ad-hoc dir-walking | P2 |
-| 6.7 | Effect-tracking proxy on the `editor.*` handle init.ts uses | Reliable reload/revert; plugins continue to use the raw API | P2 |
+| 6.1 | `setSetting(path, value)` | Runtime per-setting writes — the only true blocker | **P0** |
+| 6.2 | `exportPluginApi(name, api)` / `getPluginApi<T>(name)` | Plugin-configuration plane (§3.5) | P1 |
+| 6.3 | Closure overload for `editor.on(event, fn)`; new event names `plugins_loaded` and `ready` | Lifecycle phases (§3.3) without dedicated APIs | P1 |
+| 6.4 | Effect-tracking proxy on the `editor.*` handle init.ts uses (internal; no public API change) | Reliable reload/revert; plugins continue to use the raw API | P2 |
 
-§6.1 is the only true blocker. Everything else degrades gracefully —
-init.ts is still useful, just more verbose.
+§6.1 is the only blocker; the rest degrade gracefully or unlock
+specific scenarios (plugin code-config, clean reload).
+
+**Deliberately not added** — the alternative in each case is good
+enough that a new method would just inflate the surface:
+
+- `applyConfigPatch(partial)` — multiple `setSetting` calls cover it.
+- `getSetting(path)` — the existing `getConfig()` returns the merged
+  config; users cast.
+- `getStartupContext()` — `getEnv("SSH_TTY")` etc. cover most of it.
+  Fresh sets `FRESH_INTERACTIVE=1` on its own process env for the
+  one case (TTY/normal-mode detection) that needs editor-internal
+  knowledge.
+- `setPluginEnabled(id, enabled)` — `setSetting("plugins.<id>.enabled",
+  false)` does the same thing through the same mechanism. The plugin
+  loader reads the runtime layer before plugins start.
+- `onceConfigured(fn)` / `onceReady(fn)` — the closure overload on
+  `editor.on` plus the two new event names cover this without a
+  second API surface.
+- `getProjectRoot()` — a short loop using existing `editor.fileExists`
+  / `pathDirname` / `pathJoin` covers it.
 
 ## 7. Open questions
 
