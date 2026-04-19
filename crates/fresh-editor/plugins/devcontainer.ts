@@ -840,9 +840,12 @@ async function devcontainer_open_terminal(): Promise<void> {
     return;
   }
 
-  // Open a terminal and send the exec command into it
+  // Open a terminal and send the exec command into it.
+  // `exec` up front replaces the host shell with `devcontainer exec`, so when
+  // the user types `exit` inside the container the terminal closes outright
+  // instead of dropping back to the host shell.
   const term = await editor.createTerminal({ direction: "vertical", ratio: 0.5, focus: true });
-  const execCmd = `devcontainer exec --workspace-folder ${JSON.stringify(cwd)} /bin/sh -c 'exec \${SHELL:-/bin/sh}'\n`;
+  const execCmd = `exec devcontainer exec --workspace-folder ${JSON.stringify(cwd)} /bin/sh -c 'exec \${SHELL:-/bin/sh}'\n`;
   editor.sendTerminalInput(term.terminalId, execCmd);
   editor.setStatus(editor.t("status.terminal_opened"));
 }
