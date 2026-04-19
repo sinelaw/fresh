@@ -1897,6 +1897,76 @@ fn test_plugin_persistent_terminal_included_in_workspace() {
     );
 }
 
+/// When a plugin creates a terminal in its own split (direction specified),
+/// the terminal buffer must live in exactly one split — the new one. It was
+/// previously being added as a tab in the user's active split *and* the new
+/// split, so closing the new split left a ghost terminal tab behind.
+///
+/// Uses `persistent: true` so the tab assignment is observable through
+/// workspace serialization (ephemeral terminals are filtered out by
+/// `capture_workspace`; the tab-ownership invariant is the same).
+#[test]
+fn test_plugin_split_terminal_not_duplicated_in_active_split() {
+    use fresh::services::plugins::api::PluginCommand;
+    use fresh::workspace::SerializedTabRef;
+
+    if !pty_available() {
+        eprintln!("Skipping split-terminal test: PTY not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let file1 = project_dir.join("main.txt");
+    std::fs::write(&file1, "hello").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 24, Config::default(), project_dir)
+            .unwrap();
+    harness.open_file(&file1).unwrap();
+
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::CreateTerminal {
+            cwd: None,
+            direction: Some("vertical".to_string()),
+            ratio: Some(0.5),
+            focus: Some(false),
+            persistent: true,
+            request_id: 0,
+        })
+        .unwrap();
+
+    let workspace = harness.editor().capture_workspace();
+    assert_eq!(
+        workspace.terminals.len(),
+        1,
+        "Exactly one terminal should be serialized",
+    );
+
+    // Across all splits, the terminal should appear as a tab in exactly one
+    // place — anything else means the buffer was double-attached and the
+    // user will see a stray tab after closing the terminal split.
+    let terminal_tab_count: usize = workspace
+        .split_states
+        .values()
+        .map(|split| {
+            split
+                .open_tabs
+                .iter()
+                .filter(|t| matches!(t, SerializedTabRef::Terminal(_)))
+                .count()
+        })
+        .sum();
+    assert_eq!(
+        terminal_tab_count, 1,
+        "Terminal buffer should be a tab in exactly one split, got {}. \
+         split_states: {:#?}",
+        terminal_tab_count, workspace.split_states,
+    );
+}
+
 /// User-opened terminals (via `Editor::open_terminal`, the command-palette /
 /// keybind path) must continue to persist — the ephemeral distinction is a
 /// plugin-facing concern, not a regression of the existing behavior.

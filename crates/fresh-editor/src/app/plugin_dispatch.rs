@@ -1783,14 +1783,26 @@ impl Editor {
                             self.ephemeral_terminals.insert(terminal_id);
                         }
 
-                        // Create buffer attached to the active split
+                        // Pick buffer-attachment strategy based on whether the
+                        // plugin asked for its own split:
+                        //
+                        // - direction = Some: use `_detached` so the buffer
+                        //   isn't also added as a tab to the user's active
+                        //   split. The new split below owns it exclusively,
+                        //   so when the user closes that split the terminal
+                        //   disappears entirely instead of leaving a ghost
+                        //   tab behind in the main split.
+                        // - direction = None: use `_attached` — the plugin
+                        //   is intentionally placing the terminal as a new
+                        //   tab in the active split, which is the whole
+                        //   point of the no-split branch.
                         let active_split = self.split_manager.active_split();
-                        let buffer_id =
-                            self.create_terminal_buffer_attached(terminal_id, active_split);
+                        let buffer_id = if direction.is_some() {
+                            self.create_terminal_buffer_detached(terminal_id)
+                        } else {
+                            self.create_terminal_buffer_attached(terminal_id, active_split)
+                        };
 
-                        // If direction is specified, create a new split for the terminal.
-                        // If direction is None, just place the terminal in the active split
-                        // (no new split created — useful when the plugin manages layout).
                         let created_split_id = if let Some(dir_str) = direction.as_deref() {
                             let split_dir = match dir_str {
                                 "horizontal" => crate::model::event::SplitDirection::Horizontal,
@@ -1816,6 +1828,10 @@ impl Editor {
                                         None,
                                         self.config.editor.rulers.clone(),
                                     );
+                                    // Terminal output is ANSI-sequenced and
+                                    // assumes a fixed column count; wrapping
+                                    // would mangle cursor positioning.
+                                    view_state.viewport.line_wrap_enabled = false;
                                     self.split_view_states.insert(new_split_id, view_state);
 
                                     if focus.unwrap_or(true) {
@@ -1831,7 +1847,21 @@ impl Editor {
                                     Some(new_split_id)
                                 }
                                 Err(e) => {
-                                    tracing::error!("Failed to create split for terminal: {}", e);
+                                    tracing::error!(
+                                        "Failed to create split for terminal: {}; \
+                                         falling back to active split",
+                                        e
+                                    );
+                                    // The buffer was created detached. Split
+                                    // creation failed, so attach it to the
+                                    // active split as a graceful fallback
+                                    // rather than leaving an orphan buffer.
+                                    if let Some(view_state) =
+                                        self.split_view_states.get_mut(&active_split)
+                                    {
+                                        view_state.add_buffer(buffer_id);
+                                        view_state.viewport.line_wrap_enabled = false;
+                                    }
                                     self.set_active_buffer(buffer_id);
                                     None
                                 }
