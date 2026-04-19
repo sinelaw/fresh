@@ -8,9 +8,12 @@
 //! behaviour that the LSP status popup auto-shows on first file open
 //! for such languages, and that the popup offers the pair of actions:
 //!
-//!   * "Start <server> once"          — start now, config unchanged
-//!   * "Start <server> automatically" — persist `auto_start = true`
-//!                                       AND start now
+//!   * "Start <server> (always)" — persist `auto_start = true` AND
+//!                                  start now. Listed first and
+//!                                  pre-selected, because
+//!                                  persistent-start is what most
+//!                                  users want.
+//!   * "Start <server> once"     — start now, config unchanged.
 //!
 //! named as siblings so the difference ("just this session" vs.
 //! "and every future session") is legible at a glance.
@@ -98,14 +101,18 @@ fn test_popup_auto_shows_on_open_for_dormant_lsp() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The auto-shown popup must offer BOTH a "Start <server> once" row
-/// (session-only) and a "Start <server> automatically" row (persists
-/// `auto_start = true`), so the user can pick between one-off and
-/// persistent behaviour directly from the prompt, without editing the
-/// on-disk config by hand.
+/// The auto-shown popup must offer BOTH a "Start <server> (always)"
+/// row (persists `auto_start = true`) and a "Start <server> once" row
+/// (session-only), so the user can pick between persistent and one-off
+/// behaviour directly from the prompt without editing the on-disk
+/// config by hand.
+///
+/// Order matters: "(always)" is listed first so it's the default
+/// selection — the common case is "yes, I want this server from now
+/// on", which should be achievable with Enter alone.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
-fn test_popup_offers_start_automatically_action() -> anyhow::Result<()> {
+fn test_popup_offers_start_always_action() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let file = temp.path().join("hello.rs");
     std::fs::write(&file, "fn main() {}\n")?;
@@ -123,27 +130,27 @@ fn test_popup_offers_start_automatically_action() -> anyhow::Result<()> {
 
     let items = popup_items(&harness);
 
-    // "Start <server> automatically" — persistent sibling.
-    let autostart_row = items
+    // "Start <server> (always)" — persistent sibling.
+    let always_row = items
         .iter()
         .find(|(_, data, _)| data.as_deref() == Some("autostart:rust/rust-analyzer"))
         .unwrap_or_else(|| {
             panic!(
-                "popup should offer a 'Start rust-analyzer automatically' action with \
+                "popup should offer a 'Start rust-analyzer (always)' action with \
                  data 'autostart:rust/rust-analyzer'. Items: {:#?}",
                 items
             )
         });
-    let (auto_label, _, auto_disabled) = autostart_row;
+    let (always_label, _, always_disabled) = always_row;
     assert!(
-        !auto_disabled,
-        "the Start-automatically row must be actionable (not disabled). Label: {:?}",
-        auto_label
+        !always_disabled,
+        "the Start (always) row must be actionable (not disabled). Label: {:?}",
+        always_label
     );
     assert!(
-        auto_label.contains("Start rust-analyzer automatically"),
-        "row label must read 'Start <server> automatically'. Label: {:?}",
-        auto_label
+        always_label.contains("Start rust-analyzer (always)"),
+        "row label must read 'Start <server> (always)'. Label: {:?}",
+        always_label
     );
 
     // "Start <server> once" — session-only sibling.
@@ -161,8 +168,74 @@ fn test_popup_offers_start_automatically_action() -> anyhow::Result<()> {
     assert!(
         once_label.contains("Start rust-analyzer once"),
         "row label must read 'Start <server> once' to distinguish it from the \
-         automatically sibling. Label: {:?}",
+         (always) sibling. Label: {:?}",
         once_label
+    );
+
+    // Order + default selection: "(always)" must come before "once"
+    // in the popup, so the pre-selected row (the first actionable
+    // item) is the persistent one.
+    let always_idx = items
+        .iter()
+        .position(|(_, data, _)| data.as_deref() == Some("autostart:rust/rust-analyzer"))
+        .expect("always row present");
+    let once_idx = items
+        .iter()
+        .position(|(_, data, _)| data.as_deref() == Some("start:rust"))
+        .expect("once row present");
+    assert!(
+        always_idx < once_idx,
+        "'(always)' should come before 'once' so Enter picks the persistent \
+         option. always_idx={}, once_idx={}, items={:#?}",
+        always_idx,
+        once_idx,
+        items
+    );
+
+    Ok(())
+}
+
+/// The popup's default selection lands on the "(always)" row so the
+/// user can just press Enter — separate from position ordering (a
+/// popup could in theory list "(always)" first but pre-select a
+/// later row). Verified by checking the popup's `selected` index
+/// matches the "(always)" row.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_popup_preselects_start_always() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let file = temp.path().join("hello.rs");
+    std::fs::write(&file, "fn main() {}\n")?;
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_config(make_config_with_dormant_rust_lsp())
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    harness.open_file(&file)?;
+    harness.render()?;
+
+    let popup = harness
+        .editor()
+        .active_state()
+        .popups
+        .top()
+        .expect("popup should be visible");
+    let (items, selected) = match &popup.content {
+        fresh::view::popup::PopupContent::List { items, selected } => (items, *selected),
+        _ => panic!("expected a List popup"),
+    };
+    let selected_item = items.get(selected).expect("selected index in range");
+    assert_eq!(
+        selected_item.data.as_deref(),
+        Some("autostart:rust/rust-analyzer"),
+        "default selection should be the '(always)' row so Enter kicks off \
+         persistent-start. Selected row: {:?}, all items: {:#?}",
+        selected_item,
+        items
     );
 
     Ok(())

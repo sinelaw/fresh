@@ -401,18 +401,40 @@ impl Editor {
                     .disabled(),
                 );
             } else {
-                // Two sibling rows for a dormant server:
+                // Two sibling rows for a dormant server, in the
+                // order the user most likely wants:
                 //
-                //   "Start <name> once"          — just for this session,
-                //                                  config stays auto_start=false
-                //   "Start <name> automatically" — persists auto_start=true
-                //                                  AND starts the server now
+                //   "Start <name> (always)" — persist auto_start=true
+                //                              AND start the server now.
+                //                              Listed first because
+                //                              persistent-start is the
+                //                              common case, so pre-
+                //                              selecting it lets the
+                //                              user press Enter and
+                //                              move on.
+                //   "Start <name> once"     — start for this session,
+                //                              config stays auto_start=false.
                 //
-                // The "once" label is only needed (vs. just "Start") when
-                // the "automatically" sibling is also present (i.e. when
-                // auto_start is currently false) — otherwise there's
-                // nothing to disambiguate it from.
+                // The "once" suffix is only needed (vs. just "Start")
+                // when the "(always)" sibling is also present — i.e.
+                // when auto_start is currently false. Otherwise there
+                // is nothing to disambiguate it from.
                 let is_manual = !auto_start_by_server.get(name).copied().unwrap_or(true);
+
+                // "(always)" row — first, so it's the default.
+                if is_manual {
+                    let autostart_key = format!("autostart:{}/{}", language, name);
+                    items.push(
+                        crate::view::popup::PopupListItem::new(format!(
+                            "    Start {} (always)",
+                            name
+                        ))
+                        .with_data(autostart_key.clone()),
+                    );
+                    action_keys.push((autostart_key, format!("Start {} (always)", name)));
+                }
+
+                // "once" / plain Start row.
                 let start_label = if is_manual {
                     format!("    Start {} once", name)
                 } else {
@@ -430,26 +452,6 @@ impl Editor {
                             .with_data(start_key.clone()),
                     );
                     action_keys.push((start_key, start_action_label));
-                }
-
-                // "Start automatically": per-server, offered only when
-                // the server is dormant with `auto_start = false`.
-                // Persists auto_start=true AND starts the server now so
-                // users don't have to re-open the file. Skipped when
-                // the flag is already true (the normal "Start" row above
-                // is enough) or when the binary is missing (covered by
-                // the disabled advisory branch — persisting auto-start
-                // for a missing binary would just fail on every open).
-                if is_manual {
-                    let autostart_key = format!("autostart:{}/{}", language, name);
-                    items.push(
-                        crate::view::popup::PopupListItem::new(format!(
-                            "    Start {} automatically",
-                            name
-                        ))
-                        .with_data(autostart_key.clone()),
-                    );
-                    action_keys.push((autostart_key, format!("Start {} automatically", name)));
                 }
             }
         }
