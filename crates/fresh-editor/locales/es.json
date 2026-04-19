@@ -1051,6 +1051,7 @@
   "menu.lsp.show_completions": "Mostrar completaciones",
   "menu.lsp.show_hover": "Mostrar información flotante",
   "menu.lsp.show_signature": "Mostrar ayuda de firma",
+  "menu.lsp.show_status": "Estado de LSP\u2026",
   "menu.lsp.stop_server": "Detener servidor",
   "menu.lsp.toggle_for_buffer": "Alternar LSP para el buffer actual",
   "menu.lsp.toggle_inlay_hints": "Alternar sugerencias incrustadas",

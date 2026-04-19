@@ -1051,6 +1051,7 @@
   "menu.lsp.show_completions": "Показати автодоповнення",
   "menu.lsp.show_hover": "Показати інформацію",
   "menu.lsp.show_signature": "Показати довідку сигнатури",
+  "menu.lsp.show_status": "Статус LSP\u2026",
   "menu.lsp.stop_server": "Зупинити сервер",
   "menu.lsp.toggle_for_buffer": "Перемкнути LSP для поточного буфера",
   "menu.lsp.toggle_inlay_hints": "Перемкнути вбудовані підказки",

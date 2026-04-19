@@ -1051,6 +1051,7 @@
   "menu.lsp.show_completions": "Hiển thị gợi ý",
   "menu.lsp.show_hover": "Hiển thị thông tin Hover",
   "menu.lsp.show_signature": "Hiển thị trợ giúp chữ ký",
+  "menu.lsp.show_status": "Trạng thái LSP\u2026",
   "menu.lsp.stop_server": "Dừng server",
   "menu.lsp.toggle_for_buffer": "Bật/Tắt LSP cho bộ đệm hiện tại",
   "menu.lsp.toggle_inlay_hints": "Bật/tắt gợi ý nội tuyến",
