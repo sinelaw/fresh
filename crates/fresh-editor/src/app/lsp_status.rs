@@ -112,25 +112,33 @@ pub(crate) fn compose_lsp_status(
         return (centered("LSP (on)"), LspIndicatorState::On);
     }
 
-    // 4. No running server — surface any configured server (auto_start or
-    //    opt-in, doesn't matter for the indicator) so the user can see an
-    //    LSP is available and open the popup to start it.
+    // 4. No running server — surface any configured server so the user
+    //    can see an LSP is available and open the popup to start it.
+    //    Includes servers with `enabled = false`: picking "Disable LSP
+    //    for <lang>" flips `enabled` off, and hiding the pill at that
+    //    point would leave the user with no surface to re-enable
+    //    later. The dimmed `OffDismissed` variant makes the disabled
+    //    state visually distinct.
     let configured_count = lsp_config
         .get(current_language)
         .map(|cfg| {
             cfg.as_slice()
                 .iter()
-                .filter(|c| c.enabled && !c.command.is_empty())
+                .filter(|c| !c.command.is_empty())
                 .count()
         })
         .unwrap_or(0);
     if configured_count > 0 {
-        // User-dismissed languages keep the same `LSP (off)` text — only the
-        // style changes (handled by `element_style` via the `OffDismissed`
-        // variant).  We deliberately keep the pill visible rather than
-        // hiding it, so the user retains a discoverable surface to re-enable
-        // or view install help.
-        let state = if user_dismissed_languages.contains(current_language) {
+        // User-dismissed languages keep the same `LSP (off)` text — only
+        // the style changes (handled by `element_style` via the
+        // `OffDismissed` variant). `enabled = false` on every configured
+        // server is the persistent flavour of the same idea, so render
+        // it the same way: pill stays visible but dimmed, so the user
+        // has a discoverable surface to re-enable.
+        let any_enabled = lsp_config
+            .get(current_language)
+            .is_some_and(|cfg| cfg.as_slice().iter().any(|c| c.enabled));
+        let state = if !any_enabled || user_dismissed_languages.contains(current_language) {
             LspIndicatorState::OffDismissed
         } else {
             LspIndicatorState::Off
@@ -222,6 +230,41 @@ mod tests {
         );
         assert!(text.contains("LSP (off)"));
         assert_eq!(state, LspIndicatorState::OffDismissed);
+    }
+
+    /// After the user picks "Disable LSP for <lang>" the config flips
+    /// to `enabled = false`. The pill must stay visible (dimmed) so
+    /// the user still has a surface to re-enable; hiding it would
+    /// strand the Enable action.
+    #[test]
+    fn off_dismissed_when_all_servers_disabled_in_config() {
+        let mut config = HashMap::new();
+        let mut server = LspServerConfig::default();
+        server.command = "rust-analyzer".to_string();
+        server.enabled = false;
+        config.insert(
+            "rust".to_string(),
+            LspLanguageConfig::Single(Box::new(server)),
+        );
+        let (text, state) = compose_lsp_status(
+            "rust",
+            &HashMap::new(),
+            &HashMap::new(),
+            &config,
+            &HashSet::new(),
+        );
+        assert!(
+            text.contains("LSP (off)"),
+            "pill should still render when the language has configured \
+             servers, even if every one is enabled=false"
+        );
+        assert_eq!(
+            state,
+            LspIndicatorState::OffDismissed,
+            "disabled-in-config renders as the dimmed OffDismissed variant, \
+             matching the session-level dismissed flavour so the user can tell \
+             their Disable action took effect"
+        );
     }
 
     #[test]
