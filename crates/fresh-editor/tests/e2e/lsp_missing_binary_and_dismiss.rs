@@ -155,9 +155,11 @@ fn test_missing_binary_popup_shows_advisory_and_dismiss() -> anyhow::Result<()> 
 /// <lang>" flips `enabled = false` in the live config (persisted via
 /// `save_config`, so the choice survives a restart), and the
 /// complementary "Enable LSP for <lang>" restores `enabled = true`.
-/// The status-bar pill disappears while disabled (because
-/// `compose_lsp_status` gates on `enabled && !command.is_empty()`)
-/// and comes back on re-enable.
+/// The status-bar pill stays visible in both states — once as the
+/// dimmed `LSP (off)` (disabled), and once as the normal `LSP (off)`
+/// (re-enabled but not running) — so the user always has a surface
+/// to toggle the state back. Hiding the pill on disable would
+/// strand the Enable action.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_dismiss_then_enable_round_trip() -> anyhow::Result<()> {
@@ -210,14 +212,16 @@ fn test_dismiss_then_enable_round_trip() -> anyhow::Result<()> {
          choice persists across restarts"
     );
 
-    // Pill should disappear: no configured-and-enabled server means
-    // `compose_lsp_status` yields an empty indicator, so neither
-    // `(off)` nor `(on)` should be on the status bar.
+    // Pill should stay visible even when every configured server is
+    // `enabled = false`: hiding it would leave the user with no
+    // on-screen surface to re-enable later. The variant flips to
+    // `OffDismissed` (dimmed) so the state change is still visible;
+    // the text itself remains `LSP (off)`.
     harness.render()?;
     assert!(
-        !harness.get_status_bar().contains("LSP (off)"),
-        "after disable, the pill text should be gone (not shown in any state). \
-         Status bar: {}",
+        harness.get_status_bar().contains("LSP (off)"),
+        "after disable, the pill text should still read 'LSP (off)' so the \
+         user retains a surface to Enable. Status bar: {}",
         harness.get_status_bar()
     );
 
