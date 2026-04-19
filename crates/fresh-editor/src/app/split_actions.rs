@@ -186,6 +186,13 @@ impl Editor {
 
     /// Common split switching logic
     fn switch_split(&mut self, next: bool) {
+        // Capture what was active before the switch so we can mirror the
+        // mouse-click path in `focus_split`: leaving a terminal buffer must
+        // stop routing keyboard input to it. The terminal's visible pane
+        // keeps rendering live because `render_terminal_splits` ignores
+        // `terminal_mode` whenever the terminal isn't the active buffer.
+        let previous_buffer = self.active_buffer();
+
         if next {
             self.split_manager.next_split();
         } else {
@@ -200,6 +207,16 @@ impl Editor {
         self.ensure_active_tab_visible(split_id, self.active_buffer(), self.effective_tabs_width());
 
         let buffer_id = self.active_buffer();
+
+        // Leaving a terminal buffer: stop capturing keyboard for the
+        // terminal. Symmetric with the mouse-click path in `focus_split`.
+        if self.terminal_mode
+            && self.is_terminal_buffer(previous_buffer)
+            && !self.is_terminal_buffer(buffer_id)
+        {
+            self.terminal_mode = false;
+            self.key_context = crate::input::keybindings::KeyContext::Normal;
+        }
 
         // Emit buffer_activated hook for plugins
         self.plugin_manager.run_hook(

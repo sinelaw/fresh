@@ -166,6 +166,7 @@ pub mod tab_scrolling;
 pub mod terminal;
 pub mod terminal_close;
 pub mod terminal_resize;
+pub mod terminal_split_focus_live;
 pub mod test_scrollbar_keybinds_cursor;
 pub mod theme;
 pub mod theme_screenshots;
