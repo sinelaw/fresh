@@ -883,9 +883,8 @@ fn test_settings_from_terminal_mode_captures_input() {
     harness.assert_screen_contains("Settings");
 
     // Now try to use Settings navigation - press Down to navigate categories
-    // Categories: General, Clipboard, Devcontainer, Editor, ...
+    // Categories: General, Clipboard, Editor, ...
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Clipboard
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Devcontainer
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Editor
     harness.render().unwrap();
 
@@ -1088,9 +1087,8 @@ fn test_settings_descriptions_render_properly() {
     harness.open_settings().unwrap();
 
     // Navigate to Editor category which has settings with descriptions
-    // Categories: General, Clipboard, Devcontainer, Editor, ...
+    // Categories: General, Clipboard, Editor, ...
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Clipboard
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Devcontainer
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Editor
     harness.render().unwrap();
 
@@ -1293,10 +1291,9 @@ fn test_settings_percentage_value_saves_correctly() {
     // Open settings
     harness.open_settings().unwrap();
 
-    // Navigate to File Explorer category (down five times from General)
-    // Categories: General, Clipboard, Devcontainer, Editor, File Browser, File Explorer, ...
+    // Navigate to File Explorer category
+    // Categories: General, Clipboard, Editor, File Browser, File Explorer, ...
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Clipboard
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Devcontainer
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Editor
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // File Browser
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // File Explorer
