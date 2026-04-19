@@ -496,6 +496,128 @@ async function fetchGit(myToken: number) {
     paint();
 }
 
+// PR row types — module-level so the last-good state can reference them.
+type GhRollup = { state?: string } | null;
+type GhCommit = { statusCheckRollup?: GhRollup };
+type GhCommitNode = { commit?: GhCommit };
+type GhThread = { isResolved?: boolean; comments?: { totalCount?: number } };
+type GhPR = {
+    number?: number;
+    title?: string;
+    state?: string;
+    repository?: { nameWithOwner?: string };
+    commits?: { nodes?: GhCommitNode[] };
+    reviewThreads?: { nodes?: GhThread[] };
+};
+
+// Last-known-good GitHub state, preserved across refresh failures so
+// the panel doesn't jump between "data" and "error". `prs === null`
+// means we've never successfully fetched — in that case an error
+// replaces the section wholesale. Once we have PRs, a later failure
+// only adds a one-line banner at the top.
+let githubLastPrs: GhPR[] | null = null;
+let githubLastError: string | null = null;
+
+function renderPrRows(d: Draw, prs: GhPR[]) {
+    if (prs.length === 0) {
+        kv(d, "PRs", "no recent PRs by you", C.muted);
+        return;
+    }
+    kv(d, "PRs", `${prs.length} by you`, C.number);
+    for (const pr of prs) {
+        const state = (pr.state ?? "").toUpperCase();
+        const stateTag =
+            state === "OPEN"
+                ? "open"
+                : state === "MERGED"
+                    ? "mrgd"
+                    : state === "CLOSED"
+                        ? "clsd"
+                        : "???";
+        const stateColor =
+            state === "OPEN"
+                ? C.ok
+                : state === "MERGED"
+                    ? C.accent
+                    : state === "CLOSED"
+                        ? C.muted
+                        : C.muted;
+
+        const rollup = pr.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state ?? null;
+        const checkGlyph =
+            rollup === "SUCCESS"
+                ? "✓"
+                : rollup === "FAILURE" || rollup === "ERROR"
+                    ? "✗"
+                    : rollup === "PENDING" || rollup === "EXPECTED"
+                        ? "◌"
+                        : "–";
+        const checkColor =
+            rollup === "SUCCESS"
+                ? C.ok
+                : rollup === "FAILURE" || rollup === "ERROR"
+                    ? C.err
+                    : rollup === "PENDING" || rollup === "EXPECTED"
+                        ? C.warn
+                        : C.muted;
+
+        const threads = pr.reviewThreads?.nodes ?? [];
+        const openCmts = threads
+            .filter((t) => t.isResolved === false)
+            .reduce((acc, t) => acc + (t.comments?.totalCount ?? 0), 0);
+
+        const num = `#${pr.number ?? "?"}`;
+        const title = (pr.title ?? "").slice(0, 44);
+        const repoName = pr.repository?.nameWithOwner ?? "";
+        const prUrl =
+            repoName && pr.number
+                ? `https://github.com/${repoName}/pull/${pr.number}`
+                : undefined;
+
+        emit(d, "    ", undefined);
+        emit(d, pad(num, 6), { fg: C.number, url: prUrl });
+        emit(d, pad(stateTag, 5), { fg: stateColor, bold: true });
+        emit(d, " ", undefined);
+        emit(d, checkGlyph + " ", { fg: checkColor, bold: true });
+        const cmtCell = openCmts > 0 ? pad(`${openCmts} cmt`, 6) : pad("", 6);
+        emit(d, cmtCell, { fg: openCmts > 0 ? C.warn : C.muted });
+        emit(d, " ", undefined);
+        emit(d, title, { fg: C.value, url: prUrl });
+        newline(d);
+    }
+}
+
+function buildGithubSection(): Section {
+    return {
+        draw: (d) => {
+            // Stale-data banner: when we have previously-good PRs AND the
+            // latest refresh failed, show both. Keeps the rest of the
+            // section anchored — no row-count jumps between ticks.
+            if (githubLastError && githubLastPrs !== null) {
+                emit(d, "    " + pad("update", 10), { fg: C.muted });
+                emit(d, `failed — ${githubLastError}`, { fg: C.err });
+                newline(d);
+                renderPrRows(d, githubLastPrs);
+                return;
+            }
+            if (githubLastPrs !== null) {
+                renderPrRows(d, githubLastPrs);
+                return;
+            }
+            if (githubLastError) {
+                emit(d, "    " + pad("status", 10), { fg: C.muted });
+                emit(d, githubLastError, { fg: C.err });
+                newline(d);
+                return;
+            }
+            // First run, nothing yet.
+            emit(d, "    " + pad("status", 10), { fg: C.muted });
+            emit(d, "loading…", { fg: C.muted });
+            newline(d);
+        },
+    };
+}
+
 async function fetchGithub(myToken: number) {
     // Recent PRs authored by the current user. One GraphQL round-trip
     // fetches state (OPEN / MERGED / CLOSED), combined check status
@@ -528,6 +650,7 @@ async function fetchGithub(myToken: number) {
             }
         }
     `;
+    let failure: string | null = null;
     try {
         const res = await run(
             "gh",
@@ -538,122 +661,29 @@ async function fetchGithub(myToken: number) {
         if (myToken !== fetchToken) return;
         if (!res.ok) {
             const stderr = res.stderr.toLowerCase();
-            const why =
+            failure =
                 stderr.includes("not found") || stderr.includes("no such file")
                     ? "gh not installed"
                     : stderr.includes("auth")
                         ? "gh not authenticated"
                         : trim(res.stderr).split("\n")[0]?.slice(0, 40) || "gh failed";
-            sections.github = errorSection(why);
-            paint();
-            return;
+        } else {
+            try {
+                const parsed = JSON.parse(res.stdout);
+                const prs: GhPR[] =
+                    (parsed as { data?: { viewer?: { pullRequests?: { nodes?: GhPR[] } } } })
+                        ?.data?.viewer?.pullRequests?.nodes ?? [];
+                githubLastPrs = prs;
+                githubLastError = null;
+            } catch {
+                failure = "malformed response";
+            }
         }
-        let parsed: unknown;
-        try {
-            parsed = JSON.parse(res.stdout);
-        } catch {
-            sections.github = errorSection("malformed response");
-            paint();
-            return;
-        }
-        type Rollup = { state?: string } | null;
-        type Commit = { statusCheckRollup?: Rollup };
-        type CommitNode = { commit?: Commit };
-        type Thread = { isResolved?: boolean; comments?: { totalCount?: number } };
-        type PR = {
-            number?: number;
-            title?: string;
-            state?: string;
-            repository?: { nameWithOwner?: string };
-            commits?: { nodes?: CommitNode[] };
-            reviewThreads?: { nodes?: Thread[] };
-        };
-        const prs: PR[] =
-            (parsed as { data?: { viewer?: { pullRequests?: { nodes?: PR[] } } } })?.data
-                ?.viewer?.pullRequests?.nodes ?? [];
-        if (prs.length === 0) {
-            sections.github = {
-                draw: (d) => kv(d, "PRs", "no recent PRs by you", C.muted),
-            };
-            paint();
-            return;
-        }
-
-        sections.github = {
-            draw: (d) => {
-                kv(d, "PRs", `${prs.length} by you`, C.number);
-                for (const pr of prs) {
-                    const state = (pr.state ?? "").toUpperCase();
-                    const stateTag =
-                        state === "OPEN"
-                            ? "open"
-                            : state === "MERGED"
-                                ? "mrgd"
-                                : state === "CLOSED"
-                                    ? "clsd"
-                                    : "???";
-                    const stateColor =
-                        state === "OPEN"
-                            ? C.ok
-                            : state === "MERGED"
-                                ? C.accent
-                                : state === "CLOSED"
-                                    ? C.muted
-                                    : C.muted;
-
-                    const rollup =
-                        pr.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state ?? null;
-                    const checkGlyph =
-                        rollup === "SUCCESS"
-                            ? "✓"
-                            : rollup === "FAILURE" || rollup === "ERROR"
-                                ? "✗"
-                                : rollup === "PENDING" || rollup === "EXPECTED"
-                                    ? "◌"
-                                    : "–";
-                    const checkColor =
-                        rollup === "SUCCESS"
-                            ? C.ok
-                            : rollup === "FAILURE" || rollup === "ERROR"
-                                ? C.err
-                                : rollup === "PENDING" || rollup === "EXPECTED"
-                                    ? C.warn
-                                    : C.muted;
-
-                    const threads = pr.reviewThreads?.nodes ?? [];
-                    const openCmts = threads
-                        .filter((t) => t.isResolved === false)
-                        .reduce((acc, t) => acc + (t.comments?.totalCount ?? 0), 0);
-
-                    const num = `#${pr.number ?? "?"}`;
-                    const title = (pr.title ?? "").slice(0, 44);
-                    const repoName = pr.repository?.nameWithOwner ?? "";
-                    const prUrl =
-                        repoName && pr.number
-                            ? `https://github.com/${repoName}/pull/${pr.number}`
-                            : undefined;
-
-                    emit(d, "    ", undefined);
-                    emit(d, pad(num, 6), { fg: C.number, url: prUrl });
-                    emit(d, pad(stateTag, 5), { fg: stateColor, bold: true });
-                    emit(d, " ", undefined);
-                    emit(d, checkGlyph + " ", { fg: checkColor, bold: true });
-                    const cmtCell =
-                        openCmts > 0
-                            ? pad(`${openCmts} cmt`, 6)
-                            : pad("", 6);
-                    emit(d, cmtCell, {
-                        fg: openCmts > 0 ? C.warn : C.muted,
-                    });
-                    emit(d, " ", undefined);
-                    emit(d, title, { fg: C.value, url: prUrl });
-                    newline(d);
-                }
-            },
-        };
     } catch {
-        sections.github = errorSection("gh failed");
+        failure = "gh failed";
     }
+    if (failure !== null) githubLastError = failure;
+    sections.github = buildGithubSection();
     paint();
 }
 
@@ -756,12 +786,17 @@ async function openDashboard() {
 
     // Reset section state and kick new fetches. Token guards against late
     // resolvers from a prior open clobbering the new one.
+    //
+    // GitHub reuses the last-good PR snapshot (if any) so a re-opened
+    // dashboard can draw real data on the first frame while the refresh
+    // round-trip is still in flight. A refresh failure later on will
+    // surface via the in-panel stale-data banner.
     fetchToken++;
     const myToken = fetchToken;
     sections = {
         weather: loading(),
         git: loading(),
-        github: loading(),
+        github: githubLastPrs !== null ? buildGithubSection() : loading(),
         disk: loading(),
     };
     paint();
