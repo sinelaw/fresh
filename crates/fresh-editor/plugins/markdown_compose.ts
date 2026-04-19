@@ -1142,6 +1142,26 @@ function processLineConceals(
         if (lineContent[i] === '|') pipePositions.push(i);
       }
 
+      // Precompute which cells will be truncated. Per-character conceals
+      // that land inside a truncated cell must be suppressed — the cell-
+      // wide truncate conceal already renders the replacement. When both
+      // fire, the per-char conceal at the cell's first byte emits its
+      // replacement, and the cell-wide conceal emits its replacement one
+      // byte later, producing a cell one character wider than allocated.
+      const truncatedCellCharRanges: Array<{start: number; end: number}> = [];
+      if (!cursorStrictlyOnLine && colWidths) {
+        for (let ci = 0; ci < Math.min(cells.length, colWidths.length); ci++) {
+          const cellText = concealedText(cells[ci]);
+          if (cellText.length > colWidths[ci]) {
+            const prevPipe = pipePositions[ci];
+            const nextPipe = pipePositions[ci + 1];
+            if (prevPipe !== undefined && nextPipe !== undefined) {
+              truncatedCellCharRanges.push({ start: prevPipe + 1, end: nextPipe });
+            }
+          }
+        }
+      }
+
       // Track which pipe index we're on (0 = leading pipe)
       let pipeIdx = 0;
       for (let i = 0; i < lineContent.length; i++) {
@@ -1161,11 +1181,15 @@ function processLineConceals(
             const allocatedWidth = colWidths[cellIdx];
 
             if (cellWidth > allocatedWidth) {
-              // Truncate: conceal entire cell content and replace with truncated text
+              // Truncate: conceal entire cell content and replace with truncated text.
+              // Separator rows use box-drawing ─ to match the non-truncated path
+              // (per-char conceals replace source `-` with ─ and pad via pipe replacement).
               const prevPipeCharPos = pipePositions[pipeIdx - 1];
               const cellByteStart = charToByte(lineContent, prevPipeCharPos + 1, byteStart);
               const cellByteEnd = pipeByte;
-              const truncated = cellText.slice(0, allocatedWidth - 1) + '-';
+              const truncated = isSeparator
+                ? '─'.repeat(allocatedWidth)
+                : cellText.slice(0, allocatedWidth - 1) + '-';
               editor.addConceal(bufferId, "md-syntax", cellByteStart, cellByteEnd, truncated);
               truncatedByteRanges.push({start: cellByteStart, end: cellByteEnd});
             } else {
@@ -1188,6 +1212,10 @@ function processLineConceals(
           }
           pipeIdx++;
         } else if (isSeparator && lineContent[i] === '-') {
+          // Skip per-character conceals that land inside a truncated cell;
+          // the cell-wide truncate conceal already handles the rendering.
+          const inTruncated = truncatedCellCharRanges.some(r => i >= r.start && i < r.end);
+          if (inTruncated) continue;
           const db = charToByte(lineContent, i, byteStart);
           editor.addConceal(bufferId, "md-syntax", db, charToByte(lineContent, i + 1, byteStart), "─");
         }

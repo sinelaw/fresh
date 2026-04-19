@@ -4312,3 +4312,219 @@ fn test_toggle_compose_all_affects_all_buffers() {
         screen
     );
 }
+
+/// Regression test: compose-mode tables must fit within the editor
+/// viewport whether or not the File Explorer sidebar is open.
+///
+/// Bug: when a separator cell (`|---...---|`) was wider than the
+/// allocated column width, the cell-wide truncate conceal and the
+/// per-`-` conceals overlapped — the first `-` of each cell emitted
+/// `─` (from the per-char conceal) AND the cell-wide conceal emitted
+/// its N-char replacement, producing N+1 rendered chars per cell. The
+/// extra characters caused the separator to wrap onto a second line
+/// and visually misalign the table. Opening the sidebar made the
+/// symptom obvious: the smaller viewport forced truncation on a table
+/// that previously fit, exposing the off-by-one.
+#[test]
+fn test_compose_mode_table_width_respects_file_explorer() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    init_tracing_from_env();
+
+    // Table whose natural (un-constrained) width is bigger than the editor
+    // content area once the File Explorer sidebar is open. This forces
+    // `distributeColumnWidths` to shrink columns — but only if the cached
+    // `allocated` widths are recomputed against the new viewport width.
+    //
+    // At 120 col terminal with no sidebar, available = 120-5 = 115, so the
+    // natural widths (~28*4+5 = 117) are re-distributed down slightly.
+    // After the sidebar takes ~34 cols, available drops to ~80, so columns
+    // must get substantially narrower.
+    let md_content = "\
+# Table Width Bug
+
+| ColumnAAAAAAAAAAAAAAAAAAAAAAAAAA | ColumnBBBBBBBBBBBBBBBBBBBBBBBBBB | ColumnCCCCCCCCCCCCCCCCCCCCCCCCCC | ColumnDDDDDDDDDDDDDDDDDDDDDDDDDD |
+|----------------------------------|----------------------------------|----------------------------------|----------------------------------|
+| alphaaaaaaaaaaaaaaaaaaaaaaaaaaaa | bravooooooooooooooooooooooooooo  | charlieeeeeeeeeeeeeeeeeeeeeeeee  | deltaaaaaaaaaaaaaaaaaaaaaaaaaa   |
+| echooooooooooooooooooooooooooo   | foxtrotttttttttttttttttttttttttt | golffffffffffffffffffffffffffff  | hoteleleleleeeeeeeeeeeeeeeeeeeee |
+";
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("table_width.md");
+    std::fs::write(&md_path, &md_content).unwrap();
+
+    // Use a wide terminal so the unopened-sidebar path has plenty of room.
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    // Enable compose mode
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for compose mode to render the table (box-drawing chars visible).
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("│") && s.contains("─")
+        })
+        .unwrap();
+    let mut prev = String::new();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            let stable = s == prev;
+            prev = s;
+            stable
+        })
+        .unwrap();
+
+    // Capture the table-row span (leftmost→rightmost delimiter column)
+    // before the sidebar is opened. We use the TABLE-ROW signature (row
+    // containing "Column" text + box-drawing pipes), so we don't pick up
+    // sidebar borders.
+    let screen_before = harness.screen_to_string();
+    let (min_before, max_before) = table_column_span_on_content_rows(&screen_before);
+    let width_before = max_before - min_before;
+    assert!(
+        width_before > 60,
+        "Sanity: table should span a meaningful width before the sidebar \
+         is opened; got span {}..{}.\nScreen:\n{}",
+        min_before,
+        max_before,
+        screen_before,
+    );
+
+    // Also: the separator row between header and first data row must fit
+    // on a single line (no wrap). If the separator overflows the editor
+    // content area it will get wrapped, producing a row without both
+    // ├ and ┤ — detect that explicitly.
+    assert!(
+        separator_row_fits(&screen_before),
+        "Separator row doesn't fit on one line BEFORE the sidebar is \
+         opened.\nScreen:\n{}",
+        screen_before,
+    );
+
+    // Open the File Explorer sidebar.
+    harness.editor_mut().toggle_file_explorer();
+    harness
+        .wait_until_stable(|h| h.editor().file_explorer_visible())
+        .unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+
+    // Let compose mode settle again after the viewport change.
+    let mut prev = String::new();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            let stable = s == prev;
+            prev = s;
+            stable
+        })
+        .unwrap();
+
+    let screen_after = harness.screen_to_string();
+    let (min_after, max_after) = table_column_span_on_content_rows(&screen_after);
+    let width_after = max_after - min_after;
+
+    // After the sidebar opens, the editor content area shrinks. The table
+    // must shrink to fit — natural widths are larger than the new editor
+    // area so `distributeColumnWidths` must re-distribute.
+    assert!(
+        width_after < width_before,
+        "Table width did not shrink when the File Explorer sidebar was \
+         opened. Table span before={}..{} ({}), after={}..{} ({}). The \
+         cached table column widths were not recomputed against the \
+         smaller editor content area.\n\
+         Screen after opening sidebar:\n{}",
+        min_before,
+        max_before,
+        width_before,
+        min_after,
+        max_after,
+        width_after,
+        screen_after,
+    );
+
+    // And the separator must still fit on a single line in the now-
+    // smaller editor area.
+    assert!(
+        separator_row_fits(&screen_after),
+        "Separator row doesn't fit on one line AFTER the sidebar is \
+         opened — it's being rendered wider than the editor content area \
+         and wraps.\nScreen:\n{}",
+        screen_after,
+    );
+}
+
+/// (leftmost, rightmost) column of table delimiters. We use the table's
+/// top/bottom borders (rows containing the table-only glyphs `┬` or `┴`)
+/// — these never appear in the File Explorer pane, whose vertical border
+/// uses only `│` `┌` `┐` `└` `┘` `─`.
+fn table_column_span_on_content_rows(screen: &str) -> (usize, usize) {
+    let mut min_col = usize::MAX;
+    let mut max_col = 0usize;
+    for line in screen.lines() {
+        let is_table_border = line.contains('┬') || line.contains('┴');
+        if !is_table_border {
+            continue;
+        }
+        for (i, c) in line.chars().enumerate() {
+            if matches!(c, '┌' | '┐' | '└' | '┘' | '┬' | '┴') {
+                if i < min_col {
+                    min_col = i;
+                }
+                if i > max_col {
+                    max_col = i;
+                }
+            }
+        }
+    }
+    if min_col == usize::MAX {
+        (0, 0)
+    } else {
+        (min_col, max_col)
+    }
+}
+
+/// True iff every inter-row separator of the table fits on a single
+/// screen line. Each separator row opens with `├`; a well-rendered one
+/// also closes with `┤` on the same line. If the separator overflows the
+/// viewport it gets wrapped onto a second line, and the closing `┤`
+/// appears on the next line — the opening line has `├` but no `┤`.
+fn separator_row_fits(screen: &str) -> bool {
+    let mut any = false;
+    for line in screen.lines() {
+        if line.contains('├') {
+            any = true;
+            if !line.contains('┤') {
+                return false;
+            }
+        }
+    }
+    any
+}
