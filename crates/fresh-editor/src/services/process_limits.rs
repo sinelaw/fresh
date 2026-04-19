@@ -44,7 +44,7 @@ impl PostSpawnAction {
         if let Some(ref cgroup_dir) = self.cgroup_dir {
             let procs_file = cgroup_dir.join("cgroup.procs");
             if let Err(e) = fs::write(&procs_file, format!("{}", _child_pid)) {
-                tracing::warn!(
+                tracing::info!(
                     "Failed to move child {} into cgroup {:?}: {}",
                     _child_pid,
                     cgroup_dir,
