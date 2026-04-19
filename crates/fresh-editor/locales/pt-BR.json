@@ -1051,6 +1051,7 @@
   "menu.lsp.show_completions": "Mostrar conclusões",
   "menu.lsp.show_hover": "Mostrar informações",
   "menu.lsp.show_signature": "Mostrar ajuda de assinatura",
+  "menu.lsp.show_status": "Status do LSP\u2026",
   "menu.lsp.stop_server": "Parar servidor",
   "menu.lsp.toggle_for_buffer": "Alternar LSP para o buffer atual",
   "menu.lsp.toggle_inlay_hints": "Alternar dicas inline",

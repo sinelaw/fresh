@@ -1051,6 +1051,7 @@
   "menu.lsp.show_completions": "Показать автодополнение",
   "menu.lsp.show_hover": "Показать информацию",
   "menu.lsp.show_signature": "Показать справку по сигнатуре",
+  "menu.lsp.show_status": "Статус LSP\u2026",
   "menu.lsp.stop_server": "Остановить сервер",
   "menu.lsp.toggle_for_buffer": "Переключить LSP для текущего буфера",
   "menu.lsp.toggle_inlay_hints": "Переключить встроенные подсказки",

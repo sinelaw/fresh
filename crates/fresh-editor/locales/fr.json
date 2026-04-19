@@ -1051,6 +1051,7 @@
   "menu.lsp.show_completions": "Afficher les complétions",
   "menu.lsp.show_hover": "Afficher les infos au survol",
   "menu.lsp.show_signature": "Afficher l'aide à la signature",
+  "menu.lsp.show_status": "Statut LSP\u2026",
   "menu.lsp.stop_server": "Arrêter le serveur",
   "menu.lsp.toggle_for_buffer": "Basculer LSP pour le tampon actuel",
   "menu.lsp.toggle_inlay_hints": "Basculer les indices inlay",

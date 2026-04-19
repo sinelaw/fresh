@@ -2697,6 +2697,13 @@ impl MenuConfig {
                     },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
+                        label: t!("menu.lsp.show_status").to_string(),
+                        action: "show_lsp_status".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
                         label: t!("menu.lsp.restart_server").to_string(),
                         action: "lsp_restart".to_string(),
                         args: HashMap::new(),

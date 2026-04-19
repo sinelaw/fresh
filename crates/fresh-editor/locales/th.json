@@ -1051,6 +1051,7 @@
   "menu.lsp.show_completions": "แสดงการเติมคำ",
   "menu.lsp.show_hover": "แสดงข้อมูลโฮเวอร์",
   "menu.lsp.show_signature": "แสดงความช่วยเหลือลายเซ็น",
+  "menu.lsp.show_status": "สถานะ LSP\u2026",
   "menu.lsp.stop_server": "หยุดเซิร์ฟเวอร์",
   "menu.lsp.toggle_for_buffer": "สลับ LSP สำหรับบัฟเฟอร์ปัจจุบัน",
   "menu.lsp.toggle_inlay_hints": "สลับคำแนะนำแทรก",
