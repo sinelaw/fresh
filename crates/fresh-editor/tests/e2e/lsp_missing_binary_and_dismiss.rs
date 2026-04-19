@@ -244,3 +244,77 @@ fn test_dismiss_then_enable_round_trip() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Reopen-the-popup case: when the language is already disabled in
+/// config (e.g. on a fresh session where the persisted
+/// `enabled = false` is the only signal — the session-level
+/// `user_dismissed_lsp_languages` is empty), the popup must offer
+/// "Enable LSP for <lang>", not "Disable". Showing "Disable" while
+/// the language is already disabled would leave the user with no
+/// surface to undo their previous choice.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_popup_offers_enable_when_config_already_disabled() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let file = temp.path().join("hello.rs");
+    std::fs::write(&file, "fn main() {}\n")?;
+
+    // Simulates "previous session disabled it" — `enabled = false`
+    // but `user_dismissed_lsp_languages` empty. This is exactly the
+    // state a user lands in after a restart following a Disable.
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: vec![],
+            enabled: false,
+            auto_start: false,
+            name: Some("rust-analyzer".to_string()),
+            ..Default::default()
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    harness.open_file(&file)?;
+    harness.render()?;
+
+    // Open the popup explicitly (the auto-prompt is suppressed by the
+    // harness ctor, and `enabled = false` would route through the
+    // `Failed` spawn path anyway, not `NotAutoStart`).
+    harness.editor_mut().show_lsp_status_popup();
+    harness.render()?;
+
+    let items = popup_items(&harness);
+
+    let has_enable = items
+        .iter()
+        .any(|(label, data, _)| data.as_deref() == Some("enable:rust") && label.contains("Enable"));
+    let has_disable = items
+        .iter()
+        .any(|(_, data, _)| data.as_deref() == Some("dismiss:rust"));
+
+    assert!(
+        has_enable,
+        "popup should offer 'Enable LSP for rust' when every server is \
+         disabled in config, regardless of the session-only dismissal \
+         flag. Items: {:#?}",
+        items
+    );
+    assert!(
+        !has_disable,
+        "popup must NOT offer 'Disable LSP for rust' when the language is \
+         already disabled — that label leaves the user with no way to \
+         re-enable. Items: {:#?}",
+        items
+    );
+
+    Ok(())
+}
