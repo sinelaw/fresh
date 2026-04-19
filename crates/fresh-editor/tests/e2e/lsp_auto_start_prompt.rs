@@ -578,3 +578,123 @@ fn test_auto_prompt_follows_active_buffer_on_session_restore() -> anyhow::Result
 
     Ok(())
 }
+
+/// Picking "Disable LSP for <lang>" in the auto-prompt popup must do
+/// two user-visible things:
+///
+///   1. The row label drops the word "pill" — from the user's
+///      perspective they're disabling the LSP, not some pill widget.
+///   2. It flips `enabled = false` in the persisted config. The
+///      old behaviour (`user_dismissed_lsp_languages`, a session-
+///      scoped HashSet) didn't survive a restart, so the user got
+///      re-prompted the next time they opened the editor and
+///      rightly concluded the "Disable" action didn't actually do
+///      what it said.
+///
+/// After invoking the action, the in-memory config (which is what
+/// `save_config` writes to disk) must have `enabled = false` on the
+/// rust LSP entry — and the auto-prompt path must therefore stay
+/// silent on subsequent file opens.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_disable_action_persists_enabled_false() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let file = temp.path().join("hello.rs");
+    std::fs::write(&file, "fn main() {}\n")?;
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_config(make_config_with_dormant_rust_lsp())
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    harness.open_file(&file)?;
+    harness.render()?;
+
+    // Precondition: the popup is up and its disable row exists —
+    // asserted in `test_popup_auto_shows_on_open_for_dormant_lsp`
+    // and `test_popup_offers_start_always_action`. Here we focus on
+    // the label + side-effect of the disable row.
+
+    // 1. Label: the visible row should NOT mention "pill".
+    let items = popup_items(&harness);
+    let disable_row = items
+        .iter()
+        .find(|(_, data, _)| data.as_deref() == Some("dismiss:rust"))
+        .unwrap_or_else(|| {
+            panic!(
+                "popup should offer a 'dismiss:rust' action. Items: {:#?}",
+                items
+            )
+        });
+    let (disable_label, _, _) = disable_row;
+    assert!(
+        !disable_label.contains("pill"),
+        "row label shouldn't expose the internal 'pill' noun. Label: {:?}",
+        disable_label
+    );
+    assert!(
+        disable_label.contains("Disable LSP for rust"),
+        "row label should read 'Disable LSP for <lang>'. Label: {:?}",
+        disable_label
+    );
+
+    // Precondition for (2): the config currently has enabled=true.
+    assert!(
+        harness
+            .editor()
+            .config()
+            .lsp
+            .get("rust")
+            .map(|cfg| cfg.as_slice()[0].enabled)
+            .unwrap(),
+        "precondition: rust LSP should start as enabled=true"
+    );
+
+    harness
+        .editor_mut()
+        .handle_lsp_status_action("dismiss:rust");
+
+    // 2a. The action flipped enabled=false in the live config (the
+    //     same config `save_config` serializes to disk).
+    let enabled_after = harness
+        .editor()
+        .config()
+        .lsp
+        .get("rust")
+        .map(|cfg| cfg.as_slice()[0].enabled)
+        .expect("rust config must still be present");
+    assert!(
+        !enabled_after,
+        "BUG: 'Disable LSP for rust' must set enabled=false in the config \
+         so the change survives an editor restart. The old session-only \
+         `user_dismissed_lsp_languages` HashSet meant the next session \
+         re-prompted the user, contradicting the action's label."
+    );
+
+    // 2b. Effect: subsequent file opens in this same session no
+    //     longer pop the auto-prompt, because enabled=false takes
+    //     the spawn flow down the `Failed` path rather than
+    //     `NotAutoStart`. (A second harness + fresh config-reload
+    //     would assert the cross-restart half, but touching the
+    //     disk layer is disproportionate here; the config-state
+    //     assertion above already pins the invariant that gets
+    //     serialized.)
+    harness.editor_mut().hide_popup();
+    harness.render()?;
+
+    let second = temp.path().join("b.rs");
+    std::fs::write(&second, "fn main() {}\n")?;
+    harness.open_file(&second)?;
+    harness.render()?;
+
+    assert!(
+        harness.editor().active_state().popups.top().is_none(),
+        "after 'Disable LSP for rust', opening another rust file must not \
+         re-pop the auto-prompt"
+    );
+
+    Ok(())
+}
