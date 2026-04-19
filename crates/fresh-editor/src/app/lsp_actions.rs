@@ -381,7 +381,16 @@ impl Editor {
     /// - `enable:<language>` — restore a dismissed language's pill
     /// - `autostart:<language>/<server_name>` — flip auto_start=true for
     ///   the named server in config, save, and start it now
+    /// - `cancel_popup` — no-op here; the row exists purely so the
+    ///   user has an on-screen "Dismiss" affordance (close is handled
+    ///   upstream in `handle_popup_confirm` before this is called)
     pub fn handle_lsp_status_action(&mut self, action_key: &str) {
+        if action_key == "cancel_popup" {
+            // Popup is already closed by `handle_popup_confirm`; the
+            // row only exists to give the user an on-screen surface
+            // that documents the Esc shortcut. Nothing to do here.
+            return;
+        }
         if let Some(target) = action_key.strip_prefix("autostart:") {
             // Persist `auto_start = true` in config so the server
             // starts automatically on future file opens, then kick it

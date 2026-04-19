@@ -479,9 +479,9 @@ impl Editor {
             action_keys.push((dismiss_key, format!("Disable LSP for {}", language)));
         }
 
-        // View log action (always, at the end) — grayed out and
-        // non-actionable when no log file exists yet for this language
-        // (e.g. the server was never started, or has been rotated away).
+        // View log action — grayed out and non-actionable when no
+        // log file exists yet for this language (e.g. the server was
+        // never started, or has been rotated away).
         let log_path = crate::services::log_dirs::lsp_log_path(language);
         let log_exists = log_path.exists();
         let log_key = format!("log:{}", language);
@@ -493,6 +493,31 @@ impl Editor {
             log_item = log_item.disabled();
         }
         items.push(log_item);
+
+        // Trailing Dismiss row — gives users an on-screen way out of
+        // the popup without having to know that Esc works. The key
+        // label is looked up from the keybinding resolver so a
+        // rebound PopupCancel stays visible in the row label
+        // ("Dismiss (Q)", etc.). Falls back to "Esc" as the usual
+        // default if the resolver has no binding at all (unusual,
+        // but we don't want an empty parenthetical).
+        let cancel_binding = self
+            .keybindings
+            .read()
+            .ok()
+            .and_then(|kb| {
+                kb.get_keybinding_for_action(
+                    &crate::input::keybindings::Action::PopupCancel,
+                    crate::input::keybindings::KeyContext::Popup,
+                )
+            })
+            .unwrap_or_else(|| "Esc".to_string());
+        let cancel_key = "cancel_popup".to_string();
+        items.push(
+            crate::view::popup::PopupListItem::new(format!("    Dismiss ({})", cancel_binding))
+                .with_data(cancel_key.clone()),
+        );
+        action_keys.push((cancel_key, format!("Dismiss ({})", cancel_binding)));
 
         // Store action keys for handling confirmation
         self.pending_lsp_status_popup = Some(action_keys);
