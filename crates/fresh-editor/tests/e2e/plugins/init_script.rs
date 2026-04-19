@@ -116,8 +116,6 @@ fn set_setting_updates_effective_config() {
 fn editor_on_accepts_a_closure_and_plugins_loaded_fires() {
     let (mut harness, _tmp, config_dir) = harness_with_scratch_config_dir();
 
-    // init.ts uses the closure form of `editor.on` — this is the DX win
-    // of M2. The callback sets a status message we can observe.
     write_init_ts(
         &config_dir,
         r#"
@@ -130,18 +128,18 @@ fn editor_on_accepts_a_closure_and_plugins_loaded_fires() {
 
     harness.editor_mut().load_init_script(true);
     harness.editor_mut().fire_plugins_loaded_hook();
-    // Hook dispatch is async; drain it.
-    harness.editor_mut().process_async_messages();
 
-    let status = harness
-        .editor()
-        .get_status_message()
-        .cloned()
-        .unwrap_or_default();
-    assert!(
-        status.contains("plugins_loaded fired"),
-        "expected plugins_loaded closure to fire: status = {status:?}"
-    );
+    // Hook dispatch is async (plugin thread) — poll until the SetStatus
+    // command arrives rather than hoping a single process_async_messages
+    // is enough.
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .get_status_message()
+                .map(|s| s.contains("plugins_loaded fired"))
+                .unwrap_or(false)
+        })
+        .unwrap();
 }
 
 #[test]
@@ -237,17 +235,15 @@ fn ready_hook_fires_and_can_be_observed_with_legacy_on_form() {
 
     harness.editor_mut().load_init_script(true);
     harness.editor_mut().fire_ready_hook();
-    harness.editor_mut().process_async_messages();
 
-    let status = harness
-        .editor()
-        .get_status_message()
-        .cloned()
-        .unwrap_or_default();
-    assert!(
-        status.contains("ready fired"),
-        "expected ready hook to fire with string-handler form: status = {status:?}"
-    );
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .get_status_message()
+                .map(|s| s.contains("ready fired"))
+                .unwrap_or(false)
+        })
+        .unwrap();
 }
 
 #[test]
