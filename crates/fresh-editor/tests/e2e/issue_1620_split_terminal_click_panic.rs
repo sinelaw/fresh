@@ -1,70 +1,88 @@
 //! Reproduction for issue #1620: Panic on `Option::unwrap()` in
-//! `apply_event_to_active_buffer` when clicking inside an editor pane in a
-//! layout that mixes vertical splits with a terminal pane.
+//! `apply_event_to_active_buffer` when clicking inside an editor pane.
 //!
-//! Reporter: @zipproth. Setup they described: a vertical split with a KDL
-//! file on the left and a different file on the right, plus an "integrated
-//! terminal pane at the bottom". Clicking inside the KDL pane panicked
-//! with:
+//! Reporter @zipproth described a vertical-split layout (KDL file on the
+//! left, another file on the right) with "an integrated terminal pane at
+//! the bottom"; clicking inside the KDL pane panicked with:
 //!
 //! ```text
 //! thread 'main' panicked at crates/fresh-editor/src/app/event_apply.rs:101:18:
 //! called `Option::unwrap()` on a `None` value
 //! ```
 //!
-//! The unwrap at `event_apply.rs:101` is the second of the two inside
-//! `apply_event_to_active_buffer` — i.e. the
-//! `split_view_states[effective_active_split()].keyed_states[active_buffer()]`
-//! lookup. That means the editor reached a state where
-//! `effective_active_split` / `active_buffer` disagree with the keyed-state
-//! map owned by that split's `SplitViewState`.
+//! ## Root cause (what the repro below exercises)
 //!
-//! A pre-existing comment above the unwrap notes that focusing a buffer
-//! group panel used to trigger exactly this shape of panic (fixed by
-//! switching to `effective_active_split`). The issue here is the
-//! regression's cousin: the same shape of inconsistency resurfaces when a
-//! terminal pane is part of the layout and the user clicks back into a
-//! non-terminal pane.
+//! The panic site:
 //!
-//! This test builds the minimum layout the reporter described — two
-//! vertical editor panes (top-left holds a KDL file, top-right a
-//! different file) with a terminal pane below — and then clicks inside
-//! the KDL pane. A healthy editor should reposition the cursor without
-//! panicking; today it aborts the process.
+//! ```ignore
+//! let split_id = self.effective_active_split();
+//! let active_buf = self.active_buffer();
+//! let cursors = &mut self
+//!     .split_view_states
+//!     .get_mut(&split_id)
+//!     .unwrap()
+//!     .keyed_states
+//!     .get_mut(&active_buf)   // <-- line 101: unwraps None
+//!     .unwrap()
+//!     .cursors;
+//! ```
 //!
-//! The test uses a live PTY (via `portable_pty::native_pty_system`) and
-//! skips cleanly in environments where PTYs are unavailable, matching
-//! the pattern in `terminal_split_focus_live.rs`.
+//! `active_buffer()` reads through `effective_active_pair()` in
+//! `editor_accessors.rs`, whose fallback branch returns the split tree's
+//! `active_buffer_id()` *without* checking that the tree-buffer is
+//! actually in that split's `SplitViewState.keyed_states`. The bug is
+//! that these two stores can drift apart.
+//!
+//! They drift when a buffer is closed from a different split than the
+//! one that was showing it. `Editor::close_buffer_internal` at
+//! `crates/fresh-editor/src/app/buffer_close.rs:221-225` updates the
+//! split tree for every non-active split that had the closed buffer:
+//!
+//! ```ignore
+//! let splits_to_update = self.split_manager.splits_for_buffer(id);
+//! for split_id in splits_to_update {
+//!     self.split_manager.set_split_buffer(split_id, replacement_buffer);
+//! }
+//! ```
+//!
+//! but never calls `switch_buffer` on those splits' `SplitViewState`.
+//! The subsequent `view_state.remove_buffer(id)` loop at
+//! `buffer_close.rs:247-250` / `split.rs:473-480` preserves
+//! `keyed_states[id]` when `id` is still that split's `active_buffer`.
+//!
+//! Result: for the non-closing split S1 we end up with
+//! `tree[S1] = F2 (replacement)` but `SVS[S1].active_buffer = F1 (stale)`
+//! and `SVS[S1].keyed_states = {F1}` — no `F2` entry at all, even though
+//! `F1` is no longer in `self.buffers`.
+//!
+//! Normally the mouse-click path rescues this via `focus_split`, which
+//! calls `view_state.switch_buffer(buffer_id)` (`active_focus.rs:189`).
+//! `switch_buffer` inserts a default `BufferViewState` if the buffer is
+//! missing from `keyed_states`, which would patch the inconsistency.
+//! But that branch only runs when `split_changed`. When you navigate to
+//! S1 first via `next_split()` (which just flips `active_split` without
+//! touching any `SplitViewState` — see `split_actions.rs:196-199`) and
+//! then click inside S1, `split_changed == false`; `focus_split` takes
+//! the else branch (`active_focus.rs:203-206`) and calls
+//! `set_active_buffer`, which *early-returns* because
+//! `active_buffer() == buffer_id` (both read as `F2` from the tree —
+//! see `active_focus.rs:21-23`). No `switch_buffer` is invoked, the
+//! stale state survives, and the click's eventual
+//! `apply_event_to_active_buffer` panics.
+//!
+//! The reporter's terminal pane is incidental scenery — the panic's
+//! real precondition is "a buffer got closed while still being shown in
+//! a non-active split". Closing a terminal buffer is a natural way to
+//! end up there, which is why the reporter's layout had one.
 
 use crate::common::harness::EditorTestHarness;
-use portable_pty::{native_pty_system, PtySize};
 use std::fs;
 use tempfile::TempDir;
 
-/// Build an `EditorTestHarness`, skipping the test (returning `None`) if
-/// the host cannot allocate a PTY. Mirrors `harness_or_skip` in
-/// `terminal_split_focus_live.rs` so this test degrades gracefully on CI
-/// runners without `/dev/ptmx`.
-fn harness_or_skip(width: u16, height: u16) -> Option<EditorTestHarness> {
-    if native_pty_system()
-        .openpty(PtySize {
-            rows: 1,
-            cols: 1,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .is_err()
-    {
-        eprintln!("Skipping issue #1620 repro: PTY not available in this environment");
-        return None;
-    }
-    EditorTestHarness::new(width, height).ok()
-}
-
-/// Find a `(split_id, buffer_id, content_rect)` in the editor's cached
-/// split areas whose buffer is the one we expect. Panics if the layout
-/// doesn't contain the expected buffer — that would mean the harness
-/// setup diverged from what this test is trying to reproduce.
+/// Find the cached split area for a given buffer and return its
+/// `content_rect` so the test can click somewhere inside that pane.
+/// Panics if the buffer isn't represented in the cached layout —
+/// we rely on that to catch harness drift early.
 fn content_rect_for_buffer(
     harness: &EditorTestHarness,
     buffer_id: fresh::model::event::BufferId,
@@ -75,7 +93,7 @@ fn content_rect_for_buffer(
         }
     }
     panic!(
-        "expected split area for buffer {:?} but the cached layout only has {:?}",
+        "expected split area for buffer {:?}, cached layout has: {:?}",
         buffer_id,
         harness
             .editor()
@@ -86,130 +104,94 @@ fn content_rect_for_buffer(
     );
 }
 
-/// Reproduce the panic: a vertical pair of editor panes (KDL on left,
-/// another file on right) sitting above a terminal pane. Clicking inside
-/// the KDL pane should land the cursor there; with the bug present, the
-/// editor panics on `Option::unwrap()` in `apply_event_to_active_buffer`.
+/// Reproduce the issue #1620 panic: close a buffer while it's still
+/// the tree-buffer of an inactive split, then navigate into that
+/// split via `next_split` and click. Clicking must not panic — today
+/// it aborts the process at `event_apply.rs:101`.
 #[test]
-fn clicking_into_editor_pane_with_terminal_below_does_not_panic() {
-    let mut harness = match harness_or_skip(140, 40) {
-        Some(h) => h,
-        None => return,
-    };
+fn clicking_split_after_closing_buffer_in_another_split_does_not_panic() {
+    let mut harness = EditorTestHarness::new(140, 40).unwrap();
 
-    // Two real files on disk so the editor has concrete buffers to open
-    // rather than [No Name] scratch buffers. The KDL extension is not
-    // load-bearing for the panic — any non-terminal buffer works — but
-    // we keep it to stay faithful to the reporter's description.
     let temp_dir = TempDir::new().unwrap();
-    let kdl_path = temp_dir.path().join("settings.kdl");
+    let file_a_path = temp_dir.path().join("settings.kdl");
     fs::write(
-        &kdl_path,
+        &file_a_path,
         "// KDL settings file from the issue reporter\n\
          node \"value\" {\n    child 1\n    child 2\n}\n",
     )
     .unwrap();
-    let other_path = temp_dir.path().join("other.txt");
-    fs::write(&other_path, "plain text file in the right pane\n").unwrap();
+    let file_b_path = temp_dir.path().join("other.txt");
+    fs::write(&file_b_path, "plain text file in the second pane\n").unwrap();
 
-    // --- Build the layout -----------------------------------------------
-    //
-    // Start by opening the KDL file; this populates the initial (only)
-    // split with the KDL buffer.
-    harness.open_file(&kdl_path).unwrap();
-    let kdl_buffer = harness.editor().active_buffer_id();
+    // Step 1: open file A in the initial (only) split S1 — buffer F1.
+    harness.open_file(&file_a_path).unwrap();
+    let f1 = harness.editor().active_buffer_id();
 
-    // Horizontal split so we end up with a top pane and a bottom pane.
-    // The new (active) pane is the bottom half.
-    harness.editor_mut().split_pane_horizontal();
-    harness.render().unwrap();
-
-    // Open a terminal in the now-active (bottom) split. This is what the
-    // reporter referred to as "an integrated terminal pane at the bottom".
-    harness.editor_mut().open_terminal();
-    harness.render().unwrap();
-    let terminal_buffer = harness.editor().active_buffer_id();
-    assert!(
-        harness.editor().is_terminal_buffer(terminal_buffer),
-        "open_terminal should have made the bottom pane a terminal buffer, \
-         otherwise we're not reproducing the reporter's layout"
-    );
-
-    // Move focus back up to the top pane so the next split lands there.
-    // The concrete traversal order (prev/next) isn't load-bearing — we
-    // just need to land on the non-terminal side. Loop defensively in
-    // case next_split skips us past.
-    for _ in 0..4 {
-        if !harness
-            .editor()
-            .is_terminal_buffer(harness.editor().active_buffer_id())
-        {
-            break;
-        }
-        harness.editor_mut().next_split();
-    }
-    harness.render().unwrap();
-    assert!(
-        !harness
-            .editor()
-            .is_terminal_buffer(harness.editor().active_buffer_id()),
-        "expected to be focused on the non-terminal (top) pane before \
-         splitting vertically"
-    );
-
-    // Vertical split of the top pane — this produces the left/right pair
-    // the reporter described, leaving a third (bottom) pane with the
-    // terminal. After this, the active pane is the newly-created right
-    // side and both top panes hold the KDL buffer.
+    // Step 2: split vertically. The new split S2 becomes the active
+    // split; both panes initially show F1.
     harness.editor_mut().split_pane_vertical();
     harness.render().unwrap();
+    let split_after_split = harness.editor().get_active_split();
 
-    // Swap the right pane's buffer to the "other" file so the final
-    // layout is: top-left = KDL, top-right = other, bottom = terminal,
-    // which matches the issue description exactly.
-    harness.open_file(&other_path).unwrap();
-    let other_buffer = harness.editor().active_buffer_id();
-    assert_ne!(
-        other_buffer, kdl_buffer,
-        "open_file should have created a fresh buffer for other.txt"
+    // Step 3: open file B in S2 — tree[S2] = F2, SVS[S2] gets F2 keyed.
+    // S1 is untouched: tree[S1] = F1, SVS[S1] = { active=F1, keyed={F1} }.
+    harness.open_file(&file_b_path).unwrap();
+    let f2 = harness.editor().active_buffer_id();
+    assert_ne!(f2, f1, "opening file B should yield a distinct buffer id");
+    assert_eq!(
+        harness.editor().get_active_split(),
+        split_after_split,
+        "opening a file should open it in the currently active split, not create a new one"
     );
 
+    // Sanity-check the precondition for the drift: S1 is non-active
+    // and still has F1 in both its tree slot and its SplitViewState.
     assert_eq!(
         harness.editor().get_split_count(),
-        3,
-        "setup should have produced exactly 3 panes \
-         (KDL, other, terminal); instead got {} — \
-         the rest of the test's coordinates assume 3",
-        harness.editor().get_split_count()
+        2,
+        "expected exactly two splits after a single vertical split"
     );
 
-    // --- The clicked-pane-panics step -----------------------------------
-    //
-    // Click somewhere inside the KDL pane's content area. The reporter
-    // observed a panic here; this test expects no panic.
-    let kdl_rect = content_rect_for_buffer(&harness, kdl_buffer);
-    // Aim for a cell strictly inside the pane so gutter / edge edge-cases
-    // don't mask the real bug. Middle of the pane is fine.
-    let click_col = kdl_rect.x + kdl_rect.width / 2;
-    let click_row = kdl_rect.y + kdl_rect.height / 2;
+    // Step 4: close F1 from S2. `closing_active == false` because S2's
+    // active buffer is F2, so this takes the non-active close path that
+    // updates the tree for S1 without touching SVS[S1].
+    harness.editor_mut().close_buffer(f1).unwrap();
+    harness.render().unwrap();
 
-    // If the bug is present, this call aborts the process with
-    // `called Option::unwrap() on a None value` from event_apply.rs:101.
-    harness.mouse_click(click_col, click_row).unwrap();
+    // Step 5: navigate to S1 via next_split. This flips
+    // `split_manager.active_split` to S1 but does not call
+    // `switch_buffer` on SVS[S1], so SVS[S1] keeps its stale
+    // `active_buffer = F1` / `keyed_states = {F1}`, even though
+    // `self.buffers` no longer contains F1 and `tree[S1]` is F2.
+    harness.editor_mut().next_split();
+    harness.render().unwrap();
 
-    // If we got here, the panic did not occur. Additionally verify the
-    // click did route focus to the KDL pane (the reporter's expected
-    // behavior: "clicking inside an editor pane should move the cursor
-    // (or focus the pane) without crashing").
+    // `active_buffer()` now resolves through the tree and reports F2.
+    // `effective_active_split()` reports S1. But SVS[S1].keyed_states
+    // contains only F1. The mouse-click path about to run will hit
+    // the `.unwrap()` at `event_apply.rs:101`.
     assert_eq!(
         harness.editor().active_buffer_id(),
-        kdl_buffer,
-        "after clicking inside the KDL pane, the KDL buffer should be \
-         the active buffer"
+        f2,
+        "after next_split, the editor should report F2 as active (via the split tree)"
+    );
+
+    // Step 6: click inside S1's content area. With the bug present,
+    // this panics.
+    let s1_rect = content_rect_for_buffer(&harness, f2);
+    let click_col = s1_rect.x + s1_rect.width / 2;
+    let click_row = s1_rect.y + s1_rect.height / 2;
+    harness.mouse_click(click_col, click_row).unwrap();
+
+    // If we got here, the panic did not occur. Sanity-check focus did
+    // route to S1 and the editor is still in a sane keyboard state.
+    assert_eq!(
+        harness.editor().active_buffer_id(),
+        f2,
+        "clicking inside S1 must keep F2 (the tree-buffer of S1) as active"
     );
     assert!(
         !harness.editor().is_terminal_mode(),
-        "clicking a non-terminal pane must stop capturing keyboard for \
-         the terminal"
+        "no terminal is involved in the minimal repro; terminal_mode must be off"
     );
 }
