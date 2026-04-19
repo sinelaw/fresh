@@ -175,7 +175,13 @@ impl ThemeRegistry {
         if value.ends_with(".json") {
             if let Some(themes_dir) = self.themes_dir.as_deref() {
                 let expanded = expand_env_vars(value);
-                let expanded_path = std::path::Path::new(&expanded);
+                // Registry keys are built from `entry.path().display()`,
+                // which uses the OS-native separator (`\` on Windows).
+                // Normalize the config input's forward slashes to match so
+                // the HashMap lookup hits on Windows too. No-op on Unix
+                // (MAIN_SEPARATOR_STR is `/`).
+                let expanded_native = expanded.replace('/', std::path::MAIN_SEPARATOR_STR);
+                let expanded_path = std::path::Path::new(&expanded_native);
                 let abs = if expanded_path.is_absolute() {
                     expanded_path.to_path_buf()
                 } else {
