@@ -12,6 +12,16 @@ fn init_test_environment() {
     // Install signal handlers for debugging hangs (dumps JS + Rust stack traces on Ctrl+C)
     fresh::services::signal_handler::install_signal_handlers();
 
+    // Disable the LSP auto-prompt popup across the suite. When enabled,
+    // the popup shows on the first render after `open_file` for any
+    // language with a default-configured LSP, and the popup's input
+    // handler then swallows every subsequent `send_key` call — which
+    // breaks hundreds of tests that happen to open `.rs`/`.py`/etc
+    // files without intending to exercise LSP. Tests that specifically
+    // assert on the auto-prompt re-enable it per-editor via
+    // `harness.editor_mut().set_lsp_auto_prompt_enabled(true)`.
+    fresh::app::lsp_auto_prompt::set_default_enabled(false);
+
     // Enable panicking on JS errors so plugin bugs surface immediately in tests
     #[cfg(feature = "plugins")]
     fresh_plugin_runtime::backend::set_panic_on_js_errors(true);

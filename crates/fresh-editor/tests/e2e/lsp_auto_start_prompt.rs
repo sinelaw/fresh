@@ -20,6 +20,21 @@
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 
+/// Build a harness and flip the auto-prompt flag ON for it — the
+/// test-harness ctor disables auto-prompt process-wide so unrelated
+/// tests don't get popup keystroke interception. Tests in this file
+/// specifically assert on the auto-prompt, so they re-enable it on
+/// their own editor instance.
+fn harness_with_auto_prompt(
+    width: u16,
+    height: u16,
+    options: HarnessOptions,
+) -> anyhow::Result<EditorTestHarness> {
+    let mut harness = EditorTestHarness::create(width, height, options)?;
+    harness.editor_mut().set_lsp_auto_prompt_enabled(true);
+    Ok(harness)
+}
+
 fn make_config_with_dormant_rust_lsp() -> fresh::config::Config {
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
@@ -70,7 +85,7 @@ fn test_popup_auto_shows_on_open_for_dormant_lsp() -> anyhow::Result<()> {
     let file = temp.path().join("hello.rs");
     std::fs::write(&file, "fn main() {}\n")?;
 
-    let mut harness = EditorTestHarness::create(
+    let mut harness = harness_with_auto_prompt(
         120,
         30,
         HarnessOptions::new()
@@ -117,7 +132,7 @@ fn test_popup_offers_start_always_action() -> anyhow::Result<()> {
     let file = temp.path().join("hello.rs");
     std::fs::write(&file, "fn main() {}\n")?;
 
-    let mut harness = EditorTestHarness::create(
+    let mut harness = harness_with_auto_prompt(
         120,
         30,
         HarnessOptions::new()
@@ -207,7 +222,7 @@ fn test_popup_preselects_start_always() -> anyhow::Result<()> {
     let file = temp.path().join("hello.rs");
     std::fs::write(&file, "fn main() {}\n")?;
 
-    let mut harness = EditorTestHarness::create(
+    let mut harness = harness_with_auto_prompt(
         120,
         30,
         HarnessOptions::new()
@@ -252,7 +267,7 @@ fn test_enable_autostart_action_sets_flag_in_config() -> anyhow::Result<()> {
     let file = temp.path().join("hello.rs");
     std::fs::write(&file, "fn main() {}\n")?;
 
-    let mut harness = EditorTestHarness::create(
+    let mut harness = harness_with_auto_prompt(
         120,
         30,
         HarnessOptions::new()
@@ -379,7 +394,7 @@ done
         }]),
     );
 
-    let mut harness = EditorTestHarness::create(
+    let mut harness = harness_with_auto_prompt(
         120,
         30,
         HarnessOptions::new()
@@ -436,7 +451,7 @@ fn test_popup_does_not_auto_show_when_auto_start_true() -> anyhow::Result<()> {
         }]),
     );
 
-    let mut harness = EditorTestHarness::create(
+    let mut harness = harness_with_auto_prompt(
         120,
         30,
         HarnessOptions::new()
@@ -469,7 +484,7 @@ fn test_auto_prompt_respects_user_dismissal() -> anyhow::Result<()> {
     std::fs::write(&first, "fn main() {}\n")?;
     std::fs::write(&second, "fn main() {}\n")?;
 
-    let mut harness = EditorTestHarness::create(
+    let mut harness = harness_with_auto_prompt(
         120,
         30,
         HarnessOptions::new()
@@ -533,7 +548,7 @@ fn test_auto_prompt_follows_active_buffer_on_session_restore() -> anyhow::Result
     std::fs::write(&first, "fn main() {}\n")?;
     std::fs::write(&second, "fn other() {}\n")?;
 
-    let mut harness = EditorTestHarness::create(
+    let mut harness = harness_with_auto_prompt(
         120,
         30,
         HarnessOptions::new()
@@ -602,7 +617,7 @@ fn test_disable_action_persists_enabled_false() -> anyhow::Result<()> {
     let file = temp.path().join("hello.rs");
     std::fs::write(&file, "fn main() {}\n")?;
 
-    let mut harness = EditorTestHarness::create(
+    let mut harness = harness_with_auto_prompt(
         120,
         30,
         HarnessOptions::new()
@@ -721,7 +736,7 @@ fn test_popup_offers_dismiss_row_with_dynamic_keybinding() -> anyhow::Result<()>
     let file = temp.path().join("hello.rs");
     std::fs::write(&file, "fn main() {}\n")?;
 
-    let mut harness = EditorTestHarness::create(
+    let mut harness = harness_with_auto_prompt(
         120,
         30,
         HarnessOptions::new()

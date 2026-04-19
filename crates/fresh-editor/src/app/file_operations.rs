@@ -875,8 +875,13 @@ impl Editor {
                 // the prompt this session or dismissed the pill —
                 // both mean "please don't re-pop this."  The
                 // persisted `auto_start = true` flag is what
-                // silences the prompt across sessions.
-                if !self.auto_start_prompted_languages.contains(&language)
+                // silences the prompt across sessions. Also skip
+                // when the process-wide toggle is off — e2e tests
+                // set this via `set_lsp_auto_prompt_enabled(false)`
+                // in their ctor so the popup doesn't steal
+                // keystrokes from unrelated scenarios.
+                if self.lsp_auto_prompt_enabled
+                    && !self.auto_start_prompted_languages.contains(&language)
                     && !self.is_lsp_language_user_dismissed(&language)
                 {
                     self.pending_auto_start_prompts.insert(language);

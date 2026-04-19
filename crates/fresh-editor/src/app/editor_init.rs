@@ -657,6 +657,7 @@ impl Editor {
             user_dismissed_lsp_languages: std::collections::HashSet::new(),
             auto_start_prompted_languages: std::collections::HashSet::new(),
             pending_auto_start_prompts: std::collections::HashSet::new(),
+            lsp_auto_prompt_enabled: super::lsp_auto_prompt::default_enabled(),
             pending_close_buffer: None,
             auto_revert_enabled: true,
             last_auto_revert_poll: time_source.now(),

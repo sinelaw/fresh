@@ -81,6 +81,9 @@ fn test_missing_binary_popup_shows_advisory_and_dismiss() -> anyhow::Result<()> 
             .with_config(make_config_with_missing_rust_lsp())
             .with_working_dir(temp.path().to_path_buf()),
     )?;
+    // Opt this test into the LSP auto-prompt; the harness ctor
+    // disables it by default for the rest of the suite.
+    harness.editor_mut().set_lsp_auto_prompt_enabled(true);
 
     harness.open_file(&file)?;
 
@@ -169,6 +172,9 @@ fn test_dismiss_then_enable_round_trip() -> anyhow::Result<()> {
             .with_config(make_config_with_missing_rust_lsp())
             .with_working_dir(temp.path().to_path_buf()),
     )?;
+    // Opt this test into the LSP auto-prompt; the harness ctor
+    // disables it by default for the rest of the suite.
+    harness.editor_mut().set_lsp_auto_prompt_enabled(true);
 
     harness.open_file(&file)?;
     harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;

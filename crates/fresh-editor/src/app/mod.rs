@@ -38,6 +38,7 @@ mod keybinding_editor_actions;
 mod lifecycle;
 mod line_scan;
 mod lsp_actions;
+pub mod lsp_auto_prompt;
 mod lsp_event_notify;
 mod lsp_requests;
 mod lsp_status;
@@ -855,6 +856,15 @@ pub struct Editor {
     /// active buffer ends up being a later one. Once drained, the
     /// language moves to `auto_start_prompted_languages`.
     pending_auto_start_prompts: std::collections::HashSet<String>,
+
+    /// Per-editor flag gating the LSP auto-prompt. Real sessions
+    /// default this to `true` (see `lsp_auto_prompt::default_enabled`);
+    /// test infrastructure flips the default to `false` in its ctor
+    /// to keep the popup from stealing keystrokes from scenarios
+    /// that don't care about LSP. Snapshotted at construction so
+    /// parallel tests running in the same process don't race on a
+    /// shared atomic.
+    lsp_auto_prompt_enabled: bool,
 
     /// Pending close buffer - buffer to close after SaveFileAs completes
     /// Used when closing a modified buffer that needs to be saved first

@@ -266,6 +266,17 @@ impl Editor {
         !self.lsp_progress.is_empty()
     }
 
+    /// Toggle the LSP auto-prompt popup on this editor instance.
+    ///
+    /// See `app::lsp_auto_prompt` for the full rationale. In short:
+    /// tests default this to `false` to stop the popup from
+    /// swallowing keystrokes in scenarios that don't exercise LSP;
+    /// tests that DO exercise it re-enable on the specific harness
+    /// they care about.
+    pub fn set_lsp_auto_prompt_enabled(&mut self, enabled: bool) {
+        self.lsp_auto_prompt_enabled = enabled;
+    }
+
     /// Get the current LSP progress info (if any)
     pub fn get_lsp_progress(&self) -> Vec<(String, String, Option<String>)> {
         self.lsp_progress
