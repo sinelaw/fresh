@@ -840,6 +840,13 @@ pub struct Editor {
     /// survive editor restarts.
     user_dismissed_lsp_languages: std::collections::HashSet<String>,
 
+    /// Languages for which the auto-start prompt has already been
+    /// surfaced this session, so subsequent opens of files in the same
+    /// language don't keep re-popping the popup. Cleared only by
+    /// editor restart — the persisted `auto_start=true` flag is what
+    /// silences the prompt across sessions.
+    auto_start_prompted_languages: std::collections::HashSet<String>,
+
     /// Pending close buffer - buffer to close after SaveFileAs completes
     /// Used when closing a modified buffer that needs to be saved first
     pending_close_buffer: Option<BufferId>,

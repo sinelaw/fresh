@@ -155,6 +155,23 @@ impl Editor {
                     .collect()
             })
             .unwrap_or_default();
+        // Per-server auto_start flag map (display_name → auto_start).
+        // Used to decide whether to offer an "Enable auto-start for X"
+        // row alongside the "Start X" action — relevant only when the
+        // server is enabled but dormant and the user hasn't opted into
+        // auto-start yet.
+        let auto_start_by_server: std::collections::HashMap<String, bool> = self
+            .config
+            .lsp
+            .get(language)
+            .map(|cfg| {
+                cfg.as_slice()
+                    .iter()
+                    .filter(|c| !c.command.is_empty())
+                    .map(|c| (c.display_name(), c.auto_start))
+                    .collect()
+            })
+            .unwrap_or_default();
         let user_dismissed = self.is_lsp_language_user_dismissed(language);
 
         if configured_servers.is_empty() && running_statuses.is_empty() {
@@ -293,14 +310,55 @@ impl Editor {
                     .disabled(),
                 );
             } else {
-                // Start
+                // Two sibling rows for a dormant server:
+                //
+                //   "Start <name> once"          — just for this session,
+                //                                  config stays auto_start=false
+                //   "Start <name> automatically" — persists auto_start=true
+                //                                  AND starts the server now
+                //
+                // The "once" label is only needed (vs. just "Start") when
+                // the "automatically" sibling is also present (i.e. when
+                // auto_start is currently false) — otherwise there's
+                // nothing to disambiguate it from.
+                let is_manual = !auto_start_by_server.get(name).copied().unwrap_or(true);
+                let start_label = if is_manual {
+                    format!("    Start {} once", name)
+                } else {
+                    format!("    Start {}", name)
+                };
+                let start_action_label = if is_manual {
+                    format!("Start {} once", name)
+                } else {
+                    format!("Start {}", name)
+                };
                 let start_key = format!("start:{}", language);
                 if !action_keys.iter().any(|(k, _)| k == &start_key) {
                     items.push(
-                        crate::view::popup::PopupListItem::new(format!("    Start {}", name))
+                        crate::view::popup::PopupListItem::new(start_label)
                             .with_data(start_key.clone()),
                     );
-                    action_keys.push((start_key, format!("Start {}", name)));
+                    action_keys.push((start_key, start_action_label));
+                }
+
+                // "Start automatically": per-server, offered only when
+                // the server is dormant with `auto_start = false`.
+                // Persists auto_start=true AND starts the server now so
+                // users don't have to re-open the file. Skipped when
+                // the flag is already true (the normal "Start" row above
+                // is enough) or when the binary is missing (covered by
+                // the disabled advisory branch — persisting auto-start
+                // for a missing binary would just fail on every open).
+                if is_manual {
+                    let autostart_key = format!("autostart:{}/{}", language, name);
+                    items.push(
+                        crate::view::popup::PopupListItem::new(format!(
+                            "    Start {} automatically",
+                            name
+                        ))
+                        .with_data(autostart_key.clone()),
+                    );
+                    action_keys.push((autostart_key, format!("Start {} automatically", name)));
                 }
             }
         }

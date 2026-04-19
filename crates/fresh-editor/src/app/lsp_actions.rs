@@ -379,8 +379,51 @@ impl Editor {
     /// - `log:<language>` — open the LSP log file for the language
     /// - `dismiss:<language>` — hide the pill for this language (dim style)
     /// - `enable:<language>` — restore a dismissed language's pill
+    /// - `autostart:<language>/<server_name>` — flip auto_start=true for
+    ///   the named server in config, save, and start it now
     pub fn handle_lsp_status_action(&mut self, action_key: &str) {
-        if let Some(language) = action_key.strip_prefix("start:") {
+        if let Some(target) = action_key.strip_prefix("autostart:") {
+            // Persist `auto_start = true` in config so the server
+            // starts automatically on future file opens, then kick it
+            // off right away for the current session. Mirrors the
+            // persisting half of the stop-server prompt path (see
+            // `handle_stop_lsp_server` which sets auto_start=false).
+            if let Some((language, server_name)) = target.split_once('/') {
+                if let Some(lsp_configs) = self.config_mut().lsp.get_mut(language) {
+                    for c in lsp_configs.as_mut_slice() {
+                        if c.display_name() == server_name {
+                            c.auto_start = true;
+                        }
+                    }
+                    if let Err(e) = self.save_config() {
+                        tracing::warn!(
+                            "Failed to save config after enabling LSP auto-start: {}",
+                            e
+                        );
+                    } else {
+                        let config_path = self.dir_context.config_path();
+                        self.emit_event(
+                            "config_changed",
+                            serde_json::json!({
+                                "path": config_path.to_string_lossy(),
+                            }),
+                        );
+                    }
+                }
+
+                // Start the server now so the user doesn't have to
+                // re-open the file to see LSP features come alive.
+                let file_path = self
+                    .buffer_metadata
+                    .get(&self.active_buffer())
+                    .and_then(|meta| meta.file_path().cloned());
+                if let Some(lsp) = self.lsp.as_mut() {
+                    let (_, message) = lsp.manual_restart(language, file_path.as_deref());
+                    self.status_message = Some(message);
+                }
+                self.reopen_buffers_for_language(language);
+            }
+        } else if let Some(language) = action_key.strip_prefix("start:") {
             // Start/restart LSP for this language (same as the "Start/Restart LSP" command)
             let file_path = self
                 .buffer_metadata

@@ -65,6 +65,7 @@ pub mod line_wrapping;
 pub mod live_grep;
 pub mod locale;
 pub mod lsp;
+pub mod lsp_auto_start_prompt;
 pub mod lsp_autostart_selective;
 pub mod lsp_bulk_edit_undo_desync;
 pub mod lsp_code_action_modal;
