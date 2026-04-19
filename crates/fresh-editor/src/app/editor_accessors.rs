@@ -434,11 +434,33 @@ impl Editor {
         self.container_user = user;
     }
 
+    pub fn set_container_workspace(&mut self, workspace: Option<String>) {
+        self.container_workspace = workspace;
+    }
+
     /// Get remote connection info if editing remote files
     ///
     /// Returns `Some("user@host")` for remote editing, `None` for local.
     pub fn remote_connection_info(&self) -> Option<&str> {
         self.filesystem.remote_connection_info()
+    }
+
+    /// Get connection string for display in status bar and file explorer.
+    ///
+    /// Returns SSH connection string, Container:<id>, or None for local editing.
+    pub fn connection_display_string(&self) -> Option<String> {
+        if let Some(conn) = self.remote_connection_info() {
+            Some(if self.filesystem.is_remote_connected() {
+                conn.to_string()
+            } else {
+                format!("{} (Disconnected)", conn)
+            })
+        } else if let Some(ref id) = self.container_id {
+            let short = if id.len() > 12 { &id[..12] } else { id.as_str() };
+            Some(format!("Container:{}", short))
+        } else {
+            None
+        }
     }
 
     /// Get the status log path

@@ -178,20 +178,8 @@ impl Editor {
             self.cached_layout.file_explorer_area = Some(horizontal_chunks[0]);
             editor_content_area = horizontal_chunks[1];
 
-            // Get remote connection info before mutable borrow of file_explorer.
-            // Fall back to container_id when using local filesystem with docker exec terminals.
-            let remote_connection = if let Some(conn) = self.remote_connection_info() {
-                Some(if self.filesystem.is_remote_connected() {
-                    conn.to_string()
-                } else {
-                    format!("{} (Disconnected)", conn)
-                })
-            } else if let Some(ref id) = self.container_id {
-                let short = if id.len() > 12 { &id[..12] } else { id.as_str() };
-                Some(format!("Container:{}", short))
-            } else {
-                None
-            };
+            // Get connection string before mutable borrow of file_explorer.
+            let remote_connection = self.connection_display_string();
 
             // Render file explorer (only if we have it - during sync we just keep the area reserved)
             if let Some(ref mut explorer) = self.file_explorer {
@@ -668,21 +656,7 @@ impl Editor {
                 _ => StatusBarHover::None,
             };
 
-            // Get remote connection info if editing remote files.
-            // Fall back to container_id if filesystem doesn't report a connection string
-            // (e.g. when the agent channel isn't ready yet).
-            let remote_connection = if let Some(conn) = self.remote_connection_info() {
-                Some(if self.filesystem.is_remote_connected() {
-                    conn.to_string()
-                } else {
-                    format!("{} (Disconnected)", conn)
-                })
-            } else if let Some(ref id) = self.container_id {
-                let short = if id.len() > 12 { &id[..12] } else { id.as_str() };
-                Some(format!("Container:{}", short))
-            } else {
-                None
-            };
+            let remote_connection = self.connection_display_string();
 
             // Get session name for display (only in session mode)
             let session_name = self.session_name().map(|s| s.to_string());

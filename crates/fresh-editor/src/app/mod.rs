@@ -944,6 +944,9 @@ pub struct Editor {
     /// Remote user inside the container (e.g. "vscode") for docker exec -u
     container_user: Option<String>,
 
+    /// Workspace path inside the container (e.g. "/workspaces/project") for docker exec -w
+    container_workspace: Option<String>,
+
     /// Maps buffer ID to terminal ID (for terminal buffers)
     terminal_buffers: HashMap<BufferId, crate::services::terminal::TerminalId>,
 

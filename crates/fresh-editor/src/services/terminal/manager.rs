@@ -158,6 +158,7 @@ impl TerminalManager {
         backing_path: Option<std::path::PathBuf>,
         container_id: Option<String>,
         container_user: Option<String>,
+        container_workspace: Option<String>,
     ) -> Result<TerminalId, String> {
         let id = TerminalId(self.next_id);
         self.next_id += 1;
@@ -196,6 +197,10 @@ impl TerminalManager {
                 if let Some(ref user) = container_user {
                     args.push("-u".to_string());
                     args.push(user.clone());
+                }
+                if let Some(ref ws) = container_workspace {
+                    args.push("-w".to_string());
+                    args.push(ws.clone());
                 }
                 args.push(id.clone());
                 args.push("bash".to_string());
