@@ -5,6 +5,7 @@
 
 use crate::common::fake_lsp::FakeLspServer;
 use crate::common::harness::EditorTestHarness;
+use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 /// Two LSP servers for the same language should show all code actions in one popup.
@@ -18,6 +19,11 @@ use crossterm::event::{KeyCode, KeyModifiers};
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
 fn test_code_actions_merged_from_two_servers() -> anyhow::Result<()> {
+    // Initialize tracing + signal handlers so CI timeouts surface a backtrace
+    // instead of a silent hang.
+    init_tracing_from_env();
+    fresh::services::signal_handler::install_signal_handlers();
+
     let temp_dir = tempfile::tempdir()?;
     let _fake_server_a = FakeLspServer::spawn_with_code_actions(temp_dir.path())?;
     let _fake_server_b = FakeLspServer::spawn_with_code_actions_b(temp_dir.path())?;
@@ -65,11 +71,6 @@ fn test_code_actions_merged_from_two_servers() -> anyhow::Result<()> {
     );
 
     let mut harness = EditorTestHarness::create(
-        // 120×24 (not 80): the status bar at width 80 truncates the
-        // right-side `LSP (on)` indicator, so the
-        // `wait_for_screen_contains("LSP (on)")` poll below never
-        // matches and the test hangs to CI's 180s timeout. Same
-        // widening pattern as 8ab5337.
         120,
         24,
         crate::common::harness::HarnessOptions::new()
@@ -80,15 +81,28 @@ fn test_code_actions_merged_from_two_servers() -> anyhow::Result<()> {
     harness.open_file(&test_file)?;
     harness.render()?;
 
-    // Wait for both LSP servers to be ready
-    harness.wait_for_screen_contains("LSP (on)")?;
+    // Wait until BOTH LSP servers have finished their handshake.  The
+    // status-bar `LSP (on)` indicator flips on during `Starting` /
+    // `Initializing`, so polling it returns before either server is
+    // ready — and with two servers a `textDocument/codeAction` request
+    // fired at that point is dropped on the floor and the popup never
+    // materialises, hitting nextest's 180s timeout (see sibling
+    // `lsp_code_action_modal.rs`).
+    harness.wait_until(|h| h.editor().initialized_lsp_server_count("rust") >= 2)?;
 
     // Position cursor on "let x = 5;" (line 2)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
     harness.render()?;
 
-    // Trigger code actions via Alt+.
-    harness.send_key(KeyCode::Char('.'), KeyModifiers::ALT)?;
+    // Trigger code actions via the command palette rather than Alt+. —
+    // the macOS CI terminal does not deliver the Alt modifier through
+    // crossterm reliably, so the keystroke never reaches the action
+    // dispatcher and the popup never opens.  The command-palette path
+    // exercises the same `Action::LspCodeActions` handler without
+    // depending on modifier decoding.
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.type_text("Code Actions")?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
     harness.render()?;
 
     // Wait for code action popup — actions from server A
