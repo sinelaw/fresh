@@ -18,6 +18,74 @@ pub fn normalize_theme_name(name: &str) -> String {
     name.to_lowercase().replace(['_', ' '], "-")
 }
 
+/// Expand `~`, `$VAR`, and `${VAR}` references in a config-supplied path.
+///
+/// Minimal shell-like expansion (no crate dependency). Unknown variables are
+/// left literal so a typo surfaces as a resolution failure rather than
+/// silently collapsing to an empty path. Used for theme config values so a
+/// shared dotfiles repo can write `file://${HOME}/.config/fresh/themes/x.json`
+/// and have it resolve correctly on any machine.
+pub(crate) fn expand_env_vars(input: &str) -> String {
+    let input = if let Some(rest) = input.strip_prefix('~') {
+        match std::env::var("HOME") {
+            Ok(home) => format!("{}{}", home, rest),
+            Err(_) => input.to_string(),
+        }
+    } else {
+        input.to_string()
+    };
+
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'$' {
+            out.push(bytes[i] as char);
+            i += 1;
+            continue;
+        }
+        // `$` at end of string — keep literal.
+        if i + 1 >= bytes.len() {
+            out.push('$');
+            i += 1;
+            continue;
+        }
+        if bytes[i + 1] == b'{' {
+            if let Some(close) = input[i + 2..].find('}') {
+                let name = &input[i + 2..i + 2 + close];
+                match std::env::var(name) {
+                    Ok(v) => out.push_str(&v),
+                    Err(_) => out.push_str(&input[i..i + 2 + close + 1]),
+                }
+                i += 2 + close + 1;
+                continue;
+            }
+            // Unterminated `${…` — keep literal.
+            out.push('$');
+            i += 1;
+            continue;
+        }
+        // `$VAR` — consume ASCII alphanumerics and underscores.
+        let start = i + 1;
+        let mut end = start;
+        while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+            end += 1;
+        }
+        if end == start {
+            out.push('$');
+            i += 1;
+            continue;
+        }
+        let name = &input[start..end];
+        match std::env::var(name) {
+            Ok(v) => out.push_str(&v),
+            Err(_) => out.push_str(&input[i..end]),
+        }
+        i = end;
+    }
+    out
+}
+
 /// A registry holding all loaded themes.
 ///
 /// This is a pure data structure - no I/O operations.
@@ -32,18 +100,18 @@ pub struct ThemeRegistry {
     themes: HashMap<String, Theme>,
     /// Theme metadata for listing
     theme_list: Vec<ThemeInfo>,
+    /// User themes directory — used to resolve relative-path config values
+    /// (e.g. `"s-dark.json"`, `"packages/nord/dark.json"`) against the
+    /// machine's themes dir, so configs stay portable across machines.
+    themes_dir: Option<PathBuf>,
 }
 
 impl ThemeRegistry {
-    /// Look up a theme by key or name.
-    ///
-    /// Tries exact key match first, then falls back to matching by
-    /// `pack/name` (the portable form persisted for user themes), then by
-    /// normalized display name (for backward compat with configs that just
-    /// say `"dark"`).
+    /// Look up a theme by its config value (key, scheme URI, relative path,
+    /// or legacy bare name). See [`ThemeRegistry::resolve_key`].
     pub fn get(&self, key_or_name: &str) -> Option<&Theme> {
         self.resolve_key(key_or_name)
-            .and_then(|key| self.themes.get(key))
+            .and_then(|key| self.themes.get(&key))
     }
 
     /// Get a cloned theme by key or name.
@@ -51,38 +119,123 @@ impl ThemeRegistry {
         self.get(key_or_name).cloned()
     }
 
-    /// Resolve a key-or-name to the canonical registry key.
+    /// Resolve a config-value to the canonical registry key.
     ///
-    /// Lookup order:
-    /// 1. Exact key match (covers built-ins, `pack/name` themes, and
-    ///    `file://` / repo-URL keys written directly in config).
-    /// 2. `pack/name` portable form: input is split on the last `/`; if a
-    ///    theme with that pack and normalized name exists, it wins. This is
-    ///    what configs persist for user-installed themes so they survive
-    ///    being shared via a dotfiles repo (issue #1621).
-    /// 3. Normalized-name fallback: matches any theme whose display name
-    ///    normalizes equal to the input (keeps old `"dark"`-style configs
-    ///    working).
-    pub fn resolve_key<'a>(&'a self, key_or_name: &'a str) -> Option<&'a str> {
-        // 1. Exact key match
-        if self.themes.contains_key(key_or_name) {
-            return Some(key_or_name);
+    /// Accepted config forms (issue #1621):
+    ///
+    /// | Form | Example | Resolves to |
+    /// |------|---------|-------------|
+    /// | `builtin://NAME` | `builtin://dark` | built-in theme by name |
+    /// | `file://PATH` (env-expanded) | `file://${HOME}/.config/fresh/themes/x.json` | exact user-theme key |
+    /// | `http(s)://...` | `https://github.com/...#dark` | URL-packaged theme |
+    /// | relative `.json` path | `s-dark.json`, `packages/nord/dark.json` | user theme under themes dir |
+    /// | bare name (legacy) | `dark` | exact key, else normalized-name match |
+    ///
+    /// `$HOME`, `${HOME}`, `${XDG_CONFIG_HOME}` and a leading `~` are
+    /// expanded before path matching so shared dotfile configs work on any
+    /// machine. Returns an owned `String` because some forms (e.g. a relative
+    /// path) must be reconstructed as an absolute `file://` key.
+    pub fn resolve_key(&self, value: &str) -> Option<String> {
+        // 1. Exact key match — fast path; covers already-canonical keys
+        //    (repo URLs, `file://…` written as-is, plain built-in names).
+        if self.themes.contains_key(value) {
+            return Some(value.to_string());
         }
-        // 2. `pack/name` portable form (e.g. `user/s-dark`, `user/subdir/dark`)
-        if let Some((pack, name)) = key_or_name.rsplit_once('/') {
-            let normalized_name = normalize_theme_name(name);
-            if let Some(info) = self.theme_list.iter().find(|info| {
-                info.pack == pack && normalize_theme_name(&info.name) == normalized_name
-            }) {
-                return Some(info.key.as_str());
+
+        // 2. `builtin://NAME` — look up a built-in by normalized name.
+        if let Some(name) = value.strip_prefix("builtin://") {
+            let normalized = normalize_theme_name(name);
+            return self
+                .theme_list
+                .iter()
+                .find(|info| info.pack.is_empty() && normalize_theme_name(&info.name) == normalized)
+                .map(|info| info.key.clone());
+        }
+
+        // 3. `file://PATH` — env-expand and retry exact match.
+        if let Some(raw_path) = value.strip_prefix("file://") {
+            let expanded = expand_env_vars(raw_path);
+            let candidate = format!("file://{}", expanded);
+            if self.themes.contains_key(&candidate) {
+                return Some(candidate);
             }
+            return None;
         }
-        // 3. Normalized-name fallback
-        let normalized = normalize_theme_name(key_or_name);
+
+        // 4. `http(s)://…` — URL-packaged theme. Only exact match is valid;
+        //    don't fall through to name fallback (would mask typos).
+        if value.starts_with("http://") || value.starts_with("https://") {
+            return None;
+        }
+
+        // 5. Relative path (ends with `.json`) — resolve against themes dir.
+        //    This is the portable form for user themes (`s-dark.json` or
+        //    `packages/nord/dark.json`). Env-var expansion is applied for
+        //    the rare case of a hand-edited path like `${HOME}/foo.json`.
+        if value.ends_with(".json") {
+            if let Some(themes_dir) = self.themes_dir.as_deref() {
+                let expanded = expand_env_vars(value);
+                let expanded_path = std::path::Path::new(&expanded);
+                let abs = if expanded_path.is_absolute() {
+                    expanded_path.to_path_buf()
+                } else {
+                    themes_dir.join(expanded_path)
+                };
+                let candidate = format!("file://{}", abs.display());
+                if self.themes.contains_key(&candidate) {
+                    return Some(candidate);
+                }
+            }
+            return None;
+        }
+
+        // 6. Legacy bare name — keeps `"theme": "dark"` configs working.
+        let normalized = normalize_theme_name(value);
         self.theme_list
             .iter()
             .find(|info| normalize_theme_name(&info.name) == normalized)
-            .map(|info| info.key.as_str())
+            .map(|info| info.key.clone())
+    }
+
+    /// Portable config form for the given theme, suitable for persisting to
+    /// `config.json` and sharing across machines.
+    ///
+    /// - Built-ins  → `"builtin://NAME"`
+    /// - User theme under themes dir → relative path (`"s-dark.json"` or
+    ///   `"nord/dark.json"`)
+    /// - User theme outside themes dir → `"file://{abs}"` (user can hand-edit
+    ///   to use `${HOME}` / `${XDG_CONFIG_HOME}` if they want)
+    /// - URL-packaged theme → repo-URL key kept as-is
+    pub fn portable_form(&self, key: &str) -> Option<String> {
+        let info = self.theme_list.iter().find(|i| i.key == key)?;
+
+        // Built-in: empty pack, key is just the name.
+        if info.pack.is_empty() {
+            return Some(format!("builtin://{}", info.name));
+        }
+
+        // User theme (file:// key): rewrite to a path relative to themes_dir
+        // when possible, so the config is portable across machines.
+        if let Some(path_str) = info.key.strip_prefix("file://") {
+            let path = std::path::Path::new(path_str);
+            if let Some(themes_dir) = self.themes_dir.as_deref() {
+                if let Ok(rel) = path.strip_prefix(themes_dir) {
+                    // Normalize to forward slashes so the config is
+                    // reproducible across OSes.
+                    let rel_str = rel
+                        .components()
+                        .map(|c| c.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    return Some(rel_str);
+                }
+            }
+            // Outside themes dir — keep as absolute file:// URI.
+            return Some(info.key.clone());
+        }
+
+        // Anything else (URL-packaged themes) is already portable.
+        Some(info.key.clone())
     }
 
     /// List all available themes with metadata.
@@ -231,7 +384,11 @@ impl ThemeLoader {
             }
         }
 
-        ThemeRegistry { themes, theme_list }
+        ThemeRegistry {
+            themes,
+            theme_list,
+            themes_dir: self.user_themes_dir.clone(),
+        }
     }
 
     /// Read the `repository` field from a package.json manifest value.
@@ -710,18 +867,21 @@ mod tests {
     }
 
     /// Regression test for #1621: a `config.json` shared via a dotfiles repo
-    /// must be able to reference a user theme without baking in the absolute
-    /// `file://` path of the author's machine. The portable `pack/name` form
-    /// (e.g. `user/s-dark`, `user/my-collection/nested`) must resolve to the
-    /// same theme on every machine that has the theme file under its own
-    /// user themes dir. The form must also disambiguate against a built-in
-    /// with the same display name.
+    /// must be able to reference user themes without baking in the absolute
+    /// `file://` path of the author's machine. Accepted portable forms:
+    ///   - `builtin://NAME` for built-ins (disambiguates against same-named
+    ///     user themes)
+    ///   - relative paths like `s-dark.json` or `nord/dark.json` resolved
+    ///     from the themes dir
+    ///   - `file://` URIs with `~` / `${HOME}` / `$VAR` expansion so the
+    ///     same config works on any machine
+    ///   - legacy bare names (e.g. `"dark"`) keep resolving to a built-in
     #[test]
-    fn test_resolve_key_pack_slash_name_for_user_themes() {
+    fn test_resolve_key_portable_config_forms_for_user_themes() {
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let themes_dir = temp_dir.path().to_path_buf();
 
-        // A user theme whose name collides with built-in `dark`.
+        // User theme whose name collides with built-in `dark`.
         let user_dark = r#"{
             "name": "dark",
             "editor": {},
@@ -733,7 +893,7 @@ mod tests {
         std::fs::write(themes_dir.join("dark.json"), user_dark)
             .expect("Failed to write user dark theme");
 
-        // A user theme in a subdirectory.
+        // User theme in a subdirectory (simulates a shipped theme pack).
         let subdir = themes_dir.join("my-collection");
         std::fs::create_dir_all(&subdir).expect("Failed to create subdir");
         let nested = r#"{
@@ -749,42 +909,140 @@ mod tests {
         let loader = ThemeLoader::new(themes_dir.clone());
         let registry = loader.load_all(&[]);
 
-        // `dark` (no pack prefix) must resolve to the built-in, not the
-        // user theme, so legacy configs keep working.
-        let builtin_key = registry.resolve_key("dark").expect("`dark` should resolve");
-        assert_eq!(builtin_key, "dark", "bare `dark` must hit the built-in");
+        // 1. `builtin://dark` disambiguates against the user theme.
+        assert_eq!(
+            registry.resolve_key("builtin://dark").as_deref(),
+            Some("dark"),
+            "`builtin://dark` must resolve to the built-in"
+        );
 
-        // `user/dark` must resolve to the user theme.
+        // 2. Relative path resolves against the themes dir — the user theme,
+        //    not the built-in.
         let user_key = registry
-            .resolve_key("user/dark")
-            .expect("`user/dark` should resolve");
+            .resolve_key("dark.json")
+            .expect("`dark.json` should resolve");
         assert!(
-            user_key.starts_with("file://"),
-            "`user/dark` must resolve to the user theme's file:// key, got: {}",
+            user_key.starts_with("file://") && user_key.ends_with("dark.json"),
+            "`dark.json` must resolve to the user theme file, got: {}",
             user_key
         );
         let theme = registry
-            .get("user/dark")
-            .expect("user/dark theme should be retrievable");
+            .get("dark.json")
+            .expect("theme should be retrievable by relative path");
         assert_eq!(theme.name, "dark");
 
-        // `user/my-collection/s-dark` must resolve to the nested theme.
+        // 3. Nested relative path with subdirectory.
         let nested_key = registry
-            .resolve_key("user/my-collection/s-dark")
-            .expect("`user/my-collection/s-dark` should resolve");
+            .resolve_key("my-collection/s-dark.json")
+            .expect("nested relative path should resolve");
         assert!(
             nested_key.starts_with("file://") && nested_key.contains("my-collection"),
-            "nested theme should resolve via portable pack/name form, got: {}",
+            "nested path should resolve under themes dir, got: {}",
             nested_key
         );
 
-        // Bare normalized name keeps working for legacy configs that
-        // don't use the pack prefix.
-        assert_eq!(registry.resolve_key("high-contrast"), Some("high-contrast"));
+        // 4. `file://` with `${VAR}` expansion: we route through a test-owned
+        //    env var so the expansion is exercised deterministically.
+        std::env::set_var(
+            "FRESH_TEST_THEMES_ROOT",
+            themes_dir.to_string_lossy().to_string(),
+        );
+        let uri = "file://${FRESH_TEST_THEMES_ROOT}/dark.json";
+        let resolved = registry
+            .resolve_key(uri)
+            .expect("env-var-expanded file:// URI should resolve");
+        assert_eq!(
+            resolved, user_key,
+            "env-expanded URI should match user theme"
+        );
+        std::env::remove_var("FRESH_TEST_THEMES_ROOT");
 
-        // A completely unknown theme reference yields None (no masking of
-        // typos via fuzzy matching).
+        // 5. Legacy bare name still resolves to a built-in.
+        assert_eq!(
+            registry.resolve_key("high-contrast").as_deref(),
+            Some("high-contrast"),
+            "legacy bare-name config must keep working"
+        );
+
+        // 6. Unknown reference yields None (no fuzzy masking of typos).
         assert!(registry.resolve_key("does-not-exist").is_none());
+        assert!(registry.resolve_key("builtin://no-such-theme").is_none());
+        assert!(registry.resolve_key("missing.json").is_none());
+    }
+
+    /// `portable_form` round-trips a theme's registry key into the value
+    /// that should be persisted to `config.json`. Resolving the persisted
+    /// value must find the same theme again.
+    #[test]
+    fn test_portable_form_round_trip() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let themes_dir = temp_dir.path().to_path_buf();
+        let theme_json = r#"{
+            "name": "s-dark",
+            "editor": {},
+            "ui": {},
+            "search": {},
+            "diagnostic": {},
+            "syntax": {}
+        }"#;
+        std::fs::write(themes_dir.join("s-dark.json"), theme_json).expect("Failed to write theme");
+        let loader = ThemeLoader::new(themes_dir.clone());
+        let registry = loader.load_all(&[]);
+
+        // Built-in portable form is `builtin://NAME`.
+        let builtin_portable = registry
+            .portable_form("dark")
+            .expect("built-in should have a portable form");
+        assert_eq!(builtin_portable, "builtin://dark");
+        assert_eq!(
+            registry.resolve_key(&builtin_portable).as_deref(),
+            Some("dark")
+        );
+
+        // User-theme portable form is a relative path — never an absolute
+        // `file://` URI with the author's home dir.
+        let user_info = registry
+            .list()
+            .iter()
+            .find(|i| i.name == "s-dark")
+            .expect("user theme should be listed")
+            .clone();
+        let user_portable = registry
+            .portable_form(&user_info.key)
+            .expect("user theme should have a portable form");
+        assert_eq!(
+            user_portable, "s-dark.json",
+            "user theme must persist as a relative path, got: {}",
+            user_portable
+        );
+        assert!(
+            !user_portable.contains(themes_dir.to_string_lossy().as_ref()),
+            "portable form must not embed the absolute themes dir path"
+        );
+        // And it resolves back to the same key.
+        assert_eq!(registry.resolve_key(&user_portable), Some(user_info.key));
+    }
+
+    #[test]
+    fn test_expand_env_vars() {
+        std::env::set_var("FRESH_TEST_VAR_A", "/foo/bar");
+        std::env::set_var("FRESH_TEST_VAR_B", "baz");
+        assert_eq!(expand_env_vars("${FRESH_TEST_VAR_A}/x"), "/foo/bar/x");
+        assert_eq!(expand_env_vars("$FRESH_TEST_VAR_A/x"), "/foo/bar/x");
+        assert_eq!(expand_env_vars("a/${FRESH_TEST_VAR_B}/c"), "a/baz/c");
+        // Unknown vars remain literal.
+        assert_eq!(
+            expand_env_vars("${FRESH_NO_SUCH_VAR_XYZ}/x"),
+            "${FRESH_NO_SUCH_VAR_XYZ}/x"
+        );
+        // Unterminated `${` stays literal.
+        assert_eq!(expand_env_vars("${oops/x"), "${oops/x");
+        // `~` is expanded iff HOME is set (which it is in the test harness).
+        if let Ok(home) = std::env::var("HOME") {
+            assert_eq!(expand_env_vars("~/foo"), format!("{}/foo", home));
+        }
+        std::env::remove_var("FRESH_TEST_VAR_A");
+        std::env::remove_var("FRESH_TEST_VAR_B");
     }
 
     #[test]

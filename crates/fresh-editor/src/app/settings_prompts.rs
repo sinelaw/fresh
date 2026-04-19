@@ -403,36 +403,22 @@ impl Editor {
                 // (diagnostic and semantic token overlays bake RGB at creation time).
                 self.reapply_all_overlays();
 
-                // Resolve to the canonical registry key so that subsequent
-                // lookups (plugins, restart) use the exact key, not a name
-                // that might be ambiguous.
+                // Persist the portable form of the theme (issue #1621) so a
+                // shared dotfiles `config.json` resolves the same theme on
+                // every machine:
+                //   - built-ins    → `builtin://NAME`
+                //   - user theme   → relative path from themes dir (e.g.
+                //                    `s-dark.json`, `nord/dark.json`)
+                //   - outside dir  → absolute `file://…` (user may hand-edit
+                //                    to use `${HOME}` / `${XDG_CONFIG_HOME}`)
+                //   - URL package  → repo URL key kept as-is
                 let resolved = self
                     .theme_registry
                     .resolve_key(key_or_name)
-                    .unwrap_or(key_or_name)
-                    .to_string();
-
-                // For user-installed themes (loaded from the themes dir) we
-                // rewrite the absolute `file://` key to the portable
-                // `pack/name` form, so `config.json` stays portable across
-                // machines — e.g. shared via a dotfiles repo. The pack prefix
-                // disambiguates against built-ins (pack is empty, key is just
-                // `name`) and against other user subdirs. Built-ins, package
-                // themes (repo URLs) and pack/name keys are already portable
-                // and kept as-is.
+                    .unwrap_or_else(|| key_or_name.to_string());
                 let to_persist = self
                     .theme_registry
-                    .list()
-                    .iter()
-                    .find(|info| info.key == resolved)
-                    .filter(|info| info.key.starts_with("file://") && info.pack.starts_with("user"))
-                    .map(|info| {
-                        if info.pack.is_empty() {
-                            info.name.clone()
-                        } else {
-                            format!("{}/{}", info.pack, info.name)
-                        }
-                    })
+                    .portable_form(&resolved)
                     .unwrap_or(resolved);
                 self.config_mut().theme = to_persist.into();
 
