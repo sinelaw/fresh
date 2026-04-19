@@ -1906,7 +1906,10 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
 
     state.themePath = savedPath;
     state.themeName = themeName;
-    state.themeKey = `file://${savedPath}`;
+    // Use the portable theme name as the key. The registry resolves names
+    // via its name-fallback, and config persistence strips the absolute
+    // `file://` prefix for user themes (see apply_theme in Rust).
+    state.themeKey = themeName;
     state.isBuiltin = false; // After saving, it's now a user theme
     state.originalThemeData = deepClone(state.themeData);
     state.hasChanges = false;

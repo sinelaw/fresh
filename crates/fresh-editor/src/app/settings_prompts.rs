@@ -411,7 +411,24 @@ impl Editor {
                     .resolve_key(key_or_name)
                     .unwrap_or(key_or_name)
                     .to_string();
-                self.config_mut().theme = resolved.into();
+
+                // For user-installed themes (loaded from the themes dir) we
+                // persist the theme's display name rather than its absolute
+                // `file://` key, so `config.json` remains portable across
+                // machines — e.g. shared via a dotfiles repo. Built-ins,
+                // package themes (repo URLs) and pack/name keys are already
+                // portable and kept as-is.
+                let to_persist = self
+                    .theme_registry
+                    .list()
+                    .iter()
+                    .find(|info| info.key == resolved)
+                    .filter(|info| {
+                        info.key.starts_with("file://") && info.pack.starts_with("user")
+                    })
+                    .map(|info| info.name.clone())
+                    .unwrap_or(resolved);
+                self.config_mut().theme = to_persist.into();
 
                 // Persist to config file
                 self.save_theme_to_config();
