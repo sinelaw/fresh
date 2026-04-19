@@ -603,6 +603,8 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            startup_authority: None,
+            session_keepalive: None,
         };
 
         let (paths_tx, paths_rx) = mpsc::channel();
@@ -769,6 +771,8 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            startup_authority: None,
+            session_keepalive: None,
         };
 
         let (paths_tx, paths_rx) = mpsc::channel();
@@ -942,6 +946,8 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            startup_authority: None,
+            session_keepalive: None,
         };
 
         let (paths_tx, paths_rx) = mpsc::channel();
@@ -1287,6 +1293,8 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            startup_authority: None,
+            session_keepalive: None,
         };
 
         // `Editor` isn't `Send`, so construction + rebuild must happen
@@ -1411,6 +1419,8 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            startup_authority: None,
+            session_keepalive: None,
         };
 
         let dir_b_clone = dir_b.clone();
@@ -1448,5 +1458,118 @@ mod integration_tests {
         let result = handle.join().expect("cwd-rebuild thread panicked");
         std::fs::remove_dir_all(&parent).ok();
         result.expect("cwd-rebuild test failed");
+    }
+
+    /// `EditorServerConfig.startup_authority` lets a caller (notably
+    /// the `ssh://` / `user@host:path` CLI forms) hand the daemon a
+    /// non-local authority to boot into.  The paired
+    /// `session_keepalive` must live as long as the server so remote
+    /// resources — SSH runtimes, reconnect tasks — don't get dropped
+    /// mid-flight.  This test drives both contracts without a live
+    /// SSH connection: a plugin-style docker-exec authority stands
+    /// in for "something non-local", and a keepalive that drops an
+    /// `Arc<AtomicBool>` to `true` proves the server retained it.
+    #[test]
+    fn test_server_boots_with_startup_authority_and_keeps_keepalive() {
+        use crate::config::Config;
+        use crate::config_io::DirectoryContext;
+        use crate::server::editor_server::{EditorServer, EditorServerConfig};
+        use crate::services::authority::{
+            Authority, AuthorityPayload, FilesystemSpec, SpawnerSpec, TerminalWrapperSpec,
+        };
+        use std::sync::atomic::{AtomicBool, Ordering as AOrdering};
+        use std::sync::Arc;
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("fresh-startup-auth-{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let dir_context = DirectoryContext::for_testing(&temp_dir);
+
+        let payload = AuthorityPayload {
+            filesystem: FilesystemSpec::Local,
+            spawner: SpawnerSpec::DockerExec {
+                container_id: "cafef00d".into(),
+                user: None,
+                workspace: None,
+            },
+            terminal_wrapper: TerminalWrapperSpec::Explicit {
+                command: "docker".into(),
+                args: vec![
+                    "exec".into(),
+                    "-it".into(),
+                    "cafef00d".into(),
+                    "bash".into(),
+                ],
+                manages_cwd: true,
+            },
+            display_label: "Container:cafef00d".into(),
+        };
+        let startup_auth =
+            Authority::from_plugin_payload(payload).expect("docker payload is valid");
+
+        // Sentinel for the keepalive: flipped to `true` when the
+        // wrapper is dropped.  While the server holds it, the flag
+        // stays `false`.
+        struct DropFlag(Arc<AtomicBool>);
+        impl Drop for DropFlag {
+            fn drop(&mut self) {
+                self.0.store(true, AOrdering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let keepalive: Box<dyn std::any::Any + Send> = Box::new(DropFlag(dropped.clone()));
+
+        let server_config = EditorServerConfig {
+            working_dir: temp_dir.clone(),
+            session_name: Some(unique_session_name("startup-auth")),
+            idle_timeout: Some(Duration::from_secs(30)),
+            editor_config: Config::default(),
+            dir_context,
+            plugins_enabled: false,
+            init_enabled: false,
+            startup_authority: Some(startup_auth),
+            session_keepalive: Some(keepalive),
+        };
+
+        let dropped_for_thread = dropped.clone();
+        let handle = thread::spawn(move || -> Result<(), String> {
+            let mut server =
+                EditorServer::new(server_config).map_err(|e| format!("EditorServer::new: {e}"))?;
+
+            server
+                .initialize_editor()
+                .map_err(|e| format!("initialize_editor: {e}"))?;
+
+            // Authority installed at boot: the editor sees the
+            // container-style label from the first tick.
+            let label = server
+                .editor()
+                .expect("editor after init")
+                .authority()
+                .display_label
+                .clone();
+            if label != "Container:cafef00d" {
+                return Err(format!(
+                    "expected Container:cafef00d label, got {:?}",
+                    label
+                ));
+            }
+
+            // Keepalive is still alive inside the server.
+            if dropped_for_thread.load(AOrdering::SeqCst) {
+                return Err("keepalive dropped while server is alive".into());
+            }
+
+            // Drop the server — this must drop the keepalive too.
+            drop(server);
+            if !dropped_for_thread.load(AOrdering::SeqCst) {
+                return Err("keepalive not dropped after server shutdown".into());
+            }
+            Ok(())
+        });
+
+        let result = handle.join().expect("startup-auth thread panicked");
+        std::fs::remove_dir_all(&temp_dir).ok();
+        result.expect("startup-auth test failed");
     }
 }

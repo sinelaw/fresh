@@ -31,7 +31,6 @@ use crate::server::protocol::{
 use crate::view::color_support::ColorCapability;
 
 /// Configuration for the editor server
-#[derive(Debug, Clone)]
 pub struct EditorServerConfig {
     /// Working directory for this session
     pub working_dir: PathBuf,
@@ -47,6 +46,20 @@ pub struct EditorServerConfig {
     pub plugins_enabled: bool,
     /// Whether to auto-load ~/.config/fresh/init.ts (requires `plugins_enabled`).
     pub init_enabled: bool,
+    /// Authority to install at boot.  `None` means `Authority::local()`,
+    /// which is the standard session-mode default (principle 6 of
+    /// `AUTHORITY_DESIGN.md`).  The CLI `ssh://` / `user@host:path`
+    /// forms construct an `Authority::ssh(...)` and pass it here so
+    /// the daemon boots already attached to the remote host.  Plugins
+    /// can still replace this post-boot via `setAuthority`.
+    pub startup_authority: Option<crate::services::authority::Authority>,
+    /// Opaque handle kept alive for the server's lifetime alongside
+    /// `startup_authority`.  SSH authorities back this with the Tokio
+    /// runtime, the `SshConnection`, and the reconnect task — dropping
+    /// any of those tears down the remote session — so the caller
+    /// bundles them here and the server just holds on until shutdown.
+    /// Local authorities leave this `None`.
+    pub session_keepalive: Option<Box<dyn std::any::Any + Send>>,
 }
 
 /// Editor server that manages editor state and client connections
@@ -70,8 +83,16 @@ pub struct EditorServer {
     /// installed authorities (e.g. a devcontainer attach) survive the
     /// restart-based transition: the old editor is dropped, a new one
     /// is built with this authority in effect, and clients stay
-    /// connected the whole time. Starts as `Authority::local()`.
+    /// connected the whole time. Starts as
+    /// `config.startup_authority.unwrap_or_else(Authority::local)`.
     current_authority: crate::services::authority::Authority,
+    /// Keepalive bundle paired with the startup authority — held for
+    /// the server's lifetime so SSH runtimes, reconnect tasks, and
+    /// similar resources outlive the editor rebuilds that happen on
+    /// authority transitions.  Never inspected; dropped only when the
+    /// server is dropped.
+    #[allow(dead_code)]
+    session_keepalive: Option<Box<dyn std::any::Any + Send>>,
 }
 
 /// Buffered writer for sending data to a client without blocking the server loop.
@@ -147,7 +168,7 @@ struct ConnectedClient {
 
 impl EditorServer {
     /// Create a new editor server
-    pub fn new(config: EditorServerConfig) -> io::Result<Self> {
+    pub fn new(mut config: EditorServerConfig) -> io::Result<Self> {
         let socket_paths = if let Some(ref name) = config.session_name {
             SocketPaths::for_session_name(name)?
         } else {
@@ -162,6 +183,14 @@ impl EditorServer {
             tracing::warn!("Failed to write PID file: {}", e);
         }
 
+        // Move the startup authority + its keepalive off the config —
+        // they are consumed once and belong to the server from here on.
+        let current_authority = config
+            .startup_authority
+            .take()
+            .unwrap_or_else(crate::services::authority::Authority::local);
+        let session_keepalive = config.session_keepalive.take();
+
         Ok(Self {
             config,
             listener,
@@ -174,7 +203,8 @@ impl EditorServer {
             last_input_client: None,
             next_wait_id: 1,
             waiting_clients: std::collections::HashMap::new(),
-            current_authority: crate::services::authority::Authority::local(),
+            current_authority,
+            session_keepalive,
         })
     }
 

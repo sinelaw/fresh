@@ -1,16 +1,34 @@
 # Remote Editing (Experimental)
 
-Fresh supports editing files on remote machines via SSH using the `user@host:path` syntax. This is useful for editing files on servers without needing to install Fresh remotely.
+Fresh supports editing files on remote machines via SSH. Two wire
+forms are accepted and do the same thing — pick whichever is easier
+to type:
+
+- scp-style: `user@host:path[:line[:col]]`
+- URL-style: `ssh://[user@]host[:port]/path[:line[:col]]`
+
+The URL form is the only one that accepts a non-standard port and is
+the only one where the user is optional (it defaults to `$USER` /
+`$USERNAME`).
 
 ```bash
-# Open a specific file
+# scp-style: open a specific file
 fresh deploy@server.example.com:/etc/nginx/nginx.conf
 
-# Open home directory in file explorer
+# scp-style: open home directory in file explorer
 fresh user@host:~
 
-# Open with line number
+# scp-style: open with line number
 fresh user@host:/var/log/app.log:100
+
+# URL-style: default user from the environment
+fresh ssh://host.example/etc/hosts
+
+# URL-style: non-standard SSH port
+fresh ssh://deploy@server.example.com:2222/etc/nginx/nginx.conf
+
+# URL-style: line and column
+fresh ssh://alice@host/home/alice/src/main.rs:42:7
 ```
 
 **Features:**

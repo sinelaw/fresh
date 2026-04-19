@@ -163,10 +163,25 @@ exits as before. Tests cover both the authority-swap and the
 working-dir-swap paths (`test_session_rebuild_swaps_editor_and_authority`
 and `test_session_rebuild_switches_working_dir`).
 
-Session-mode startup is always `Authority::local()`. The SSH CLI
-form is not yet plumbed through `EditorServerConfig`; adding it is a
-straightforward follow-up (an optional `startup_authority` field that
-defaults to local) but out of scope for this refactor.
+`EditorServerConfig` has two optional slots for callers that want
+the daemon to boot into something other than local:
+
+- `startup_authority: Option<Authority>` — installed as
+  `current_authority` before the first editor is built. Defaults to
+  `Authority::local()`.
+- `session_keepalive: Option<Box<dyn Any + Send>>` — an opaque
+  bundle held for the server's lifetime alongside `startup_authority`.
+  SSH authorities back this with the Tokio runtime, the
+  `SshConnection`, and the reconnect task; dropping any one of those
+  would tear the remote session down, so the server just holds the
+  bundle until shutdown. Local authorities leave it `None`.
+
+Actually wiring the CLI `ssh://` / scp-style remote forms into a
+detached daemon spawn still requires forwarding the remote spec
+through `spawn_server_detached` — the slots are in place but the
+`--server` launcher does not yet parse and pass a remote URL. That's
+a separate piece of plumbing; tests exercise the slots directly
+(`test_server_boots_with_startup_authority_and_keeps_keepalive`).
 
 ### Related: `change_working_dir`
 

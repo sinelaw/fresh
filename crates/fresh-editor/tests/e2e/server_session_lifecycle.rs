@@ -42,6 +42,8 @@ fn make_server_config(
         dir_context,
         plugins_enabled: false,
         init_enabled: false,
+        startup_authority: None,
+        session_keepalive: None,
     }
 }
 
