@@ -1277,12 +1277,11 @@ impl Editor {
                 }
             }
             Action::InitRevert => {
-                // "As if init.ts had never run": clear the overlay, then
-                // unload the plugin (which drops its commands, handlers,
-                // events, and exported APIs).
+                // Unload init.ts — drops its commands, handlers, events,
+                // and exported APIs. setSetting writes persist (fire-and-
+                // forget, same as every other editor).
                 #[cfg(feature = "plugins")]
                 {
-                    self.clear_runtime_overlay();
                     let name = crate::init_script::INIT_PLUGIN_NAME;
                     match self.plugin_manager.unload_plugin(name) {
                         Ok(()) => {

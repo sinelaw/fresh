@@ -325,16 +325,6 @@ pub struct Editor {
     /// Cached raw user config (for plugins, avoids re-reading file on every frame).
     user_config_raw: Arc<serde_json::Value>,
 
-    /// Disk-loaded config as JSON. Re-read only when the on-disk config
-    /// changes (reload_config). `config` above is recomputed whenever
-    /// `runtime_overlay` changes by starting from this JSON and applying
-    /// overlay entries.
-    base_config_json: serde_json::Value,
-
-    /// Plugin-scoped runtime overlay (design M1). Writes via
-    /// `editor.setSetting(...)` land here; unloading the plugin drops them.
-    runtime_overlay: crate::runtime_config::RuntimeConfigOverlay,
-
     /// Directory context for editor state paths
     dir_context: DirectoryContext,
 

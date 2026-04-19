@@ -355,21 +355,6 @@ impl Editor {
         // Refresh cached raw user config for plugins
         self.set_user_config_raw(Config::read_user_config_raw(&self.working_dir));
 
-        // Refresh the JSON snapshot the runtime overlay builds on top of,
-        // then re-apply the overlay so plugin setSetting writes survive a
-        // disk reload.
-        self.base_config_json = serde_json::to_value(&self.config).unwrap_or_else(|e| {
-            tracing::warn!("failed to serialize base config to JSON: {e}");
-            serde_json::json!({})
-        });
-        if !self.runtime_overlay.is_empty() {
-            if let Err(msg) = self.rebuild_config_from_overlay() {
-                tracing::warn!(
-                    "runtime overlay rebuild after disk reload failed, dropping overlay: {msg}"
-                );
-            }
-        }
-
         // Apply theme change if needed
         if old_theme != self.config.theme {
             if let Some(theme) = self.theme_registry.get_cloned(&self.config.theme) {

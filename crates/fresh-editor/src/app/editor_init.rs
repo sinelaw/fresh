@@ -11,6 +11,31 @@
 // on Editor and most of the types in the module.
 use super::*;
 
+/// Set a value at a dot-separated path inside a JSON object, creating
+/// intermediate maps as needed.
+fn set_dot_path(root: &mut serde_json::Value, path: &str, value: serde_json::Value) {
+    let segments: Vec<&str> = path.split('.').filter(|s| !s.is_empty()).collect();
+    if segments.is_empty() {
+        return;
+    }
+    let mut cur = root;
+    for seg in &segments[..segments.len() - 1] {
+        if !cur.is_object() {
+            *cur = serde_json::Value::Object(serde_json::Map::new());
+        }
+        cur = cur
+            .as_object_mut()
+            .unwrap()
+            .entry((*seg).to_string())
+            .or_insert(serde_json::Value::Null);
+    }
+    let last = segments[segments.len() - 1];
+    if !cur.is_object() {
+        *cur = serde_json::Value::Object(serde_json::Map::new());
+    }
+    cur.as_object_mut().unwrap().insert(last.to_string(), value);
+}
+
 impl Editor {
     /// Create a new editor with the given configuration and terminal dimensions
     /// Uses system directories for state (recovery, sessions, etc.)
@@ -481,11 +506,6 @@ impl Editor {
             Arc::new(serde_json::to_value(&*config_arc).unwrap_or(serde_json::Value::Null));
         let config_snapshot_anchor = Arc::clone(&config_arc);
 
-        // Snapshot the disk-resolved config as JSON so the M1 runtime
-        // overlay can rebuild `config` without re-reading disk on every
-        // setSetting call.
-        let base_config_json = (*config_cached_json).clone();
-
         let mut editor = Editor {
             buffers,
             event_logs,
@@ -494,8 +514,6 @@ impl Editor {
             config_snapshot_anchor,
             config_cached_json,
             user_config_raw: Arc::new(user_config_raw),
-            base_config_json,
-            runtime_overlay: crate::runtime_config::RuntimeConfigOverlay::new(),
             dir_context: dir_context.clone(),
             grammar_registry,
             pending_grammars: scan_result
@@ -812,11 +830,6 @@ impl Editor {
                             .into(),
                     }
                 } else {
-                    // Wipe prior overlay so stale writes from the previous
-                    // init.ts don't survive a reload. The new source will
-                    // re-apply whatever it wants via setSetting.
-                    self.clear_runtime_overlay();
-
                     match self.plugin_manager.load_plugin_from_source(
                         &source,
                         crate::init_script::INIT_PLUGIN_NAME,
@@ -845,58 +858,34 @@ impl Editor {
         }
     }
 
-    /// Handle a `setSetting(path, value)` call (M1).
+    /// Handle `setSetting(path, value)`. Fire-and-forget: patches Config
+    /// directly via JSON round-trip. No overlay, no per-plugin tracking,
+    /// no revert on unload — same model as Neovim/VS Code/Emacs/Sublime.
     pub fn handle_set_setting(&mut self, path: String, value: serde_json::Value) {
-        let prior_overlay = self.runtime_overlay.clone();
-        self.runtime_overlay.set(path.clone(), value);
-        if let Err(msg) = self.rebuild_config_from_overlay() {
-            self.runtime_overlay = prior_overlay;
-            if let Err(rollback_err) = self.rebuild_config_from_overlay() {
-                tracing::error!("init.ts setSetting({path}): rollback also failed: {rollback_err}");
+        let mut json = serde_json::to_value(&*self.config).unwrap_or_default();
+        set_dot_path(&mut json, &path, value);
+        match serde_json::from_value::<crate::config::Config>(json) {
+            Ok(new_config) => {
+                let old_theme = self.config.theme.clone();
+                self.config = Arc::new(new_config);
+                if old_theme != self.config.theme {
+                    if let Some(theme) = self.theme_registry.get_cloned(&self.config.theme) {
+                        self.theme = theme;
+                    }
+                }
+                *self.keybindings.write().unwrap() =
+                    crate::input::keybindings::KeybindingResolver::new(&self.config);
+                self.clipboard.apply_config(&self.config.clipboard);
+                self.menu_bar_visible = self.config.editor.show_menu_bar;
+                self.tab_bar_visible = self.config.editor.show_tab_bar;
+                self.status_bar_visible = self.config.editor.show_status_bar;
+                self.prompt_line_visible = self.config.editor.show_prompt_line;
+                self.update_plugin_state_snapshot();
             }
-            self.set_status_message(format!("init.ts setSetting({path}): {msg}"));
-        }
-    }
-
-    /// Drop every runtime-overlay entry. Called on init.ts unload/reload.
-    pub fn clear_runtime_overlay(&mut self) {
-        let removed = self.runtime_overlay.clear();
-        if removed == 0 {
-            return;
-        }
-        tracing::debug!("runtime overlay: cleared {removed} entries");
-        if let Err(msg) = self.rebuild_config_from_overlay() {
-            tracing::warn!("runtime overlay rebuild after clear failed: {msg}");
-        }
-    }
-
-    /// Rebuild `self.config` from `base_config_json + runtime_overlay`.
-    pub(crate) fn rebuild_config_from_overlay(&mut self) -> Result<(), String> {
-        let mut merged = self.base_config_json.clone();
-        self.runtime_overlay.apply_to(&mut merged);
-
-        let new_config: crate::config::Config =
-            serde_json::from_value(merged).map_err(|e| format!("config validation failed: {e}"))?;
-
-        let old_theme = self.config.theme.clone();
-        self.config = Arc::new(new_config);
-
-        if old_theme != self.config.theme {
-            if let Some(theme) = self.theme_registry.get_cloned(&self.config.theme) {
-                self.theme = theme;
+            Err(e) => {
+                self.set_status_message(format!("setSetting({path}): {e}"));
             }
         }
-
-        *self.keybindings.write().unwrap() =
-            crate::input::keybindings::KeybindingResolver::new(&self.config);
-        self.clipboard.apply_config(&self.config.clipboard);
-        self.menu_bar_visible = self.config.editor.show_menu_bar;
-        self.tab_bar_visible = self.config.editor.show_tab_bar;
-        self.status_bar_visible = self.config.editor.show_status_bar;
-        self.prompt_line_visible = self.config.editor.show_prompt_line;
-
-        self.update_plugin_state_snapshot();
-        Ok(())
     }
 
     /// Fire the `plugins_loaded` hook (design M2, §3.3 phase 2).

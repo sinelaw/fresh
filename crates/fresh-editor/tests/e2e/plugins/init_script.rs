@@ -251,10 +251,10 @@ fn ready_hook_fires_and_can_be_observed_with_legacy_on_form() {
 }
 
 #[test]
-fn reloading_init_ts_reverts_prior_setting() {
-    // When init.ts is reloaded (plugin unload + load), its prior writes must
-    // be dropped before the new body runs. A reload that no longer calls
-    // setSetting must restore the base value.
+fn set_setting_is_fire_and_forget_across_reload() {
+    // setSetting writes persist across reload — fire-and-forget, same model
+    // as Neovim/VS Code/Emacs/Sublime. A reload that no longer calls
+    // setSetting does NOT revert the prior value.
     let (mut harness, _tmp, config_dir) = harness_with_scratch_config_dir();
 
     let original_tab_size = harness.editor().config_for_tests().editor.tab_size as u64;
@@ -277,7 +277,7 @@ fn reloading_init_ts_reverts_prior_setting() {
         overridden
     );
 
-    // Second run: no setSetting at all.
+    // Second run: no setSetting at all — the old write persists.
     write_init_ts(
         &config_dir,
         r#"
@@ -290,8 +290,8 @@ fn reloading_init_ts_reverts_prior_setting() {
 
     assert_eq!(
         harness.editor().config_for_tests().editor.tab_size as u64,
-        original_tab_size,
-        "reload with no setSetting must drop the prior overlay write"
+        overridden,
+        "fire-and-forget: the prior setSetting write survives reload"
     );
 }
 
@@ -413,7 +413,10 @@ fn init_check_action_reports_an_error_on_a_broken_file() {
 }
 
 #[test]
-fn init_revert_action_drops_prior_setting_writes() {
+fn init_revert_unloads_plugin_but_settings_persist() {
+    // Revert unloads the init.ts plugin (commands, handlers, events gone)
+    // but setSetting writes persist — fire-and-forget, consistent with
+    // the Neovim/VS Code/Emacs model.
     use fresh::input::keybindings::Action;
 
     let (mut harness, _tmp, config_dir) = harness_with_scratch_config_dir();
@@ -436,7 +439,7 @@ fn init_revert_action_drops_prior_setting_writes() {
         overridden
     );
 
-    // Revert — effects should disappear without the file being edited.
+    // Revert — plugin is unloaded, but setting writes are fire-and-forget.
     harness
         .editor_mut()
         .dispatch_action_for_tests(Action::InitRevert);
@@ -444,8 +447,8 @@ fn init_revert_action_drops_prior_setting_writes() {
 
     assert_eq!(
         harness.editor().config_for_tests().editor.tab_size as u64,
-        original_tab_size,
-        "init: Revert should drop the overlay and restore the base value"
+        overridden,
+        "fire-and-forget: setSetting writes survive init: Revert"
     );
 }
 
