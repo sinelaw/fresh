@@ -167,7 +167,7 @@
     "active_keybinding_map": {
       "description": "Active keybinding map name",
       "$ref": "#/$defs/KeybindingMapOptions",
-      "default": "default"
+      "default": "macos"
     },
     "languages": {
       "description": "Per-language configuration overrides (tab size, formatters, etc.)",
@@ -226,6 +226,14 @@
         "sources": [
           "https://github.com/sinelaw/fresh-plugins-registry"
         ]
+      }
+    },
+    "devcontainer": {
+      "description": "Devcontainer settings",
+      "$ref": "#/$defs/DevcontainerConfig",
+      "default": {
+        "auto_detect": true,
+        "cli_path": "devcontainer"
       }
     }
   },
@@ -1376,7 +1384,7 @@
           "default": {
             "max_memory_percent": 50,
             "max_cpu_percent": 90,
-            "enabled": true
+            "enabled": false
           },
           "x-section": "Advanced",
           "x-order": 15
@@ -1539,6 +1547,22 @@
           "default": [
             "https://github.com/sinelaw/fresh-plugins-registry"
           ]
+        }
+      }
+    },
+    "DevcontainerConfig": {
+      "description": "Configuration for devcontainer support",
+      "type": "object",
+      "properties": {
+        "auto_detect": {
+          "description": "Automatically detect devcontainer.json when opening a directory (default: true)",
+          "type": "boolean",
+          "default": true
+        },
+        "cli_path": {
+          "description": "Path to the devcontainer CLI executable (default: \"devcontainer\")",
+          "type": "string",
+          "default": "devcontainer"
         }
       }
     }

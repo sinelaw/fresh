@@ -1462,51 +1462,45 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     // Falls back to the current working directory so `fresh` (no args) also auto-detects.
     // When auto_detect is true, connect automatically without prompting (mirrors VS Code behavior).
     let mut initial_status_message: Option<String> = None;
-    let (filesystem, process_spawner) =
-        if remote_info.is_none() && config.devcontainer.auto_detect {
-            // Use working_dir when a directory was passed as an argument;
-            // fall back to effective_working_dir (current dir) otherwise.
-            let detect_dir = working_dir
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| effective_working_dir.clone());
-            if let Some(detected) =
-                fresh::services::devcontainer::detect_devcontainer(
-                    &detect_dir,
-                    filesystem.as_ref(),
-                )
-            {
-                tracing::info!(
-                    "Devcontainer config detected: {}",
-                    detected.config_path.display()
-                );
-                match connect_devcontainer(
-                    &detected.workspace_path,
-                    &config.devcontainer.cli_path,
-                ) {
-                    Ok((result, remote_workspace)) => {
-                        working_dir = Some(remote_workspace);
-                        container_id = result.container_id;
-                        container_user = result.container_user;
-                        container_workspace = result.container_workspace;
-                        (result.filesystem, result.process_spawner)
-                    }
-                    Err(e) => {
-                        let detail = format!("{:#}", e);
-                        tracing::error!("Devcontainer failed: {}", detail);
-                        initial_status_message = Some(format!(
-                            "Devcontainer failed: {}. Using local filesystem.",
-                            detail
-                        ));
-                        (filesystem, process_spawner)
-                    }
+    let (filesystem, process_spawner) = if remote_info.is_none() && config.devcontainer.auto_detect
+    {
+        // Use working_dir when a directory was passed as an argument;
+        // fall back to effective_working_dir (current dir) otherwise.
+        let detect_dir = working_dir
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| effective_working_dir.clone());
+        if let Some(detected) =
+            fresh::services::devcontainer::detect_devcontainer(&detect_dir, filesystem.as_ref())
+        {
+            tracing::info!(
+                "Devcontainer config detected: {}",
+                detected.config_path.display()
+            );
+            match connect_devcontainer(&detected.workspace_path, &config.devcontainer.cli_path) {
+                Ok((result, remote_workspace)) => {
+                    working_dir = Some(remote_workspace);
+                    container_id = result.container_id;
+                    container_user = result.container_user;
+                    container_workspace = result.container_workspace;
+                    (result.filesystem, result.process_spawner)
                 }
-            } else {
-                (filesystem, process_spawner)
+                Err(e) => {
+                    let detail = format!("{:#}", e);
+                    tracing::error!("Devcontainer failed: {}", detail);
+                    initial_status_message = Some(format!(
+                        "Devcontainer failed: {}. Using local filesystem.",
+                        detail
+                    ));
+                    (filesystem, process_spawner)
+                }
             }
         } else {
             (filesystem, process_spawner)
-        };
+        }
+    } else {
+        (filesystem, process_spawner)
+    };
 
     tracing::info!("Config loaded");
 

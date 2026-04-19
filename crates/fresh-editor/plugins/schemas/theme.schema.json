@@ -128,6 +128,30 @@
             35
           ]
         },
+        "diff_add_highlight_bg": {
+          "description": "Diff added word-level highlight background (optional override)\nWhen not set, computed by brightening diff_add_bg",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "diff_remove_highlight_bg": {
+          "description": "Diff removed word-level highlight background (optional override)\nWhen not set, computed by brightening diff_remove_bg",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "diff_modify_bg": {
           "description": "Diff modified line background",
           "$ref": "#/$defs/ColorDef",
@@ -662,6 +686,78 @@
             255,
             255
           ]
+        },
+        "file_status_added_fg": {
+          "description": "File status: added file color in file explorer (falls back to diagnostic.info_fg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_status_modified_fg": {
+          "description": "File status: modified file color in file explorer (falls back to diagnostic.warning_fg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_status_deleted_fg": {
+          "description": "File status: deleted file color in file explorer (falls back to diagnostic.error_fg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_status_renamed_fg": {
+          "description": "File status: renamed file color in file explorer (falls back to diagnostic.info_fg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_status_untracked_fg": {
+          "description": "File status: untracked file color in file explorer (falls back to diagnostic.hint_fg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_status_conflicted_fg": {
+          "description": "File status: conflicted file color in file explorer (falls back to diagnostic.error_fg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       }
     },

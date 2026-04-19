@@ -456,7 +456,11 @@ impl Editor {
                 format!("{} (Disconnected)", conn)
             })
         } else if let Some(ref id) = self.container_id {
-            let short = if id.len() > 12 { &id[..12] } else { id.as_str() };
+            let short = if id.len() > 12 {
+                &id[..12]
+            } else {
+                id.as_str()
+            };
             Some(format!("Container:{}", short))
         } else {
             None

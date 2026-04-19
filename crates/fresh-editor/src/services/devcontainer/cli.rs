@@ -136,10 +136,7 @@ impl DevcontainerCli {
         let value: serde_json::Value = serde_json::from_str(json_line)
             .map_err(|e| DevcontainerError::ParseError(format!("{}: {}", e, json_line)))?;
 
-        let outcome = value
-            .get("outcome")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let outcome = value.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
 
         if outcome != "success" {
             return Err(DevcontainerError::ParseError(format!(
@@ -173,7 +170,6 @@ impl DevcontainerCli {
             remote_user,
         })
     }
-
 }
 
 impl Default for DevcontainerCli {
@@ -209,8 +205,7 @@ mod tests {
     #[test]
     fn test_parse_up_output_no_remote_user() {
         let cli = DevcontainerCli::new();
-        let output =
-            r#"{"outcome":"success","containerId":"abc123","remoteWorkspaceFolder":"/workspaces/proj"}"#;
+        let output = r#"{"outcome":"success","containerId":"abc123","remoteWorkspaceFolder":"/workspaces/proj"}"#;
 
         let result = cli.parse_up_output(output).unwrap();
         assert!(result.remote_user.is_none());

@@ -72,10 +72,7 @@ mod tests {
         let result = detect_devcontainer(tmp.path(), &StdFileSystem);
         assert!(result.is_some());
         let detected = result.unwrap();
-        assert_eq!(
-            detected.config_path,
-            tmp.path().join(".devcontainer.json")
-        );
+        assert_eq!(detected.config_path, tmp.path().join(".devcontainer.json"));
     }
 
     #[test]
@@ -98,6 +95,8 @@ mod tests {
         assert!(result.is_some());
         // Should prefer .devcontainer/devcontainer.json
         let detected = result.unwrap();
-        assert!(detected.config_path.ends_with(".devcontainer/devcontainer.json"));
+        assert!(detected
+            .config_path
+            .ends_with(".devcontainer/devcontainer.json"));
     }
 }
