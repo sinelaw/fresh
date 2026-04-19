@@ -2492,6 +2492,15 @@ impl Editor {
 
         // IMPORTANT: Calculate LSP changes BEFORE applying to buffer!
         // The byte positions in the events are relative to the ORIGINAL buffer.
+        //
+        // The tree-only swap below violates the pane-buffer invariant
+        // transiently (see active_focus.rs for the invariant's contract)
+        // but `collect_lsp_changes` does not route any input, call
+        // `apply_event_to_active_buffer`, or otherwise read
+        // `active_buffer()` while the invariant is broken, so the drift
+        // is contained within this synchronous section. If that changes,
+        // switch to a read-only accessor that takes `buffer_id` directly
+        // rather than mutating tree state.
         let original_active = self.active_buffer();
         self.split_manager.set_active_buffer_id(buffer_id);
         let lsp_changes = self.collect_lsp_changes(&batch_for_lsp);

@@ -1092,9 +1092,9 @@ impl Editor {
                             let splits = self.split_manager.splits_for_buffer(existing_buffer_id);
                             if let Some(&split_id) = splits.first() {
                                 self.split_manager.set_active_split(split_id);
-                                // NOTE: active_buffer is derived from split_manager,
-                                // but we need to ensure the split shows the right buffer
-                                self.split_manager.set_active_buffer_id(existing_buffer_id);
+                                // Route through set_pane_buffer so tree + SVS
+                                // stay consistent (issue #1620 invariant).
+                                self.set_pane_buffer(split_id, existing_buffer_id);
                                 tracing::debug!(
                                     "Focused split {:?} containing panel buffer",
                                     split_id
@@ -1307,15 +1307,17 @@ impl Editor {
                     return Ok(());
                 }
 
-                // Show the buffer in the target split
+                // Show the buffer in the target split. set_pane_buffer
+                // covers the tree + SVS updates the old code did by hand.
                 let leaf_id = LeafId(split_id);
-                self.split_manager.set_split_buffer(leaf_id, buffer_id);
-
-                // Focus the target split and set its buffer
                 self.split_manager.set_active_split(leaf_id);
-                self.split_manager.set_active_buffer_id(buffer_id);
+                self.set_pane_buffer(leaf_id, buffer_id);
 
-                // Switch per-buffer view state in the target split
+                // Fall-through to the cursor/open_buffers housekeeping
+                // that used to follow the manual switch_buffer. We keep
+                // the `if let Some(view_state)` block below — set_pane_buffer
+                // already called switch_buffer, but the downstream code
+                // also nudges open_buffers and focus_history.
                 if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
                     view_state.switch_buffer(buffer_id);
                     view_state.add_buffer(buffer_id);

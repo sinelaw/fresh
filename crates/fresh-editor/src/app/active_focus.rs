@@ -4,10 +4,48 @@
 //! switching what the user is looking at. Both fire several invariants:
 //! split manager updates, tab list updates, file-explorer sync, terminal
 //! buffer resume, semantic-token cleanup for deleted buffers, etc.
+//!
+//! ## Pane-buffer invariant
+//!
+//! "Which buffer is displayed in leaf split S" is stored in two places
+//! for historical reasons: `split_manager`'s tree (as the leaf node's
+//! `buffer_id`) and `split_view_states[S]` (as `active_buffer` plus an
+//! entry in `keyed_states`). These must agree — callers downstream
+//! (notably `apply_event_to_active_buffer`) index one using the other
+//! without re-validating.
+//!
+//! All writes to this fact MUST go through [`Editor::set_pane_buffer`]
+//! (or the higher-level wrappers `set_active_buffer` / `focus_split`
+//! that call it). Raw `split_manager.set_split_buffer` /
+//! `split_manager.set_active_buffer_id` calls updated only one side,
+//! which caused issue #1620 (a `None.unwrap()` panic when clicking
+//! after a buffer was closed from another split).
 
 use super::*;
 
 impl Editor {
+    /// Atomically update both sides of the pane-buffer invariant for a
+    /// given leaf split: the split tree's stored buffer AND the matching
+    /// `SplitViewState.active_buffer` / `keyed_states` map.
+    ///
+    /// This is the one place that is allowed to change "which buffer is
+    /// shown in pane `leaf`". Every call site that used to poke
+    /// `split_manager.set_split_buffer` or
+    /// `split_manager.set_active_buffer_id` directly should go through
+    /// here instead, so the two stores can never drift (see the
+    /// module-level note and issue #1620).
+    ///
+    /// If the leaf has no `SplitViewState` yet (e.g. mid-session-restore,
+    /// when the SVS is registered later), the tree is still updated and
+    /// the SVS sync is skipped — the caller is responsible for ensuring
+    /// the SVS exists by the time any input is routed.
+    pub(super) fn set_pane_buffer(&mut self, leaf: LeafId, buffer_id: BufferId) {
+        self.split_manager.set_split_buffer(leaf, buffer_id);
+        if let Some(view_state) = self.split_view_states.get_mut(&leaf) {
+            view_state.switch_buffer(buffer_id);
+        }
+    }
+
     /// Set the active buffer and trigger all necessary side effects
     ///
     /// This is the centralized method for switching buffers. It:
@@ -39,20 +77,24 @@ impl Editor {
             self.key_context = crate::input::keybindings::KeyContext::Normal;
         }
 
-        // Update split manager (single source of truth)
-        self.split_manager.set_active_buffer_id(buffer_id);
-
-        // Switch per-buffer view state in the active split
+        // Capture the previous focus target BEFORE set_pane_buffer runs,
+        // so the LRU records the right thing.
         let active_split = self.split_manager.active_split();
+        let previous_target = self
+            .split_view_states
+            .get(&active_split)
+            .map(|vs| vs.active_target());
+
+        // Atomic pane-buffer update: tree + SVS in lockstep.
+        self.set_pane_buffer(active_split, buffer_id);
+
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            // Capture what the user was looking at (buffer tab or group tab)
-            // BEFORE clearing the group marker, so the LRU records the right thing.
-            let previous_target = view_state.active_target();
-            view_state.switch_buffer(buffer_id);
             view_state.add_buffer(buffer_id);
             view_state.active_group_tab = None;
             view_state.focused_group_leaf = None;
-            view_state.push_focus(previous_target);
+            if let Some(previous_target) = previous_target {
+                view_state.push_focus(previous_target);
+            }
         }
 
         // If switching to a terminal buffer that should resume terminal mode, re-enter it
@@ -171,8 +213,11 @@ impl Editor {
             // Update split manager to focus this split
             self.split_manager.set_active_split(split_id);
 
-            // Update the buffer in the new split
-            self.split_manager.set_active_buffer_id(buffer_id);
+            // Atomic pane-buffer update: tree + SVS in lockstep. Replaces
+            // the previous pair of split_manager.set_active_buffer_id +
+            // view_state.switch_buffer that could desync if either leg
+            // silently no-op'd (issue #1620).
+            self.set_pane_buffer(split_id, buffer_id);
 
             // Set key context based on target buffer type
             if self.is_terminal_buffer(buffer_id) {
@@ -182,12 +227,6 @@ impl Editor {
                 // Ensure key context is Normal when focusing a non-terminal buffer
                 // This handles the case of clicking on editor from FileExplorer context
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
-            }
-
-            // Switch the view state to the target buffer so that Deref
-            // (cursors, viewport, …) resolves to the correct BufferViewState.
-            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                view_state.switch_buffer(buffer_id);
             }
 
             // Handle buffer change side effects

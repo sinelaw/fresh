@@ -1321,7 +1321,7 @@ impl Editor {
                 let current_leaf_id = if is_first_leaf {
                     // First leaf reuses the existing split
                     let leaf_id = self.split_manager.active_split();
-                    self.split_manager.set_split_buffer(leaf_id, buffer_id);
+                    self.set_pane_buffer(leaf_id, buffer_id);
                     leaf_id
                 } else {
                     // Non-first leaves use the active split (created by split_active)
@@ -1358,7 +1358,7 @@ impl Editor {
 
                 let current_leaf_id = if is_first_leaf {
                     let leaf_id = self.split_manager.active_split();
-                    self.split_manager.set_split_buffer(leaf_id, buffer_id);
+                    self.set_pane_buffer(leaf_id, buffer_id);
                     leaf_id
                 } else {
                     self.split_manager.active_split()

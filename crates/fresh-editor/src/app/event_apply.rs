@@ -89,9 +89,26 @@ impl Editor {
         // the group host's. Without this, MoveCursor events for a focused
         // panel would try to look up the panel buffer's keyed state in the
         // host split (which doesn't have it) and panic on unwrap.
+        //
+        // Debug-only check: verify the pane-buffer invariant before
+        // dereferencing. Any mismatch means a write path skipped
+        // `Editor::set_pane_buffer` (see `active_focus.rs`); we want
+        // that to fail with a clear message in tests rather than
+        // surfacing as a bare `Option::unwrap` panic in production
+        // (issue #1620).
         {
             let split_id = self.effective_active_split();
             let active_buf = self.active_buffer();
+            debug_assert!(
+                self.split_view_states
+                    .get(&split_id)
+                    .is_some_and(|vs| vs.keyed_states.contains_key(&active_buf)),
+                "pane-buffer invariant violated: split {:?} resolves to buffer {:?} \
+                 but that split's keyed_states has no entry for it. Some write path \
+                 bypassed Editor::set_pane_buffer; see active_focus.rs / issue #1620.",
+                split_id,
+                active_buf,
+            );
             let cursors = &mut self
                 .split_view_states
                 .get_mut(&split_id)

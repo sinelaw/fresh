@@ -634,9 +634,12 @@ impl Editor {
             return;
         }
 
-        // Plugin sends arbitrary SplitId — convert to LeafId at the boundary
+        // Plugin sends arbitrary SplitId — convert to LeafId at the boundary.
+        // Go through set_pane_buffer so tree + SVS stay consistent (the
+        // downstream view_state block tweaks open_buffers/view_transform
+        // further, but the primitive is what keeps the invariant).
         let leaf_id = LeafId(split_id);
-        self.split_manager.set_split_buffer(leaf_id, buffer_id);
+        self.set_pane_buffer(leaf_id, buffer_id);
         tracing::info!("Set split {:?} to buffer {:?}", split_id, buffer_id);
 
         // Switch per-buffer view state — the new buffer's own view_transform
