@@ -65,6 +65,8 @@ impl Editor {
             Some(self.working_dir.clone()),
             Some(log_path.clone()),
             backing_path_for_spawn,
+            self.container_id.clone(),
+            self.container_user.clone(),
         ) {
             Ok(terminal_id) => {
                 // Track log file path (use actual ID in case it differs)

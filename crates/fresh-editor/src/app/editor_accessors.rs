@@ -424,6 +424,16 @@ impl Editor {
         self.process_spawner = spawner;
     }
 
+    /// Set the container ID for devcontainer terminal support
+    pub fn set_container_id(&mut self, id: Option<String>) {
+        self.container_id = id;
+    }
+
+    /// Set the container user for devcontainer docker exec (-u flag)
+    pub fn set_container_user(&mut self, user: Option<String>) {
+        self.container_user = user;
+    }
+
     /// Get remote connection info if editing remote files
     ///
     /// Returns `Some("user@host")` for remote editing, `None` for local.

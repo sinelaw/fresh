@@ -504,6 +504,12 @@ struct SetupState {
     /// Terminal mode state (raw mode, alternate screen, etc.)
     /// Drop impl restores terminal on cleanup
     terminal_modes: TerminalModes,
+    /// Container ID when connected to a devcontainer (for docker exec terminal)
+    container_id: Option<String>,
+    /// Remote user inside the container (e.g. "vscode") for docker exec -u
+    container_user: Option<String>,
+    /// Status message to display immediately after startup (e.g. devcontainer errors)
+    initial_status_message: Option<String>,
 }
 
 /// State for stdin streaming in background
@@ -1132,6 +1138,10 @@ struct FilesystemResult {
     filesystem: std::sync::Arc<dyn FileSystem + Send + Sync>,
     /// Process spawner for plugin command execution
     process_spawner: std::sync::Arc<dyn remote::ProcessSpawner>,
+    /// Container ID when connected to a devcontainer (for docker exec terminal)
+    container_id: Option<String>,
+    /// Remote user inside the container (e.g. "vscode") for docker exec -u
+    container_user: Option<String>,
     /// Remote session resources - must be kept alive for remote editing
     remote_session: Option<RemoteSession>,
     /// Devcontainer session resources - must be kept alive for container editing
@@ -1146,6 +1156,8 @@ fn create_filesystem(remote_info: &Option<RemoteLocation>) -> AnyhowResult<Files
         Ok(FilesystemResult {
             filesystem: std::sync::Arc::new(StdFileSystem),
             process_spawner: std::sync::Arc::new(remote::LocalProcessSpawner),
+            container_id: None,
+            container_user: None,
             remote_session: None,
             devcontainer_session: None,
         })
@@ -1197,6 +1209,8 @@ fn connect_remote(remote: &RemoteLocation) -> AnyhowResult<FilesystemResult> {
     Ok(FilesystemResult {
         filesystem,
         process_spawner,
+        container_id: None,
+        container_user: None,
         remote_session: Some(RemoteSession {
             _connection: connection,
             _runtime: rt,
@@ -1206,15 +1220,17 @@ fn connect_remote(remote: &RemoteLocation) -> AnyhowResult<FilesystemResult> {
     })
 }
 
-/// Start a devcontainer and return a RemoteFileSystem connected to it.
+/// Start a devcontainer and prepare for container-aware editing.
 ///
-/// Uses the `devcontainer` CLI to build/start the container, then establishes
-/// an agent connection via `docker exec`.
+/// The devcontainer mounts the local workspace into the container, so files
+/// are accessible via the local filesystem without a remote agent.
+/// This function starts the container (if not already running) and returns
+/// the container ID so that terminal splits can run inside it via `docker exec`.
 fn connect_devcontainer(
     workspace_path: &Path,
     cli_path: &str,
 ) -> AnyhowResult<(FilesystemResult, PathBuf)> {
-    use fresh::services::devcontainer::{ContainerConnection, DevcontainerCli};
+    use fresh::services::devcontainer::DevcontainerCli;
 
     let rt = tokio::runtime::Runtime::new()
         .context("Failed to create Tokio runtime for devcontainer")?;
@@ -1243,51 +1259,32 @@ fn connect_devcontainer(
         .block_on(cli.up(workspace_path))
         .context("Failed to start devcontainer")?;
 
+    let container_id = up_result.container_id;
+    let container_user = up_result.remote_user;
     eprintln!(
-        "Container started: {}",
-        &up_result.container_id[..12.min(up_result.container_id.len())]
+        "Container started: {} (user: {})",
+        &container_id[..12.min(container_id.len())],
+        container_user.as_deref().unwrap_or("root")
+    );
+    tracing::info!(
+        "Devcontainer ready, container_id={}, user={:?}",
+        container_id,
+        container_user
     );
 
-    let remote_workspace = PathBuf::from(&up_result.remote_workspace_folder);
-
-    // Connect to the container via docker exec + Python agent
-    eprintln!("Connecting to container...");
-    let connection = rt
-        .block_on(ContainerConnection::connect(
-            up_result.container_id,
-            remote_workspace.clone(),
-        ))
-        .context("Failed to connect to devcontainer")?;
-
-    let connection_string = connection.connection_string();
-    let channel = connection.channel();
-
-    tracing::info!("Connected to devcontainer: {}", connection_string);
-
-    let filesystem = std::sync::Arc::new(remote::RemoteFileSystem::new(
-        channel.clone(),
-        connection_string,
-    ));
-    let process_spawner = std::sync::Arc::new(remote::RemoteProcessSpawner::new(channel.clone()));
-
-    // Spawn background reconnect task
-    let reconnect_handle = {
-        let _guard = rt.enter();
-        connection.spawn_reconnect_task()
-    };
-
+    // The workspace is mounted into the container, so use the local filesystem
+    // for file editing. Terminal splits will use `docker exec` to run inside
+    // the container (set via container_id).
     let result = FilesystemResult {
-        filesystem,
-        process_spawner,
+        filesystem: std::sync::Arc::new(StdFileSystem),
+        process_spawner: std::sync::Arc::new(remote::LocalProcessSpawner),
+        container_id: Some(container_id),
+        container_user,
         remote_session: None,
-        devcontainer_session: Some(DevcontainerSession {
-            _connection: connection,
-            _runtime: rt,
-            _reconnect_handle: reconnect_handle,
-        }),
+        devcontainer_session: None,
     };
 
-    Ok((result, remote_workspace))
+    Ok((result, workspace_path.to_path_buf()))
 }
 
 fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
@@ -1419,6 +1416,8 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let FilesystemResult {
         filesystem,
         process_spawner,
+        mut container_id,
+        mut container_user,
         remote_session,
         devcontainer_session,
     } = create_filesystem(&remote_info)?;
@@ -1472,50 +1471,58 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         config::Config::load_with_layers(&dir_context, &effective_working_dir)
     };
 
-    // Devcontainer detection: if opening a local directory, check for .devcontainer config
+    // Devcontainer detection: check for .devcontainer config in the target directory.
+    // Falls back to the current working directory so `fresh` (no args) also auto-detects.
+    // When auto_detect is true, connect automatically without prompting (mirrors VS Code behavior).
+    let mut initial_status_message: Option<String> = None;
     let (filesystem, process_spawner, devcontainer_session) =
         if remote_info.is_none() && config.devcontainer.auto_detect {
-            if let Some(ref dir) = working_dir {
-                if let Some(detected) =
-                    fresh::services::devcontainer::detect_devcontainer(dir, filesystem.as_ref())
-                {
-                    tracing::info!(
-                        "Devcontainer config detected: {}",
-                        detected.config_path.display()
-                    );
-                    // Prompt user on stderr (before terminal raw mode)
-                    eprint!(
-                        "Devcontainer detected ({}). Open in container? [y/N] ",
-                        detected.config_path.display()
-                    );
-                    let mut answer = String::new();
-                    if io::stdin().read_line(&mut answer).is_ok()
-                        && answer.trim().eq_ignore_ascii_case("y")
-                    {
-                        match connect_devcontainer(
-                            &detected.workspace_path,
-                            &config.devcontainer.cli_path,
-                        ) {
-                            Ok((result, remote_workspace)) => {
-                                // Override working_dir to the container's workspace folder
-                                working_dir = Some(remote_workspace);
-                                (
-                                    result.filesystem,
-                                    result.process_spawner,
-                                    result.devcontainer_session,
-                                )
-                            }
-                            Err(e) => {
-                                eprintln!("Warning: Failed to start devcontainer: {}", e);
-                                eprintln!("Falling back to local filesystem.");
-                                (filesystem, process_spawner, devcontainer_session)
-                            }
-                        }
-                    } else {
+            // Use working_dir when a directory was passed as an argument;
+            // fall back to effective_working_dir (current dir) otherwise.
+            let detect_dir = working_dir
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| effective_working_dir.clone());
+            if let Some(detected) =
+                fresh::services::devcontainer::detect_devcontainer(
+                    &detect_dir,
+                    filesystem.as_ref(),
+                )
+            {
+                tracing::info!(
+                    "Devcontainer config detected: {}",
+                    detected.config_path.display()
+                );
+                eprintln!(
+                    "Devcontainer detected ({}). Connecting...",
+                    detected.config_path.display()
+                );
+                match connect_devcontainer(
+                    &detected.workspace_path,
+                    &config.devcontainer.cli_path,
+                ) {
+                    Ok((result, remote_workspace)) => {
+                        working_dir = Some(remote_workspace);
+                        container_id = result.container_id;
+                        container_user = result.container_user;
+                        (
+                            result.filesystem,
+                            result.process_spawner,
+                            result.devcontainer_session,
+                        )
+                    }
+                    Err(e) => {
+                        // Use {:#} to show full error chain (all causes)
+                        let detail = format!("{:#}", e);
+                        let msg = format!("Devcontainer failed: {}", detail);
+                        let _ = std::fs::write("/tmp/fresh-devcontainer-error.txt", &msg);
+                        eprintln!("[fresh devcontainer] {}", msg);
+                        initial_status_message = Some(format!(
+                            "Devcontainer failed: {}. Using local filesystem.",
+                            detail
+                        ));
                         (filesystem, process_spawner, devcontainer_session)
                     }
-                } else {
-                    (filesystem, process_spawner, devcontainer_session)
                 }
             } else {
                 (filesystem, process_spawner, devcontainer_session)
@@ -1608,6 +1615,9 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         process_spawner,
         _remote_session: remote_session,
         _devcontainer_session: devcontainer_session,
+        container_id,
+        container_user,
+        initial_status_message,
     })
 }
 
@@ -3092,6 +3102,9 @@ fn real_main() -> AnyhowResult<()> {
         process_spawner,
         _remote_session,
         _devcontainer_session,
+        container_id,
+        container_user,
+        initial_status_message,
     } = initialize_app(&args).context("Failed to initialize application")?;
 
     let mut current_working_dir = initial_working_dir;
@@ -3131,6 +3144,12 @@ fn real_main() -> AnyhowResult<()> {
 
         // Set the process spawner (LocalProcessSpawner for local, RemoteProcessSpawner for remote)
         editor.set_process_spawner(process_spawner.clone());
+        editor.set_container_id(container_id.clone());
+        editor.set_container_user(container_user.clone());
+
+        if let Some(ref msg) = initial_status_message {
+            editor.set_status_message(msg.clone());
+        }
 
         #[cfg(target_os = "linux")]
         if gpm_client.is_some() {

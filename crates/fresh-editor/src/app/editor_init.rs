@@ -686,6 +686,8 @@ impl Editor {
             warning_domains: WarningDomainRegistry::new(),
             update_checker,
             terminal_manager: crate::services::terminal::TerminalManager::new(),
+            container_id: None,
+            container_user: None,
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),

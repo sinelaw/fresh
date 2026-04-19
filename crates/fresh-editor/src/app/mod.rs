@@ -938,6 +938,12 @@ pub struct Editor {
     /// Terminal manager for built-in terminal support
     terminal_manager: crate::services::terminal::TerminalManager,
 
+    /// Container ID when connected to a devcontainer (used for docker exec terminal)
+    container_id: Option<String>,
+
+    /// Remote user inside the container (e.g. "vscode") for docker exec -u
+    container_user: Option<String>,
+
     /// Maps buffer ID to terminal ID (for terminal buffers)
     terminal_buffers: HashMap<BufferId, crate::services::terminal::TerminalId>,
 
