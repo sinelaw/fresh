@@ -457,13 +457,22 @@ impl Editor {
         }
 
         // Disable / Enable row — shown whenever the language has at
-        // least one configured server. Persisted in config so the
-        // choice survives an editor restart (see the `dismiss:` /
-        // `enable:` branches in `handle_lsp_status_action`). We reuse
-        // `all_servers.is_empty()` as the "nothing here" signal
-        // since languages with zero configured-or-running servers
-        // already bailed out above.
-        if user_dismissed {
+        // least one configured server. The label flips on either the
+        // session-level dismiss flag OR the persisted `enabled = false`
+        // half: both mean "the language is currently muted from the
+        // user's POV", and showing "Disable" while the config already
+        // has every server disabled would leave the user with no
+        // surface to undo it. Picking the row writes through to the
+        // matching half of the state in `handle_lsp_status_action`
+        // (`dismiss:` flips both, `enable:` flips both) so the two
+        // signals stay in sync after every round-trip.
+        let any_enabled = self
+            .config
+            .lsp
+            .get(language)
+            .is_some_and(|cfg| cfg.as_slice().iter().any(|c| c.enabled));
+        let muted = user_dismissed || !any_enabled;
+        if muted {
             let enable_key = format!("enable:{}", language);
             items.push(
                 crate::view::popup::PopupListItem::new(format!("    Enable LSP for {}", language))
