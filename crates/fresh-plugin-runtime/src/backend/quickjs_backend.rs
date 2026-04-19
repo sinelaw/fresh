@@ -5182,14 +5182,13 @@ impl QuickJsBackend {
             owners.retain(|_, name| name != plugin_name);
         }
 
-        // Drop every runtime-overlay setting this plugin wrote
-        // (design M1). The editor's handler no-ops if the plugin didn't
-        // write anything, so firing this unconditionally is safe.
-        let _ = self
-            .command_sender
-            .send(PluginCommand::ClearPluginSettings {
-                plugin_name: plugin_name.to_string(),
-            });
+        // Clear the runtime config overlay when init.ts unloads (design
+        // M1). Only init.ts writes settings via setSetting; other plugins
+        // don't, so we gate on the name to avoid wiping init.ts's writes
+        // when some unrelated plugin is unloaded.
+        if plugin_name == crate::INIT_PLUGIN_NAME {
+            let _ = self.command_sender.send(PluginCommand::ClearRuntimeOverlay);
+        }
 
         // Drop any plugin-API exports (design M3) this plugin published.
         self.plugin_api_exports

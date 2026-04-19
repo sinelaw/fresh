@@ -840,15 +840,10 @@ impl Editor {
         }
     }
 
-    /// Handle a `setSetting(path, value)` from a plugin (M1).
-    pub fn handle_set_setting(
-        &mut self,
-        plugin_name: String,
-        path: String,
-        value: serde_json::Value,
-    ) {
+    /// Handle a `setSetting(path, value)` call (M1).
+    pub fn handle_set_setting(&mut self, path: String, value: serde_json::Value) {
         let prior_overlay = self.runtime_overlay.clone();
-        self.runtime_overlay.set(&plugin_name, path.clone(), value);
+        self.runtime_overlay.set(path.clone(), value);
         if let Err(msg) = self.rebuild_config_from_overlay() {
             self.runtime_overlay = prior_overlay;
             if let Err(rollback_err) = self.rebuild_config_from_overlay() {
@@ -858,12 +853,13 @@ impl Editor {
         }
     }
 
-    /// Drop every runtime-overlay entry attributed to `plugin_name`.
-    pub fn handle_clear_plugin_settings(&mut self, plugin_name: &str) {
-        let removed = self.runtime_overlay.clear_plugin(plugin_name);
+    /// Drop every runtime-overlay entry. Called on init.ts unload/reload.
+    pub fn clear_runtime_overlay(&mut self) {
+        let removed = self.runtime_overlay.clear();
         if removed == 0 {
             return;
         }
+        tracing::debug!("runtime overlay: cleared {removed} entries");
         if let Err(msg) = self.rebuild_config_from_overlay() {
             tracing::warn!("runtime overlay rebuild after clear failed: {msg}");
         }

@@ -637,15 +637,11 @@ impl Editor {
             PluginCommand::ReloadConfig => {
                 self.reload_config();
             }
-            PluginCommand::SetSetting {
-                plugin_name,
-                path,
-                value,
-            } => {
-                self.handle_set_setting(plugin_name, path, value);
+            PluginCommand::SetSetting { path, value, .. } => {
+                self.handle_set_setting(path, value);
             }
-            PluginCommand::ClearPluginSettings { plugin_name } => {
-                self.handle_clear_plugin_settings(&plugin_name);
+            PluginCommand::ClearRuntimeOverlay => {
+                self.clear_runtime_overlay();
             }
             PluginCommand::ReloadThemes { apply_theme } => {
                 self.reload_themes();

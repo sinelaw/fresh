@@ -934,13 +934,8 @@ pub enum PluginCommand {
     /// After a plugin saves config changes, it should call this to reload the config
     ReloadConfig,
 
-    /// Write a single setting to the runtime (init.ts / plugin) layer for
-    /// this session only. The write is attributed to the calling plugin —
-    /// unloading that plugin drops its runtime writes.
-    ///
-    /// `path` is dot-separated (e.g. "editor.tab_size"). `value` is a JSON
-    /// value in the shape the setting expects (schema is generated from
-    /// config-schema.json).
+    /// Write a single setting to the runtime overlay for this session.
+    /// `path` is dot-separated (e.g. "editor.tab_size"). Last write wins.
     SetSetting {
         plugin_name: String,
         path: String,
@@ -948,9 +943,9 @@ pub enum PluginCommand {
         value: JsonValue,
     },
 
-    /// Drop all runtime setting writes attributed to a plugin. Fired by
-    /// the plugin loader on unload/hot-reload.
-    ClearPluginSettings { plugin_name: String },
+    /// Drop every entry in the runtime config overlay. Fired on init.ts
+    /// unload/reload so a re-run starts from the disk-resolved base.
+    ClearRuntimeOverlay,
 
     /// Register a custom command
     RegisterCommand { command: Command },
