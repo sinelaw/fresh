@@ -217,11 +217,22 @@ impl Editor {
             }
         }
 
-        // Update all splits that are showing this buffer to show the replacement
+        // Update all splits that are showing this buffer to show the replacement.
+        // The split tree and per-split SplitViewState are two halves of the
+        // same fact ("which buffer does pane S show?"). Updating only the tree
+        // leaves SVS[S].active_buffer pointing at the buffer we're about to
+        // free and keyed_states without an entry for the replacement; the next
+        // click into S then goes through focus_split's same-split branch
+        // (active_buffer() reads the tree, sees the replacement, set_active_buffer
+        // early-returns on equality, switch_buffer never runs) and trips the
+        // unwrap in apply_event_to_active_buffer. Issue #1620.
         let splits_to_update = self.split_manager.splits_for_buffer(id);
         for split_id in splits_to_update {
             self.split_manager
                 .set_split_buffer(split_id, replacement_buffer);
+            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                view_state.switch_buffer(replacement_buffer);
+            }
         }
 
         self.buffers.remove(&id);
