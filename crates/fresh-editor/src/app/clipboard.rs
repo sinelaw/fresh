@@ -328,7 +328,13 @@ impl Editor {
         use crate::view::prompt::PromptType;
 
         let available_themes = self.theme_registry.list();
-        let current_theme_key = &self.config.theme.0;
+        // Resolve the config value (portable form) to a canonical registry
+        // key so the picker can pre-highlight the current theme.
+        let resolved_current = self
+            .theme_registry
+            .resolve_key(&self.config.theme.0)
+            .unwrap_or_else(|| self.config.theme.0.clone());
+        let current_theme_key = resolved_current.as_str();
 
         // Find the index of the current theme (match by key first, then name)
         let current_index = available_themes

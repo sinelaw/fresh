@@ -315,7 +315,14 @@ impl Editor {
     /// Start the theme selection prompt with available themes
     pub(super) fn start_select_theme_prompt(&mut self) {
         let available_themes = self.theme_registry.list();
-        let current_theme_key = &self.config.theme.0;
+        // The config may hold a portable form (`s-dark.json`, `builtin://dark`,
+        // `file://${HOME}/…`) rather than a canonical registry key. Resolve
+        // it so the picker can pre-highlight the current theme.
+        let resolved_current = self
+            .theme_registry
+            .resolve_key(&self.config.theme.0)
+            .unwrap_or_else(|| self.config.theme.0.clone());
+        let current_theme_key = resolved_current.as_str();
 
         // Find the index of the current theme (match by key first, then name)
         let current_index = available_themes
@@ -369,7 +376,7 @@ impl Editor {
         self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Select theme: ".to_string(),
             PromptType::SelectTheme {
-                original_theme: current_theme_key.clone(),
+                original_theme: current_theme_key.to_string(),
             },
             suggestions,
         ));

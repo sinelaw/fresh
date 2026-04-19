@@ -34,7 +34,14 @@ impl Editor {
 
     /// Fire the `theme_inspect_key` hook for the given key.
     pub(super) fn fire_theme_inspect_hook(&mut self, key: String) {
-        let theme_name = self.config.theme.0.clone();
+        // Resolve the config value (which may be a portable form like
+        // `s-dark.json` or `builtin://dark`) to the canonical registry key
+        // the plugin's theme registry uses internally. Falls back to the
+        // raw config value if resolution fails.
+        let theme_name = self
+            .theme_registry
+            .resolve_key(&self.config.theme.0)
+            .unwrap_or_else(|| self.config.theme.0.clone());
         self.plugin_manager.run_hook(
             "theme_inspect_key",
             HookArgs::ThemeInspectKey { theme_name, key },
