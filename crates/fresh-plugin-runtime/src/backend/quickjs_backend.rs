@@ -700,6 +700,12 @@ pub struct JsEditorApi {
     /// Tracks LSP server language → owning plugin name (first-writer-wins collision detection)
     #[qjs(skip_trace)]
     registered_lsp_servers: Rc<RefCell<HashMap<String, String>>>,
+    /// Plugin-configuration plane (design M3): name → (exporter plugin_name,
+    /// persistent JS Object). Shared across every plugin context on the
+    /// same Runtime so init.ts can reach another plugin's typed API.
+    #[qjs(skip_trace)]
+    plugin_api_exports:
+        Rc<RefCell<HashMap<String, (String, rquickjs::Persistent<rquickjs::Object<'static>>)>>>,
     pub plugin_name: String,
 }
 
@@ -712,6 +718,74 @@ impl JsEditorApi {
     /// the editor supports the features they need.
     pub fn api_version(&self) -> u32 {
         2
+    }
+
+    /// The name of the plugin this `editor` handle belongs to. Used by the
+    /// M3 plugin-API plane (`exportPluginApi` tags the exporter). Plugin
+    /// authors generally don't call this directly.
+    pub fn plugin_name(&self) -> String {
+        self.plugin_name.clone()
+    }
+
+    /// Publish a typed API surface under `name`. Another plugin (typically
+    /// `init.ts`) can reach it later via `getPluginApi(name)`. Calling
+    /// again with the same `name` replaces the previous registration
+    /// (idempotent — reload works). Exports are auto-dropped when the
+    /// calling plugin is unloaded.
+    ///
+    /// Returns `true` on success. Rejects with a TypeError if `name` is
+    /// empty or `api` is not an object (functions and primitives are not
+    /// valid API surfaces — only objects).
+    #[plugin_api(ts_return = "boolean")]
+    pub fn export_plugin_api<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        name: String,
+        api: rquickjs::Value<'js>,
+    ) -> rquickjs::Result<bool> {
+        if name.is_empty() {
+            let msg =
+                rquickjs::String::from_str(ctx.clone(), "exportPluginApi: name must be non-empty")?;
+            return Err(ctx.throw(msg.into_value()));
+        }
+        let obj = match api.as_object() {
+            Some(o) => o.clone(),
+            None => {
+                let msg = rquickjs::String::from_str(
+                    ctx.clone(),
+                    "exportPluginApi: api must be an object",
+                )?;
+                return Err(ctx.throw(msg.into_value()));
+            }
+        };
+        let persistent = rquickjs::Persistent::save(&ctx, obj);
+        self.plugin_api_exports
+            .borrow_mut()
+            .insert(name, (self.plugin_name.clone(), persistent));
+        Ok(true)
+    }
+
+    /// Look up a plugin API previously published via `exportPluginApi`.
+    /// Returns the api object (restored into the caller's context) or
+    /// `null` if no plugin exports under that name.
+    #[plugin_api(ts_return = "unknown | null")]
+    pub fn get_plugin_api<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        name: String,
+    ) -> rquickjs::Result<rquickjs::Value<'js>> {
+        let persistent = self
+            .plugin_api_exports
+            .borrow()
+            .get(&name)
+            .map(|(_exporter, p)| p.clone());
+        match persistent {
+            Some(p) => {
+                let restored = p.restore(&ctx)?;
+                Ok(restored.into_value())
+            }
+            None => Ok(rquickjs::Value::new_null(ctx)),
+        }
     }
 
     /// Get the active buffer ID (0 if none)
@@ -1695,6 +1769,36 @@ impl JsEditorApi {
     /// Reload configuration from file
     pub fn reload_config(&self) {
         let _ = self.command_sender.send(PluginCommand::ReloadConfig);
+    }
+
+    /// Set a single config setting in the runtime layer for this session.
+    ///
+    /// `path` is dot-separated (e.g. `"editor.tab_size"`). `value` is any JSON
+    /// value in the shape the setting expects. The write lives in an
+    /// in-memory layer scoped to the calling plugin — it does not modify
+    /// `config.json`, and unloading the plugin (or reloading init.ts) drops
+    /// it. Intended use is `init.ts` running a conditional:
+    /// `if (editor.getEnv("SSH_TTY")) editor.setSetting("terminal.mouse", false);`
+    ///
+    /// Returns `true` if the write was queued. The actual update is
+    /// asynchronous; a subsequent `getConfig()` will reflect it after the
+    /// editor processes the command.
+    pub fn set_setting<'js>(
+        &self,
+        _ctx: rquickjs::Ctx<'js>,
+        path: String,
+        value: Value<'js>,
+    ) -> rquickjs::Result<bool> {
+        let json: serde_json::Value = rquickjs_serde::from_value(value)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        Ok(self
+            .command_sender
+            .send(PluginCommand::SetSetting {
+                plugin_name: self.plugin_name.clone(),
+                path,
+                value: json,
+            })
+            .is_ok())
     }
 
     /// Reload theme registry from disk
@@ -4342,6 +4446,22 @@ pub struct QuickJsBackend {
     registered_language_configs: Rc<RefCell<HashMap<String, String>>>,
     /// Tracks LSP server language → owning plugin name (first-writer-wins)
     registered_lsp_servers: Rc<RefCell<HashMap<String, String>>>,
+    /// Plugin-configuration plane (design M3): name → (exporter, persistent
+    /// JS Object). Shared across every JsEditorApi instance on this
+    /// Runtime.
+    plugin_api_exports:
+        Rc<RefCell<HashMap<String, (String, rquickjs::Persistent<rquickjs::Object<'static>>)>>>,
+}
+
+impl Drop for QuickJsBackend {
+    fn drop(&mut self) {
+        // Persistent<Object> holds references into the QuickJS heap; if any
+        // are alive when `runtime` drops, QuickJS asserts non-empty
+        // gc_obj_list. Clear the plugin-API export map (and any other
+        // Persistent-holding map we add later) before the Runtime field
+        // gets to run its own Drop.
+        self.plugin_api_exports.borrow_mut().clear();
+    }
 }
 
 impl QuickJsBackend {
@@ -4435,6 +4555,7 @@ impl QuickJsBackend {
         let registered_grammar_languages = Rc::new(RefCell::new(HashMap::new()));
         let registered_language_configs = Rc::new(RefCell::new(HashMap::new()));
         let registered_lsp_servers = Rc::new(RefCell::new(HashMap::new()));
+        let plugin_api_exports = Rc::new(RefCell::new(HashMap::new()));
 
         let backend = Self {
             runtime,
@@ -4454,6 +4575,7 @@ impl QuickJsBackend {
             registered_grammar_languages,
             registered_language_configs,
             registered_lsp_servers,
+            plugin_api_exports,
         };
 
         // Initialize main context (for internal utilities if needed)
@@ -4474,6 +4596,7 @@ impl QuickJsBackend {
         let registered_grammar_languages = Rc::clone(&self.registered_grammar_languages);
         let registered_language_configs = Rc::clone(&self.registered_language_configs);
         let registered_lsp_servers = Rc::clone(&self.registered_lsp_servers);
+        let plugin_api_exports = Rc::clone(&self.plugin_api_exports);
 
         context.with(|ctx| {
             let globals = ctx.globals();
@@ -4497,6 +4620,7 @@ impl QuickJsBackend {
                 registered_grammar_languages: Rc::clone(&registered_grammar_languages),
                 registered_language_configs: Rc::clone(&registered_language_configs),
                 registered_lsp_servers: Rc::clone(&registered_lsp_servers),
+                plugin_api_exports: Rc::clone(&plugin_api_exports),
                 plugin_name: plugin_name.to_string(),
             };
             let editor = rquickjs::Class::<JsEditorApi>::instance(ctx.clone(), js_api)?;
@@ -4509,6 +4633,43 @@ impl QuickJsBackend {
 
             // Define registerHandler() for strict-mode-compatible handler registration
             ctx.eval::<(), _>("globalThis.registerHandler = function(name, fn) { globalThis[name] = fn; };")?;
+
+// Closure-friendly overload for `editor.on(event, fn)` (design M2).
+            // The existing method takes a string handler name registered on
+            // globalThis. This shim wraps it so callers can pass a function
+            // directly — we synthesize a unique name, stash the function on
+            // globalThis (mirroring registerHandler), and subscribe via the
+            // original path. Pass-through for the legacy string form.
+            ctx.eval::<(), _>(
+                r#"
+                (function() {
+                    const originalOn = editor.on.bind(editor);
+                    const originalOff = editor.off.bind(editor);
+                    let counter = 0;
+                    const anonNames = new WeakMap();
+                    editor.on = function(eventName, handlerOrName) {
+                        if (typeof handlerOrName === 'function') {
+                            const existing = anonNames.get(handlerOrName);
+                            const name = existing || `__anon_on_${++counter}`;
+                            if (!existing) {
+                                anonNames.set(handlerOrName, name);
+                            }
+                            globalThis[name] = handlerOrName;
+                            return originalOn(eventName, name);
+                        }
+                        return originalOn(eventName, handlerOrName);
+                    };
+                    editor.off = function(eventName, handlerOrName) {
+                        if (typeof handlerOrName === 'function') {
+                            const name = anonNames.get(handlerOrName);
+                            if (name === undefined) return false;
+                            return originalOff(eventName, name);
+                        }
+                        return originalOff(eventName, handlerOrName);
+                    };
+                })();
+                "#,
+            )?;
 
             // Provide console.log for debugging
             // Use Rest<T> to handle variadic arguments like console.log('a', 'b', obj)
@@ -5020,6 +5181,20 @@ impl QuickJsBackend {
         if let Ok(mut owners) = self.async_resource_owners.lock() {
             owners.retain(|_, name| name != plugin_name);
         }
+
+        // Drop every runtime-overlay setting this plugin wrote
+        // (design M1). The editor's handler no-ops if the plugin didn't
+        // write anything, so firing this unconditionally is safe.
+        let _ = self
+            .command_sender
+            .send(PluginCommand::ClearPluginSettings {
+                plugin_name: plugin_name.to_string(),
+            });
+
+        // Drop any plugin-API exports (design M3) this plugin published.
+        self.plugin_api_exports
+            .borrow_mut()
+            .retain(|_, (exporter, _)| exporter != plugin_name);
 
         // Clear collision tracking maps so another plugin can re-register these names
         self.registered_command_names

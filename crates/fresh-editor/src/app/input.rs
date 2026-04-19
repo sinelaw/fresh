@@ -1225,6 +1225,85 @@ impl Editor {
                     );
                 }
             }
+            Action::InitReload => {
+                // Same code path as auto-load: read init.ts and push it
+                // through the existing plugin pipeline. The runtime's
+                // hot-reload semantics drop prior commands / handlers /
+                // event subs / settings before the new source runs.
+                self.load_init_script(true);
+                // Re-fire plugins_loaded so handlers expecting a "fresh"
+                // post-load environment (M2) see it.
+                self.fire_plugins_loaded_hook();
+            }
+            Action::InitEdit => {
+                // Ensure the file exists (create from template if absent),
+                // then open it in the editor so users can edit + reload.
+                let config_dir = self.dir_context.config_dir.clone();
+                match crate::init_script::ensure_starter(&config_dir) {
+                    Ok(path) => match self.open_file(&path) {
+                        Ok(_) => {
+                            self.set_status_message(format!("init.ts: {}", path.display()));
+                        }
+                        Err(e) => {
+                            self.set_status_message(format!("init.ts: open failed: {e}"));
+                        }
+                    },
+                    Err(e) => {
+                        self.set_status_message(format!("init.ts: create failed: {e}"));
+                    }
+                }
+            }
+            Action::InitCheck => {
+                // Run the same parse check as `fresh --cmd init check` but
+                // surface results in the status bar.
+                let report = crate::init_script::check(&self.dir_context.config_dir);
+                if report.ok && report.diagnostics.is_empty() {
+                    self.set_status_message("init.ts: ok".into());
+                } else if !report.ok {
+                    let first = report
+                        .diagnostics
+                        .first()
+                        .map(|d| format!("{}:{}: {}", d.line, d.column, d.message))
+                        .unwrap_or_else(|| "unknown error".into());
+                    self.set_status_message(format!(
+                        "init.ts: {} error(s) — first: {first}",
+                        report.diagnostics.len()
+                    ));
+                } else {
+                    self.set_status_message(format!(
+                        "init.ts: {} warning(s)",
+                        report.diagnostics.len()
+                    ));
+                }
+            }
+            Action::InitRevert => {
+                // "As if init.ts had never run": unload the plugin. That
+                // drops its commands, handlers, events, and (via
+                // ClearPluginSettings) its runtime overlay entries.
+                #[cfg(feature = "plugins")]
+                {
+                    let name = crate::init_script::INIT_PLUGIN_NAME;
+                    match self.plugin_manager.unload_plugin(name) {
+                        Ok(()) => {
+                            self.set_status_message(
+                                "init.ts reverted — state is as if it had never run".into(),
+                            );
+                        }
+                        Err(e) => {
+                            // Not having an init.ts loaded is the common case
+                            // and should read as a no-op, not an error.
+                            tracing::debug!("init: revert: {e}");
+                            self.set_status_message("init.ts is not currently loaded".into());
+                        }
+                    }
+                }
+                #[cfg(not(feature = "plugins"))]
+                {
+                    self.set_status_message(
+                        "Plugins not available (compiled without plugin support)".into(),
+                    );
+                }
+            }
             Action::OpenTerminal => {
                 self.open_terminal();
             }

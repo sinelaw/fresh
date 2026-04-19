@@ -1263,6 +1263,35 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[Normal],
         custom_contexts: &[],
     },
+    // User init.ts
+    CommandDef {
+        name_key: "cmd.init_reload",
+        desc_key: "cmd.init_reload_desc",
+        action: || Action::InitReload,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.init_revert",
+        desc_key: "cmd.init_revert_desc",
+        action: || Action::InitRevert,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.init_edit",
+        desc_key: "cmd.init_edit_desc",
+        action: || Action::InitEdit,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.init_check",
+        desc_key: "cmd.init_check_desc",
+        action: || Action::InitCheck,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
 ];
 
 /// Get all available commands for the command palette

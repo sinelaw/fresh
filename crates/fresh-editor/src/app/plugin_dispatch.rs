@@ -637,6 +637,16 @@ impl Editor {
             PluginCommand::ReloadConfig => {
                 self.reload_config();
             }
+            PluginCommand::SetSetting {
+                plugin_name,
+                path,
+                value,
+            } => {
+                self.handle_set_setting(plugin_name, path, value);
+            }
+            PluginCommand::ClearPluginSettings { plugin_name } => {
+                self.handle_clear_plugin_settings(&plugin_name);
+            }
             PluginCommand::ReloadThemes { apply_theme } => {
                 self.reload_themes();
                 if let Some(theme_name) = apply_theme {

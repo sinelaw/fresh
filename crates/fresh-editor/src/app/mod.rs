@@ -302,43 +302,38 @@ pub struct Editor {
     /// field assignment through `self.config` is a compile error — every
     /// mutation must route through the CoW-aware accessor.
     ///
+    /// Effective value is `base_config_json` + `runtime_overlay` (design
+    /// §3.4): init.ts and plugins may layer per-session writes via
+    /// `editor.setSetting(path, value)`. The overlay is merged into
+    /// `base_config_json`, the result is deserialised into this field,
+    /// and mutations go through `Arc::make_mut`.
+    ///
     /// **Freshness invariant**: `config_snapshot_anchor` below is set to
     /// `Arc::clone(&self.config)` on every plugin-snapshot refresh. That
     /// guarantees the first `Arc::make_mut(&mut self.config)` after each
     /// refresh *always* CoW-clones (strong count ≥ 2), so `self.config`
     /// moves to a new pointer and stops being `ptr_eq` with the anchor.
-    /// Subsequent mutations in the same refresh cycle may mutate the new
-    /// pointer in place, but the anchor still points at the *pre-refresh*
-    /// value — so the next refresh's `ptr_eq(self.config, anchor)` check
-    /// still detects that serialization is out of date. In no scenario
-    /// can `config_cached_json` go stale relative to `*self.config`.
     config: Arc<Config>,
 
     /// Clone of `config` captured at the last plugin-snapshot refresh.
-    /// The only writer is `update_plugin_state_snapshot` (see
-    /// `plugin_dispatch.rs`), which keeps it in lock-step with
-    /// `config_cached_json`. Two roles:
-    ///
-    /// 1. Forces the first post-refresh `Arc::make_mut` on `self.config`
-    ///    to CoW, so any mutation produces a new pointer distinguishable
-    ///    by `Arc::ptr_eq` from the anchor.
-    /// 2. Acts as the cache key for `config_cached_json`:
-    ///    `Arc::ptr_eq(&self.config, &self.config_snapshot_anchor)` is
-    ///    true iff the cached JSON is still valid.
     config_snapshot_anchor: Arc<Config>,
 
     /// Serialized JSON of `*self.config` as of the last time
     /// `ptr_eq(&self.config, &self.config_snapshot_anchor)` was false.
-    /// This is the value the plugin snapshot hands to `getConfig()`.
-    /// Recomputed only when the config pointer actually moves, so idle
-    /// ticks do zero serialization work.
     config_cached_json: Arc<serde_json::Value>,
 
     /// Cached raw user config (for plugins, avoids re-reading file on every frame).
-    /// Wrapped in `Arc` so the plugin snapshot refresh is a refcount bump
-    /// and mutation is funneled through `set_user_config_raw()`, which
-    /// replaces the whole `Arc`.
     user_config_raw: Arc<serde_json::Value>,
+
+    /// Disk-loaded config as JSON. Re-read only when the on-disk config
+    /// changes (reload_config). `config` above is recomputed whenever
+    /// `runtime_overlay` changes by starting from this JSON and applying
+    /// overlay entries.
+    base_config_json: serde_json::Value,
+
+    /// Plugin-scoped runtime overlay (design M1). Writes via
+    /// `editor.setSetting(...)` land here; unloading the plugin drops them.
+    runtime_overlay: crate::runtime_config::RuntimeConfigOverlay,
 
     /// Directory context for editor state paths
     dir_context: DirectoryContext,

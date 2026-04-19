@@ -602,6 +602,7 @@ mod integration_tests {
             editor_config: config,
             dir_context,
             plugins_enabled: false,
+            init_enabled: false,
         };
 
         let (paths_tx, paths_rx) = mpsc::channel();
@@ -767,6 +768,7 @@ mod integration_tests {
             editor_config: config,
             dir_context,
             plugins_enabled: false,
+            init_enabled: false,
         };
 
         let (paths_tx, paths_rx) = mpsc::channel();
@@ -939,6 +941,7 @@ mod integration_tests {
             editor_config: config,
             dir_context,
             plugins_enabled: false,
+            init_enabled: false,
         };
 
         let (paths_tx, paths_rx) = mpsc::channel();

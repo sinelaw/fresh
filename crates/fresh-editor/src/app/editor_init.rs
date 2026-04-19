@@ -481,6 +481,11 @@ impl Editor {
             Arc::new(serde_json::to_value(&*config_arc).unwrap_or(serde_json::Value::Null));
         let config_snapshot_anchor = Arc::clone(&config_arc);
 
+        // Snapshot the disk-resolved config as JSON so the M1 runtime
+        // overlay can rebuild `config` without re-reading disk on every
+        // setSetting call.
+        let base_config_json = (*config_cached_json).clone();
+
         let mut editor = Editor {
             buffers,
             event_logs,
@@ -489,6 +494,8 @@ impl Editor {
             config_snapshot_anchor,
             config_cached_json,
             user_config_raw: Arc::new(user_config_raw),
+            base_config_json,
+            runtime_overlay: crate::runtime_config::RuntimeConfigOverlay::new(),
             dir_context: dir_context.clone(),
             grammar_registry,
             pending_grammars: scan_result
@@ -782,5 +789,146 @@ impl Editor {
                 ));
             })
             .ok();
+    }
+
+    // =========================================================================
+    // init.ts / runtime-overlay surface (design docs §3–§6)
+    // =========================================================================
+
+    /// Auto-load `~/.config/fresh/init.ts` if present, through the existing
+    /// plugin pipeline under the stable name `crate::init_script::INIT_PLUGIN_NAME`.
+    pub fn load_init_script(&mut self, enabled: bool) {
+        use crate::init_script::{
+            decide_load, describe, record_success, InitOutcome, LoadDecision,
+        };
+
+        let config_dir = self.dir_context.config_dir.clone();
+        let outcome = match decide_load(&config_dir, enabled) {
+            LoadDecision::Skip(outcome) => outcome,
+            LoadDecision::Load { source } => {
+                if !self.plugin_manager.is_active() {
+                    InitOutcome::Failed {
+                        message: "plugin runtime inactive (--no-plugins); init.ts cannot run"
+                            .into(),
+                    }
+                } else {
+                    match self.plugin_manager.load_plugin_from_source(
+                        &source,
+                        crate::init_script::INIT_PLUGIN_NAME,
+                        true,
+                    ) {
+                        Ok(()) => {
+                            record_success(&config_dir);
+                            InitOutcome::Loaded
+                        }
+                        Err(e) => InitOutcome::Failed {
+                            message: format!("{e}"),
+                        },
+                    }
+                }
+            }
+        };
+
+        let summary = describe(&outcome);
+        match outcome {
+            InitOutcome::NotFound | InitOutcome::Disabled => tracing::debug!("{}", summary),
+            InitOutcome::Loaded => tracing::info!("{}", summary),
+            InitOutcome::CrashFused { .. } | InitOutcome::Failed { .. } => {
+                tracing::warn!("{}", summary);
+                self.set_status_message(summary);
+            }
+        }
+    }
+
+    /// Handle a `setSetting(path, value)` from a plugin (M1).
+    pub fn handle_set_setting(
+        &mut self,
+        plugin_name: String,
+        path: String,
+        value: serde_json::Value,
+    ) {
+        let prior_overlay = self.runtime_overlay.clone();
+        self.runtime_overlay.set(&plugin_name, path.clone(), value);
+        if let Err(msg) = self.rebuild_config_from_overlay() {
+            self.runtime_overlay = prior_overlay;
+            if let Err(rollback_err) = self.rebuild_config_from_overlay() {
+                tracing::error!("init.ts setSetting({path}): rollback also failed: {rollback_err}");
+            }
+            self.set_status_message(format!("init.ts setSetting({path}): {msg}"));
+        }
+    }
+
+    /// Drop every runtime-overlay entry attributed to `plugin_name`.
+    pub fn handle_clear_plugin_settings(&mut self, plugin_name: &str) {
+        let removed = self.runtime_overlay.clear_plugin(plugin_name);
+        if removed == 0 {
+            return;
+        }
+        if let Err(msg) = self.rebuild_config_from_overlay() {
+            tracing::warn!("runtime overlay rebuild after clear failed: {msg}");
+        }
+    }
+
+    /// Rebuild `self.config` from `base_config_json + runtime_overlay`.
+    pub(crate) fn rebuild_config_from_overlay(&mut self) -> Result<(), String> {
+        let mut merged = self.base_config_json.clone();
+        self.runtime_overlay.apply_to(&mut merged);
+
+        let new_config: crate::config::Config =
+            serde_json::from_value(merged).map_err(|e| format!("config validation failed: {e}"))?;
+
+        let old_theme = self.config.theme.clone();
+        self.config = Arc::new(new_config);
+
+        if old_theme != self.config.theme {
+            if let Some(theme) = self.theme_registry.get_cloned(&self.config.theme) {
+                self.theme = theme;
+            }
+        }
+
+        *self.keybindings.write().unwrap() =
+            crate::input::keybindings::KeybindingResolver::new(&self.config);
+        self.clipboard.apply_config(&self.config.clipboard);
+        self.menu_bar_visible = self.config.editor.show_menu_bar;
+        self.tab_bar_visible = self.config.editor.show_tab_bar;
+        self.status_bar_visible = self.config.editor.show_status_bar;
+        self.prompt_line_visible = self.config.editor.show_prompt_line;
+
+        self.update_plugin_state_snapshot();
+        Ok(())
+    }
+
+    /// Fire the `plugins_loaded` hook (design M2, §3.3 phase 2).
+    pub fn fire_plugins_loaded_hook(&self) {
+        #[cfg(feature = "plugins")]
+        if self.plugin_manager.is_active() {
+            self.plugin_manager.run_hook(
+                "plugins_loaded",
+                crate::services::plugins::hooks::HookArgs::PluginsLoaded,
+            );
+        }
+    }
+
+    /// Fire the `ready` hook (design M2, §3.3 phase 3).
+    pub fn fire_ready_hook(&self) {
+        #[cfg(feature = "plugins")]
+        if self.plugin_manager.is_active() {
+            self.plugin_manager
+                .run_hook("ready", crate::services::plugins::hooks::HookArgs::Ready);
+        }
+    }
+
+    /// Test-only accessor for the current effective config.
+    #[doc(hidden)]
+    pub fn config_for_tests(&self) -> &crate::config::Config {
+        &self.config
+    }
+
+    /// Test-only shim that dispatches an action through the normal path.
+    #[doc(hidden)]
+    pub fn dispatch_action_for_tests(&mut self, action: crate::input::keybindings::Action) {
+        if let Err(e) = self.handle_action(action) {
+            tracing::warn!("dispatch_action_for_tests: {e}");
+        }
     }
 }

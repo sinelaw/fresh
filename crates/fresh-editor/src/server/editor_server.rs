@@ -44,6 +44,8 @@ pub struct EditorServerConfig {
     pub dir_context: DirectoryContext,
     /// Whether plugins are enabled
     pub plugins_enabled: bool,
+    /// Whether to auto-load ~/.config/fresh/init.ts (requires `plugins_enabled`).
+    pub init_enabled: bool,
 }
 
 /// Editor server that manages editor state and client connections
@@ -442,6 +444,9 @@ impl EditorServer {
             filesystem,
         )
         .map_err(|e| io::Error::other(format!("Failed to create editor: {}", e)))?;
+
+        // Auto-load init.ts via the same pipeline as the non-server entry point.
+        editor.load_init_script(self.config.init_enabled);
 
         // Enable session mode - use hardware cursor only, no REVERSED software cursor
         editor.set_session_mode(true);

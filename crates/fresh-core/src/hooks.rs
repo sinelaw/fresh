@@ -114,6 +114,16 @@ pub enum HookArgs {
     /// Editor is initializing
     EditorInitialized,
 
+    /// All plugin packages + init.ts have been loaded. Fires after the
+    /// plugin discovery loop and before session restore — the lifecycle
+    /// hook for code that wants to configure a plugin via its
+    /// getPluginApi(...) surface. See design §3.3 (phase 2).
+    PluginsLoaded,
+
+    /// Editor has completed startup: plugins are loaded, session is
+    /// restored, and the active buffer exists. Design §3.3 (phase 3).
+    Ready,
+
     /// Rendering is starting for a buffer (called once per buffer before render_line hooks)
     RenderStart { buffer_id: BufferId },
 
@@ -544,6 +554,12 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             serde_json::json!({ "milliseconds": milliseconds })
         }
         HookArgs::EditorInitialized => {
+            serde_json::json!({})
+        }
+        HookArgs::PluginsLoaded => {
+            serde_json::json!({})
+        }
+        HookArgs::Ready => {
             serde_json::json!({})
         }
         HookArgs::PromptChanged { prompt_type, input } => {

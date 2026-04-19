@@ -33,6 +33,7 @@ pub use fresh_gui::{
 pub fn run_gui(
     files: &[String],
     no_plugins: bool,
+    no_init: bool,
     config_path: Option<&PathBuf>,
     locale: Option<&str>,
     no_session: bool,
@@ -116,6 +117,10 @@ pub fn run_gui(
             filesystem,
         )
         .context("Failed to create editor instance")?;
+
+        // Auto-load ~/.config/fresh/init.ts via the plugin pipeline.
+        editor.load_init_script(!no_init);
+        editor.fire_plugins_loaded_hook();
 
         // ratatui-wgpu does not render a hardware cursor.
         editor.set_software_cursor_only(true);

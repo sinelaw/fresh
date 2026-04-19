@@ -682,6 +682,12 @@ pub enum Action {
     // Plugin development
     LoadPluginFromBuffer, // Load current buffer as a plugin
 
+    // User init.ts (design M4, M5, M6)
+    InitReload, // Reload ~/.config/fresh/init.ts via the existing plugin pipeline
+    InitRevert, // Unload init.ts as if it had never run
+    InitEdit,   // Open ~/.config/fresh/init.ts (creates from template if missing)
+    InitCheck,  // Syntax-check ~/.config/fresh/init.ts via oxc
+
     // Composite buffer (side-by-side diff) hunk navigation
     CompositeNextHunk, // Navigate to the next hunk in a composite diff view
     CompositePrevHunk, // Navigate to the previous hunk in a composite diff view
@@ -1061,6 +1067,10 @@ impl Action {
             "calibrate_input" => CalibrateInput,
             "event_debug" => EventDebug,
             "load_plugin_from_buffer" => LoadPluginFromBuffer,
+            "init_reload" => InitReload,
+            "init_revert" => InitRevert,
+            "init_edit" => InitEdit,
+            "init_check" => InitCheck,
             "open_keybinding_editor" => OpenKeybindingEditor,
 
             "composite_next_hunk" => CompositeNextHunk,
@@ -2282,6 +2292,10 @@ impl KeybindingResolver {
             Action::CalibrateInput => t!("action.calibrate_input"),
             Action::EventDebug => t!("action.event_debug"),
             Action::LoadPluginFromBuffer => "Load Plugin from Buffer".into(),
+            Action::InitReload => "Reload init.ts".into(),
+            Action::InitRevert => "Revert init.ts".into(),
+            Action::InitEdit => "Edit init.ts".into(),
+            Action::InitCheck => "Check init.ts".into(),
             Action::OpenKeybindingEditor => "Keybinding Editor".into(),
             Action::CompositeNextHunk => t!("action.composite_next_hunk"),
             Action::CompositePrevHunk => t!("action.composite_prev_hunk"),

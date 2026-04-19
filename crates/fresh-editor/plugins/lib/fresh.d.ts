@@ -869,6 +869,30 @@ interface EditorAPI {
 	*/
 	apiVersion(): number;
 	/**
+	* The name of the plugin this `editor` handle belongs to. Used by the
+	* M3 plugin-API plane (`exportPluginApi` tags the exporter). Plugin
+	* authors generally don't call this directly.
+	*/
+	pluginName(): string;
+	/**
+	* Publish a typed API surface under `name`. Another plugin (typically
+	* `init.ts`) can reach it later via `getPluginApi(name)`. Calling
+	* again with the same `name` replaces the previous registration
+	* (idempotent — reload works). Exports are auto-dropped when the
+	* calling plugin is unloaded.
+	* 
+	* Returns `true` on success. Rejects with a TypeError if `name` is
+	* empty or `api` is not an object (functions and primitives are not
+	* valid API surfaces — only objects).
+	*/
+	exportPluginApi(name: string, api: unknown): boolean;
+	/**
+	* Look up a plugin API previously published via `exportPluginApi`.
+	* Returns the api object (restored into the caller's context) or
+	* `null` if no plugin exports under that name.
+	*/
+	getPluginApi(name: string): unknown | null;
+	/**
 	* Get the active buffer ID (0 if none)
 	*/
 	getActiveBufferId(): number;
@@ -1165,6 +1189,21 @@ interface EditorAPI {
 	* Reload configuration from file
 	*/
 	reloadConfig(): void;
+	/**
+	* Set a single config setting in the runtime layer for this session.
+	* 
+	* `path` is dot-separated (e.g. `"editor.tab_size"`). `value` is any JSON
+	* value in the shape the setting expects. The write lives in an
+	* in-memory layer scoped to the calling plugin — it does not modify
+	* `config.json`, and unloading the plugin (or reloading init.ts) drops
+	* it. Intended use is `init.ts` running a conditional:
+	* `if (editor.getEnv("SSH_TTY")) editor.setSetting("terminal.mouse", false);`
+	* 
+	* Returns `true` if the write was queued. The actual update is
+	* asynchronous; a subsequent `getConfig()` will reflect it after the
+	* editor processes the command.
+	*/
+	setSetting(path: string, value: unknown): boolean;
 	/**
 	* Reload theme registry from disk
 	* Call this after installing theme packages or saving new themes

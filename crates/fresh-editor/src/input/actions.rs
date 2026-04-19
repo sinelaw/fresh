@@ -3072,6 +3072,10 @@ pub fn action_to_events(
         | Action::CalibrateInput
         | Action::EventDebug
         | Action::LoadPluginFromBuffer
+        | Action::InitReload
+        | Action::InitRevert
+        | Action::InitEdit
+        | Action::InitCheck
         | Action::OpenKeybindingEditor
         | Action::AddRuler
         | Action::RemoveRuler

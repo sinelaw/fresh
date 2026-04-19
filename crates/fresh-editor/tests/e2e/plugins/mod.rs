@@ -9,6 +9,7 @@ pub mod diff_cursor;
 pub mod find_file;
 pub mod git;
 pub mod gutter;
+pub mod init_script;
 pub mod language_pack;
 pub mod load_from_buffer;
 pub mod lsp_find_references;

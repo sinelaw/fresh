@@ -41,6 +41,7 @@ fn make_server_config(
         editor_config: config,
         dir_context,
         plugins_enabled: false,
+        init_enabled: false,
     }
 }
 

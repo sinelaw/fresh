@@ -111,6 +111,11 @@ fresh-parser-js = { workspace = true, optional = true }
 fresh-languages = { workspace = true, optional = true, features = ["all-languages"] }
 fresh-plugin-runtime = { workspace = true, optional = true }
 
+# oxc for user init.ts syntax checking (fresh --cmd init check)
+oxc_allocator.workspace = true
+oxc_parser.workspace = true
+oxc_span.workspace = true
+
 # Always required (for schema generation and runtime)
 serde.workspace = true
 serde_json.workspace = true

@@ -115,6 +115,14 @@ struct Cli {
     #[arg(long)]
     no_plugins: bool,
 
+    /// Skip `~/.config/fresh/init.ts` for this launch
+    #[arg(long)]
+    no_init: bool,
+
+    /// Safe mode: skip init.ts AND all plugins (recovery from a bad config)
+    #[arg(long)]
+    safe: bool,
+
     /// Path to configuration file
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
@@ -178,6 +186,8 @@ struct Args {
     files: Vec<String>,
     stdin: bool,
     no_plugins: bool,
+    no_init: bool,
+    safe: bool,
     config: Option<PathBuf>,
     log_file: Option<PathBuf>,
     event_log: Option<PathBuf>,
@@ -412,10 +422,17 @@ impl From<Cli> for Args {
             )
         };
 
+        // Safe mode implies no_plugins and no_init.
+        let safe = cli.safe;
+        let no_plugins = cli.no_plugins || safe;
+        let no_init = cli.no_init || safe;
+
         Args {
             files,
             stdin: cli.stdin,
-            no_plugins: cli.no_plugins,
+            no_plugins,
+            no_init,
+            safe,
             config: cli.config,
             log_file: cli.log_file,
             event_log: cli.event_log,
@@ -1537,6 +1554,52 @@ fn check_plugin_bundle(plugin_path: &std::path::Path) -> AnyhowResult<()> {
     Ok(())
 }
 
+/// `fresh --cmd init check` — syntax-check ~/.config/fresh/init.ts via oxc.
+/// Exits 0 if the file is absent or parses cleanly, 1 on any parse error.
+fn init_check_command() -> AnyhowResult<()> {
+    let dir_context = fresh::config_io::DirectoryContext::from_system()
+        .context("failed to resolve config directory")?;
+    let report = fresh::init_script::check(&dir_context.config_dir);
+
+    let path_display = report.path.display();
+    if report.ok {
+        if report.diagnostics.is_empty() {
+            // File may or may not exist — either way, nothing to complain about.
+            println!("init.ts: ok ({path_display})");
+        } else {
+            // Warnings without errors. Still exit 0.
+            for d in &report.diagnostics {
+                eprintln!(
+                    "{path_display}:{}:{}  warning  {}",
+                    d.line, d.column, d.message
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    for d in &report.diagnostics {
+        let tag = match d.severity {
+            fresh::init_script::CheckSeverity::Error => "error",
+            fresh::init_script::CheckSeverity::Warning => "warning",
+        };
+        eprintln!(
+            "{path_display}:{}:{}  {tag}  {}",
+            d.line, d.column, d.message
+        );
+    }
+    let errors = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == fresh::init_script::CheckSeverity::Error)
+        .count();
+    eprintln!(
+        "\n{errors} error{}. init.ts will not be evaluated until fixed.",
+        if errors == 1 { "" } else { "s" }
+    );
+    std::process::exit(1);
+}
+
 /// Initialize a new Fresh package (plugin, theme, or language pack)
 fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
     use std::io::{BufRead, Write};
@@ -2388,6 +2451,7 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
         editor_config,
         dir_context,
         plugins_enabled: !args.no_plugins,
+        init_enabled: !args.no_init,
     };
 
     eprintln!("[server] Creating EditorServer...");
@@ -2814,6 +2878,28 @@ fn real_main() -> AnyhowResult<()> {
     // Convert to legacy Args format for compatibility
     let args: Args = cli.into();
 
+    // Expose `FRESH_INTERACTIVE=1` on the editor's process env when Fresh
+    // is launched as a human-interactive editor (stdin is a TTY, not a
+    // CLI sub-command, not --stdin / --attach / --server). init.ts (and
+    // plugins in general) read this via getEnv to branch on "real"
+    // launches — e.g., skip heavy workflow-setup under $GIT_EDITOR. See
+    // design §5 / §6.2.
+    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin())
+        && !args.stdin
+        && !args.attach
+        && !args.server
+        && !args.list_sessions
+        && args.kill.is_none()
+        && args.open_files_in_session.is_none()
+        && args.init.is_none()
+        && !args.list_grammars
+        && !args.dump_config
+        && !args.show_paths
+        && args.check_plugin.is_none();
+    if interactive {
+        std::env::set_var("FRESH_INTERACTIVE", "1");
+    }
+
     // Handle --show-paths early (no terminal setup needed)
     if args.show_paths {
         let dir_context = fresh::config_io::DirectoryContext::from_system()?;
@@ -2869,8 +2955,14 @@ fn real_main() -> AnyhowResult<()> {
         return check_plugin_bundle(plugin_path);
     }
 
-    // Handle --init early (no terminal setup needed)
+    // Handle --init early (no terminal setup needed).
+    // `--cmd init check` is a hidden sub-route on the same flag.
     if let Some(ref pkg_type) = args.init {
+        if let Some(subcmd) = pkg_type {
+            if subcmd == "check" {
+                return init_check_command();
+            }
+        }
         return init_package_command(pkg_type.clone());
     }
 
@@ -2905,6 +2997,7 @@ fn real_main() -> AnyhowResult<()> {
         return fresh::gui::run_gui(
             &args.files,
             args.no_plugins,
+            args.no_init,
             args.config.as_ref(),
             args.locale.as_deref(),
             args.no_session,
@@ -2973,6 +3066,17 @@ fn real_main() -> AnyhowResult<()> {
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");
 
+        // User init.ts: auto-load from ~/.config/fresh/init.ts through the
+        // same pipeline as "Load Plugin from Buffer". Respects `--no-init`
+        // and `--safe`, and is short-circuited by the crash fuse after
+        // repeated failures.
+        editor.load_init_script(!args.no_init);
+
+        // All plugins (registry + init.ts) have loaded — fire the
+        // plugins_loaded lifecycle hook so init.ts `on("plugins_loaded",
+        // fn)` callbacks can configure plugins via getPluginApi.
+        editor.fire_plugins_loaded_hook();
+
         // Set the process spawner (LocalProcessSpawner for local, RemoteProcessSpawner for remote)
         editor.set_process_spawner(process_spawner.clone());
 
@@ -3020,6 +3124,11 @@ fn real_main() -> AnyhowResult<()> {
         if let Err(e) = editor.start_recovery_session() {
             tracing::warn!("Failed to start recovery session: {}", e);
         }
+
+        // Workspace restored, initial buffers opened, recovery session up —
+        // fire the `ready` lifecycle hook (design M2, §3.3 phase 3) before
+        // handing off to the event loop.
+        editor.fire_ready_hook();
 
         let iteration = run_editor_iteration(
             &mut editor,
