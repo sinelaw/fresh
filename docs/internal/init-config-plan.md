@@ -6,13 +6,15 @@
 > the MVP here.
 
 The work splits into six milestones. **M0 → M1 → M5 → M6** is the MVP
-path that delivers a useful init.ts. **M2 → M3 → M4** unlocks the
-plugin-configuration plane. Each milestone is a shippable unit.
+path that delivers a useful init.ts. **M2 → M3** unlocks the
+plugin-configuration plane. **M4** is reload (tightens the iteration
+loop). Each milestone is a shippable unit.
 
-## M0 — Loader & safety plumbing
+## M0 — Loader, source-tagging & safety plumbing
 
-**Goal.** Fresh detects, loads, and can opt out of a user init.ts. No
-new surface for the user to write code against yet.
+**Goal.** Fresh detects, loads, and can opt out of a user init.ts.
+Per-source registration tagging is in place so a future reload can
+clean up init.ts's writes.
 
 - Locate `~/.config/fresh/init.ts`, transpile via the existing oxc
   pipeline, evaluate in the same QuickJS sandbox plugins use, at the
@@ -23,11 +25,17 @@ new surface for the user to write code against yet.
   `~/.config/fresh/logs/init.crashes`; auto-engages safe mode after
   three crashes in a short window; resets after one good launch.
 - Errors during evaluation are caught — status indicator + log entry,
-  editor continues with defaults.
+  editor continues with whatever was applied so far.
+- Extend the existing per-source registration the plugin loader uses
+  so `init.ts` is a recognised source name. Commands, handlers, event
+  subscriptions, LSP/grammar/language registrations made during init.ts
+  evaluation are tagged with this source. (No reload command yet —
+  that's M4 — but the tagging needs to be in place from the start.)
 
 **Verifies.** Empty init.ts loads silently. A `throw` produces a
 status indicator; editor still opens. `--safe` skips evaluation.
-Crash fuse engages and resets correctly.
+Crash fuse engages and resets correctly. Inspecting the registries
+shows init.ts-tagged entries after a non-empty init.ts runs.
 
 **Depends on.** Nothing.
 
@@ -98,32 +106,29 @@ shipped `.d.ts`.
 
 **Depends on.** M0, M1, M2.
 
-## M4 — Reload & effect tracking (§6.7)
+## M4 — Reload command
 
-**Goal.** `init: Reload` works without restarting Fresh; failed
-reloads don't leave the editor half-applied.
+**Goal.** `init: Reload` works without restarting Fresh.
 
-- Wrap the `editor.*` handle handed to init.ts in a recording proxy.
-  Every mutating call records `(prior-value, new-value,
-  source-location)`. Methods to track: `setSetting`,
-  `applyConfigPatch`, `setPluginEnabled`, `registerLspServer`,
-  `applyTheme`, `loadPlugin`, `registerCommand`, `on`,
-  `registerHandler`, plus configure-calls dispatched through
-  `getPluginApi(...).configure(...)`.
-- Reload command: replay the effect list in reverse to revert, then
-  re-evaluate init.ts. If the new run throws, re-apply the saved
-  effects so the session keeps working.
-- Persist the last successful effect list to
-  `~/.config/fresh/logs/init.last.json` for an `init: Status` view
-  and a manual `init: Revert`.
-- Plugins continue to use the raw `editor.*` — only the init.ts
-  handle is wrapped.
+- Implement reload as: drop everything tagged with the init.ts source
+  in the per-source registries (M0); drop the init.ts runtime config
+  layer (M1); reload every plugin init.ts touched via `getPluginApi`
+  (M3); re-transpile and re-evaluate init.ts.
+- Track touched plugins in a small in-memory set (just plugin names,
+  not full effect records).
+- `init: Revert` is the same flow without step 4 — leaves the editor
+  as if init.ts had never run.
+- Failed re-evaluation leaves the editor in a possibly half-applied
+  state with a status indicator pointing at the failure. A subsequent
+  reload after the user fixes the file does a full reset and runs
+  cleanly. No second-evaluation recovery needed.
 
 **Verifies.** Edit init.ts → reload → state matches the new file.
-Reload with a syntax error → prior state is preserved; status
-indicator surfaces the diagnostic.
+Edit to introduce a syntax error → reload → status indicator surfaces
+the diagnostic; another reload after the fix lands clean.
 
-**Depends on.** M0, M1, M2, M3.
+**Depends on.** M0 (source-tagging), M1 (runtime layer to drop), M2
+(used by user code), M3 (plugin reload list).
 
 ## M5 — Check command & scope-discipline lints
 
@@ -173,8 +178,8 @@ available; `init: Edit` creates a working file.
 
 - **Tests.** Each milestone adds e2e fixtures in `crates/fresh-editor`
   alongside existing suites: a fixture init.ts plus assertions on the
-  resulting editor state. M4 adds unit tests for the effect-tracking
-  proxy.
+  resulting editor state. M4 adds e2e coverage for the
+  drop-tagged-then-re-eval flow, including the failed-reload case.
 - **User docs.** Land `docs/configuration/init.md` after M1.
   Plugin-author docs for the `exportPluginApi` convention land in
   `docs/plugins/development/code-config.md` after M3.

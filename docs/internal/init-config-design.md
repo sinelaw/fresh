@@ -132,13 +132,23 @@ The editor must always reach a usable state. Required, in order:
 
 - **Type-check failure** — `init.ts` is skipped, an error indicator
   links to the diagnostic, editor starts with defaults.
-- **Runtime throw** — effects from the failed run roll back; user can
-  reload, edit, or enter safe mode.
+- **Runtime throw at startup** — partial effects remain; status
+  indicator surfaces the failure; editor continues with whatever was
+  applied so far.
 - **Crash inside `init.ts`** three times within a short window — next
   launch enters safe mode automatically. Resets after one good launch.
 
-Reload reverts the previous run's effects then re-runs; if the new run
-fails, the previous effects re-apply (session keeps working).
+**Reload semantics.** Drop the init.ts-tagged entries from the
+existing per-source registries (commands, handlers, event subs, LSP
+registrations), drop the init.ts runtime config layer, reload every
+plugin init.ts touched via `getPluginApi`, then re-evaluate. If
+re-evaluation throws, state may be half-applied; the user sees a
+banner pointing at the failure and re-runs reload after fixing.
+
+This relies on the plugin runtime's existing per-source registration
+tagging — init.ts is just one more source name. No effect-record
+journal, no proxy on `editor.*`. `init: Revert` is the same as reload
+but skips the re-evaluation step.
 
 The user can always start with `--safe` (skip init.ts and plugins) or
 `--no-init` (skip init.ts only). Safe-mode startup must not require
@@ -174,13 +184,17 @@ plugin.
 
 | # | Addition | Purpose | Priority |
 |---|---|---|---|
-| 6.1 | `setSetting(path, value)` | Runtime per-setting writes — the only true blocker | **P0** |
+| 6.1 | `setSetting(path, value)` | Runtime per-setting writes — the only blocker | **P0** |
 | 6.2 | `exportPluginApi(name, api)` / `getPluginApi<T>(name)` | Plugin-configuration plane (§3.5) | P1 |
 | 6.3 | Closure overload for `editor.on(event, fn)`; new event names `plugins_loaded` and `ready` | Lifecycle phases (§3.3) without dedicated APIs | P1 |
-| 6.4 | Effect-tracking proxy on the `editor.*` handle init.ts uses (internal; no public API change) | Reliable reload/revert; plugins continue to use the raw API | P2 |
 
-§6.1 is the only blocker; the rest degrade gracefully or unlock
-specific scenarios (plugin code-config, clean reload).
+§6.1 is the only blocker; §6.2 unlocks code-configurable plugins;
+§6.3 unlocks the two-phase model.
+
+Reload (§4) does not need a dedicated API. It reuses the existing
+per-source registration tagging the plugin runtime already has —
+init.ts becomes one more source name, and reload drops everything
+tagged with that name before re-running.
 
 **Deliberately not added** — the alternative in each case is good
 enough that a new method would just inflate the surface:
@@ -200,6 +214,10 @@ enough that a new method would just inflate the surface:
   second API surface.
 - `getProjectRoot()` — a short loop using existing `editor.fileExists`
   / `pathDirname` / `pathJoin` covers it.
+- Effect-tracking proxy on `editor.*` — per-source registration
+  tagging (already used by plugins) plus dropping the init.ts runtime
+  config layer is enough. Reload is "drop tagged + reload touched
+  plugins + re-evaluate."
 
 ## 7. Open questions
 
