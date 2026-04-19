@@ -155,7 +155,12 @@ impl ThemeRegistry {
         // 3. `file://PATH` — env-expand and retry exact match.
         if let Some(raw_path) = value.strip_prefix("file://") {
             let expanded = expand_env_vars(raw_path);
-            let candidate = format!("file://{}", expanded);
+            // Normalize forward slashes to the OS-native separator so the
+            // candidate matches the registry key built from
+            // `entry.path().display()` (backslashes on Windows). No-op on
+            // Unix where `MAIN_SEPARATOR_STR == "/"`.
+            let expanded_native = expanded.replace('/', std::path::MAIN_SEPARATOR_STR);
+            let candidate = format!("file://{}", expanded_native);
             if self.themes.contains_key(&candidate) {
                 return Some(candidate);
             }
