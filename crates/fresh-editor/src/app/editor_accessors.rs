@@ -131,6 +131,22 @@ impl Editor {
             .find_keybinding_for_action(action_name, self.key_context.clone())
     }
 
+    /// Raw-event counterpart: return the `(KeyCode, KeyModifiers)` currently
+    /// bound to `action` in `context`. Intended for callers that need to
+    /// simulate the user pressing the bound key (e2e tests, some hotkey-
+    /// chaining code) without hardcoding a default that a user's rebind
+    /// would invalidate.
+    pub fn keybinding_event_for_action(
+        &self,
+        action: &crate::input::keybindings::Action,
+        context: crate::input::keybindings::KeyContext,
+    ) -> Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)> {
+        self.keybindings
+            .read()
+            .unwrap()
+            .get_keybinding_event_for_action(action, context)
+    }
+
     /// Get mutable access to the mode registry
     pub fn mode_registry_mut(&mut self) -> &mut ModeRegistry {
         &mut self.mode_registry
