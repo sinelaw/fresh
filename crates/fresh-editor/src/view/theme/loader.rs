@@ -37,19 +37,13 @@ pub struct ThemeRegistry {
 impl ThemeRegistry {
     /// Look up a theme by key or name.
     ///
-    /// Tries exact key match first, then falls back to matching by normalized
-    /// display name (for backward compat with configs that just say `"dark"`).
+    /// Tries exact key match first, then falls back to matching by
+    /// `pack/name` (the portable form persisted for user themes), then by
+    /// normalized display name (for backward compat with configs that just
+    /// say `"dark"`).
     pub fn get(&self, key_or_name: &str) -> Option<&Theme> {
-        // Exact key match
-        if let Some(theme) = self.themes.get(key_or_name) {
-            return Some(theme);
-        }
-        // Fallback: match by normalized display name
-        let normalized = normalize_theme_name(key_or_name);
-        self.theme_list
-            .iter()
-            .find(|info| normalize_theme_name(&info.name) == normalized)
-            .and_then(|info| self.themes.get(&info.key))
+        self.resolve_key(key_or_name)
+            .and_then(|key| self.themes.get(key))
     }
 
     /// Get a cloned theme by key or name.
@@ -58,10 +52,32 @@ impl ThemeRegistry {
     }
 
     /// Resolve a key-or-name to the canonical registry key.
+    ///
+    /// Lookup order:
+    /// 1. Exact key match (covers built-ins, `pack/name` themes, and
+    ///    `file://` / repo-URL keys written directly in config).
+    /// 2. `pack/name` portable form: input is split on the last `/`; if a
+    ///    theme with that pack and normalized name exists, it wins. This is
+    ///    what configs persist for user-installed themes so they survive
+    ///    being shared via a dotfiles repo (issue #1621).
+    /// 3. Normalized-name fallback: matches any theme whose display name
+    ///    normalizes equal to the input (keeps old `"dark"`-style configs
+    ///    working).
     pub fn resolve_key<'a>(&'a self, key_or_name: &'a str) -> Option<&'a str> {
+        // 1. Exact key match
         if self.themes.contains_key(key_or_name) {
             return Some(key_or_name);
         }
+        // 2. `pack/name` portable form (e.g. `user/s-dark`, `user/subdir/dark`)
+        if let Some((pack, name)) = key_or_name.rsplit_once('/') {
+            let normalized_name = normalize_theme_name(name);
+            if let Some(info) = self.theme_list.iter().find(|info| {
+                info.pack == pack && normalize_theme_name(&info.name) == normalized_name
+            }) {
+                return Some(info.key.as_str());
+            }
+        }
+        // 3. Normalized-name fallback
         let normalized = normalize_theme_name(key_or_name);
         self.theme_list
             .iter()
@@ -691,6 +707,84 @@ mod tests {
             theme_info.pack, "user/my-collection",
             "Nested theme should have subdirectory in pack name"
         );
+    }
+
+    /// Regression test for #1621: a `config.json` shared via a dotfiles repo
+    /// must be able to reference a user theme without baking in the absolute
+    /// `file://` path of the author's machine. The portable `pack/name` form
+    /// (e.g. `user/s-dark`, `user/my-collection/nested`) must resolve to the
+    /// same theme on every machine that has the theme file under its own
+    /// user themes dir. The form must also disambiguate against a built-in
+    /// with the same display name.
+    #[test]
+    fn test_resolve_key_pack_slash_name_for_user_themes() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let themes_dir = temp_dir.path().to_path_buf();
+
+        // A user theme whose name collides with built-in `dark`.
+        let user_dark = r#"{
+            "name": "dark",
+            "editor": {},
+            "ui": {},
+            "search": {},
+            "diagnostic": {},
+            "syntax": {}
+        }"#;
+        std::fs::write(themes_dir.join("dark.json"), user_dark)
+            .expect("Failed to write user dark theme");
+
+        // A user theme in a subdirectory.
+        let subdir = themes_dir.join("my-collection");
+        std::fs::create_dir_all(&subdir).expect("Failed to create subdir");
+        let nested = r#"{
+            "name": "s-dark",
+            "editor": {},
+            "ui": {},
+            "search": {},
+            "diagnostic": {},
+            "syntax": {}
+        }"#;
+        std::fs::write(subdir.join("s-dark.json"), nested).expect("Failed to write nested theme");
+
+        let loader = ThemeLoader::new(themes_dir.clone());
+        let registry = loader.load_all(&[]);
+
+        // `dark` (no pack prefix) must resolve to the built-in, not the
+        // user theme, so legacy configs keep working.
+        let builtin_key = registry.resolve_key("dark").expect("`dark` should resolve");
+        assert_eq!(builtin_key, "dark", "bare `dark` must hit the built-in");
+
+        // `user/dark` must resolve to the user theme.
+        let user_key = registry
+            .resolve_key("user/dark")
+            .expect("`user/dark` should resolve");
+        assert!(
+            user_key.starts_with("file://"),
+            "`user/dark` must resolve to the user theme's file:// key, got: {}",
+            user_key
+        );
+        let theme = registry
+            .get("user/dark")
+            .expect("user/dark theme should be retrievable");
+        assert_eq!(theme.name, "dark");
+
+        // `user/my-collection/s-dark` must resolve to the nested theme.
+        let nested_key = registry
+            .resolve_key("user/my-collection/s-dark")
+            .expect("`user/my-collection/s-dark` should resolve");
+        assert!(
+            nested_key.starts_with("file://") && nested_key.contains("my-collection"),
+            "nested theme should resolve via portable pack/name form, got: {}",
+            nested_key
+        );
+
+        // Bare normalized name keeps working for legacy configs that
+        // don't use the pack prefix.
+        assert_eq!(registry.resolve_key("high-contrast"), Some("high-contrast"));
+
+        // A completely unknown theme reference yields None (no masking of
+        // typos via fuzzy matching).
+        assert!(registry.resolve_key("does-not-exist").is_none());
     }
 
     #[test]

@@ -413,20 +413,26 @@ impl Editor {
                     .to_string();
 
                 // For user-installed themes (loaded from the themes dir) we
-                // persist the theme's display name rather than its absolute
-                // `file://` key, so `config.json` remains portable across
-                // machines — e.g. shared via a dotfiles repo. Built-ins,
-                // package themes (repo URLs) and pack/name keys are already
-                // portable and kept as-is.
+                // rewrite the absolute `file://` key to the portable
+                // `pack/name` form, so `config.json` stays portable across
+                // machines — e.g. shared via a dotfiles repo. The pack prefix
+                // disambiguates against built-ins (pack is empty, key is just
+                // `name`) and against other user subdirs. Built-ins, package
+                // themes (repo URLs) and pack/name keys are already portable
+                // and kept as-is.
                 let to_persist = self
                     .theme_registry
                     .list()
                     .iter()
                     .find(|info| info.key == resolved)
-                    .filter(|info| {
-                        info.key.starts_with("file://") && info.pack.starts_with("user")
+                    .filter(|info| info.key.starts_with("file://") && info.pack.starts_with("user"))
+                    .map(|info| {
+                        if info.pack.is_empty() {
+                            info.name.clone()
+                        } else {
+                            format!("{}/{}", info.pack, info.name)
+                        }
                     })
-                    .map(|info| info.name.clone())
                     .unwrap_or(resolved);
                 self.config_mut().theme = to_persist.into();
 
