@@ -10,15 +10,16 @@ path that delivers a useful init.ts. **M2 → M3** unlocks the
 plugin-configuration plane. **M4** is reload (tightens the iteration
 loop). Each milestone is a shippable unit.
 
-## M0 — Loader, source-tagging & safety plumbing
+## M0 — Startup auto-load & safety plumbing
 
-**Goal.** Fresh detects, loads, and can opt out of a user init.ts.
-Per-source registration tagging is in place so a future reload can
-clean up init.ts's writes.
+**Goal.** Fresh auto-loads `~/.config/fresh/init.ts` at startup using
+the existing plugin pipeline; users can opt out.
 
-- Locate `~/.config/fresh/init.ts`, transpile via the existing oxc
-  pipeline, evaluate in the same QuickJS sandbox plugins use, at the
-  phase-1 step in design §3.3.
+- At the phase-1 step in design §3.3, read the init.ts file and call
+  the existing `PluginManager::load_plugin_from_source(source,
+  "init.ts", true)`. The runtime's hot-reload semantics already do
+  the right thing: a prior plugin named `init.ts` (none, on first
+  load) is unloaded, the new one is loaded.
 - CLI flags `--safe` (skip init.ts and plugins) and `--no-init` (skip
   init.ts only).
 - Crash-fuse: failed-launch counter at
@@ -26,16 +27,16 @@ clean up init.ts's writes.
   three crashes in a short window; resets after one good launch.
 - Errors during evaluation are caught — status indicator + log entry,
   editor continues with whatever was applied so far.
-- Extend the existing per-source registration the plugin loader uses
-  so `init.ts` is a recognised source name. Commands, handlers, event
-  subscriptions, LSP/grammar/language registrations made during init.ts
-  evaluation are tagged with this source. (No reload command yet —
-  that's M4 — but the tagging needs to be in place from the start.)
+
+No new source-tagging work: the plugin runtime already tags
+registrations by plugin name (`CommandSource::Plugin(plugin_name)`,
+`unregister_commands_by_plugin`). The plugin name `init.ts` is the
+tag.
 
 **Verifies.** Empty init.ts loads silently. A `throw` produces a
 status indicator; editor still opens. `--safe` skips evaluation.
-Crash fuse engages and resets correctly. Inspecting the registries
-shows init.ts-tagged entries after a non-empty init.ts runs.
+Crash fuse engages and resets correctly. `editor.unloadPlugin("init.ts")`
+from the palette tears down init.ts's registrations.
 
 **Depends on.** Nothing.
 
@@ -106,29 +107,36 @@ shipped `.d.ts`.
 
 **Depends on.** M0, M1, M2.
 
-## M4 — Reload command
+## M4 — Reload palette commands
 
-**Goal.** `init: Reload` works without restarting Fresh.
+**Goal.** Discoverable `init: Reload` and `init: Revert` palette
+commands. The actual reload mechanism is "Load Plugin from Buffer"
+which already exists.
 
-- Implement reload as: drop everything tagged with the init.ts source
-  in the per-source registries (M0); drop the init.ts runtime config
-  layer (M1); reload every plugin init.ts touched via `getPluginApi`
-  (M3); re-transpile and re-evaluate init.ts.
-- Track touched plugins in a small in-memory set (just plugin names,
-  not full effect records).
-- `init: Revert` is the same flow without step 4 — leaves the editor
-  as if init.ts had never run.
-- Failed re-evaluation leaves the editor in a possibly half-applied
-  state with a status indicator pointing at the failure. A subsequent
-  reload after the user fixes the file does a full reset and runs
-  cleanly. No second-evaluation recovery needed.
+- Add `init: Reload` palette command: read `~/.config/fresh/init.ts`,
+  call `load_plugin_from_source(content, "init.ts", true)`. Existing
+  hot-reload semantics drop the prior init.ts plugin (and with it
+  init.ts's commands, handlers, event subs, LSP registrations,
+  per-source runtime config layer from M1) and load the new source.
+- Add `init: Revert`: call `unloadPlugin("init.ts")` and stop —
+  leaves the editor as if init.ts had never run.
+- Before re-loading, also call `reloadPlugin(name)` for every plugin
+  init.ts touched via `getPluginApi` so their `configure` state
+  resets. Track touched plugins in a small in-memory set indexed by
+  the init.ts plugin instance.
+- Invoking the existing "Load Plugin from Buffer" command on the open
+  init.ts buffer must produce the same result. They share the same
+  code path with the same plugin name.
 
-**Verifies.** Edit init.ts → reload → state matches the new file.
-Edit to introduce a syntax error → reload → status indicator surfaces
-the diagnostic; another reload after the fix lands clean.
+**Verifies.** Edit init.ts → `init: Reload` → state matches the new
+file. Edit to introduce a syntax error → reload → status indicator
+surfaces the diagnostic; another reload after the fix lands clean.
+"Load Plugin from Buffer" on init.ts produces the same effect as
+`init: Reload`.
 
-**Depends on.** M0 (source-tagging), M1 (runtime layer to drop), M2
-(used by user code), M3 (plugin reload list).
+**Depends on.** M0 (auto-load uses the same pipeline), M1 (runtime
+layer is per-plugin-source so it gets dropped on unload), M2 (typical
+user code uses these events), M3 (plugin reload list).
 
 ## M5 — Check command & scope-discipline lints
 

@@ -64,7 +64,14 @@ isn't gated on an environment read or a plugin-API call.
 
 `init.ts` uses the **same plugin API** plugins use — same
 `getEditor()`, same `registerHandler`, same `editor.*`. Not a new
-dialect. Five `EditorAPI` additions (§6) cover what's missing.
+dialect. The three `EditorAPI` additions in §6 cover what's missing.
+
+Mechanically, `init.ts` **is a plugin** named `init.ts`, loaded via
+the existing `load_plugin_from_source` pipeline (the same one behind
+the "Load Plugin from Buffer" command). The only differences from a
+normal plugin: it auto-loads at startup from a fixed path, runs
+before registry plugins, and any setting writes (§6.1) it makes go
+into a runtime config layer scoped to the `init.ts` plugin name.
 
 ### 3.3 Lifecycle — three phases
 
@@ -138,17 +145,21 @@ The editor must always reach a usable state. Required, in order:
 - **Crash inside `init.ts`** three times within a short window — next
   launch enters safe mode automatically. Resets after one good launch.
 
-**Reload semantics.** Drop the init.ts-tagged entries from the
-existing per-source registries (commands, handlers, event subs, LSP
-registrations), drop the init.ts runtime config layer, reload every
-plugin init.ts touched via `getPluginApi`, then re-evaluate. If
-re-evaluation throws, state may be half-applied; the user sees a
-banner pointing at the failure and re-runs reload after fixing.
+**Reload semantics.** Reload is the existing plugin hot-reload path:
+read the file, call `load_plugin_from_source(content, "init.ts",
+true)`. The runtime already unloads the prior `init.ts` plugin
+(dropping its commands, handlers, event subs, LSP registrations,
+runtime config layer) and loads the new one. Plugins init.ts touched
+via `getPluginApi` are also reloaded so their `configure` state
+resets. If re-evaluation throws, state may be half-applied; the user
+sees a banner pointing at the failure and re-runs reload after fixing.
 
-This relies on the plugin runtime's existing per-source registration
-tagging — init.ts is just one more source name. No effect-record
-journal, no proxy on `editor.*`. `init: Revert` is the same as reload
-but skips the re-evaluation step.
+The "Load Plugin from Buffer" command, when invoked on the open
+init.ts buffer, goes through the same code path with the same plugin
+name — it *is* `init: Reload`, just discovered through a different
+palette entry. `init: Reload` and `init: Revert` are thin wrappers
+that find/open the init.ts file (or use the cached source) so the
+user doesn't have to have it open. No new mechanism.
 
 The user can always start with `--safe` (skip init.ts and plugins) or
 `--no-init` (skip init.ts only). Safe-mode startup must not require
