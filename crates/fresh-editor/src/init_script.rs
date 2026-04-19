@@ -17,12 +17,7 @@ use std::path::{Path, PathBuf};
 const CRASH_FUSE_THRESHOLD: u32 = 3;
 /// Rolling window (seconds) beyond which stale failures are ignored.
 const CRASH_FUSE_WINDOW_SECS: u64 = 300;
-/// Re-export from the plugin runtime so all crates use a single source.
-#[cfg(feature = "plugins")]
-pub use fresh_plugin_runtime::INIT_PLUGIN_NAME;
-
-/// Fallback when compiled without plugins (tests, wasm, schema-only).
-#[cfg(not(feature = "plugins"))]
+/// Plugin name Fresh uses when loading init.ts — stable so hot-reload works.
 pub const INIT_PLUGIN_NAME: &str = "init.ts";
 
 /// Starter content written by `init: Edit init.ts` when the file doesn't

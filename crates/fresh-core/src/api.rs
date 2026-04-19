@@ -943,10 +943,6 @@ pub enum PluginCommand {
         value: JsonValue,
     },
 
-    /// Drop every entry in the runtime config overlay. Fired on init.ts
-    /// unload/reload so a re-run starts from the disk-resolved base.
-    ClearRuntimeOverlay,
-
     /// Register a custom command
     RegisterCommand { command: Command },
 

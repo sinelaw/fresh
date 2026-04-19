@@ -812,6 +812,11 @@ impl Editor {
                             .into(),
                     }
                 } else {
+                    // Wipe prior overlay so stale writes from the previous
+                    // init.ts don't survive a reload. The new source will
+                    // re-apply whatever it wants via setSetting.
+                    self.clear_runtime_overlay();
+
                     match self.plugin_manager.load_plugin_from_source(
                         &source,
                         crate::init_script::INIT_PLUGIN_NAME,

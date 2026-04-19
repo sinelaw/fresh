@@ -640,9 +640,6 @@ impl Editor {
             PluginCommand::SetSetting { path, value, .. } => {
                 self.handle_set_setting(path, value);
             }
-            PluginCommand::ClearRuntimeOverlay => {
-                self.clear_runtime_overlay();
-            }
             PluginCommand::ReloadThemes { apply_theme } => {
                 self.reload_themes();
                 if let Some(theme_name) = apply_theme {
