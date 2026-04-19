@@ -59,16 +59,25 @@ registerHandler("tbg_create", tbg_create);
 /**
  * Report which panel's buffer is the currently active buffer via the status
  * message. The test reads the status bar to assert focus routing.
+ *
+ * Each call includes a monotonic `seq=N` suffix so tests can distinguish a
+ * freshly-computed result from a stale one left over from a previous call;
+ * without this, `wait_until(contains "TestBG: FOCUS=")` would return
+ * immediately on the old status line before the new invocation has run.
  */
+let whichSeq = 0;
 function tbg_which(): void {
+  whichSeq++;
   const activeId = editor.getActiveBufferId();
+  let focus: string;
   if (activeId === state.panels["left"]) {
-    editor.setStatus("TestBG: FOCUS=LEFT");
+    focus = "LEFT";
   } else if (activeId === state.panels["right"]) {
-    editor.setStatus("TestBG: FOCUS=RIGHT");
+    focus = "RIGHT";
   } else {
-    editor.setStatus(`TestBG: FOCUS=OTHER(${activeId})`);
+    focus = `OTHER(${activeId})`;
   }
+  editor.setStatus(`TestBG: FOCUS=${focus} seq=${whichSeq}`);
 }
 registerHandler("tbg_which", tbg_which);
 

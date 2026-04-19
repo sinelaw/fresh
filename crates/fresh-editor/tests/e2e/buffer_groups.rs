@@ -53,10 +53,28 @@ fn open_test_bg(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
+/// Extract the monotonic `seq=N` value that the plugin appends to its
+/// focus status line. Returns `None` if no such status is on screen.
+fn parse_which_seq(harness: &EditorTestHarness) -> Option<u64> {
+    let s = harness.screen_to_string();
+    let idx = s.rfind("TestBG: FOCUS=")?;
+    let tail = &s[idx..];
+    let seq_idx = tail.find("seq=")?;
+    let after = &tail[seq_idx + "seq=".len()..];
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
 /// Run the "TestBG: Which" command and return the reported focus via
 /// the status bar — one of "LEFT", "RIGHT", "OTHER", or `None` if the
 /// command wasn't executed / status not updated.
+///
+/// The plugin tags each status with a monotonic `seq=N`. We record the
+/// highest seq already on screen and wait for a strictly higher one,
+/// so we never read a stale status left over from a previous invocation.
 fn run_which(harness: &mut EditorTestHarness) -> Option<&'static str> {
+    let prev_seq = parse_which_seq(harness).unwrap_or(0);
+
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -69,14 +87,16 @@ fn run_which(harness: &mut EditorTestHarness) -> Option<&'static str> {
     harness.render().unwrap();
 
     harness
-        .wait_until(|h| h.screen_to_string().contains("TestBG: FOCUS="))
+        .wait_until(|h| parse_which_seq(h).is_some_and(|s| s > prev_seq))
         .unwrap();
     let s = harness.screen_to_string();
-    if s.contains("TestBG: FOCUS=LEFT") {
+    let idx = s.rfind("TestBG: FOCUS=")?;
+    let tail = &s[idx..];
+    if tail.starts_with("TestBG: FOCUS=LEFT") {
         Some("LEFT")
-    } else if s.contains("TestBG: FOCUS=RIGHT") {
+    } else if tail.starts_with("TestBG: FOCUS=RIGHT") {
         Some("RIGHT")
-    } else if s.contains("TestBG: FOCUS=OTHER") {
+    } else if tail.starts_with("TestBG: FOCUS=OTHER") {
         Some("OTHER")
     } else {
         None
