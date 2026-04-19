@@ -91,12 +91,8 @@ fn test_crash_loop_is_bounded() -> anyhow::Result<()> {
         }]),
     );
 
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        120,
-        30,
-        config,
-        temp.path().to_path_buf(),
-    )?;
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, config, temp.path().to_path_buf())?;
 
     harness.open_file(&file)?;
     harness.render()?;

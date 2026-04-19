@@ -83,6 +83,29 @@ const MAX_RESTARTS_IN_WINDOW: usize = 5;
 const RESTART_WINDOW_SECS: u64 = 180; // 3 minutes
 const RESTART_BACKOFF_BASE_MS: u64 = 1000; // 1s, 2s, 4s, 8s...
 
+/// Outcome of consulting the spawn gate for a language.
+///
+/// The gate is the single throttle point for process spawns — every
+/// path that ultimately forks an LSP child (user activity via
+/// `try_spawn` → `force_spawn`, scheduled restarts via
+/// `process_pending_restarts`, crash recovery, manual restarts) goes
+/// through it. Previously, only `handle_server_crash` tracked restart
+/// attempts, which meant a fast-crashing server respawned on every
+/// edit via `force_spawn` and flooded the log (see #1612).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpawnDecision {
+    /// A handle already exists — return the existing one, don't spawn.
+    Existing,
+    /// Spawn is permitted; the attempt has been recorded.
+    Allow,
+    /// A restart is already scheduled via exponential backoff — do
+    /// not double-spawn. The scheduled restart will fire later.
+    PendingBackoff,
+    /// The language hit the crash cap and is in cooldown until the
+    /// user manually re-enables it.
+    CooledDown,
+}
+
 /// Convert a directory path to an LSP `file://` URI without the `url` crate.
 fn path_to_uri(path: &Path) -> Option<Uri> {
     let abs = if path.is_absolute() {
@@ -737,6 +760,51 @@ impl LspManager {
             .collect()
     }
 
+    /// Consult the spawn throttle for `language` and, on `Allow`, record
+    /// the attempt.
+    ///
+    /// This is the single source of truth for "are we allowed to spawn
+    /// another LSP child right now?" — every path that actually spawns
+    /// must call it.  The caller should propagate the decision (return
+    /// None / refuse to spawn) on anything other than `Allow`.
+    fn spawn_decision(&mut self, language: &str) -> SpawnDecision {
+        if self
+            .handles
+            .iter()
+            .any(|sh| sh.handle.scope().accepts(language))
+        {
+            return SpawnDecision::Existing;
+        }
+        if self.restart_cooldown.contains(language) {
+            return SpawnDecision::CooledDown;
+        }
+        if self.pending_restarts.contains_key(language) {
+            return SpawnDecision::PendingBackoff;
+        }
+
+        let now = Instant::now();
+        let window = Duration::from_secs(RESTART_WINDOW_SECS);
+        let attempts = self
+            .restart_attempts
+            .entry(language.to_string())
+            .or_default();
+        attempts.retain(|t| now.duration_since(*t) < window);
+
+        if attempts.len() >= MAX_RESTARTS_IN_WINDOW {
+            self.restart_cooldown.insert(language.to_string());
+            tracing::warn!(
+                "LSP server for {} has spawned {} times in {} minutes, entering cooldown",
+                language,
+                MAX_RESTARTS_IN_WINDOW,
+                RESTART_WINDOW_SECS / 60
+            );
+            return SpawnDecision::CooledDown;
+        }
+
+        attempts.push(now);
+        SpawnDecision::Allow
+    }
+
     /// Force spawn LSP server(s) for a language.
     ///
     /// Spawns servers configured for the language, filtered as follows:
@@ -797,6 +865,38 @@ impl LspManager {
                 return None;
             }
         };
+
+        // Consult the spawn gate. This is the single point that enforces
+        // the restart throttle across *all* spawn entry points — user
+        // activity (try_spawn), scheduled backoff, manual restart. See
+        // #1612: previously only handle_server_crash tracked attempts,
+        // so a fast-crashing server got respawned on every edit.
+        match self.spawn_decision(language) {
+            SpawnDecision::Existing => {
+                // Existing-handle case is already short-circuited above,
+                // but handle it defensively.
+                return self
+                    .handles
+                    .iter_mut()
+                    .find(|sh| sh.handle.scope().accepts(language))
+                    .map(|sh| &mut sh.handle);
+            }
+            SpawnDecision::CooledDown => {
+                tracing::debug!(
+                    "force_spawn: {} is in cooldown, refusing spawn (use Restart LSP command)",
+                    language
+                );
+                return None;
+            }
+            SpawnDecision::PendingBackoff => {
+                tracing::debug!(
+                    "force_spawn: {} has a pending restart scheduled, not double-spawning",
+                    language
+                );
+                return None;
+            }
+            SpawnDecision::Allow => {}
+        }
 
         // Check we have runtime and bridge
         let runtime = match self.runtime.as_ref() {
@@ -1061,38 +1161,20 @@ impl LspManager {
             );
         }
 
-        // Clean up old restart attempts outside the window
+        // Attempt-counting and the cap are owned by `spawn_decision`
+        // (called at every real spawn site). Here we only schedule the
+        // next restart with exponential backoff; the gate will decide
+        // whether it actually proceeds when the pending restart fires.
         let now = Instant::now();
-        let window = Duration::from_secs(RESTART_WINDOW_SECS);
-        let attempts = self
+        let attempt_number = self
             .restart_attempts
-            .entry(language.to_string())
-            .or_default();
-        attempts.retain(|t| now.duration_since(*t) < window);
+            .get(language)
+            .map(|v| v.len())
+            .unwrap_or(0);
 
-        // Check if we've exceeded max restarts
-        if attempts.len() >= MAX_RESTARTS_IN_WINDOW {
-            self.restart_cooldown.insert(language.to_string());
-            tracing::warn!(
-                "LSP server for {} has crashed {} times in {} minutes, entering cooldown",
-                language,
-                MAX_RESTARTS_IN_WINDOW,
-                RESTART_WINDOW_SECS / 60
-            );
-            return format!(
-                "LSP server for {} has crashed too many times ({} in {} min). Use 'Restart LSP Server' command to manually restart.",
-                language,
-                MAX_RESTARTS_IN_WINDOW,
-                RESTART_WINDOW_SECS / 60
-            );
-        }
-
-        // Calculate exponential backoff delay
-        let attempt_number = attempts.len();
         let delay_ms = RESTART_BACKOFF_BASE_MS * (1 << attempt_number); // 1s, 2s, 4s, 8s
         let restart_time = now + Duration::from_millis(delay_ms);
 
-        // Schedule the restart
         self.pending_restarts
             .insert(language.to_string(), restart_time);
 
@@ -1131,13 +1213,9 @@ impl LspManager {
         for language in due_restarts {
             self.pending_restarts.remove(&language);
 
-            // Record this restart attempt
-            self.restart_attempts
-                .entry(language.clone())
-                .or_default()
-                .push(now);
-
-            // Attempt to spawn the server (bypassing auto_start for crash recovery)
+            // Attempt to spawn the server (bypassing auto_start for
+            // crash recovery). The attempt is recorded by the spawn
+            // gate inside force_spawn — no need to push here.
             if self.force_spawn(&language, None).is_some() {
                 let message = format!("LSP server for {} restarted successfully", language);
                 tracing::info!("{}", message);
