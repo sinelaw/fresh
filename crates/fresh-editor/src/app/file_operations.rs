@@ -860,20 +860,26 @@ impl Editor {
                     "LSP for {} not auto-starting (auto_start=false). Use command palette to start manually.",
                     language
                 );
-                // Surface the LSP popup once per language per session so
-                // the user can discover the dormant server (otherwise
-                // the only visible signal is a muted `LSP (off)` pill
-                // at the bottom-right, which is easy to miss). Skip if
-                // the user has already been prompted for this language
-                // this session, or has dismissed the pill entirely —
-                // both mean "please don't re-pop this on every file
-                // open." The persisted `auto_start=true` flag is what
+                // Queue an auto-prompt for this language so the user
+                // can discover the dormant server (otherwise the only
+                // visible signal is a muted `LSP (off)` pill, which is
+                // easy to miss). We intentionally don't show the popup
+                // inline here — session restore typically opens many
+                // files of the same language back-to-back, and the
+                // buffer active at *this* instant isn't necessarily
+                // the one the user lands on. Draining happens on
+                // render, which guarantees the popup attaches to
+                // whichever buffer the user is actually looking at.
+                //
+                // Skip queueing entirely when the user already got
+                // the prompt this session or dismissed the pill —
+                // both mean "please don't re-pop this."  The
+                // persisted `auto_start = true` flag is what
                 // silences the prompt across sessions.
                 if !self.auto_start_prompted_languages.contains(&language)
                     && !self.is_lsp_language_user_dismissed(&language)
                 {
-                    self.auto_start_prompted_languages.insert(language.clone());
-                    self.show_lsp_status_popup();
+                    self.pending_auto_start_prompts.insert(language);
                 }
             }
             LspSpawnResult::NotConfigured => {

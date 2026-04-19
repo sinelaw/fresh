@@ -13,6 +13,18 @@ use crate::app::warning_domains::WarningDomain;
 
 use super::Editor;
 
+/// True when `popup` is the LSP status popup (as built by
+/// `build_and_show_lsp_status_popup`). Used by the auto-prompt
+/// drain to find and clean up orphan prompts on non-active
+/// buffers without affecting unrelated popups (completion, hover,
+/// etc.) that might be on top.
+fn is_lsp_status_popup(popup: &crate::view::popup::Popup) -> bool {
+    popup
+        .title
+        .as_deref()
+        .is_some_and(|t| t.starts_with("LSP Servers ("))
+}
+
 impl Editor {
     /// Show warnings by opening the warning log file directly
     ///
@@ -78,6 +90,85 @@ impl Editor {
         );
 
         self.build_and_show_lsp_status_popup(&language);
+    }
+
+    /// If an auto-start prompt is queued for the active buffer's
+    /// language, show it now. Called from the render path so the
+    /// popup always attaches to the buffer the user is actually
+    /// looking at — even across a session restore that opens
+    /// several files of the same language in succession and flips
+    /// the active buffer mid-sequence.
+    ///
+    /// The language stays in `pending_auto_start_prompts` after a
+    /// draw: if focus moves to a different buffer of the same
+    /// language before the user has dismissed the popup, we'll
+    /// pop the orphan from the old buffer's stack and re-attach
+    /// the popup to the new active buffer on the next render. The
+    /// user-side lifecycle — pick an action, or press Esc — is
+    /// what flips the language into
+    /// `auto_start_prompted_languages` and ends the prompt cycle
+    /// (see `handle_lsp_status_action` and `handle_popup_cancel`).
+    ///
+    /// Short-circuits aggressively so the steady-state cost on
+    /// every render is a single `HashSet::is_empty` check.
+    pub(crate) fn drain_pending_lsp_prompt_for_active_buffer(&mut self) {
+        if self.pending_auto_start_prompts.is_empty() {
+            return;
+        }
+        let active = self.active_buffer();
+        let Some(language) = self.buffers.get(&active).map(|s| s.language.clone()) else {
+            return;
+        };
+        if !self.pending_auto_start_prompts.contains(&language) {
+            return;
+        }
+        // Recheck the dismissal guard at show time — it may have
+        // flipped between file-open and render.
+        if self.is_lsp_language_user_dismissed(&language) {
+            self.pending_auto_start_prompts.remove(&language);
+            return;
+        }
+        // If the active buffer's top popup is already the LSP
+        // status popup, nothing to do — the previous render landed
+        // it here and the user is presumably looking at it.
+        if self
+            .buffers
+            .get(&active)
+            .and_then(|s| s.popups.top())
+            .is_some_and(is_lsp_status_popup)
+        {
+            return;
+        }
+        // If some OTHER popup owns the active buffer's top (e.g.
+        // a completion popup), don't stomp on it — wait for a
+        // future frame when the user has dismissed it.
+        if self
+            .buffers
+            .get(&active)
+            .and_then(|s| s.popups.top())
+            .is_some()
+        {
+            return;
+        }
+
+        // Pop any orphan LSP status popup off *other* buffers so
+        // the user doesn't find a stale prompt when they later
+        // visit those tabs. `show_lsp_status_popup` also toggles
+        // off whatever is currently tracked in
+        // `pending_lsp_status_popup`, so reset that marker first
+        // — otherwise the call below would close instead of show.
+        let active_id = active;
+        for (id, state) in self.buffers.iter_mut() {
+            if *id == active_id {
+                continue;
+            }
+            if state.popups.top().is_some_and(is_lsp_status_popup) {
+                state.popups.hide();
+            }
+        }
+        self.pending_lsp_status_popup = None;
+
+        self.show_lsp_status_popup();
     }
 
     /// Rebuild the LSP-status popup in place if it's currently open.

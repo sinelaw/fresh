@@ -32,6 +32,15 @@ impl Editor {
 
             self.hide_popup();
             self.pending_lsp_status_popup = None;
+            // User picked a row → they've seen and handled the
+            // prompt, so end the auto-prompt cycle for this
+            // language. Mirrors the same cleanup in
+            // `handle_popup_cancel` for the Esc path.
+            let active = self.active_buffer();
+            if let Some(language) = self.buffers.get(&active).map(|s| s.language.clone()) {
+                self.pending_auto_start_prompts.remove(&language);
+                self.auto_start_prompted_languages.insert(language);
+            }
 
             if let Some(key) = action_key {
                 self.handle_lsp_status_action(&key);
@@ -242,6 +251,15 @@ impl Editor {
 
         // Check if this is an LSP status details popup
         if self.pending_lsp_status_popup.take().is_some() {
+            // The user has now seen the prompt and dismissed it —
+            // end the auto-prompt cycle for the active buffer's
+            // language so re-focusing another file of the same
+            // language doesn't re-pop it.
+            let active = self.active_buffer();
+            if let Some(language) = self.buffers.get(&active).map(|s| s.language.clone()) {
+                self.pending_auto_start_prompts.remove(&language);
+                self.auto_start_prompted_languages.insert(language);
+            }
             self.hide_popup();
             return;
         }
