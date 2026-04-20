@@ -9,11 +9,22 @@ const editor = getEditor();
 //   after the user closes the last file buffer (instead of the
 //   default untitled scratch).
 //
-//   - Auto-centers inside the viewport. Repaints on terminal resize.
+//   - Auto-centers both horizontally and vertically. Repaints when the
+//     viewport changes (terminal resize, file-explorer toggle, split
+//     reshape).
 //   - Auto-refreshes every 5 seconds while visible.
 //   - Closes the file explorer to get the full viewport.
 //   - All colors are theme keys → repaints for free on theme switch.
 //   - All color/state spans can carry URLs (OSC-8 hyperlinks).
+//   - Content is pushed to the buffer via `setVirtualBufferContent`, a
+//     single atomic command. Going through clearNamespace / deleteRange /
+//     insertText / addOverlay would let a render frame slip in between
+//     the delete and the insert — the plugin thread pushes each call as
+//     an independent message onto an MPSC channel that the editor drains
+//     non-blocking every tick, so a partial-batch render is possible and
+//     observably flickery. `setVirtualBufferContent` ships text + all
+//     inline overlays in one message, so the editor applies the whole
+//     replacement before the next frame.
 // ═════════════════════════════════════════════════════════════════════
 
 type Span = {
@@ -27,7 +38,6 @@ type Span = {
 type Draw = { text: string; spans: Span[] };
 type Section = { draw: (d: Draw) => void };
 
-const NS = "dashboard";
 const MAX_INNER = 72; // content width excluding frame + centering pad
 
 const C = {
@@ -293,27 +303,72 @@ function renderFrame(inner: number, leftPad: number): Draw {
 
 // ── Paint the buffer ───────────────────────────────────────────────────
 
+// Convert the byte-indexed Draw model produced by renderFrame into per-line
+// TextPropertyEntry[] with inlineOverlays. Spans are expected to stay within
+// a single line (the renderer never emits a newline inside a styled span)
+// but we clip defensively so a stray cross-line span doesn't misindex.
+function drawToEntries(d: Draw): TextPropertyEntry[] {
+    const entries: TextPropertyEntry[] = [];
+    const lines = d.text.split("\n");
+    let lineByteStart = 0;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const isLast = i === lines.length - 1;
+        if (isLast && line.length === 0) break; // trailing empty after final \n
+        const lineBytes = utf8Len(line);
+        const lineByteEnd = lineByteStart + lineBytes;
+        const ios: InlineOverlay[] = [];
+        for (const sp of d.spans) {
+            if (sp.end <= lineByteStart) continue;
+            if (sp.start >= lineByteEnd) continue;
+            const s = Math.max(sp.start, lineByteStart) - lineByteStart;
+            const e = Math.min(sp.end, lineByteEnd) - lineByteStart;
+            if (e <= s) continue;
+            const style: Partial<OverlayOptions> = {};
+            if (sp.fg) style.fg = sp.fg;
+            if (sp.bold) style.bold = true;
+            if (sp.url) style.url = sp.url;
+            ios.push({ start: s, end: e, style });
+        }
+        entries.push({
+            text: line + (isLast ? "" : "\n"),
+            inlineOverlays: ios.length > 0 ? ios : undefined,
+        });
+        lineByteStart = lineByteEnd + 1; // account for the \n byte we split on
+    }
+    return entries;
+}
+
+// Track the last viewport dims we painted for, so repeat viewport_changed
+// events (e.g. scroll fires one every time) don't trigger redundant paints.
+let lastPaintedW = -1;
+let lastPaintedH = -1;
+
 function paint() {
     if (dashboardBufferId === null) return;
     const bufferId = dashboardBufferId;
     const vp = editor.getViewport();
     const width = vp?.width ?? 100;
+    const height = vp?.height ?? 24;
     const { inner, leftPad } = frameWidth(width);
     const drawn = renderFrame(inner, leftPad);
 
-    editor.clearNamespace(bufferId, NS);
-    const info = editor.getBufferInfo(bufferId);
-    const existing = info?.length ?? 0;
-    if (existing > 0) editor.deleteRange(bufferId, 0, existing);
-    editor.insertText(bufferId, 0, drawn.text);
-    for (const sp of drawn.spans) {
-        const opts: Record<string, unknown> = {};
-        if (sp.fg) opts.fg = sp.fg;
-        if (sp.bold) opts.bold = true;
-        if (sp.url) opts.url = sp.url;
-        if (Object.keys(opts).length === 0) continue;
-        editor.addOverlay(bufferId, NS, sp.start, sp.end, opts);
+    // Count newlines in the rendered frame to vertically center it. Pad
+    // above with blank lines; there's no need to pad below since the
+    // virtual buffer's empty trailing rows already render as blank.
+    let frameHeight = 0;
+    for (let i = 0; i < drawn.text.length; i++) {
+        if (drawn.text.charCodeAt(i) === 10) frameHeight++;
     }
+    const topPad = Math.max(0, Math.floor((height - frameHeight) / 2));
+
+    const entries: TextPropertyEntry[] = [];
+    for (let i = 0; i < topPad; i++) entries.push({ text: "\n" });
+    for (const e of drawToEntries(drawn)) entries.push(e);
+
+    editor.setVirtualBufferContent(bufferId, entries);
+    lastPaintedW = width;
+    lastPaintedH = height;
 }
 
 // ── Data fetchers ──────────────────────────────────────────────────────
@@ -837,10 +892,21 @@ registerHandler(
         if (shouldShowDashboard()) await openDashboard();
     },
 );
-registerHandler("dashboardOnResize", () => {
-    if (dashboardBufferId !== null) paint();
-});
+// viewport_changed fires whenever a split's dimensions change, which
+// covers terminal resize *and* file-explorer toggle (opening the explorer
+// shrinks the dashboard split's width; closing it grows it back). We
+// dedupe against the last-painted dims so scroll-only events (which also
+// fire this hook) don't cause gratuitous repaints.
+registerHandler(
+    "dashboardOnViewportChanged",
+    (data: { buffer_id: number; width: number; height: number }) => {
+        if (dashboardBufferId === null) return;
+        if (data.buffer_id !== dashboardBufferId) return;
+        if (data.width === lastPaintedW && data.height === lastPaintedH) return;
+        paint();
+    },
+);
 
 editor.on("ready", "dashboardOnReady");
 editor.on("buffer_closed", "dashboardOnBufferClosed");
-editor.on("resize", "dashboardOnResize");
+editor.on("viewport_changed", "dashboardOnViewportChanged");
