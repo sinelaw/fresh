@@ -1413,6 +1413,87 @@ fn find_settings_explorer_border_col(harness: &EditorTestHarness) -> u16 {
     );
 }
 
+/// Regression: toggling File Explorer → Show Hidden in the Settings UI and
+/// saving must update the live file explorer's IgnorePatterns, not just the
+/// config on disk. Width must also be propagated to the live explorer width.
+#[test]
+fn test_settings_file_explorer_toggles_propagate_to_runtime() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    // Sanity: both toggles start off.
+    assert!(!harness
+        .editor()
+        .file_explorer()
+        .unwrap()
+        .ignore_patterns()
+        .show_hidden());
+    assert!(!harness
+        .editor()
+        .file_explorer()
+        .unwrap()
+        .ignore_patterns()
+        .show_gitignored());
+
+    harness.open_settings().unwrap();
+
+    // Navigate to File Explorer category. Order (from test_settings_percentage):
+    // General, Clipboard, Editor, File Browser, File Explorer.
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // File Explorer items (alphabetical): Custom Ignore Patterns, Preview Tabs,
+    // Respect Gitignore, Show Gitignored, Show Hidden, Width.
+    // Land on Show Gitignored and toggle.
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // Move to Show Hidden and toggle.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Tab to footer then navigate to Save (index 2) and press Enter.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Reset
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Save
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.editor().is_settings_open(),
+        "Settings should be closed after saving"
+    );
+
+    // Config persisted.
+    assert!(harness.config().file_explorer.show_hidden);
+    assert!(harness.config().file_explorer.show_gitignored);
+
+    // Live IgnorePatterns updated — the bug was that only the config changed
+    // and the running explorer kept its old state until next restart.
+    let patterns = harness.editor().file_explorer().unwrap().ignore_patterns();
+    assert!(
+        patterns.show_hidden(),
+        "live IgnorePatterns.show_hidden was not propagated from Settings save"
+    );
+    assert!(
+        patterns.show_gitignored(),
+        "live IgnorePatterns.show_gitignored was not propagated from Settings save"
+    );
+}
+
 /// Test number input editing mode - enter editing, type value, confirm
 #[test]
 fn test_number_input_enter_editing_mode() {

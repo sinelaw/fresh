@@ -167,10 +167,14 @@ impl Editor {
         self.status_bar_visible = self.config.editor.show_status_bar;
         self.prompt_line_visible = self.config.editor.show_prompt_line;
 
-        // Re-sync the cached file-explorer width from config so a Settings UI
-        // change resizes the panel without a restart. (Drag updates the cache
-        // directly; config edits only update `self.config`.)
+        // Propagate file-explorer settings to live runtime state (IgnorePatterns
+        // and width are shadows of config, not read live on each render).
         self.file_explorer_width = self.config.file_explorer.width;
+        if let Some(ref mut explorer) = self.file_explorer {
+            let patterns = explorer.ignore_patterns_mut();
+            patterns.set_show_hidden(self.config.file_explorer.show_hidden);
+            patterns.set_show_gitignored(self.config.file_explorer.show_gitignored);
+        }
 
         // On Windows, switch mouse tracking mode when mouse_hover_enabled changes.
         // Mode 1003 (all motion) is used for hover; mode 1002 (cell motion) otherwise.
