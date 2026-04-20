@@ -938,11 +938,10 @@ fn test_cursor_before_first_tab() {
         expected_cursor_row, cursor_y
     );
 
-    // The x position should be at the start of content (after gutter)
-    // not at position after the first tab expansion (which would be ~gutter+8)
-    // The gutter for this file is "    3 │ " = 8 characters
-    // So cursor should be at column 8 (right after gutter), NOT column 15 (after tab expansion)
-    let gutter_width = 8u16;
+    // The x position should be at the start of content (after gutter),
+    // not at the position after the first tab expansion.  Queried from the
+    // margin manager so the assertion tracks the actual rendered width.
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
     println!(
         "Cursor x={} (should be {} = gutter width, not {} = after tab)",
         cursor_x,

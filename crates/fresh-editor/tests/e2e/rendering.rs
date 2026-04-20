@@ -56,26 +56,23 @@ fn test_screen_cursor_position() {
     // Get the actual screen cursor position from the terminal
     let cursor_pos = harness.screen_cursor_position();
 
-    // After typing "abc", cursor should be at column 11:
-    // " "  "   1" " │ " "abc" - the cursor should be after 'c'
-    // Indicator column: 1 char (space when no indicator)
-    // Line numbers are 4 chars wide: "   1"
-    // Then " │ " = 3 chars
-    // Then "abc" = 3 chars
-    // Total: 1 + 4 + 3 + 3 = 11
-    // So cursor X should be at column 11 (0-indexed)
-    // And cursor Y should be at content_first_row (after menu bar and tab bar)
+    // After typing "abc", cursor should be just past the gutter + "abc":
+    //   indicator (1) + line-number digits + separator (3) + "abc" (3)
+    // The gutter width adapts to the line count (see issue #1204), so query it
+    // from the margin manager instead of hard-coding a value.
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
+    let expected_x = gutter_width + 3;
 
-    println!("Cursor position after typing 'abc': {{cursor_pos:?}}");
-    println!("Expected: x=11 (1 + 4 + 3 + 3), y={content_first_row}");
+    println!("Cursor position after typing 'abc': {cursor_pos:?}");
+    println!("Expected: x={expected_x} (gutter {gutter_width} + 3), y={content_first_row}");
 
     assert_eq!(
         cursor_pos.1, content_first_row as u16,
         "Cursor Y should be at row {content_first_row} (content area start)"
     );
     assert_eq!(
-        cursor_pos.0, 11,
-        "Cursor X should be at column 11 (after 'abc')"
+        cursor_pos.0, expected_x,
+        "Cursor X should be at column {expected_x} (after 'abc')"
     );
 }
 
@@ -550,8 +547,9 @@ fn test_ansi_rgb_color_rendering() {
     // Get the content area start row (after menu bar and tab bar)
     let (content_row, _) = harness.content_area_rows();
 
-    // The gutter is: indicator (1) + line numbers (4) + separator (3) = 8 chars
-    let gutter_width = 8;
+    // Gutter: indicator (1) + line-number digits + separator (3).
+    // Queried from the margin manager so the test tracks the actual rendered width.
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
 
     let screen = harness.screen_to_string();
     println!("Screen content:\n{screen}");

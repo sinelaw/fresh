@@ -193,11 +193,8 @@ fn test_horizontal_scrolling() {
     };
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
-    // Calculate visible width (80 - 7 for line number gutter = 73 chars)
-    let gutter_width = 7;
-    let _visible_width = 80 - gutter_width; // 73 characters visible
-
-    // Type characters to fill most of the visible width
+    // Type characters to fill most of the visible width.  The gutter width
+    // is queried dynamically below where needed.
     let initial_text = "a".repeat(60);
     harness.type_text(&initial_text).unwrap();
 
@@ -2074,8 +2071,8 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
     config.editor.line_wrap = false;
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
-    let gutter_width = 8; // Approximate gutter width for line numbers
-    let visible_width = 80 - gutter_width; // ~72 characters visible
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as usize;
+    let visible_width = 80 - gutter_width;
 
     // Create a long line that extends well beyond visible width
     // We'll create a line that's 100 characters long

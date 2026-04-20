@@ -1336,7 +1336,7 @@ fn test_shift_click_extends_selection() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let gutter_width = 8; // Approximate gutter width
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
 
     // Click to position cursor at start of "hello" (after gutter)
     harness.mouse_click(gutter_width, row).unwrap();
@@ -1391,7 +1391,7 @@ fn test_shift_click_can_shrink_selection() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let gutter_width = 8;
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
 
     // Create initial selection via drag from position 5 to 15
     harness
@@ -1764,8 +1764,7 @@ fn test_double_click_requires_same_position() {
     let row = content_first_row as u16;
 
     // Get gutter width so we know where text starts
-    // Gutter is typically around 8 characters (line numbers + separator)
-    let gutter_width = 8;
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
 
     // Position A: "hello" starts at column gutter_width
     let pos_a_col = gutter_width + 2; // Over "hello"

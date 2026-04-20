@@ -163,11 +163,13 @@ impl Viewport {
     /// Calculate the gutter width based on buffer length
     /// Format: "[indicator]{:>N} │ " where N is the number of digits for line numbers
     /// - Indicator column: 1 char (space, or symbols like ●/✗/⚠)
-    /// - Line numbers: N digits (min 4), right-aligned
+    /// - Line numbers: N digits (min 2), right-aligned
     /// - Separator: " │ " = 3 chars (space, box char, space)
     ///
-    /// Total width = 1 + N + 3 = N + 4 (where N >= 4 minimum, so min 8 total)
-    /// This is a heuristic using the configured estimated line length
+    /// Total width = 1 + N + 3 = N + 4 (where N >= 2 minimum, so min 6 total).
+    /// The width adapts to the buffer's line count — small files don't waste
+    /// space on a 4-digit-wide column. `MIN_LINE_NUMBER_DIGITS` keeps it from
+    /// shrinking so much that a 1-line buffer feels cramped.
     pub fn gutter_width(&self, buffer: &Buffer) -> usize {
         let byte_offset_mode = buffer.line_count().is_none();
         let gutter_estimate = if byte_offset_mode {
@@ -181,8 +183,7 @@ impl Viewport {
         } else {
             ((gutter_estimate as f64).log10().floor() as usize) + 1
         };
-        // 1 (indicator) + minimum 4 digits for readability + 3 (" │ ")
-        1 + digits.max(4) + 3
+        1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
     }
 
     /// Count visual rows for a single logical line, accounting for plugin soft
