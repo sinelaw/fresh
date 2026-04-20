@@ -621,10 +621,16 @@ fn test_pkg_manager_ui_split_view_and_tab_navigation() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for package manager UI to appear and loading to complete
-    // (AVAILABLE appears after registry sync finishes)
+    // Wait for package manager UI to appear and loading to complete.
+    // `AVAILABLE` appears once the registry sync finishes, and the footer
+    // panel's help text (which contains "Tab") is populated by the same
+    // updatePkgManagerView() pass — but on slow runners the footer render
+    // can land a frame or two after the list. Wait for both.
     harness
-        .wait_until(|h| h.screen_to_string().contains("AVAILABLE"))
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("AVAILABLE") && s.contains("Tab")
+        })
         .unwrap();
 
     let screen = harness.screen_to_string();
