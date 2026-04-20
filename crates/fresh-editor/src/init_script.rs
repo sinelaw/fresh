@@ -98,11 +98,16 @@ const editor = getEditor();
 //     editor.setSetting("editor.wrap_column", 80);
 // }
 
+// Example: enable the bundled Dashboard plugin (weather, git, PRs,
+// disk). Off by default — this line opts you in.
+// const dash = editor.getPluginApi("dashboard");
+// if (dash) dash.enable();
+
 // Example: configure a plugin once it loads. `plugins_loaded` fires after
 // every registry plugin and init.ts top-level code has run.
 // editor.on("plugins_loaded", () => {
-//     const dash = editor.getPluginApi("welcome-dashboard");
-//     if (dash) dash.configure({ title: "Command Center" });
+//     const api = editor.getPluginApi("my-plugin");
+//     if (api) api.configure({ option: "value" });
 // });
 "#;
 

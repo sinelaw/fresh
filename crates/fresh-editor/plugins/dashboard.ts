@@ -9,6 +9,16 @@ const editor = getEditor();
 //   after the user closes the last file buffer (instead of the
 //   default untitled scratch).
 //
+//   Opt-in. The plugin loads but stays dormant until the user enables
+//   it from `~/.config/fresh/init.ts`:
+//
+//       const dash = editor.getPluginApi("dashboard");
+//       if (dash) dash.enable();
+//
+//   `disable()` reverses it, closing the buffer and unsubscribing all
+//   hooks. Until `enable()` is called, the plugin doesn't create any
+//   buffers, subscribe to any events, or run the refresh loop.
+//
 //   - Auto-centers both horizontally and vertically. Repaints when the
 //     viewport changes (terminal resize, file-explorer toggle, split
 //     reshape).
@@ -1024,8 +1034,17 @@ async function refreshLoop(myBufferId: number) {
     }
 }
 
+// Set for the duration of an in-flight openDashboard call. The
+// createVirtualBuffer round-trip is async, so a second openDashboard
+// invocation (e.g. from the `ready` hook firing while enable()'s own
+// call is still awaiting) would otherwise see dashboardBufferId === null
+// and create a second Dashboard tab.
+let dashboardOpening = false;
+
 async function openDashboard() {
     if (dashboardBufferId !== null) return; // already open
+    if (dashboardOpening) return; // another openDashboard is mid-await
+    dashboardOpening = true;
 
     const res = await editor.createVirtualBuffer({
         name: "Dashboard",
@@ -1035,6 +1054,7 @@ async function openDashboard() {
         editingDisabled: true,
     });
     dashboardBufferId = res.bufferId;
+    dashboardOpening = false;
     editor.showBuffer(dashboardBufferId);
 
     // Close any untitled scratch left over from the last-tab-closed event
@@ -1085,8 +1105,14 @@ function shouldShowDashboard(): boolean {
     return realFiles.length === 0;
 }
 
-// Closures aren't (yet) typed for editor.on — register named handlers
-// via the documented `registerHandler` + string-based `on` pattern.
+// ── Opt-in via init.ts ─────────────────────────────────────────────────
+
+// Named handlers are registered up-front — the plugin runtime requires
+// handlers to exist before `editor.on(...)` subscribes to them — but we
+// don't subscribe to any editor events until init.ts calls `enable()`
+// on the exported plugin API. A user who never opts in pays only the
+// plugin-load cost; no buffers are created, no timers run, no network
+// fetches fire.
 registerHandler("dashboardOnReady", async () => {
     if (shouldShowDashboard()) await openDashboard();
 });
@@ -1116,7 +1142,6 @@ registerHandler(
         paint();
     },
 );
-
 // Dispatch clicks on rows that carry an action. We don't trust the
 // terminal to honor OSC-8 hyperlinks on the `url` span — many strip
 // them silently — so every clickable element also registers a
@@ -1142,7 +1167,52 @@ registerHandler(
     },
 );
 
-editor.on("ready", "dashboardOnReady");
-editor.on("buffer_closed", "dashboardOnBufferClosed");
-editor.on("viewport_changed", "dashboardOnViewportChanged");
-editor.on("mouse_click", "dashboardOnMouseClick");
+let dashboardEnabled = false;
+
+function enableDashboard() {
+    if (dashboardEnabled) return;
+    dashboardEnabled = true;
+    editor.on("ready", "dashboardOnReady");
+    editor.on("buffer_closed", "dashboardOnBufferClosed");
+    editor.on("viewport_changed", "dashboardOnViewportChanged");
+    editor.on("mouse_click", "dashboardOnMouseClick");
+    // If init.ts enables us at runtime (or re-enables after a disable()),
+    // the `ready` hook may have already fired, so trigger an immediate
+    // check. Startup path: init.ts runs before workspace restore and
+    // before `ready`, so `shouldShowDashboard()` here will see zero
+    // buffers and the dashboard would open prematurely — defer to the
+    // `ready` handler in that case. We key off whether plugins are fully
+    // initialized by inspecting the buffer list: during early startup
+    // there are no buffers at all (listBuffers() returns []), whereas at
+    // runtime there's always at least the current or scratch buffer.
+    if (editor.listBuffers().length > 0 && shouldShowDashboard()) {
+        openDashboard();
+    }
+}
+
+function disableDashboard() {
+    if (!dashboardEnabled) return;
+    dashboardEnabled = false;
+    editor.off("ready", "dashboardOnReady");
+    editor.off("buffer_closed", "dashboardOnBufferClosed");
+    editor.off("viewport_changed", "dashboardOnViewportChanged");
+    editor.off("mouse_click", "dashboardOnMouseClick");
+    if (dashboardBufferId !== null) {
+        editor.closeBuffer(dashboardBufferId);
+        dashboardBufferId = null;
+    }
+}
+
+// Expose enable/disable so init.ts can opt in:
+//
+//   // ~/.config/fresh/init.ts
+//   const dash = editor.getPluginApi("dashboard");
+//   if (dash) dash.enable();
+//
+// `plugins_loaded` isn't needed here — init.ts runs after every
+// registry plugin, so getPluginApi("dashboard") is already available
+// at top level.
+editor.exportPluginApi("dashboard", {
+    enable: enableDashboard,
+    disable: disableDashboard,
+});
