@@ -314,13 +314,11 @@ impl Editor {
                             .map(|n| (n.entry.path.clone(), n.entry.is_symlink()));
 
                         if let Some((dir_path, is_symlink)) = node_info {
-                            if let Err(e) = explorer.load_gitignore_for_dir(&dir_path) {
-                                tracing::warn!(
-                                    "Failed to load .gitignore from {:?}: {}",
-                                    dir_path,
-                                    e
-                                );
-                            }
+                            crate::app::file_operations::load_gitignore_via_fs(
+                                self.authority.filesystem.as_ref(),
+                                explorer,
+                                &dir_path,
+                            );
 
                             // If a symlink directory was just expanded, we need to rebuild
                             // the decoration cache so decorations under the canonical target

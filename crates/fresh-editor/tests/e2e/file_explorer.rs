@@ -3013,6 +3013,71 @@ fn test_external_gitignore_edit_and_delete_reload_via_poll() {
     );
 }
 
+/// Creating a .gitignore externally in an already-expanded directory must
+/// be picked up by the poll: the dir's mtime bumps, refresh_node re-lists,
+/// and the rules for that dir get loaded for the first time.
+#[test]
+fn test_externally_creating_gitignore_loads_rules_via_poll() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join("foo.txt"), "").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.render().unwrap();
+
+    // Sanity: no gitignore loaded at start.
+    assert_eq!(
+        harness
+            .editor()
+            .file_explorer()
+            .unwrap()
+            .ignore_patterns()
+            .loaded_gitignore_dirs()
+            .len(),
+        0
+    );
+
+    // Prime the dir-mtime store so the later change is detected as a
+    // difference, not as a first-sighting. Two ticks: spawn + receive.
+    harness.advance_time(std::time::Duration::from_secs(5));
+    harness.editor_mut().poll_file_tree_changes();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    harness.advance_time(std::time::Duration::from_secs(5));
+    harness.editor_mut().poll_file_tree_changes();
+
+    // Externally create a .gitignore that matches foo.txt. Sleep past 1s
+    // filesystem mtime granularity so the parent dir's mtime is distinguishable.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    fs::write(project_root.join(".gitignore"), "foo.txt\n").unwrap();
+
+    // First tick spawns the bg dir-poll; subsequent ticks process its
+    // results (where refresh_node + reload-gitignore runs). Advance time
+    // past the poll interval on every iteration so the guard lets us in.
+    let foo = project_root.join("foo.txt");
+    let mut picked_up = false;
+    for _ in 0..50 {
+        harness.advance_time(std::time::Duration::from_secs(5));
+        harness.editor_mut().poll_file_tree_changes();
+        if harness
+            .editor()
+            .file_explorer()
+            .unwrap()
+            .ignore_patterns()
+            .is_ignored(&foo, false)
+        {
+            picked_up = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        picked_up,
+        "new .gitignore should be loaded via dir-mtime poll + refresh path"
+    );
+}
+
 /// Helper: find the right border column of the file explorer on screen.
 ///
 /// Scans for the box-drawing corner characters that ratatui's `Block` draws

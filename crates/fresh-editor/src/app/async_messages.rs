@@ -1191,11 +1191,12 @@ impl Editor {
         let root_path = view.tree().get_node(root_id).map(|n| n.entry.path.clone());
 
         if let Some(root_path) = root_path {
-            if let Err(e) = view.load_gitignore_for_dir(&root_path) {
-                tracing::warn!("Failed to load root .gitignore from {:?}: {}", root_path, e);
-            } else {
-                tracing::debug!("Loaded root .gitignore from {:?}", root_path);
-            }
+            crate::app::file_operations::load_gitignore_via_fs(
+                self.authority.filesystem.as_ref(),
+                &mut view,
+                &root_path,
+            );
+            tracing::debug!("Loaded root .gitignore from {:?}", root_path);
         }
 
         // Apply show_hidden / show_gitignored settings.

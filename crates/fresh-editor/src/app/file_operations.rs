@@ -9,6 +9,8 @@
 //! - Save conflict detection
 
 use crate::model::buffer::SudoSaveRequired;
+use crate::model::filesystem::FileSystem;
+use crate::view::file_tree::FileTreeView;
 use crate::view::prompt::PromptType;
 use std::path::{Path, PathBuf};
 
@@ -133,9 +135,11 @@ impl Editor {
         // Otherwise the tree keeps filtering by the old rules until restart.
         if let Some(ref p) = path {
             if p.file_name().and_then(|n| n.to_str()) == Some(".gitignore") {
-                if let (Some(parent), Some(explorer)) = (p.parent(), self.file_explorer.as_mut()) {
-                    if let Err(e) = explorer.load_gitignore_for_dir(parent) {
-                        tracing::warn!("Failed to reload .gitignore after save: {}", e);
+                if let Some(parent) = p.parent() {
+                    let parent = parent.to_path_buf();
+                    let fs = self.authority.filesystem.clone();
+                    if let Some(explorer) = self.file_explorer.as_mut() {
+                        load_gitignore_via_fs(fs.as_ref(), explorer, &parent);
                     }
                 }
             }
@@ -551,12 +555,10 @@ impl Editor {
         // Re-stat every loaded .gitignore and reload/drop as needed, so
         // external edits (git pull, sed, another editor) and deletions take
         // effect without a restart. In-editor saves already reload eagerly
-        // via finalize_save_buffer. This is sync I/O on a handful of small
-        // files — we don't need the bg thread for it.
-        if let Some(ref mut explorer) = self.file_explorer {
-            if explorer.ignore_patterns_mut().sync_gitignores_from_disk() {
-                any_refreshed = true;
-            }
+        // via finalize_save_buffer. Sync I/O here — a handful of small files
+        // and all access goes through the filesystem authority.
+        if self.sync_gitignores_from_disk() {
+            any_refreshed = true;
         }
 
         // If a previous dir-poll is still in flight, don't stack another.
@@ -641,7 +643,7 @@ impl Editor {
         )>,
         git_index_mtime: Option<(PathBuf, std::time::SystemTime)>,
     ) -> bool {
-        let mut dirs_to_refresh = Vec::new();
+        let mut dirs_to_refresh: Vec<(crate::view::file_tree::NodeId, PathBuf)> = Vec::new();
 
         for (node_id, path, mtime_opt) in results {
             let Some(current_mtime) = mtime_opt else {
@@ -651,7 +653,7 @@ impl Editor {
             if let Some(&stored_mtime) = self.dir_mod_times.get(&path) {
                 if current_mtime != stored_mtime {
                     self.dir_mod_times.insert(path.clone(), current_mtime);
-                    dirs_to_refresh.push(node_id);
+                    dirs_to_refresh.push((node_id, path.clone()));
                     tracing::debug!("Directory changed: {:?}", path);
                 }
             } else {
@@ -683,17 +685,56 @@ impl Editor {
             return false;
         }
 
-        // Refresh each changed directory
+        // Refresh each changed directory and (re)load its .gitignore. A new
+        // .gitignore file inside an expanded dir bumps the dir's mtime so we
+        // land here; refresh_node re-lists entries but doesn't parse rules —
+        // load_gitignore_via_fs handles the rules side. Idempotent when the
+        // dir has no .gitignore.
+        let refreshed_dirs: Vec<PathBuf> = dirs_to_refresh.iter().map(|(_, p)| p.clone()).collect();
         if let (Some(runtime), Some(explorer)) = (&self.tokio_runtime, &mut self.file_explorer) {
-            for node_id in dirs_to_refresh {
+            for (node_id, _) in dirs_to_refresh {
                 let tree = explorer.tree_mut();
                 if let Err(e) = runtime.block_on(tree.refresh_node(node_id)) {
                     tracing::warn!("Failed to refresh directory: {}", e);
                 }
             }
         }
+        let fs = self.authority.filesystem.clone();
+        if let Some(explorer) = self.file_explorer.as_mut() {
+            for dir in refreshed_dirs {
+                load_gitignore_via_fs(fs.as_ref(), explorer, &dir);
+            }
+        }
 
         true
+    }
+
+    /// Re-stat every loaded .gitignore via the filesystem authority and
+    /// reload or drop as needed. Returns true if anything changed.
+    fn sync_gitignores_from_disk(&mut self) -> bool {
+        let fs = self.authority.filesystem.clone();
+        let Some(explorer) = self.file_explorer.as_mut() else {
+            return false;
+        };
+        let dirs = explorer.ignore_patterns().loaded_gitignore_dirs();
+        let mut changed = false;
+        for dir in dirs {
+            let gitignore_path = dir.join(".gitignore");
+            match fs.metadata(&gitignore_path) {
+                Err(_) => {
+                    explorer.ignore_patterns_mut().remove_gitignore(&dir);
+                    changed = true;
+                }
+                Ok(meta) => {
+                    let stored = explorer.ignore_patterns().stored_gitignore_mtime(&dir);
+                    if stored != meta.modified {
+                        load_gitignore_via_fs(fs.as_ref(), explorer, &dir);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        changed
     }
 
     /// Resolve the path to `.git/index` via `git rev-parse --git-dir`.
@@ -1246,4 +1287,24 @@ impl Editor {
             _ => None,
         }
     }
+}
+
+/// Stat and read `dir/.gitignore` via the filesystem authority and install
+/// the result on `explorer`. No-op (with a warn-level log on unexpected
+/// errors) when the file doesn't exist. Shared by the init, expand, save,
+/// and poll paths so everything routes through the same authority.
+pub(crate) fn load_gitignore_via_fs(fs: &dyn FileSystem, explorer: &mut FileTreeView, dir: &Path) {
+    let gitignore_path = dir.join(".gitignore");
+    let meta = match fs.metadata(&gitignore_path) {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    let bytes = match fs.read_file(&gitignore_path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("Failed to read {:?}: {}", gitignore_path, e);
+            return;
+        }
+    };
+    explorer.load_gitignore_from_bytes(dir, &bytes, meta.modified);
 }

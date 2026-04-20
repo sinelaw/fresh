@@ -369,11 +369,16 @@ impl FileTreeView {
         }
     }
 
-    /// Load .gitignore for a directory
-    ///
-    /// This should be called when expanding a directory to load its .gitignore
-    pub fn load_gitignore_for_dir(&mut self, dir_path: &std::path::Path) -> std::io::Result<()> {
-        self.ignore_patterns.load_gitignore(dir_path)
+    /// Install a gitignore for `dir_path` from already-read bytes. Caller
+    /// performs the I/O via the editor's filesystem authority.
+    pub fn load_gitignore_from_bytes(
+        &mut self,
+        dir_path: &std::path::Path,
+        contents: &[u8],
+        mtime: Option<std::time::SystemTime>,
+    ) {
+        self.ignore_patterns
+            .load_gitignore_from_bytes(dir_path, contents, mtime);
     }
 
     /// Expand all parent directories and select the given file path
