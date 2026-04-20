@@ -13,9 +13,11 @@ const editor = getEditor();
 //     viewport changes (terminal resize, file-explorer toggle, split
 //     reshape).
 //   - Auto-refreshes every 5 seconds while visible.
-//   - Closes the file explorer to get the full viewport.
 //   - All colors are theme keys → repaints for free on theme switch.
-//   - All color/state spans can carry URLs (OSC-8 hyperlinks).
+//   - Clickable rows (repo URL, branch name, PR numbers, review-branch
+//     action) route clicks through the mouse_click hook, so they work
+//     in terminals that swallow OSC-8 hyperlinks. The OSC-8 `url` span
+//     is still set as a fallback for terminals that do honor it.
 //   - Content is pushed to the buffer via `setVirtualBufferContent`, a
 //     single atomic command. Going through clearNamespace / deleteRange /
 //     insertText / addOverlay would let a render frame slip in between
@@ -35,7 +37,23 @@ type Span = {
     bold?: boolean;
     url?: string;
 };
-type Draw = { text: string; spans: Span[] };
+// Click action attached to whole rows — dispatched by the mouse_click
+// handler, which looks up the clicked buffer row in Draw.rowActions.
+// Since terminals that swallow OSC-8 hyperlinks are common, we can't
+// rely on the `url` span alone; routing clicks through the editor
+// guarantees PR numbers / repo / review-branch are always actionable.
+type ClickAction =
+    | { kind: "open-url"; url: string }
+    | { kind: "review-branch" };
+type Draw = {
+    text: string;
+    spans: Span[];
+    // currentRow tracks how many newlines we've emitted; row-tagged
+    // entries register their action against this row so the click
+    // handler can route a click at buffer_row back to the action.
+    currentRow: number;
+    rowActions: Map<number, ClickAction>;
+};
 type Section = { draw: (d: Draw) => void };
 
 const MAX_INNER = 72; // content width excluding frame + centering pad
@@ -106,7 +124,7 @@ function pad(s: string, width: number): string {
 function emit(
     d: Draw,
     s: string,
-    opts?: { fg?: string; bold?: boolean; url?: string },
+    opts?: { fg?: string; bold?: boolean; url?: string; action?: ClickAction },
 ) {
     if (!s) return;
     const start = utf8Len(d.text);
@@ -120,10 +138,21 @@ function emit(
             url: opts.url,
         });
     }
+    if (opts?.action) {
+        // Anchor to the row this emit landed on — subsequent emits on the
+        // same row would overwrite this if they set a different action,
+        // which is fine because a single row has one logical click target.
+        d.rowActions.set(d.currentRow, opts.action);
+    }
 }
 
 function newline(d: Draw) {
     d.text += "\n";
+    d.currentRow++;
+}
+
+function emptyDraw(): Draw {
+    return { text: "", spans: [], currentRow: 0, rowActions: new Map() };
 }
 
 // ── Sections (sentinel / placeholder factories) ────────────────────────
@@ -169,7 +198,7 @@ function frameWidth(viewportW: number): { inner: number; leftPad: number } {
 }
 
 function renderFrame(inner: number, leftPad: number): Draw {
-    const d: Draw = { text: "", spans: [] };
+    const d: Draw = emptyDraw();
     const lp = " ".repeat(leftPad);
 
     const titleText = "FRESH";
@@ -218,22 +247,16 @@ function renderFrame(inner: number, leftPad: number): Draw {
         newline(d);
     };
 
-    const row = (body: Draw) => {
+    const row = (
+        body: { text: string; spans: Span[] },
+        action?: ClickAction,
+    ) => {
         // Wraps a single logical row of section body in the frame.
         emit(d, lp, undefined);
         emit(d, "│", { fg: C.frame });
-        // Splice the section body (which may have its own spans) into d.
-        const bodyLines = body.text.split("\n");
-        const bodyBytesPerLine: number[] = [];
-        {
-            let cursor = 0;
-            for (const ln of bodyLines) {
-                bodyBytesPerLine.push(cursor);
-                cursor += utf8Len(ln) + 1;
-            }
-        }
-        // This function expects body already formatted for one line.
-        const line = bodyLines[0] ?? "";
+        // body is already one line (no embedded newlines) — renderSection
+        // slices multi-line section output before calling row().
+        const line = body.text;
         const used = visualWidth(line);
         const startInDoc = utf8Len(d.text);
         d.text += line;
@@ -250,6 +273,7 @@ function renderFrame(inner: number, leftPad: number): Draw {
         }
         emit(d, " ".repeat(Math.max(0, inner - used)), undefined);
         emit(d, "│", { fg: C.frame });
+        if (action) d.rowActions.set(d.currentRow, action);
         newline(d);
     };
 
@@ -264,11 +288,12 @@ function renderFrame(inner: number, leftPad: number): Draw {
     const renderSection = (name: string, s: Section) => {
         sectionHeader(name);
         // Let section draw into a detached Draw, then split into rows.
-        const body: Draw = { text: "", spans: [] };
+        const body: Draw = emptyDraw();
         s.draw(body);
         const bodyLines = body.text.split("\n");
         let cursor = 0;
-        for (const ln of bodyLines) {
+        for (let lineIdx = 0; lineIdx < bodyLines.length; lineIdx++) {
+            const ln = bodyLines[lineIdx];
             if (ln.length === 0 && cursor + ln.length + 1 >= body.text.length) break;
             // Slice the body's spans that fall inside this line's byte range.
             const lineStart = cursor;
@@ -282,7 +307,9 @@ function renderFrame(inner: number, leftPad: number): Draw {
                     bold: sp.bold,
                     url: sp.url,
                 }));
-            row({ text: ln, spans: sliced });
+            // Propagate the section-level row action (keyed by section-body
+            // line index) onto the outer frame row we're about to write.
+            row({ text: ln, spans: sliced }, body.rowActions.get(lineIdx));
             cursor = lineEnd + 1;
         }
         spacerRow();
@@ -344,6 +371,10 @@ function drawToEntries(d: Draw): TextPropertyEntry[] {
 let lastPaintedW = -1;
 let lastPaintedH = -1;
 
+// Row-index → click action map, keyed by absolute buffer row (after
+// adding topPad). Rebuilt every paint; read by the mouse_click handler.
+let currentRowActions: Map<number, ClickAction> = new Map();
+
 function paint() {
     if (dashboardBufferId === null) return;
     const bufferId = dashboardBufferId;
@@ -366,9 +397,43 @@ function paint() {
     for (let i = 0; i < topPad; i++) entries.push({ text: "\n" });
     for (const e of drawToEntries(drawn)) entries.push(e);
 
+    // Translate frame-relative row actions to absolute buffer rows by
+    // shifting by the vertical padding we just prepended.
+    const abs: Map<number, ClickAction> = new Map();
+    for (const [row, action] of drawn.rowActions) {
+        abs.set(row + topPad, action);
+    }
+    currentRowActions = abs;
+
     editor.setVirtualBufferContent(bufferId, entries);
     lastPaintedW = width;
     lastPaintedH = height;
+}
+
+// Open a URL in the user's browser via the platform's "open" helper.
+// Fires both xdg-open (Linux) and open (macOS) — only one exists per
+// platform; the other exits immediately with ENOENT and causes no
+// user-visible effect. Fire-and-forget: we don't await.
+function openUrl(url: string) {
+    // spawnProcess returns a ProcessHandle; we intentionally discard it.
+    // The process runs to completion on its own; failures are silent.
+    editor.spawnProcess("xdg-open", [url]);
+    editor.spawnProcess("open", [url]);
+}
+
+function dispatchClickAction(action: ClickAction) {
+    switch (action.kind) {
+        case "open-url":
+            openUrl(action.url);
+            return;
+        case "review-branch":
+            // `start_review_diff` is registered by the audit_mode plugin.
+            // executeAction falls through to Action::PluginAction for any
+            // name that isn't a built-in, which the plugin manager then
+            // dispatches by handler name.
+            editor.executeAction("start_review_diff");
+            return;
+    }
 }
 
 // ── Data fetchers ──────────────────────────────────────────────────────
@@ -424,17 +489,97 @@ function kv(d: Draw, key: string, val: string, valColor: string = C.value) {
     newline(d);
 }
 
+// wttr.in's j1 response shape — only the fields we consume.
+type WttrHour = {
+    time?: string; // "0", "300", …, "2100"
+    tempC?: string;
+    FeelsLikeC?: string;
+    windspeedKmph?: string;
+    humidity?: string;
+    weatherDesc?: { value?: string }[];
+};
+type WttrDay = {
+    date?: string;
+    maxtempC?: string;
+    mintempC?: string;
+    hourly?: WttrHour[];
+};
+type WttrCurrent = {
+    temp_C?: string;
+    FeelsLikeC?: string;
+    windspeedKmph?: string;
+    humidity?: string;
+    weatherDesc?: { value?: string }[];
+};
+type WttrJ1 = {
+    current_condition?: WttrCurrent[];
+    weather?: WttrDay[];
+};
+
+// Find the hourly entry whose `time` is closest to `targetHour` (0–23).
+// wttr.in returns 3-hour samples encoded as "0", "300", "600", …, so a
+// requested 17 (5pm) snaps to the 1800 sample. We round to the nearest
+// (rather than floor) to avoid showing "morning" weather for 17:00 just
+// because 1500 is numerically smaller.
+function hourlyAt(hours: WttrHour[], targetHour: number): WttrHour | null {
+    let best: WttrHour | null = null;
+    let bestDelta = Infinity;
+    for (const h of hours) {
+        const raw = h.time ?? "";
+        const hh = Math.round((Number(raw) || 0) / 100);
+        const delta = Math.abs(hh - targetHour);
+        if (delta < bestDelta) {
+            best = h;
+            bestDelta = delta;
+        }
+    }
+    return best;
+}
+
+function formatCurrent(c: WttrCurrent | undefined): string | null {
+    if (!c) return null;
+    const cond = c.weatherDesc?.[0]?.value ?? "";
+    const temp = c.temp_C ? `${c.temp_C}°C` : "";
+    const feels = c.FeelsLikeC && c.FeelsLikeC !== c.temp_C
+        ? `feels ${c.FeelsLikeC}°C` : "";
+    const wind = c.windspeedKmph ? `${c.windspeedKmph} km/h` : "";
+    const hum = c.humidity ? `${c.humidity}%` : "";
+    const s = [cond, temp, feels, wind, hum]
+        .filter((x) => x.length > 0)
+        .join(" · ");
+    return s ? truncate(s, VALUE_MAX) : null;
+}
+
+function formatHour(h: WttrHour | null): string | null {
+    if (!h) return null;
+    const cond = h.weatherDesc?.[0]?.value ?? "";
+    const temp = h.tempC ? `${h.tempC}°C` : "";
+    const feels = h.FeelsLikeC && h.FeelsLikeC !== h.tempC
+        ? `feels ${h.FeelsLikeC}°C` : "";
+    const s = [cond, temp, feels]
+        .filter((x) => x.length > 0)
+        .join(" · ");
+    return s ? truncate(s, VALUE_MAX) : null;
+}
+
+function formatDaySummary(day: WttrDay | undefined): string | null {
+    if (!day) return null;
+    const midday = hourlyAt(day.hourly ?? [], 12);
+    const cond = midday?.weatherDesc?.[0]?.value ?? "";
+    const range = day.mintempC && day.maxtempC
+        ? `${day.mintempC}°..${day.maxtempC}°C`
+        : "";
+    const s = [range, cond].filter((x) => x.length > 0).join(" · ");
+    return s ? truncate(s, VALUE_MAX) : null;
+}
+
 async function fetchWeather(myToken: number) {
     try {
+        // j1 = full JSON payload (current + 3-day forecast, 3-hour samples).
+        // Larger than the old %-format but gets us everything in one call.
         const { stdout, ok } = await run(
             "curl",
-            [
-                "-fsS",
-                "--max-time",
-                "5",
-                // Drop %l — we don't display location.
-                "https://wttr.in/?format=%C|%t|%f|%w|%h",
-            ],
+            ["-fsS", "--max-time", "5", "https://wttr.in/?format=j1"],
             "",
             6000,
         );
@@ -442,25 +587,26 @@ async function fetchWeather(myToken: number) {
         if (!ok || !stdout.trim()) {
             sections.weather = errorSection("offline");
         } else {
-            const parts = trim(stdout).split("|").map((s) => s.trim().replace(/\s+/g, " "));
-            const [cond, temp, feels, wind, hum] = [
-                parts[0] ?? "",
-                parts[1] ?? "",
-                parts[2] ?? "",
-                parts[3] ?? "",
-                parts[4] ?? "",
-            ];
-            // Skip the "feels like" field when it matches the real temp —
-            // common on wttr.in output and just adds noise.
-            const feelsPart = feels && feels !== temp ? `feels ${feels}` : "";
-            const summary = truncate(
-                [cond, temp, feelsPart, wind, hum]
-                    .filter((s) => s.length > 0)
-                    .join(" · "),
-                VALUE_MAX,
-            );
+            let parsed: WttrJ1;
+            try {
+                parsed = JSON.parse(stdout) as WttrJ1;
+            } catch {
+                sections.weather = errorSection("malformed response");
+                paint();
+                return;
+            }
+            const now = formatCurrent(parsed.current_condition?.[0]);
+            // "5pm": nearest 3-hour sample in today's forecast. wttr.in
+            // buckets at 0/3/6/…/21, so 17:00 picks the 18:00 bucket.
+            const todayHours = parsed.weather?.[0]?.hourly ?? [];
+            const evening = formatHour(hourlyAt(todayHours, 17));
+            const tomorrow = formatDaySummary(parsed.weather?.[1]);
             sections.weather = {
-                draw: (d) => kv(d, "now", summary, C.accent),
+                draw: (d) => {
+                    kv(d, "now", now ?? "–", now ? C.accent : C.muted);
+                    if (evening) kv(d, "5pm", evening, C.value);
+                    if (tomorrow) kv(d, "tomorrow", tomorrow, C.value);
+                },
             };
         }
     } catch {
@@ -485,6 +631,16 @@ function normalizeRepoUrl(raw: string): string | null {
     return s;
 }
 
+// Parse the two numbers produced by `git rev-list --left-right --count`
+// ("<ahead> <behind>"). Returns null on malformed output.
+function parseLeftRight(stdout: string): { ahead: number; behind: number } | null {
+    const parts = trim(stdout).split(/\s+/);
+    const a = Number(parts[0]);
+    const b = Number(parts[1]);
+    if (isNaN(a) || isNaN(b)) return null;
+    return { ahead: a, behind: b };
+}
+
 async function fetchGit(myToken: number) {
     const cwd = editor.getCwd();
     try {
@@ -504,44 +660,98 @@ async function fetchGit(myToken: number) {
             let trackStr = "no upstream";
             let trackColor = C.muted;
             if (ahead.ok) {
-                const parts = trim(ahead.stdout).split(/\s+/);
-                const a = Number(parts[0]);
-                const b = Number(parts[1]);
-                if (!isNaN(a) && !isNaN(b)) {
-                    trackStr = `↑ ${a}   ↓ ${b}`;
-                    trackColor = a > 0 || b > 0 ? C.accent : C.ok;
+                const ab = parseLeftRight(ahead.stdout);
+                if (ab) {
+                    trackStr = `↑ ${ab.ahead}   ↓ ${ab.behind}`;
+                    trackColor = ab.ahead > 0 || ab.behind > 0 ? C.accent : C.ok;
                 }
             }
             const repoUrl = remote.ok ? normalizeRepoUrl(remote.stdout) : null;
             currentRepoUrl = repoUrl;
             const branchName = trim(branch.stdout);
+
+            // "vs master" row: commits ahead/behind of master, or main as a
+            // fallback for repos that use it as the default branch. Skipped
+            // when the current branch IS master/main (self-comparison is 0/0
+            // and not interesting), or when neither ref exists.
+            let vsBase: { base: string; ahead: number; behind: number } | null = null;
+            if (branchName !== "master" && branchName !== "main") {
+                for (const base of ["origin/master", "origin/main", "master", "main"]) {
+                    const r = await run(
+                        "git",
+                        ["rev-list", "--left-right", "--count", `HEAD...${base}`],
+                        cwd,
+                        3000,
+                    );
+                    if (r.ok) {
+                        const ab = parseLeftRight(r.stdout);
+                        if (ab) {
+                            vsBase = { base: base.replace(/^origin\//, ""), ...ab };
+                            break;
+                        }
+                    }
+                }
+            }
+            if (myToken !== fetchToken) return;
+
             sections.git = {
                 draw: (d) => {
-                    // branch — clickable, links to branch page on host
+                    // branch — whole row routes clicks to the branch page
+                    const branchBranchUrl = repoUrl
+                        ? `${repoUrl}/tree/${encodeURIComponent(branchName)}`
+                        : undefined;
                     emit(d, "    " + pad("branch", 10), { fg: C.muted });
                     emit(d, branchName, {
                         fg: C.branch,
-                        url: repoUrl ? `${repoUrl}/tree/${encodeURIComponent(branchName)}` : undefined,
+                        url: branchBranchUrl,
+                        action: branchBranchUrl
+                            ? { kind: "open-url", url: branchBranchUrl }
+                            : undefined,
                     });
                     newline(d);
 
-                    // remote URL — clickable
+                    // remote URL — displayed in full with scheme so that
+                    // terminals that auto-detect URLs (but ignore OSC-8)
+                    // still recognize it. The whole row is also click-
+                    // routable via the mouse_click hook.
                     if (repoUrl) {
                         emit(d, "    " + pad("repo", 10), { fg: C.muted });
-                        emit(d, repoUrl.replace(/^https?:\/\//, ""), {
+                        emit(d, repoUrl, {
                             fg: C.accent,
                             url: repoUrl,
+                            action: { kind: "open-url", url: repoUrl },
                         });
                         newline(d);
                     }
 
                     kv(d, "tracking", trackStr, trackColor);
+                    if (vsBase) {
+                        const label = `vs ${vsBase.base}`;
+                        const str = `↑ ${vsBase.ahead}   ↓ ${vsBase.behind}`;
+                        const color =
+                            vsBase.ahead > 0 || vsBase.behind > 0 ? C.accent : C.ok;
+                        kv(d, label, str, color);
+                    }
                     kv(
                         d,
                         "changes",
                         `${modified} file${modified === 1 ? "" : "s"}`,
                         modified > 0 ? C.warn : C.muted,
                     );
+
+                    // Clickable "review branch" action. Triggers the
+                    // audit_mode plugin's `start_review_diff` handler via
+                    // the plugin-action bridge — executeAction falls
+                    // through to Action::PluginAction for any name that's
+                    // not a built-in, and the plugin manager dispatches
+                    // that to the registered handler by name.
+                    emit(d, "    " + pad("review", 10), { fg: C.muted });
+                    emit(d, "▶ review branch", {
+                        fg: C.accent,
+                        bold: true,
+                        action: { kind: "review-branch" },
+                    });
+                    newline(d);
                 },
             };
         }
@@ -629,8 +839,14 @@ function renderPrRows(d: Draw, prs: GhPR[]) {
                 ? `https://github.com/${repoName}/pull/${pr.number}`
                 : undefined;
 
+        // Whole PR row routes clicks to prUrl (set once on the first
+        // action-bearing emit — subsequent emits on the same row would
+        // overwrite with the same value).
+        const prAction: ClickAction | undefined = prUrl
+            ? { kind: "open-url", url: prUrl }
+            : undefined;
         emit(d, "    ", undefined);
-        emit(d, pad(num, 6), { fg: C.number, url: prUrl });
+        emit(d, pad(num, 6), { fg: C.number, url: prUrl, action: prAction });
         emit(d, pad(stateTag, 5), { fg: stateColor, bold: true });
         emit(d, " ", undefined);
         emit(d, checkGlyph + " ", { fg: checkColor, bold: true });
@@ -833,12 +1049,6 @@ async function openDashboard() {
         }
     }
 
-    // Close the file explorer so the dashboard has the full viewport.
-    // No direct "close" action exists — ToggleFileExplorer will close
-    // it if open; we only toggle once, so a closed explorer wouldn't
-    // re-open spuriously on repeated dashboard-opens.
-    editor.executeAction("ToggleFileExplorer");
-
     // Reset section state and kick new fetches. Token guards against late
     // resolvers from a prior open clobbering the new one.
     //
@@ -907,6 +1117,32 @@ registerHandler(
     },
 );
 
+// Dispatch clicks on rows that carry an action. We don't trust the
+// terminal to honor OSC-8 hyperlinks on the `url` span — many strip
+// them silently — so every clickable element also registers a
+// row-based ClickAction and we route the click ourselves.
+registerHandler(
+    "dashboardOnMouseClick",
+    (data: {
+        column: number;
+        row: number;
+        button: string;
+        modifiers: string;
+        buffer_id: number | null;
+        buffer_row: number | null;
+        buffer_col: number | null;
+    }) => {
+        if (data.button !== "left") return;
+        if (dashboardBufferId === null) return;
+        if (data.buffer_id !== dashboardBufferId) return;
+        if (data.buffer_row === null) return;
+        const action = currentRowActions.get(data.buffer_row);
+        if (!action) return;
+        dispatchClickAction(action);
+    },
+);
+
 editor.on("ready", "dashboardOnReady");
 editor.on("buffer_closed", "dashboardOnBufferClosed");
 editor.on("viewport_changed", "dashboardOnViewportChanged");
+editor.on("mouse_click", "dashboardOnMouseClick");
