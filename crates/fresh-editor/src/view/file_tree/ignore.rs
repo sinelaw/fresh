@@ -100,29 +100,29 @@ impl IgnorePatterns {
 
     /// Check if a path should be ignored
     ///
-    /// Returns true if the file should be hidden from the tree
+    /// Each filter (hidden / custom / gitignored) is evaluated independently:
+    /// a file is hidden from the tree if *any* enabled filter matches it. This
+    /// way a file that is both hidden and gitignored still disappears when
+    /// gitignored files are hidden, even if hidden files are shown.
     pub fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
-        let status = self.get_status(path, is_dir);
-
-        match status {
-            IgnoreStatus::Visible => false,
-            IgnoreStatus::GitIgnored => !self.show_gitignored,
-            IgnoreStatus::Hidden => !self.show_hidden,
-            IgnoreStatus::CustomIgnored => !self.show_custom_ignored,
+        if !self.show_hidden && is_hidden_name(path) {
+            return true;
         }
+        if !self.show_custom_ignored && self.matches_custom_pattern(path) {
+            return true;
+        }
+        if !self.show_gitignored && self.matches_gitignore(path, is_dir) {
+            return true;
+        }
+        false
     }
 
     /// Get the ignore status of a path
     ///
     /// This is useful for rendering (e.g., gray out ignored files)
     pub fn get_status(&self, path: &Path, is_dir: bool) -> IgnoreStatus {
-        // Check if hidden (starts with .)
-        if let Some(name) = path.file_name() {
-            if let Some(name_str) = name.to_str() {
-                if name_str.starts_with('.') && name_str != ".." && name_str != "." {
-                    return IgnoreStatus::Hidden;
-                }
-            }
+        if is_hidden_name(path) {
+            return IgnoreStatus::Hidden;
         }
 
         // Check custom patterns
@@ -241,6 +241,13 @@ impl Default for IgnorePatterns {
     }
 }
 
+fn is_hidden_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.starts_with('.') && n != "." && n != "..")
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,6 +348,53 @@ mod tests {
 
         patterns.set_show_gitignored(false);
         assert!(!patterns.show_gitignored());
+    }
+
+    #[test]
+    fn test_hidden_gitignored_respects_gitignore_filter() -> std::io::Result<()> {
+        // Regression test for #1388: a file that is both hidden (starts with '.')
+        // and matched by .gitignore must stay hidden when `show_gitignored` is
+        // false, even if `show_hidden` is true. Hidden ≠ gitignored, and the
+        // user's choice to hide gitignored files should take precedence.
+        let temp_dir = TempDir::new()?;
+        let mut gitignore = fs::File::create(temp_dir.path().join(".gitignore"))?;
+        writeln!(gitignore, ".DS_Store")?;
+        drop(gitignore);
+
+        let mut patterns = IgnorePatterns::new();
+        patterns.load_gitignore(temp_dir.path())?;
+        patterns.set_show_hidden(true);
+        patterns.set_show_gitignored(false);
+
+        let ds_store = temp_dir.path().join(".DS_Store");
+        assert!(
+            patterns.is_ignored(&ds_store, false),
+            ".DS_Store is gitignored; should be hidden despite show_hidden=true"
+        );
+
+        // A hidden file NOT in .gitignore should still be shown.
+        let gitignore_file = temp_dir.path().join(".gitignore");
+        assert!(
+            !patterns.is_ignored(&gitignore_file, false),
+            ".gitignore is hidden but not gitignored; should be visible \
+             when show_hidden=true"
+        );
+
+        // Conversely, when show_gitignored is true, the file reappears even
+        // if show_hidden is false (gitignored filter is independent).
+        patterns.set_show_hidden(false);
+        patterns.set_show_gitignored(true);
+        assert!(
+            patterns.is_ignored(&ds_store, false),
+            ".DS_Store is still hidden, should respect show_hidden=false"
+        );
+
+        // Both filters disabled → fully visible.
+        patterns.set_show_hidden(true);
+        patterns.set_show_gitignored(true);
+        assert!(!patterns.is_ignored(&ds_store, false));
+
+        Ok(())
     }
 
     #[test]

@@ -2776,6 +2776,58 @@ fn test_dotfiles_hidden_by_default_and_toggle_controls_visibility() {
     );
 }
 
+/// Regression test for https://github.com/sinelaw/fresh/issues/1388:
+/// A file that is both a dotfile and matched by .gitignore should stay hidden
+/// while "Show Gitignored Files" is off, even if "Show Hidden Files" is on.
+/// Previously the explorer classified such files as Hidden first and only
+/// consulted the hidden-files toggle, letting gitignored dotfiles slip in.
+#[test]
+fn test_hidden_gitignored_file_respects_gitignore_toggle() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join(".gitignore"), ".DS_Store\n").unwrap();
+    fs::write(project_root.join(".DS_Store"), "macos junk").unwrap();
+    fs::write(project_root.join("visible_file.txt"), "visible").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .wait_for_file_explorer_item("visible_file.txt")
+        .unwrap();
+
+    // Turn on "Show hidden files". "Show gitignored files" stays off.
+    harness.editor_mut().file_explorer_toggle_hidden();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(".gitignore"),
+        ".gitignore is hidden but not gitignored; should be visible with \
+         show_hidden=true.\nScreen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains(".DS_Store"),
+        ".DS_Store is gitignored AND hidden; it should stay out of the \
+         explorer while 'Show Gitignored Files' is off, regardless of \
+         'Show Hidden Files'.\nScreen:\n{}",
+        screen
+    );
+
+    // Turning on "Show gitignored files" reveals the file.
+    harness.editor_mut().file_explorer_toggle_gitignored();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(".DS_Store"),
+        ".DS_Store should be visible when both 'Show Hidden Files' and \
+         'Show Gitignored Files' are on.\nScreen:\n{}",
+        screen
+    );
+}
+
 /// Helper: find the right border column of the file explorer on screen.
 ///
 /// Scans for the box-drawing corner characters that ratatui's `Block` draws
