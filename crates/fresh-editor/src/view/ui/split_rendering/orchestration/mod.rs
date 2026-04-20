@@ -450,6 +450,7 @@ pub(crate) fn render_content(
                             view_state.scroll_row,
                             content_height,
                             is_active,
+                            theme,
                         )
                     } else {
                         (0, 0)
@@ -627,6 +628,7 @@ pub(crate) fn render_content(
                     &viewport,
                     layout.horizontal_scrollbar_rect,
                     is_active,
+                    theme,
                     max_content_width,
                 )
             } else {

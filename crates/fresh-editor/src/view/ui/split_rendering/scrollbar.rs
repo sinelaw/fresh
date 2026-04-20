@@ -5,9 +5,10 @@
 //! struct".
 
 use crate::state::EditorState;
+use crate::view::theme::Theme;
 use crate::view::viewport::Viewport;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
@@ -228,8 +229,8 @@ pub(super) fn render_scrollbar(
     state: &EditorState,
     viewport: &Viewport,
     scrollbar_rect: Rect,
-    is_active: bool,
-    _theme: &crate::view::theme::Theme,
+    _is_active: bool,
+    theme: &Theme,
     large_file_threshold_bytes: u64,
     total_lines: usize,
     top_line: usize,
@@ -279,16 +280,8 @@ pub(super) fn render_scrollbar(
 
     let thumb_end = thumb_start + thumb_size;
 
-    let track_color = if is_active {
-        Color::DarkGray
-    } else {
-        Color::Black
-    };
-    let thumb_color = if is_active {
-        Color::Gray
-    } else {
-        Color::DarkGray
-    };
+    let track_color = theme.scrollbar_track_fg;
+    let thumb_color = theme.scrollbar_thumb_fg;
 
     for row in 0..height {
         let cell_area = Rect::new(scrollbar_rect.x, scrollbar_rect.y + row as u16, 1, 1);
@@ -314,7 +307,8 @@ pub(super) fn render_horizontal_scrollbar(
     frame: &mut Frame,
     viewport: &Viewport,
     hscrollbar_rect: Rect,
-    is_active: bool,
+    _is_active: bool,
+    theme: &Theme,
     max_content_width: usize,
 ) -> (usize, usize) {
     let width = hscrollbar_rect.width as usize;
@@ -322,11 +316,7 @@ pub(super) fn render_horizontal_scrollbar(
         return (0, 0);
     }
 
-    let track_color = if is_active {
-        Color::DarkGray
-    } else {
-        Color::Black
-    };
+    let track_color = theme.scrollbar_track_fg;
 
     if viewport.line_wrap_enabled {
         for col in 0..width {
@@ -358,11 +348,7 @@ pub(super) fn render_horizontal_scrollbar(
 
     let thumb_end = thumb_start + thumb_size;
 
-    let thumb_color = if is_active {
-        Color::Gray
-    } else {
-        Color::DarkGray
-    };
+    let thumb_color = theme.scrollbar_thumb_fg;
 
     for col in 0..width {
         let cell_area = Rect::new(hscrollbar_rect.x + col as u16, hscrollbar_rect.y, 1, 1);
@@ -387,7 +373,8 @@ pub(super) fn render_composite_scrollbar(
     total_rows: usize,
     scroll_row: usize,
     viewport_height: usize,
-    is_active: bool,
+    _is_active: bool,
+    theme: &Theme,
 ) -> (usize, usize) {
     let height = scrollbar_rect.height as usize;
     if height == 0 || total_rows == 0 {
@@ -419,16 +406,8 @@ pub(super) fn render_composite_scrollbar(
 
     let thumb_end = thumb_start + thumb_size;
 
-    let track_color = if is_active {
-        Color::DarkGray
-    } else {
-        Color::Black
-    };
-    let thumb_color = if is_active {
-        Color::Gray
-    } else {
-        Color::DarkGray
-    };
+    let track_color = theme.scrollbar_track_fg;
+    let thumb_color = theme.scrollbar_thumb_fg;
 
     for row in 0..height {
         let cell_area = Rect::new(scrollbar_rect.x, scrollbar_rect.y + row as u16, 1, 1);

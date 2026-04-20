@@ -1853,13 +1853,14 @@ impl EditorTestHarness {
     /// Primary cursor is detected at hardware cursor position
     /// Secondary cursors are detected by REVERSED style modifier or inactive cursor background
     pub fn find_all_cursors(&mut self) -> Vec<(u16, u16, String, bool)> {
-        use ratatui::style::{Color, Modifier};
+        use ratatui::style::Modifier;
         let mut cursors = Vec::new();
 
         // Get hardware cursor position (primary cursor)
         let (hw_x, hw_y) = self.screen_cursor_position();
 
         // Get the buffer to read cell content
+        let theme_inactive_cursor = self.editor.theme().inactive_cursor;
         let buffer = self.terminal.backend().buffer();
         let content_start = layout::CONTENT_START_ROW as u16;
         let content_end = buffer
@@ -1877,13 +1878,9 @@ impl EditorTestHarness {
             }
         }
 
-        // Find secondary cursors (cells with REVERSED modifier or inactive cursor background)
-        // Inactive cursor colors from theme.rs: Rgb(100,100,100) (dark), Rgb(180,180,180) (light), DarkGray (base16)
-        let inactive_cursor_colors = [
-            Color::Rgb(100, 100, 100),
-            Color::Rgb(180, 180, 180),
-            Color::DarkGray,
-        ];
+        // Inactive cursor bg is taken from the active theme; any cell matching
+        // that bg in the content area is treated as a secondary cursor.
+        let inactive_cursor_bg = theme_inactive_cursor;
 
         for y in content_start..content_end {
             for x in 0..buffer.area.width {
@@ -1901,7 +1898,7 @@ impl EditorTestHarness {
                 let pos = buffer.index_of(x, y);
                 if let Some(cell) = buffer.content.get(pos) {
                     let is_reversed = cell.modifier.contains(Modifier::REVERSED);
-                    let has_inactive_cursor_bg = inactive_cursor_colors.contains(&cell.bg);
+                    let has_inactive_cursor_bg = cell.bg == inactive_cursor_bg;
                     if is_reversed || has_inactive_cursor_bg {
                         cursors.push((x, y, cell.symbol().to_string(), false));
                     }

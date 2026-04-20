@@ -19,7 +19,11 @@ pub fn is_scrollbar_thumb_style(style: Style) -> bool {
             | Some(Color::Rgb(180, 180, 180))  // Light theme thumb
             | Some(Color::Rgb(140, 140, 140))  // Light theme hover
             | Some(Color::Rgb(170, 170, 170))  // Retro theme thumb
-            | Some(Color::Rgb(255, 255, 255))  // Retro theme hover
+            | Some(Color::Rgb(255, 255, 255))  // Retro theme hover / high-contrast track
+            | Some(Color::Rgb(255, 255, 0))    // High contrast thumb (RGB yellow)
+            | Some(Color::Rgb(0, 255, 255))    // High contrast hover (RGB cyan)
+            | Some(Color::Rgb(98, 114, 164))   // Dracula thumb
+            | Some(Color::Rgb(139, 233, 253))  // Dracula hover thumb
             | Some(Color::Yellow)     // High contrast thumb
             | Some(Color::Cyan) // High contrast hover
     )
@@ -38,6 +42,10 @@ pub fn is_scrollbar_track_style(style: Style) -> bool {
             | Some(Color::Rgb(220, 220, 220))  // Light theme track
             | Some(Color::Rgb(200, 200, 200))  // Light theme hover
             | Some(Color::Rgb(0, 0, 128))      // Retro theme track
+            | Some(Color::Rgb(255, 255, 255))  // High-contrast track (RGB white)
+            | Some(Color::Rgb(255, 255, 0))    // High-contrast hover track (RGB yellow)
+            | Some(Color::Rgb(68, 71, 90))     // Dracula track
+            | Some(Color::Rgb(80, 83, 100))    // Dracula hover track
             | Some(Color::White) // High contrast theme track
     )
 }

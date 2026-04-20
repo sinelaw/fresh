@@ -66,19 +66,20 @@ fn test_scrollbar_shows_scrollable_content_with_wrapped_lines() {
         content_first_row, content_last_row, scrollbar_col
     );
 
-    // Count scrollbar thumb and track cells by checking actual background colors
-    // The scrollbar uses Gray for thumb (active) and DarkGray for track (active)
+    // Count scrollbar thumb and track cells by comparing to the active theme's
+    // scrollbar colors (which the renderer uses).
+    let theme = harness.editor().theme();
+    let thumb_bg = theme.scrollbar_thumb_fg;
+    let track_bg = theme.scrollbar_track_fg;
     let mut thumb_count = 0;
     let mut track_count = 0;
     let content_height = content_last_row - content_first_row + 1;
 
     for row in content_first_row..=content_last_row {
         if let Some(style) = harness.get_cell_style(scrollbar_col, row as u16) {
-            // Check the actual background color to distinguish thumb from track
-            // Thumb is Gray, Track is DarkGray (when active)
             match style.bg {
-                Some(ratatui::style::Color::Gray) => thumb_count += 1,
-                Some(ratatui::style::Color::DarkGray) => track_count += 1,
+                Some(c) if c == thumb_bg => thumb_count += 1,
+                Some(c) if c == track_bg => track_count += 1,
                 _ => {}
             }
         }
