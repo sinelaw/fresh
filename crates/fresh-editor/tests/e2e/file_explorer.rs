@@ -2828,6 +2828,128 @@ fn test_hidden_gitignored_file_respects_gitignore_toggle() {
     );
 }
 
+/// Editing .gitignore in the editor and saving must reload the patterns
+/// so the file explorer picks up the new rules without a restart.
+#[test]
+fn test_saving_gitignore_reloads_ignore_patterns() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Start with a .gitignore that does NOT match .target_file.
+    let gitignore_path = project_root.join(".gitignore");
+    fs::write(&gitignore_path, "other_pattern\n").unwrap();
+    fs::write(project_root.join(".target_file"), "content").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    // Show hidden so .target_file would be visible on the hidden-filter side.
+    harness.editor_mut().file_explorer_toggle_hidden();
+    harness.wait_for_file_explorer_item(".target_file").unwrap();
+    assert!(
+        !harness
+            .editor()
+            .file_explorer()
+            .unwrap()
+            .ignore_patterns()
+            .is_ignored(&project_root.join(".target_file"), false),
+        "pre-save: .target_file should be visible (not yet gitignored)"
+    );
+
+    // Open .gitignore, append `.target_file`, save.
+    harness.editor_mut().open_file(&gitignore_path).unwrap();
+    harness.editor_mut().focus_editor();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text(".target_file\n").unwrap();
+    harness.editor_mut().save().unwrap();
+    harness.render().unwrap();
+
+    // Sanity: the on-disk file really has the new rule.
+    let disk = fs::read_to_string(&gitignore_path).unwrap();
+    assert!(
+        disk.contains(".target_file"),
+        "pre-check: .gitignore on disk must contain .target_file after save. Got:\n{}",
+        disk
+    );
+
+    // After save, the new rule should be live — no restart, no manual refresh.
+    assert!(
+        harness
+            .editor()
+            .file_explorer()
+            .unwrap()
+            .ignore_patterns()
+            .is_ignored(&project_root.join(".target_file"), false),
+        "post-save: .target_file should be filtered out by the reloaded .gitignore. \
+         On-disk .gitignore:\n{}",
+        disk
+    );
+}
+
+/// Nested .gitignore — editing a per-directory .gitignore must reload patterns
+/// for that specific directory (not just the root).
+#[test]
+fn test_saving_nested_gitignore_reloads_for_that_dir() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    let subdir = project_root.join("subdir");
+    fs::create_dir(&subdir).unwrap();
+
+    let nested_gitignore = subdir.join(".gitignore");
+    fs::write(&nested_gitignore, "\n").unwrap();
+    fs::write(subdir.join(".target_file"), "content").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.editor_mut().file_explorer_toggle_hidden();
+    harness.render().unwrap();
+
+    // Before: subdir/.target_file is not matched by any loaded gitignore.
+    assert!(
+        !harness
+            .editor()
+            .file_explorer()
+            .unwrap()
+            .ignore_patterns()
+            .is_ignored(&subdir.join(".target_file"), false),
+        "pre-save: nested .target_file should not be filtered yet"
+    );
+
+    // Edit the nested .gitignore.
+    harness.editor_mut().open_file(&nested_gitignore).unwrap();
+    harness.editor_mut().focus_editor();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text(".target_file\n").unwrap();
+    harness.editor_mut().save().unwrap();
+    harness.render().unwrap();
+
+    // Reloaded — the subdir-scoped rule is live.
+    assert!(
+        harness
+            .editor()
+            .file_explorer()
+            .unwrap()
+            .ignore_patterns()
+            .is_ignored(&subdir.join(".target_file"), false),
+        "post-save: nested .target_file should be filtered by the reloaded per-dir .gitignore"
+    );
+    // And it doesn't leak upward: a sibling file at the root is not affected.
+    fs::write(project_root.join(".target_file"), "content").unwrap();
+    assert!(
+        !harness
+            .editor()
+            .file_explorer()
+            .unwrap()
+            .ignore_patterns()
+            .is_ignored(&project_root.join(".target_file"), false),
+        "a nested .gitignore rule must not filter a same-named file at the project root"
+    );
+}
+
 /// Helper: find the right border column of the file explorer on screen.
 ///
 /// Scans for the box-drawing corner characters that ratatui's `Block` draws

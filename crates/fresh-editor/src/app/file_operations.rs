@@ -129,6 +129,18 @@ impl Editor {
             }
         }
 
+        // Reload .gitignore in the file explorer when the user saves one.
+        // Otherwise the tree keeps filtering by the old rules until restart.
+        if let Some(ref p) = path {
+            if p.file_name().and_then(|n| n.to_str()) == Some(".gitignore") {
+                if let (Some(parent), Some(explorer)) = (p.parent(), self.file_explorer.as_mut()) {
+                    if let Err(e) = explorer.load_gitignore_for_dir(parent) {
+                        tracing::warn!("Failed to reload .gitignore after save: {}", e);
+                    }
+                }
+            }
+        }
+
         // Notify LSP of save
         self.notify_lsp_save_buffer(buffer_id);
 
