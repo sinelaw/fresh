@@ -2833,7 +2833,9 @@ fn test_hidden_gitignored_file_respects_gitignore_toggle() {
 #[test]
 fn test_saving_gitignore_reloads_ignore_patterns() {
     let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
-    let project_root = harness.project_dir().unwrap();
+    // Canonicalize so path comparisons match the tree's internal form on
+    // macOS (tempdirs live under /var/folders → /private/var/folders).
+    let project_root = harness.project_dir().unwrap().canonicalize().unwrap();
 
     // Start with a .gitignore that does NOT match .target_file.
     let gitignore_path = project_root.join(".gitignore");
@@ -2893,7 +2895,7 @@ fn test_saving_gitignore_reloads_ignore_patterns() {
 #[test]
 fn test_saving_nested_gitignore_reloads_for_that_dir() {
     let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
-    let project_root = harness.project_dir().unwrap();
+    let project_root = harness.project_dir().unwrap().canonicalize().unwrap();
     let subdir = project_root.join("subdir");
     fs::create_dir(&subdir).unwrap();
 
@@ -2955,7 +2957,7 @@ fn test_saving_nested_gitignore_reloads_for_that_dir() {
 #[test]
 fn test_external_gitignore_edit_and_delete_reload_via_poll() {
     let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
-    let project_root = harness.project_dir().unwrap();
+    let project_root = harness.project_dir().unwrap().canonicalize().unwrap();
 
     let gitignore_path = project_root.join(".gitignore");
     fs::write(&gitignore_path, "foo.txt\n").unwrap();
@@ -3019,7 +3021,7 @@ fn test_external_gitignore_edit_and_delete_reload_via_poll() {
 #[test]
 fn test_externally_creating_gitignore_loads_rules_via_poll() {
     let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
-    let project_root = harness.project_dir().unwrap();
+    let project_root = harness.project_dir().unwrap().canonicalize().unwrap();
 
     fs::write(project_root.join("foo.txt"), "").unwrap();
 
