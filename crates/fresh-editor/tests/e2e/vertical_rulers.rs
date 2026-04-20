@@ -12,8 +12,11 @@ use fresh::config::Config;
 use ratatui::style::Color;
 use tempfile::TempDir;
 
-/// Helper: gutter width for a small buffer is 1 (indicator) + 4 (digits) + 3 (" │ ") = 8
-const SMALL_BUFFER_GUTTER: u16 = 8;
+/// Helper: query the rendered gutter width from the active buffer's margin state.
+/// For a <=99-line buffer this is 1 (indicator) + 2 (digits) + 3 (" │ ") = 6.
+fn gutter_width(harness: &EditorTestHarness) -> u16 {
+    harness.editor().active_state().margins.left_total_width() as u16
+}
 
 /// The default ruler background color: Rgb(50, 50, 50)
 const RULER_BG: Color = Color::Rgb(50, 50, 50);
@@ -55,24 +58,24 @@ fn test_rulers_render_at_correct_columns() {
 
     // Ruler at column 10 should have ruler bg
     assert!(
-        has_ruler_bg(&harness, SMALL_BUFFER_GUTTER + 10, row),
+        has_ruler_bg(&harness, gutter_width(&harness) + 10, row),
         "Ruler bg should appear at column 10"
     );
 
     // Ruler at column 20 should have ruler bg
     assert!(
-        has_ruler_bg(&harness, SMALL_BUFFER_GUTTER + 20, row),
+        has_ruler_bg(&harness, gutter_width(&harness) + 20, row),
         "Ruler bg should appear at column 20"
     );
 
     // Column 15 should NOT have ruler bg
     assert!(
-        !has_ruler_bg(&harness, SMALL_BUFFER_GUTTER + 15, row),
+        !has_ruler_bg(&harness, gutter_width(&harness) + 15, row),
         "Column 15 should not have ruler bg"
     );
 
     // Rulers should preserve text content (not overwrite with │)
-    let cell_10 = harness.get_cell(SMALL_BUFFER_GUTTER + 10, row);
+    let cell_10 = harness.get_cell(gutter_width(&harness) + 10, row);
     assert_eq!(
         cell_10.as_deref(),
         Some("X"),
@@ -92,7 +95,7 @@ fn test_rulers_span_full_height() {
     harness.render().unwrap();
 
     let (content_first_row, content_last_row) = harness.content_area_rows();
-    let ruler_x = SMALL_BUFFER_GUTTER + 10;
+    let ruler_x = gutter_width(&harness) + 10;
 
     for row in content_first_row..=content_last_row {
         assert!(
@@ -118,7 +121,7 @@ fn test_rulers_horizontal_scroll() {
     let row = content_first_row as u16;
 
     // Initially ruler at column 5 should be visible at screen x = gutter + 5
-    let ruler_screen_x = SMALL_BUFFER_GUTTER + 5;
+    let ruler_screen_x = gutter_width(&harness) + 5;
     assert!(
         has_ruler_bg(&harness, ruler_screen_x, row),
         "Ruler at col 5 should be visible initially"
@@ -148,7 +151,7 @@ fn test_no_rulers_by_default() {
 
     for col_offset in [10u16, 20, 30, 40] {
         assert!(
-            !has_ruler_bg(&harness, SMALL_BUFFER_GUTTER + col_offset, row),
+            !has_ruler_bg(&harness, gutter_width(&harness) + col_offset, row),
             "No ruler should exist at column {col_offset} with default config"
         );
     }
@@ -165,7 +168,7 @@ fn test_ruler_uses_theme_color() {
     harness.render().unwrap();
 
     let (content_first_row, _) = harness.content_area_rows();
-    let ruler_x = SMALL_BUFFER_GUTTER + 10;
+    let ruler_x = gutter_width(&harness) + 10;
 
     let style = harness.get_cell_style(ruler_x, content_first_row as u16);
     assert!(style.is_some(), "Ruler cell should have a style");
@@ -199,7 +202,7 @@ fn test_per_buffer_ruler_independence() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let ruler_x = SMALL_BUFFER_GUTTER + 15;
+    let ruler_x = gutter_width(&harness) + 15;
 
     assert!(
         has_ruler_bg(&harness, ruler_x, row),
@@ -236,7 +239,7 @@ fn test_add_ruler_command() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let ruler_x = SMALL_BUFFER_GUTTER + 25;
+    let ruler_x = gutter_width(&harness) + 25;
 
     // Before: no ruler at column 25
     assert!(
@@ -273,8 +276,8 @@ fn test_remove_ruler_command() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let ruler_x_10 = SMALL_BUFFER_GUTTER + 10;
-    let ruler_x_20 = SMALL_BUFFER_GUTTER + 20;
+    let ruler_x_10 = gutter_width(&harness) + 10;
+    let ruler_x_20 = gutter_width(&harness) + 20;
 
     // Verify both rulers exist
     assert!(
@@ -321,8 +324,8 @@ fn test_remove_ruler_selects_specific() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let ruler_x_10 = SMALL_BUFFER_GUTTER + 10;
-    let ruler_x_20 = SMALL_BUFFER_GUTTER + 20;
+    let ruler_x_10 = gutter_width(&harness) + 10;
+    let ruler_x_20 = gutter_width(&harness) + 20;
 
     // Both rulers exist
     assert!(has_ruler_bg(&harness, ruler_x_10, row));
@@ -387,7 +390,7 @@ fn test_add_ruler_invalid_input() {
     let row = content_first_row as u16;
     for col in [10u16, 20, 30] {
         assert!(
-            !has_ruler_bg(&harness, SMALL_BUFFER_GUTTER + col, row),
+            !has_ruler_bg(&harness, gutter_width(&harness) + col, row),
             "No ruler should exist after invalid input"
         );
     }
@@ -402,7 +405,7 @@ fn test_add_then_remove_ruler_bad_then_good_input() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let ruler_x = SMALL_BUFFER_GUTTER + 80;
+    let ruler_x = gutter_width(&harness) + 80;
 
     // Step 1: Add a ruler at column 80 via command palette
     assert!(
@@ -477,7 +480,7 @@ fn test_add_ruler_zero_column() {
     let row = content_first_row as u16;
     for col in [10u16, 20, 30] {
         assert!(
-            !has_ruler_bg(&harness, SMALL_BUFFER_GUTTER + col, row),
+            !has_ruler_bg(&harness, gutter_width(&harness) + col, row),
             "No ruler should exist after adding column 0"
         );
     }

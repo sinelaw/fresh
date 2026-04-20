@@ -1,16 +1,15 @@
 ---
 source: crates/fresh-editor/tests/common/visual_testing.rs
-assertion_line: 69
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   LSP   Help                                                                       
  file1.rs ×                                                                                                         □ × 
-    1 │ // File 1 - Contains a very long line that will require horizontal scrolling to see the end of it completely wh 
-▾   2 │ fn main() {                                                                                                     
-    3 │     let very_long_variable_name_that_extends_beyond_normal_view = "This is a string with a lot of content that  
-    4 │     println!("{}", very_long_variable_name_that_extends_beyond_normal_view);                                    
-    5 │ }                                                                                                               
-    6 │                                                                                                                 
+  1 │ // File 1 - Contains a very long line that will require horizontal scrolling to see the end of it completely when 
+▾ 2 │ fn main() {                                                                                                       
+  3 │     let very_long_variable_name_that_extends_beyond_normal_view = "This is a string with a lot of content that go 
+  4 │     println!("{}", very_long_variable_name_that_extends_beyond_normal_view);                                      
+  5 │ }                                                                                                                 
+  6 │                                                                                                                   
 ~                                                                                                                       
 ~                                                                                                                       
 ~                                                                                                                       

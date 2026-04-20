@@ -92,23 +92,23 @@ fn test_relative_line_numbers_show_correct_distances() {
     // and line2 shows relative distance 1
     // We check for the pattern in the gutter area
     assert!(
-        screen.contains("   2 │ line1") || screen.contains("   2│ line1"),
+        screen.contains(" 2 │ line1") || screen.contains(" 2│ line1"),
         "Line 1 should show relative distance 2 from cursor on line 3, screen:\n{screen}"
     );
     assert!(
-        screen.contains("   1 │ line2") || screen.contains("   1│ line2"),
+        screen.contains(" 1 │ line2") || screen.contains(" 1│ line2"),
         "Line 2 should show relative distance 1 from cursor on line 3, screen:\n{screen}"
     );
     assert!(
-        screen.contains("   3 │ line3") || screen.contains("   3│ line3"),
+        screen.contains(" 3 │ line3") || screen.contains(" 3│ line3"),
         "Cursor line (line 3) should show absolute line number 3, screen:\n{screen}"
     );
     assert!(
-        screen.contains("   1 │ line4") || screen.contains("   1│ line4"),
+        screen.contains(" 1 │ line4") || screen.contains(" 1│ line4"),
         "Line 4 should show relative distance 1 from cursor on line 3, screen:\n{screen}"
     );
     assert!(
-        screen.contains("   2 │ line5") || screen.contains("   2│ line5"),
+        screen.contains(" 2 │ line5") || screen.contains(" 2│ line5"),
         "Line 5 should show relative distance 2 from cursor on line 3, screen:\n{screen}"
     );
 }

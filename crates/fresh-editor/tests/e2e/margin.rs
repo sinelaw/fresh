@@ -22,10 +22,10 @@ fn test_margin_line_numbers_rendering() {
     let screen = harness.screen_to_string();
     println!("Screen output:\n{screen}");
 
-    // Should show line numbers in the left margin
-    harness.assert_screen_contains("   1 │");
-    harness.assert_screen_contains("   2 │");
-    harness.assert_screen_contains("   3 │");
+    // Should show line numbers in the left margin (2-digit gutter for <=99-line buffer)
+    harness.assert_screen_contains(" 1 │");
+    harness.assert_screen_contains(" 2 │");
+    harness.assert_screen_contains(" 3 │");
 
     // Should show file content
     harness.assert_screen_contains("Line 1");
@@ -42,8 +42,8 @@ fn test_margin_empty_buffer() {
     let screen = harness.screen_to_string();
     println!("Empty buffer screen:\n{screen}");
 
-    // Should show line 1 even for empty buffer
-    harness.assert_screen_contains("   1 │");
+    // Should show line 1 even for empty buffer (2-digit gutter minimum)
+    harness.assert_screen_contains(" 1 │");
 }
 
 /// Test that line_numbers config is respected when launching without a file
@@ -222,7 +222,7 @@ fn test_margin_custom_annotations() {
 
     // Breakpoint should be gone
     // But line numbers should still be there
-    harness.assert_screen_contains("   3 │");
+    harness.assert_screen_contains(" 3 │");
 }
 
 /// Test that margins work correctly after editing
@@ -246,10 +246,10 @@ fn test_margin_after_editing() {
     let screen = harness.screen_to_string();
     println!("Screen after typing:\n{screen}");
 
-    // Should show line numbers for all lines
-    harness.assert_screen_contains("   1 │");
-    harness.assert_screen_contains("   2 │");
-    harness.assert_screen_contains("   3 │");
+    // Should show line numbers for all lines (2-digit gutter minimum)
+    harness.assert_screen_contains(" 1 │");
+    harness.assert_screen_contains(" 2 │");
+    harness.assert_screen_contains(" 3 │");
 
     // Should show typed content
     harness.assert_screen_contains("First line");
@@ -271,10 +271,13 @@ fn test_cursor_position_with_margin() {
     let cursor_pos = harness.screen_cursor_position();
     println!("Cursor position: {cursor_pos:?}");
 
-    // Format: [indicator (1)] + [line numbers (4)] + [" │ " (3)] = 8 chars gutter
-    // cursor after "abc" should be at column 11 (8 + 3)
+    // Gutter is queried dynamically (width depends on buffer size):
+    //   [indicator (1)] + [line numbers (2+)] + [" │ " (3)] chars
+    // cursor after "abc" (3 chars) should be at gutter_width + 3.
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
     assert_eq!(
-        cursor_pos.0, 11,
+        cursor_pos.0,
+        gutter_width + 3,
         "Cursor X position should account for margin width"
     );
     assert_eq!(
@@ -309,7 +312,7 @@ fn test_margin_with_horizontal_scroll() {
     println!("Screen with horizontal scroll:\n{screen}");
 
     // Line number should still be visible even when horizontally scrolled
-    harness.assert_screen_contains("   1 │");
+    harness.assert_screen_contains(" 1 │");
 
     // Should see X's (the content)
     harness.assert_screen_contains("X");

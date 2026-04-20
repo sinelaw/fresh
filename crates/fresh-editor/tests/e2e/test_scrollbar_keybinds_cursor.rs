@@ -328,11 +328,9 @@ fn test_cursor_x_position_after_enter_at_end_of_line() {
     // Get screen cursor position
     let (screen_x, _screen_y) = harness.screen_cursor_position();
 
-    // The cursor should be at the leftmost column of the content area (after the gutter)
-    // For a buffer with 3 lines (line1, line2, empty), the gutter width is:
-    // 1 (indicator) + 4 (line number) + 3 (separator " │ ") = 8
-    // So screen_x should be 8 (the first column after the gutter)
-    let expected_x = 8; // gutter width
+    // The cursor should be at the leftmost column of the content area (after the gutter).
+    // Query the rendered gutter width so the test tracks whatever minimum is configured.
+    let expected_x = harness.editor().active_state().margins.left_total_width() as u16;
     assert_eq!(
         screen_x, expected_x,
         "BUG: Cursor X should be at leftmost column {} (after gutter), got {}",

@@ -6664,8 +6664,14 @@ fn test_hover_popup_follows_mouse_when_lsp_returns_no_range() -> anyhow::Result<
         None
     }
 
-    // Move mouse over the first symbol and get initial popup position
-    let initial_col = 10u16;
+    // Move mouse over the first symbol and get initial popup position.
+    // Anchor to the rendered gutter width so all test positions stay within the
+    // identifier "example_function_name" regardless of gutter size. The word
+    // starts at `gutter_width + 3` (after "fn "), and the test below samples
+    // mouse positions at offsets -2, +2, +5 from initial — so pick an offset
+    // that keeps every sample inside the identifier.
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
+    let initial_col = gutter_width + 6;
     let initial_row = 2u16;
     harness.mouse_move(initial_col, initial_row)?;
     harness.render()?;

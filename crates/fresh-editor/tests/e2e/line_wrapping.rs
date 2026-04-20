@@ -392,7 +392,6 @@ fn test_wrapped_line_no_horizontal_scroll() {
 #[test]
 fn test_wrapped_line_cursor_positioning() {
     const TERMINAL_WIDTH: u16 = 60;
-    const GUTTER_WIDTH: u16 = 8;
 
     let mut harness = EditorTestHarness::new(TERMINAL_WIDTH, 24).unwrap();
 
@@ -419,10 +418,11 @@ fn test_wrapped_line_cursor_positioning() {
         "Cursor should be at position 0 after Ctrl+Home"
     );
 
-    // Cursor at position 0 should be at x=GUTTER_WIDTH (after gutter)
+    // Cursor at position 0 should be at x=gutter_width (after gutter)
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
     assert_eq!(
-        start_x, GUTTER_WIDTH,
-        "Cursor at position 0 should be at x={GUTTER_WIDTH} (after gutter)"
+        start_x, gutter_width,
+        "Cursor at position 0 should be at x={gutter_width} (after gutter)"
     );
 
     // Verify the beginning of the text is visible on screen
@@ -440,7 +440,7 @@ fn test_wrapped_line_cursor_positioning() {
 
     // Move right through the line to detect where wrapping occurs
     // We'll detect up to 2 wrap points to understand the wrapping pattern
-    for i in 1..=long_text.len().min(100) {
+    for i in 1..=long_text.len() {
         harness
             .send_key(KeyCode::Right, KeyModifiers::NONE)
             .unwrap();
@@ -460,8 +460,8 @@ fn test_wrapped_line_cursor_positioning() {
 
                 // At first wrap point, cursor should be at start of continuation line
                 assert_eq!(
-                    cur_x, GUTTER_WIDTH,
-                    "At first wrap point (position {i}), cursor should be at x={GUTTER_WIDTH}"
+                    cur_x, gutter_width,
+                    "At first wrap point (position {i}), cursor should be at x={gutter_width}"
                 );
                 assert_eq!(
                     cur_y,
@@ -475,8 +475,8 @@ fn test_wrapped_line_cursor_positioning() {
 
                 // At second wrap point, cursor should also be at start of continuation line
                 assert_eq!(
-                    cur_x, GUTTER_WIDTH,
-                    "At second wrap point (position {i}), cursor should be at x={GUTTER_WIDTH}"
+                    cur_x, gutter_width,
+                    "At second wrap point (position {i}), cursor should be at x={gutter_width}"
                 );
                 assert_eq!(
                     cur_y,
@@ -572,8 +572,10 @@ fn test_wrapped_line_cursor_positioning() {
     let mut wrapped_up = false;
     let mut prev_y = end_y;
 
-    // Move left through the text, watching for upward wrapping
-    for i in 1..=50 {
+    // Move left through the text, watching for upward wrapping.
+    // Loop bound must exceed the visual line width so we reliably cross at
+    // least one wrap boundary from the physical end of the text.
+    for i in 1..=long_text.len() {
         harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
@@ -588,7 +590,7 @@ fn test_wrapped_line_cursor_positioning() {
             wrapped_up = true;
 
             // When wrapping up, cursor should NOT be at gutter (should be at end of previous line)
-            assert!(cur_x > GUTTER_WIDTH, "When wrapping up, cursor should be at end of previous line, not at x={GUTTER_WIDTH}");
+            assert!(cur_x > gutter_width, "When wrapping up, cursor should be at end of previous line, not at x={gutter_width}");
 
             // We've verified upward wrapping works
             break;
@@ -615,8 +617,8 @@ fn test_wrapped_line_cursor_positioning() {
         "Cursor should be at position 0 after Ctrl+Home"
     );
     assert_eq!(
-        final_x, GUTTER_WIDTH,
-        "Cursor should be at x={GUTTER_WIDTH}"
+        final_x, gutter_width,
+        "Cursor should be at x={gutter_width}"
     );
     assert_eq!(final_y, start_y, "Cursor should be back at starting y");
 
@@ -1772,7 +1774,6 @@ fn test_mouse_click_wrapped_thai_grapheme_clusters() {
 fn test_visual_line_movement_up_down() {
     const TERMINAL_WIDTH: u16 = 60;
     const TERMINAL_HEIGHT: u16 = 24;
-    const GUTTER_WIDTH: u16 = 8; // Line numbers + margin
 
     let mut harness = EditorTestHarness::new(TERMINAL_WIDTH, TERMINAL_HEIGHT).unwrap();
 
@@ -1807,10 +1808,11 @@ fn test_visual_line_movement_up_down() {
     );
 
     assert_eq!(start_pos, 0, "Should start at buffer position 0");
-    assert_eq!(start_x, GUTTER_WIDTH, "Should be at start of text area");
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
+    assert_eq!(start_x, gutter_width, "Should be at start of text area");
 
     // Calculate the text width per visual line (terminal - gutter - scrollbar)
-    let text_width = (TERMINAL_WIDTH - GUTTER_WIDTH - 1) as usize; // 51 chars
+    let text_width = (TERMINAL_WIDTH - gutter_width - 1) as usize;
 
     // Move cursor to the middle of the first visual line
     for _ in 0..20 {
@@ -1870,10 +1872,11 @@ fn test_visual_line_movement_up_down() {
     );
 
     // Buffer position should be approximately at the same column but in the wrapped segment
-    // (around text_width + original_column)
+    // (around text_width + original_column). Tolerance is wide because word-boundary
+    // wrapping can push the wrap point back several characters to the previous space.
     let expected_pos_approx = text_width + 20; // roughly where we expect cursor
     assert!(
-        (down_pos as isize - expected_pos_approx as isize).abs() < 5,
+        (down_pos as isize - expected_pos_approx as isize).abs() <= 10,
         "Buffer position {} should be around {} (text_width + column)",
         down_pos,
         expected_pos_approx
