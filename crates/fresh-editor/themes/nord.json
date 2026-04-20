@@ -36,6 +36,10 @@
     "help_indicator_fg": [191, 97, 106],
     "help_indicator_bg": [46, 52, 64],
     "split_separator_fg": [107, 118, 140],
+    "scrollbar_track_fg": [59, 66, 82],
+    "scrollbar_thumb_fg": [94, 129, 172],
+    "scrollbar_track_hover_fg": [67, 76, 94],
+    "scrollbar_thumb_hover_fg": [136, 192, 208],
     "settings_selected_bg": [94, 129, 172],
     "settings_selected_fg": [236, 239, 244]
   },
