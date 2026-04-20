@@ -1594,7 +1594,7 @@ impl Editor {
             {
                 self.mouse_state.dragging_file_explorer = true;
                 self.mouse_state.drag_start_position = Some((col, row));
-                self.mouse_state.drag_start_explorer_width = Some(self.file_explorer_width_percent);
+                self.mouse_state.drag_start_explorer_width = Some(self.file_explorer_width);
                 return Ok(());
             }
         }
@@ -2351,16 +2351,25 @@ impl Editor {
             return Ok(());
         };
 
-        // Calculate the delta in screen space
         let delta = col as i32 - start_col as i32;
         let total_width = self.terminal_width as i32;
 
+        // Drag preserves the variant the user chose. A user editing
+        // columns doesn't want their mode silently flipped to percent
+        // just because they grabbed the divider.
         if total_width > 0 {
-            // Convert screen delta to percentage delta
-            let percent_delta = delta as f32 / total_width as f32;
-            // Clamp the new width between 10% and 50%
-            let new_width = (start_width + percent_delta).clamp(0.1, 0.5);
-            self.file_explorer_width_percent = new_width;
+            use crate::config::ExplorerWidth;
+            self.file_explorer_width = match start_width {
+                ExplorerWidth::Percent(start_pct) => {
+                    let percent_delta = (delta * 100) / total_width;
+                    let new_pct = (start_pct as i32 + percent_delta).clamp(0, 100) as u8;
+                    ExplorerWidth::Percent(new_pct)
+                }
+                ExplorerWidth::Columns(start_cols) => {
+                    let new_cols = (start_cols as i32 + delta).clamp(0, total_width) as u16;
+                    ExplorerWidth::Columns(new_cols)
+                }
+            };
         }
 
         Ok(())

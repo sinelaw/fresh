@@ -1387,9 +1387,13 @@ pub struct FileExplorerConfig {
     #[serde(default)]
     pub custom_ignore_patterns: Vec<String>,
 
-    /// Width of file explorer as percentage (0.0 to 1.0)
+    /// File explorer width. Either a percent (`"30%"`, 0–100) or an
+    /// absolute column count (`"24"`). Legacy numeric forms are still
+    /// accepted on read: a bare integer is treated as percent, and a
+    /// fractional number in `[0, 1]` is treated as a legacy percent
+    /// fraction (e.g. `0.3` → 30%).
     #[serde(default = "default_explorer_width")]
-    pub width: f32,
+    pub width: ExplorerWidth,
 
     /// Open files in a "preview" (ephemeral) tab on single-click in the
     /// file explorer. The preview tab is replaced by the next single-click
@@ -1401,8 +1405,216 @@ pub struct FileExplorerConfig {
     pub preview_tabs: bool,
 }
 
-fn default_explorer_width() -> f32 {
-    0.3 // 30% of screen width
+/// Width configuration for the file explorer.
+///
+/// Two forms are supported:
+///
+/// - `Percent(n)` — relative to the current terminal width. `n` is a
+///   whole-percent value in `0..=100`.
+/// - `Columns(n)` — absolute character columns. `n` is clamped at
+///   render time against the live terminal width so the layout stays
+///   inside the window.
+///
+/// ## Wire formats accepted on deserialize
+///
+/// | JSON form | Parsed as |
+/// |---|---|
+/// | `30` (integer) | `Percent(30)` |
+/// | `0.3` (float in `[0, 1]`) | `Percent(30)` — legacy fraction |
+/// | `1.5`, `30.0` (float outside `[0, 1]`) | `Percent(n)` |
+/// | `"30%"`, `"30 %"` (string with `%`) | `Percent(30)` |
+/// | `"24"` (string, no `%`) | `Columns(24)` |
+///
+/// ## Wire format emitted on serialize
+///
+/// - `Percent(n)` → string `"n%"`
+/// - `Columns(n)` → string `"n"`
+///
+/// This makes `config.json` self-describing: the unit is visible on the
+/// value, and round-trip is stable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplorerWidth {
+    Percent(u8),
+    Columns(u16),
+}
+
+impl ExplorerWidth {
+    /// Default width when none is configured.
+    pub const DEFAULT: Self = Self::Percent(30);
+
+    /// Convert to terminal columns.
+    ///
+    /// `Percent` multiplies `terminal_width` by the percent; `Columns`
+    /// returns the requested count, clamped against `terminal_width`
+    /// so callers never receive a value larger than the window.
+    pub fn to_cols(self, terminal_width: u16) -> u16 {
+        match self {
+            Self::Percent(pct) => ((terminal_width as u32 * pct as u32) / 100) as u16,
+            Self::Columns(cols) => cols.min(terminal_width),
+        }
+    }
+}
+
+impl Default for ExplorerWidth {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl std::fmt::Display for ExplorerWidth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Percent(n) => write!(f, "{}%", n),
+            Self::Columns(n) => write!(f, "{}", n),
+        }
+    }
+}
+
+/// Parse error for `ExplorerWidth` strings.
+#[derive(Debug)]
+pub struct ExplorerWidthParseError(String);
+
+impl std::fmt::Display for ExplorerWidthParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ExplorerWidthParseError {}
+
+impl std::str::FromStr for ExplorerWidth {
+    type Err = ExplorerWidthParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Err(ExplorerWidthParseError(
+                "explorer width: empty string".into(),
+            ));
+        }
+        if let Some(rest) = s.strip_suffix('%') {
+            let n: u16 = rest.trim().parse().map_err(|_| {
+                ExplorerWidthParseError(format!("explorer width: {:?} is not a valid percent", s))
+            })?;
+            if n > 100 {
+                return Err(ExplorerWidthParseError(format!(
+                    "explorer width: {}% exceeds 100%",
+                    n
+                )));
+            }
+            Ok(Self::Percent(n as u8))
+        } else {
+            let n: u16 = s.parse().map_err(|_| {
+                ExplorerWidthParseError(format!(
+                    "explorer width: {:?} is neither a percent (e.g. \"30%\") nor a column count (e.g. \"24\")",
+                    s
+                ))
+            })?;
+            Ok(Self::Columns(n))
+        }
+    }
+}
+
+impl serde::Serialize for ExplorerWidth {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ExplorerWidth {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = serde_json::Value::deserialize(d)?;
+        explorer_width::from_value(&raw)
+    }
+}
+
+impl schemars::JsonSchema for ExplorerWidth {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("ExplorerWidth")
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // Declared as string (the canonical written form). Numbers are
+        // still accepted on read via the custom Deserialize impl, for
+        // back-compat with configs saved by older versions.
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": r"^(100%|[1-9]?[0-9]%|\d+)$",
+            "description": "Either a percent like \"30%\" (0–100) or an absolute column count like \"24\".",
+        })
+    }
+}
+
+fn default_explorer_width() -> ExplorerWidth {
+    ExplorerWidth::DEFAULT
+}
+
+/// Public default used by the workspace state deserializer.
+pub fn default_explorer_width_value() -> ExplorerWidth {
+    ExplorerWidth::DEFAULT
+}
+
+/// Shared parsing logic for the custom `Deserialize` impl on
+/// `ExplorerWidth` and for the `Option<ExplorerWidth>` variant used by
+/// `PartialConfig`. Accepts all documented wire formats.
+pub(crate) mod explorer_width {
+    use super::ExplorerWidth;
+    use serde::de::{self, Deserialize, Deserializer};
+    use std::str::FromStr;
+
+    /// `Option<ExplorerWidth>` deserializer for `PartialConfig`.
+    ///
+    /// `null`/absent → `None`. Anything else is parsed by
+    /// [`from_value`] and wrapped in `Some`.
+    pub fn deserialize_optional<'de, D>(d: D) -> Result<Option<ExplorerWidth>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = Option::<serde_json::Value>::deserialize(d)?;
+        match raw {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => from_value(&v).map(Some),
+        }
+    }
+
+    pub(super) fn from_value<E: de::Error>(v: &serde_json::Value) -> Result<ExplorerWidth, E> {
+        match v {
+            serde_json::Value::String(s) => ExplorerWidth::from_str(s).map_err(E::custom),
+            serde_json::Value::Number(n) => {
+                if let Some(u) = n.as_u64() {
+                    // Integer number — historical format for percent
+                    // (post-#1118, pre-columns). Keep treating it as
+                    // percent so existing configs stay correct.
+                    if u > 100 {
+                        return Err(E::custom(format!(
+                            "explorer width: {} exceeds 100 (percent). Use \"{}\" for columns.",
+                            u, u
+                        )));
+                    }
+                    Ok(ExplorerWidth::Percent(u as u8))
+                } else if let Some(f) = n.as_f64() {
+                    // Float: legacy fraction in [0, 1] OR explicit percent.
+                    let pct = if (0.0..=1.0).contains(&f) {
+                        f * 100.0
+                    } else {
+                        f
+                    };
+                    if !(0.0..=100.0).contains(&pct) {
+                        return Err(E::custom(format!(
+                            "explorer width: percent {} out of range 0..=100",
+                            pct
+                        )));
+                    }
+                    Ok(ExplorerWidth::Percent(pct.round() as u8))
+                } else {
+                    Err(E::custom("explorer width: unsupported number"))
+                }
+            }
+            _ => Err(E::custom(
+                "explorer width: expected \"30%\", \"24\" (columns), or a number",
+            )),
+        }
+    }
 }
 
 /// Clipboard configuration
@@ -5922,6 +6134,145 @@ impl std::error::Error for ConfigError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_file_explorer_width_default_is_percent_30() {
+        let cfg = FileExplorerConfig::default();
+        assert_eq!(cfg.width, ExplorerWidth::Percent(30));
+    }
+
+    // --- Wire format acceptance ---------------------------------------
+
+    #[test]
+    fn test_width_accepts_legacy_float_fraction() {
+        let cfg: FileExplorerConfig = serde_json::from_str(r#"{"width": 0.3}"#).unwrap();
+        assert_eq!(cfg.width, ExplorerWidth::Percent(30));
+    }
+
+    #[test]
+    fn test_width_accepts_bare_integer_as_percent() {
+        // Historical format from the earlier integer-percent PR.
+        let cfg: FileExplorerConfig = serde_json::from_str(r#"{"width": 42}"#).unwrap();
+        assert_eq!(cfg.width, ExplorerWidth::Percent(42));
+    }
+
+    #[test]
+    fn test_width_accepts_percent_string() {
+        let cfg: FileExplorerConfig = serde_json::from_str(r#"{"width": "75%"}"#).unwrap();
+        assert_eq!(cfg.width, ExplorerWidth::Percent(75));
+        // Tolerate whitespace around the percent.
+        let cfg: FileExplorerConfig = serde_json::from_str(r#"{"width": "42 %"}"#).unwrap();
+        assert_eq!(cfg.width, ExplorerWidth::Percent(42));
+    }
+
+    #[test]
+    fn test_width_accepts_columns_string() {
+        let cfg: FileExplorerConfig = serde_json::from_str(r#"{"width": "24"}"#).unwrap();
+        assert_eq!(cfg.width, ExplorerWidth::Columns(24));
+    }
+
+    #[test]
+    fn test_width_rejects_percent_over_100() {
+        let err = serde_json::from_str::<FileExplorerConfig>(r#"{"width": "150%"}"#)
+            .expect_err("percent > 100 should be rejected");
+        assert!(err.to_string().contains("100"), "{err}");
+    }
+
+    #[test]
+    fn test_width_rejects_integer_over_100() {
+        // Bare integer is interpreted as percent, so >100 is an error.
+        // Users who want 150 columns should write "150".
+        let err = serde_json::from_str::<FileExplorerConfig>(r#"{"width": 150}"#)
+            .expect_err("bare integer > 100 should be rejected as percent");
+        assert!(err.to_string().contains("percent") || err.to_string().contains("100"));
+    }
+
+    #[test]
+    fn test_width_rejects_garbage_string() {
+        serde_json::from_str::<FileExplorerConfig>(r#"{"width": "big"}"#)
+            .expect_err("non-numeric string should be rejected");
+    }
+
+    // --- Write-side format --------------------------------------------
+
+    #[test]
+    fn test_width_serializes_percent_as_string_with_suffix() {
+        let cfg = FileExplorerConfig {
+            width: ExplorerWidth::Percent(30),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(json["width"], serde_json::json!("30%"));
+    }
+
+    #[test]
+    fn test_width_serializes_columns_as_string_without_suffix() {
+        let cfg = FileExplorerConfig {
+            width: ExplorerWidth::Columns(24),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(json["width"], serde_json::json!("24"));
+    }
+
+    #[test]
+    fn test_width_round_trip_both_variants() {
+        for value in [ExplorerWidth::Percent(17), ExplorerWidth::Columns(42)] {
+            let cfg = FileExplorerConfig {
+                width: value,
+                ..Default::default()
+            };
+            let json = serde_json::to_string(&cfg).unwrap();
+            let restored: FileExplorerConfig = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored.width, value, "round trip failed for {:?}", value);
+        }
+    }
+
+    // --- to_cols -------------------------------------------------------
+
+    #[test]
+    fn test_to_cols_percent() {
+        assert_eq!(ExplorerWidth::Percent(30).to_cols(100), 30);
+        assert_eq!(ExplorerWidth::Percent(25).to_cols(120), 30);
+        assert_eq!(ExplorerWidth::Percent(30).to_cols(0), 0);
+        assert_eq!(ExplorerWidth::Percent(100).to_cols(200), 200);
+    }
+
+    #[test]
+    fn test_to_cols_columns_clamps_to_terminal() {
+        assert_eq!(ExplorerWidth::Columns(24).to_cols(100), 24);
+        assert_eq!(ExplorerWidth::Columns(999).to_cols(80), 80);
+        assert_eq!(ExplorerWidth::Columns(0).to_cols(100), 0);
+    }
+
+    // --- load_from_file regression ------------------------------------
+
+    #[test]
+    fn test_load_from_file_accepts_legacy_float_fraction_width() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"file_explorer":{"width":0.25}}"#).unwrap();
+        let cfg = Config::load_from_file(&path).expect("legacy float fraction must still load");
+        assert_eq!(cfg.file_explorer.width, ExplorerWidth::Percent(25));
+    }
+
+    #[test]
+    fn test_load_from_file_accepts_columns_string_width() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"file_explorer":{"width":"42"}}"#).unwrap();
+        let cfg = Config::load_from_file(&path).unwrap();
+        assert_eq!(cfg.file_explorer.width, ExplorerWidth::Columns(42));
+    }
+
+    #[test]
+    fn test_load_from_file_accepts_percent_string_width() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"file_explorer":{"width":"55%"}}"#).unwrap();
+        let cfg = Config::load_from_file(&path).unwrap();
+        assert_eq!(cfg.file_explorer.width, ExplorerWidth::Percent(55));
+    }
 
     #[test]
     fn test_default_config() {

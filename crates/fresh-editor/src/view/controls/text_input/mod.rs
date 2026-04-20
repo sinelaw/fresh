@@ -35,6 +35,12 @@ pub struct TextInputState {
     pub focus: FocusState,
     /// If true, validate that value is valid JSON before allowing exit
     pub validate_json: bool,
+    /// "Select-all" affordance: when the input gains focus the whole
+    /// value is conceptually selected, so the next printable keystroke
+    /// replaces it (matching the spinner UX from `NumberInputState`).
+    /// Any cursor movement, deletion, or explicit `insert` cancels the
+    /// flag and the input behaves normally from then on.
+    pub pending_replace_on_type: bool,
 }
 
 impl TextInputState {
@@ -47,7 +53,14 @@ impl TextInputState {
             placeholder: String::new(),
             focus: FocusState::Normal,
             validate_json: false,
+            pending_replace_on_type: false,
         }
+    }
+
+    /// Arm the "next-keystroke-replaces-value" affordance. Call when
+    /// the input first gains focus from a normal/hovered state.
+    pub fn arm_replace_on_type(&mut self) {
+        self.pending_replace_on_type = !self.value.is_empty();
     }
 
     /// Set JSON validation mode
@@ -94,6 +107,7 @@ impl TextInputState {
         if !self.is_enabled() {
             return;
         }
+        self.consume_pending_replace();
         self.value.insert(self.cursor, c);
         self.cursor += c.len_utf8();
     }
@@ -103,6 +117,7 @@ impl TextInputState {
         if !self.is_enabled() {
             return;
         }
+        self.consume_pending_replace();
         self.value.insert_str(self.cursor, s);
         self.cursor += s.len();
     }
@@ -110,6 +125,10 @@ impl TextInputState {
     /// Delete the character before the cursor (backspace)
     pub fn backspace(&mut self) {
         if !self.is_enabled() || self.cursor == 0 {
+            return;
+        }
+        if self.consume_pending_replace() {
+            // The "selected" value is cleared; nothing left to backspace.
             return;
         }
         // Find the previous character boundary
@@ -122,11 +141,27 @@ impl TextInputState {
         self.cursor = prev_boundary;
     }
 
+    /// If a pending replace-on-type is armed, clear the value and the
+    /// flag. Returns whether the pending state was consumed.
+    fn consume_pending_replace(&mut self) -> bool {
+        if self.pending_replace_on_type {
+            self.value.clear();
+            self.cursor = 0;
+            self.pending_replace_on_type = false;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Delete the grapheme cluster at the cursor (delete key)
     ///
     /// Deletes the entire grapheme cluster, handling combining characters properly.
     pub fn delete(&mut self) {
         if !self.is_enabled() || self.cursor >= self.value.len() {
+            return;
+        }
+        if self.consume_pending_replace() {
             return;
         }
         let next_boundary = grapheme::next_grapheme_boundary(&self.value, self.cursor);
@@ -138,6 +173,7 @@ impl TextInputState {
     /// Uses grapheme cluster boundaries for proper handling of combining characters
     /// like Thai diacritics, emoji with modifiers, etc.
     pub fn move_left(&mut self) {
+        self.pending_replace_on_type = false;
         if self.cursor > 0 {
             self.cursor = grapheme::prev_grapheme_boundary(&self.value, self.cursor);
         }
@@ -148,6 +184,7 @@ impl TextInputState {
     /// Uses grapheme cluster boundaries for proper handling of combining characters
     /// like Thai diacritics, emoji with modifiers, etc.
     pub fn move_right(&mut self) {
+        self.pending_replace_on_type = false;
         if self.cursor < self.value.len() {
             self.cursor = grapheme::next_grapheme_boundary(&self.value, self.cursor);
         }
@@ -155,11 +192,13 @@ impl TextInputState {
 
     /// Move cursor to start
     pub fn move_home(&mut self) {
+        self.pending_replace_on_type = false;
         self.cursor = 0;
     }
 
     /// Move cursor to end
     pub fn move_end(&mut self) {
+        self.pending_replace_on_type = false;
         self.cursor = self.value.len();
     }
 
@@ -290,6 +329,44 @@ mod tests {
                 f(frame, area);
             })
             .unwrap();
+    }
+
+    #[test]
+    fn test_arm_replace_on_type_replaces_value_on_first_char() {
+        let mut state = TextInputState::new("Width").with_value("30%");
+        state.arm_replace_on_type();
+        assert!(state.pending_replace_on_type);
+        state.insert('2');
+        assert_eq!(state.value, "2");
+        assert!(!state.pending_replace_on_type);
+        state.insert('4');
+        assert_eq!(state.value, "24");
+    }
+
+    #[test]
+    fn test_arm_replace_on_type_is_cancelled_by_cursor_movement() {
+        let mut state = TextInputState::new("Width").with_value("30%");
+        state.arm_replace_on_type();
+        state.move_left();
+        assert!(!state.pending_replace_on_type);
+        state.insert('x');
+        assert_eq!(state.value, "30x%");
+    }
+
+    #[test]
+    fn test_arm_replace_on_type_skips_when_empty() {
+        let mut state = TextInputState::new("Width");
+        state.arm_replace_on_type();
+        assert!(!state.pending_replace_on_type);
+    }
+
+    #[test]
+    fn test_arm_replace_on_type_backspace_clears_whole_value() {
+        let mut state = TextInputState::new("Width").with_value("30%");
+        state.arm_replace_on_type();
+        state.backspace();
+        assert_eq!(state.value, "");
+        assert!(!state.pending_replace_on_type);
     }
 
     #[test]

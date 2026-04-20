@@ -292,8 +292,15 @@ pub struct WorkspaceConfigOverrides {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileExplorerState {
     pub visible: bool,
-    #[serde(default)]
-    pub width_percent: f32,
+    /// File explorer width. See [`crate::config::ExplorerWidth`] for
+    /// the accepted wire formats (percent string, column string, legacy
+    /// numeric forms). The `width_percent` alias preserves read
+    /// compatibility with workspace files written by earlier versions.
+    #[serde(
+        alias = "width_percent",
+        default = "crate::config::default_explorer_width_value"
+    )]
+    pub width: crate::config::ExplorerWidth,
     /// Expanded directories (relative paths)
     #[serde(default)]
     pub expanded_dirs: Vec<PathBuf>,
@@ -312,7 +319,7 @@ impl Default for FileExplorerState {
     fn default() -> Self {
         Self {
             visible: false,
-            width_percent: 0.3,
+            width: crate::config::default_explorer_width_value(),
             expanded_dirs: Vec::new(),
             scroll_offset: 0,
             show_hidden: false,
@@ -1265,10 +1272,10 @@ mod tests {
     }
 
     #[test]
-    fn test_file_explorer_state() {
+    fn test_file_explorer_state_percent_round_trip() {
         let state = FileExplorerState {
             visible: true,
-            width_percent: 0.25,
+            width: crate::config::ExplorerWidth::Percent(25),
             expanded_dirs: vec![
                 PathBuf::from("src"),
                 PathBuf::from("src/app"),
@@ -1283,10 +1290,43 @@ mod tests {
         let restored: FileExplorerState = serde_json::from_str(&json).unwrap();
 
         assert!(restored.visible);
-        assert_eq!(restored.width_percent, 0.25);
+        assert_eq!(restored.width, crate::config::ExplorerWidth::Percent(25));
         assert_eq!(restored.expanded_dirs.len(), 3);
         assert_eq!(restored.scroll_offset, 5);
         assert!(restored.show_hidden);
         assert!(!restored.show_gitignored);
+    }
+
+    #[test]
+    fn test_file_explorer_state_columns_round_trip() {
+        let state = FileExplorerState {
+            visible: true,
+            width: crate::config::ExplorerWidth::Columns(42),
+            expanded_dirs: vec![],
+            scroll_offset: 0,
+            show_hidden: false,
+            show_gitignored: false,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: FileExplorerState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.width, crate::config::ExplorerWidth::Columns(42));
+    }
+
+    /// Legacy workspace files named the field `width_percent` and
+    /// stored the value as a float fraction in `0.0..=1.0`. Both must
+    /// still load (via serde `alias` and the `ExplorerWidth`
+    /// deserializer).
+    #[test]
+    fn test_file_explorer_state_legacy_width_percent_alias() {
+        let json = r#"{
+            "visible": true,
+            "width_percent": 0.3,
+            "expanded_dirs": [],
+            "scroll_offset": 0,
+            "show_hidden": false,
+            "show_gitignored": false
+        }"#;
+        let restored: FileExplorerState = serde_json::from_str(json).unwrap();
+        assert_eq!(restored.width, crate::config::ExplorerWidth::Percent(30));
     }
 }

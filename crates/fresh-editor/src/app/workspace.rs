@@ -258,7 +258,7 @@ impl Editor {
             let expanded_dirs = get_expanded_dirs(explorer, &self.working_dir);
             FileExplorerState {
                 visible: self.file_explorer_visible,
-                width_percent: self.file_explorer_width_percent,
+                width: self.file_explorer_width,
                 expanded_dirs,
                 scroll_offset: explorer.get_scroll_offset(),
                 show_hidden: explorer.ignore_patterns().show_hidden(),
@@ -267,7 +267,7 @@ impl Editor {
         } else {
             FileExplorerState {
                 visible: self.file_explorer_visible,
-                width_percent: self.file_explorer_width_percent,
+                width: self.file_explorer_width,
                 expanded_dirs: Vec::new(),
                 scroll_offset: 0,
                 show_hidden: false,
@@ -749,7 +749,7 @@ impl Editor {
 
         // 4. Restore file explorer state
         self.file_explorer_visible = workspace.file_explorer.visible;
-        self.file_explorer_width_percent = workspace.file_explorer.width_percent;
+        self.file_explorer_width = workspace.file_explorer.width;
 
         // Store pending show_hidden and show_gitignored settings (fixes #569)
         // These will be applied when the file explorer is initialized (async)

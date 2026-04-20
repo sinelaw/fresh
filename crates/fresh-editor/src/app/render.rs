@@ -171,14 +171,12 @@ impl Editor {
                 self.file_explorer.is_some(),
                 self.file_explorer_sync_in_progress
             );
-            // Convert f32 percentage (0.0-1.0) to u16 percentage (0-100)
-            let explorer_percent = (self.file_explorer_width_percent * 100.0) as u16;
-            let editor_percent = 100 - explorer_percent;
+            let explorer_cols = self.file_explorer_width.to_cols(main_content_area.width);
             let horizontal_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(explorer_percent), // File explorer
-                    Constraint::Percentage(editor_percent),   // Editor area
+                    Constraint::Length(explorer_cols), // File explorer
+                    Constraint::Min(0),                // Editor area (remainder)
                 ])
                 .split(main_content_area);
 
@@ -1552,14 +1550,10 @@ impl Editor {
         let file_explorer_should_show = self.file_explorer_visible
             && (self.file_explorer.is_some() || self.file_explorer_sync_in_progress);
         let editor_content_area = if file_explorer_should_show {
-            let explorer_percent = (self.file_explorer_width_percent * 100.0) as u16;
-            let editor_percent = 100 - explorer_percent;
+            let explorer_cols = self.file_explorer_width.to_cols(main_content_area.width);
             let horizontal_chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(explorer_percent),
-                    Constraint::Percentage(editor_percent),
-                ])
+                .constraints([Constraint::Length(explorer_cols), Constraint::Min(0)])
                 .split(main_content_area);
             horizontal_chunks[1]
         } else {

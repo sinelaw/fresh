@@ -578,7 +578,7 @@ impl Editor {
             local_filesystem: Arc::new(crate::model::filesystem::StdFileSystem),
             file_explorer_visible: false,
             file_explorer_sync_in_progress: false,
-            file_explorer_width_percent: file_explorer_width,
+            file_explorer_width,
             pending_file_explorer_show_hidden: None,
             pending_file_explorer_show_gitignored: None,
             menu_bar_visible: show_menu_bar,

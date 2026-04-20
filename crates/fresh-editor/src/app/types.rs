@@ -797,8 +797,10 @@ pub(super) struct MouseState {
     pub drag_start_ratio: Option<f32>,
     /// Whether we're currently dragging the file explorer border
     pub dragging_file_explorer: bool,
-    /// Initial file explorer width percentage when starting to drag
-    pub drag_start_explorer_width: Option<f32>,
+    /// File explorer width at the moment the drag started. Drag
+    /// preserves the active variant: a drag that begins in `Percent`
+    /// stays in `Percent`, and likewise for `Columns`.
+    pub drag_start_explorer_width: Option<crate::config::ExplorerWidth>,
     /// Current hover target (if any)
     pub hover_target: Option<HoverTarget>,
     /// Whether we're currently doing a text selection drag

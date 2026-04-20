@@ -321,7 +321,11 @@ pub struct PartialFileExplorerConfig {
     pub show_hidden: Option<bool>,
     pub show_gitignored: Option<bool>,
     pub custom_ignore_patterns: Option<Vec<String>>,
-    pub width: Option<f32>,
+    #[serde(
+        default,
+        deserialize_with = "crate::config::explorer_width::deserialize_optional"
+    )]
+    pub width: Option<crate::config::ExplorerWidth>,
     pub preview_tabs: Option<bool>,
 }
 

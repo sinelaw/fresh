@@ -1506,8 +1506,18 @@ impl SettingsState {
             }
         }
         if let Some(item) = self.current_item_mut() {
-            if let SettingControl::DualList(ref mut dl) = item.control {
-                dl.editing = true;
+            match item.control {
+                SettingControl::DualList(ref mut dl) => {
+                    dl.editing = true;
+                }
+                SettingControl::Text(ref mut state) => {
+                    // Mirror the spinner's "select-all on enter edit"
+                    // UX: the first printable keystroke replaces the
+                    // current value. Arrow keys or deletion cancel it
+                    // and the input behaves normally from then on.
+                    state.arm_replace_on_type();
+                }
+                _ => {}
             }
         }
     }
@@ -1551,10 +1561,7 @@ impl SettingsState {
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::TextList(state) => state.insert(c),
-                SettingControl::Text(state) => {
-                    state.value.insert(state.cursor, c);
-                    state.cursor += c.len_utf8();
-                }
+                SettingControl::Text(state) => state.insert(c),
                 SettingControl::Map(state) => {
                     state.new_key_text.insert(state.cursor, c);
                     state.cursor += c.len_utf8();
@@ -1570,16 +1577,7 @@ impl SettingsState {
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::TextList(state) => state.backspace(),
-                SettingControl::Text(state) => {
-                    if state.cursor > 0 {
-                        let mut char_start = state.cursor - 1;
-                        while char_start > 0 && !state.value.is_char_boundary(char_start) {
-                            char_start -= 1;
-                        }
-                        state.value.remove(char_start);
-                        state.cursor = char_start;
-                    }
-                }
+                SettingControl::Text(state) => state.backspace(),
                 SettingControl::Map(state) => {
                     if state.cursor > 0 {
                         let mut char_start = state.cursor - 1;
@@ -1601,15 +1599,7 @@ impl SettingsState {
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::TextList(state) => state.move_left(),
-                SettingControl::Text(state) => {
-                    if state.cursor > 0 {
-                        let mut new_pos = state.cursor - 1;
-                        while new_pos > 0 && !state.value.is_char_boundary(new_pos) {
-                            new_pos -= 1;
-                        }
-                        state.cursor = new_pos;
-                    }
-                }
+                SettingControl::Text(state) => state.move_left(),
                 SettingControl::Map(state) => {
                     if state.cursor > 0 {
                         let mut new_pos = state.cursor - 1;
@@ -1630,16 +1620,7 @@ impl SettingsState {
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::TextList(state) => state.move_right(),
-                SettingControl::Text(state) => {
-                    if state.cursor < state.value.len() {
-                        let mut new_pos = state.cursor + 1;
-                        while new_pos < state.value.len() && !state.value.is_char_boundary(new_pos)
-                        {
-                            new_pos += 1;
-                        }
-                        state.cursor = new_pos;
-                    }
-                }
+                SettingControl::Text(state) => state.move_right(),
                 SettingControl::Map(state) => {
                     if state.cursor < state.new_key_text.len() {
                         let mut new_pos = state.cursor + 1;

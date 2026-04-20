@@ -511,9 +511,10 @@ pub struct Editor {
     /// When true, we still render the file explorer area even if file_explorer is temporarily None
     file_explorer_sync_in_progress: bool,
 
-    /// File explorer width as percentage (0.0 to 1.0)
-    /// This is the runtime value that can be modified by dragging the border
-    file_explorer_width_percent: f32,
+    /// File explorer width: either a percent of the terminal width or
+    /// an absolute column count. Runtime value, may be modified by
+    /// dragging the divider (drag preserves the active variant).
+    file_explorer_width: crate::config::ExplorerWidth,
 
     /// Pending show_hidden setting to apply when file explorer is initialized (from session restore)
     pending_file_explorer_show_hidden: Option<bool>,
@@ -1120,13 +1121,12 @@ impl Editor {
 
     /// Calculate the effective width available for tabs.
     ///
-    /// When the file explorer is visible, tabs only get a portion of the terminal width
-    /// based on `file_explorer_width_percent`. This matches the layout calculation in render.rs.
+    /// When the file explorer is visible, tabs only get a portion of the
+    /// terminal width. Matches the layout calculation in render.rs.
     fn effective_tabs_width(&self) -> u16 {
         if self.file_explorer_visible && self.file_explorer.is_some() {
-            // When file explorer is visible, tabs get (1 - explorer_width) of the terminal width
-            let editor_percent = 1.0 - self.file_explorer_width_percent;
-            (self.terminal_width as f32 * editor_percent) as u16
+            let explorer = self.file_explorer_width.to_cols(self.terminal_width);
+            self.terminal_width.saturating_sub(explorer)
         } else {
             self.terminal_width
         }

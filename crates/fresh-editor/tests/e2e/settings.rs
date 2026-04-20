@@ -1268,93 +1268,40 @@ fn test_map_control_add_new_shows_text_input() {
         .unwrap();
 }
 
-/// Test changing File Explorer Width (a percentage/float setting) and saving
+/// Smoke test: the File Explorer Width field renders with the default
+/// 30% displayed as `"30%"` in the settings UI.
 ///
-/// This tests the bug where percentage values were being saved incorrectly:
-/// - Width is stored as float 0.0-1.0 (e.g., 0.3 = 30%)
-/// - UI displays as integer (30)
-/// - Bug: saved as integer (30) instead of float (0.30)
-/// - Result: on reload, 30 * 100 = 3000 displayed
+/// The field is a free-form string now ("30%" or "24" for columns),
+/// so detailed parse/round-trip behavior lives in config unit tests.
 #[test]
-fn test_settings_percentage_value_saves_correctly() {
+fn test_settings_file_explorer_width_shows_percent_suffix() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
     harness.render().unwrap();
 
-    // Get initial width (default is 0.3 = 30%)
-    let initial_width = harness.config().file_explorer.width;
-    assert!(
-        (initial_width - 0.3).abs() < 0.01,
-        "Initial width should be ~0.3, got {}",
-        initial_width
+    assert_eq!(
+        harness.config().file_explorer.width,
+        fresh::config::ExplorerWidth::Percent(30),
     );
 
-    // Open settings
     harness.open_settings().unwrap();
 
-    // Navigate to File Explorer category
-    // Categories: General, Clipboard, Editor, File Browser, File Explorer, ...
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Clipboard
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Editor
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // File Browser
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // File Explorer
+    // Navigate to File Explorer category.
+    // Categories in order: General, Clipboard, Editor, File Browser, File Explorer, ...
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
     harness.render().unwrap();
-
-    // Switch to settings panel
+    // Switch to the settings panel.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-
-    // Navigate down to find the Width setting.
-    // File Explorer settings (alphabetical): Custom Ignore Patterns,
-    // Preview Tabs, Respect Gitignore, Show Gitignored, Show Hidden, Width.
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Preview Tabs
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Respect Gitignore
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Show Gitignored
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Show Hidden
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Width
+    // Width is the last field in the alphabetical listing.
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
     harness.render().unwrap();
 
-    // Should show Width setting with current value (30 = 0.3 * 100)
     harness.assert_screen_contains("Width");
-    harness.assert_screen_contains("30");
-
-    // Increment the value to 31 (which should become 0.31)
-    harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Should now show 31
-    harness.assert_screen_contains("31");
-
-    // Should show modified indicator
-    harness.assert_screen_contains("modified");
-
-    // Tab to footer (Layer button), then Tab to Save
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Reset
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Save
-    harness.render().unwrap();
-
-    // Press Enter to save
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Verify settings is closed
-    assert!(
-        !harness.editor().is_settings_open(),
-        "Settings should be closed after saving"
-    );
-
-    // CRITICAL: Verify the width was saved as a float, not an integer
-    // If the bug exists, width would be 31.0 instead of 0.31
-    let new_width = harness.config().file_explorer.width;
-    assert!(
-        (new_width - 0.31).abs() < 0.01,
-        "Width should be ~0.31 after saving, got {} (bug: value was saved as integer instead of float)",
-        new_width
-    );
+    harness.assert_screen_contains("30%");
 }
 
 /// Test number input editing mode - enter editing, type value, confirm

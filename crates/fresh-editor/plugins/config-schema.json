@@ -122,7 +122,7 @@
         "show_hidden": false,
         "show_gitignored": false,
         "custom_ignore_patterns": [],
-        "width": 0.30000001192092896,
+        "width": "30%",
         "preview_tabs": true
       }
     },
@@ -874,10 +874,9 @@
           "default": []
         },
         "width": {
-          "description": "Width of file explorer as percentage (0.0 to 1.0)",
-          "type": "number",
-          "format": "float",
-          "default": 0.30000001192092896
+          "description": "File explorer width. Either a percent (`\"30%\"`, 0–100) or an\nabsolute column count (`\"24\"`). Legacy numeric forms are still\naccepted on read: a bare integer is treated as percent, and a\nfractional number in `[0, 1]` is treated as a legacy percent\nfraction (e.g. `0.3` → 30%).",
+          "$ref": "#/$defs/ExplorerWidth",
+          "default": "30%"
         },
         "preview_tabs": {
           "description": "Open files in a \"preview\" (ephemeral) tab on single-click in the\nfile explorer. The preview tab is replaced by the next single-click\ninstead of accumulating tabs. Editing the file, double-clicking\n(or pressing Enter) on it in the explorer, or dragging its tab\npromotes the tab to a permanent tab.\nDefault: true",
@@ -885,6 +884,11 @@
           "default": true
         }
       }
+    },
+    "ExplorerWidth": {
+      "description": "Either a percent like \"30%\" (0–100) or an absolute column count like \"24\".",
+      "type": "string",
+      "pattern": "^(100%|[1-9]?[0-9]%|\\d+)$"
     },
     "FileBrowserConfig": {
       "description": "File browser configuration (for Open File dialog)",
