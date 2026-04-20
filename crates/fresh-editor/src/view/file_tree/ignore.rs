@@ -9,7 +9,9 @@
 //! compatible with git's ignore rules.
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// Status of a file/directory with respect to ignore patterns
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +33,10 @@ pub struct IgnorePatterns {
     /// Key: directory path, Value: gitignore rules for that directory
     gitignores: Vec<(PathBuf, Gitignore)>,
 
+    /// Mtime of each loaded .gitignore at load time. Used to detect
+    /// external edits and deletions during the file-tree poll.
+    gitignore_mtimes: HashMap<PathBuf, SystemTime>,
+
     /// Custom glob patterns to ignore
     custom_patterns: Vec<String>,
 
@@ -49,6 +55,7 @@ impl IgnorePatterns {
     pub fn new() -> Self {
         Self {
             gitignores: Vec::new(),
+            gitignore_mtimes: HashMap::new(),
             custom_patterns: Vec::new(),
             show_hidden: false,
             show_gitignored: false,
@@ -71,10 +78,16 @@ impl IgnorePatterns {
 
         match builder.build() {
             Ok(gitignore) => {
+                let mtime = std::fs::metadata(&gitignore_path)
+                    .ok()
+                    .and_then(|m| m.modified().ok());
                 // Remove any existing gitignore for this directory
                 self.gitignores.retain(|(path, _)| path != dir);
                 // Add new gitignore
                 self.gitignores.push((dir.to_path_buf(), gitignore));
+                if let Some(mtime) = mtime {
+                    self.gitignore_mtimes.insert(dir.to_path_buf(), mtime);
+                }
                 Ok(())
             }
             Err(e) => {
@@ -82,6 +95,43 @@ impl IgnorePatterns {
                 Ok(()) // Don't fail if .gitignore is malformed
             }
         }
+    }
+
+    /// Re-check every currently-loaded `.gitignore` on disk, reloading those
+    /// whose mtime has changed and dropping those that have been deleted.
+    ///
+    /// Returns `true` if anything changed (so the caller knows to re-render).
+    pub fn sync_gitignores_from_disk(&mut self) -> bool {
+        let dirs: Vec<PathBuf> = self.gitignores.iter().map(|(d, _)| d.clone()).collect();
+        let mut changed = false;
+
+        for dir in dirs {
+            let gitignore_path = dir.join(".gitignore");
+            let current_mtime = std::fs::metadata(&gitignore_path)
+                .ok()
+                .and_then(|m| m.modified().ok());
+
+            match current_mtime {
+                None => {
+                    // File vanished — drop the entry.
+                    self.gitignores.retain(|(d, _)| d != &dir);
+                    self.gitignore_mtimes.remove(&dir);
+                    changed = true;
+                }
+                Some(mtime) => {
+                    let stored = self.gitignore_mtimes.get(&dir).copied();
+                    if stored != Some(mtime) {
+                        // Content changed — reload. load_gitignore overwrites
+                        // the entry and stores the new mtime.
+                        if self.load_gitignore(&dir).is_ok() {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        changed
     }
 
     /// Add a custom glob pattern to ignore
@@ -222,6 +272,7 @@ impl IgnorePatterns {
     /// Clear all gitignore rules
     pub fn clear_gitignores(&mut self) {
         self.gitignores.clear();
+        self.gitignore_mtimes.clear();
     }
 
     /// Clear all custom patterns

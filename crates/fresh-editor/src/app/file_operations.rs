@@ -524,6 +524,7 @@ impl Editor {
 
         // Check for results from a previous background poll
         let mut any_refreshed = false;
+        let mut dir_poll_pending = false;
         if let Some(ref rx) = self.pending_dir_poll_rx {
             match rx.try_recv() {
                 Ok((dir_results, git_index_mtime)) => {
@@ -531,7 +532,7 @@ impl Editor {
                     any_refreshed = self.process_dir_poll_results(dir_results, git_index_mtime);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    return false;
+                    dir_poll_pending = true;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.pending_dir_poll_rx = None;
@@ -546,6 +547,22 @@ impl Editor {
             return any_refreshed;
         }
         self.last_file_tree_poll = self.time_source.now();
+
+        // Re-stat every loaded .gitignore and reload/drop as needed, so
+        // external edits (git pull, sed, another editor) and deletions take
+        // effect without a restart. In-editor saves already reload eagerly
+        // via finalize_save_buffer. This is sync I/O on a handful of small
+        // files — we don't need the bg thread for it.
+        if let Some(ref mut explorer) = self.file_explorer {
+            if explorer.ignore_patterns_mut().sync_gitignores_from_disk() {
+                any_refreshed = true;
+            }
+        }
+
+        // If a previous dir-poll is still in flight, don't stack another.
+        if dir_poll_pending {
+            return any_refreshed;
+        }
 
         // Resolve the git index path once (first poll only). This uses the
         // ProcessSpawner which may block briefly on the first call, but only

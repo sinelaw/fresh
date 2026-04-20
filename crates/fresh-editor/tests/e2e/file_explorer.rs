@@ -2950,6 +2950,69 @@ fn test_saving_nested_gitignore_reloads_for_that_dir() {
     );
 }
 
+/// External edits to a .gitignore must be picked up by the file-tree poll,
+/// and deleting a .gitignore must drop its rules.
+#[test]
+fn test_external_gitignore_edit_and_delete_reload_via_poll() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let gitignore_path = project_root.join(".gitignore");
+    fs::write(&gitignore_path, "foo.txt\n").unwrap();
+    fs::write(project_root.join("foo.txt"), "").unwrap();
+    fs::write(project_root.join("bar.txt"), "").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.render().unwrap();
+
+    let check = |h: &EditorTestHarness, name: &str| {
+        h.editor()
+            .file_explorer()
+            .unwrap()
+            .ignore_patterns()
+            .is_ignored(&project_root.join(name), false)
+    };
+    assert!(
+        check(&harness, "foo.txt"),
+        "initial: foo.txt should be gitignored"
+    );
+    assert!(
+        !check(&harness, "bar.txt"),
+        "initial: bar.txt should not be gitignored"
+    );
+
+    // Sleep past typical 1s mtime granularity so the edit produces a distinct
+    // mtime. External write + poll tick.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    fs::write(&gitignore_path, "bar.txt\n").unwrap();
+    harness.advance_time(std::time::Duration::from_secs(5));
+    harness.editor_mut().poll_file_tree_changes();
+
+    assert!(
+        !check(&harness, "foo.txt"),
+        "after external edit: foo.txt should be visible"
+    );
+    assert!(
+        check(&harness, "bar.txt"),
+        "after external edit: bar.txt should be gitignored"
+    );
+
+    // Delete .gitignore — the dropped entry should no longer filter anything.
+    fs::remove_file(&gitignore_path).unwrap();
+    harness.advance_time(std::time::Duration::from_secs(5));
+    harness.editor_mut().poll_file_tree_changes();
+
+    assert!(
+        !check(&harness, "foo.txt"),
+        "after delete: foo.txt should be visible"
+    );
+    assert!(
+        !check(&harness, "bar.txt"),
+        "after delete: bar.txt should be visible"
+    );
+}
+
 /// Helper: find the right border column of the file explorer on screen.
 ///
 /// Scans for the box-drawing corner characters that ratatui's `Block` draws
