@@ -73,8 +73,8 @@ fn test_remote_indicator_popup_local_without_devcontainer_shows_hint() -> anyhow
     assert!(
         items
             .iter()
-            .any(|t| t.contains("No dev container config detected")),
-        "Popup should show the disabled hint when no config is detectable. \
+            .any(|t| t.contains("Create Dev Container Config")),
+        "Popup should offer the scaffold row when no config is detectable. \
          Items: {:#?}",
         items
     );

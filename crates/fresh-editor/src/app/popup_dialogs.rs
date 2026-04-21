@@ -724,12 +724,15 @@ impl Editor {
                             .with_data("plugin:devcontainer_open_config".to_string()),
                     );
                 } else {
-                    // No .devcontainer present; give a single disabled
-                    // hint row so the popup isn't empty. The item has
-                    // no data so confirm on it is a no-op.
+                    // No .devcontainer present — offer the scaffold
+                    // so users can bootstrap a config in one click
+                    // without dropping to a shell. The scaffold
+                    // command is plugin-owned and registered
+                    // unconditionally at plugin load, so this row is
+                    // always actionable.
                     items.push(
-                        PopupListItem::new("    No dev container config detected".to_string())
-                            .disabled(),
+                        PopupListItem::new("    Create Dev Container Config".to_string())
+                            .with_data("plugin:devcontainer_scaffold_config".to_string()),
                     );
                 }
             }
