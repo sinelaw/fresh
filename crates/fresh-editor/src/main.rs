@@ -3394,6 +3394,14 @@ fn real_main() -> AnyhowResult<()> {
             tracing::warn!("Failed to start recovery session: {}", e);
         }
 
+        // Drain any CLI file arguments that were queued by
+        // `initialize_app` BEFORE firing the ready hook, so plugins
+        // listening on `ready` see those buffers as already open. Left
+        // to the event loop, ready would fire first and plugins that
+        // branch on "is there a real file open?" (e.g. the dashboard)
+        // would race the file in and open on top of it.
+        editor.process_pending_file_opens();
+
         // Workspace restored, initial buffers opened, recovery session up —
         // fire the `ready` lifecycle hook (design M2, §3.3 phase 3) before
         // handing off to the event loop.

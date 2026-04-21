@@ -1139,6 +1139,24 @@ async function openDashboard() {
     });
     dashboardBufferId = res.bufferId;
     dashboardOpening = false;
+
+    // Re-check: while we were awaiting createVirtualBuffer, a real
+    // file may have landed — e.g. a CLI file from `fresh my_file`
+    // that was queued before our `ready` handler ran, or a file the
+    // user opened from the explorer. If so, quietly close the buffer
+    // we just created instead of showing it and stealing focus.
+    const realFilesNow = editor.listBuffers().filter(
+        (b) =>
+            !b.is_virtual &&
+            b.path &&
+            b.path.length > 0 &&
+            b.id !== dashboardBufferId,
+    );
+    if (realFilesNow.length > 0) {
+        editor.closeBuffer(dashboardBufferId);
+        dashboardBufferId = null;
+        return;
+    }
     editor.showBuffer(dashboardBufferId);
 
     // Close any untitled scratch left over from the last-tab-closed event
@@ -1210,6 +1228,23 @@ registerHandler(
         if (shouldShowDashboard()) await openDashboard();
     },
 );
+// Step aside when a real file opens. This covers two flows:
+//   1. `fresh my_file` at the command line: the file is queued before
+//      the event loop starts, so the dashboard's `ready` handler can
+//      race ahead and open on top of the pending file. When the file
+//      eventually lands here, we close the dashboard so the user's
+//      file is the visible tab.
+//   2. Opening a file from the explorer / command palette while the
+//      dashboard is the current tab. Same reasoning: the user asked
+//      for a real buffer, so the dashboard shouldn't linger in front.
+registerHandler(
+    "dashboardOnAfterFileOpen",
+    (_e: { buffer_id: number; path: string }) => {
+        if (dashboardBufferId === null) return;
+        editor.closeBuffer(dashboardBufferId);
+        dashboardBufferId = null;
+    },
+);
 // viewport_changed fires whenever a split's dimensions change, which
 // covers terminal resize *and* file-explorer toggle (opening the explorer
 // shrinks the dashboard split's width; closing it grows it back). We
@@ -1264,6 +1299,7 @@ editor.on("ready", "dashboardOnReady");
 editor.on("buffer_closed", "dashboardOnBufferClosed");
 editor.on("viewport_changed", "dashboardOnViewportChanged");
 editor.on("mouse_click", "dashboardOnMouseClick");
+editor.on("after_file_open", "dashboardOnAfterFileOpen");
 if (editor.listBuffers().length > 0 && shouldShowDashboard()) {
     openDashboard();
 }

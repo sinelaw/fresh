@@ -3,6 +3,7 @@
 
 pub mod audit_mode;
 pub mod command_keybinding_editor;
+pub mod dashboard;
 pub mod diagnostics_panel_bugs;
 pub mod diagnostics_panel_jump;
 pub mod diff_cursor;
