@@ -124,6 +124,13 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // sync with `crates/fresh-editor/src/services/authority/mod.rs`.
         "AuthorityPayload" => Some(AUTHORITY_PAYLOAD_DECL.to_string()),
 
+        // Remote Indicator override — payload for
+        // `editor.setRemoteIndicatorState(...)`. Same hand-written
+        // rationale: the authoritative enum lives in
+        // `fresh-editor::view::ui::status_bar::RemoteIndicatorOverride`
+        // and this crate must not depend on it. Keep in sync.
+        "RemoteIndicatorStatePayload" => Some(REMOTE_INDICATOR_STATE_DECL.to_string()),
+
         _ => None,
     }
 }
@@ -160,6 +167,17 @@ type AuthorityPayload = {
   terminal_wrapper: AuthorityTerminalWrapper;
   display_label?: string;
 };"#;
+
+/// Hand-written declaration for `RemoteIndicatorStatePayload`. Keep in
+/// sync with
+/// `crates/fresh-editor/src/view/ui/status_bar.rs::RemoteIndicatorOverride`
+/// (the struct this crate must not depend on).
+const REMOTE_INDICATOR_STATE_DECL: &str = r#"type RemoteIndicatorStatePayload =
+  | { kind: "local" }
+  | { kind: "connecting"; label?: string | null }
+  | { kind: "connected"; label?: string | null }
+  | { kind: "failed_attach"; error?: string | null }
+  | { kind: "disconnected"; label?: string | null };"#;
 
 /// Types that are dependencies of other types and must always be included.
 /// These are types referenced inside option structs or other complex types
@@ -935,6 +953,8 @@ mod tests {
             "spawnHostProcess",
             "setAuthority",
             "clearAuthority",
+            "setRemoteIndicatorState",
+            "clearRemoteIndicatorState",
             "getBufferText",
             "delay",
             "sendLspRequest",

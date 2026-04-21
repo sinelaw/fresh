@@ -842,6 +842,21 @@ type LspServerPackConfig = {
 	*/
 	processLimits: ProcessLimitsPackConfig | null;
 };
+type RemoteIndicatorStatePayload = {
+	kind: "local";
+} | {
+	kind: "connecting";
+	label?: string | null;
+} | {
+	kind: "connected";
+	label?: string | null;
+} | {
+	kind: "failed_attach";
+	error?: string | null;
+} | {
+	kind: "disconnected";
+	label?: string | null;
+};
 type ReplaceResult = {
 	/**
 	* Number of replacements made
@@ -1740,6 +1755,31 @@ interface EditorAPI {
 	* `setAuthority`.
 	*/
 	clearAuthority(): void;
+	/**
+	* Override the Remote Indicator's displayed state. Plugins call
+	* this to surface lifecycle transitions that the authority layer
+	* doesn't know about yet — "Connecting" while `devcontainer up`
+	* runs, "FailedAttach" after a non-zero exit, etc.
+	* 
+	* Accepts a tagged JS object:
+	* ```ts
+	* editor.setRemoteIndicatorState({ kind: "connecting", label: "Building" });
+	* editor.setRemoteIndicatorState({ kind: "failed_attach", error: "exit 1" });
+	* editor.setRemoteIndicatorState({ kind: "connected", label: "Container:abc" });
+	* editor.setRemoteIndicatorState({ kind: "local" });
+	* ```
+	* 
+	* The override sticks until replaced or cleared via
+	* `clearRemoteIndicatorState`. Editor restart (e.g. on
+	* `setAuthority`) resets it — plugins must reassert after a
+	* post-restart init if they want the override to persist.
+	*/
+	setRemoteIndicatorState(state: RemoteIndicatorStatePayload): boolean;
+	/**
+	* Drop any active Remote Indicator override. Safe to call even
+	* without a prior `setRemoteIndicatorState`.
+	*/
+	clearRemoteIndicatorState(): void;
 	/**
 	* Wait for a process to complete and get its result (async)
 	*/
