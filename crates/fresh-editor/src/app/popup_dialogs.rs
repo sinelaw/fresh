@@ -633,9 +633,7 @@ impl Editor {
     /// no-op with a status message, which is the same fallback every
     /// other plugin-command invocation site uses.
     pub fn show_remote_indicator_popup(&mut self) {
-        use crate::view::popup::{
-            Popup, PopupContent, PopupKind, PopupListItem, PopupResolver,
-        };
+        use crate::view::popup::{Popup, PopupContent, PopupKind, PopupListItem, PopupResolver};
         use ratatui::style::Style;
 
         if self
@@ -690,8 +688,7 @@ impl Editor {
             (Some(_), true) => {
                 title = "Remote: Disconnected".to_string();
                 items.push(
-                    PopupListItem::new("    Go Local".to_string())
-                        .with_data("detach".to_string()),
+                    PopupListItem::new("    Go Local".to_string()).with_data("detach".to_string()),
                 );
             }
             // Local authority.
@@ -747,9 +744,11 @@ impl Editor {
         let position = self
             .cached_layout
             .status_bar_remote_area
-            .map(|(_, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
-                x: col_start,
-            })
+            .map(
+                |(_, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
+                    x: col_start,
+                },
+            )
             .unwrap_or(crate::view::popup::PopupPosition::BottomRight);
 
         let popup_width = (items
@@ -822,14 +821,19 @@ impl Editor {
     /// plugin's `findConfig()` so the Remote Indicator menu can decide
     /// whether to offer "Reopen in Container" without actually having to
     /// call into the plugin.
+    ///
+    /// Routes through `authority.filesystem` per `CONTRIBUTING.md`
+    /// guideline 4, so an SSH-rooted workspace probes the remote host
+    /// rather than the local one.
     fn find_devcontainer_config(&self) -> Option<std::path::PathBuf> {
         let cwd = self.working_dir();
+        let fs = self.authority.filesystem.as_ref();
         let primary = cwd.join(".devcontainer").join("devcontainer.json");
-        if primary.exists() {
+        if fs.exists(&primary) {
             return Some(primary);
         }
         let secondary = cwd.join(".devcontainer.json");
-        if secondary.exists() {
+        if fs.exists(&secondary) {
             return Some(secondary);
         }
         None
