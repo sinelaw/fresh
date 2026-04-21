@@ -668,12 +668,17 @@ impl schemars::JsonSchema for StatusBarElement {
 }
 
 fn default_status_bar_left() -> Vec<StatusBarElement> {
+    // Keep this list tight enough to fit comfortably on 80-col
+    // terminals — several e2e tests pin that width and depend on
+    // specific element contents (filename, cursor position,
+    // diagnostics badge, status messages) not getting
+    // ellipsis-truncated.
+    //
+    // Users who want the Remote Indicator at the far left either
+    // add `"{remote}"` manually or get it injected by the v1→v2
+    // config migration when they upgrade from an older Fresh with
+    // a customized `status_bar.left`.
     vec![
-        // Remote authority entry point — ships first so every install has
-        // a visible, clickable way to reach the attach / rebuild / detach
-        // menu. Opt-out is possible by removing `{remote}` from this
-        // list in user config.
-        StatusBarElement::RemoteIndicator,
         StatusBarElement::Filename,
         StatusBarElement::Cursor,
         StatusBarElement::Diagnostics,
@@ -711,7 +716,7 @@ fn default_status_bar_right() -> Vec<StatusBarElement> {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StatusBarConfig {
     /// Elements shown on the left side of the status bar.
-    /// Default: ["{remote}", "{filename}", "{cursor}", "{diagnostics}", "{cursor_count}", "{messages}"]
+    /// Default: ["{filename}", "{cursor}", "{diagnostics}", "{cursor_count}", "{messages}"]
     #[serde(default = "default_status_bar_left")]
     #[schemars(extend("x-section" = "Status Bar", "x-dual-list-sibling" = "/editor/status_bar/right"))]
     pub left: Vec<StatusBarElement>,
