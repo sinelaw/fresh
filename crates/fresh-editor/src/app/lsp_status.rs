@@ -52,19 +52,46 @@ fn centered(s: &str) -> String {
 /// in `status_bar::element_style`; the text is what's rendered inside the
 /// segment.  Priority:
 ///
+///   0. Buffer-level skip (large file, binary, per-buffer toggle)
+///                     — "LSP (n/a)",              state = OffDismissed
 ///   1. Progress       — detailed progress string, state = On
 ///   2. Error          — "LSP (error)",            state = Error
 ///   3. Running        — "LSP (on)",               state = On
 ///   4. Configured-but-not-running (either auto_start or opt-in dormant)
 ///                     — "LSP (off)",              state = Off / OffDismissed
 ///   5. Nothing        — empty,                    state = None
+///
+/// The buffer-level skip only wins over running language state: showing
+/// "LSP (on)" while LSP is actively skipping this buffer (e.g. rust-
+/// analyzer running elsewhere, but this file exceeded the large-file
+/// threshold) would be a lie. When no server is running, the language-
+/// level "LSP (off)" pill is the more informative signal and takes over.
 pub(crate) fn compose_lsp_status(
     current_language: &str,
+    buffer_lsp_disabled_reason: Option<&str>,
     lsp_progress: &HashMap<String, LspProgressInfo>,
     lsp_server_statuses: &HashMap<(String, String), LspServerStatus>,
     lsp_config: &HashMap<String, LspLanguageConfig>,
     user_dismissed_languages: &HashSet<String>,
 ) -> (String, LspIndicatorState) {
+    // 0. Per-buffer LSP skip — only flag it when it's a *mismatch* with
+    //    language state: LSP is running for this language, but not for
+    //    this buffer (large file, binary, per-buffer toggle). Without
+    //    the running check, stopping the language-level server would
+    //    also show "LSP (n/a)" since `handle_stop_lsp_server` marks
+    //    every buffer disabled — but in that case the "LSP (off)" pill
+    //    (configured, not running) is the more informative signal.
+    let language_has_running_server = lsp_server_statuses.iter().any(|((lang, _), status)| {
+        lang == current_language && !matches!(status, LspServerStatus::Shutdown)
+    });
+    if buffer_lsp_disabled_reason.is_some()
+        && language_has_running_server
+        && lsp_config
+            .get(current_language)
+            .is_some_and(|cfg| cfg.as_slice().iter().any(|c| !c.command.is_empty()))
+    {
+        return (centered("LSP (n/a)"), LspIndicatorState::OffDismissed);
+    }
     // 1. Progress for this language takes precedence.  We intentionally do
     //    NOT render the progress title/message/percent inline on the status
     //    bar: those strings grow and shrink wildly during indexing (e.g.
@@ -195,6 +222,7 @@ mod tests {
     fn empty_when_nothing_configured_or_running() {
         let (text, state) = compose_lsp_status(
             "rust",
+            None,
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
@@ -208,6 +236,7 @@ mod tests {
     fn off_when_configured_but_not_running() {
         let (text, state) = compose_lsp_status(
             "rust",
+            None,
             &HashMap::new(),
             &HashMap::new(),
             &configured_for("rust", "rust-analyzer"),
@@ -223,6 +252,7 @@ mod tests {
         dismissed.insert("rust".to_string());
         let (text, state) = compose_lsp_status(
             "rust",
+            None,
             &HashMap::new(),
             &HashMap::new(),
             &configured_for("rust", "rust-analyzer"),
@@ -248,6 +278,7 @@ mod tests {
         );
         let (text, state) = compose_lsp_status(
             "rust",
+            None,
             &HashMap::new(),
             &HashMap::new(),
             &config,
@@ -272,6 +303,7 @@ mod tests {
         let statuses = status("rust", "rust-analyzer", LspServerStatus::Running);
         let (text, state) = compose_lsp_status(
             "rust",
+            None,
             &HashMap::new(),
             &statuses,
             &configured_for("rust", "rust-analyzer"),
@@ -290,6 +322,7 @@ mod tests {
         );
         let (text, state) = compose_lsp_status(
             "rust",
+            None,
             &HashMap::new(),
             &statuses,
             &HashMap::new(),
@@ -306,6 +339,7 @@ mod tests {
         let statuses = status("rust", "rust-analyzer", LspServerStatus::Error);
         let (text, state) = compose_lsp_status(
             "rust",
+            None,
             &progress_for("rust"),
             &statuses,
             &HashMap::new(),
@@ -320,6 +354,7 @@ mod tests {
         let statuses = status("rust", "rust-analyzer", LspServerStatus::Shutdown);
         let (text, state) = compose_lsp_status(
             "rust",
+            None,
             &HashMap::new(),
             &statuses,
             &configured_for("rust", "rust-analyzer"),
@@ -334,6 +369,7 @@ mod tests {
         let statuses = status("python", "pyright", LspServerStatus::Running);
         let (text, state) = compose_lsp_status(
             "rust",
+            None,
             &HashMap::new(),
             &statuses,
             &HashMap::new(),
@@ -349,6 +385,7 @@ mod tests {
         // surrounding status-bar layout does not shift between states.
         let (off, _) = compose_lsp_status(
             "rust",
+            None,
             &HashMap::new(),
             &HashMap::new(),
             &configured_for("rust", "rust-analyzer"),
@@ -356,14 +393,92 @@ mod tests {
         );
         let (err, _) = compose_lsp_status(
             "rust",
+            None,
             &HashMap::new(),
             &status("rust", "rust-analyzer", LspServerStatus::Error),
             &HashMap::new(),
             &HashSet::new(),
         );
+        let (na, _) = compose_lsp_status(
+            "rust",
+            Some("File too large"),
+            &HashMap::new(),
+            &status("rust", "rust-analyzer", LspServerStatus::Running),
+            &configured_for("rust", "rust-analyzer"),
+            &HashSet::new(),
+        );
         let off_w = unicode_width::UnicodeWidthStr::width(off.as_str());
         let err_w = unicode_width::UnicodeWidthStr::width(err.as_str());
+        let na_w = unicode_width::UnicodeWidthStr::width(na.as_str());
         assert_eq!(off_w, INDICATOR_WIDTH);
         assert_eq!(err_w, INDICATOR_WIDTH);
+        assert_eq!(na_w, INDICATOR_WIDTH);
+    }
+
+    // When the focused buffer has LSP disabled per-buffer (large file,
+    // binary, per-buffer toggle) the pill must visibly reflect that,
+    // overriding the language-level state. Otherwise opening e.g. a
+    // huge .rs file while rust-analyzer serves other buffers would
+    // show "LSP (on)" — a lie for *this* buffer.
+    #[test]
+    fn buffer_disabled_wins_over_running_language_lsp() {
+        let statuses = status("rust", "rust-analyzer", LspServerStatus::Running);
+        let (text, state) = compose_lsp_status(
+            "rust",
+            Some("File too large (438726656 bytes)"),
+            &HashMap::new(),
+            &statuses,
+            &configured_for("rust", "rust-analyzer"),
+            &HashSet::new(),
+        );
+        assert!(
+            text.contains("LSP (n/a)"),
+            "expected distinct 'LSP (n/a)' pill for per-buffer skip, got {:?}",
+            text
+        );
+        assert_eq!(state, LspIndicatorState::OffDismissed);
+    }
+
+    // The per-buffer pill only makes sense when the language has
+    // LSP configured in the first place. For a virtual buffer with
+    // no language or no configured servers, fall through to the
+    // normal "nothing" rule — no indicator.
+    #[test]
+    fn buffer_disabled_without_language_config_renders_nothing() {
+        let (text, state) = compose_lsp_status(
+            "rust",
+            Some("Virtual buffer"),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+        );
+        assert_eq!(text, "");
+        assert_eq!(state, LspIndicatorState::None);
+    }
+
+    // When the language-level LSP is stopped, every buffer for that
+    // language is marked disabled too (see `handle_stop_lsp_server`).
+    // In that case the language-level "LSP (off)" pill is the more
+    // informative signal — the buffer-level "(n/a)" pill only fires
+    // on a genuine mismatch (LSP running for language but skipped for
+    // this buffer). Regression guard for the Stop-LSP-Server flow.
+    #[test]
+    fn buffer_disabled_does_not_hide_language_off_when_no_server_running() {
+        let (text, state) = compose_lsp_status(
+            "rust",
+            Some("user disabled LSP"),
+            &HashMap::new(),
+            &HashMap::new(),
+            &configured_for("rust", "rust-analyzer"),
+            &HashSet::new(),
+        );
+        assert!(
+            text.contains("LSP (off)"),
+            "When no server is running, the per-buffer skip should defer \
+             to the language-level 'LSP (off)' pill — got {:?}",
+            text
+        );
+        assert_eq!(state, LspIndicatorState::Off);
     }
 }

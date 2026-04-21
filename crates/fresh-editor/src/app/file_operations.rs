@@ -804,7 +804,7 @@ impl Editor {
             .unwrap_or(0);
         if file_size > self.config.editor.large_file_threshold_bytes {
             let reason = format!("File too large ({} bytes)", file_size);
-            tracing::warn!(
+            tracing::debug!(
                 "Skipping LSP for large file: {} ({})",
                 path.display(),
                 reason

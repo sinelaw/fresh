@@ -608,8 +608,14 @@ impl Editor {
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
             .unwrap_or_default();
+        let buffer_lsp_disabled_reason = self
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .filter(|m| !m.lsp_enabled)
+            .and_then(|m| m.lsp_disabled_reason.as_deref());
         let (lsp_status, lsp_indicator_state) = compose_lsp_status(
             &current_language,
+            buffer_lsp_disabled_reason,
             &self.lsp_progress,
             &self.lsp_server_statuses,
             &self.config.lsp,
