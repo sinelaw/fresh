@@ -471,3 +471,148 @@ attach, the status bar flips to an error palette on failure, and the
 popup's rows match the state. Phase C fills in "Cancel Startup" and
 Phase D fills in "Show Build Logs" — both currently render as
 disabled rows that clearly communicate the feature is coming.
+
+---
+
+## Phase C · Streaming process API + cancellation
+
+Phases A/B visualize attach lifecycle but still rely on `devcontainer
+up` running to completion with output buffered in memory. Phase C
+introduces line-streamed host-process execution and the kill-handle
+plumbing that "Cancel Startup" needs. This is the largest plugin-API
+change in the plan; it's gated so every piece is independently
+testable.
+
+### C-1 · New plugin command: `SpawnHostProcessStreaming`
+
+**Why.** Gap analysis §4. The current `SpawnHostProcess` returns a
+completed `{stdout, stderr, exit_code}`; there is no way to see
+output as it arrives, and no handle to cancel.
+
+**Files.**
+
+- `crates/fresh-core/src/api.rs`:
+  - New `PluginCommand::SpawnHostProcessStreaming { command, args,
+    cwd, process_id, callback_id }`. `process_id` is caller-chosen
+    (TS side allocates it) so the TS Promise wrapping the handle can
+    correlate kill requests without waiting for a round trip.
+  - New `AsyncMessage::PluginProcessStreamLine { process_id, line,
+    stream: StdStream }` where `StdStream` is `Stdout | Stderr`.
+  - Keep `PluginProcessOutput { process_id, stdout, stderr, exit_code
+    }` as the terminal event — `stdout`/`stderr` left empty when
+    streaming.
+- `crates/fresh-editor/src/app/plugin_dispatch.rs`:
+  - Handle the new variant. Spawn via `LocalProcessSpawner`
+    (host-side, per `AUTHORITY_DESIGN.md`), drive stdout/stderr with
+    `tokio::io::BufReader::lines` and forward each line to the
+    async-bridge sender.
+  - Store the `tokio::process::Child` handle in a new
+    `host_process_handles: HashMap<u64, tokio::process::Child>` on
+    `Editor` so a subsequent kill command can find it.
+- `crates/fresh-editor/plugins/lib/fresh.d.ts` — regenerated.
+- `crates/fresh-editor/plugins/lib/fresh.ts` (or wherever the TS
+  surface shim lives) — implement `spawnHostProcessStreaming(command,
+  args, cwd?)` returning
+  `{ processId, onStdout, onStderr, wait, kill }`. Under the hood
+  the function registers `onStdout` / `onStderr` callbacks keyed by
+  `processId`, then issues the plugin command.
+
+**Tests.** Unit test that serializes/deserializes every new
+variant. Integration test that spawns `sh -c 'for i in 1 2 3; do echo
+$i; sleep 0.05; done'` through the new API and asserts the three
+lines arrive before the exit event. Use semantic-wait on the exit
+event, not a timer.
+
+**Regen.** `cargo test -p fresh-plugin-runtime write_fresh_dts_file
+-- --ignored` and `./scripts/gen_schema.sh`.
+
+**Commit split.** Two commits. First: Rust-side variants + dispatch +
+child-handle storage. Second: TS surface (`fresh.d.ts` regen +
+`fresh.ts` shim).
+
+### C-2 · New plugin command: `KillHostProcess`
+
+**Why.** Pairs with C-1. `Cancel Startup` in the Remote Indicator
+popup needs a way to actually stop `devcontainer up`.
+
+**Files.**
+
+- `crates/fresh-core/src/api.rs` — new
+  `PluginCommand::KillHostProcess { process_id }`.
+- `crates/fresh-editor/src/app/plugin_dispatch.rs` — look up the
+  handle from `host_process_handles`, call `Child::kill()`, remove
+  from the map. Gracefully no-op (with `tracing::debug!`) when the
+  id is unknown — the handle may have already exited.
+- `crates/fresh-editor/plugins/lib/fresh.ts` — the `kill()` method on
+  the returned handle object calls this command with the stored
+  `processId`.
+
+**Tests.** Integration test: spawn `sh -c 'sleep 10'` streaming, call
+`kill()`, semantic-wait on exit event. Assert the exit event arrived
+with a non-zero `exit_code` (signal termination convention is `-1` in
+`SpawnResult`).
+
+**Regen.** As above.
+
+**Commit split.** One commit. Kill is the minimum viable surface;
+timeouts and signal-choice knobs (SIGTERM vs SIGKILL, graceful kill
+with timeout) can come later if asked.
+
+### C-3 · Rewrite `runDevcontainerUp` to stream
+
+**Why.** C-1 and C-2 are dead surface until the devcontainer plugin
+adopts them.
+
+**Files.**
+
+- `crates/fresh-editor/plugins/devcontainer.ts`:
+  - Replace the single `await editor.spawnHostProcess("devcontainer",
+    args)` with `spawnHostProcessStreaming`. Collect stdout into a
+    buffer for the final JSON parse (the JSON line is emitted on
+    stdout at the end; streaming doesn't change that).
+  - Forward each stdout/stderr line via a new `onBuildLine(line,
+    stream)` callback — currently dumps to `editor.debug`; Phase D
+    replaces this with a write to the build-log virtual buffer.
+  - Store the returned `processId` in a module-level
+    `attachInFlight: ProcessHandle | null` so
+    `devcontainer_cancel_attach` can call `attachInFlight?.kill()`.
+  - New handler `devcontainer_cancel_attach` that calls `.kill()` on
+    the in-flight handle, then sets
+    `RemoteIndicatorState::Local` (cancelled is not a failure, it's
+    a user-initiated revert).
+
+**Tests.** E2E with the existing fake-CLI shim extended to sleep
+before emitting JSON. Trigger attach, semantic-wait on
+`Connecting`, open the popup, confirm the "Cancel Startup" row,
+semantic-wait on the indicator returning to Local. Assert the fake
+shim actually received a termination (the shim can write a sentinel
+file in its signal handler).
+
+**Commit split.** Two commits. First: adopt streaming for the
+happy-path (no cancellation yet). Second: cancellation handler +
+`attachInFlight` tracking.
+
+### C-4 · Finalize the "Cancel Startup" popup row
+
+**Why.** Phase B's B-4 stubbed the row as disabled; now we can enable
+it.
+
+**Files.**
+
+- `crates/fresh-editor/src/app/popup_dialogs.rs` — drop the
+  `(coming soon)` suffix and the `disabled()` call for the row.
+
+**Tests.** Reuse the C-3 e2e but assert the popup row is actionable
+(no `[dim]` overlay in the rendered output — the closest proxy for
+`disabled` in terminal tests).
+
+**Commit split.** One commit.
+
+### Phase C acceptance
+
+With C-1..C-4 merged: `devcontainer up` output streams to `debug`
+(Phase D makes it user-visible), the user can cancel an in-flight
+attach from the Remote Indicator menu, and the plugin API has a
+reusable streaming-spawn/kill primitive that future plugins can use.
+No other core surface has changed; `DockerExecSpawner` and the
+authority contract are untouched.
