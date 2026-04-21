@@ -1190,21 +1190,22 @@ child `docker` processes that SIGKILL leaks. We can address this
 later with process-group handling; the initial Phase C cut accepts
 possibly-leaked children, with a log line noting the limitation.
 
-### Q-D1 · Buffer vs. terminal for build output
+### Q-D1 · Buffer vs. terminal for build output — resolved
 
-Fresh has virtual buffers and integrated terminals. Terminals can
-render ANSI color codes; buffers cannot. `devcontainer up` emits
-color when its stdout is a TTY. We have three options:
+Fresh already ships an ANSI→style parser at
+`crates/fresh-editor/src/primitives/ansi.rs` (`AnsiParser` →
+`ratatui::style::Style`), used by the rendering pipeline for terminal
+output. Phase D reuses this directly: the build-log virtual buffer
+parses each incoming line with `AnsiParser` and emits styled overlay
+ranges for each styled span. No new infrastructure required; the
+"strip ANSI" fallback is off the table.
 
-1. **Virtual buffer, strip ANSI** (simplest; loses color).
-2. **Virtual buffer, translate ANSI to overlays** (most work; color
-   preserved).
-3. **Embedded terminal with the streaming output piped in** (uses
-   existing TTY infra; more plumbing at the plugin boundary).
-
-Recommendation: option 1 for Phase D. Revisit if users complain
-about lost color context. This matches the existing info-panel
-pattern which is also a colored-via-overlay virtual buffer.
+Implementation shape for D-1: the plugin-side append sends raw bytes
+through; core-side `AppendVirtualBuffer` (D-2 if it lands) runs the
+line through `AnsiParser` and stores each styled fragment as an
+overlay alongside the text — same pattern the terminal buffer uses.
+If D-2 doesn't land, the plugin-side rewrite call does the parse
+before writing the buffer content.
 
 ### Q-E1 · Plugin load scope for `customizations.fresh.plugins`
 
