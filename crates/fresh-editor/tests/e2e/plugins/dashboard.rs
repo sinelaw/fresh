@@ -58,13 +58,24 @@ fn dashboard_stays_closed_when_cli_file_is_opening() {
         .editor_mut()
         .queue_file_open(file_path.clone(), None, None, None, None, None, None);
     harness.editor_mut().fire_ready_hook();
-    // Drain any buffer-create commands the plugin may have queued in
-    // response to the ready hook, so a dashboard-open won't hide
-    // behind async plumbing and escape detection.
-    harness.editor_mut().process_async_messages();
     harness.editor_mut().process_pending_file_opens();
-    harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+
+    // The async plumbing between QuickJS and the editor settles over
+    // a few render ticks: the dashboard's `after_file_open` handler
+    // has to reach the plugin thread, close the just-created virtual
+    // buffer, and the resulting commands have to drain back to the
+    // editor before the active buffer flips to the CLI file. Under
+    // CI load the order isn't deterministic, so wait semantically
+    // rather than banking on a fixed number of `process_async_messages`
+    // drains (per CONTRIBUTING.md — no fixed-timer tests).
+    harness
+        .wait_until(|h| {
+            let active = h.editor().active_buffer();
+            h.editor()
+                .get_buffer_display_name(active)
+                .contains("my_file.txt")
+        })
+        .unwrap();
 
     let active = harness.editor().active_buffer();
     let active_name = harness.editor().get_buffer_display_name(active);
@@ -72,10 +83,6 @@ fn dashboard_stays_closed_when_cli_file_is_opening() {
         active_name, "Dashboard",
         "CLI-supplied file must remain the active tab — the dashboard \
          should not open when a file was requested on the command line"
-    );
-    assert!(
-        active_name.contains("my_file.txt"),
-        "active buffer should be the CLI file, got {active_name:?}"
     );
 }
 
@@ -88,16 +95,12 @@ fn dashboard_opens_when_no_file_is_queued() {
     let (mut harness, _tmp) = harness_with_dashboard_plugin();
 
     harness.editor_mut().fire_ready_hook();
-    harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
-
-    let active = harness.editor().active_buffer();
-    let active_name = harness.editor().get_buffer_display_name(active);
-    assert_eq!(
-        active_name, "Dashboard",
-        "with no files queued, the dashboard should take the empty \
-         workspace as its cue to open"
-    );
+    harness
+        .wait_until(|h| {
+            let active = h.editor().active_buffer();
+            h.editor().get_buffer_display_name(active) == "Dashboard"
+        })
+        .unwrap();
 }
 
 /// Third-party plugins (and user init.ts) can add their own section
@@ -147,22 +150,15 @@ if (dash) {
             .expect("harness");
 
     harness.editor_mut().fire_ready_hook();
-    harness.editor_mut().process_async_messages();
-    // The sidecar's refresh is async — give the editor a couple of
-    // async-message drains to let the initial registerSection refresh
-    // resolve and paint.
-    for _ in 0..5 {
-        harness.editor_mut().process_async_messages();
-        harness.render().unwrap();
-    }
 
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("CUSTOM"),
-        "custom section header should appear; screen was:\n{screen}"
-    );
-    assert!(
-        screen.contains("hello") && screen.contains("from sidecar"),
-        "custom section body should contain its kv row; screen was:\n{screen}"
-    );
+    // The sidecar's refresh is async — wait until its section body
+    // actually appears on screen rather than banking on a fixed
+    // number of `process_async_messages` drains. Both CUSTOM header
+    // and the kv row need to land.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("CUSTOM") && screen.contains("hello") && screen.contains("from sidecar")
+        })
+        .unwrap();
 }
