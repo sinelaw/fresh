@@ -39,7 +39,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc as std_mpsc, Arc, Mutex};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 
 /// Grace period after didOpen before sending didChange (in milliseconds)
@@ -2517,8 +2517,9 @@ impl LspState {
 
 /// Async LSP task that handles all I/O
 struct LspTask {
-    /// Process handle - kept alive for lifetime management (kill_on_drop)
-    _process: Child,
+    /// Process handle — kept alive for lifetime management
+    /// (`kill_on_drop` set on the underlying tokio child).
+    _process: crate::services::remote::StdioChild,
 
     /// Stdin for sending messages
     stdin: ChildStdin,
@@ -2565,7 +2566,15 @@ struct LspTask {
 }
 
 impl LspTask {
-    /// Create a new LSP task
+    /// Create a new LSP task.
+    ///
+    /// Spawning is routed through the authority's
+    /// [`LongRunningSpawner`] so container authorities run the server
+    /// inside the container via `docker exec -i`. See
+    /// `AUTHORITY_DESIGN.md` principle 2 — no branch on backend kind
+    /// anywhere in this file. The host-only `process_limits` block is
+    /// passed along; the spawner implementation decides whether to
+    /// honour it (Local does, Docker logs and skips).
     #[allow(clippy::too_many_arguments)]
     async fn spawn(
         command: &str,
@@ -2578,81 +2587,89 @@ impl LspTask {
         stderr_log_path: std::path::PathBuf,
         language_id_overrides: HashMap<String, String>,
         document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
+        long_running_spawner: Arc<dyn crate::services::remote::LongRunningSpawner>,
     ) -> Result<Self, String> {
         tracing::info!("Spawning async LSP server: {} {:?}", command, args);
         tracing::info!("Process limits: {:?}", process_limits);
         tracing::info!("LSP stderr will be logged to: {:?}", stderr_log_path);
 
-        // Check if the command exists before trying to spawn
-        // This provides a clearer error message than the generic "No such file or directory"
-        if !Self::command_exists(command) {
+        // Check if the command exists before trying to spawn.
+        // Routes through the authority's spawner so a container
+        // probe looks inside the container — matches the one the
+        // real `spawn_stdio` is about to do.
+        if !long_running_spawner.command_exists(command).await {
             return Err(format!(
-                "LSP server executable '{}' not found. Please install it or check your PATH.",
+                "LSP server executable '{}' not found in the active authority's PATH. \
+                 Please install it or check your configuration.",
                 command
             ));
         }
 
-        // Create stderr log file and redirect process stderr directly to it
-        let stderr_file = std::fs::File::create(&stderr_log_path).map_err(|e| {
-            format!(
-                "Failed to create LSP stderr log file {:?}: {}",
-                stderr_log_path, e
-            )
-        })?;
+        // Drive spawn through the authority. Env is handed over as a
+        // `(String, String)` vec so the trait stays ordering-explicit
+        // (HashMap ordering would leak into docker `-e` argument
+        // positions).
+        let env_pairs: Vec<(String, String)> =
+            env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 
-        let mut cmd = Command::new(command);
-        cmd.args(args)
-            .envs(env)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::from(stderr_file))
-            .kill_on_drop(true);
+        let mut stdio_child = long_running_spawner
+            .spawn_stdio(command, args, env_pairs, None, Some(process_limits))
+            .await
+            .map_err(|e| format!("Failed to spawn LSP server '{}': {}", command, e))?;
 
-        // Apply resource limits to the process.  The returned `PostSpawnAction`
-        // must be applied by us after `cmd.spawn()` returns — cgroup
-        // assignment happens from the parent using the child's PID, because
-        // doing it in a `pre_exec` closure is not fork-safe (allocation
-        // inside the forked child can deadlock on a malloc lock held by
-        // another thread of the parent at fork time).
-        let post_spawn = process_limits
-            .apply_to_command(&mut cmd)
-            .map_err(|e| format!("Failed to apply process limits: {}", e))?;
-
-        let mut process = cmd.spawn().map_err(|e| {
-            format!(
-                "Failed to spawn LSP server '{}': {}",
-                command,
-                match e.kind() {
-                    std::io::ErrorKind::NotFound => "executable not found in PATH".to_string(),
-                    std::io::ErrorKind::PermissionDenied =>
-                        "permission denied (check file permissions)".to_string(),
-                    _ => e.to_string(),
-                }
-            )
-        })?;
-
-        // Move the newly-spawned child into its cgroup (if configured).
-        // Best-effort: on failure the child keeps running under the parent's
-        // cgroup, which is fine for correctness even if it means the resource
-        // limit isn't enforced.
-        if let Some(child_pid) = process.id() {
-            post_spawn.apply_to_child(child_pid);
-        }
-
-        let stdin = process
-            .stdin
-            .take()
+        let stdin = stdio_child
+            .take_stdin()
             .ok_or_else(|| "Failed to get stdin".to_string())?;
 
-        let stdout = BufReader::new(
-            process
-                .stdout
-                .take()
-                .ok_or_else(|| "Failed to get stdout".to_string())?,
-        );
+        let stdout_stream = stdio_child
+            .take_stdout()
+            .ok_or_else(|| "Failed to get stdout".to_string())?;
+        let stdout = BufReader::new(stdout_stream);
+
+        // Stderr is now piped (was redirected via fd to a file pre-
+        // refactor; we can't fd-redirect across `docker exec`). Spawn
+        // a reader task that copies lines into the log file so
+        // `View Log` still works. Failures are logged and dropped —
+        // the LSP itself is already running.
+        if let Some(stderr_stream) = stdio_child.take_stderr() {
+            let log_path = stderr_log_path.clone();
+            tokio::spawn(async move {
+                use tokio::fs::File;
+                use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
+                let mut file = match File::create(&log_path).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        tracing::warn!("Could not create LSP stderr log {:?}: {}", log_path, e);
+                        return;
+                    }
+                };
+                let mut reader = TokioBufReader::new(stderr_stream);
+                let mut buf = String::new();
+                loop {
+                    buf.clear();
+                    match reader.read_line(&mut buf).await {
+                        Ok(0) => break,
+                        Ok(_) => {
+                            if let Err(e) = file.write_all(buf.as_bytes()).await {
+                                tracing::warn!(
+                                    "Write to LSP stderr log {:?} failed: {}",
+                                    log_path,
+                                    e
+                                );
+                                return;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!("LSP stderr stream closed for {:?}: {}", log_path, e);
+                            return;
+                        }
+                    }
+                }
+            });
+        }
 
         Ok(Self {
-            _process: process,
+            _process: stdio_child,
             stdin,
             stdout,
             next_id: 0,
@@ -2668,17 +2685,6 @@ impl LspTask {
             stderr_log_path,
             language_id_overrides,
         })
-    }
-
-    /// Check if a command exists in PATH or as an absolute path.
-    ///
-    /// Thin wrapper that forwards to the module-level
-    /// [`super::command_exists`] — the shared implementation lives at the
-    /// module root so the click-time probe (and any future non-spawn
-    /// callers) can reuse it without depending on the private
-    /// `LspTask` type.
-    pub(crate) fn command_exists(command: &str) -> bool {
-        super::command_exists(command)
     }
 
     /// Spawn the stdout reader task that continuously reads and dispatches LSP messages
@@ -3997,7 +4003,14 @@ pub struct LspHandle {
 // paths are secondary, and try_send in Drop is inherently best-effort cleanup.
 #[allow(clippy::let_underscore_must_use)]
 impl LspHandle {
-    /// Spawn a new LSP server in an async task
+    /// Spawn a new LSP server in an async task.
+    ///
+    /// `long_running_spawner` is the active authority's stdio-process
+    /// spawner (see `AUTHORITY_DESIGN.md`). Container authorities wire
+    /// a `docker exec -i`-routed variant here so the LSP server runs
+    /// inside the container. `process_limits` is forwarded as-is; the
+    /// spawner decides whether host-side enforcement makes sense
+    /// (Local honors it, Docker logs and skips).
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         runtime: &tokio::runtime::Handle,
@@ -4009,6 +4022,7 @@ impl LspHandle {
         async_bridge: &AsyncBridge,
         process_limits: ProcessLimits,
         language_id_overrides: std::collections::HashMap<String, String>,
+        long_running_spawner: Arc<dyn crate::services::remote::LongRunningSpawner>,
     ) -> Result<Self, String> {
         let (command_tx, command_rx) = mpsc::channel(100); // Buffer up to 100 commands
         let async_tx = async_bridge.sender();
@@ -4051,6 +4065,7 @@ impl LspHandle {
                 stderr_log_path_clone.clone(),
                 language_id_overrides,
                 document_versions_for_task,
+                long_running_spawner,
             )
             .await
             {
@@ -4684,6 +4699,13 @@ impl Drop for LspHandle {
 mod tests {
     use super::*;
     use crate::services::lsp::manager::LanguageScope;
+    use crate::services::remote::LocalLongRunningSpawner;
+
+    /// Shared spawner used by every LspHandle::spawn test so individual
+    /// call sites stay legible. Host-local, no limits applied.
+    fn local_spawner() -> Arc<dyn crate::services::remote::LongRunningSpawner> {
+        Arc::new(LocalLongRunningSpawner)
+    }
 
     #[test]
     fn test_json_rpc_request_serialization() {
@@ -4941,6 +4963,7 @@ mod tests {
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
+            local_spawner(),
         );
 
         // Should succeed in spawning
@@ -4970,6 +4993,7 @@ mod tests {
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
+            local_spawner(),
         )
         .unwrap();
 
@@ -4999,6 +5023,7 @@ mod tests {
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
+            local_spawner(),
         )
         .unwrap();
 
@@ -5034,6 +5059,7 @@ mod tests {
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
+            local_spawner(),
         )
         .unwrap();
 
@@ -5070,6 +5096,7 @@ mod tests {
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
+            local_spawner(),
         );
 
         // Should succeed in creating handle (error happens asynchronously)
@@ -5110,6 +5137,7 @@ mod tests {
                     &async_bridge,
                     ProcessLimits::unlimited(),
                     Default::default(),
+                    local_spawner(),
                 )
                 .unwrap()
             });
@@ -5182,6 +5210,7 @@ mod tests {
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
+            local_spawner(),
         )
         .unwrap();
 
@@ -5234,6 +5263,7 @@ mod tests {
             &async_bridge,
             ProcessLimits::unlimited(),
             Default::default(),
+            local_spawner(),
         )
         .unwrap();
 

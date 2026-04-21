@@ -487,6 +487,14 @@ impl Editor {
     /// during construction.
     pub fn set_boot_authority(&mut self, authority: crate::services::authority::Authority) {
         self.authority = authority;
+        // Propagate the authority's long-running spawner into the LSP
+        // manager so `force_spawn` can route server processes through
+        // the right backend. The editor rebuilds on every authority
+        // transition (AUTHORITY_DESIGN.md principle 7), so this is the
+        // single wiring point — no need for a hot-swap API.
+        if let Some(lsp) = self.lsp.as_mut() {
+            lsp.set_long_running_spawner(self.authority.long_running_spawner.clone());
+        }
         #[cfg(feature = "plugins")]
         self.update_plugin_state_snapshot();
     }

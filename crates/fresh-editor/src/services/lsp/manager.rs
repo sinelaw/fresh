@@ -289,6 +289,13 @@ pub struct LspManager {
     /// Async bridge for communication
     async_bridge: Option<AsyncBridge>,
 
+    /// Long-running stdio spawner from the active authority. Used by
+    /// `force_spawn` and friends to route LSP child processes through
+    /// the right backend (local Command, `docker exec -i`, SSH). Set
+    /// by `set_long_running_spawner` from `Editor::set_boot_authority`
+    /// before any LSP spawn can happen.
+    long_running_spawner: Option<std::sync::Arc<dyn crate::services::remote::LongRunningSpawner>>,
+
     /// Restart attempt timestamps per language (for tracking restart frequency)
     restart_attempts: HashMap<String, Vec<Instant>>,
 
@@ -318,12 +325,28 @@ impl LspManager {
             per_language_root_uris: HashMap::new(),
             runtime: None,
             async_bridge: None,
+            long_running_spawner: None,
             restart_attempts: HashMap::new(),
             restart_cooldown: HashSet::new(),
             pending_restarts: HashMap::new(),
             allowed_languages: HashSet::new(),
             disabled_languages: HashSet::new(),
         }
+    }
+
+    /// Wire the long-running spawner from the active `Authority`.
+    ///
+    /// Called from `Editor::set_boot_authority` so every LSP server
+    /// spawned after this point runs under the right backend — local
+    /// host, `docker exec -i` for containers, or SSH-tunneled.
+    /// Authority transitions destroy and rebuild the editor (and
+    /// therefore `LspManager`), so this is a one-shot wiring call per
+    /// editor instance.
+    pub fn set_long_running_spawner(
+        &mut self,
+        spawner: std::sync::Arc<dyn crate::services::remote::LongRunningSpawner>,
+    ) {
+        self.long_running_spawner = Some(spawner);
     }
 
     /// Check if a language has been manually enabled (allowing spawn even if auto_start=false)
@@ -898,7 +921,10 @@ impl LspManager {
             SpawnDecision::Allow => {}
         }
 
-        // Check we have runtime and bridge
+        // Check we have runtime, bridge, and the authority's spawner.
+        // All three are wired at editor construction; a missing one is
+        // a configuration error worth surfacing rather than silently
+        // degrading to a host-only spawn.
         let runtime = match self.runtime.as_ref() {
             Some(r) => r.clone(),
             None => {
@@ -910,6 +936,18 @@ impl LspManager {
             Some(b) => b.clone(),
             None => {
                 tracing::error!("force_spawn: no async bridge available for {}", language);
+                return None;
+            }
+        };
+        let long_running_spawner = match self.long_running_spawner.as_ref() {
+            Some(s) => s.clone(),
+            None => {
+                tracing::error!(
+                    "force_spawn: long-running spawner not wired for {} — \
+                     Editor must call LspManager::set_long_running_spawner \
+                     after construction",
+                    language
+                );
                 return None;
             }
         };
@@ -959,6 +997,7 @@ impl LspManager {
                 &async_bridge,
                 config.process_limits.clone(),
                 config.language_id_overrides.clone(),
+                long_running_spawner.clone(),
             ) {
                 Ok(handle) => {
                     let effective_root = self.resolve_root_uri(language, file_path);
@@ -1033,6 +1072,13 @@ impl LspManager {
             Some(b) => b.clone(),
             None => return,
         };
+        let long_running_spawner = match self.long_running_spawner.as_ref() {
+            Some(s) => s.clone(),
+            None => {
+                tracing::error!("ensure_universal_servers_running: long-running spawner not wired");
+                return;
+            }
+        };
 
         let mut spawned = Vec::new();
         for config in &self.universal_configs {
@@ -1056,6 +1102,7 @@ impl LspManager {
                 &async_bridge,
                 config.process_limits.clone(),
                 config.language_id_overrides.clone(),
+                long_running_spawner.clone(),
             ) {
                 Ok(handle) => {
                     let effective_root = file_path
@@ -1354,6 +1401,15 @@ impl LspManager {
             Some(b) => b.clone(),
             None => return (false, "No async bridge available".to_string()),
         };
+        let long_running_spawner = match self.long_running_spawner.as_ref() {
+            Some(s) => s.clone(),
+            None => {
+                return (
+                    false,
+                    "Long-running spawner not wired on LspManager".to_string(),
+                )
+            }
+        };
 
         let scope = if is_universal {
             LanguageScope::all()
@@ -1371,6 +1427,7 @@ impl LspManager {
             &async_bridge,
             config.process_limits.clone(),
             config.language_id_overrides.clone(),
+            long_running_spawner,
         ) {
             Ok(handle) => {
                 let effective_root = if is_universal {
