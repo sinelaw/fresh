@@ -154,6 +154,39 @@ fn test_compact_cursor_format() {
     );
 }
 
+/// The default `status_bar.left` ships `{remote}` at index 0 so every
+/// fresh install has a visible remote-authority entry point without
+/// user configuration. Guard this with an e2e check so the default
+/// doesn't silently regress.
+#[test]
+fn test_default_left_ships_remote_indicator() {
+    let config = Config::default();
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 30, config).unwrap();
+
+    let dir = harness.project_dir().unwrap();
+    let file = dir.join("test.txt");
+    fs::write(&file, "hello\n").unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Local"),
+        "Default status bar should render 'Local' from the bundled {{remote}} element.\n\
+         Status bar: {status}"
+    );
+    let local_idx = status
+        .find("Local")
+        .expect("'Local' missing from default status bar");
+    let filename_idx = status.find("test.txt").unwrap_or(usize::MAX);
+    assert!(
+        local_idx < filename_idx,
+        "Default {{remote}} should sit at the far-left, before the filename.\n\
+         Status bar: {status}"
+    );
+}
+
 /// Adding the `{remote}` element to the local status bar should render a
 /// visible "Local" indicator so the bottom-left remote-authority entry point
 /// is always present.

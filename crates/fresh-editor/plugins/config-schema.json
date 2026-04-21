@@ -44,6 +44,7 @@
         "show_status_bar": true,
         "status_bar": {
           "left": [
+            "{remote}",
             "{filename}",
             "{cursor}",
             "{diagnostics}",
@@ -352,6 +353,7 @@
           "$ref": "#/$defs/StatusBarConfig",
           "default": {
             "left": [
+              "{remote}",
               "{filename}",
               "{cursor}",
               "{diagnostics}",
@@ -730,12 +732,13 @@
       "type": "object",
       "properties": {
         "left": {
-          "description": "Elements shown on the left side of the status bar.\nDefault: [\"{filename}\", \"{cursor}\", \"{diagnostics}\", \"{cursor_count}\", \"{messages}\"]",
+          "description": "Elements shown on the left side of the status bar.\nDefault: [\"{remote}\", \"{filename}\", \"{cursor}\", \"{diagnostics}\", \"{cursor_count}\", \"{messages}\"]",
           "type": "array",
           "items": {
             "$ref": "#/$defs/StatusBarElement"
           },
           "default": [
+            "{remote}",
             "{filename}",
             "{cursor}",
             "{diagnostics}",
