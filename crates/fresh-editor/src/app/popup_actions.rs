@@ -116,6 +116,20 @@ impl Editor {
                 }
             }
 
+            Some(PopupResolver::RemoteIndicator) => {
+                let action_key = self
+                    .active_state()
+                    .popups
+                    .top()
+                    .and_then(|p| p.selected_item())
+                    .and_then(|item| item.data.clone());
+                self.hide_popup();
+                if let Some(key) = action_key {
+                    self.handle_remote_indicator_action(&key);
+                }
+                return PopupConfirmResult::EarlyReturn;
+            }
+
             Some(PopupResolver::Completion) => {
                 // Grab the selected item's label + insert-text before we
                 // mutate the popup stack — insert_completion_text edits
@@ -310,6 +324,10 @@ impl Editor {
             Some(PopupResolver::Completion) => {
                 self.hide_popup();
                 self.completion_items = None;
+            }
+
+            Some(PopupResolver::RemoteIndicator) => {
+                self.hide_popup();
             }
 
             Some(PopupResolver::None) | None => {

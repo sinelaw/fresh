@@ -46,6 +46,29 @@ enum ElementKind {
     RemoteDisconnected,
     /// Clock element — colon rendered with hardware blink
     Clock,
+    /// Remote authority indicator — styling driven by connection state
+    RemoteIndicator(RemoteIndicatorState),
+}
+
+/// Visual/semantic state of the remote authority indicator.
+///
+/// Mirrors the three-phase lifecycle from the dev-container UX spec
+/// ("Local" / "Connected" / "Disconnected") while remaining general
+/// enough to cover any remote authority Fresh currently supports
+/// (SSH sessions today; container-style authorities in the future).
+///
+/// The variant chosen here feeds `element_style` and controls whether
+/// the indicator reads as neutral, highlighted, or an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RemoteIndicatorState {
+    /// Editing local files; rendered with the default status-bar palette.
+    #[default]
+    Local,
+    /// Connected to an SSH / container / other remote authority.
+    Connected,
+    /// Connection lost — rendered with the error palette as a persistent
+    /// warning that writes/saves are no longer reaching the authority.
+    Disconnected,
 }
 
 /// A single rendered status bar element with its text and styling info.
@@ -119,6 +142,9 @@ pub struct StatusBarLayout {
     pub language_indicator: Option<(u16, u16, u16)>,
     /// Status message area (row, start_col, end_col) - clickable to show full history
     pub message_area: Option<(u16, u16, u16)>,
+    /// Remote authority indicator area (row, start_col, end_col) - clickable
+    /// to open the remote-authority context menu.
+    pub remote_indicator: Option<(u16, u16, u16)>,
 }
 
 /// Status bar hover state for styling clickable indicators
@@ -138,6 +164,8 @@ pub enum StatusBarHover {
     LanguageIndicator,
     /// Mouse is over the status message area
     MessageArea,
+    /// Mouse is over the remote authority indicator
+    RemoteIndicator,
 }
 
 /// Which search option checkbox is being hovered
@@ -772,6 +800,23 @@ impl StatusBarRenderer {
                     kind: ElementKind::Clock,
                 })
             }
+            StatusBarElement::RemoteIndicator => {
+                // Persistent remote-authority entry point. When local we
+                // still emit a short label so the indicator is visible —
+                // the spec calls for a persistent control, not one that
+                // vanishes when there is nothing to report.
+                let (text, state) = match ctx.remote_connection {
+                    None => (" Local ".to_string(), RemoteIndicatorState::Local),
+                    Some(conn) if conn.contains("(Disconnected)") => {
+                        (format!(" {} ", conn), RemoteIndicatorState::Disconnected)
+                    }
+                    Some(conn) => (format!(" {} ", conn), RemoteIndicatorState::Connected),
+                };
+                Some(RenderedElement {
+                    text,
+                    kind: ElementKind::RemoteIndicator(state),
+                })
+            }
         }
     }
 
@@ -889,6 +934,33 @@ impl StatusBarRenderer {
             ElementKind::Palette => Style::default()
                 .fg(theme.help_indicator_fg)
                 .bg(theme.help_indicator_bg),
+            ElementKind::RemoteIndicator(state) => {
+                let is_hovering = hover == StatusBarHover::RemoteIndicator;
+                let (fg, bg) = match state {
+                    // Connected: reuse the "help indicator" palette so
+                    // the indicator reads as a distinct, stable UI
+                    // entry point rather than blending into the neutral
+                    // status-bar text.
+                    RemoteIndicatorState::Connected => {
+                        (theme.help_indicator_fg, theme.help_indicator_bg)
+                    }
+                    // Disconnected: error palette so the loss of
+                    // connection is immediately visible.
+                    RemoteIndicatorState::Disconnected => (
+                        theme.status_error_indicator_fg,
+                        theme.status_error_indicator_bg,
+                    ),
+                    // Local: neutral status-bar palette.
+                    RemoteIndicatorState::Local => {
+                        (theme.status_bar_fg, theme.status_bar_bg)
+                    }
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                style
+            }
         }
     }
 
@@ -909,6 +981,9 @@ impl StatusBarRenderer {
             ElementKind::Lsp => layout.lsp_indicator = Some((row, start_col, end_col)),
             ElementKind::WarningBadge => layout.warning_badge = Some((row, start_col, end_col)),
             ElementKind::Messages => layout.message_area = Some((row, start_col, end_col)),
+            ElementKind::RemoteIndicator(_) => {
+                layout.remote_indicator = Some((row, start_col, end_col))
+            }
             _ => {}
         }
     }
@@ -1480,5 +1555,30 @@ mod tests {
         };
 
         assert_eq!(truncated.to_string_plain(), "/home/user/project");
+    }
+
+    #[test]
+    fn test_remote_indicator_element_kind_equality() {
+        // Each lifecycle state produces a distinct ElementKind so the styler
+        // can pick the right palette for Local / Connected / Disconnected.
+        assert_eq!(
+            ElementKind::RemoteIndicator(RemoteIndicatorState::Local),
+            ElementKind::RemoteIndicator(RemoteIndicatorState::Local)
+        );
+        assert_ne!(
+            ElementKind::RemoteIndicator(RemoteIndicatorState::Local),
+            ElementKind::RemoteIndicator(RemoteIndicatorState::Connected)
+        );
+        assert_ne!(
+            ElementKind::RemoteIndicator(RemoteIndicatorState::Connected),
+            ElementKind::RemoteIndicator(RemoteIndicatorState::Disconnected)
+        );
+    }
+
+    #[test]
+    fn test_remote_indicator_state_default_is_local() {
+        // `Default` → `Local` is relied on by callers that construct the
+        // indicator before a connection is known.
+        assert_eq!(RemoteIndicatorState::default(), RemoteIndicatorState::Local);
     }
 }

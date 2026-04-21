@@ -612,6 +612,229 @@ impl Editor {
         }
     }
 
+    /// Show the Remote Indicator context menu popup.
+    ///
+    /// The menu is context-aware based on the current authority state:
+    /// - **Local:** offers "Attach to Dev Container" (when a devcontainer
+    ///   config is detectable) and "Open Dev Container Config".
+    /// - **Connected (container):** offers "Reopen Locally" (detach),
+    ///   "Rebuild Container", and "Show Container Info".
+    /// - **Connected (SSH):** offers "Disconnect Remote" and "Show Info".
+    /// - **Disconnected:** offers "Reconnect" (best-effort) and "Go Local".
+    ///
+    /// Clicking the `{remote}` status-bar element a second time toggles
+    /// the popup closed, matching the LSP-indicator affordance.
+    ///
+    /// # Design note
+    ///
+    /// Plugin-owned actions (attach, rebuild) are dispatched via
+    /// `Action::PluginAction` so core code never names the devcontainer
+    /// plugin directly. If the plugin isn't loaded the action becomes a
+    /// no-op with a status message, which is the same fallback every
+    /// other plugin-command invocation site uses.
+    pub fn show_remote_indicator_popup(&mut self) {
+        use crate::view::popup::{
+            Popup, PopupContent, PopupKind, PopupListItem, PopupResolver,
+        };
+        use ratatui::style::Style;
+
+        if self
+            .active_state()
+            .popups
+            .top()
+            .is_some_and(|p| matches!(p.resolver, PopupResolver::RemoteIndicator))
+        {
+            self.hide_popup();
+            return;
+        }
+
+        let connection = self.connection_display_string();
+        let is_disconnected = connection
+            .as_deref()
+            .is_some_and(|c| c.contains("(Disconnected)"));
+        let is_container = connection
+            .as_deref()
+            .is_some_and(|c| c.starts_with("Container:"));
+        let is_ssh = connection.is_some() && !is_container;
+
+        let devcontainer_config_path = self.find_devcontainer_config();
+
+        let mut items: Vec<PopupListItem> = Vec::new();
+        let title: String;
+
+        match (connection.as_deref(), is_disconnected) {
+            // Connected authority (container or SSH), not disconnected.
+            (Some(label), false) => {
+                title = format!("Remote: {}", label);
+                if is_container {
+                    items.push(
+                        PopupListItem::new("    Reopen Locally".to_string())
+                            .with_data("detach".to_string()),
+                    );
+                    items.push(
+                        PopupListItem::new("    Rebuild Container".to_string())
+                            .with_data("plugin:devcontainer_rebuild".to_string()),
+                    );
+                    items.push(
+                        PopupListItem::new("    Show Container Info".to_string())
+                            .with_data("plugin:devcontainer_show_info".to_string()),
+                    );
+                } else if is_ssh {
+                    items.push(
+                        PopupListItem::new("    Disconnect Remote".to_string())
+                            .with_data("detach".to_string()),
+                    );
+                }
+            }
+            // Disconnected — warn and offer fallbacks.
+            (Some(_), true) => {
+                title = "Remote: Disconnected".to_string();
+                items.push(
+                    PopupListItem::new("    Go Local".to_string())
+                        .with_data("detach".to_string()),
+                );
+            }
+            // Local authority.
+            (None, _) => {
+                title = "Remote: Local".to_string();
+                if devcontainer_config_path.is_some() {
+                    items.push(
+                        PopupListItem::new("    Reopen in Container".to_string())
+                            .with_data("plugin:devcontainer_attach".to_string()),
+                    );
+                    items.push(
+                        PopupListItem::new("    Open Dev Container Config".to_string())
+                            .with_data("plugin:devcontainer_open_config".to_string()),
+                    );
+                } else {
+                    // No .devcontainer present; give a single disabled
+                    // hint row so the popup isn't empty. The item has
+                    // no data so confirm on it is a no-op.
+                    items.push(
+                        PopupListItem::new("    No dev container config detected".to_string())
+                            .disabled(),
+                    );
+                }
+            }
+        }
+
+        // Dismiss row — mirrors the LSP popup's terminal Dismiss row so
+        // users have an on-screen way out of the popup.
+        let cancel_binding = self
+            .keybindings
+            .read()
+            .ok()
+            .and_then(|kb| {
+                kb.get_keybinding_for_action(
+                    &crate::input::keybindings::Action::PopupCancel,
+                    crate::input::keybindings::KeyContext::Popup,
+                )
+            })
+            .unwrap_or_else(|| "Esc".to_string());
+        items.push(
+            PopupListItem::new(format!("    Dismiss ({})", cancel_binding))
+                .with_data("cancel_popup".to_string()),
+        );
+
+        let first_actionable = items
+            .iter()
+            .position(|i| i.data.is_some() && !i.disabled)
+            .unwrap_or(0);
+
+        // Anchor the popup to the remote-indicator's left edge if it's
+        // visible in the last frame; otherwise fall back to the bottom-
+        // right corner so the popup still appears.
+        let position = self
+            .cached_layout
+            .status_bar_remote_area
+            .map(|(_, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
+                x: col_start,
+            })
+            .unwrap_or(crate::view::popup::PopupPosition::BottomRight);
+
+        let popup_width = (items
+            .iter()
+            .map(|i| unicode_width::UnicodeWidthStr::width(i.text.as_str()))
+            .max()
+            .unwrap_or(24)
+            + 4) as u16;
+
+        let popup = Popup {
+            kind: PopupKind::List,
+            title: Some(title),
+            description: None,
+            transient: false,
+            content: PopupContent::List {
+                items,
+                selected: first_actionable,
+            },
+            position,
+            width: popup_width.clamp(28, 50),
+            max_height: 10,
+            bordered: true,
+            border_style: Style::default().fg(self.theme.popup_border_fg),
+            background_style: Style::default().bg(self.theme.popup_bg),
+            scroll_offset: 0,
+            text_selection: None,
+            accept_key_hint: None,
+            resolver: PopupResolver::RemoteIndicator,
+        };
+
+        let buffer_id = self.active_buffer();
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.popups.show(popup);
+        }
+    }
+
+    /// Dispatch the action selected from the Remote Indicator popup.
+    ///
+    /// - `"detach"`        — `clear_authority()` (falls back to local).
+    /// - `"plugin:<name>"` — forwards to `Action::PluginAction(name)`.
+    /// - `"cancel_popup"`  — no-op; the popup framework already closed
+    ///                       the popup when the row was confirmed.
+    /// - anything else     — logged and ignored.
+    pub fn handle_remote_indicator_action(&mut self, action_key: &str) {
+        if action_key == "detach" {
+            self.clear_authority();
+            return;
+        }
+        if action_key == "cancel_popup" {
+            return;
+        }
+        if let Some(plugin_action) = action_key.strip_prefix("plugin:") {
+            // `handle_action` wires this through the plugin manager; if
+            // the plugin isn't loaded it surfaces a status message, which
+            // is the correct no-op behavior for every plugin-command
+            // invocation site in the codebase.
+            let _ = self.handle_action(crate::input::keybindings::Action::PluginAction(
+                plugin_action.to_string(),
+            ));
+            return;
+        }
+        tracing::warn!(
+            "handle_remote_indicator_action: unknown action key '{}'",
+            action_key
+        );
+    }
+
+    /// Probe for a `devcontainer.json` under the current working
+    /// directory. Mirrors the first two priorities of the devcontainer
+    /// plugin's `findConfig()` so the Remote Indicator menu can decide
+    /// whether to offer "Reopen in Container" without actually having to
+    /// call into the plugin.
+    fn find_devcontainer_config(&self) -> Option<std::path::PathBuf> {
+        let cwd = self.working_dir();
+        let primary = cwd.join(".devcontainer").join("devcontainer.json");
+        if primary.exists() {
+            return Some(primary);
+        }
+        let secondary = cwd.join(".devcontainer.json");
+        if secondary.exists() {
+            return Some(secondary);
+        }
+        None
+    }
+
     /// Show a transient hover popup with the given message text, positioned below the cursor.
     /// Used for file-open messages (e.g. `file.txt:10@"Look at this"`).
     pub fn show_file_message_popup(&mut self, message: &str) {

@@ -226,6 +226,7 @@
   "action.show_help": "Show manual",
   "action.show_keyboard_shortcuts": "Show keyboard shortcuts",
   "action.show_lsp_status": "Show LSP status",
+  "action.show_remote_indicator_menu": "Show remote authority menu",
   "action.show_macro": "Show macro '%{key}' in buffer",
   "action.show_warnings": "Show warnings",
   "action.show_status_log": "Show status message log",

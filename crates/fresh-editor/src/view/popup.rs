@@ -100,6 +100,11 @@ pub enum PopupResolver {
     /// fires `action_popup_result` with this popup's id and the selected
     /// row's `data` as the action id.
     PluginAction { popup_id: String },
+    /// Remote-authority indicator popup (Local / Connected / Disconnected
+    /// context menu anchored to the status bar's `{remote}` element).
+    /// Confirm dispatches the selected row's `data` through
+    /// `handle_remote_indicator_action`.
+    RemoteIndicator,
 }
 
 /// Content of a popup window

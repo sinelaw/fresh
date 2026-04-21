@@ -512,6 +512,9 @@ impl Editor {
             Action::ShowLspStatus => {
                 self.show_lsp_status_popup();
             }
+            Action::ShowRemoteIndicatorMenu => {
+                self.show_remote_indicator_popup();
+            }
             Action::ClearWarnings => {
                 self.clear_warnings();
             }

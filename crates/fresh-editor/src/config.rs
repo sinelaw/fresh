@@ -544,6 +544,7 @@ impl WhitespaceVisibility {
 /// - `"{update}"` — update available indicator
 /// - `"{palette}"` — command palette shortcut hint
 /// - `"{clock}"` — current time (HH:MM) with blinking colon separator
+/// - `"{remote}"` — remote authority indicator (Local / SSH / Container / Disconnected)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum StatusBarElement {
@@ -577,6 +578,11 @@ pub enum StatusBarElement {
     Palette,
     /// Current time (HH:MM) with blinking colon separator
     Clock,
+    /// Remote authority indicator: shows "Local", the active SSH/Container
+    /// authority label, or a disconnected marker. Intended for placement at
+    /// the bottom-left of the status bar as a persistent remote-state entry
+    /// point.
+    RemoteIndicator,
 }
 
 impl TryFrom<String> for StatusBarElement {
@@ -603,6 +609,7 @@ impl TryFrom<String> for StatusBarElement {
             "update" => Ok(Self::Update),
             "palette" => Ok(Self::Palette),
             "clock" => Ok(Self::Clock),
+            "remote" => Ok(Self::RemoteIndicator),
             _ => Err(format!("Unknown status bar element: {}", s)),
         }
     }
@@ -626,6 +633,7 @@ impl From<StatusBarElement> for String {
             StatusBarElement::Update => "{update}".to_string(),
             StatusBarElement::Palette => "{palette}".to_string(),
             StatusBarElement::Clock => "{clock}".to_string(),
+            StatusBarElement::RemoteIndicator => "{remote}".to_string(),
         }
     }
 }
@@ -652,7 +660,8 @@ impl schemars::JsonSchema for StatusBarElement {
                 {"value": "{warnings}", "name": "Warnings"},
                 {"value": "{update}", "name": "Update"},
                 {"value": "{palette}", "name": "Palette"},
-                {"value": "{clock}", "name": "Clock"}
+                {"value": "{clock}", "name": "Clock"},
+                {"value": "{remote}", "name": "Remote Indicator"}
             ]
         })
     }

@@ -545,6 +545,8 @@ pub enum HoverTarget {
     FileExplorerStatusIndicator(std::path::PathBuf),
     /// Hovering over the status bar LSP indicator
     StatusBarLspIndicator,
+    /// Hovering over the status bar remote-authority indicator
+    StatusBarRemoteIndicator,
     /// Hovering over the status bar warning badge
     StatusBarWarningBadge,
     /// Hovering over the status bar line ending indicator
@@ -949,6 +951,9 @@ pub(crate) struct CachedLayout {
     pub status_bar_language_area: Option<(u16, u16, u16)>,
     /// Status bar message area (row, start_col, end_col) - clickable to show status log
     pub status_bar_message_area: Option<(u16, u16, u16)>,
+    /// Status bar remote-authority indicator area (row, start_col, end_col)
+    /// — clickable to open the remote-authority context menu.
+    pub status_bar_remote_area: Option<(u16, u16, u16)>,
     /// Search options layout for checkbox hit testing
     pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
     /// Menu bar layout for hit testing

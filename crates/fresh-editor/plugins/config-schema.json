@@ -827,6 +827,10 @@
         {
           "value": "{clock}",
           "name": "Clock"
+        },
+        {
+          "value": "{remote}",
+          "name": "Remote Indicator"
         }
       ]
     },

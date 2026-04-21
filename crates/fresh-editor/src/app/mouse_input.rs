@@ -1016,6 +1016,15 @@ impl Editor {
                     }
                 }
 
+                // Check remote indicator area
+                if let Some((rem_row, rem_start, rem_end)) =
+                    self.cached_layout.status_bar_remote_area
+                {
+                    if row == rem_row && col >= rem_start && col < rem_end {
+                        return Some(HoverTarget::StatusBarRemoteIndicator);
+                    }
+                }
+
                 // Check warning badge area
                 if let Some((warn_row, warn_start, warn_end)) =
                     self.cached_layout.status_bar_warning_area
@@ -1809,6 +1818,15 @@ impl Editor {
                 {
                     if row == lsp_row && col >= lsp_start && col < lsp_end {
                         return self.handle_action(Action::ShowLspStatus);
+                    }
+                }
+
+                // Check remote indicator - click opens remote-authority menu
+                if let Some((rem_row, rem_start, rem_end)) =
+                    self.cached_layout.status_bar_remote_area
+                {
+                    if row == rem_row && col >= rem_start && col < rem_end {
+                        return self.handle_action(Action::ShowRemoteIndicatorMenu);
                     }
                 }
 

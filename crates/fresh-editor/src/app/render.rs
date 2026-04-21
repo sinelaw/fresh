@@ -664,6 +664,7 @@ impl Editor {
                 }
                 Some(HoverTarget::StatusBarEncodingIndicator) => StatusBarHover::EncodingIndicator,
                 Some(HoverTarget::StatusBarLanguageIndicator) => StatusBarHover::LanguageIndicator,
+                Some(HoverTarget::StatusBarRemoteIndicator) => StatusBarHover::RemoteIndicator,
                 _ => StatusBarHover::None,
             };
 
@@ -722,6 +723,7 @@ impl Editor {
             self.cached_layout.status_bar_encoding_area = status_bar_layout.encoding_indicator;
             self.cached_layout.status_bar_language_area = status_bar_layout.language_indicator;
             self.cached_layout.status_bar_message_area = status_bar_layout.message_area;
+            self.cached_layout.status_bar_remote_area = status_bar_layout.remote_indicator;
         }
 
         // Render search options bar when in search prompt

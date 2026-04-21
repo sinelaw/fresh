@@ -154,6 +154,62 @@ fn test_compact_cursor_format() {
     );
 }
 
+/// Adding the `{remote}` element to the local status bar should render a
+/// visible "Local" indicator so the bottom-left remote-authority entry point
+/// is always present.
+#[test]
+fn test_remote_indicator_shows_local() {
+    let config = config_with_status_bar(
+        vec![StatusBarElement::RemoteIndicator, StatusBarElement::Filename],
+        vec![],
+    );
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 30, config).unwrap();
+
+    let dir = harness.project_dir().unwrap();
+    let file = dir.join("test.txt");
+    fs::write(&file, "hello\n").unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Local"),
+        "Remote indicator should show 'Local' when no authority is connected.\nStatus bar: {status}"
+    );
+}
+
+/// The remote indicator should be the left-most element when configured
+/// first in the `left` list — the spec places the remote authority entry
+/// point at the bottom-left of the status bar.
+#[test]
+fn test_remote_indicator_placed_at_far_left() {
+    let config = config_with_status_bar(
+        vec![StatusBarElement::RemoteIndicator, StatusBarElement::Filename],
+        vec![],
+    );
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 30, config).unwrap();
+
+    let dir = harness.project_dir().unwrap();
+    let file = dir.join("test.txt");
+    fs::write(&file, "hello\n").unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    let status = harness.get_status_bar();
+    let local_idx = status
+        .find("Local")
+        .expect("Remote indicator missing from status bar");
+    let filename_idx = status
+        .find("test.txt")
+        .expect("Filename missing from status bar");
+    assert!(
+        local_idx < filename_idx,
+        "Remote indicator should appear before the filename.\nStatus bar: {status}"
+    );
+}
+
 /// Both empty sides should still render a valid (blank) status bar without
 /// crashing.
 #[test]
