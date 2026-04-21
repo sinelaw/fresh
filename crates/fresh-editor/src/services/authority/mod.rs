@@ -34,7 +34,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::model::filesystem::{FileSystem, StdFileSystem};
-use crate::services::remote::{LocalProcessSpawner, ProcessSpawner};
+use crate::services::remote::{
+    LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner, ProcessSpawner,
+};
 
 /// How the integrated terminal is launched under this authority.
 ///
@@ -144,6 +146,12 @@ fn default_true() -> bool {
 pub struct Authority {
     pub filesystem: Arc<dyn FileSystem + Send + Sync>,
     pub process_spawner: Arc<dyn ProcessSpawner>,
+    /// Spawner for long-lived stdio processes — LSP servers today, tool
+    /// agents tomorrow. Container authorities wire this to a
+    /// `docker exec -i` variant so servers run inside the container
+    /// rather than on the host. Without it, LSP bypasses the authority
+    /// entirely (see `AUTHORITY_DESIGN.md` principle 2).
+    pub long_running_spawner: Arc<dyn LongRunningSpawner>,
     pub terminal_wrapper: TerminalWrapper,
     /// Status-bar / file-explorer label. Empty means render nothing.
     /// SSH leaves this empty and lets the status bar fall back to the
@@ -160,6 +168,7 @@ impl Authority {
         Self {
             filesystem: Arc::new(StdFileSystem),
             process_spawner: Arc::new(LocalProcessSpawner),
+            long_running_spawner: Arc::new(LocalLongRunningSpawner),
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
         }
@@ -169,6 +178,12 @@ impl Authority {
     /// (and its keepalive resources) so we just wire the parts in. Label
     /// is left empty — the status bar falls back to the filesystem's own
     /// `remote_connection_info()` which knows how to annotate disconnect.
+    ///
+    /// `long_running_spawner` defaults to the local implementation for
+    /// now; Phase L of the dev-container gap plan adds an SSH-routed
+    /// variant so LSP runs on the remote host. Until then, LSP over SSH
+    /// still spawns on the host — a pre-existing limitation the plan
+    /// documents but defers.
     pub fn ssh(
         filesystem: Arc<dyn FileSystem + Send + Sync>,
         process_spawner: Arc<dyn ProcessSpawner>,
@@ -176,6 +191,7 @@ impl Authority {
         Self {
             filesystem,
             process_spawner,
+            long_running_spawner: Arc::new(LocalLongRunningSpawner),
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
         }
@@ -217,9 +233,17 @@ impl Authority {
             },
         };
 
+        // Long-running spawner defaults to local until the Docker
+        // variant lands in Phase L-2b. Container authorities built
+        // from this payload will spawn LSP servers on the host in
+        // the meantime — the old pre-Authority behavior — so LSP
+        // behavior does not regress during the rollout.
+        let long_running_spawner: Arc<dyn LongRunningSpawner> = Arc::new(LocalLongRunningSpawner);
+
         Ok(Self {
             filesystem,
             process_spawner,
+            long_running_spawner,
             terminal_wrapper,
             display_label: payload.display_label,
         })

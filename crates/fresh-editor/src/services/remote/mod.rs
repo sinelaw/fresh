@@ -31,7 +31,8 @@ pub use protocol::{
     write_params, AgentRequest, AgentResponse,
 };
 pub use spawner::{
-    LocalProcessSpawner, ProcessSpawner, RemoteProcessSpawner, SpawnError, SpawnResult,
+    LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner, ProcessSpawner,
+    RemoteProcessSpawner, SpawnError, SpawnResult, StdioChild,
 };
 
 /// The Python agent source code, embedded at compile time.
