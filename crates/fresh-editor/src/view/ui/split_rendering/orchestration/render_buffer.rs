@@ -395,6 +395,7 @@ pub(crate) fn draw_buffer_in_split(
     software_cursor_only: bool,
     rulers: &[usize],
     compose_column_guides: Option<Vec<u16>>,
+    pending_hardware_cursor: &mut Option<(u16, u16)>,
 ) {
     let render_area = layout_output.render_area;
     let effective_editor_bg = layout_output.effective_editor_bg;
@@ -484,7 +485,12 @@ pub(crate) fn draw_buffer_in_split(
     }
 
     if let Some((screen_x, screen_y)) = cursor_screen_pos {
-        frame.set_cursor_position((screen_x, screen_y));
+        // Record the hardware cursor position instead of committing it to
+        // the frame now. `render.rs` decides at the end of the render pass
+        // whether to show the cursor — if a popup later overlays this cell
+        // it suppresses the cursor so the hardware caret does not bleed
+        // through the popup.
+        *pending_hardware_cursor = Some((screen_x, screen_y));
 
         // When software_cursor_only the backend has no hardware cursor, so
         // ensure the cell at the cursor position always has REVERSED style.
@@ -546,6 +552,7 @@ pub(crate) fn render_buffer_in_split(
     show_tilde: bool,
     cell_theme_map: &mut Vec<CellThemeInfo>,
     screen_width: u16,
+    pending_hardware_cursor: &mut Option<(u16, u16)>,
 ) -> Vec<ViewLineMapping> {
     let layout_output = compute_buffer_layout(
         state,
@@ -589,6 +596,7 @@ pub(crate) fn render_buffer_in_split(
         software_cursor_only,
         rulers,
         compose_column_guides,
+        pending_hardware_cursor,
     );
 
     view_line_mappings

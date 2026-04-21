@@ -420,6 +420,14 @@ impl Editor {
 
         let is_maximized = self.split_manager.is_maximized();
 
+        // The active split's buffer renderer records where the hardware
+        // cursor *wants* to appear here; we only commit it to the frame at
+        // the very end of this draw pass, after popups have been rendered,
+        // so a popup covering the cursor cell causes the cursor to be
+        // hidden (otherwise the hardware caret would bleed through the
+        // popup).
+        let mut pending_hardware_cursor: Option<(u16, u16)> = None;
+
         let _content_span = tracing::info_span!("render_content").entered();
         let (
             split_areas,
@@ -464,6 +472,7 @@ impl Editor {
             self.config.editor.show_tilde,
             &mut self.cached_layout.cell_theme_map,
             size.width,
+            &mut pending_hardware_cursor,
         );
 
         drop(_content_span);
@@ -1144,11 +1153,67 @@ impl Editor {
             }
         }
 
+        // Commit the active-split hardware cursor (deferred since
+        // `render_content`) unless a popup has been drawn over that cell.
+        // Ratatui draws the hardware caret on top of every cell, so a
+        // popup cannot hide the cursor by painting cells — the only way
+        // to hide it is to leave `Frame::cursor_position` as `None`, which
+        // triggers `Terminal::hide_cursor` at the end of the draw.
+        //
+        // When a prompt is active the prompt renderer already placed the
+        // caret on the prompt line via `frame.set_cursor_position`; don't
+        // override it with the (now-irrelevant) buffer cursor.
+        if let Some((cx, cy)) = pending_hardware_cursor {
+            if self.prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
+                frame.set_cursor_position((cx, cy));
+            }
+        }
+
         // Convert all colors for terminal capability (256/16 color fallback)
         crate::view::color_support::convert_buffer_colors(
             frame.buffer_mut(),
             self.color_capability,
         );
+    }
+
+    /// Returns true if `(x, y)` falls inside any popup-style overlay that
+    /// was rendered this frame. Used to decide whether the hardware cursor
+    /// should be shown or hidden so it does not bleed through a popup.
+    fn cursor_obscured_by_overlay(&self, x: u16, y: u16) -> bool {
+        let inside = |rect: ratatui::layout::Rect| -> bool {
+            x >= rect.x
+                && x < rect.x.saturating_add(rect.width)
+                && y >= rect.y
+                && y < rect.y.saturating_add(rect.height)
+        };
+
+        if self
+            .cached_layout
+            .popup_areas
+            .iter()
+            .any(|entry| inside(entry.1))
+        {
+            return true;
+        }
+        if self
+            .cached_layout
+            .global_popup_areas
+            .iter()
+            .any(|entry| inside(entry.1))
+        {
+            return true;
+        }
+        if let Some((rect, _, _, _)) = self.cached_layout.suggestions_area {
+            if inside(rect) {
+                return true;
+            }
+        }
+        if let Some(ref fb) = self.file_browser_layout {
+            if inside(fb.popup_area) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Render the Quick Open hints line showing available mode prefixes

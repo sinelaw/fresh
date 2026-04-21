@@ -91,6 +91,7 @@ impl SplitRenderer {
         show_tilde: bool,
         cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
         screen_width: u16,
+        pending_hardware_cursor: &mut Option<(u16, u16)>,
     ) -> (
         Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
         HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
@@ -141,6 +142,7 @@ impl SplitRenderer {
             show_tilde,
             cell_theme_map,
             screen_width,
+            pending_hardware_cursor,
         )
     }
 
