@@ -868,11 +868,91 @@ function buildContainerAuthorityPayload(
   };
 }
 
+/// Run `initializeCommand` on the host before container lifecycle
+/// hooks. Per the dev-container spec this is the "host-side
+/// prologue" — it runs before `devcontainer up` and has no
+/// container to be in. The `devcontainer` CLI does not invoke it
+/// automatically; Fresh is the layer that has to.
+///
+/// Returns `true` on success or when no initializeCommand is defined;
+/// `false` and sets a user-visible failure status when the command
+/// exits non-zero, so callers can short-circuit the attach.
+async function runInitializeCommand(): Promise<boolean> {
+  const cmd = config?.initializeCommand;
+  if (!cmd) {
+    return true;
+  }
+
+  editor.setStatus(editor.t("status.running", { name: "initializeCommand" }));
+  const cwd = editor.getCwd();
+
+  async function runOne(bin: string, args: string[]): Promise<number> {
+    const res = await editor.spawnHostProcess(bin, args, cwd);
+    return res.exit_code;
+  }
+
+  let exitCode: number;
+  if (typeof cmd === "string") {
+    exitCode = await runOne("sh", ["-c", cmd]);
+  } else if (Array.isArray(cmd)) {
+    const [bin, ...rest] = cmd;
+    exitCode = await runOne(bin, rest);
+  } else {
+    // Object form: run each named subcommand sequentially, bail on
+    // first failure. Matches the semantics of the per-hook runner
+    // in devcontainer_on_lifecycle_confirmed below.
+    exitCode = 0;
+    for (const [label, subcmd] of Object.entries(cmd)) {
+      let bin: string;
+      let args: string[];
+      if (Array.isArray(subcmd)) {
+        [bin, ...args] = subcmd;
+      } else {
+        bin = "sh";
+        args = ["-c", subcmd as string];
+      }
+      editor.setStatus(
+        editor.t("status.running_sub", { name: "initializeCommand", label }),
+      );
+      const res = await runOne(bin, args);
+      if (res !== 0) {
+        exitCode = res;
+        editor.setStatus(
+          editor.t("status.failed_sub", {
+            name: "initializeCommand",
+            label,
+            code: String(res),
+          }),
+        );
+        return false;
+      }
+    }
+  }
+
+  if (exitCode !== 0) {
+    editor.setStatus(
+      editor.t("status.failed", {
+        name: "initializeCommand",
+        code: String(exitCode),
+      }),
+    );
+    return false;
+  }
+  return true;
+}
+
 async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
   const cwd = editor.getCwd();
   const which = await editor.spawnHostProcess("which", ["devcontainer"]);
   if (which.exit_code !== 0) {
     showCliNotFoundPopup();
+    return;
+  }
+
+  // initializeCommand runs on the host BEFORE `devcontainer up`, per
+  // spec. Bail the attach if it fails; the user shouldn't get an
+  // attached container after their host-side prologue errored.
+  if (!(await runInitializeCommand())) {
     return;
   }
 
