@@ -1422,6 +1422,42 @@ mod tests {
     }
 
     #[test]
+    fn resolver_migrates_v1_status_bar_left_on_load() {
+        // A user with a v1 config that customized status_bar.left
+        // without {remote} loads the editor for the first time on
+        // v2. The resolver runs the migration in-memory; the
+        // resolved Config has {remote} at index 0.
+        let (temp, resolver) = create_test_resolver();
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{
+                "version": 1,
+                "editor": {
+                    "status_bar": {
+                        "left": ["{filename}", "{cursor}"],
+                        "right": []
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let config = resolver.resolve().unwrap();
+        let left = &config.editor.status_bar.left;
+        assert_eq!(
+            left.first().cloned(),
+            Some(crate::config::StatusBarElement::RemoteIndicator),
+            "resolver should inject RemoteIndicator at index 0 during v1→v2 \
+             migration; left = {:?}",
+            left
+        );
+        drop(temp);
+    }
+
+    #[test]
     fn save_and_load_session() {
         let (_temp, resolver) = create_test_resolver();
 
