@@ -307,3 +307,167 @@ to end, container logs are one command away, and users can see which
 configured ports are actually bound. Everything still uses the
 buffered `spawnHostProcess`; no new plugin API surface, no state
 machine, no indicator sub-states.
+
+---
+
+## Phase B · Remote Indicator state machine
+
+Phase A leaves the Remote Indicator with three states (Local,
+Connected, Disconnected). The spec also asks for Connecting/Building
+(§3, §4) and a visible failure state that surfaces Retry (§8).
+Phase B adds those, plus the plugin op that drives them.
+
+### B-1 · `RemoteIndicatorState::Connecting` + `FailedAttach` variants
+
+**Why.** Gaps §3, §4, §8. The status bar currently has no way to say
+"an attach is in progress" or "the last attach failed"; both are
+reachable but indistinguishable from Local.
+
+**Files.**
+
+- `crates/fresh-editor/src/view/ui/status_bar.rs` — add two variants
+  to `RemoteIndicatorState`:
+  - `Connecting { phase: ConnectingPhase, since: Instant }`
+  - `FailedAttach { last_error: String }`
+  plus a new `ConnectingPhase` enum (`Initialize`, `Build`, `Start`,
+  `PostInit`) mapping to the spec's state machine.
+- Rendering: `Connecting` uses a Unicode spinner glyph that rotates
+  per-frame (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) plus the authority label.
+  `FailedAttach` uses the error palette and renders as
+  `[Attach failed — click for options]`.
+- `ElementKind::RemoteIndicator(RemoteIndicatorState)` already carries
+  the state through; expand the palette selector in `element_style`
+  to map the two new variants.
+
+**Tests.** Unit test: assert `element_style` returns a non-default
+style for each new variant. E2E test: construct an editor with a
+test-only API for setting the state directly (gated behind
+`#[cfg(test)]` so it doesn't leak into the plugin surface), assert
+the rendered status bar contains the spinner glyph or the "Attach
+failed" text.
+
+**Regen.** None — these variants live inside the view crate; no
+JsonSchema or TS types.
+
+**Commit split.** One commit. New rendering branches are purely
+additive and the default never triggers them, so
+`cargo check --all-targets` passes trivially.
+
+### B-2 · Plugin op: `editor.setRemoteIndicatorState(payload)`
+
+**Why.** B-1 adds the states to the view; B-2 gives the plugin a way
+to drive them. Without this op the spinner would never appear.
+
+**Files.**
+
+- `crates/fresh-core/src/api.rs` — add a new `PluginCommand` variant:
+  ```rust
+  SetRemoteIndicatorState {
+      state: RemoteIndicatorStatePayload,
+  }
+  ```
+  where `RemoteIndicatorStatePayload` is a tagged enum mirroring the
+  view variants but with serializable error strings. Derives:
+  `Debug, Clone, Serialize, Deserialize, TS, JsonSchema`.
+- `crates/fresh-editor/src/app/plugin_dispatch.rs` — match the new
+  variant. Translate the payload into a `RemoteIndicatorState` and
+  store it on a new `pending_remote_state: Option<...>` field on
+  `Editor`.
+- `crates/fresh-editor/src/app/render.rs` — read
+  `editor.remote_state()` (new accessor) alongside
+  `connection_display_string()`; if `remote_state` is `Some`, it
+  overrides the derived Local/Connected/Disconnected state for the
+  rendered `{remote}` element.
+- `crates/fresh-editor/plugins/lib/fresh.d.ts` — regenerated (see
+  Regen below).
+
+**Tests.** Plugin-runtime unit test that sends a
+`SetRemoteIndicatorState` command and asserts it round-trips through
+`fresh_core::api`. E2E that loads a test plugin calling
+`editor.setRemoteIndicatorState({kind: "connecting", phase:
+"build"})` on a hook, waits for the next render (semantic wait on the
+rendered spinner, not a timer), and asserts the status bar shows it.
+
+**Regen.**
+
+- `cargo test -p fresh-plugin-runtime write_fresh_dts_file -- --ignored`
+  for `fresh.d.ts`.
+- `./scripts/gen_schema.sh` because the new payload derives
+  `JsonSchema` and surfaces in the config schema's `$defs`.
+
+**Commit split.** Two commits. First: Rust-side variant + dispatch +
+render integration, with the regenerated `fresh.d.ts` and
+`config-schema.json` bundled in (per `CONTRIBUTING.md` artifact
+rules). Second: `chore:` commit that only re-runs the generators in
+case the first commit's diff isn't byte-identical to a clean regen.
+
+### B-3 · Plugin wiring in `devcontainer.ts`
+
+**Why.** B-1 and B-2 are dead surface until the devcontainer plugin
+actually transitions through the states.
+
+**Files.**
+
+- `crates/fresh-editor/plugins/devcontainer.ts` — modify
+  `runDevcontainerUp`:
+  1. Set `connecting { phase: initialize }` before
+     `initializeCommand` (wired in A-1).
+  2. Set `connecting { phase: build }` before calling
+     `devcontainer up`.
+  3. Parse `devcontainer up` JSON; on success call `setAuthority`
+     (which restarts the editor — state is reset naturally).
+  4. On non-zero exit, set `failed_attach { last_error: stderr }`.
+- Add a new handler `devcontainer_retry_attach` that re-runs
+  `runDevcontainerUp`. The Remote Indicator popup's FailedAttach
+  branch (below) points to this handler.
+- On plugin load, check plugin global state for a pending
+  `Connecting` marker (set by a previous instance before `setAuthority`
+  restarted the editor). If found and an authority is now active,
+  clear it. If found and no authority is active, the previous attach
+  presumably failed or was cancelled; transition to `FailedAttach`.
+
+**Tests.** E2E with a fake `devcontainer` CLI shim that exits with
+status 1 and a scripted stderr: trigger attach, semantic-wait on the
+status bar reaching "Attach failed". Second e2e: fake CLI with a
+long sleep and success JSON, semantic-wait on the spinner glyph
+appearing and the indicator then transitioning to `Connected` once
+the shim completes.
+
+**Commit split.** Two commits. First: forward-path state transitions
+(happy-path Connecting → restart → Connected). Second: failure path
+(`FailedAttach` + retry handler).
+
+### B-4 · Remote Indicator popup updates
+
+**Why.** The popup's context-aware rows must reflect the new states.
+Connecting should offer "Show Logs" + "Cancel Startup" (the latter
+hooks into Phase C); FailedAttach should offer "Retry" + "Reopen
+Locally" + "Show Build Logs".
+
+**Files.**
+
+- `crates/fresh-editor/src/app/popup_dialogs.rs` — extend
+  `show_remote_indicator_popup` with branches for the two new
+  variants:
+  - `Connecting` rows: "Show Logs" (→
+    `plugin:devcontainer_show_build_logs`, wired in Phase D) and
+    "Cancel Startup" (→ `plugin:devcontainer_cancel_attach`, wired
+    in Phase C). Until those plugin handlers exist the rows are
+    `disabled()` with a `(coming soon)` suffix — never broken.
+  - `FailedAttach` rows: "Retry" (→
+    `plugin:devcontainer_retry_attach`), "Reopen Locally" (→
+    `detach`, already handled), "Show Build Logs" (→ same Phase D
+    handler).
+
+**Tests.** E2E driving the editor into each state and asserting the
+popup contents.
+
+**Commit split.** One commit, `feat:`-prefixed.
+
+### Phase B acceptance
+
+With B-1..B-4 merged: the Remote Indicator visibly spins during
+attach, the status bar flips to an error palette on failure, and the
+popup's rows match the state. Phase C fills in "Cancel Startup" and
+Phase D fills in "Show Build Logs" — both currently render as
+disabled rows that clearly communicate the feature is coming.
