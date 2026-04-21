@@ -964,16 +964,23 @@ impl LspManager {
                 return None;
             }
         };
+        // Default to the local spawner when nothing's been wired. The
+        // editor's `set_boot_authority` wires this as part of normal
+        // construction; tests and other call sites that construct an
+        // LspManager directly without going through Editor get the
+        // pre-Phase-L behavior (host-only spawn) automatically. Passing
+        // through the warning keeps the failure loud enough to catch
+        // regressions in Editor-side wiring.
         let long_running_spawner = match self.long_running_spawner.as_ref() {
             Some(s) => s.clone(),
             None => {
-                tracing::error!(
+                tracing::warn!(
                     "force_spawn: long-running spawner not wired for {} — \
-                     Editor must call LspManager::set_long_running_spawner \
-                     after construction",
+                     falling back to host-local spawn (normal for tests \
+                     that skip set_boot_authority)",
                     language
                 );
-                return None;
+                std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner)
             }
         };
 
@@ -1097,13 +1104,13 @@ impl LspManager {
             Some(b) => b.clone(),
             None => return,
         };
-        let long_running_spawner = match self.long_running_spawner.as_ref() {
-            Some(s) => s.clone(),
-            None => {
-                tracing::error!("ensure_universal_servers_running: long-running spawner not wired");
-                return;
-            }
-        };
+        let long_running_spawner =
+            self.long_running_spawner
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| {
+                    std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner)
+                });
 
         let mut spawned = Vec::new();
         for config in &self.universal_configs {
@@ -1426,15 +1433,13 @@ impl LspManager {
             Some(b) => b.clone(),
             None => return (false, "No async bridge available".to_string()),
         };
-        let long_running_spawner = match self.long_running_spawner.as_ref() {
-            Some(s) => s.clone(),
-            None => {
-                return (
-                    false,
-                    "Long-running spawner not wired on LspManager".to_string(),
-                )
-            }
-        };
+        let long_running_spawner =
+            self.long_running_spawner
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| {
+                    std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner)
+                });
 
         let scope = if is_universal {
             LanguageScope::all()
