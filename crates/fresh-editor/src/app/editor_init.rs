@@ -483,11 +483,7 @@ impl Editor {
             // that uses `declare global { interface FreshPluginRegistry }`
             // contributes its augmentation, and init.ts's tsconfig
             // picks the aggregate up via `files`.
-            let all_plugins = plugin_manager.list_plugins();
-            let declarations: Vec<(String, String)> = all_plugins
-                .into_iter()
-                .filter_map(|info| info.declarations.map(|d| (info.name, d)))
-                .collect();
+            let declarations = plugin_manager.plugin_declarations();
             crate::init_script::write_plugin_declarations(&dir_context.config_dir, &declarations);
         }
 

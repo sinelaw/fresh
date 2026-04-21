@@ -311,6 +311,27 @@ impl PluginManager {
             .unwrap_or_default()
     }
 
+    /// Collect the isolated-declarations `.d.ts` emit of every loaded
+    /// plugin that produced one. Returns `(plugin_name, d_ts_source)`
+    /// pairs — callers use this to assemble `plugins.d.ts`.
+    ///
+    /// Available in all builds: without the `plugins` feature it
+    /// returns an empty vec, letting `editor_init` call this
+    /// unconditionally.
+    pub fn plugin_declarations(&self) -> Vec<(String, String)> {
+        #[cfg(feature = "plugins")]
+        {
+            self.list_plugins()
+                .into_iter()
+                .filter_map(|info| info.declarations.map(|d| (info.name, d)))
+                .collect()
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            Vec::new()
+        }
+    }
+
     /// Reload a plugin by name.
     #[cfg(feature = "plugins")]
     pub fn reload_plugin(&self, name: &str) -> anyhow::Result<()> {
