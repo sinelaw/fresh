@@ -635,7 +635,13 @@ function devcontainer_run_lifecycle(): void {
     return;
   }
 
+  // `initializeCommand` is the host-side prologue per the dev-container
+  // spec — surface it in the picker so users can re-run it on demand.
+  // The automatic attach flow runs it separately (see runDevcontainerUp)
+  // before `devcontainer up`, so the CLI-driven hooks that follow don't
+  // re-run it.
   const lifecycle: [string, LifecycleCommand | undefined][] = [
+    ["initializeCommand", config.initializeCommand],
     ["onCreateCommand", config.onCreateCommand],
     ["updateContentCommand", config.updateContentCommand],
     ["postCreateCommand", config.postCreateCommand],
