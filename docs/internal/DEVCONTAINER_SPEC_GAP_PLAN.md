@@ -1224,28 +1224,33 @@ as attach failures. Deferred to a follow-up PR post-E-3.
 
 ## Summary table
 
-| Phase | Scope | Gap items closed | New plugin API | Lines of Rust added (est.) |
-|-------|-------|------------------|----------------|-----------------------------|
+| Phase | Scope | Gap items closed | New API | Lines of Rust added (est.) |
+|-------|-------|------------------|---------|-----------------------------|
 | Pre | 3 cleanups | — | none | ~20 |
-| A | Plugin-only spec alignment | §1 (partial), §2, §6, §7 (partial) | none | ~30 (scaffold-row wiring) |
+| L | LSP-in-container via authority | bug beyond spec | internal `LongRunningSpawner` trait | ~400 |
+| A | Spec alignments + config v2 rollout | §1 (partial), §2, §6, §7 (partial); rollout | none | ~80 (scaffold wiring + migration) |
 | B | Indicator state machine | §3, §4 (visibility), §8 (display) | `setRemoteIndicatorState` | ~200 |
 | C | Streaming host spawn + cancel | §4 (logs/cancel) | `spawnHostProcessStreaming`, `killHostProcess` | ~250 |
 | D | Build-log buffer + retry popup | §4 (logs shown), §8 (retry) | `appendVirtualBuffer` (conditional) | ~50 |
 | E | Customizations + ports panel | §7 | none | ~0 (pure plugin) |
 
-Each row's estimate is a rough ballpark for review-planning purposes;
-actual numbers will emerge from the PRs.
+Each row's estimate is a rough ballpark for review-planning; actual
+numbers emerge from the PRs.
 
 ---
 
 ## Closing
 
-Pre-work + five phases close every in-scope spec gap identified in
-`DEVCONTAINER_SPEC_GAP_ANALYSIS.md`. The plan respects Fresh's
-architectural principles (authority opacity, one-slot transition,
-plugin-owned backend lifecycle) and lines up with `CONTRIBUTING.md`
-commit, test, and regeneration discipline throughout. Each phase can
-stand on its own: if Phase C is cancelled after Phase B, the Remote
-Indicator still works as a visible-but-non-cancellable state
-machine, which is strictly more useful than today's always-Local
-display.
+Pre-work + Phase L + five lettered phases close every in-scope spec
+gap identified in `DEVCONTAINER_SPEC_GAP_ANALYSIS.md` plus the
+LSP-in-container correctness bug surfaced while planning. The plan
+respects Fresh's architectural principles (authority opacity,
+one-slot transition, plugin-owned backend lifecycle) and lines up
+with `CONTRIBUTING.md` commit, test, and regeneration discipline
+throughout. Each phase can stand on its own: if Phase C is cancelled
+after Phase B, the Remote Indicator still works as a visible-but-
+non-cancellable state machine; if Phase D is cancelled after Phase
+C, logs stream to `editor.debug` rather than a buffer. Phase L is
+the one phase that's not user-facing on its own — its value is
+unlocked by *any* subsequent phase that uses LSP inside a container,
+which is the common case for serious devcontainer users.
