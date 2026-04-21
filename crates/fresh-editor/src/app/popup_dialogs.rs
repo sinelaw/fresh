@@ -703,16 +703,13 @@ impl Editor {
                         .map(|s| format!(" — {}", s))
                         .unwrap_or_default();
                     title = format!("Remote: Connecting{}", suffix);
-                    // Phase C lands Cancel Startup; Phase D lands
-                    // streaming logs. Until both exist, the rows
-                    // render disabled so users can see the surface
-                    // exists without clicking into a broken action.
                     items.push(
-                        PopupListItem::new("    Cancel Startup (coming soon)".to_string())
-                            .disabled(),
+                        PopupListItem::new("    Cancel Startup".to_string())
+                            .with_data("plugin:devcontainer_cancel_attach".to_string()),
                     );
                     items.push(
-                        PopupListItem::new("    Show Logs (coming soon)".to_string()).disabled(),
+                        PopupListItem::new("    Show Logs".to_string())
+                            .with_data("plugin:devcontainer_show_build_logs".to_string()),
                     );
                 }
                 RemoteIndicatorOverride::FailedAttach { error } => {
@@ -730,8 +727,8 @@ impl Editor {
                             .with_data("clear_override".to_string()),
                     );
                     items.push(
-                        PopupListItem::new("    Show Build Logs (coming soon)".to_string())
-                            .disabled(),
+                        PopupListItem::new("    Show Build Logs".to_string())
+                            .with_data("plugin:devcontainer_show_build_logs".to_string()),
                     );
                 }
                 _ => {
