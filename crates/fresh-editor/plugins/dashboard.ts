@@ -430,6 +430,7 @@ function renderFrame(inner: number, leftPad: number): Draw {
                     end: startInDoc + Math.min(sp.end, utf8Len(line)),
                     fg: sp.fg,
                     bold: sp.bold,
+                    underline: sp.underline,
                     url: sp.url,
                 });
             }
@@ -536,10 +537,15 @@ let lastPaintedH = -1;
 // adding topPad). Rebuilt every paint; read by the mouse_click handler.
 let currentRowActions: Map<number, ClickAction> = new Map();
 
-function paint() {
+function paint(dims?: { width: number; height: number }) {
     if (dashboardBufferId === null) return;
     const bufferId = dashboardBufferId;
-    const vp = editor.getViewport();
+    // Prefer explicit dims (from a viewport_changed event, which ships
+    // the just-resized width/height before the state snapshot catches
+    // up) and fall back to the snapshot. Without this, toggling the
+    // file explorer repaints against the stale pre-toggle width, so
+    // the frame stays anchored at the old position for one tick.
+    const vp = dims ?? editor.getViewport();
     const width = vp?.width ?? 100;
     const height = vp?.height ?? 24;
     const { inner, leftPad } = frameWidth(width);
@@ -1367,7 +1373,10 @@ registerHandler(
         if (dashboardBufferId === null) return;
         if (data.buffer_id !== dashboardBufferId) return;
         if (data.width === lastPaintedW && data.height === lastPaintedH) return;
-        paint();
+        // Pass the fresh dims through so we center against the new
+        // split width on this very tick — the getViewport() snapshot
+        // is only updated on the next render pass.
+        paint({ width: data.width, height: data.height });
     },
 );
 // Dispatch clicks on rows that carry an action. We don't trust the
