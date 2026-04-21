@@ -741,20 +741,87 @@ function devcontainer_show_features(): void {
 }
 registerHandler("devcontainer_show_features", devcontainer_show_features);
 
-function devcontainer_show_ports(): void {
+/// Parse `docker port <id>` output into a map from
+/// "<container-port>/<proto>" to "<host>:<host-port>".
+///
+/// Each output line looks like `8080/tcp -> 0.0.0.0:49153`. Malformed
+/// lines are skipped — we prefer a partial merge over bailing on
+/// unknown formats from future Docker versions.
+function parseDockerPortOutput(stdout: string): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const rawLine of stdout.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const arrow = line.indexOf(" -> ");
+    if (arrow < 0) continue;
+    const left = line.slice(0, arrow).trim();
+    const right = line.slice(arrow + 4).trim();
+    if (left && right) map[left] = right;
+  }
+  return map;
+}
+
+async function devcontainer_show_ports(): Promise<void> {
   if (!config || !config.forwardPorts || config.forwardPorts.length === 0) {
     editor.setStatus(editor.t("status.no_ports"));
     return;
+  }
+
+  // When attached to a container, merge runtime bindings from
+  // `docker port <id>` into the prompt descriptions so the user sees
+  // which configured ports actually reached the host. Off-container
+  // the runtime side is unavailable; fall back to config-only.
+  let runtime: Record<string, string> = {};
+  const authorityLabel = editor.getAuthorityLabel();
+  const prefix = "Container:";
+  if (authorityLabel.startsWith(prefix)) {
+    const containerId = authorityLabel.slice(prefix.length);
+    if (containerId.length > 0) {
+      const which = await editor.spawnHostProcess("which", ["docker"]);
+      if (which.exit_code === 0) {
+        const res = await editor.spawnHostProcess(
+          "docker",
+          ["port", containerId],
+          editor.getCwd(),
+        );
+        if (res.exit_code === 0) {
+          runtime = parseDockerPortOutput(res.stdout);
+        }
+      }
+    }
   }
 
   const suggestions: PromptSuggestion[] = config.forwardPorts.map((port) => {
     const attrs = config!.portsAttributes?.[String(port)];
     const proto = attrs?.protocol ?? "tcp";
     let desc = proto;
-    if (attrs?.label) desc += ` - ${attrs.label}`;
+    if (attrs?.label) desc += ` · ${attrs.label}`;
     if (attrs?.onAutoForward) desc += ` (${attrs.onAutoForward})`;
+    // Runtime bindings are keyed by "<port>/<protocol>" — Docker
+    // emits `tcp` / `udp` lowercased. Match protocol defensively.
+    const key = `${port}/${proto.toLowerCase()}`;
+    const binding = runtime[key];
+    if (binding) {
+      desc += ` → ${binding}`;
+    }
     return { text: String(port), description: desc };
   });
+
+  // Surface runtime-only ports (exposed by the container but not
+  // listed in forwardPorts) so users see the full picture.
+  for (const [key, binding] of Object.entries(runtime)) {
+    const slash = key.indexOf("/");
+    const portStr = slash >= 0 ? key.slice(0, slash) : key;
+    const portNum = Number(portStr);
+    const alreadyListed =
+      config.forwardPorts.some((p) => String(p) === portStr) ||
+      (!Number.isNaN(portNum) && config.forwardPorts.some((p) => p === portNum));
+    if (alreadyListed) continue;
+    suggestions.push({
+      text: portStr,
+      description: `${key} · runtime only → ${binding}`,
+    });
+  }
 
   editor.startPrompt(editor.t("prompt.ports"), "devcontainer-ports");
   editor.setPromptSuggestions(suggestions);
