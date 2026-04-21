@@ -151,8 +151,197 @@ generator and diffs against the checked-in file.
 All three items land before starting Phase A. Collectively they
 establish: every devcontainer-adjacent filesystem probe is
 authority-routed (P-1), every generated artifact is current (P-2,
-P-3). Phases A–E can then add new files and types without inheriting
-drift.
+P-3). Phases L and A–E can then add new files and types without
+inheriting drift.
+
+---
+
+## Phase L · LSP (and other long-running stdio) in the container
+
+While verifying the gap analysis, we found that `LspHandle::spawn`
+(`services/lsp/async_handler.rs:2603`) calls
+`tokio::process::Command::new(command)` directly and
+`services/lsp/mod.rs::command_exists` calls `which::which(...)` —
+both bypass the authority. That means when attached to a container,
+LSP servers still run on the **host**, looking up binaries in the
+**host's** `$PATH`. `rust-analyzer` can't see the project's sysroot
+from outside the container, `clangd` misses the container's include
+dirs, and any language that's only installed inside the container
+simply fails with "binary not found." This is a correctness bug
+relative to `AUTHORITY_DESIGN.md` principle 2 ("authority is the sole
+router for 'where'"), not a UX gap.
+
+Closing it without adopting the VS Code remote-host model (spec §5)
+requires a new trait abstraction: `ProcessSpawner` is one-shot
+(`command/args/cwd → SpawnResult`), which doesn't fit a stdin/stdout
+LSP server. Phase L introduces the long-running equivalent and routes
+LSP through it.
+
+### L-1 · Define `LongRunningSpawner` on `Authority`
+
+**Why.** One trait for every long-lived stdio process (LSP today;
+PTY-less tool agents tomorrow) so the container case stays a single
+implementation.
+
+**Files.**
+
+- `crates/fresh-editor/src/services/remote/spawner.rs` — new trait:
+  ```rust
+  #[async_trait]
+  pub trait LongRunningSpawner: Send + Sync {
+      async fn spawn_stdio(
+          &self,
+          command: &str,
+          args: &[String],
+          env: Vec<(String, String)>,
+          cwd: Option<&Path>,
+      ) -> Result<StdioChild, SpawnError>;
+
+      async fn command_exists(&self, command: &str) -> bool;
+  }
+  ```
+  where `StdioChild` wraps `tokio::process::Child` but exposes only
+  `stdin`, `stdout`, `stderr`, `id()`, `kill()`, `wait()`. Wrapping
+  is important because the container variant spawns `docker exec`,
+  not the binary directly — the rest of the LSP code shouldn't care.
+- `crates/fresh-editor/src/services/authority/mod.rs` — add
+  `pub long_running_spawner: Arc<dyn LongRunningSpawner>` to
+  `Authority`. Constructors (`Authority::local`, `Authority::ssh`,
+  `Authority::from_plugin_payload`) wire the right impl.
+
+**Tests.** Trait-object round-trip: spawn `sh -c 'echo hello'` via
+each impl, assert the stdout line matches.
+
+**Regen.** None — internal trait, not exposed via plugin API or
+JSON schema.
+
+**Commit split.** One commit adding the trait + `StdioChild` +
+Authority wiring. No LSP call-site changes yet.
+
+### L-2 · Implement `LongRunningSpawner` for Local and Docker
+
+**Why.** L-1 adds the trait; L-2 provides the two concrete impls.
+
+**Files.**
+
+- `crates/fresh-editor/src/services/remote/spawner.rs` — new
+  `LocalLongRunningSpawner` wrapping `tokio::process::Command`. Host
+  `command_exists` delegates to `which::which` as today.
+- `crates/fresh-editor/src/services/authority/docker_spawner.rs` —
+  sibling `DockerLongRunningSpawner` that runs
+  `docker exec -i -u <user> -w <workspace> <id> <command> <args>`.
+  `-i` keeps stdin open for the LSP's JSON-RPC stream; stdout/stderr
+  pipe back through the `docker` CLI like any other child. For
+  `command_exists`, run `docker exec <id> sh -c 'command -v <cmd>'`
+  and read the exit code.
+- SSH authority: for now, delegate `command_exists` to `ssh … 'command -v'`
+  and `spawn_stdio` to `ssh … <cmd>`. Ship container first; land SSH
+  in the same phase if low-risk, otherwise a follow-up.
+
+**Tests.** Unit test (with a fake `docker` shim on `PATH`) that
+asserts the composed command line. `#[ignore]`-gated integration
+test that requires a real Docker daemon; contributors with docker
+installed run it locally.
+
+**Commit split.** Two commits: local impl first (zero behavioral
+change because LSP still uses the direct path), then docker impl.
+
+### L-3 · Route `LspHandle::spawn` through `Authority`
+
+**Why.** L-1/L-2 are dead surface until `LspHandle` adopts the
+trait. This is the correctness fix.
+
+**Files.**
+
+- `crates/fresh-editor/src/services/lsp/async_handler.rs`:
+  - `LspHandle::spawn` takes `authority: &Authority` as a parameter.
+    Replace `Command::new(command)` with
+    `authority.long_running_spawner.spawn_stdio(command, args, env, cwd).await`.
+  - The existing `stderr_file` fd-redirect doesn't compose with
+    `docker exec` — switch to reading from `StdioChild::stderr` in a
+    tokio task that writes lines to the log file via
+    `authority.filesystem.write` (guideline 4; the log file itself
+    lives host-side in both the local and container case because
+    the log dir is host-configured).
+  - `process_limits` / cgroup application only makes sense for
+    host-spawned children. Add a `spawned_locally: bool` on
+    `StdioChild` and skip `post_spawn.apply_to_child(...)` when the
+    child is `docker`/`ssh` itself rather than the real LSP.
+- `crates/fresh-editor/src/services/lsp/mod.rs::command_exists` —
+  take `&Authority`, forward to
+  `authority.long_running_spawner.command_exists(...)`. Callers in
+  `popup_dialogs.rs` and `lsp_status.rs` pass `self.authority()`.
+- `LspManager::force_spawn` — plumb the authority down from `Editor`.
+
+**Tests.**
+
+- Unit: mock `LongRunningSpawner` that records the spawn call;
+  assert `LspHandle::spawn` passed the right command + args.
+- E2E: fake `docker` shim that forks a stub LSP server emitting a
+  canned `initialize` response. Boot Fresh with a container
+  authority (constructed via test-only helper), open a `.rs` file,
+  semantic-wait on the LSP indicator transitioning to "ready";
+  assert the shim received `docker exec -i <id> rust-analyzer`-style
+  arguments.
+
+**Regen.** None.
+
+**Commit split.** Three commits — each passes `cargo check
+--all-targets` on its own:
+1. Thread `authority` through `force_spawn` and `LspHandle::spawn`,
+   still using the local spawn impl (no behavior change).
+2. Switch the spawn call site to `authority.long_running_spawner`.
+3. Switch `command_exists` to the authority variant.
+
+### L-4 · User-visible diagnostics for container LSP failures
+
+**Why.** When `command_exists` returns false inside the container,
+the current "binary not in PATH" advisory is misleading — it says to
+install on the host. Update the copy.
+
+**Files.**
+
+- `crates/fresh-editor/src/app/popup_dialogs.rs` — check the active
+  authority when rendering the `(binary not in PATH)` row; if
+  container, reword to `(not installed in container)` and swap the
+  install hint to point at `postCreateCommand` in
+  `devcontainer.json`.
+- `locales/en.json` — new strings.
+
+**Tests.** E2E: attach to the fake container shim, open a file whose
+LSP binary is absent, trigger the LSP popup, assert the rendered
+row says "not installed in container."
+
+**Commit split.** One commit.
+
+### Phase L acceptance
+
+With L-1..L-4 merged: opening a Rust file while attached to a
+container spawns `rust-analyzer` inside the container, sees the
+project's real sysroot, and responds to `textDocument/hover`
+requests as if the editor were running natively inside. The LSP log
+panel still works because stderr is forwarded. The authority
+contract is preserved — no core code branches on "is this a
+container?"; everything goes through `authority.long_running_spawner`.
+
+Phase L does **not** adopt the VS Code remote-host model. We run the
+LSP server process inside the container and the editor UI on the
+host, with JSON-RPC flowing through `docker exec -i`'s stdio pipe.
+Spec §5 stays out of scope for the same reason — we don't need a
+second Fresh instance inside the container to get the correctness
+property the user actually cares about (servers see the container's
+filesystem).
+
+### Phase L consequences for later phases
+
+- **A-4 ("Show Container Logs")** — already uses `spawnHostProcess`
+  for `docker logs`; no change.
+- **Phase C streaming API** — unrelated; Phase L is long-lived
+  stdio routed through authority, Phase C is host-side one-shot
+  streaming that deliberately bypasses authority per
+  `AUTHORITY_DESIGN.md`.
+- **Phase D build-log buffer** — unrelated; build output comes from
+  `devcontainer up` on the host.
 
 ---
 
