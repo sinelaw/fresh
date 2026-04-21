@@ -104,6 +104,63 @@ const editor = getEditor();
 //     const api = editor.getPluginApi("my-plugin");
 //     if (api) api.configure({ option: "value" });
 // });
+
+// Example: add a custom section to the Dashboard plugin.
+//
+// The dashboard exports `registerSection(name, refresh)`. `refresh`
+// is async and is called on every dashboard tick (every 5s while the
+// dashboard is visible, plus an initial call on registration). The
+// context passed to `refresh` has four primitives:
+//
+//   ctx.kv(label, value, color?)    — "    label     value" row
+//   ctx.text(s, { color?, bold?, url?, onClick? })  — styled text, no newline
+//   ctx.newline()                   — end the current row
+//   ctx.error(message)              — one-line error row
+//
+// Valid `color` names are:
+//   "muted" | "accent" | "value" | "number"
+//   "ok" | "warn" | "err" | "branch"
+//
+// editor.on("plugins_loaded", () => {
+//     const dash = editor.getPluginApi("dashboard") as
+//         | {
+//             registerSection: (
+//                 name: string,
+//                 refresh: (ctx: {
+//                     kv: (label: string, value: string, color?: string) => void;
+//                     text: (
+//                         s: string,
+//                         opts?: {
+//                             color?: string;
+//                             bold?: boolean;
+//                             url?: string;
+//                             onClick?: () => void;
+//                         },
+//                     ) => void;
+//                     newline: () => void;
+//                     error: (message: string) => void;
+//                 }) => Promise<void>,
+//             ) => () => void;
+//         }
+//         | null;
+//     if (!dash) return;
+//     dash.registerSection("todo", async (ctx) => {
+//         // Pretend we read a TODO count from somewhere async.
+//         const count = 3;
+//         if (count === 0) {
+//             ctx.kv("status", "inbox zero", "ok");
+//             return;
+//         }
+//         ctx.kv("open", String(count), count > 5 ? "warn" : "value");
+//         ctx.text("    " + "see all".padEnd(10), { color: "muted" });
+//         ctx.text("open inbox", {
+//             color: "accent",
+//             bold: true,
+//             onClick: () => editor.executeAction("open_inbox"),
+//         });
+//         ctx.newline();
+//     });
+// });
 "#;
 
 /// `tsconfig.json` for the user's init.ts. Matches the plugin-dev

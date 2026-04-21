@@ -49,10 +49,12 @@ type Span = {
 // handler, which looks up the clicked buffer row in Draw.rowActions.
 // Since terminals that swallow OSC-8 hyperlinks are common, we can't
 // rely on the `url` span alone; routing clicks through the editor
-// guarantees PR numbers / repo / review-branch are always actionable.
+// guarantees that PR numbers / repo / custom section rows are always
+// actionable. The `callback` variant lets third-party sections wire
+// up arbitrary click handlers via the public `DashboardContext` API.
 type ClickAction =
     | { kind: "open-url"; url: string }
-    | { kind: "review-branch" };
+    | { kind: "callback"; fn: () => void };
 type Draw = {
     text: string;
     spans: Span[];
@@ -62,8 +64,6 @@ type Draw = {
     currentRow: number;
     rowActions: Map<number, ClickAction>;
 };
-type Section = { draw: (d: Draw) => void };
-
 const MAX_INNER = 72; // content width excluding frame + centering pad
 
 const C = {
@@ -80,15 +80,87 @@ const C = {
     barFill: "syntax.function",
 };
 
+// ── Public section API ─────────────────────────────────────────────────
+//
+// Third-party plugins (and user init.ts) can add their own dashboard
+// rows via the exported plugin API. See `editor.exportPluginApi` at
+// the bottom of this file and the usage example in the init.ts
+// starter template (`init_script.rs::STARTER_TEMPLATE`).
+
+// Named palette colors exposed to section callbacks. Each maps to a
+// theme key under the hood so sections follow the active theme
+// without hard-coding RGB values.
+type DashboardColor =
+    | "muted"
+    | "accent"
+    | "value"
+    | "number"
+    | "ok"
+    | "warn"
+    | "err"
+    | "branch";
+
+const COLOR_KEYS: Record<DashboardColor, string> = {
+    muted: C.muted,
+    accent: C.accent,
+    value: C.value,
+    number: C.number,
+    ok: C.ok,
+    warn: C.warn,
+    err: C.err,
+    branch: C.branch,
+};
+
+type DashboardTextOpts = {
+    color?: DashboardColor;
+    bold?: boolean;
+    /** OSC-8 hyperlink target; terminals that honor it render the span as a
+     *  clickable link. When only `onClick` is set (no `url`), the span is
+     *  still routed through Fresh's own mouse-click dispatch. */
+    url?: string;
+    /** Invoked when the user clicks anywhere on the row carrying this text
+     *  span, regardless of whether the terminal honors OSC-8. Multiple text
+     *  spans on the same row share a single row-level click target; the
+     *  first `onClick` emitted wins. */
+    onClick?: () => void;
+};
+
+type DashboardContext = {
+    /** Emit a label/value row like "    label     value". The label
+     *  column is padded to 10 cols so multi-row sections align. */
+    kv(label: string, value: string, color?: DashboardColor): void;
+    /** Emit a styled text segment on the current row. No newline is
+     *  added — call `newline()` when the row is finished. */
+    text(s: string, opts?: DashboardTextOpts): void;
+    /** End the current row. */
+    newline(): void;
+    /** Shortcut for a single-row error message: "    status    why". */
+    error(message: string): void;
+};
+
+type SectionRefresh = (ctx: DashboardContext) => Promise<void>;
+
+type RegisteredSection = {
+    id: number;
+    name: string;
+    refresh: SectionRefresh;
+    /** Rendered output from the most recent refresh. Re-used until the
+     *  next refresh lands so the dashboard doesn't flash back to a
+     *  "loading…" placeholder on every tick. */
+    draw: Draw;
+};
+
+// ── Internal state ─────────────────────────────────────────────────────
+
 // State survives across open/close cycles so we don't pile up dashboards.
 let dashboardBufferId: number | null = null;
-let sections: Record<"weather" | "git" | "github" | "disk", Section> = {
-    weather: loading(),
-    git: loading(),
-    github: loading(),
-    disk: loading(),
-};
 let fetchToken = 0; // bumped each open; late fetches from a prior open no-op.
+
+// Registered sections, in render order. Built-ins are registered at
+// plugin load (see the bottom of this file); third-party plugins
+// append via the exported `registerSection` API.
+let nextSectionId = 1;
+const registeredSections: RegisteredSection[] = [];
 
 // ── Drawing primitives ─────────────────────────────────────────────────
 
@@ -169,26 +241,105 @@ function emptyDraw(): Draw {
 
 // ── Sections (sentinel / placeholder factories) ────────────────────────
 
-function loading(): Section {
-    return {
-        draw: (d) => {
-            const label = pad("status", 10);
-            emit(d, "    " + label, { fg: C.muted });
-            emit(d, "loading…", { fg: C.muted });
+// Produce a one-line status row: "    status    text". Used for the
+// initial "loading…" placeholder and for top-level error messages
+// that replace a whole section's body.
+function statusRowDraw(text: string, fg: string): Draw {
+    const d = emptyDraw();
+    const label = pad("status", 10);
+    emit(d, "    " + label, { fg: C.muted });
+    emit(d, text, { fg });
+    newline(d);
+    return d;
+}
+
+function loadingDraw(): Draw {
+    return statusRowDraw("loading…", C.muted);
+}
+
+// ── Section registry + DashboardContext factory ────────────────────────
+
+// Build a DashboardContext that accumulates drawing operations into a
+// fresh Draw. After the caller's refresh callback resolves, the Draw
+// is stashed on the section entry and the dashboard repaints with it.
+function makeContext(): { ctx: DashboardContext; draw: Draw } {
+    const d = emptyDraw();
+    const ctx: DashboardContext = {
+        kv(label, value, color) {
+            const fg = color ? COLOR_KEYS[color] : C.value;
+            emit(d, "    " + pad(label, 10), { fg: C.muted });
+            emit(d, value, { fg });
             newline(d);
         },
+        text(s, opts) {
+            const action: ClickAction | undefined = opts?.onClick
+                ? { kind: "callback", fn: opts.onClick }
+                : opts?.url
+                    ? { kind: "open-url", url: opts.url }
+                    : undefined;
+            emit(d, s, {
+                fg: opts?.color ? COLOR_KEYS[opts.color] : undefined,
+                bold: opts?.bold,
+                url: opts?.url,
+                action,
+            });
+        },
+        newline() {
+            newline(d);
+        },
+        error(message) {
+            const label = pad("status", 10);
+            emit(d, "    " + label, { fg: C.muted });
+            emit(d, message, { fg: C.err });
+            newline(d);
+        },
+    };
+    return { ctx, draw: d };
+}
+
+// Register a dashboard section. `refresh` is invoked each tick (every
+// 5s while the dashboard is visible) and on every open. Returns a
+// function that unregisters the section when called — e.g. for
+// plugins that want to remove their section on disable.
+function registerSection(name: string, refresh: SectionRefresh): () => void {
+    const id = nextSectionId++;
+    const entry: RegisteredSection = {
+        id,
+        name,
+        refresh,
+        draw: loadingDraw(),
+    };
+    registeredSections.push(entry);
+    // Kick an immediate refresh so the initial frame isn't "loading…"
+    // for any longer than the callback actually takes.
+    void refreshSection(entry, fetchToken);
+    paint();
+    return () => {
+        const idx = registeredSections.findIndex((s) => s.id === id);
+        if (idx >= 0) {
+            registeredSections.splice(idx, 1);
+            paint();
+        }
     };
 }
 
-function errorSection(why: string): Section {
-    return {
-        draw: (d) => {
-            const label = pad("status", 10);
-            emit(d, "    " + label, { fg: C.muted });
-            emit(d, why, { fg: C.err });
-            newline(d);
-        },
-    };
+async function refreshSection(entry: RegisteredSection, myToken: number) {
+    const { ctx, draw } = makeContext();
+    try {
+        await entry.refresh(ctx);
+    } catch (e) {
+        // A thrown error becomes a one-line error row so a buggy
+        // third-party section can't blank the whole dashboard.
+        const { ctx: fallbackCtx, draw: fallbackDraw } = makeContext();
+        fallbackCtx.error(`failed — ${String(e).slice(0, 60)}`);
+        if (myToken !== fetchToken) return;
+        entry.draw = fallbackDraw;
+        paint();
+        return;
+    }
+    if (myToken !== fetchToken) return;
+    entry.draw = draw;
+    paint();
 }
 
 // ── Frame + section renderer ───────────────────────────────────────────
@@ -297,11 +448,8 @@ function renderFrame(inner: number, leftPad: number): Draw {
         newline(d);
     };
 
-    const renderSection = (name: string, s: Section) => {
+    const renderSection = (name: string, body: Draw) => {
         sectionHeader(name);
-        // Let section draw into a detached Draw, then split into rows.
-        const body: Draw = emptyDraw();
-        s.draw(body);
         const bodyLines = body.text.split("\n");
         let cursor = 0;
         for (let lineIdx = 0; lineIdx < bodyLines.length; lineIdx++) {
@@ -328,10 +476,9 @@ function renderFrame(inner: number, leftPad: number): Draw {
         spacerRow();
     };
 
-    renderSection("WEATHER", sections.weather);
-    renderSection("GIT", sections.git);
-    renderSection("GITHUB", sections.github);
-    renderSection("DISK", sections.disk);
+    for (const entry of registeredSections) {
+        renderSection(entry.name.toUpperCase(), entry.draw);
+    }
 
     // bottom
     emit(d, lp, undefined);
@@ -440,12 +587,12 @@ function dispatchClickAction(action: ClickAction) {
         case "open-url":
             openUrl(action.url);
             return;
-        case "review-branch":
-            // `start_review_diff` is registered by the audit_mode plugin.
-            // executeAction falls through to Action::PluginAction for any
-            // name that isn't a built-in, which the plugin manager then
-            // dispatches by handler name.
-            editor.executeAction("start_review_diff");
+        case "callback":
+            try {
+                action.fn();
+            } catch (e) {
+                editor.debug(`dashboard click handler threw: ${String(e)}`);
+            }
             return;
     }
 }
@@ -495,12 +642,6 @@ const VALUE_MAX = MAX_INNER - 14;
 function bar(pct: number, width: number): string {
     const filled = Math.max(0, Math.min(width, Math.round((pct / 100) * width)));
     return "━".repeat(filled) + "╌".repeat(width - filled);
-}
-
-function kv(d: Draw, key: string, val: string, valColor: string = C.value) {
-    emit(d, "    " + pad(key, 10), { fg: C.muted });
-    emit(d, val, { fg: valColor });
-    newline(d);
 }
 
 // wttr.in's j1 response shape — only the fields we consume.
@@ -587,47 +728,45 @@ function formatDaySummary(day: WttrDay | undefined): string | null {
     return s ? truncate(s, VALUE_MAX) : null;
 }
 
-async function fetchWeather(myToken: number) {
+const weatherRefresh: SectionRefresh = async (ctx) => {
+    let stdout: string;
+    let ok: boolean;
     try {
         // j1 = full JSON payload (current + 3-day forecast, 3-hour samples).
         // Larger than the old %-format but gets us everything in one call.
-        const { stdout, ok } = await run(
+        const res = await run(
             "curl",
             ["-fsS", "--max-time", "5", "https://wttr.in/?format=j1"],
             "",
             6000,
         );
-        if (myToken !== fetchToken) return;
-        if (!ok || !stdout.trim()) {
-            sections.weather = errorSection("offline");
-        } else {
-            let parsed: WttrJ1;
-            try {
-                parsed = JSON.parse(stdout) as WttrJ1;
-            } catch {
-                sections.weather = errorSection("malformed response");
-                paint();
-                return;
-            }
-            const now = formatCurrent(parsed.current_condition?.[0]);
-            // "5pm": nearest 3-hour sample in today's forecast. wttr.in
-            // buckets at 0/3/6/…/21, so 17:00 picks the 18:00 bucket.
-            const todayHours = parsed.weather?.[0]?.hourly ?? [];
-            const evening = formatHour(hourlyAt(todayHours, 17));
-            const tomorrow = formatDaySummary(parsed.weather?.[1]);
-            sections.weather = {
-                draw: (d) => {
-                    kv(d, "now", now ?? "–", now ? C.accent : C.muted);
-                    if (evening) kv(d, "5pm", evening, C.value);
-                    if (tomorrow) kv(d, "tomorrow", tomorrow, C.value);
-                },
-            };
-        }
+        stdout = res.stdout;
+        ok = res.ok;
     } catch {
-        sections.weather = errorSection("fetch failed");
+        ctx.error("fetch failed");
+        return;
     }
-    paint();
-}
+    if (!ok || !stdout.trim()) {
+        ctx.error("offline");
+        return;
+    }
+    let parsed: WttrJ1;
+    try {
+        parsed = JSON.parse(stdout) as WttrJ1;
+    } catch {
+        ctx.error("malformed response");
+        return;
+    }
+    const now = formatCurrent(parsed.current_condition?.[0]);
+    // "5pm": nearest 3-hour sample in today's forecast. wttr.in
+    // buckets at 0/3/6/…/21, so 17:00 picks the 18:00 bucket.
+    const todayHours = parsed.weather?.[0]?.hourly ?? [];
+    const evening = formatHour(hourlyAt(todayHours, 17));
+    const tomorrow = formatDaySummary(parsed.weather?.[1]);
+    ctx.kv("now", now ?? "–", now ? "accent" : "muted");
+    if (evening) ctx.kv("5pm", evening, "value");
+    if (tomorrow) ctx.kv("tomorrow", tomorrow, "value");
+};
 
 function normalizeRepoUrl(raw: string): string | null {
     const s = trim(raw);
@@ -669,124 +808,119 @@ function parseLeftRight(stdout: string): { ahead: number; behind: number } | nul
     return { ahead: a, behind: b };
 }
 
-async function fetchGit(myToken: number) {
+const gitRefresh: SectionRefresh = async (ctx) => {
     const cwd = editor.getCwd();
+    let branch;
+    let status;
+    let ahead;
+    let remote;
     try {
-        const [branch, status, ahead, remote] = await Promise.all([
+        [branch, status, ahead, remote] = await Promise.all([
             run("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd, 3000),
             run("git", ["status", "--porcelain"], cwd, 3000),
             run("git", ["rev-list", "--left-right", "--count", "HEAD...@{u}"], cwd, 3000),
             run("git", ["remote", "get-url", "origin"], cwd, 3000),
         ]);
-        if (myToken !== fetchToken) return;
-        if (!branch.ok) {
-            sections.git = errorSection("not a git repo");
-        } else {
-            const modified = status.stdout
-                .split("\n")
-                .filter((l) => l.trim().length > 0).length;
-            let trackStr = "no upstream";
-            let trackColor = C.muted;
-            if (ahead.ok) {
-                const ab = parseLeftRight(ahead.stdout);
-                if (ab) {
-                    trackStr = `↑ ${ab.ahead}   ↓ ${ab.behind}`;
-                    trackColor = ab.ahead > 0 || ab.behind > 0 ? C.accent : C.ok;
-                }
-            }
-            const repoUrl = remote.ok ? normalizeRepoUrl(remote.stdout) : null;
-            const branchName = trim(branch.stdout);
-
-            // "vs master" row: commits ahead/behind of master, or main as a
-            // fallback for repos that use it as the default branch. Skipped
-            // when the current branch IS master/main (self-comparison is 0/0
-            // and not interesting), or when neither ref exists.
-            let vsBase: { base: string; ahead: number; behind: number } | null = null;
-            if (branchName !== "master" && branchName !== "main") {
-                for (const base of ["origin/master", "origin/main", "master", "main"]) {
-                    const r = await run(
-                        "git",
-                        ["rev-list", "--left-right", "--count", `HEAD...${base}`],
-                        cwd,
-                        3000,
-                    );
-                    if (r.ok) {
-                        const ab = parseLeftRight(r.stdout);
-                        if (ab) {
-                            vsBase = { base: base.replace(/^origin\//, ""), ...ab };
-                            break;
-                        }
-                    }
-                }
-            }
-            if (myToken !== fetchToken) return;
-
-            sections.git = {
-                draw: (d) => {
-                    // branch — whole row routes clicks to the branch page
-                    const branchBranchUrl = repoUrl
-                        ? `${repoUrl}/tree/${encodeURIComponent(branchName)}`
-                        : undefined;
-                    emit(d, "    " + pad("branch", 10), { fg: C.muted });
-                    emit(d, branchName, {
-                        fg: C.branch,
-                        url: branchBranchUrl,
-                        action: branchBranchUrl
-                            ? { kind: "open-url", url: branchBranchUrl }
-                            : undefined,
-                    });
-                    newline(d);
-
-                    // remote URL — displayed in full with scheme so that
-                    // terminals that auto-detect URLs (but ignore OSC-8)
-                    // still recognize it. The whole row is also click-
-                    // routable via the mouse_click hook.
-                    if (repoUrl) {
-                        emit(d, "    " + pad("repo", 10), { fg: C.muted });
-                        emit(d, repoUrl, {
-                            fg: C.accent,
-                            url: repoUrl,
-                            action: { kind: "open-url", url: repoUrl },
-                        });
-                        newline(d);
-                    }
-
-                    kv(d, "tracking", trackStr, trackColor);
-                    if (vsBase) {
-                        const label = `vs ${vsBase.base}`;
-                        const str = `↑ ${vsBase.ahead}   ↓ ${vsBase.behind}`;
-                        const color =
-                            vsBase.ahead > 0 || vsBase.behind > 0 ? C.accent : C.ok;
-                        kv(d, label, str, color);
-                    }
-                    kv(
-                        d,
-                        "changes",
-                        `${modified} file${modified === 1 ? "" : "s"}`,
-                        modified > 0 ? C.warn : C.muted,
-                    );
-
-                    // Clickable "review branch" action. Triggers the
-                    // audit_mode plugin's `start_review_diff` handler via
-                    // the plugin-action bridge — executeAction falls
-                    // through to Action::PluginAction for any name that's
-                    // not a built-in, and the plugin manager dispatches
-                    // that to the registered handler by name.
-                    emit(d, "    " + pad("review", 10), { fg: C.muted });
-                    emit(d, "▶ review branch", {
-                        fg: C.accent,
-                        bold: true,
-                        action: { kind: "review-branch" },
-                    });
-                    newline(d);
-                },
-            };
-        }
     } catch {
-        sections.git = errorSection("git failed");
+        ctx.error("git failed");
+        return;
     }
-    paint();
-}
+    if (!branch.ok) {
+        ctx.error("not a git repo");
+        return;
+    }
+    const modified = status.stdout
+        .split("\n")
+        .filter((l) => l.trim().length > 0).length;
+    let trackStr = "no upstream";
+    let trackColor: DashboardColor = "muted";
+    if (ahead.ok) {
+        const ab = parseLeftRight(ahead.stdout);
+        if (ab) {
+            trackStr = `↑ ${ab.ahead}   ↓ ${ab.behind}`;
+            trackColor = ab.ahead > 0 || ab.behind > 0 ? "accent" : "ok";
+        }
+    }
+    const repoUrl = remote.ok ? normalizeRepoUrl(remote.stdout) : null;
+    const branchName = trim(branch.stdout);
+
+    // "vs master" row: commits ahead/behind of master, or main as a
+    // fallback for repos that use it as the default branch. Skipped
+    // when the current branch IS master/main (self-comparison is 0/0
+    // and not interesting), or when neither ref exists.
+    let vsBase: { base: string; ahead: number; behind: number } | null = null;
+    if (branchName !== "master" && branchName !== "main") {
+        for (const base of ["origin/master", "origin/main", "master", "main"]) {
+            const r = await run(
+                "git",
+                ["rev-list", "--left-right", "--count", `HEAD...${base}`],
+                cwd,
+                3000,
+            );
+            if (r.ok) {
+                const ab = parseLeftRight(r.stdout);
+                if (ab) {
+                    vsBase = { base: base.replace(/^origin\//, ""), ...ab };
+                    break;
+                }
+            }
+        }
+    }
+
+    // branch — whole row routes clicks to the branch page.
+    const branchBranchUrl = repoUrl
+        ? `${repoUrl}/tree/${encodeURIComponent(branchName)}`
+        : undefined;
+    ctx.text("    " + pad("branch", 10), { color: "muted" });
+    ctx.text(branchName, {
+        color: "branch",
+        url: branchBranchUrl,
+        onClick: branchBranchUrl
+            ? () => openUrl(branchBranchUrl)
+            : undefined,
+    });
+    ctx.newline();
+
+    // remote URL — displayed in full with scheme so that terminals
+    // that auto-detect URLs (but ignore OSC-8) still recognize it.
+    // The whole row is also click-routable via the mouse_click hook.
+    if (repoUrl) {
+        ctx.text("    " + pad("repo", 10), { color: "muted" });
+        ctx.text(repoUrl, {
+            color: "accent",
+            url: repoUrl,
+            onClick: () => openUrl(repoUrl),
+        });
+        ctx.newline();
+    }
+
+    ctx.kv("tracking", trackStr, trackColor);
+    if (vsBase) {
+        const label = `vs ${vsBase.base}`;
+        const str = `↑ ${vsBase.ahead}   ↓ ${vsBase.behind}`;
+        const color: DashboardColor =
+            vsBase.ahead > 0 || vsBase.behind > 0 ? "accent" : "ok";
+        ctx.kv(label, str, color);
+    }
+    ctx.kv(
+        "changes",
+        `${modified} file${modified === 1 ? "" : "s"}`,
+        modified > 0 ? "warn" : "muted",
+    );
+
+    // Clickable "review branch" action. Triggers the audit_mode
+    // plugin's `start_review_diff` handler via the plugin-action
+    // bridge — executeAction falls through to Action::PluginAction
+    // for any name that's not a built-in, and the plugin manager
+    // dispatches that to the registered handler by name.
+    ctx.text("    " + pad("review", 10), { color: "muted" });
+    ctx.text("▶ review branch", {
+        color: "accent",
+        bold: true,
+        onClick: () => editor.executeAction("start_review_diff"),
+    });
+    ctx.newline();
+};
 
 // PR row types — module-level so the last-good state can reference them.
 type GhRollup = { state?: string } | null;
@@ -818,12 +952,12 @@ const PR_COL_STATE = 5;
 const PR_COL_CHECK = 2;
 const PR_COL_CMTS = 6;
 
-function renderPrRows(d: Draw, prs: GhPR[]) {
+function renderPrRows(ctx: DashboardContext, prs: GhPR[]) {
     if (prs.length === 0) {
-        kv(d, "PRs", "no open PRs", C.muted);
+        ctx.kv("PRs", "no open PRs", "muted");
         return;
     }
-    kv(d, "PRs", `${prs.length} open`, C.number);
+    ctx.kv("PRs", `${prs.length} open`, "number");
     for (const pr of prs) {
         const state = (pr.state ?? "").toUpperCase();
         const stateTag =
@@ -834,14 +968,12 @@ function renderPrRows(d: Draw, prs: GhPR[]) {
                     : state === "CLOSED"
                         ? "clsd"
                         : "???";
-        const stateColor =
+        const stateColor: DashboardColor =
             state === "OPEN"
-                ? C.ok
+                ? "ok"
                 : state === "MERGED"
-                    ? C.accent
-                    : state === "CLOSED"
-                        ? C.muted
-                        : C.muted;
+                    ? "accent"
+                    : "muted";
 
         const rollup = pr.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state ?? null;
         const checkGlyph =
@@ -852,14 +984,14 @@ function renderPrRows(d: Draw, prs: GhPR[]) {
                     : rollup === "PENDING" || rollup === "EXPECTED"
                         ? "◌"
                         : "–";
-        const checkColor =
+        const checkColor: DashboardColor =
             rollup === "SUCCESS"
-                ? C.ok
+                ? "ok"
                 : rollup === "FAILURE" || rollup === "ERROR"
-                    ? C.err
+                    ? "err"
                     : rollup === "PENDING" || rollup === "EXPECTED"
-                        ? C.warn
-                        : C.muted;
+                        ? "warn"
+                        : "muted";
 
         const threads = pr.reviewThreads?.nodes ?? [];
         const openCmts = threads
@@ -877,61 +1009,53 @@ function renderPrRows(d: Draw, prs: GhPR[]) {
         // Whole PR row routes clicks to prUrl (set once on the first
         // action-bearing emit — subsequent emits on the same row would
         // overwrite with the same value).
-        const prAction: ClickAction | undefined = prUrl
-            ? { kind: "open-url", url: prUrl }
-            : undefined;
-        emit(d, "    ", undefined);
-        emit(d, pad(num, PR_COL_NUM), {
-            fg: C.number,
+        const onClickPr = prUrl ? () => openUrl(prUrl) : undefined;
+        ctx.text("    ");
+        ctx.text(pad(num, PR_COL_NUM), {
+            color: "number",
             url: prUrl,
-            action: prAction,
+            onClick: onClickPr,
         });
-        emit(d, pad(stateTag, PR_COL_STATE), { fg: stateColor, bold: true });
-        emit(d, " ", undefined);
-        emit(d, pad(checkGlyph, PR_COL_CHECK), {
-            fg: checkColor,
+        ctx.text(pad(stateTag, PR_COL_STATE), {
+            color: stateColor,
+            bold: true,
+        });
+        ctx.text(" ");
+        ctx.text(pad(checkGlyph, PR_COL_CHECK), {
+            color: checkColor,
             bold: true,
         });
         const cmtCell =
             openCmts > 0
                 ? pad(`${openCmts} cmt`, PR_COL_CMTS)
                 : pad("", PR_COL_CMTS);
-        emit(d, cmtCell, { fg: openCmts > 0 ? C.warn : C.muted });
-        emit(d, " ", undefined);
-        emit(d, title, { fg: C.value, url: prUrl });
-        newline(d);
+        ctx.text(cmtCell, { color: openCmts > 0 ? "warn" : "muted" });
+        ctx.text(" ");
+        ctx.text(title, { color: "value", url: prUrl });
+        ctx.newline();
     }
 }
 
-function buildGithubSection(): Section {
-    return {
-        draw: (d) => {
-            // Stale-data banner: when we have previously-good PRs AND the
-            // latest refresh failed, show both. Keeps the rest of the
-            // section anchored — no row-count jumps between ticks.
-            if (githubLastError && githubLastPrs !== null) {
-                emit(d, "    " + pad("update", 10), { fg: C.muted });
-                emit(d, `failed — ${githubLastError}`, { fg: C.err });
-                newline(d);
-                renderPrRows(d, githubLastPrs);
-                return;
-            }
-            if (githubLastPrs !== null) {
-                renderPrRows(d, githubLastPrs);
-                return;
-            }
-            if (githubLastError) {
-                emit(d, "    " + pad("status", 10), { fg: C.muted });
-                emit(d, githubLastError, { fg: C.err });
-                newline(d);
-                return;
-            }
-            // First run, nothing yet.
-            emit(d, "    " + pad("status", 10), { fg: C.muted });
-            emit(d, "loading…", { fg: C.muted });
-            newline(d);
-        },
-    };
+function drawGithubState(ctx: DashboardContext) {
+    // Stale-data banner: when we have previously-good PRs AND the
+    // latest refresh failed, show both. Keeps the rest of the
+    // section anchored — no row-count jumps between ticks.
+    if (githubLastError && githubLastPrs !== null) {
+        ctx.text("    " + pad("update", 10), { color: "muted" });
+        ctx.text(`failed — ${githubLastError}`, { color: "err" });
+        ctx.newline();
+        renderPrRows(ctx, githubLastPrs);
+        return;
+    }
+    if (githubLastPrs !== null) {
+        renderPrRows(ctx, githubLastPrs);
+        return;
+    }
+    if (githubLastError) {
+        ctx.error(githubLastError);
+        return;
+    }
+    ctx.kv("status", "loading…", "muted");
 }
 
 // Detect the GitHub owner/repo for the working directory. Returns
@@ -955,15 +1079,13 @@ async function detectGithubNwo(
     return { nwo };
 }
 
-async function fetchGithub(myToken: number) {
+const githubRefresh: SectionRefresh = async (ctx) => {
     const cwd = editor.getCwd();
     const detected = await detectGithubNwo(cwd);
-    if (myToken !== fetchToken) return;
     if ("err" in detected) {
         githubLastPrs = null;
         githubLastError = detected.err;
-        sections.github = buildGithubSection();
-        paint();
+        drawGithubState(ctx);
         return;
     }
     const nwo = detected.nwo;
@@ -1018,7 +1140,6 @@ async function fetchGithub(myToken: number) {
             "",
             7000,
         );
-        if (myToken !== fetchToken) return;
         if (!res.ok) {
             const stderr = res.stderr.toLowerCase();
             failure =
@@ -1048,15 +1169,14 @@ async function fetchGithub(myToken: number) {
         failure = "gh failed";
     }
     if (failure !== null) githubLastError = failure;
-    sections.github = buildGithubSection();
-    paint();
-}
+    drawGithubState(ctx);
+};
 
-async function fetchDisk(myToken: number) {
+const diskRefresh: SectionRefresh = async (ctx) => {
+    const mounts = ["/", editor.getEnv("HOME") ?? "/home"];
+    const seen = new Set<string>();
+    const rows: { mount: string; pct: number; used: string; size: string }[] = [];
     try {
-        const mounts = ["/", editor.getEnv("HOME") ?? "/home"];
-        const seen = new Set<string>();
-        const rows: { mount: string; pct: number; used: string; size: string }[] = [];
         for (const m of mounts) {
             const { stdout, ok } = await run("df", ["-hP", m], "", 3000);
             if (!ok) continue;
@@ -1074,36 +1194,33 @@ async function fetchDisk(myToken: number) {
                 size: cols[1],
             });
         }
-        if (myToken !== fetchToken) return;
-        if (rows.length === 0) {
-            sections.disk = errorSection("df failed");
-        } else {
-            sections.disk = {
-                draw: (d) => {
-                    for (const row of rows) {
-                        const fg = row.pct >= 90 ? C.err : row.pct >= 75 ? C.warn : C.ok;
-                        emit(d, "    " + pad(row.mount, 10), { fg: C.muted });
-                        emit(d, bar(row.pct, 18), { fg, bold: true });
-                        emit(d, "  " + String(row.pct).padStart(3) + "%", { fg });
-                        emit(d, `   ${row.used} / ${row.size}`, { fg: C.muted });
-                        newline(d);
-                    }
-                },
-            };
-        }
     } catch {
-        sections.disk = errorSection("df failed");
+        ctx.error("df failed");
+        return;
     }
-    paint();
-}
+    if (rows.length === 0) {
+        ctx.error("df failed");
+        return;
+    }
+    for (const row of rows) {
+        const color: DashboardColor =
+            row.pct >= 90 ? "err" : row.pct >= 75 ? "warn" : "ok";
+        ctx.text("    " + pad(row.mount, 10), { color: "muted" });
+        ctx.text(bar(row.pct, 18), { color, bold: true });
+        ctx.text("  " + String(row.pct).padStart(3) + "%", { color });
+        ctx.text(`   ${row.used} / ${row.size}`, { color: "muted" });
+        ctx.newline();
+    }
+};
 
 // ── Lifecycle ──────────────────────────────────────────────────────────
 
 // Fire-and-forget: refresh every 5s while the dashboard remains the
-// active dashboard. Each tick bumps `fetchToken` and re-kicks all four
-// fetchers; in-flight fetches from a previous tick become no-ops the
-// moment their token stops matching. Loop exits when the dashboard
-// buffer is closed (dashboardBufferId becomes null).
+// active dashboard. Each tick bumps `fetchToken` and re-kicks every
+// registered section's refresh callback; in-flight refreshes from a
+// previous tick become no-ops the moment their token stops matching.
+// Loop exits when the dashboard buffer is closed (dashboardBufferId
+// becomes null).
 async function refreshLoop(myBufferId: number) {
     while (dashboardBufferId === myBufferId) {
         await editor.delay(5000);
@@ -1111,10 +1228,9 @@ async function refreshLoop(myBufferId: number) {
         paint(); // refresh clock even if fetches lag
         fetchToken++;
         const tok = fetchToken;
-        fetchWeather(tok);
-        fetchGit(tok);
-        fetchGithub(tok);
-        fetchDisk(tok);
+        for (const entry of registeredSections) {
+            void refreshSection(entry, tok);
+        }
     }
 }
 
@@ -1171,27 +1287,22 @@ async function openDashboard() {
         }
     }
 
-    // Reset section state and kick new fetches. Token guards against late
-    // resolvers from a prior open clobbering the new one.
+    // Reset section draws to "loading…" and kick a fresh refresh for
+    // each registered section. Token guards against late resolvers
+    // from a prior open clobbering the new one.
     //
-    // GitHub reuses the last-good PR snapshot (if any) so a re-opened
-    // dashboard can draw real data on the first frame while the refresh
-    // round-trip is still in flight. A refresh failure later on will
-    // surface via the in-panel stale-data banner.
+    // GitHub's section callback reuses the last-good PR snapshot (if
+    // any) on its first call post-open so a re-opened dashboard can
+    // draw real data on the first frame while the refresh round-trip
+    // is still in flight. Refresh failures surface via the in-panel
+    // stale-data banner.
     fetchToken++;
     const myToken = fetchToken;
-    sections = {
-        weather: loading(),
-        git: loading(),
-        github: githubLastPrs !== null ? buildGithubSection() : loading(),
-        disk: loading(),
-    };
+    for (const entry of registeredSections) {
+        entry.draw = loadingDraw();
+        void refreshSection(entry, myToken);
+    }
     paint();
-
-    fetchWeather(myToken);
-    fetchGit(myToken);
-    fetchGithub(myToken);
-    fetchDisk(myToken);
 
     // Kick off the 5-second refresh loop. It stops itself when the
     // dashboard is closed.
@@ -1283,6 +1394,32 @@ registerHandler(
         dispatchClickAction(action);
     },
 );
+
+// Register the built-in sections. They use the same public
+// `DashboardContext` API that third-party plugins consume, so any
+// change to the context contract surfaces here first.
+registerSection("weather", weatherRefresh);
+registerSection("git", gitRefresh);
+registerSection("github", githubRefresh);
+registerSection("disk", diskRefresh);
+
+// Expose the section-registration entry point to other plugins and
+// to user init.ts. The API is intentionally small: a single
+// `registerSection(name, refresh)` that returns an unregister
+// callback. The refresh callback receives a `DashboardContext` with
+// `kv`, `text`, `newline`, and `error` primitives — see the init.ts
+// starter template for an end-to-end example.
+editor.exportPluginApi("dashboard", {
+    registerSection(name: string, refresh: SectionRefresh): () => void {
+        if (typeof name !== "string" || name.length === 0) {
+            throw new Error("dashboard.registerSection: name must be a non-empty string");
+        }
+        if (typeof refresh !== "function") {
+            throw new Error("dashboard.registerSection: refresh must be a function");
+        }
+        return registerSection(name, refresh);
+    },
+});
 
 // Subscribe to the hooks that drive the dashboard. Reaching this code
 // means the plugin has been loaded, which only happens when
