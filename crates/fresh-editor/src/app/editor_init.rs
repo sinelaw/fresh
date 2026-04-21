@@ -660,6 +660,7 @@ impl Editor {
             next_buffer_group_id: 0,
             grouped_subtrees: HashMap::new(),
             background_process_handles: HashMap::new(),
+            host_process_handles: HashMap::new(),
             prompt_histories: {
                 // Load prompt histories from disk if available
                 let mut histories = HashMap::new();

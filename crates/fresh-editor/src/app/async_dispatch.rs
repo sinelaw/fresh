@@ -528,6 +528,14 @@ impl Editor {
                     stderr,
                     exit_code,
                 } => {
+                    // Drop any host-process kill handle tied to this
+                    // id. The spawn task has exited (that's what this
+                    // event means) so the handle is stale; a late
+                    // `KillHostProcess` from the plugin should be a
+                    // silent no-op rather than a dangling send. For
+                    // non-host-process spawns the key won't be in
+                    // the map and the remove is a no-op.
+                    self.host_process_handles.remove(&process_id);
                     self.handle_plugin_process_output(
                         fresh_core::api::JsCallbackId::from(process_id),
                         stdout,

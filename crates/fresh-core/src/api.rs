@@ -2010,12 +2010,29 @@ pub enum PluginCommand {
     /// (e.g. `devcontainer up`) before installing an authority that
     /// would otherwise route the spawn elsewhere. Behaves like
     /// `SpawnProcess` but always uses `LocalProcessSpawner`.
+    ///
+    /// The TS-side handle exposes `.kill()` on the returned
+    /// `ProcessHandle`, serviced by `KillHostProcess` below — this
+    /// lets callers abort a long-running host spawn (e.g.
+    /// `devcontainer up`) via a user action like "Cancel Startup".
     SpawnHostProcess {
         command: String,
         args: Vec<String>,
         cwd: Option<String>,
         callback_id: JsCallbackId,
     },
+
+    /// Cancel a host-side process previously started via
+    /// `SpawnHostProcess`. `process_id` is the callback id returned
+    /// by `spawnHostProcess` (the TS handle stores it and forwards
+    /// when the caller invokes `.kill()`).
+    ///
+    /// No-op when the id is unknown — the process may have already
+    /// exited, or the caller may hold a stale handle. SIGKILL on
+    /// Unix per `tokio::process::Child::start_kill`; children of the
+    /// killed process may leak (see Q-C2 in
+    /// `DEVCONTAINER_SPEC_GAP_PLAN.md`).
+    KillHostProcess { process_id: u64 },
 }
 
 impl PluginCommand {
@@ -4281,5 +4298,23 @@ mod tests {
         let h = api.state_snapshot_handle();
         assert_eq!(h.read().unwrap().active_buffer_id, BufferId(42));
         assert!(Arc::ptr_eq(&h, &snap));
+    }
+
+    /// `KillHostProcess` survives a round-trip through serde: the
+    /// `process_id` field stays identified by name and the variant
+    /// retains its tag shape. If a future contributor renames the
+    /// field or splits it into a tuple, the plugin-runtime TS side
+    /// (which hand-builds the command JSON for the dispatcher) would
+    /// silently break — this test pins the wire format.
+    #[test]
+    fn plugin_command_kill_host_process_serde_round_trip() {
+        let cmd = PluginCommand::KillHostProcess { process_id: 1234 };
+        let json = serde_json::to_value(&cmd).unwrap();
+        assert_eq!(json["KillHostProcess"]["process_id"], 1234);
+        let decoded: PluginCommand = serde_json::from_value(json).unwrap();
+        match decoded {
+            PluginCommand::KillHostProcess { process_id } => assert_eq!(process_id, 1234),
+            other => panic!("expected KillHostProcess, got {:?}", other),
+        }
     }
 }

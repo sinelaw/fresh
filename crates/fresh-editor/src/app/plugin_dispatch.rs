@@ -822,40 +822,126 @@ impl Editor {
                 // they want is even built. Uses the same callback shape
                 // as `SpawnProcess` so the plugin-facing API is
                 // symmetric.
+                //
+                // Kill handle: we store a oneshot sender in
+                // `host_process_handles` keyed by the callback id. A
+                // `KillHostProcess` dispatch sends on it; the spawn
+                // task's `tokio::select!` then start_kill()s the
+                // child. This lets a plugin cancel a long-running
+                // spawn (e.g. "Cancel Startup" on the Remote
+                // Indicator popup during `devcontainer up`).
                 if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+                    use tokio::io::{AsyncReadExt, BufReader};
+                    use tokio::process::Command as TokioCommand;
+
                     let effective_cwd = cwd.or_else(|| {
                         std::env::current_dir()
                             .map(|p| p.to_string_lossy().to_string())
                             .ok()
                     });
                     let sender = bridge.sender();
-                    let host_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner> =
-                        std::sync::Arc::new(crate::services::remote::LocalProcessSpawner);
+                    let process_id = callback_id.as_u64();
+
+                    let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
+                    self.host_process_handles.insert(process_id, kill_tx);
 
                     runtime.spawn(async move {
-                        #[allow(clippy::let_underscore_must_use)]
-                        match host_spawner.spawn(command, args, effective_cwd).await {
-                            Ok(result) => {
-                                let _ = sender.send(AsyncMessage::PluginProcessOutput {
-                                    process_id: callback_id.as_u64(),
-                                    stdout: result.stdout,
-                                    stderr: result.stderr,
-                                    exit_code: result.exit_code,
-                                });
-                            }
+                        let mut cmd = TokioCommand::new(&command);
+                        cmd.args(&args);
+                        cmd.stdout(std::process::Stdio::piped());
+                        cmd.stderr(std::process::Stdio::piped());
+                        if let Some(ref dir) = effective_cwd {
+                            cmd.current_dir(dir);
+                        }
+                        let mut child = match cmd.spawn() {
+                            Ok(c) => c,
                             Err(e) => {
+                                #[allow(clippy::let_underscore_must_use)]
                                 let _ = sender.send(AsyncMessage::PluginProcessOutput {
-                                    process_id: callback_id.as_u64(),
+                                    process_id,
                                     stdout: String::new(),
                                     stderr: e.to_string(),
                                     exit_code: -1,
                                 });
+                                return;
                             }
-                        }
+                        };
+
+                        // Take the pipes out of the Child so the
+                        // reader tasks own them; then `child.wait()`
+                        // has exclusive mutable access for the
+                        // kill-or-exit select. Matches the
+                        // fresh-plugin-runtime process.rs pattern.
+                        let stdout_pipe = child.stdout.take();
+                        let stderr_pipe = child.stderr.take();
+
+                        let stdout_fut = async {
+                            let mut buf = String::new();
+                            if let Some(s) = stdout_pipe {
+                                #[allow(clippy::let_underscore_must_use)]
+                                let _ = BufReader::new(s).read_to_string(&mut buf).await;
+                            }
+                            buf
+                        };
+                        let stderr_fut = async {
+                            let mut buf = String::new();
+                            if let Some(s) = stderr_pipe {
+                                #[allow(clippy::let_underscore_must_use)]
+                                let _ = BufReader::new(s).read_to_string(&mut buf).await;
+                            }
+                            buf
+                        };
+                        let wait_fut = async {
+                            tokio::select! {
+                                status = child.wait() => {
+                                    status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1)
+                                }
+                                _ = &mut kill_rx => {
+                                    // Best-effort SIGKILL + reap.
+                                    // Children of the killed
+                                    // process may leak (Q-C2).
+                                    #[allow(clippy::let_underscore_must_use)]
+                                    let _ = child.start_kill();
+                                    child
+                                        .wait()
+                                        .await
+                                        .map(|s| s.code().unwrap_or(-1))
+                                        .unwrap_or(-1)
+                                }
+                            }
+                        };
+                        let (stdout, stderr, exit_code) =
+                            tokio::join!(stdout_fut, stderr_fut, wait_fut);
+
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = sender.send(AsyncMessage::PluginProcessOutput {
+                            process_id,
+                            stdout,
+                            stderr,
+                            exit_code,
+                        });
                     });
                 } else {
                     self.plugin_manager
                         .reject_callback(callback_id, "Async runtime not available".to_string());
+                }
+            }
+
+            PluginCommand::KillHostProcess { process_id } => {
+                // Removing from the map gives us the oneshot sender.
+                // Firing it signals the spawn task to `start_kill()`
+                // the child and reap. Unknown ids are intentionally
+                // silent — the process may have exited on its own
+                // and its cleanup already drained the slot.
+                if let Some(tx) = self.host_process_handles.remove(&process_id) {
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = tx.send(());
+                    tracing::debug!("KillHostProcess: sent kill for process_id={}", process_id);
+                } else {
+                    tracing::debug!(
+                        "KillHostProcess: unknown process_id={} (already exited?)",
+                        process_id
+                    );
                 }
             }
 

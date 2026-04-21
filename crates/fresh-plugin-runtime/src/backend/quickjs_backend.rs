@@ -3924,6 +3924,22 @@ impl JsEditorApi {
         id
     }
 
+    /// Cancel a host-side process started via `spawnHostProcess`.
+    /// `process_id` is the callback id the JS wrapper stashed on the
+    /// handle. Returns `false` only when the command channel is dead
+    /// (editor tearing down). Unknown ids no-op on the editor side —
+    /// see `PluginCommand::KillHostProcess` in fresh-core/api.rs.
+    ///
+    /// Exposed on the JS side as `editor._killHostProcess`; the
+    /// public API is `handle.kill()` from the `spawnHostProcess`
+    /// wrapper.
+    #[plugin_api(js_name = "_killHostProcess")]
+    pub fn kill_host_process(&self, process_id: u64) -> bool {
+        self.command_sender
+            .send(PluginCommand::KillHostProcess { process_id })
+            .is_ok()
+    }
+
     /// Install a new authority via an opaque payload.
     ///
     /// The payload is a JS object describing filesystem + spawner +
@@ -4978,7 +4994,36 @@ impl QuickJsBackend {
 
                 // Apply wrappers to async functions on editor
                 editor.spawnProcess = _wrapAsyncThenable("_spawnProcessStart", "spawnProcess");
-                editor.spawnHostProcess = _wrapAsyncThenable("_spawnHostProcessStart", "spawnHostProcess");
+                // spawnHostProcess gets a bespoke wrapper (instead of
+                // `_wrapAsyncThenable`) because its `ProcessHandle`
+                // exposes a real `kill()` that forwards to
+                // `_killHostProcess`. Generic wrap has no hook for
+                // that.
+                editor.spawnHostProcess = function(command, args, cwd) {
+                    if (typeof editor._spawnHostProcessStart !== 'function') {
+                        throw new Error('editor.spawnHostProcess is not implemented (missing _spawnHostProcessStart)');
+                    }
+                    const callbackId = editor._spawnHostProcessStart(command, args || [], cwd || "");
+                    const resultPromise = new Promise(function(resolve, reject) {
+                        globalThis._pendingCallbacks.set(callbackId, { resolve: resolve, reject: reject });
+                    });
+                    return {
+                        processId: callbackId,
+                        get result() { return resultPromise; },
+                        then: function(f, r) { return resultPromise.then(f, r); },
+                        catch: function(r) { return resultPromise.catch(r); },
+                        kill: function() {
+                            // Returns true when the kill was enqueued
+                            // (the process may have already exited; in
+                            // that case the dispatcher silently
+                            // drops it). Matches the
+                            // `ProcessHandle.kill(): Promise<boolean>`
+                            // type signature by wrapping the sync
+                            // boolean in a Promise.
+                            return Promise.resolve(editor._killHostProcess(callbackId));
+                        }
+                    };
+                };
                 editor.delay = _wrapAsync("_delayStart", "delay");
                 editor.createVirtualBuffer = _wrapAsync("_createVirtualBufferStart", "createVirtualBuffer");
                 editor.createVirtualBufferInSplit = _wrapAsync("_createVirtualBufferInSplitStart", "createVirtualBufferInSplit");

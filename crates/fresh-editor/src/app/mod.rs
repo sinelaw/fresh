@@ -752,6 +752,13 @@ pub struct Editor {
     /// Maps process_id to abort handle
     background_process_handles: HashMap<u64, tokio::task::AbortHandle>,
 
+    /// Cancellation senders for host-side processes spawned via
+    /// `spawnHostProcess`. Firing the sender (or dropping it) triggers
+    /// an in-task `child.start_kill()` so the process is reaped, not
+    /// just orphaned. Entries are removed when the spawn task sends
+    /// its terminal `PluginProcessOutput`.
+    host_process_handles: HashMap<u64, tokio::sync::oneshot::Sender<()>>,
+
     /// Prompt histories keyed by prompt type name (e.g., "search", "replace", "goto_line", "plugin:custom_name")
     /// This provides a generic history system that works for all prompt types including plugin prompts.
     prompt_histories: HashMap<String, crate::input::input_history::InputHistory>,
