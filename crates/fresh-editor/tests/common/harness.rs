@@ -1848,6 +1848,31 @@ impl EditorTestHarness {
         (pos.x, pos.y)
     }
 
+    /// Render and report whether the hardware cursor was shown, and where.
+    ///
+    /// Returns `Some((x, y))` if ratatui's `Terminal::draw` ended the frame
+    /// by calling `show_cursor` + `set_cursor_position` — i.e. the editor
+    /// populated `Frame::cursor_position`. Returns `None` if `hide_cursor`
+    /// was called — i.e. `Frame::cursor_position` was `None`.
+    ///
+    /// Detection uses a sentinel: before `draw`, we move the backend's
+    /// cursor to `(0, 0)`. `Terminal::draw` only updates the backend
+    /// position when the frame asked for the cursor to be shown, so if the
+    /// position stays at the sentinel afterward, the frame hid it. The
+    /// editor never places its hardware cursor at `(0, 0)` (row 0 is the
+    /// menu bar), so the sentinel is unambiguous.
+    pub fn render_observing_cursor(&mut self) -> anyhow::Result<Option<(u16, u16)>> {
+        self.terminal
+            .set_cursor_position(ratatui::layout::Position::new(0, 0))?;
+        self.render()?;
+        let pos = self.terminal.get_cursor_position().unwrap_or_default();
+        if pos.x == 0 && pos.y == 0 {
+            Ok(None)
+        } else {
+            Ok(Some((pos.x, pos.y)))
+        }
+    }
+
     /// Find all visible cursors on screen
     /// Returns a vec of (x, y, character_at_cursor, is_primary)
     /// Primary cursor is detected at hardware cursor position
