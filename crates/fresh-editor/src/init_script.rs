@@ -107,42 +107,12 @@ const editor = getEditor();
 
 // Example: add a custom section to the Dashboard plugin.
 //
-// The dashboard exports `registerSection(name, refresh)`. `refresh`
-// is async and is called on every dashboard tick (every 5s while the
-// dashboard is visible, plus an initial call on registration). The
-// context passed to `refresh` has four primitives:
-//
-//   ctx.kv(label, value, color?)    — "    label     value" row
-//   ctx.text(s, { color?, bold?, url?, onClick? })  — styled text, no newline
-//   ctx.newline()                   — end the current row
-//   ctx.error(message)              — one-line error row
-//
-// Valid `color` names are:
-//   "muted" | "accent" | "value" | "number"
-//   "ok" | "warn" | "err" | "branch"
+// `editor.getPluginApi("dashboard")` is typed automatically via
+// `types/plugins.d.ts` — no `as` cast needed. Hover over `dash` or
+// `ctx` in your editor to see the full API.
 //
 // editor.on("plugins_loaded", () => {
-//     const dash = editor.getPluginApi("dashboard") as
-//         | {
-//             registerSection: (
-//                 name: string,
-//                 refresh: (ctx: {
-//                     kv: (label: string, value: string, color?: string) => void;
-//                     text: (
-//                         s: string,
-//                         opts?: {
-//                             color?: string;
-//                             bold?: boolean;
-//                             url?: string;
-//                             onClick?: () => void;
-//                         },
-//                     ) => void;
-//                     newline: () => void;
-//                     error: (message: string) => void;
-//                 }) => Promise<void>,
-//             ) => () => void;
-//         }
-//         | null;
+//     const dash = editor.getPluginApi("dashboard");
 //     if (!dash) return;
 //     dash.registerSection("todo", async (ctx) => {
 //         // Pretend we read a TODO count from somewhere async.

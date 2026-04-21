@@ -90,7 +90,7 @@ const C = {
 // Named palette colors exposed to section callbacks. Each maps to a
 // theme key under the hood so sections follow the active theme
 // without hard-coding RGB values.
-type DashboardColor =
+export type DashboardColor =
     | "muted"
     | "accent"
     | "value"
@@ -111,7 +111,7 @@ const COLOR_KEYS: Record<DashboardColor, string> = {
     branch: C.branch,
 };
 
-type DashboardTextOpts = {
+export type DashboardTextOpts = {
     color?: DashboardColor;
     bold?: boolean;
     /** OSC-8 hyperlink target; terminals that honor it render the span as a
@@ -125,7 +125,7 @@ type DashboardTextOpts = {
     onClick?: () => void;
 };
 
-type DashboardContext = {
+export type DashboardContext = {
     /** Emit a label/value row like "    label     value". The label
      *  column is padded to 10 cols so multi-row sections align. */
     kv(label: string, value: string, color?: DashboardColor): void;
@@ -138,7 +138,22 @@ type DashboardContext = {
     error(message: string): void;
 };
 
-type SectionRefresh = (ctx: DashboardContext) => Promise<void>;
+export type SectionRefresh = (ctx: DashboardContext) => Promise<void>;
+
+/**
+ * Public surface of the bundled `dashboard` plugin, reachable through
+ * `editor.getPluginApi("dashboard")`. Third-party plugins and user
+ * init.ts can contribute their own rows via `registerSection`.
+ */
+export type DashboardApi = {
+    registerSection(name: string, refresh: SectionRefresh): () => void;
+};
+
+declare global {
+    interface FreshPluginRegistry {
+        dashboard: DashboardApi;
+    }
+}
 
 type RegisteredSection = {
     id: number;
