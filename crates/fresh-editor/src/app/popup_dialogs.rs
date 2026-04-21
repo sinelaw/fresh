@@ -877,17 +877,16 @@ impl Editor {
 
     /// Dispatch the action selected from the Remote Indicator popup.
     ///
-    /// - `"detach"`          — `clear_authority()` (falls back to local).
-    /// - `"clear_override"`   — drop the Remote Indicator override
-    ///                          without changing the authority. Used
-    ///                          by the FailedAttach "Reopen Locally"
-    ///                          row: nothing to detach (no authority
-    ///                          was ever installed), but the
-    ///                          FailedAttach indicator should clear.
-    /// - `"plugin:<name>"`    — forwards to `Action::PluginAction(name)`.
-    /// - `"cancel_popup"`     — no-op; the popup framework already closed
-    ///                          the popup when the row was confirmed.
-    /// - anything else        — logged and ignored.
+    /// - `"detach"` — `clear_authority()` (falls back to local).
+    /// - `"clear_override"` — drop the Remote Indicator override
+    ///   without changing the authority. Used by the FailedAttach
+    ///   "Reopen Locally" row: nothing to detach (no authority was
+    ///   ever installed), but the FailedAttach indicator should
+    ///   clear.
+    /// - `"plugin:<name>"` — forwards to `Action::PluginAction(name)`.
+    /// - `"cancel_popup"` — no-op; the popup framework already
+    ///   closed the popup when the row was confirmed.
+    /// - anything else — logged and ignored.
     pub fn handle_remote_indicator_action(&mut self, action_key: &str) {
         if action_key == "detach" {
             self.remote_indicator_override = None;
@@ -905,10 +904,18 @@ impl Editor {
             // `handle_action` wires this through the plugin manager; if
             // the plugin isn't loaded it surfaces a status message, which
             // is the correct no-op behavior for every plugin-command
-            // invocation site in the codebase.
-            let _ = self.handle_action(crate::input::keybindings::Action::PluginAction(
+            // invocation site in the codebase. We still want to log an
+            // unexpected dispatch error — plugin misbehavior shouldn't
+            // leave the user staring at a silently-failed Retry click.
+            if let Err(e) = self.handle_action(crate::input::keybindings::Action::PluginAction(
                 plugin_action.to_string(),
-            ));
+            )) {
+                tracing::warn!(
+                    "remote indicator popup: dispatching '{}' failed: {}",
+                    plugin_action,
+                    e
+                );
+            }
             return;
         }
         tracing::warn!(
