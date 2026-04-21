@@ -616,3 +616,127 @@ attach from the Remote Indicator menu, and the plugin API has a
 reusable streaming-spawn/kill primitive that future plugins can use.
 No other core surface has changed; `DockerExecSpawner` and the
 authority contract are untouched.
+
+---
+
+## Phase D · Build-log panel + retry UX
+
+Phase C streams lines but sends them to `editor.debug`. Phase D makes
+those lines user-visible in a dedicated buffer and closes the loop on
+the "Show Build Logs" / "Retry" popup rows that Phase B stubbed.
+
+### D-1 · `*Dev Container Output*` virtual buffer
+
+**Why.** Gap analysis §4. The spec wants a "dedicated 'Dev Container
+Output' terminal" that streams stdout/stderr live. Fresh already
+supports virtual buffers via `editor.createVirtualBufferInSplit` —
+reusing that avoids introducing a new buffer flavor.
+
+**Files.**
+
+- `crates/fresh-editor/plugins/devcontainer.ts`:
+  - New module-level `buildLogBufferId: number | null`. Lazily create
+    the virtual buffer the first time a build line arrives after an
+    attach starts. Close it on successful attach (it will be recreated
+    next time) but **keep** it open on failure so "Show Build Logs"
+    is not an empty tab.
+  - Replace the C-3 `onBuildLine` stub with `appendToBuildLog(line,
+    stream)`: read current content, append
+    `line + "\n"` (prefixed with `stderr: ` for the stderr stream to
+    keep interleaving readable), write back. Virtual-buffer
+    `setVirtualBufferContent` is the existing API; if it doesn't
+    support efficient append, add a new `appendVirtualBuffer(id,
+    text)` plugin command alongside (see D-2).
+  - New handler `devcontainer_show_build_logs` — opens the buffer in a
+    split (focusing it if already visible). Uses the same
+    `createVirtualBufferInSplit` pattern as the info panel.
+
+**Tests.** E2E with the streaming fake CLI from Phase C: trigger
+attach, semantic-wait on the spinner, trigger "Show Build Logs" from
+the popup, assert the rendered buffer contains the scripted lines.
+
+**Commit split.** One commit, `feat:`-prefixed.
+
+### D-2 · (Conditional) `AppendVirtualBuffer` plugin command
+
+**Why.** If profiling D-1 shows `setVirtualBufferContent` rewrites the
+whole buffer per line — which it likely does given the Rope storage —
+high-volume builds (`cargo build` emitting thousands of lines) will
+cause an O(n²) slowdown.
+
+**Decision gate.** Run D-1 with a build that emits ~1000 lines and
+measure; only add D-2 if the profile shows quadratic behavior. Log
+the measurement in the PR description either way.
+
+**Files (if needed).**
+
+- `crates/fresh-core/src/api.rs` — new
+  `PluginCommand::AppendVirtualBuffer { buffer_id, text }`.
+- `crates/fresh-editor/src/app/plugin_commands.rs` — handle via an
+  insert at the buffer's end rather than a full-content replacement.
+- `crates/fresh-editor/plugins/lib/fresh.ts` —
+  `editor.appendVirtualBuffer(id, text)`.
+
+**Tests.** Microbenchmark in the unit-test layer: append 10k short
+lines and assert total time is under some budget. Standard
+CONTRIBUTING testing rule: no fixed timeout — the test uses a
+`Duration` comparison to a generous budget that's still strictly
+sub-quadratic (e.g. 2s for 10k lines).
+
+**Regen.** `fresh.d.ts` + `config-schema.json`.
+
+**Commit split.** One commit. Preceded by the profile data in the
+PR description.
+
+### D-3 · Wire the Phase B disabled rows to the new buffer
+
+**Why.** Phase B stubbed "Show Logs" (Connecting) and "Show Build
+Logs" (FailedAttach) as disabled rows; both should now dispatch
+`plugin:devcontainer_show_build_logs`.
+
+**Files.**
+
+- `crates/fresh-editor/src/app/popup_dialogs.rs` — drop the
+  `disabled()` and `(coming soon)` from those rows; they're now
+  actionable.
+
+**Tests.** Extend the Phase B e2e tests that assert the popup
+contents for each state.
+
+**Commit split.** One commit.
+
+### D-4 · Failed-attach action popup with "Retry" / "Reopen Locally"
+
+**Why.** Gap analysis §8. Spec calls for a notification on build
+failure with Retry / Reopen Locally; we want both the Remote Indicator
+popup path (already covered by Phase B's FailedAttach branch) *and* a
+proactive action popup so the user doesn't have to go hunting for the
+indicator.
+
+**Files.**
+
+- `crates/fresh-editor/plugins/devcontainer.ts` — after setting
+  `FailedAttach`, show an action popup via
+  `editor.showActionPopup({...})` with:
+  - `Retry` → `devcontainer_retry_attach`
+  - `Show Build Logs` → `devcontainer_show_build_logs`
+  - `Reopen Locally` → already-`Local` no-op but shown for symmetry
+  - `Dismiss`
+  - The first three map to existing handlers; Dismiss leaves the
+    `FailedAttach` indicator in place (the user may want to retry
+    later from the popup menu).
+
+**Tests.** E2E with the failing fake CLI: trigger attach, semantic-
+wait on the "Attach failed" action popup, select "Show Build Logs",
+assert the build-log buffer is focused.
+
+**Commit split.** One commit.
+
+### Phase D acceptance
+
+With D-1..D-4 merged: build output is live-visible in a dedicated
+buffer, failure surfaces a user-prompted Retry/Show Logs popup, and
+the Remote Indicator popup's previously-stubbed rows all dispatch to
+real handlers. The §4 and §8 gaps are fully closed. The only
+remaining spec items are §7 (customizations + ports), which Phase E
+picks up.
