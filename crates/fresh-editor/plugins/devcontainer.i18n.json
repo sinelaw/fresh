@@ -72,7 +72,16 @@
     "indicator.error_initialize": "initializeCommand failed",
     "status.rebuild_parse_failed": "could not parse devcontainer up output",
     "status.rebuild_missing_container_id": "missing containerId",
-    "indicator.error_restart_recovery": "attach did not complete"
+    "indicator.error_restart_recovery": "attach did not complete",
+    "status.build_log_prepare_failed": "Could not prepare build log file",
+    "status.no_build_log": "No dev container build log yet",
+    "status.build_log_missing": "Build log file is missing or unreadable",
+    "status.cancel_nothing_in_flight": "No dev container attach is in progress",
+    "status.attach_cancelled": "Dev container attach cancelled",
+    "cmd.show_build_logs": "Dev Container: Show Build Logs",
+    "cmd.show_build_logs_desc": "Open the most recent devcontainer up build log",
+    "cmd.cancel_attach": "Dev Container: Cancel Startup",
+    "cmd.cancel_attach_desc": "Abort an in-flight dev container attach"
   },
   "cs": {
     "cmd.show_info": "Dev Container: Zobrazit info",
@@ -147,7 +156,16 @@
     "indicator.error_initialize": "initializeCommand selhal",
     "status.rebuild_parse_failed": "nelze zpracovat výstup devcontainer up",
     "status.rebuild_missing_container_id": "chybí containerId",
-    "indicator.error_restart_recovery": "připojení nebylo dokončeno"
+    "indicator.error_restart_recovery": "připojení nebylo dokončeno",
+    "status.build_log_prepare_failed": "Nelze připravit soubor s protokolem sestavení",
+    "status.no_build_log": "Žádný protokol sestavení dev containeru zatím není",
+    "status.build_log_missing": "Soubor s protokolem sestavení chybí nebo je nečitelný",
+    "status.cancel_nothing_in_flight": "Neprobíhá žádné připojování dev containeru",
+    "status.attach_cancelled": "Připojování dev containeru zrušeno",
+    "cmd.show_build_logs": "Dev Container: Zobrazit protokol sestavení",
+    "cmd.show_build_logs_desc": "Otevřít protokol posledního devcontainer up",
+    "cmd.cancel_attach": "Dev Container: Zrušit spouštění",
+    "cmd.cancel_attach_desc": "Přerušit probíhající připojování dev containeru"
   },
   "de": {
     "cmd.show_info": "Dev Container: Info anzeigen",
@@ -222,7 +240,16 @@
     "indicator.error_initialize": "initializeCommand fehlgeschlagen",
     "status.rebuild_parse_failed": "Ausgabe von devcontainer up konnte nicht analysiert werden",
     "status.rebuild_missing_container_id": "containerId fehlt",
-    "indicator.error_restart_recovery": "Anhängen nicht abgeschlossen"
+    "indicator.error_restart_recovery": "Anhängen nicht abgeschlossen",
+    "status.build_log_prepare_failed": "Build-Protokolldatei konnte nicht vorbereitet werden",
+    "status.no_build_log": "Noch kein Dev Container Build-Protokoll vorhanden",
+    "status.build_log_missing": "Build-Protokolldatei fehlt oder ist nicht lesbar",
+    "status.cancel_nothing_in_flight": "Kein Dev Container-Anhang läuft gerade",
+    "status.attach_cancelled": "Dev Container-Anhang abgebrochen",
+    "cmd.show_build_logs": "Dev Container: Build-Protokolle anzeigen",
+    "cmd.show_build_logs_desc": "Öffnet das letzte devcontainer up Build-Protokoll",
+    "cmd.cancel_attach": "Dev Container: Start abbrechen",
+    "cmd.cancel_attach_desc": "Bricht einen laufenden Dev Container-Anhang ab"
   },
   "es": {
     "cmd.show_info": "Dev Container: Mostrar Info",
@@ -297,7 +324,16 @@
     "indicator.error_initialize": "initializeCommand falló",
     "status.rebuild_parse_failed": "no se pudo analizar la salida de devcontainer up",
     "status.rebuild_missing_container_id": "falta containerId",
-    "indicator.error_restart_recovery": "la conexión no se completó"
+    "indicator.error_restart_recovery": "la conexión no se completó",
+    "status.build_log_prepare_failed": "No se pudo preparar el archivo de registro de compilación",
+    "status.no_build_log": "Aún no hay registro de compilación del dev container",
+    "status.build_log_missing": "El archivo de registro de compilación falta o es ilegible",
+    "status.cancel_nothing_in_flight": "No hay ninguna conexión de dev container en curso",
+    "status.attach_cancelled": "Conexión de dev container cancelada",
+    "cmd.show_build_logs": "Dev Container: Mostrar registros de compilación",
+    "cmd.show_build_logs_desc": "Abre el registro del último devcontainer up",
+    "cmd.cancel_attach": "Dev Container: Cancelar inicio",
+    "cmd.cancel_attach_desc": "Aborta una conexión de dev container en curso"
   },
   "fr": {
     "cmd.show_info": "Dev Container: Afficher les infos",
@@ -372,7 +408,16 @@
     "indicator.error_initialize": "initializeCommand a échoué",
     "status.rebuild_parse_failed": "impossible d'analyser la sortie de devcontainer up",
     "status.rebuild_missing_container_id": "containerId manquant",
-    "indicator.error_restart_recovery": "l'attachement n'a pas abouti"
+    "indicator.error_restart_recovery": "l'attachement n'a pas abouti",
+    "status.build_log_prepare_failed": "Impossible de préparer le fichier journal de compilation",
+    "status.no_build_log": "Aucun journal de compilation de dev container",
+    "status.build_log_missing": "Fichier journal de compilation manquant ou illisible",
+    "status.cancel_nothing_in_flight": "Aucun rattachement de dev container en cours",
+    "status.attach_cancelled": "Rattachement de dev container annulé",
+    "cmd.show_build_logs": "Dev Container : Afficher les journaux de compilation",
+    "cmd.show_build_logs_desc": "Ouvrir le dernier journal de devcontainer up",
+    "cmd.cancel_attach": "Dev Container : Annuler le démarrage",
+    "cmd.cancel_attach_desc": "Interrompt un rattachement de dev container en cours"
   },
   "ja": {
     "cmd.show_info": "Dev Container: 情報を表示",
@@ -447,7 +492,16 @@
     "indicator.error_initialize": "initializeCommand が失敗しました",
     "status.rebuild_parse_failed": "devcontainer up の出力を解析できませんでした",
     "status.rebuild_missing_container_id": "containerId がありません",
-    "indicator.error_restart_recovery": "アタッチが完了しませんでした"
+    "indicator.error_restart_recovery": "アタッチが完了しませんでした",
+    "status.build_log_prepare_failed": "ビルドログファイルを準備できませんでした",
+    "status.no_build_log": "Dev Container のビルドログがまだありません",
+    "status.build_log_missing": "ビルドログファイルが見つからないか読み取れません",
+    "status.cancel_nothing_in_flight": "進行中の Dev Container のアタッチはありません",
+    "status.attach_cancelled": "Dev Container のアタッチをキャンセルしました",
+    "cmd.show_build_logs": "Dev Container: ビルドログを表示",
+    "cmd.show_build_logs_desc": "最新の devcontainer up のビルドログを開く",
+    "cmd.cancel_attach": "Dev Container: 起動をキャンセル",
+    "cmd.cancel_attach_desc": "進行中の Dev Container のアタッチを中断する"
   },
   "ko": {
     "cmd.show_info": "Dev Container: 정보 표시",
@@ -522,7 +576,16 @@
     "indicator.error_initialize": "initializeCommand 실패",
     "status.rebuild_parse_failed": "devcontainer up 출력을 파싱할 수 없음",
     "status.rebuild_missing_container_id": "containerId 누락",
-    "indicator.error_restart_recovery": "연결이 완료되지 않음"
+    "indicator.error_restart_recovery": "연결이 완료되지 않음",
+    "status.build_log_prepare_failed": "빌드 로그 파일을 준비할 수 없습니다",
+    "status.no_build_log": "아직 Dev Container 빌드 로그가 없습니다",
+    "status.build_log_missing": "빌드 로그 파일이 없거나 읽을 수 없습니다",
+    "status.cancel_nothing_in_flight": "진행 중인 Dev Container 연결이 없습니다",
+    "status.attach_cancelled": "Dev Container 연결이 취소되었습니다",
+    "cmd.show_build_logs": "Dev Container: 빌드 로그 보기",
+    "cmd.show_build_logs_desc": "최근 devcontainer up의 빌드 로그를 엽니다",
+    "cmd.cancel_attach": "Dev Container: 시작 취소",
+    "cmd.cancel_attach_desc": "진행 중인 Dev Container 연결을 중단합니다"
   },
   "zh-CN": {
     "cmd.show_info": "Dev Container: 显示信息",
@@ -597,7 +660,16 @@
     "indicator.error_initialize": "initializeCommand 失败",
     "status.rebuild_parse_failed": "无法解析 devcontainer up 的输出",
     "status.rebuild_missing_container_id": "缺少 containerId",
-    "indicator.error_restart_recovery": "附加未完成"
+    "indicator.error_restart_recovery": "附加未完成",
+    "status.build_log_prepare_failed": "无法准备构建日志文件",
+    "status.no_build_log": "尚无 Dev Container 构建日志",
+    "status.build_log_missing": "构建日志文件缺失或无法读取",
+    "status.cancel_nothing_in_flight": "当前没有进行中的 Dev Container 连接",
+    "status.attach_cancelled": "已取消 Dev Container 连接",
+    "cmd.show_build_logs": "Dev Container: 显示构建日志",
+    "cmd.show_build_logs_desc": "打开最近一次 devcontainer up 的构建日志",
+    "cmd.cancel_attach": "Dev Container: 取消启动",
+    "cmd.cancel_attach_desc": "中止进行中的 Dev Container 连接"
   },
   "it": {
     "cmd.show_info": "Dev Container: Mostra info",
@@ -672,7 +744,16 @@
     "indicator.error_initialize": "initializeCommand fallito",
     "status.rebuild_parse_failed": "impossibile analizzare l'output di devcontainer up",
     "status.rebuild_missing_container_id": "containerId mancante",
-    "indicator.error_restart_recovery": "collegamento non completato"
+    "indicator.error_restart_recovery": "collegamento non completato",
+    "status.build_log_prepare_failed": "Impossibile preparare il file di log della build",
+    "status.no_build_log": "Nessun log di build del dev container disponibile",
+    "status.build_log_missing": "File di log della build mancante o illeggibile",
+    "status.cancel_nothing_in_flight": "Nessun collegamento al dev container in corso",
+    "status.attach_cancelled": "Collegamento al dev container annullato",
+    "cmd.show_build_logs": "Dev Container: Mostra log di build",
+    "cmd.show_build_logs_desc": "Apre il log dell'ultimo devcontainer up",
+    "cmd.cancel_attach": "Dev Container: Annulla avvio",
+    "cmd.cancel_attach_desc": "Interrompe un collegamento al dev container in corso"
   },
   "pt-BR": {
     "cmd.show_info": "Dev Container: Mostrar informacoes",
@@ -747,7 +828,16 @@
     "indicator.error_initialize": "initializeCommand falhou",
     "status.rebuild_parse_failed": "não foi possível analisar a saída do devcontainer up",
     "status.rebuild_missing_container_id": "containerId ausente",
-    "indicator.error_restart_recovery": "conexão não concluída"
+    "indicator.error_restart_recovery": "conexão não concluída",
+    "status.build_log_prepare_failed": "Não foi possível preparar o arquivo de log de build",
+    "status.no_build_log": "Ainda não há log de build do dev container",
+    "status.build_log_missing": "Arquivo de log de build ausente ou ilegível",
+    "status.cancel_nothing_in_flight": "Nenhuma conexão de dev container em andamento",
+    "status.attach_cancelled": "Conexão de dev container cancelada",
+    "cmd.show_build_logs": "Dev Container: Mostrar logs de build",
+    "cmd.show_build_logs_desc": "Abre o log do último devcontainer up",
+    "cmd.cancel_attach": "Dev Container: Cancelar inicialização",
+    "cmd.cancel_attach_desc": "Aborta uma conexão de dev container em andamento"
   },
   "ru": {
     "cmd.show_info": "Dev Container: Показать информацию",
@@ -822,7 +912,16 @@
     "indicator.error_initialize": "initializeCommand завершился с ошибкой",
     "status.rebuild_parse_failed": "не удалось разобрать вывод devcontainer up",
     "status.rebuild_missing_container_id": "отсутствует containerId",
-    "indicator.error_restart_recovery": "подключение не завершилось"
+    "indicator.error_restart_recovery": "подключение не завершилось",
+    "status.build_log_prepare_failed": "Не удалось подготовить файл журнала сборки",
+    "status.no_build_log": "Журнал сборки dev container пока отсутствует",
+    "status.build_log_missing": "Файл журнала сборки отсутствует или не читается",
+    "status.cancel_nothing_in_flight": "Нет выполняемого подключения dev container",
+    "status.attach_cancelled": "Подключение dev container отменено",
+    "cmd.show_build_logs": "Dev Container: Показать журнал сборки",
+    "cmd.show_build_logs_desc": "Открывает журнал последнего devcontainer up",
+    "cmd.cancel_attach": "Dev Container: Отменить запуск",
+    "cmd.cancel_attach_desc": "Прерывает выполняющееся подключение dev container"
   },
   "th": {
     "cmd.show_info": "Dev Container: แสดงข้อมูล",
@@ -897,7 +996,16 @@
     "indicator.error_initialize": "initializeCommand ล้มเหลว",
     "status.rebuild_parse_failed": "ไม่สามารถแยกวิเคราะห์เอาต์พุตของ devcontainer up",
     "status.rebuild_missing_container_id": "ขาด containerId",
-    "indicator.error_restart_recovery": "การเชื่อมต่อไม่สำเร็จ"
+    "indicator.error_restart_recovery": "การเชื่อมต่อไม่สำเร็จ",
+    "status.build_log_prepare_failed": "ไม่สามารถเตรียมไฟล์บันทึกการสร้าง",
+    "status.no_build_log": "ยังไม่มีบันทึกการสร้าง Dev Container",
+    "status.build_log_missing": "ไฟล์บันทึกการสร้างหายไปหรืออ่านไม่ได้",
+    "status.cancel_nothing_in_flight": "ไม่มีการเชื่อมต่อ Dev Container ที่กำลังดำเนินการ",
+    "status.attach_cancelled": "ยกเลิกการเชื่อมต่อ Dev Container แล้ว",
+    "cmd.show_build_logs": "Dev Container: แสดงบันทึกการสร้าง",
+    "cmd.show_build_logs_desc": "เปิดบันทึกการสร้าง devcontainer up ล่าสุด",
+    "cmd.cancel_attach": "Dev Container: ยกเลิกการเริ่มต้น",
+    "cmd.cancel_attach_desc": "ยกเลิกการเชื่อมต่อ Dev Container ที่กำลังดำเนินการ"
   },
   "uk": {
     "cmd.show_info": "Dev Container: Показати інформацію",
@@ -972,7 +1080,16 @@
     "indicator.error_initialize": "initializeCommand завершився з помилкою",
     "status.rebuild_parse_failed": "не вдалося розібрати вивід devcontainer up",
     "status.rebuild_missing_container_id": "відсутній containerId",
-    "indicator.error_restart_recovery": "підключення не завершилося"
+    "indicator.error_restart_recovery": "підключення не завершилося",
+    "status.build_log_prepare_failed": "Не вдалося підготувати файл журналу збирання",
+    "status.no_build_log": "Журнал збирання dev container ще відсутній",
+    "status.build_log_missing": "Файл журналу збирання відсутній або не читається",
+    "status.cancel_nothing_in_flight": "Немає поточного підключення dev container",
+    "status.attach_cancelled": "Підключення dev container скасовано",
+    "cmd.show_build_logs": "Dev Container: Показати журнал збирання",
+    "cmd.show_build_logs_desc": "Відкриває журнал останнього devcontainer up",
+    "cmd.cancel_attach": "Dev Container: Скасувати запуск",
+    "cmd.cancel_attach_desc": "Перериває поточне підключення dev container"
   },
   "vi": {
     "cmd.show_info": "Dev Container: Hiển thị thông tin",
@@ -1047,6 +1164,15 @@
     "indicator.error_initialize": "initializeCommand thất bại",
     "status.rebuild_parse_failed": "không thể phân tích đầu ra của devcontainer up",
     "status.rebuild_missing_container_id": "thiếu containerId",
-    "indicator.error_restart_recovery": "gắn kết không hoàn tất"
+    "indicator.error_restart_recovery": "gắn kết không hoàn tất",
+    "status.build_log_prepare_failed": "Không thể chuẩn bị tệp nhật ký xây dựng",
+    "status.no_build_log": "Chưa có nhật ký xây dựng dev container",
+    "status.build_log_missing": "Tệp nhật ký xây dựng bị thiếu hoặc không đọc được",
+    "status.cancel_nothing_in_flight": "Không có kết nối dev container đang chạy",
+    "status.attach_cancelled": "Đã hủy kết nối dev container",
+    "cmd.show_build_logs": "Dev Container: Hiện nhật ký xây dựng",
+    "cmd.show_build_logs_desc": "Mở nhật ký devcontainer up gần nhất",
+    "cmd.cancel_attach": "Dev Container: Hủy khởi động",
+    "cmd.cancel_attach_desc": "Hủy kết nối dev container đang chạy"
   }
 }

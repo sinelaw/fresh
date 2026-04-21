@@ -87,6 +87,17 @@ let infoPanelSplitId: number | null = null;
 let infoPanelOpen = false;
 let cachedContent = "";
 
+// The in-flight `devcontainer up` handle (set before we await, cleared
+// on exit). `devcontainer_cancel_attach` forwards `.kill()` to this.
+// null when no attach is running.
+let attachInFlight: ProcessHandle<SpawnResult> | null = null;
+
+// Set by `devcontainer_cancel_attach` right before it kills the
+// in-flight handle; read by `runDevcontainerUp` so the non-zero exit
+// coming out of the kill doesn't also trigger a FailedAttach — the
+// cancel already set the indicator back to Local.
+let attachCancelled = false;
+
 // Focus state for info panel buttons (Tab navigation like pkg.ts)
 type InfoFocusTarget = { type: "button"; index: number };
 
@@ -1040,10 +1051,79 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
     label: editor.t("indicator.phase_build"),
   });
   editor.setStatus(editor.t("status.rebuilding"));
-  const args = ["up", "--workspace-folder", cwd, ...extraArgs];
-  const result = await editor.spawnHostProcess("devcontainer", args);
+
+  // Redirect `devcontainer up`'s stderr into a workspace-scoped log
+  // file; let stdout flow back through the existing pipe so we parse
+  // the success JSON from `result.stdout` as before. This mirrors
+  // the CLI's stream contract: stdout = machine-readable result;
+  // stderr = human-readable progress / errors. The log file holds
+  // exactly the "progress/errors" half.
+  //
+  // Rationale for the file:
+  //   - "Show Build Logs" is just `openFile(path)` — no new API.
+  //   - Fresh's auto-revert (2s poll) streams lines into the buffer
+  //     as they arrive; user sees live progress without special
+  //     plumbing.
+  //   - Path is under the workspace, so bind-mount coincidence keeps
+  //     it reachable post-attach (container auth sees the same file).
+  //   - `.fresh-cache/.gitignore = *` self-ignores the cache dir
+  //     without forcing users to touch their own `.gitignore`.
+  const logPath = await prepareBuildLogFile(cwd);
+  if (!logPath) {
+    const errText = editor.t("status.build_log_prepare_failed");
+    editor.setStatus(editor.t("status.rebuild_failed", { error: errText }));
+    editor.setRemoteIndicatorState({
+      kind: "failed_attach",
+      error: errText,
+    });
+    return;
+  }
+  rememberLastBuildLogPath(logPath);
+  // Open the log immediately so auto-revert will poll it and the
+  // user sees lines stream in. Non-fatal if openFile fails — the
+  // build continues either way.
+  editor.openFile(logPath, null, null);
+
+  // `sh -c 'exec devcontainer "$@" 2> "$LOG"' sh <log> <args...>` —
+  // positional-arg form so the log path and cwd never get
+  // string-interpolated into the script body. $1 is the log path;
+  // `shift` drops it; `$@` is the devcontainer invocation.
+  const shellScript = 'LOG="$1"; shift; exec devcontainer "$@" 2> "$LOG"';
+  const args = [
+    "-c",
+    shellScript,
+    "sh",
+    logPath,
+    "up",
+    "--workspace-folder",
+    cwd,
+    ...extraArgs,
+  ];
+  const handle = editor.spawnHostProcess("sh", args);
+  attachInFlight = handle;
+  attachCancelled = false;
+  let result: SpawnResult;
+  try {
+    result = await handle;
+  } finally {
+    attachInFlight = null;
+  }
+
+  // Cancel path: `devcontainer_cancel_attach` set `attachCancelled`
+  // and flipped the indicator back to Local already. The non-zero
+  // exit coming out of `Child::start_kill()` is not an error.
+  if (attachCancelled) {
+    attachCancelled = false;
+    return;
+  }
+
   if (result.exit_code !== 0) {
-    const errText = result.stderr.trim() || "unknown";
+    // On failure the log file holds the stderr trace — surface its
+    // last non-empty line as a human-readable status blurb. This
+    // is purely cosmetic; exit_code drove the branch.
+    const logText = editor.readFile(logPath) ?? "";
+    const errText = extractLastNonEmptyLine(logText)
+      ?? `exit ${result.exit_code}`;
     editor.setStatus(editor.t("status.rebuild_failed", { error: errText }));
     editor.setRemoteIndicatorState({
       kind: "failed_attach",
@@ -1086,6 +1166,60 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
   editor.setAuthority(payload);
 }
 
+// Lay out `.fresh-cache/devcontainer-logs/<timestamp>.log` under the
+// workspace. Returns the log path on success, null on failure
+// (mkdir denied, etc.). The directory carries its own
+// `.gitignore = *` so the cache never leaks into a commit without
+// the user touching their top-level `.gitignore`.
+async function prepareBuildLogFile(cwd: string): Promise<string | null> {
+  const cacheDir = `${cwd}/.fresh-cache`;
+  const logDir = `${cacheDir}/devcontainer-logs`;
+  const mkRes = await editor.spawnHostProcess("mkdir", ["-p", logDir]);
+  if (mkRes.exit_code !== 0) {
+    editor.debug(
+      `devcontainer: mkdir -p ${logDir} failed: ${mkRes.stderr.trim()}`,
+    );
+    return null;
+  }
+  const cacheIgnore = `${cacheDir}/.gitignore`;
+  if (editor.readFile(cacheIgnore) === null) {
+    // writeFile failure is non-fatal — worst case the user sees
+    // `.fresh-cache/` in `git status` once.
+    editor.writeFile(cacheIgnore, "*\n");
+  }
+  // `toISOString()` → "2026-04-21T12:34:56.789Z"; strip the ms+Z
+  // and swap separators that are awkward in filenames on some
+  // platforms.
+  const ts = new Date()
+    .toISOString()
+    .replace(/\.\d+Z$/, "")
+    .replace(/:/g, "-")
+    .replace("T", "_");
+  return `${logDir}/build-${ts}.log`;
+}
+
+function lastBuildLogKey(): string {
+  return "last-build-log:" + editor.getCwd();
+}
+
+function rememberLastBuildLogPath(path: string): void {
+  editor.setGlobalState(lastBuildLogKey(), path);
+}
+
+function readLastBuildLogPath(): string | null {
+  const raw = editor.getGlobalState(lastBuildLogKey()) as unknown;
+  return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
+
+function extractLastNonEmptyLine(text: string): string | null {
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const t = lines[i].trim();
+    if (t.length > 0) return t;
+  }
+  return null;
+}
+
 async function devcontainer_attach(): Promise<void> {
   if (!config) {
     editor.setStatus(editor.t("status.no_config"));
@@ -1124,6 +1258,49 @@ async function devcontainer_detach(): Promise<void> {
   editor.clearAuthority();
 }
 registerHandler("devcontainer_detach", devcontainer_detach);
+
+/// Abort an in-flight attach by killing the `devcontainer up` host
+/// spawn. No-op when nothing is in flight. The indicator is flipped
+/// back to Local immediately — cancel is a user-initiated revert,
+/// not a failure, so we don't go through FailedAttach.
+async function devcontainer_cancel_attach(): Promise<void> {
+  const handle = attachInFlight;
+  if (!handle) {
+    editor.setStatus(editor.t("status.cancel_nothing_in_flight"));
+    return;
+  }
+  // Order matters: set the flag before kill() so the awaiting
+  // runDevcontainerUp sees `attachCancelled = true` when the
+  // terminal event arrives, and takes the silent-return path
+  // instead of painting FailedAttach on top of the Local we're
+  // about to install.
+  attachCancelled = true;
+  editor.setRemoteIndicatorState({ kind: "local" });
+  editor.setStatus(editor.t("status.attach_cancelled"));
+  // `.kill()` returns a Promise<boolean> from the TS wrapper — we
+  // don't need the boolean; the kill is fire-and-forget.
+  void handle.kill();
+}
+registerHandler("devcontainer_cancel_attach", devcontainer_cancel_attach);
+
+/// Open the build log from the most recent `devcontainer up` in a
+/// buffer. The path was remembered across restarts via
+/// `setGlobalState`, so this works both during Connecting (log is
+/// still being appended — Fresh's auto-revert shows live updates)
+/// and after a FailedAttach / successful attach.
+async function devcontainer_show_build_logs(): Promise<void> {
+  const path = readLastBuildLogPath();
+  if (!path) {
+    editor.setStatus(editor.t("status.no_build_log"));
+    return;
+  }
+  if (editor.readFile(path) === null) {
+    editor.setStatus(editor.t("status.build_log_missing"));
+    return;
+  }
+  editor.openFile(path, null, null);
+}
+registerHandler("devcontainer_show_build_logs", devcontainer_show_build_logs);
 
 /// Show a one-shot snapshot of the attached container's stdout/stderr
 /// via `docker logs --tail 1000 <id>`. The log is rendered into a
@@ -1404,6 +1581,18 @@ function registerCommands(): void {
     "%cmd.show_logs",
     "%cmd.show_logs_desc",
     "devcontainer_show_logs",
+    null,
+  );
+  editor.registerCommand(
+    "%cmd.show_build_logs",
+    "%cmd.show_build_logs_desc",
+    "devcontainer_show_build_logs",
+    null,
+  );
+  editor.registerCommand(
+    "%cmd.cancel_attach",
+    "%cmd.cancel_attach_desc",
+    "devcontainer_cancel_attach",
     null,
   );
 }
