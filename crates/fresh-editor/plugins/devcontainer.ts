@@ -1077,6 +1077,12 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
   // setAuthority fires the restart flow in core. The status message
   // we set here won't survive the restart; the plugin will re-init
   // with the new authority active and print status.detected again.
+  //
+  // Write the attempt breadcrumb immediately before so the post-
+  // restart plugin instance can detect "attach was in flight" and
+  // decide between success (container authority live) and silent
+  // failure (no authority landed — surfaces as FailedAttach).
+  writeAttachAttempt();
   editor.setAuthority(payload);
 }
 
@@ -1097,6 +1103,22 @@ async function devcontainer_rebuild(): Promise<void> {
   await runDevcontainerUp(["--remove-existing-container"]);
 }
 registerHandler("devcontainer_rebuild", devcontainer_rebuild);
+
+/// Retry a previously-failed attach. Thin wrapper around
+/// `devcontainer_attach` — exists so the Remote Indicator popup's
+/// FailedAttach branch can dispatch something named `retry_attach`
+/// without hard-coding an implementation detail. Also the natural
+/// single call site if we ever want to add backoff or attempt
+/// counting.
+async function devcontainer_retry_attach(): Promise<void> {
+  // Drop the stale FailedAttach state before the new attempt so
+  // the popup shows the freshly-entered Connecting state
+  // immediately; setRemoteIndicatorState inside runDevcontainerUp
+  // will override again.
+  editor.clearRemoteIndicatorState();
+  await devcontainer_attach();
+}
+registerHandler("devcontainer_retry_attach", devcontainer_retry_attach);
 
 async function devcontainer_detach(): Promise<void> {
   editor.clearAuthority();
@@ -1258,6 +1280,39 @@ function writeAttachDecision(value: AttachDecision): void {
   editor.setGlobalState(attachDecisionKey(), value);
 }
 
+/// Breadcrumb written before calling `editor.setAuthority(payload)`
+/// — setAuthority restarts the editor, so there's no clean callback
+/// to hook once the new authority is live. If the post-restart plugin
+/// instance sees this key with no matching container authority
+/// installed, the attach round-tripped through setAuthority but the
+/// core failed to construct the authority (rare: a rejected
+/// AuthorityPayload). We surface that as FailedAttach so users aren't
+/// stuck wondering why Connecting silently became Local.
+///
+/// The key carries the epoch-ms timestamp of the attempt so stale
+/// entries from long-dormant sessions don't bleed into a fresh
+/// attach years later.
+function attachAttemptKey(): string {
+  return "attach-attempt:" + editor.getCwd();
+}
+
+function writeAttachAttempt(): void {
+  editor.setGlobalState(attachAttemptKey(), String(Date.now()));
+}
+
+function clearAttachAttempt(): void {
+  editor.setGlobalState(attachAttemptKey(), null);
+}
+
+function readAttachAttemptMs(): number | null {
+  const raw = editor.getGlobalState(attachAttemptKey()) as unknown;
+  if (typeof raw === "string") {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 function showAttachPrompt(): void {
   editor.showActionPopup({
     id: "devcontainer-attach",
@@ -1399,6 +1454,31 @@ if (findConfig()) {
   function devcontainer_maybe_show_attach_prompt(): void {
     const authorityLabel = editor.getAuthorityLabel();
     const alreadyAttached = authorityLabel.length > 0;
+
+    // Post-restart recovery: clear or surface a FailedAttach for
+    // attempts that round-tripped through setAuthority without
+    // landing a container. Stale breadcrumbs (> 30 min) are
+    // quietly dropped so an old attempt can't poison a fresh
+    // session years later.
+    const attemptMs = readAttachAttemptMs();
+    if (attemptMs !== null) {
+      const ageMs = Date.now() - attemptMs;
+      const MAX_AGE_MS = 30 * 60 * 1000;
+      if (ageMs > MAX_AGE_MS) {
+        clearAttachAttempt();
+      } else if (alreadyAttached) {
+        // Matching container authority came up — success path.
+        clearAttachAttempt();
+      } else {
+        // No container landed but we just tried. Surface it.
+        editor.setRemoteIndicatorState({
+          kind: "failed_attach",
+          error: editor.t("indicator.error_restart_recovery"),
+        });
+        clearAttachAttempt();
+      }
+    }
+
     if (alreadyAttached) {
       editor.debug(
         "Dev Container plugin: authority '" + authorityLabel + "' already installed, skipping attach prompt",

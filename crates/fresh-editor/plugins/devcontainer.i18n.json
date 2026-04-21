@@ -71,7 +71,8 @@
     "indicator.phase_build": "Building",
     "indicator.error_initialize": "initializeCommand failed",
     "status.rebuild_parse_failed": "could not parse devcontainer up output",
-    "status.rebuild_missing_container_id": "missing containerId"
+    "status.rebuild_missing_container_id": "missing containerId",
+    "indicator.error_restart_recovery": "attach did not complete"
   },
   "cs": {
     "cmd.show_info": "Dev Container: Zobrazit info",
@@ -145,7 +146,8 @@
     "indicator.phase_build": "Sestavování",
     "indicator.error_initialize": "initializeCommand selhal",
     "status.rebuild_parse_failed": "nelze zpracovat výstup devcontainer up",
-    "status.rebuild_missing_container_id": "chybí containerId"
+    "status.rebuild_missing_container_id": "chybí containerId",
+    "indicator.error_restart_recovery": "připojení nebylo dokončeno"
   },
   "de": {
     "cmd.show_info": "Dev Container: Info anzeigen",
@@ -219,7 +221,8 @@
     "indicator.phase_build": "Erstellen",
     "indicator.error_initialize": "initializeCommand fehlgeschlagen",
     "status.rebuild_parse_failed": "Ausgabe von devcontainer up konnte nicht analysiert werden",
-    "status.rebuild_missing_container_id": "containerId fehlt"
+    "status.rebuild_missing_container_id": "containerId fehlt",
+    "indicator.error_restart_recovery": "Anhängen nicht abgeschlossen"
   },
   "es": {
     "cmd.show_info": "Dev Container: Mostrar Info",
@@ -293,7 +296,8 @@
     "indicator.phase_build": "Construyendo",
     "indicator.error_initialize": "initializeCommand falló",
     "status.rebuild_parse_failed": "no se pudo analizar la salida de devcontainer up",
-    "status.rebuild_missing_container_id": "falta containerId"
+    "status.rebuild_missing_container_id": "falta containerId",
+    "indicator.error_restart_recovery": "la conexión no se completó"
   },
   "fr": {
     "cmd.show_info": "Dev Container: Afficher les infos",
@@ -367,7 +371,8 @@
     "indicator.phase_build": "Construction",
     "indicator.error_initialize": "initializeCommand a échoué",
     "status.rebuild_parse_failed": "impossible d'analyser la sortie de devcontainer up",
-    "status.rebuild_missing_container_id": "containerId manquant"
+    "status.rebuild_missing_container_id": "containerId manquant",
+    "indicator.error_restart_recovery": "l'attachement n'a pas abouti"
   },
   "ja": {
     "cmd.show_info": "Dev Container: 情報を表示",
@@ -441,7 +446,8 @@
     "indicator.phase_build": "ビルド中",
     "indicator.error_initialize": "initializeCommand が失敗しました",
     "status.rebuild_parse_failed": "devcontainer up の出力を解析できませんでした",
-    "status.rebuild_missing_container_id": "containerId がありません"
+    "status.rebuild_missing_container_id": "containerId がありません",
+    "indicator.error_restart_recovery": "アタッチが完了しませんでした"
   },
   "ko": {
     "cmd.show_info": "Dev Container: 정보 표시",
@@ -515,7 +521,8 @@
     "indicator.phase_build": "빌드 중",
     "indicator.error_initialize": "initializeCommand 실패",
     "status.rebuild_parse_failed": "devcontainer up 출력을 파싱할 수 없음",
-    "status.rebuild_missing_container_id": "containerId 누락"
+    "status.rebuild_missing_container_id": "containerId 누락",
+    "indicator.error_restart_recovery": "연결이 완료되지 않음"
   },
   "zh-CN": {
     "cmd.show_info": "Dev Container: 显示信息",
@@ -589,7 +596,8 @@
     "indicator.phase_build": "正在构建",
     "indicator.error_initialize": "initializeCommand 失败",
     "status.rebuild_parse_failed": "无法解析 devcontainer up 的输出",
-    "status.rebuild_missing_container_id": "缺少 containerId"
+    "status.rebuild_missing_container_id": "缺少 containerId",
+    "indicator.error_restart_recovery": "附加未完成"
   },
   "it": {
     "cmd.show_info": "Dev Container: Mostra info",
@@ -663,7 +671,8 @@
     "indicator.phase_build": "Compilazione",
     "indicator.error_initialize": "initializeCommand fallito",
     "status.rebuild_parse_failed": "impossibile analizzare l'output di devcontainer up",
-    "status.rebuild_missing_container_id": "containerId mancante"
+    "status.rebuild_missing_container_id": "containerId mancante",
+    "indicator.error_restart_recovery": "collegamento non completato"
   },
   "pt-BR": {
     "cmd.show_info": "Dev Container: Mostrar informacoes",
@@ -737,7 +746,8 @@
     "indicator.phase_build": "Construindo",
     "indicator.error_initialize": "initializeCommand falhou",
     "status.rebuild_parse_failed": "não foi possível analisar a saída do devcontainer up",
-    "status.rebuild_missing_container_id": "containerId ausente"
+    "status.rebuild_missing_container_id": "containerId ausente",
+    "indicator.error_restart_recovery": "conexão não concluída"
   },
   "ru": {
     "cmd.show_info": "Dev Container: Показать информацию",
@@ -811,7 +821,8 @@
     "indicator.phase_build": "Сборка",
     "indicator.error_initialize": "initializeCommand завершился с ошибкой",
     "status.rebuild_parse_failed": "не удалось разобрать вывод devcontainer up",
-    "status.rebuild_missing_container_id": "отсутствует containerId"
+    "status.rebuild_missing_container_id": "отсутствует containerId",
+    "indicator.error_restart_recovery": "подключение не завершилось"
   },
   "th": {
     "cmd.show_info": "Dev Container: แสดงข้อมูล",
@@ -885,7 +896,8 @@
     "indicator.phase_build": "กำลังสร้าง",
     "indicator.error_initialize": "initializeCommand ล้มเหลว",
     "status.rebuild_parse_failed": "ไม่สามารถแยกวิเคราะห์เอาต์พุตของ devcontainer up",
-    "status.rebuild_missing_container_id": "ขาด containerId"
+    "status.rebuild_missing_container_id": "ขาด containerId",
+    "indicator.error_restart_recovery": "การเชื่อมต่อไม่สำเร็จ"
   },
   "uk": {
     "cmd.show_info": "Dev Container: Показати інформацію",
@@ -959,7 +971,8 @@
     "indicator.phase_build": "Збирання",
     "indicator.error_initialize": "initializeCommand завершився з помилкою",
     "status.rebuild_parse_failed": "не вдалося розібрати вивід devcontainer up",
-    "status.rebuild_missing_container_id": "відсутній containerId"
+    "status.rebuild_missing_container_id": "відсутній containerId",
+    "indicator.error_restart_recovery": "підключення не завершилося"
   },
   "vi": {
     "cmd.show_info": "Dev Container: Hiển thị thông tin",
@@ -1033,6 +1046,7 @@
     "indicator.phase_build": "Đang xây dựng",
     "indicator.error_initialize": "initializeCommand thất bại",
     "status.rebuild_parse_failed": "không thể phân tích đầu ra của devcontainer up",
-    "status.rebuild_missing_container_id": "thiếu containerId"
+    "status.rebuild_missing_container_id": "thiếu containerId",
+    "indicator.error_restart_recovery": "gắn kết không hoàn tất"
   }
 }
