@@ -1255,14 +1255,27 @@ impl Editor {
                 // then open it in the editor so users can edit + reload.
                 let config_dir = self.dir_context.config_dir.clone();
                 match crate::init_script::ensure_starter(&config_dir) {
-                    Ok(path) => match self.open_file(&path) {
-                        Ok(_) => {
-                            self.set_status_message(format!("init.ts: {}", path.display()));
+                    Ok(path) => {
+                        // Regenerate `types/plugins.d.ts` from the live plugin
+                        // set. It's written once at editor startup, but any
+                        // plugin loaded/reloaded/unloaded since then would
+                        // leave the aggregate stale (or missing, in builds
+                        // where the plugins feature was off at boot but the
+                        // user has since enabled a plugin). The user's
+                        // tsconfig.json lists this file in `files`, so a
+                        // stale copy is exactly when `getPluginApi("foo")`
+                        // loses its typed overload.
+                        let declarations = self.plugin_manager.plugin_declarations();
+                        crate::init_script::write_plugin_declarations(&config_dir, &declarations);
+                        match self.open_file(&path) {
+                            Ok(_) => {
+                                self.set_status_message(format!("init.ts: {}", path.display()));
+                            }
+                            Err(e) => {
+                                self.set_status_message(format!("init.ts: open failed: {e}"));
+                            }
                         }
-                        Err(e) => {
-                            self.set_status_message(format!("init.ts: open failed: {e}"));
-                        }
-                    },
+                    }
                     Err(e) => {
                         self.set_status_message(format!("init.ts: create failed: {e}"));
                     }

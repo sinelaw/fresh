@@ -73,6 +73,18 @@ pub fn transpile_typescript(source: &str, filename: &str) -> Result<String> {
 /// downstream plugins and to the user's `init.ts` without manual
 /// `.d.ts` maintenance.
 ///
+/// The source is forced into **module** mode before the transform runs:
+/// isolated-declarations only hides non-exported symbols when the input
+/// AST has at least one `ImportDeclaration`/`ExportDeclaration`. For a
+/// plain-script input it instead emits a `declare` for every top-level
+/// declaration, leaking internal interfaces, constants, and function
+/// signatures into the aggregate `plugins.d.ts`. Many Fresh plugins
+/// have no `import`/`export` statement (they're top-level calls on the
+/// ambient `editor` global), so we append the canonical empty-export
+/// marker `export {};` when the source doesn't already have module
+/// syntax. `SourceType::with_module(true)` on the parser alone is not
+/// enough — the transform looks at the AST, not the parser flag.
+///
 /// Returns the generated `.d.ts` source as a string. Non-fatal
 /// diagnostics from the isolated-declarations pass are surfaced in
 /// the error path when they render an empty emit unusable; benign
@@ -80,9 +92,19 @@ pub fn transpile_typescript(source: &str, filename: &str) -> Result<String> {
 /// are tolerated and the caller simply gets a partial emit.
 pub fn emit_isolated_declarations(source: &str, filename: &str) -> Result<String> {
     let allocator = Allocator::default();
-    let source_type = SourceType::from_path(filename).unwrap_or_default();
+    let source_type = SourceType::from_path(filename)
+        .unwrap_or_default()
+        .with_module(true);
 
-    let parser_ret = Parser::new(&allocator, source, source_type).parse();
+    let module_marked;
+    let effective_source: &str = if has_es_module_syntax(source) {
+        source
+    } else {
+        module_marked = format!("{source}\nexport {{}};\n");
+        &module_marked
+    };
+
+    let parser_ret = Parser::new(&allocator, effective_source, source_type).parse();
     if !parser_ret.errors.is_empty() {
         let errors: Vec<String> = parser_ret.errors.iter().map(|e| e.to_string()).collect();
         return Err(anyhow!(
@@ -827,6 +849,58 @@ fn declaration_to_statement(decl: Declaration<'_>) -> Statement<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emit_isolated_declarations_script_hides_internals() {
+        // Script-style plugin: no `import`, no `export`. Before we forced
+        // module mode, isolated-declarations treated every top-level
+        // declaration as publicly visible and leaked `interface Internal`,
+        // `declare const internal`, `declare function internal()` into
+        // the emit. Module mode keeps the output empty for a file with
+        // no exports.
+        let source = r#"
+            interface Internal { x: number; }
+            const internalConst: Internal = { x: 1 };
+            function internalFn(): void {}
+        "#;
+        let dts = emit_isolated_declarations(source, "script_plugin.ts").unwrap();
+        assert!(
+            !dts.contains("Internal"),
+            "non-exported interface leaked into .d.ts: {dts}"
+        );
+        assert!(
+            !dts.contains("internalConst"),
+            "non-exported const leaked into .d.ts: {dts}"
+        );
+        assert!(
+            !dts.contains("internalFn"),
+            "non-exported function leaked into .d.ts: {dts}"
+        );
+    }
+
+    #[test]
+    fn emit_isolated_declarations_keeps_exports_and_registry_augmentation() {
+        // A plugin that has no `import`/`export` statements in the
+        // value plane but does augment `FreshPluginRegistry` still has
+        // to land its `declare global` block in the emit — that's what
+        // makes `editor.getPluginApi("foo")` typed in init.ts.
+        let source = r#"
+            export type FooApi = { doThing(): void };
+            declare global {
+                interface FreshPluginRegistry {
+                    foo: FooApi;
+                }
+            }
+            const internal = 42;
+        "#;
+        let dts = emit_isolated_declarations(source, "foo.ts").unwrap();
+        assert!(dts.contains("FooApi"), "exported type missing: {dts}");
+        assert!(
+            dts.contains("FreshPluginRegistry"),
+            "registry augmentation missing: {dts}"
+        );
+        assert!(!dts.contains("internal"), "internal const leaked: {dts}");
+    }
 
     #[test]
     fn test_transpile_basic_typescript() {

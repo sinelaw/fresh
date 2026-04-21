@@ -363,6 +363,41 @@ fn init_edit_creates_starter_template_when_missing() {
 }
 
 #[test]
+fn init_edit_refreshes_plugins_d_ts() {
+    // The user's tsconfig.json lists `types/plugins.d.ts` in `files`, so
+    // it must exist by the time the LSP picks up init.ts or the typed
+    // `getPluginApi("foo")` overload stays untyped. Startup writes the
+    // file once; the InitEdit action re-runs that write so plugins
+    // loaded/unloaded since boot are reflected before the user opens
+    // init.ts, and so a user who deleted the file gets it back.
+    use fresh::input::keybindings::Action;
+
+    let (mut harness, _tmp, config_dir) = harness_with_scratch_config_dir();
+    let plugins_dts = config_dir.join("types").join("plugins.d.ts");
+
+    // Delete whatever the harness may have written at boot so we can
+    // assert that InitEdit itself re-creates the file.
+    if plugins_dts.exists() {
+        fs::remove_file(&plugins_dts).unwrap();
+    }
+
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::InitEdit);
+    harness.editor_mut().process_async_messages();
+
+    assert!(
+        plugins_dts.exists(),
+        "InitEdit must write types/plugins.d.ts so the user's tsconfig.json resolves"
+    );
+    let body = std::fs::read_to_string(&plugins_dts).unwrap();
+    assert!(
+        body.contains("AUTO-GENERATED"),
+        "plugins.d.ts should carry the fresh autogen header: {body:?}"
+    );
+}
+
+#[test]
 fn init_check_action_reports_ok_on_a_clean_file() {
     use fresh::input::keybindings::Action;
 
