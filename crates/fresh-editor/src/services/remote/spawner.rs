@@ -15,8 +15,10 @@
 //!   through this so an authority pointing at a container runs the server
 //!   inside the container (via `docker exec -i`) instead of on the host.
 
+use crate::services::process_limits::PostSpawnAction;
 use crate::services::remote::channel::{AgentChannel, ChannelError};
 use crate::services::remote::protocol::{decode_base64, exec_params};
+use crate::types::ProcessLimits;
 use std::path::Path;
 use std::process::ExitStatus;
 use std::sync::Arc;
@@ -184,6 +186,13 @@ impl StdioChild {
     /// Construct a `StdioChild` from an already-spawned
     /// `tokio::process::Child`. Pulls the piped streams out of the
     /// child so callers can take them individually later.
+    ///
+    /// This constructor is for spawners that don't participate in
+    /// host-side resource limiting (the Docker variant is the
+    /// canonical example). Local spawners should prefer
+    /// [`Self::from_local_tokio_child`] so a `PostSpawnAction` produced
+    /// by [`ProcessLimits::apply_to_command`] is applied to the child's
+    /// PID before the spawner returns.
     pub fn from_tokio_child(mut child: tokio::process::Child, spawned_locally: bool) -> Self {
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
@@ -195,6 +204,22 @@ impl StdioChild {
             stderr,
             spawned_locally,
         }
+    }
+
+    /// Construct a `StdioChild` for a locally-spawned child while
+    /// applying any host-side `PostSpawnAction` (cgroup attachment)
+    /// returned by [`ProcessLimits::apply_to_command`]. Best-effort:
+    /// failure to attach logs a warning but doesn't fail the spawn,
+    /// matching the pre-refactor behavior.
+    pub fn from_local_tokio_child(
+        child: tokio::process::Child,
+        post_spawn: PostSpawnAction,
+    ) -> Self {
+        let out = Self::from_tokio_child(child, true);
+        if let Some(pid) = out.inner.id() {
+            post_spawn.apply_to_child(pid);
+        }
+        out
     }
 
     /// Take the stdin stream. Returns `None` after the first call.
@@ -249,17 +274,26 @@ impl StdioChild {
 /// one-shot spawner. Routing LSP spawning through it is what gives
 /// container authorities in-container LSP without a special-cased
 /// branch in `LspHandle`.
+///
+/// Callers pass an optional [`ProcessLimits`] block so local spawners
+/// can honor host-side memory / CPU limits. Non-local variants (docker,
+/// ssh) don't have a meaningful way to impose host limits on their
+/// child — cgroups attached to the `docker` CLI PID don't reach into
+/// the container — and are expected to ignore them.
 #[async_trait::async_trait]
 pub trait LongRunningSpawner: Send + Sync {
     /// Spawn `command` with `args` as a long-lived stdio child under
     /// this authority. Stdin/stdout/stderr are piped so the caller can
-    /// hand them to dedicated reader/writer tasks.
+    /// hand them to dedicated reader/writer tasks. `limits`, when
+    /// provided, lets local spawners attach cgroups or `setrlimit`;
+    /// remote spawners are expected to ignore it (see trait docs).
     async fn spawn_stdio(
         &self,
         command: &str,
         args: &[String],
         env: Vec<(String, String)>,
         cwd: Option<&Path>,
+        limits: Option<&ProcessLimits>,
     ) -> Result<StdioChild, SpawnError>;
 
     /// Check whether `command` resolves to an executable under this
@@ -274,7 +308,9 @@ pub trait LongRunningSpawner: Send + Sync {
 ///
 /// Functionally equivalent to how `LspHandle::spawn` works today, but
 /// exposed through the trait so non-local authorities can substitute
-/// their own implementation without any LSP-side awareness.
+/// their own implementation without any LSP-side awareness. Applies
+/// any `ProcessLimits` passed in via the same machinery the
+/// pre-refactor LSP code used (`apply_to_command` + `apply_to_child`).
 pub struct LocalLongRunningSpawner;
 
 #[async_trait::async_trait]
@@ -285,6 +321,7 @@ impl LongRunningSpawner for LocalLongRunningSpawner {
         args: &[String],
         env: Vec<(String, String)>,
         cwd: Option<&Path>,
+        limits: Option<&ProcessLimits>,
     ) -> Result<StdioChild, SpawnError> {
         let mut cmd = tokio::process::Command::new(command);
         cmd.args(args)
@@ -296,10 +333,22 @@ impl LongRunningSpawner for LocalLongRunningSpawner {
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
+
+        // Apply pre-spawn hooks (cgroup path selection, setrlimit
+        // via `pre_exec`). Errors bubble up so callers see
+        // configuration problems early — matches the pre-refactor
+        // LSP behavior.
+        let post_spawn = match limits {
+            Some(lim) => lim
+                .apply_to_command(&mut cmd)
+                .map_err(|e| SpawnError::Process(format!("Failed to apply process limits: {e}")))?,
+            None => PostSpawnAction::default(),
+        };
+
         let child = cmd
             .spawn()
             .map_err(|e| SpawnError::Process(e.to_string()))?;
-        Ok(StdioChild::from_tokio_child(child, true))
+        Ok(StdioChild::from_local_tokio_child(child, post_spawn))
     }
 
     async fn command_exists(&self, command: &str) -> bool {
@@ -328,7 +377,13 @@ mod tests {
     async fn local_long_running_spawn_stdio_pipes_output() {
         let spawner = LocalLongRunningSpawner;
         let mut child = spawner
-            .spawn_stdio("sh", &["-c".into(), "echo hi".into()], Vec::new(), None)
+            .spawn_stdio(
+                "sh",
+                &["-c".into(), "echo hi".into()],
+                Vec::new(),
+                None,
+                None,
+            )
             .await
             .expect("spawn succeeds");
 

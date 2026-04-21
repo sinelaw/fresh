@@ -139,7 +139,25 @@ impl LongRunningSpawner for DockerLongRunningSpawner {
         args: &[String],
         env: Vec<(String, String)>,
         cwd: Option<&Path>,
+        limits: Option<&crate::types::ProcessLimits>,
     ) -> Result<StdioChild, SpawnError> {
+        // Docker authorities can't meaningfully enforce host-side
+        // resource limits: a cgroup attached to the `docker` CLI PID
+        // doesn't govern the container-side server, and `setrlimit`
+        // applied via `pre_exec` in the host-side `docker` process
+        // propagates nowhere. Log when limits are set so users don't
+        // silently wonder why their cap isn't enforced.
+        if let Some(lim) = limits {
+            if lim.enabled && (lim.max_memory_percent.is_some() || lim.max_cpu_percent.is_some()) {
+                tracing::debug!(
+                    "DockerLongRunningSpawner: ignoring process_limits — host-side \
+                     cgroups/rlimits don't reach into containers (memory={:?}%, cpu={:?}%)",
+                    lim.max_memory_percent,
+                    lim.max_cpu_percent
+                );
+            }
+        }
+
         // `-e KEY=VAL` entries are injected *before* the container id
         // so `docker exec` applies them to the server process. We use
         // the same slot as the one-shot path but build a distinct
