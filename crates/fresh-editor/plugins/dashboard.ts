@@ -58,12 +58,19 @@ type ClickAction =
 type Draw = {
     text: string;
     spans: Span[];
-    // currentRow tracks how many newlines we've emitted; row-tagged
-    // entries register their action against this row so the click
-    // handler can route a click at buffer_row back to the action.
+    // currentRow / currentCol are maintained by `emit()` + `newline()` so
+    // click-action ranges land on the same cells the underlined text
+    // actually occupies. A click at (buffer_row, buffer_col) only fires
+    // if it falls inside one of the row's registered ranges — padding
+    // spaces, kv labels, and the frame border inside an inner row are
+    // not clickable, matching the visual affordance.
     currentRow: number;
-    rowActions: Map<number, ClickAction>;
+    currentCol: number;
+    rowActions: Map<number, ClickActionRange[]>;
 };
+
+/** Column range within a row that carries a click target. */
+type ClickActionRange = { colStart: number; colEnd: number; action: ClickAction };
 const MAX_INNER = 72; // content width excluding frame + centering pad
 
 const C = {
@@ -224,6 +231,9 @@ function emit(
     if (!s) return;
     const start = utf8Len(d.text);
     d.text += s;
+    const width = visualWidth(s);
+    const startCol = d.currentCol;
+    d.currentCol += width;
     // Anything the user can click gets underlined so it reads as a link
     // even in terminals that don't render OSC-8 hyperlinks.
     const clickable = !!(opts?.url || opts?.action);
@@ -238,20 +248,23 @@ function emit(
         });
     }
     if (opts?.action) {
-        // Anchor to the row this emit landed on — subsequent emits on the
-        // same row would overwrite this if they set a different action,
-        // which is fine because a single row has one logical click target.
-        d.rowActions.set(d.currentRow, opts.action);
+        // Record a column-scoped range so the click handler can match
+        // clicks only on the text cells the underline actually covers,
+        // not on padding or kv labels sharing the row.
+        const ranges = d.rowActions.get(d.currentRow) ?? [];
+        ranges.push({ colStart: startCol, colEnd: startCol + width, action: opts.action });
+        d.rowActions.set(d.currentRow, ranges);
     }
 }
 
 function newline(d: Draw) {
     d.text += "\n";
     d.currentRow++;
+    d.currentCol = 0;
 }
 
 function emptyDraw(): Draw {
-    return { text: "", spans: [], currentRow: 0, rowActions: new Map() };
+    return { text: "", spans: [], currentRow: 0, currentCol: 0, rowActions: new Map() };
 }
 
 // ── Sections (sentinel / placeholder factories) ────────────────────────
@@ -427,7 +440,7 @@ function renderFrame(inner: number, leftPad: number): Draw {
 
     const row = (
         body: { text: string; spans: Span[] },
-        action?: ClickAction,
+        ranges?: ClickActionRange[],
     ) => {
         // Wraps a single logical row of section body in the frame.
         emit(d, lp, undefined);
@@ -437,7 +450,12 @@ function renderFrame(inner: number, leftPad: number): Draw {
         const line = body.text;
         const used = visualWidth(line);
         const startInDoc = utf8Len(d.text);
+        // Content starts in the outer draw at this visual column —
+        // section-body ranges are offset by it below so clicks hit
+        // the same cells the text actually lives in.
+        const contentStartCol = d.currentCol;
         d.text += line;
+        d.currentCol += used;
         for (const sp of body.spans) {
             if (sp.start < utf8Len(line)) {
                 d.spans.push({
@@ -450,9 +468,17 @@ function renderFrame(inner: number, leftPad: number): Draw {
                 });
             }
         }
+        if (ranges && ranges.length > 0) {
+            const shifted = ranges.map((r) => ({
+                colStart: r.colStart + contentStartCol,
+                colEnd: r.colEnd + contentStartCol,
+                action: r.action,
+            }));
+            const existing = d.rowActions.get(d.currentRow) ?? [];
+            d.rowActions.set(d.currentRow, existing.concat(shifted));
+        }
         emit(d, " ".repeat(Math.max(0, inner - used)), undefined);
         emit(d, "│", { fg: C.frame });
-        if (action) d.rowActions.set(d.currentRow, action);
         newline(d);
     };
 
@@ -548,9 +574,10 @@ function drawToEntries(d: Draw): TextPropertyEntry[] {
 let lastPaintedW = -1;
 let lastPaintedH = -1;
 
-// Row-index → click action map, keyed by absolute buffer row (after
-// adding topPad). Rebuilt every paint; read by the mouse_click handler.
-let currentRowActions: Map<number, ClickAction> = new Map();
+// Row-index → click-action ranges map, keyed by absolute buffer row
+// (after adding topPad). Each range is a `[colStart, colEnd)` pair so
+// the click handler can gate on buffer_col too. Rebuilt every paint.
+let currentRowActions: Map<number, ClickActionRange[]> = new Map();
 
 function paint(dims?: { width: number; height: number }) {
     if (dashboardBufferId === null) return;
@@ -580,10 +607,11 @@ function paint(dims?: { width: number; height: number }) {
     for (const e of drawToEntries(drawn)) entries.push(e);
 
     // Translate frame-relative row actions to absolute buffer rows by
-    // shifting by the vertical padding we just prepended.
-    const abs: Map<number, ClickAction> = new Map();
-    for (const [row, action] of drawn.rowActions) {
-        abs.set(row + topPad, action);
+    // shifting by the vertical padding we just prepended. Columns are
+    // absolute already (the frame renderer placed them via currentCol).
+    const abs: Map<number, ClickActionRange[]> = new Map();
+    for (const [row, ranges] of drawn.rowActions) {
+        abs.set(row + topPad, ranges);
     }
     currentRowActions = abs;
 
@@ -1412,6 +1440,8 @@ registerHandler(
         row: number;
         button: string;
         modifiers: string;
+        content_x: number;
+        content_y: number;
         buffer_id: number | null;
         buffer_row: number | null;
         buffer_col: number | null;
@@ -1420,9 +1450,24 @@ registerHandler(
         if (dashboardBufferId === null) return;
         if (data.buffer_id !== dashboardBufferId) return;
         if (data.buffer_row === null) return;
-        const action = currentRowActions.get(data.buffer_row);
-        if (!action) return;
-        dispatchClickAction(action);
+        const ranges = currentRowActions.get(data.buffer_row);
+        if (!ranges) return;
+        // Gate on the visual column within the buffer's content area.
+        // `buffer_col` is in UTF-8 bytes and doesn't line up with the
+        // frame's multi-byte characters (`│`, `╭` etc.), so we derive
+        // the visual column from `column - content_x` — the screen
+        // column relative to the buffer panel's left edge. Our
+        // registered ranges are stored in visual cells and reset to 0
+        // at each newline, so the two units match. A click outside
+        // every registered range is a no-op: whitespace, kv labels,
+        // and the frame border inside an inner row stay unclickable,
+        // matching the underline-as-affordance contract.
+        const visualCol = data.column - data.content_x;
+        const match = ranges.find(
+            (r) => visualCol >= r.colStart && visualCol < r.colEnd,
+        );
+        if (!match) return;
+        dispatchClickAction(match.action);
     },
 );
 
