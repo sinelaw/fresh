@@ -52,20 +52,33 @@ enum ElementKind {
 
 /// Visual/semantic state of the remote authority indicator.
 ///
-/// Mirrors the three-phase lifecycle from the dev-container UX spec
-/// ("Local" / "Connected" / "Disconnected") while remaining general
-/// enough to cover any remote authority Fresh currently supports
-/// (SSH sessions today; container-style authorities in the future).
+/// Covers the full dev-container UX lifecycle the spec asks for —
+/// Local, Connecting to a remote authority, Connected, FailedAttach,
+/// Disconnected — while remaining general enough for any remote
+/// authority Fresh currently supports (SSH today; containers;
+/// anything a plugin installs via `editor.setAuthority(...)`).
 ///
-/// The variant chosen here feeds `element_style` and controls whether
-/// the indicator reads as neutral, highlighted, or an error.
+/// Variants deliberately hold no data — phase labels and error text
+/// are passed alongside via `StatusBarContext::remote_state_override`
+/// (added in Phase B-2) so the enum stays `Copy` and core code never
+/// learns devcontainer-specific vocabulary (see
+/// `AUTHORITY_DESIGN.md` principle 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RemoteIndicatorState {
     /// Editing local files; rendered with the default status-bar palette.
     #[default]
     Local,
+    /// An attach (or reconnect) is in flight — rendered with a spinner
+    /// glyph and the help-indicator palette. Plugins drive this via
+    /// `setRemoteIndicatorState` before kicking off `devcontainer up`
+    /// or similar long-running setup.
+    Connecting,
     /// Connected to an SSH / container / other remote authority.
     Connected,
+    /// The last attach attempt failed. Rendered with the error palette
+    /// so the state is visible at a glance; the popup surfaces the
+    /// error detail and a Retry action.
+    FailedAttach,
     /// Connection lost — rendered with the error palette as a persistent
     /// warning that writes/saves are no longer reaching the authority.
     Disconnected,
@@ -937,16 +950,18 @@ impl StatusBarRenderer {
             ElementKind::RemoteIndicator(state) => {
                 let is_hovering = hover == StatusBarHover::RemoteIndicator;
                 let (fg, bg) = match state {
-                    // Connected: reuse the "help indicator" palette so
-                    // the indicator reads as a distinct, stable UI
-                    // entry point rather than blending into the neutral
-                    // status-bar text.
-                    RemoteIndicatorState::Connected => {
+                    // Connecting and Connected share the "help
+                    // indicator" palette so the transition from one to
+                    // the other is a glyph swap rather than a color
+                    // flash — the user's eye tracks the indicator
+                    // changing, not disappearing.
+                    RemoteIndicatorState::Connecting | RemoteIndicatorState::Connected => {
                         (theme.help_indicator_fg, theme.help_indicator_bg)
                     }
-                    // Disconnected: error palette so the loss of
-                    // connection is immediately visible.
-                    RemoteIndicatorState::Disconnected => (
+                    // FailedAttach + Disconnected share the error
+                    // palette. Both are "the remote isn't reaching you
+                    // right now" states, differing only in cause.
+                    RemoteIndicatorState::FailedAttach | RemoteIndicatorState::Disconnected => (
                         theme.status_error_indicator_fg,
                         theme.status_error_indicator_bg,
                     ),
@@ -1558,19 +1573,33 @@ mod tests {
     #[test]
     fn test_remote_indicator_element_kind_equality() {
         // Each lifecycle state produces a distinct ElementKind so the styler
-        // can pick the right palette for Local / Connected / Disconnected.
+        // can pick the right palette for Local / Connecting / Connected /
+        // FailedAttach / Disconnected.
         assert_eq!(
             ElementKind::RemoteIndicator(RemoteIndicatorState::Local),
             ElementKind::RemoteIndicator(RemoteIndicatorState::Local)
         );
-        assert_ne!(
-            ElementKind::RemoteIndicator(RemoteIndicatorState::Local),
-            ElementKind::RemoteIndicator(RemoteIndicatorState::Connected)
-        );
-        assert_ne!(
-            ElementKind::RemoteIndicator(RemoteIndicatorState::Connected),
-            ElementKind::RemoteIndicator(RemoteIndicatorState::Disconnected)
-        );
+        let distinct = [
+            RemoteIndicatorState::Local,
+            RemoteIndicatorState::Connecting,
+            RemoteIndicatorState::Connected,
+            RemoteIndicatorState::FailedAttach,
+            RemoteIndicatorState::Disconnected,
+        ];
+        for (i, a) in distinct.iter().enumerate() {
+            for (j, b) in distinct.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                assert_ne!(
+                    ElementKind::RemoteIndicator(*a),
+                    ElementKind::RemoteIndicator(*b),
+                    "expected {:?} != {:?}",
+                    a,
+                    b
+                );
+            }
+        }
     }
 
     #[test]
