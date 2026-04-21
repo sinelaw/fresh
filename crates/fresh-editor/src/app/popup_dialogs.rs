@@ -678,69 +678,132 @@ impl Editor {
         let devcontainer_config_path = self.find_devcontainer_config();
 
         let mut items: Vec<PopupListItem> = Vec::new();
-        let title: String;
+        let mut title: String = String::new();
 
-        match (connection.as_deref(), is_disconnected) {
-            // Connected authority (container or SSH), not disconnected.
-            (Some(label), false) => {
-                title = format!("Remote: {}", label);
-                if is_container {
+        // Plugin-supplied override (Connecting / FailedAttach) takes
+        // precedence over the authority-derived branches. A Connecting
+        // indicator shouldn't render the "Reopen in Container" menu
+        // of the underlying derived state — an attach is in flight;
+        // the user needs Show Logs / Cancel / (after B-3b) Retry.
+        //
+        // Local / Connected / Disconnected overrides are treated as
+        // labelling shortcuts, not menu-shape changes — they fall
+        // through to the derived branches below.
+        use crate::view::ui::status_bar::RemoteIndicatorOverride;
+        let override_handled = matches!(
+            self.remote_indicator_override,
+            Some(RemoteIndicatorOverride::Connecting { .. })
+                | Some(RemoteIndicatorOverride::FailedAttach { .. })
+        );
+        if let Some(over) = self.remote_indicator_override.clone() {
+            match over {
+                RemoteIndicatorOverride::Connecting { label } => {
+                    let suffix = label
+                        .filter(|s| !s.is_empty())
+                        .map(|s| format!(" — {}", s))
+                        .unwrap_or_default();
+                    title = format!("Remote: Connecting{}", suffix);
+                    // Phase C lands Cancel Startup; Phase D lands
+                    // streaming logs. Until both exist, the rows
+                    // render disabled so users can see the surface
+                    // exists without clicking into a broken action.
                     items.push(
-                        PopupListItem::new("    Reopen Locally".to_string())
-                            .with_data("detach".to_string()),
+                        PopupListItem::new("    Cancel Startup (coming soon)".to_string())
+                            .disabled(),
                     );
                     items.push(
-                        PopupListItem::new("    Rebuild Container".to_string())
-                            .with_data("plugin:devcontainer_rebuild".to_string()),
-                    );
-                    items.push(
-                        PopupListItem::new("    Show Container Logs".to_string())
-                            .with_data("plugin:devcontainer_show_logs".to_string()),
-                    );
-                    items.push(
-                        PopupListItem::new("    Show Container Info".to_string())
-                            .with_data("plugin:devcontainer_show_info".to_string()),
-                    );
-                } else if is_ssh {
-                    items.push(
-                        PopupListItem::new("    Disconnect Remote".to_string())
-                            .with_data("detach".to_string()),
+                        PopupListItem::new("    Show Logs (coming soon)".to_string()).disabled(),
                     );
                 }
-            }
-            // Disconnected — warn and offer fallbacks.
-            (Some(_), true) => {
-                title = "Remote: Disconnected".to_string();
-                items.push(
-                    PopupListItem::new("    Go Local".to_string()).with_data("detach".to_string()),
-                );
-            }
-            // Local authority.
-            (None, _) => {
-                title = "Remote: Local".to_string();
-                if devcontainer_config_path.is_some() {
+                RemoteIndicatorOverride::FailedAttach { error } => {
+                    let suffix = error
+                        .filter(|s| !s.is_empty())
+                        .map(|s| format!(" — {}", s))
+                        .unwrap_or_default();
+                    title = format!("Remote: Attach failed{}", suffix);
                     items.push(
-                        PopupListItem::new("    Reopen in Container".to_string())
-                            .with_data("plugin:devcontainer_attach".to_string()),
+                        PopupListItem::new("    Retry".to_string())
+                            .with_data("plugin:devcontainer_retry_attach".to_string()),
                     );
                     items.push(
-                        PopupListItem::new("    Open Dev Container Config".to_string())
-                            .with_data("plugin:devcontainer_open_config".to_string()),
+                        PopupListItem::new("    Reopen Locally".to_string())
+                            .with_data("clear_override".to_string()),
                     );
-                } else {
-                    // No .devcontainer present — offer the scaffold
-                    // so users can bootstrap a config in one click
-                    // without dropping to a shell. The scaffold
-                    // command is plugin-owned and registered
-                    // unconditionally at plugin load, so this row is
-                    // always actionable.
                     items.push(
-                        PopupListItem::new("    Create Dev Container Config".to_string())
-                            .with_data("plugin:devcontainer_scaffold_config".to_string()),
+                        PopupListItem::new("    Show Build Logs (coming soon)".to_string())
+                            .disabled(),
                     );
+                }
+                _ => {
+                    // Fall through to the derived branches.
                 }
             }
         }
+
+        if !override_handled {
+            match (connection.as_deref(), is_disconnected) {
+                // Connected authority (container or SSH), not disconnected.
+                (Some(label), false) => {
+                    title = format!("Remote: {}", label);
+                    if is_container {
+                        items.push(
+                            PopupListItem::new("    Reopen Locally".to_string())
+                                .with_data("detach".to_string()),
+                        );
+                        items.push(
+                            PopupListItem::new("    Rebuild Container".to_string())
+                                .with_data("plugin:devcontainer_rebuild".to_string()),
+                        );
+                        items.push(
+                            PopupListItem::new("    Show Container Logs".to_string())
+                                .with_data("plugin:devcontainer_show_logs".to_string()),
+                        );
+                        items.push(
+                            PopupListItem::new("    Show Container Info".to_string())
+                                .with_data("plugin:devcontainer_show_info".to_string()),
+                        );
+                    } else if is_ssh {
+                        items.push(
+                            PopupListItem::new("    Disconnect Remote".to_string())
+                                .with_data("detach".to_string()),
+                        );
+                    }
+                }
+                // Disconnected — warn and offer fallbacks.
+                (Some(_), true) => {
+                    title = "Remote: Disconnected".to_string();
+                    items.push(
+                        PopupListItem::new("    Go Local".to_string())
+                            .with_data("detach".to_string()),
+                    );
+                }
+                // Local authority.
+                (None, _) => {
+                    title = "Remote: Local".to_string();
+                    if devcontainer_config_path.is_some() {
+                        items.push(
+                            PopupListItem::new("    Reopen in Container".to_string())
+                                .with_data("plugin:devcontainer_attach".to_string()),
+                        );
+                        items.push(
+                            PopupListItem::new("    Open Dev Container Config".to_string())
+                                .with_data("plugin:devcontainer_open_config".to_string()),
+                        );
+                    } else {
+                        // No .devcontainer present — offer the scaffold
+                        // so users can bootstrap a config in one click
+                        // without dropping to a shell. The scaffold
+                        // command is plugin-owned and registered
+                        // unconditionally at plugin load, so this row is
+                        // always actionable.
+                        items.push(
+                            PopupListItem::new("    Create Dev Container Config".to_string())
+                                .with_data("plugin:devcontainer_scaffold_config".to_string()),
+                        );
+                    }
+                }
+            }
+        } // end: if !override_handled
 
         // Dismiss row — mirrors the LSP popup's terminal Dismiss row so
         // users have an on-screen way out of the popup.
@@ -814,14 +877,25 @@ impl Editor {
 
     /// Dispatch the action selected from the Remote Indicator popup.
     ///
-    /// - `"detach"`        — `clear_authority()` (falls back to local).
-    /// - `"plugin:<name>"` — forwards to `Action::PluginAction(name)`.
-    /// - `"cancel_popup"`  — no-op; the popup framework already closed
-    ///                       the popup when the row was confirmed.
-    /// - anything else     — logged and ignored.
+    /// - `"detach"`          — `clear_authority()` (falls back to local).
+    /// - `"clear_override"`   — drop the Remote Indicator override
+    ///                          without changing the authority. Used
+    ///                          by the FailedAttach "Reopen Locally"
+    ///                          row: nothing to detach (no authority
+    ///                          was ever installed), but the
+    ///                          FailedAttach indicator should clear.
+    /// - `"plugin:<name>"`    — forwards to `Action::PluginAction(name)`.
+    /// - `"cancel_popup"`     — no-op; the popup framework already closed
+    ///                          the popup when the row was confirmed.
+    /// - anything else        — logged and ignored.
     pub fn handle_remote_indicator_action(&mut self, action_key: &str) {
         if action_key == "detach" {
+            self.remote_indicator_override = None;
             self.clear_authority();
+            return;
+        }
+        if action_key == "clear_override" {
+            self.remote_indicator_override = None;
             return;
         }
         if action_key == "cancel_popup" {
