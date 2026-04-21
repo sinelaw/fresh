@@ -345,13 +345,97 @@ filesystem).
 
 ---
 
-## Phase A · Small spec alignments (plugin-only)
+## Phase A · Small spec alignments (+ config v2 rollout)
 
-Five low-risk items that don't need new Rust surface. All changes live
-in `crates/fresh-editor/plugins/devcontainer.ts` and
-`crates/fresh-editor/plugins/devcontainer.i18n.json`. Each ships as
-its own commit so the `git log` reads as a checklist of spec-aligning
-fixes.
+Five low-risk plugin-side items that don't need new Rust surface, plus
+one rollout item that makes the `{remote}` indicator visible by
+default. Each ships as its own commit so the `git log` reads as a
+checklist of spec-aligning fixes.
+
+### A-0 · Bump config version to 2; auto-add `{remote}` on migration
+
+**Why.** The `{remote}` status-bar element shipped on this branch is
+opt-in — users only see it if they've listed `"{remote}"` in
+`status_bar.left`. The gap-analysis conversation settled on
+"backwards compatibility is not required; bump the version and inject
+the element on migration." This closes the "invisible to existing
+users" risk for every subsequent phase that drives UI through the
+indicator.
+
+**Files.**
+
+- `crates/fresh-editor/src/config_io.rs`:
+  - `pub const CURRENT_CONFIG_VERSION: u32 = 2;` (currently 1).
+  - New `migrate_v1_to_v2(value)` that:
+    1. Sets `"version": 2` on the root object.
+    2. If `editor.status_bar.left` is present and doesn't already
+       contain `"{remote}"`, inserts it at index 0.
+    3. If `editor.status_bar.left` is absent (i.e. the user never
+       overrode the default), do nothing — the new `Default`
+       already contains `"{remote}"` (see below).
+  - Wire the migration into the existing dispatch:
+    ```rust
+    if version < 2 { value = migrate_v1_to_v2(value)?; }
+    ```
+- `crates/fresh-editor/src/config.rs` — change
+  `default_status_bar_left()` to put `StatusBarElement::RemoteIndicator`
+  at position 0:
+  ```rust
+  fn default_status_bar_left() -> Vec<StatusBarElement> {
+      vec![
+          StatusBarElement::RemoteIndicator,
+          StatusBarElement::Filename,
+          StatusBarElement::Cursor,
+          StatusBarElement::Diagnostics,
+          StatusBarElement::CursorCount,
+          StatusBarElement::Messages,
+      ]
+  }
+  ```
+- `crates/fresh-editor/plugins/config-schema.json` — regenerated via
+  `./scripts/gen_schema.sh` to pick up the new default.
+
+**Tests.**
+
+- Unit test in `config_io.rs` (alongside the existing
+  `migrate_v0_to_v1` tests): given `{"version": 1, "editor":
+  {"status_bar": {"left": ["{filename}"]}}}`, assert the migration
+  produces `{"version": 2, "editor": {"status_bar": {"left":
+  ["{remote}", "{filename}"]}}}`.
+- Unit test: given `{"version": 1}` with no `status_bar` field,
+  assert the migration bumps the version but leaves `left` absent
+  (defaults take over at resolve time).
+- Unit test: given `{"version": 1, "editor": {"status_bar":
+  {"left": ["{remote}", "{filename}"]}}}`, assert the migration
+  doesn't duplicate — the element stays at index 0 unchanged.
+- E2E: create a fresh workspace with no user config, launch Fresh,
+  assert the rendered status bar's first element is the remote
+  indicator ("Local" on launch).
+- E2E: pre-seed `~/.config/fresh/config.json` with a v1 config whose
+  `left` lacks `{remote}`, launch Fresh, assert (a) the in-memory
+  config now has `{remote}` at position 0 and (b) the config file
+  was rewritten with `version: 2`. File rewrite behavior follows
+  whatever the existing v0→v1 migration does — re-use its pattern.
+
+**Regen.** `./scripts/gen_schema.sh` must run — the default for
+`status_bar.left` in `config-schema.json` changes, and
+`CONTRIBUTING.md` guideline 6 requires the regenerated artifact to
+ship with the code change.
+
+**Commit split.** Three commits.
+1. `feat: default_status_bar_left now includes RemoteIndicator` —
+   pure default change plus regenerated schema. Existing tests that
+   check default contents get updated in the same commit.
+2. `feat(config): bump CURRENT_CONFIG_VERSION to 2 with migration
+   injecting {remote}` — the migration function + dispatch line +
+   unit tests.
+3. `test(config): e2e coverage for v1→v2 on-disk migration` — the
+   two e2e tests above. Separated because the e2e tests take longer
+   to run and are easier to review in isolation.
+
+Five plugin-side items follow. All changes live in
+`crates/fresh-editor/plugins/devcontainer.ts` and
+`crates/fresh-editor/plugins/devcontainer.i18n.json`.
 
 ### A-1 · Run `initializeCommand` on the host before `devcontainer up`
 
