@@ -1029,14 +1029,21 @@ function renderPrRows(ctx: DashboardContext, prs: GhPR[]) {
 
         // Whole PR row routes clicks to prUrl (set once on the first
         // action-bearing emit — subsequent emits on the same row would
-        // overwrite with the same value).
+        // overwrite with the same value). Emit the number text and
+        // its padding in two separate spans so the underline (added
+        // to clickable spans by `emit`) lands on the "#1234" text
+        // only — trailing padding spaces stay plain.
         const onClickPr = prUrl ? () => openUrl(prUrl) : undefined;
+        const numPad = " ".repeat(
+            Math.max(0, PR_COL_NUM - visualWidth(num)),
+        );
         ctx.text("    ");
-        ctx.text(pad(num, PR_COL_NUM), {
+        ctx.text(num, {
             color: "number",
             url: prUrl,
             onClick: onClickPr,
         });
+        if (numPad) ctx.text(numPad);
         ctx.text(pad(stateTag, PR_COL_STATE), {
             color: stateColor,
             bold: true,
