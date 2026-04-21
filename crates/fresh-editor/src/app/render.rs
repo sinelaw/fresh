@@ -704,6 +704,7 @@ impl Editor {
                 remote_connection: remote_connection.as_deref(),
                 session_name: session_name.as_deref(),
                 read_only: is_read_only,
+                remote_state_override: self.remote_indicator_override.as_ref(),
             };
             let status_bar_layout = StatusBarRenderer::render_status_bar(
                 frame,

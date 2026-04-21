@@ -84,6 +84,86 @@ pub enum RemoteIndicatorState {
     Disconnected,
 }
 
+/// Plugin-supplied override for the Remote Indicator. Carries both
+/// the state enum and a user-visible label/error text so core doesn't
+/// need to know how to phrase "Connecting..." or a specific failure
+/// string — the plugin owns the copy.
+///
+/// Deserialized from the tagged JSON shape accepted by the
+/// `SetRemoteIndicatorState` plugin op (see `fresh-core::api`). Kept
+/// in the view crate so the enum lives next to the rendering that
+/// consumes it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RemoteIndicatorOverride {
+    /// Force the indicator to "Local" even when the authority would
+    /// otherwise read as Connected. Rarely needed in practice.
+    Local,
+    /// Attach is in flight. `label` is the short text shown next to
+    /// the spinner glyph (e.g. "Building", "Pulling image").
+    Connecting {
+        #[serde(default)]
+        label: Option<String>,
+    },
+    /// Force Connected. `label` overrides the authority's display
+    /// string if present; otherwise the derived label is shown.
+    Connected {
+        #[serde(default)]
+        label: Option<String>,
+    },
+    /// Last attach attempt failed. `error` is the short message the
+    /// indicator renders; longer context belongs in the popup.
+    FailedAttach {
+        #[serde(default)]
+        error: Option<String>,
+    },
+    /// Explicitly disconnected (e.g. plugin detected a container
+    /// stop that the authority doesn't know about yet).
+    Disconnected {
+        #[serde(default)]
+        label: Option<String>,
+    },
+}
+
+impl RemoteIndicatorOverride {
+    /// Project into the Copy enum consumed by `element_style`.
+    pub fn state(&self) -> RemoteIndicatorState {
+        match self {
+            Self::Local => RemoteIndicatorState::Local,
+            Self::Connecting { .. } => RemoteIndicatorState::Connecting,
+            Self::Connected { .. } => RemoteIndicatorState::Connected,
+            Self::FailedAttach { .. } => RemoteIndicatorState::FailedAttach,
+            Self::Disconnected { .. } => RemoteIndicatorState::Disconnected,
+        }
+    }
+
+    /// Short label rendered inside the indicator element. Defaults
+    /// are chosen so an override with no `label`/`error` field still
+    /// displays something sensible.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Local => "Local".to_string(),
+            Self::Connecting { label } => match label {
+                Some(s) if !s.is_empty() => format!("⠿ {}", s),
+                _ => "⠿ Connecting".to_string(),
+            },
+            Self::Connected { label } => label
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Connected")
+                .to_string(),
+            Self::FailedAttach { error } => match error {
+                Some(s) if !s.is_empty() => format!("Attach failed: {}", s),
+                _ => "Attach failed".to_string(),
+            },
+            Self::Disconnected { label } => match label {
+                Some(s) if !s.is_empty() => format!("{} (Disconnected)", s),
+                _ => "Disconnected".to_string(),
+            },
+        }
+    }
+}
+
 /// A single rendered status bar element with its text and styling info.
 struct RenderedElement {
     text: String,
@@ -138,6 +218,13 @@ pub struct StatusBarContext<'a> {
     pub remote_connection: Option<&'a str>,
     pub session_name: Option<&'a str>,
     pub read_only: bool,
+    /// Plugin-supplied override for the `{remote}` indicator. When
+    /// `Some`, its state+label are rendered instead of the one
+    /// derived from `remote_connection`. Set via the
+    /// `SetRemoteIndicatorState` plugin op; cleared by
+    /// `ClearRemoteIndicatorState` or by a `None` pass at the call
+    /// site.
+    pub remote_state_override: Option<&'a RemoteIndicatorOverride>,
 }
 
 /// Layout information returned from status bar rendering for mouse click detection
@@ -818,12 +905,21 @@ impl StatusBarRenderer {
                 // still emit a short label so the indicator is visible —
                 // the spec calls for a persistent control, not one that
                 // vanishes when there is nothing to report.
-                let (text, state) = match ctx.remote_connection {
-                    None => (" Local ".to_string(), RemoteIndicatorState::Local),
-                    Some(conn) if conn.contains("(Disconnected)") => {
-                        (format!(" {} ", conn), RemoteIndicatorState::Disconnected)
+                //
+                // Precedence: plugin-supplied override (via
+                // `SetRemoteIndicatorState`) wins over the authority-
+                // derived state. The override carries its own label;
+                // derived states synthesize one from `remote_connection`.
+                let (text, state) = if let Some(over) = ctx.remote_state_override {
+                    (format!(" {} ", over.label()), over.state())
+                } else {
+                    match ctx.remote_connection {
+                        None => (" Local ".to_string(), RemoteIndicatorState::Local),
+                        Some(conn) if conn.contains("(Disconnected)") => {
+                            (format!(" {} ", conn), RemoteIndicatorState::Disconnected)
+                        }
+                        Some(conn) => (format!(" {} ", conn), RemoteIndicatorState::Connected),
                     }
-                    Some(conn) => (format!(" {} ", conn), RemoteIndicatorState::Connected),
                 };
                 Some(RenderedElement {
                     text,
@@ -1607,5 +1703,106 @@ mod tests {
         // `Default` → `Local` is relied on by callers that construct the
         // indicator before a connection is known.
         assert_eq!(RemoteIndicatorState::default(), RemoteIndicatorState::Local);
+    }
+
+    #[test]
+    fn test_remote_indicator_override_deserializes_kind_tags() {
+        // Pins the wire shape the `SetRemoteIndicatorState` plugin op
+        // accepts. A breaking change here would silently reject plugin
+        // payloads after upgrade.
+        let cases: &[(&str, RemoteIndicatorOverride)] = &[
+            (r#"{"kind":"local"}"#, RemoteIndicatorOverride::Local),
+            (
+                r#"{"kind":"connecting","label":"Building"}"#,
+                RemoteIndicatorOverride::Connecting {
+                    label: Some("Building".into()),
+                },
+            ),
+            (
+                r#"{"kind":"connecting"}"#,
+                RemoteIndicatorOverride::Connecting { label: None },
+            ),
+            (
+                r#"{"kind":"connected","label":"Container:abc"}"#,
+                RemoteIndicatorOverride::Connected {
+                    label: Some("Container:abc".into()),
+                },
+            ),
+            (
+                r#"{"kind":"failed_attach","error":"exit 1"}"#,
+                RemoteIndicatorOverride::FailedAttach {
+                    error: Some("exit 1".into()),
+                },
+            ),
+            (
+                r#"{"kind":"disconnected","label":"Container:abc"}"#,
+                RemoteIndicatorOverride::Disconnected {
+                    label: Some("Container:abc".into()),
+                },
+            ),
+        ];
+        for (json, expected) in cases {
+            let parsed: RemoteIndicatorOverride = serde_json::from_str(json)
+                .unwrap_or_else(|e| panic!("failed to parse {}: {}", json, e));
+            assert_eq!(&parsed, expected, "wire shape mismatch for {}", json);
+        }
+    }
+
+    #[test]
+    fn test_remote_indicator_override_labels() {
+        // Labels surface in the `{remote}` element text directly, so
+        // defaults matter — a missing `label` must still produce
+        // something readable.
+        let connecting = RemoteIndicatorOverride::Connecting { label: None };
+        assert!(
+            connecting.label().contains("Connecting"),
+            "connecting default label should mention Connecting, got {:?}",
+            connecting.label()
+        );
+
+        let connecting_labeled = RemoteIndicatorOverride::Connecting {
+            label: Some("Building".into()),
+        };
+        assert!(
+            connecting_labeled.label().contains("Building"),
+            "labeled connecting should include the label, got {:?}",
+            connecting_labeled.label()
+        );
+
+        let failed_bare = RemoteIndicatorOverride::FailedAttach { error: None };
+        assert_eq!(failed_bare.label(), "Attach failed");
+
+        let failed_detail = RemoteIndicatorOverride::FailedAttach {
+            error: Some("exit 1".into()),
+        };
+        assert!(
+            failed_detail.label().contains("exit 1"),
+            "failed with error should include the error, got {:?}",
+            failed_detail.label()
+        );
+    }
+
+    #[test]
+    fn test_remote_indicator_override_state_projection() {
+        assert_eq!(
+            RemoteIndicatorOverride::Local.state(),
+            RemoteIndicatorState::Local
+        );
+        assert_eq!(
+            RemoteIndicatorOverride::Connecting { label: None }.state(),
+            RemoteIndicatorState::Connecting
+        );
+        assert_eq!(
+            RemoteIndicatorOverride::Connected { label: None }.state(),
+            RemoteIndicatorState::Connected
+        );
+        assert_eq!(
+            RemoteIndicatorOverride::FailedAttach { error: None }.state(),
+            RemoteIndicatorState::FailedAttach
+        );
+        assert_eq!(
+            RemoteIndicatorOverride::Disconnected { label: None }.state(),
+            RemoteIndicatorState::Disconnected
+        );
     }
 }

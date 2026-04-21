@@ -1971,6 +1971,38 @@ pub enum PluginCommand {
     /// restart.
     ClearAuthority,
 
+    /// Override the Remote Indicator's displayed state for the rest
+    /// of the current editor session (until a restart, or until the
+    /// plugin sends another override / `ClearRemoteIndicatorState`).
+    ///
+    /// The derived state — computed from the active authority's
+    /// connection info — keeps running underneath and is what the
+    /// indicator shows whenever an override is not in effect.
+    /// Plugins use this to surface lifecycle states that have no
+    /// authority-level truth yet (e.g. "Connecting" during
+    /// `devcontainer up`, "FailedAttach" after a non-zero exit).
+    ///
+    /// `state` is a tagged enum keyed by `kind`:
+    ///   - `{ "kind": "local" }`
+    ///   - `{ "kind": "connecting", "label": "..." }`
+    ///   - `{ "kind": "connected", "label": "..." }`
+    ///   - `{ "kind": "failed_attach", "error": "..." }`
+    ///   - `{ "kind": "disconnected", "label": "..." }`
+    ///
+    /// The exact schema lives in
+    /// `crates/fresh-editor/src/view/ui/status_bar.rs`; fresh-core
+    /// takes it opaquely so new variants can land without touching
+    /// core plumbing.
+    SetRemoteIndicatorState {
+        #[ts(type = "unknown")]
+        state: JsonValue,
+    },
+
+    /// Drop any active Remote Indicator override and fall back to
+    /// the authority-derived state. Safe to call without a prior
+    /// `SetRemoteIndicatorState`.
+    ClearRemoteIndicatorState,
+
     /// Spawn a process on the host, regardless of the currently
     /// installed authority.
     ///

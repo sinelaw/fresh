@@ -576,6 +576,7 @@ impl Editor {
             fs_manager,
             authority,
             pending_authority: None,
+            remote_indicator_override: None,
             local_filesystem: Arc::new(crate::model::filesystem::StdFileSystem),
             file_explorer_visible: false,
             file_explorer_sync_in_progress: false,

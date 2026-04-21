@@ -503,6 +503,13 @@ pub struct Editor {
     /// the authority over through its own channel.
     pending_authority: Option<crate::services::authority::Authority>,
 
+    /// Plugin-supplied override for the Remote Indicator. Takes
+    /// precedence over the authority-derived state at render time.
+    /// Cleared on editor restart (plugins must reassert the state
+    /// after `setAuthority`). See
+    /// `PluginCommand::SetRemoteIndicatorState`.
+    pub remote_indicator_override: Option<crate::view::ui::status_bar::RemoteIndicatorOverride>,
+
     /// Local filesystem for editor-internal files (log files, status
     /// log). Stays separate from `authority` because these are the
     /// editor's own private state — they live on the host disk

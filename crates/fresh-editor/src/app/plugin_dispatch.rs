@@ -892,6 +892,27 @@ impl Editor {
                 self.clear_authority();
             }
 
+            PluginCommand::SetRemoteIndicatorState { state } => {
+                // Opaque JSON at the fresh-core boundary; the concrete
+                // schema (RemoteIndicatorOverride) lives in the view
+                // crate so core stays ignorant of per-state labels.
+                match serde_json::from_value::<crate::view::ui::status_bar::RemoteIndicatorOverride>(
+                    state,
+                ) {
+                    Ok(over) => {
+                        self.remote_indicator_override = Some(over);
+                    }
+                    Err(e) => {
+                        tracing::warn!("setRemoteIndicatorState: invalid payload: {}", e);
+                        self.set_status_message(format!("setRemoteIndicatorState rejected: {}", e));
+                    }
+                }
+            }
+
+            PluginCommand::ClearRemoteIndicatorState => {
+                self.remote_indicator_override = None;
+            }
+
             PluginCommand::SpawnProcessWait {
                 process_id,
                 callback_id,
