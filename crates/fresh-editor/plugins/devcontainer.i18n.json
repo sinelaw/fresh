@@ -59,7 +59,14 @@
     "cmd.scaffold_config_desc": "Create a minimal .devcontainer/devcontainer.json in the workspace",
     "status.scaffold_already_exists": "Dev Container config already exists",
     "status.scaffold_created": "Created .devcontainer/devcontainer.json",
-    "status.scaffold_failed": "Failed to create Dev Container config"
+    "status.scaffold_failed": "Failed to create Dev Container config",
+    "cmd.show_logs": "Dev Container: Show Logs",
+    "cmd.show_logs_desc": "Show the attached container's recent stdout/stderr via docker logs",
+    "status.logs_require_container": "Show Logs requires an attached Dev Container",
+    "status.logs_docker_missing": "docker CLI not found on host",
+    "status.logs_loading": "Loading container logs...",
+    "status.logs_shown": "Container logs shown",
+    "status.logs_empty": "(container has produced no output)"
   },
   "cs": {
     "cmd.show_info": "Dev Container: Zobrazit info",
@@ -121,7 +128,14 @@
     "cmd.scaffold_config_desc": "Vytvořit minimální .devcontainer/devcontainer.json v pracovním prostoru",
     "status.scaffold_already_exists": "Konfigurace Dev Containeru již existuje",
     "status.scaffold_created": "Vytvořeno .devcontainer/devcontainer.json",
-    "status.scaffold_failed": "Nepodařilo se vytvořit konfiguraci Dev Containeru"
+    "status.scaffold_failed": "Nepodařilo se vytvořit konfiguraci Dev Containeru",
+    "cmd.show_logs": "Dev Container: Zobrazit logy",
+    "cmd.show_logs_desc": "Zobrazit poslední stdout/stderr připojeného kontejneru přes docker logs",
+    "status.logs_require_container": "Zobrazení logů vyžaduje připojený Dev Container",
+    "status.logs_docker_missing": "docker CLI nebylo nalezeno na hostiteli",
+    "status.logs_loading": "Načítám logy kontejneru...",
+    "status.logs_shown": "Logy kontejneru zobrazeny",
+    "status.logs_empty": "(kontejner neprodukoval žádný výstup)"
   },
   "de": {
     "cmd.show_info": "Dev Container: Info anzeigen",
@@ -183,7 +197,14 @@
     "cmd.scaffold_config_desc": "Minimale .devcontainer/devcontainer.json im Workspace erstellen",
     "status.scaffold_already_exists": "Dev-Container-Konfiguration existiert bereits",
     "status.scaffold_created": ".devcontainer/devcontainer.json erstellt",
-    "status.scaffold_failed": "Dev-Container-Konfiguration konnte nicht erstellt werden"
+    "status.scaffold_failed": "Dev-Container-Konfiguration konnte nicht erstellt werden",
+    "cmd.show_logs": "Dev Container: Logs anzeigen",
+    "cmd.show_logs_desc": "Kürzliche stdout/stderr des angehängten Containers via docker logs anzeigen",
+    "status.logs_require_container": "Logs anzeigen erfordert einen angehängten Dev Container",
+    "status.logs_docker_missing": "docker CLI auf dem Host nicht gefunden",
+    "status.logs_loading": "Container-Logs werden geladen...",
+    "status.logs_shown": "Container-Logs angezeigt",
+    "status.logs_empty": "(Container hat keine Ausgabe produziert)"
   },
   "es": {
     "cmd.show_info": "Dev Container: Mostrar Info",
@@ -245,7 +266,14 @@
     "cmd.scaffold_config_desc": "Crear un .devcontainer/devcontainer.json mínimo en el workspace",
     "status.scaffold_already_exists": "La configuración del Dev Container ya existe",
     "status.scaffold_created": ".devcontainer/devcontainer.json creado",
-    "status.scaffold_failed": "No se pudo crear la configuración del Dev Container"
+    "status.scaffold_failed": "No se pudo crear la configuración del Dev Container",
+    "cmd.show_logs": "Dev Container: Mostrar logs",
+    "cmd.show_logs_desc": "Mostrar stdout/stderr reciente del contenedor adjunto vía docker logs",
+    "status.logs_require_container": "Mostrar logs requiere un Dev Container adjunto",
+    "status.logs_docker_missing": "CLI docker no encontrado en el host",
+    "status.logs_loading": "Cargando logs del contenedor...",
+    "status.logs_shown": "Logs del contenedor mostrados",
+    "status.logs_empty": "(el contenedor no ha producido salida)"
   },
   "fr": {
     "cmd.show_info": "Dev Container: Afficher les infos",
@@ -307,7 +335,14 @@
     "cmd.scaffold_config_desc": "Créer un .devcontainer/devcontainer.json minimal dans l'espace de travail",
     "status.scaffold_already_exists": "La configuration Dev Container existe déjà",
     "status.scaffold_created": ".devcontainer/devcontainer.json créé",
-    "status.scaffold_failed": "Échec de la création de la configuration Dev Container"
+    "status.scaffold_failed": "Échec de la création de la configuration Dev Container",
+    "cmd.show_logs": "Dev Container: Afficher les logs",
+    "cmd.show_logs_desc": "Afficher les stdout/stderr récents du conteneur attaché via docker logs",
+    "status.logs_require_container": "Afficher les logs nécessite un Dev Container attaché",
+    "status.logs_docker_missing": "CLI docker introuvable sur l'hôte",
+    "status.logs_loading": "Chargement des logs du conteneur...",
+    "status.logs_shown": "Logs du conteneur affichés",
+    "status.logs_empty": "(le conteneur n'a produit aucune sortie)"
   },
   "ja": {
     "cmd.show_info": "Dev Container: 情報を表示",
@@ -369,7 +404,14 @@
     "cmd.scaffold_config_desc": "ワークスペースに最小の .devcontainer/devcontainer.json を作成",
     "status.scaffold_already_exists": "Dev Container設定は既に存在します",
     "status.scaffold_created": ".devcontainer/devcontainer.json を作成しました",
-    "status.scaffold_failed": "Dev Container設定の作成に失敗しました"
+    "status.scaffold_failed": "Dev Container設定の作成に失敗しました",
+    "cmd.show_logs": "Dev Container: ログを表示",
+    "cmd.show_logs_desc": "docker logs 経由で接続中のコンテナの最近のstdout/stderrを表示",
+    "status.logs_require_container": "ログ表示には接続中のDev Containerが必要です",
+    "status.logs_docker_missing": "ホストに docker CLI が見つかりません",
+    "status.logs_loading": "コンテナログを読み込み中...",
+    "status.logs_shown": "コンテナログを表示しました",
+    "status.logs_empty": "（コンテナは出力を生成していません）"
   },
   "ko": {
     "cmd.show_info": "Dev Container: 정보 표시",
@@ -431,7 +473,14 @@
     "cmd.scaffold_config_desc": "작업 공간에 최소한의 .devcontainer/devcontainer.json 생성",
     "status.scaffold_already_exists": "Dev Container 설정이 이미 있습니다",
     "status.scaffold_created": ".devcontainer/devcontainer.json 생성됨",
-    "status.scaffold_failed": "Dev Container 설정 생성 실패"
+    "status.scaffold_failed": "Dev Container 설정 생성 실패",
+    "cmd.show_logs": "Dev Container: 로그 표시",
+    "cmd.show_logs_desc": "docker logs를 통해 연결된 컨테이너의 최근 stdout/stderr 표시",
+    "status.logs_require_container": "로그 표시에는 연결된 Dev Container가 필요합니다",
+    "status.logs_docker_missing": "호스트에서 docker CLI를 찾을 수 없습니다",
+    "status.logs_loading": "컨테이너 로그 불러오는 중...",
+    "status.logs_shown": "컨테이너 로그 표시됨",
+    "status.logs_empty": "(컨테이너가 출력을 생성하지 않음)"
   },
   "zh-CN": {
     "cmd.show_info": "Dev Container: 显示信息",
@@ -493,7 +542,14 @@
     "cmd.scaffold_config_desc": "在工作区中创建最小的 .devcontainer/devcontainer.json",
     "status.scaffold_already_exists": "Dev Container 配置已存在",
     "status.scaffold_created": "已创建 .devcontainer/devcontainer.json",
-    "status.scaffold_failed": "创建 Dev Container 配置失败"
+    "status.scaffold_failed": "创建 Dev Container 配置失败",
+    "cmd.show_logs": "Dev Container: 显示日志",
+    "cmd.show_logs_desc": "通过 docker logs 显示已附加容器的近期 stdout/stderr",
+    "status.logs_require_container": "显示日志需要已附加的 Dev Container",
+    "status.logs_docker_missing": "主机上未找到 docker CLI",
+    "status.logs_loading": "正在加载容器日志...",
+    "status.logs_shown": "已显示容器日志",
+    "status.logs_empty": "（容器没有产生输出）"
   },
   "it": {
     "cmd.show_info": "Dev Container: Mostra info",
@@ -555,7 +611,14 @@
     "cmd.scaffold_config_desc": "Crea un .devcontainer/devcontainer.json minimale nel workspace",
     "status.scaffold_already_exists": "La configurazione Dev Container esiste già",
     "status.scaffold_created": ".devcontainer/devcontainer.json creato",
-    "status.scaffold_failed": "Creazione della configurazione Dev Container fallita"
+    "status.scaffold_failed": "Creazione della configurazione Dev Container fallita",
+    "cmd.show_logs": "Dev Container: Mostra log",
+    "cmd.show_logs_desc": "Mostra lo stdout/stderr recente del container collegato tramite docker logs",
+    "status.logs_require_container": "Mostra log richiede un Dev Container collegato",
+    "status.logs_docker_missing": "CLI docker non trovato sull'host",
+    "status.logs_loading": "Caricamento log del container...",
+    "status.logs_shown": "Log del container mostrati",
+    "status.logs_empty": "(il container non ha prodotto output)"
   },
   "pt-BR": {
     "cmd.show_info": "Dev Container: Mostrar informacoes",
@@ -617,7 +680,14 @@
     "cmd.scaffold_config_desc": "Criar um .devcontainer/devcontainer.json mínimo no workspace",
     "status.scaffold_already_exists": "Configuração do Dev Container já existe",
     "status.scaffold_created": ".devcontainer/devcontainer.json criado",
-    "status.scaffold_failed": "Falha ao criar configuração do Dev Container"
+    "status.scaffold_failed": "Falha ao criar configuração do Dev Container",
+    "cmd.show_logs": "Dev Container: Mostrar logs",
+    "cmd.show_logs_desc": "Mostrar stdout/stderr recente do contêiner anexado via docker logs",
+    "status.logs_require_container": "Mostrar logs requer um Dev Container anexado",
+    "status.logs_docker_missing": "CLI docker não encontrado no host",
+    "status.logs_loading": "Carregando logs do contêiner...",
+    "status.logs_shown": "Logs do contêiner exibidos",
+    "status.logs_empty": "(o contêiner não produziu saída)"
   },
   "ru": {
     "cmd.show_info": "Dev Container: Показать информацию",
@@ -679,7 +749,14 @@
     "cmd.scaffold_config_desc": "Создать минимальный .devcontainer/devcontainer.json в рабочей области",
     "status.scaffold_already_exists": "Конфигурация Dev Container уже существует",
     "status.scaffold_created": ".devcontainer/devcontainer.json создан",
-    "status.scaffold_failed": "Не удалось создать конфигурацию Dev Container"
+    "status.scaffold_failed": "Не удалось создать конфигурацию Dev Container",
+    "cmd.show_logs": "Dev Container: Показать логи",
+    "cmd.show_logs_desc": "Показать последние stdout/stderr подключённого контейнера через docker logs",
+    "status.logs_require_container": "Для показа логов требуется подключённый Dev Container",
+    "status.logs_docker_missing": "CLI docker не найден на хосте",
+    "status.logs_loading": "Загрузка логов контейнера...",
+    "status.logs_shown": "Логи контейнера показаны",
+    "status.logs_empty": "(контейнер не произвёл вывода)"
   },
   "th": {
     "cmd.show_info": "Dev Container: แสดงข้อมูล",
@@ -741,7 +818,14 @@
     "cmd.scaffold_config_desc": "สร้าง .devcontainer/devcontainer.json ขั้นต่ำในเวิร์กสเปซ",
     "status.scaffold_already_exists": "การตั้งค่า Dev Container มีอยู่แล้ว",
     "status.scaffold_created": "สร้าง .devcontainer/devcontainer.json แล้ว",
-    "status.scaffold_failed": "สร้างการตั้งค่า Dev Container ไม่สำเร็จ"
+    "status.scaffold_failed": "สร้างการตั้งค่า Dev Container ไม่สำเร็จ",
+    "cmd.show_logs": "Dev Container: แสดงล็อก",
+    "cmd.show_logs_desc": "แสดง stdout/stderr ล่าสุดของคอนเทนเนอร์ที่แนบผ่าน docker logs",
+    "status.logs_require_container": "การแสดงล็อกต้องการ Dev Container ที่แนบอยู่",
+    "status.logs_docker_missing": "ไม่พบ CLI docker บนโฮสต์",
+    "status.logs_loading": "กำลังโหลดล็อกคอนเทนเนอร์...",
+    "status.logs_shown": "แสดงล็อกคอนเทนเนอร์แล้ว",
+    "status.logs_empty": "(คอนเทนเนอร์ไม่ได้สร้างเอาต์พุต)"
   },
   "uk": {
     "cmd.show_info": "Dev Container: Показати інформацію",
@@ -803,7 +887,14 @@
     "cmd.scaffold_config_desc": "Створити мінімальний .devcontainer/devcontainer.json у робочій області",
     "status.scaffold_already_exists": "Конфігурація Dev Container вже існує",
     "status.scaffold_created": ".devcontainer/devcontainer.json створено",
-    "status.scaffold_failed": "Не вдалося створити конфігурацію Dev Container"
+    "status.scaffold_failed": "Не вдалося створити конфігурацію Dev Container",
+    "cmd.show_logs": "Dev Container: Показати логи",
+    "cmd.show_logs_desc": "Показати останні stdout/stderr підключеного контейнера через docker logs",
+    "status.logs_require_container": "Для показу логів потрібен підключений Dev Container",
+    "status.logs_docker_missing": "CLI docker не знайдено на хості",
+    "status.logs_loading": "Завантаження логів контейнера...",
+    "status.logs_shown": "Логи контейнера показано",
+    "status.logs_empty": "(контейнер не створив вивід)"
   },
   "vi": {
     "cmd.show_info": "Dev Container: Hiển thị thông tin",
@@ -865,6 +956,13 @@
     "cmd.scaffold_config_desc": "Tạo .devcontainer/devcontainer.json tối thiểu trong workspace",
     "status.scaffold_already_exists": "Cấu hình Dev Container đã tồn tại",
     "status.scaffold_created": "Đã tạo .devcontainer/devcontainer.json",
-    "status.scaffold_failed": "Tạo cấu hình Dev Container thất bại"
+    "status.scaffold_failed": "Tạo cấu hình Dev Container thất bại",
+    "cmd.show_logs": "Dev Container: Hiện nhật ký",
+    "cmd.show_logs_desc": "Hiện stdout/stderr gần đây của container được gắn qua docker logs",
+    "status.logs_require_container": "Hiện nhật ký cần một Dev Container được gắn",
+    "status.logs_docker_missing": "CLI docker không tìm thấy trên host",
+    "status.logs_loading": "Đang tải nhật ký container...",
+    "status.logs_shown": "Đã hiện nhật ký container",
+    "status.logs_empty": "(container chưa tạo đầu ra)"
   }
 }

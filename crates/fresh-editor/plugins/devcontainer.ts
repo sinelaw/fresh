@@ -1011,6 +1011,75 @@ async function devcontainer_detach(): Promise<void> {
 }
 registerHandler("devcontainer_detach", devcontainer_detach);
 
+/// Show a one-shot snapshot of the attached container's stdout/stderr
+/// via `docker logs --tail 1000 <id>`. The log is rendered into a
+/// read-only virtual buffer split; closing the split discards the
+/// snapshot (re-run the command for a refresh).
+///
+/// Host-side by design: we talk to the `docker` CLI from outside the
+/// container so this works even when the container is mid-reboot or
+/// has no shell. The container id comes from the active authority's
+/// display label ("Container:<shortid>") rather than re-parsing the
+/// `devcontainer up` JSON — plugins own the authority surface, core
+/// owns the label.
+async function devcontainer_show_logs(): Promise<void> {
+  const authorityLabel = editor.getAuthorityLabel();
+  const prefix = "Container:";
+  if (!authorityLabel.startsWith(prefix)) {
+    editor.setStatus(editor.t("status.logs_require_container"));
+    return;
+  }
+  const containerId = authorityLabel.slice(prefix.length);
+  if (containerId.length === 0) {
+    editor.setStatus(editor.t("status.logs_require_container"));
+    return;
+  }
+
+  const which = await editor.spawnHostProcess("which", ["docker"]);
+  if (which.exit_code !== 0) {
+    editor.setStatus(editor.t("status.logs_docker_missing"));
+    return;
+  }
+
+  editor.setStatus(editor.t("status.logs_loading"));
+  const res = await editor.spawnHostProcess(
+    "docker",
+    ["logs", "--tail", "1000", containerId],
+    editor.getCwd(),
+  );
+
+  // `docker logs` emits container stdout on our stdout and container
+  // stderr on our stderr — merge them with a leading marker so the
+  // user can tell them apart in the buffer.
+  const mergedParts: string[] = [];
+  if (res.stdout.length > 0) {
+    mergedParts.push(res.stdout);
+  }
+  if (res.stderr.length > 0) {
+    mergedParts.push("--- stderr ---\n" + res.stderr);
+  }
+  const merged = mergedParts.join("\n").length > 0
+    ? mergedParts.join("\n")
+    : editor.t("status.logs_empty");
+
+  const result = await editor.createVirtualBufferInSplit({
+    name: "*Dev Container Logs*",
+    mode: "devcontainer-info",
+    readOnly: true,
+    showLineNumbers: false,
+    showCursors: true,
+    editingDisabled: true,
+    lineWrap: true,
+    ratio: 0.4,
+    direction: "horizontal",
+    entries: [{ text: merged, properties: { type: "log" } }],
+  });
+  if (result !== null) {
+    editor.setStatus(editor.t("status.logs_shown"));
+  }
+}
+registerHandler("devcontainer_show_logs", devcontainer_show_logs);
+
 // =============================================================================
 // Scaffold
 // =============================================================================
@@ -1182,6 +1251,12 @@ function registerCommands(): void {
     "%cmd.detach",
     "%cmd.detach_desc",
     "devcontainer_detach",
+    null,
+  );
+  editor.registerCommand(
+    "%cmd.show_logs",
+    "%cmd.show_logs_desc",
+    "devcontainer_show_logs",
     null,
   );
 }
