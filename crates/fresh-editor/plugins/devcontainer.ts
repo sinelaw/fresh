@@ -1012,6 +1012,66 @@ async function devcontainer_detach(): Promise<void> {
 registerHandler("devcontainer_detach", devcontainer_detach);
 
 // =============================================================================
+// Scaffold
+// =============================================================================
+
+/// Write a minimal `.devcontainer/devcontainer.json` when the workspace
+/// doesn't have one yet, and open it for editing. The template is
+/// deliberately conservative — the user picks an image and tweaks
+/// lifecycle hooks from there. Matches the spec's "Configure Dev
+/// Container" entry for the Local branch of the Remote Indicator
+/// popup.
+function devcontainer_scaffold_config(): void {
+  const cwd = editor.getCwd();
+  const dcDir = editor.pathJoin(cwd, ".devcontainer");
+  const configFile = editor.pathJoin(dcDir, "devcontainer.json");
+
+  // Respect an existing config — always a safer default than
+  // overwriting. The user can call `devcontainer_open_config` if they
+  // just meant to edit it.
+  if (editor.fileExists(configFile)) {
+    editor.setStatus(editor.t("status.scaffold_already_exists"));
+    editor.openFile(configFile, null, null);
+    return;
+  }
+
+  if (!editor.createDir(dcDir)) {
+    editor.setStatus(editor.t("status.scaffold_failed"));
+    return;
+  }
+
+  const workspaceName = cwd.split("/").filter(Boolean).pop() ?? "workspace";
+  const template =
+    JSON.stringify(
+      {
+        name: workspaceName,
+        image: "mcr.microsoft.com/devcontainers/base:ubuntu",
+      },
+      null,
+      2,
+    ) + "\n";
+
+  if (!editor.writeFile(configFile, template)) {
+    editor.setStatus(editor.t("status.scaffold_failed"));
+    return;
+  }
+
+  // Refresh the in-memory config so a subsequent "Reopen in Container"
+  // uses the new file without requiring a plugin reload.
+  try {
+    config = editor.parseJsonc(template) as DevContainerConfig;
+    configPath = configFile;
+    registerCommands();
+  } catch (e) {
+    editor.debug("devcontainer: scaffold parse failed: " + String(e));
+  }
+
+  editor.setStatus(editor.t("status.scaffold_created"));
+  editor.openFile(configFile, null, null);
+}
+registerHandler("devcontainer_scaffold_config", devcontainer_scaffold_config);
+
+// =============================================================================
 // One-shot attach prompt
 // =============================================================================
 //
@@ -1129,6 +1189,17 @@ function registerCommands(): void {
 // =============================================================================
 // Initialization
 // =============================================================================
+
+// The scaffold command is the only palette entry that makes sense
+// without a detected config — it's how the user creates one. Register
+// unconditionally so "Dev Container: Create Config" is reachable from
+// a cold workspace.
+editor.registerCommand(
+  "%cmd.scaffold_config",
+  "%cmd.scaffold_config_desc",
+  "devcontainer_scaffold_config",
+  null,
+);
 
 if (findConfig()) {
   registerCommands();

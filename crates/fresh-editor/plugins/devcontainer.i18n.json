@@ -54,7 +54,12 @@
     "panel.section_users": "Users",
     "panel.section_lifecycle": "Lifecycle Commands",
     "panel.section_host_req": "Host Requirements",
-    "panel.footer": "Tab: cycle buttons  Enter: activate  Alt+r: run  Alt+o: open  Alt+b: rebuild  q: close"
+    "panel.footer": "Tab: cycle buttons  Enter: activate  Alt+r: run  Alt+o: open  Alt+b: rebuild  q: close",
+    "cmd.scaffold_config": "Dev Container: Create Config",
+    "cmd.scaffold_config_desc": "Create a minimal .devcontainer/devcontainer.json in the workspace",
+    "status.scaffold_already_exists": "Dev Container config already exists",
+    "status.scaffold_created": "Created .devcontainer/devcontainer.json",
+    "status.scaffold_failed": "Failed to create Dev Container config"
   },
   "cs": {
     "cmd.show_info": "Dev Container: Zobrazit info",
@@ -111,7 +116,12 @@
     "panel.section_users": "Uzivatele",
     "panel.section_lifecycle": "Lifecycle prikazy",
     "panel.section_host_req": "Pozadavky na hostitele",
-    "panel.footer": "Tab: prepnout  Enter: aktivovat  Alt+r: lifecycle  Alt+o: otevrit  Alt+b: sestavit  q: zavrit"
+    "panel.footer": "Tab: prepnout  Enter: aktivovat  Alt+r: lifecycle  Alt+o: otevrit  Alt+b: sestavit  q: zavrit",
+    "cmd.scaffold_config": "Dev Container: Vytvořit konfiguraci",
+    "cmd.scaffold_config_desc": "Vytvořit minimální .devcontainer/devcontainer.json v pracovním prostoru",
+    "status.scaffold_already_exists": "Konfigurace Dev Containeru již existuje",
+    "status.scaffold_created": "Vytvořeno .devcontainer/devcontainer.json",
+    "status.scaffold_failed": "Nepodařilo se vytvořit konfiguraci Dev Containeru"
   },
   "de": {
     "cmd.show_info": "Dev Container: Info anzeigen",
@@ -168,7 +178,12 @@
     "panel.section_users": "Benutzer",
     "panel.section_lifecycle": "Lifecycle-Befehle",
     "panel.section_host_req": "Hostanforderungen",
-    "panel.footer": "Tab: Wechseln  Enter: Aktivieren  Alt+r: Lifecycle  Alt+o: Oeffnen  Alt+b: Erstellen  q: Schliessen"
+    "panel.footer": "Tab: Wechseln  Enter: Aktivieren  Alt+r: Lifecycle  Alt+o: Oeffnen  Alt+b: Erstellen  q: Schliessen",
+    "cmd.scaffold_config": "Dev Container: Konfiguration erstellen",
+    "cmd.scaffold_config_desc": "Minimale .devcontainer/devcontainer.json im Workspace erstellen",
+    "status.scaffold_already_exists": "Dev-Container-Konfiguration existiert bereits",
+    "status.scaffold_created": ".devcontainer/devcontainer.json erstellt",
+    "status.scaffold_failed": "Dev-Container-Konfiguration konnte nicht erstellt werden"
   },
   "es": {
     "cmd.show_info": "Dev Container: Mostrar Info",
@@ -225,7 +240,12 @@
     "panel.section_users": "Usuarios",
     "panel.section_lifecycle": "Comandos Lifecycle",
     "panel.section_host_req": "Requisitos del Host",
-    "panel.footer": "Tab: ciclar  Enter: activar  Alt+r: lifecycle  Alt+o: abrir  Alt+b: reconstruir  q: cerrar"
+    "panel.footer": "Tab: ciclar  Enter: activar  Alt+r: lifecycle  Alt+o: abrir  Alt+b: reconstruir  q: cerrar",
+    "cmd.scaffold_config": "Dev Container: Crear configuración",
+    "cmd.scaffold_config_desc": "Crear un .devcontainer/devcontainer.json mínimo en el workspace",
+    "status.scaffold_already_exists": "La configuración del Dev Container ya existe",
+    "status.scaffold_created": ".devcontainer/devcontainer.json creado",
+    "status.scaffold_failed": "No se pudo crear la configuración del Dev Container"
   },
   "fr": {
     "cmd.show_info": "Dev Container: Afficher les infos",
@@ -282,7 +302,12 @@
     "panel.section_users": "Utilisateurs",
     "panel.section_lifecycle": "Commandes Lifecycle",
     "panel.section_host_req": "Exigences de l'hote",
-    "panel.footer": "Tab: cycler  Enter: activer  Alt+r: lifecycle  Alt+o: ouvrir  Alt+b: reconstruire  q: fermer"
+    "panel.footer": "Tab: cycler  Enter: activer  Alt+r: lifecycle  Alt+o: ouvrir  Alt+b: reconstruire  q: fermer",
+    "cmd.scaffold_config": "Dev Container: Créer la configuration",
+    "cmd.scaffold_config_desc": "Créer un .devcontainer/devcontainer.json minimal dans l'espace de travail",
+    "status.scaffold_already_exists": "La configuration Dev Container existe déjà",
+    "status.scaffold_created": ".devcontainer/devcontainer.json créé",
+    "status.scaffold_failed": "Échec de la création de la configuration Dev Container"
   },
   "ja": {
     "cmd.show_info": "Dev Container: 情報を表示",
@@ -339,7 +364,12 @@
     "panel.section_users": "ユーザー",
     "panel.section_lifecycle": "ライフサイクルコマンド",
     "panel.section_host_req": "ホスト要件",
-    "panel.footer": "Tab: 切替  Enter: 実行  Alt+r: ライフサイクル  Alt+o: 設定  Alt+b: リビルド  q: 閉じる"
+    "panel.footer": "Tab: 切替  Enter: 実行  Alt+r: ライフサイクル  Alt+o: 設定  Alt+b: リビルド  q: 閉じる",
+    "cmd.scaffold_config": "Dev Container: 設定を作成",
+    "cmd.scaffold_config_desc": "ワークスペースに最小の .devcontainer/devcontainer.json を作成",
+    "status.scaffold_already_exists": "Dev Container設定は既に存在します",
+    "status.scaffold_created": ".devcontainer/devcontainer.json を作成しました",
+    "status.scaffold_failed": "Dev Container設定の作成に失敗しました"
   },
   "ko": {
     "cmd.show_info": "Dev Container: 정보 표시",
@@ -396,7 +426,12 @@
     "panel.section_users": "사용자",
     "panel.section_lifecycle": "라이프사이클 명령",
     "panel.section_host_req": "호스트 요구사항",
-    "panel.footer": "Tab: 전환  Enter: 실행  Alt+r: 라이프사이클  Alt+o: 설정  Alt+b: 재빌드  q: 닫기"
+    "panel.footer": "Tab: 전환  Enter: 실행  Alt+r: 라이프사이클  Alt+o: 설정  Alt+b: 재빌드  q: 닫기",
+    "cmd.scaffold_config": "Dev Container: 설정 만들기",
+    "cmd.scaffold_config_desc": "작업 공간에 최소한의 .devcontainer/devcontainer.json 생성",
+    "status.scaffold_already_exists": "Dev Container 설정이 이미 있습니다",
+    "status.scaffold_created": ".devcontainer/devcontainer.json 생성됨",
+    "status.scaffold_failed": "Dev Container 설정 생성 실패"
   },
   "zh-CN": {
     "cmd.show_info": "Dev Container: 显示信息",
@@ -453,7 +488,12 @@
     "panel.section_users": "用户",
     "panel.section_lifecycle": "生命周期命令",
     "panel.section_host_req": "主机要求",
-    "panel.footer": "Tab: 切换  Enter: 执行  Alt+r: 生命周期  Alt+o: 打开  Alt+b: 重建  q: 关闭"
+    "panel.footer": "Tab: 切换  Enter: 执行  Alt+r: 生命周期  Alt+o: 打开  Alt+b: 重建  q: 关闭",
+    "cmd.scaffold_config": "Dev Container: 创建配置",
+    "cmd.scaffold_config_desc": "在工作区中创建最小的 .devcontainer/devcontainer.json",
+    "status.scaffold_already_exists": "Dev Container 配置已存在",
+    "status.scaffold_created": "已创建 .devcontainer/devcontainer.json",
+    "status.scaffold_failed": "创建 Dev Container 配置失败"
   },
   "it": {
     "cmd.show_info": "Dev Container: Mostra info",
@@ -510,7 +550,12 @@
     "panel.section_users": "Utenti",
     "panel.section_lifecycle": "Comandi Lifecycle",
     "panel.section_host_req": "Requisiti host",
-    "panel.footer": "Tab: cicla  Enter: attiva  Alt+r: lifecycle  Alt+o: apri  Alt+b: ricompila  q: chiudi"
+    "panel.footer": "Tab: cicla  Enter: attiva  Alt+r: lifecycle  Alt+o: apri  Alt+b: ricompila  q: chiudi",
+    "cmd.scaffold_config": "Dev Container: Crea configurazione",
+    "cmd.scaffold_config_desc": "Crea un .devcontainer/devcontainer.json minimale nel workspace",
+    "status.scaffold_already_exists": "La configurazione Dev Container esiste già",
+    "status.scaffold_created": ".devcontainer/devcontainer.json creato",
+    "status.scaffold_failed": "Creazione della configurazione Dev Container fallita"
   },
   "pt-BR": {
     "cmd.show_info": "Dev Container: Mostrar informacoes",
@@ -567,7 +612,12 @@
     "panel.section_users": "Usuarios",
     "panel.section_lifecycle": "Comandos Lifecycle",
     "panel.section_host_req": "Requisitos do host",
-    "panel.footer": "Tab: ciclar  Enter: ativar  Alt+r: lifecycle  Alt+o: abrir  Alt+b: reconstruir  q: fechar"
+    "panel.footer": "Tab: ciclar  Enter: ativar  Alt+r: lifecycle  Alt+o: abrir  Alt+b: reconstruir  q: fechar",
+    "cmd.scaffold_config": "Dev Container: Criar configuração",
+    "cmd.scaffold_config_desc": "Criar um .devcontainer/devcontainer.json mínimo no workspace",
+    "status.scaffold_already_exists": "Configuração do Dev Container já existe",
+    "status.scaffold_created": ".devcontainer/devcontainer.json criado",
+    "status.scaffold_failed": "Falha ao criar configuração do Dev Container"
   },
   "ru": {
     "cmd.show_info": "Dev Container: Показать информацию",
@@ -624,7 +674,12 @@
     "panel.section_users": "Пользователи",
     "panel.section_lifecycle": "Lifecycle-команды",
     "panel.section_host_req": "Требования к хосту",
-    "panel.footer": "Tab: цикл  Enter: активировать  Alt+r: lifecycle  Alt+o: открыть  Alt+b: пересобрать  q: закрыть"
+    "panel.footer": "Tab: цикл  Enter: активировать  Alt+r: lifecycle  Alt+o: открыть  Alt+b: пересобрать  q: закрыть",
+    "cmd.scaffold_config": "Dev Container: Создать конфигурацию",
+    "cmd.scaffold_config_desc": "Создать минимальный .devcontainer/devcontainer.json в рабочей области",
+    "status.scaffold_already_exists": "Конфигурация Dev Container уже существует",
+    "status.scaffold_created": ".devcontainer/devcontainer.json создан",
+    "status.scaffold_failed": "Не удалось создать конфигурацию Dev Container"
   },
   "th": {
     "cmd.show_info": "Dev Container: แสดงข้อมูล",
@@ -681,7 +736,12 @@
     "panel.section_users": "ผู้ใช้",
     "panel.section_lifecycle": "คำสั่ง Lifecycle",
     "panel.section_host_req": "ข้อกำหนดโฮสต์",
-    "panel.footer": "Tab: สลับ  Enter: เปิดใช้งาน  Alt+r: lifecycle  Alt+o: เปิด  Alt+b: สร้างใหม่  q: ปิด"
+    "panel.footer": "Tab: สลับ  Enter: เปิดใช้งาน  Alt+r: lifecycle  Alt+o: เปิด  Alt+b: สร้างใหม่  q: ปิด",
+    "cmd.scaffold_config": "Dev Container: สร้างการตั้งค่า",
+    "cmd.scaffold_config_desc": "สร้าง .devcontainer/devcontainer.json ขั้นต่ำในเวิร์กสเปซ",
+    "status.scaffold_already_exists": "การตั้งค่า Dev Container มีอยู่แล้ว",
+    "status.scaffold_created": "สร้าง .devcontainer/devcontainer.json แล้ว",
+    "status.scaffold_failed": "สร้างการตั้งค่า Dev Container ไม่สำเร็จ"
   },
   "uk": {
     "cmd.show_info": "Dev Container: Показати інформацію",
@@ -738,7 +798,12 @@
     "panel.section_users": "Користувачі",
     "panel.section_lifecycle": "Lifecycle-команди",
     "panel.section_host_req": "Вимоги до хоста",
-    "panel.footer": "Tab: цикл  Enter: активувати  Alt+r: lifecycle  Alt+o: відкрити  Alt+b: перебудувати  q: закрити"
+    "panel.footer": "Tab: цикл  Enter: активувати  Alt+r: lifecycle  Alt+o: відкрити  Alt+b: перебудувати  q: закрити",
+    "cmd.scaffold_config": "Dev Container: Створити конфігурацію",
+    "cmd.scaffold_config_desc": "Створити мінімальний .devcontainer/devcontainer.json у робочій області",
+    "status.scaffold_already_exists": "Конфігурація Dev Container вже існує",
+    "status.scaffold_created": ".devcontainer/devcontainer.json створено",
+    "status.scaffold_failed": "Не вдалося створити конфігурацію Dev Container"
   },
   "vi": {
     "cmd.show_info": "Dev Container: Hiển thị thông tin",
@@ -795,6 +860,11 @@
     "panel.section_users": "Người dùng",
     "panel.section_lifecycle": "Lệnh Lifecycle",
     "panel.section_host_req": "Yêu cầu máy chủ",
-    "panel.footer": "Tab: chuyển  Enter: kích hoạt  Alt+r: lifecycle  Alt+o: mở  Alt+b: xây dựng lại  q: đóng"
+    "panel.footer": "Tab: chuyển  Enter: kích hoạt  Alt+r: lifecycle  Alt+o: mở  Alt+b: xây dựng lại  q: đóng",
+    "cmd.scaffold_config": "Dev Container: Tạo cấu hình",
+    "cmd.scaffold_config_desc": "Tạo .devcontainer/devcontainer.json tối thiểu trong workspace",
+    "status.scaffold_already_exists": "Cấu hình Dev Container đã tồn tại",
+    "status.scaffold_created": "Đã tạo .devcontainer/devcontainer.json",
+    "status.scaffold_failed": "Tạo cấu hình Dev Container thất bại"
   }
 }
