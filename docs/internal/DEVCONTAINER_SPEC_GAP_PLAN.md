@@ -740,3 +740,112 @@ the Remote Indicator popup's previously-stubbed rows all dispatch to
 real handlers. The §4 and §8 gaps are fully closed. The only
 remaining spec items are §7 (customizations + ports), which Phase E
 picks up.
+
+---
+
+## Phase E · Customizations and port forwarding
+
+The final phase covers what §7 ("Ready State") asks of a container-
+active editor beyond launching shells at the right cwd. Two separate
+concerns land here; they are sequenced but do not depend on each
+other.
+
+### E-1 · `customizations.fresh.plugins` namespace
+
+**Why.** Gap analysis §7. The spec calls out
+`customizations.vscode.extensions`; VS Code extensions don't apply to
+Fresh (different plugin model), but the *shape* of the feature is
+worth mirroring under a Fresh-specific namespace.
+
+**Design.** The plugin reads
+`config.customizations?.fresh?.plugins` as `string[]`. Each entry is
+a plugin file path relative to the workspace root, or a built-in
+plugin name. After attach, the devcontainer plugin iterates and
+invokes `editor.loadPlugin(path)` for each. Paths go through
+`authority.filesystem` so they resolve inside the container on the
+container authority (where the plugin files presumably live).
+
+**Files.**
+
+- `crates/fresh-editor/plugins/devcontainer.ts`:
+  - On `plugins_loaded` when the active authority carries a
+    `Container:` label, read `config.customizations?.fresh?.plugins`
+    and call `editor.loadPlugin(path)` per entry.
+  - Entries already loaded (by path) are skipped with an `editor.debug`
+    message — this avoids double-load after a reconnect.
+- No Rust code change required. `editor.loadPlugin` already exists
+  per the existing pattern used by the init-script loader.
+
+**Tests.** E2E: fixture workspace with
+`.devcontainer/devcontainer.json` containing
+`customizations.fresh.plugins = ["./my-test-plugin.ts"]`, and a
+sibling `my-test-plugin.ts` that registers a command with a
+distinctive name. Trigger attach (with the fake CLI that succeeds),
+semantic-wait on the new command appearing in the palette.
+
+**Commit split.** One commit.
+
+### E-2 · Document the namespace
+
+**Why.** `customizations.fresh.*` is now a supported extension point;
+plugin authors need to discover it.
+
+**Files.**
+
+- `docs/internal/DEVCONTAINER_PLUGIN_DESIGN.md` — add a
+  "Customizations" section describing the `fresh.plugins` array,
+  noting that paths resolve through the container's filesystem and
+  listing what `vscode.extensions` does **not** do (install VS Code
+  extensions).
+- `README.md` for the devcontainer plugin (if one exists; otherwise
+  skip).
+
+**Commit split.** One commit, `docs:`-prefixed.
+
+### E-3 · Port forwarding visibility
+
+**Why.** Gap analysis §7. Phase A's A-5 merges configured
+`forwardPorts` with `docker port <id>` output in the palette picker;
+E-3 extends that to a standalone status view.
+
+**Files.**
+
+- `crates/fresh-editor/plugins/devcontainer.ts`:
+  - New handler `devcontainer_show_forwarded_ports_panel` that opens
+    a virtual buffer `*Dev Container Ports*` tabulating:
+    - `forwardPorts` entries (configured)
+    - `portsAttributes` labels / protocols / `onAutoForward` policy
+    - runtime `docker port <id>` binding output
+  - Columns: `Configured | Protocol | Label | Runtime binding`.
+  - Refresh button (`r` keybinding within the panel, following the
+    info-panel button-row pattern already in `devcontainer.ts`).
+- Register a palette command `Dev Container: Show Forwarded Ports`
+  (distinct from the picker-style `Show Ports` already registered —
+  this one opens the full panel).
+
+**Tests.** E2E: attach via fake CLI, trigger the panel, assert rows
+for each configured port with the expected runtime binding string
+(the fake `docker port` shim scripts the output).
+
+**Commit split.** One commit.
+
+### E-4 · (Deferred by design) auto-forward detection
+
+The spec asks to "Detect any ports opened by the containerized
+application and offer to forward them to localhost." Per the gap
+analysis scope boundary, Fresh does not watch container-side
+listeners. Users see what's configured and what Docker actually bound
+via E-3; anything further would require a `docker exec <id> ss -tln`
+loop that the terminal editor shouldn't run unbidden.
+
+If demand for this appears post-launch, the cleanest add-on would be
+a one-off palette command `Dev Container: Scan for Listening Ports`
+that runs `ss -tln` inside the container and offers to add each new
+entry to the panel — triggered, not continuous.
+
+### Phase E acceptance
+
+With E-1..E-3 merged: `customizations.fresh.plugins` is a documented
+extension point, port forwarding has a dedicated live panel, and
+Phase A's picker still works for quick lookups. All §7 spec items
+within the declared scope are implemented.
