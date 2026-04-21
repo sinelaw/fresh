@@ -161,6 +161,7 @@ pub enum Language {
     Cpp,
     Go,
     Json,
+    Jsonc,
     Java,
     CSharp,
     Php,
@@ -366,6 +367,27 @@ impl Language {
                 #[cfg(not(feature = "tree-sitter-json"))]
                 Err("JSON language support not enabled".to_string())
             }
+            Self::Jsonc => {
+                // JSONC (JSON with Comments) reuses the tree-sitter-json parser.
+                // A dedicated JSONC grammar isn't published as a Rust crate; the
+                // JSON parser recovers past comments and trailing commas well
+                // enough for highlighting, which is the only consumer here.
+                #[cfg(feature = "tree-sitter-json")]
+                {
+                    let mut config = HighlightConfiguration::new(
+                        tree_sitter_json::LANGUAGE.into(),
+                        "jsonc",
+                        tree_sitter_json::HIGHLIGHTS_QUERY,
+                        "",
+                        "",
+                    )
+                    .map_err(|e| format!("Failed to create JSONC highlight config: {e}"))?;
+                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
+                    Ok(config)
+                }
+                #[cfg(not(feature = "tree-sitter-json"))]
+                Err("JSONC language support not enabled".to_string())
+            }
             Self::Java => {
                 #[cfg(feature = "tree-sitter-java")]
                 {
@@ -528,6 +550,7 @@ impl Language {
             Language::Cpp,
             Language::Go,
             Language::Json,
+            Language::Jsonc,
             Language::Java,
             Language::CSharp,
             Language::Php,
@@ -552,6 +575,7 @@ impl Language {
             Self::Cpp => "cpp",
             Self::Go => "go",
             Self::Json => "json",
+            Self::Jsonc => "jsonc",
             Self::Java => "java",
             Self::CSharp => "csharp",
             Self::Php => "php",
@@ -596,6 +620,7 @@ impl Language {
             Self::Cpp => &["cpp", "hpp", "cc", "hh", "cxx", "hxx", "cppm", "ixx"],
             Self::Go => &["go"],
             Self::Json => &["json"],
+            Self::Jsonc => &["jsonc"],
             Self::Java => &["java"],
             Self::CSharp => &["cs"],
             Self::Php => &["php"],
@@ -620,6 +645,7 @@ impl Language {
             Self::Cpp => "C++",
             Self::Go => "Go",
             Self::Json => "JSON",
+            Self::Jsonc => "JSON with Comments",
             Self::Java => "Java",
             Self::CSharp => "C#",
             Self::Php => "PHP",
@@ -645,6 +671,7 @@ impl Language {
             "cpp" | "c++" => Some(Self::Cpp),
             "go" => Some(Self::Go),
             "json" => Some(Self::Json),
+            "jsonc" => Some(Self::Jsonc),
             "java" => Some(Self::Java),
             "c_sharp" | "c#" | "csharp" => Some(Self::CSharp),
             "php" => Some(Self::Php),
@@ -686,6 +713,7 @@ impl Language {
             "c++" => Some(Self::Cpp),
             "go" | "golang" => Some(Self::Go),
             "json" => Some(Self::Json),
+            "jsonc" | "json with comments" => Some(Self::Jsonc),
             "java" => Some(Self::Java),
             "c#" => Some(Self::CSharp),
             "php" => Some(Self::Php),

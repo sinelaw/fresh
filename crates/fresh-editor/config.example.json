@@ -237,12 +237,43 @@
     },
     "json": {
       "extensions": [
-        "json",
-        "jsonc"
+        "json"
       ],
       "filenames": [],
       "grammar": "json",
       "comment_prefix": null,
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true,
+      "use_tabs": false
+    },
+    "jsonc": {
+      "extensions": [
+        "jsonc"
+      ],
+      "filenames": [
+        "devcontainer.json",
+        ".devcontainer.json",
+        "tsconfig.json",
+        "tsconfig.*.json",
+        "jsconfig.json",
+        "jsconfig.*.json",
+        ".eslintrc.json",
+        ".babelrc",
+        ".babelrc.json",
+        ".swcrc",
+        ".jshintrc",
+        ".hintrc",
+        "settings.json",
+        "keybindings.json",
+        "tasks.json",
+        "launch.json",
+        "extensions.json",
+        "argv.json"
+      ],
+      "grammar": "jsonc",
+      "comment_prefix": "//",
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
@@ -460,6 +491,20 @@
       "initialization_options": null
     },
     "json": {
+      "command": "vscode-json-languageserver",
+      "args": [
+        "--stdio"
+      ],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "jsonc": {
       "command": "vscode-json-languageserver",
       "args": [
         "--stdio"

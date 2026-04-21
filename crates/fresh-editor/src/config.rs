@@ -3442,10 +3442,65 @@ impl Config {
         languages.insert(
             "json".to_string(),
             LanguageConfig {
-                extensions: vec!["json".to_string(), "jsonc".to_string()],
+                extensions: vec!["json".to_string()],
                 filenames: vec![],
                 grammar: "json".to_string(),
                 comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: Some(FormatterConfig {
+                    command: "prettier".to_string(),
+                    args: vec!["--stdin-filepath".to_string(), "$FILE".to_string()],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+            },
+        );
+
+        // JSONC — JSON with Comments. Shares the tree-sitter-json parser (via
+        // the `jsonc` grammar alias in `fresh-languages`) but keeps a separate
+        // language id so the `vscode-json-language-server` receives the
+        // correct `languageId` and well-known JSONC filenames like
+        // `devcontainer.json` and `tsconfig.json` route here instead of to
+        // strict JSON.
+        languages.insert(
+            "jsonc".to_string(),
+            LanguageConfig {
+                extensions: vec!["jsonc".to_string()],
+                filenames: vec![
+                    "devcontainer.json".to_string(),
+                    ".devcontainer.json".to_string(),
+                    "tsconfig.json".to_string(),
+                    "tsconfig.*.json".to_string(),
+                    "jsconfig.json".to_string(),
+                    "jsconfig.*.json".to_string(),
+                    ".eslintrc.json".to_string(),
+                    ".babelrc".to_string(),
+                    ".babelrc.json".to_string(),
+                    ".swcrc".to_string(),
+                    ".jshintrc".to_string(),
+                    ".hintrc".to_string(),
+                    "settings.json".to_string(),
+                    "keybindings.json".to_string(),
+                    "tasks.json".to_string(),
+                    "launch.json".to_string(),
+                    "extensions.json".to_string(),
+                    "argv.json".to_string(),
+                ],
+                grammar: "jsonc".to_string(),
+                comment_prefix: Some("//".to_string()),
                 auto_indent: true,
                 auto_close: None,
                 auto_surround: None,
@@ -5233,6 +5288,27 @@ impl Config {
         // vscode-json-language-server (installed via npm install -g vscode-langservers-extracted)
         lsp.insert(
             "json".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "vscode-json-language-server".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // Same server handles JSONC — the vscode-json-language-server accepts
+        // the `jsonc` languageId and enables comment/trailing-comma tolerance
+        // plus schema associations for well-known files.
+        lsp.insert(
+            "jsonc".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "vscode-json-language-server".to_string(),
                 args: vec!["--stdio".to_string()],

@@ -125,6 +125,11 @@ impl IndentCalculator {
                 fresh_languages::tree_sitter_json::LANGUAGE.into(),
                 include_str!("../../queries/json/indents.scm"),
             ),
+            Language::Jsonc => (
+                "jsonc",
+                fresh_languages::tree_sitter_json::LANGUAGE.into(),
+                include_str!("../../queries/json/indents.scm"),
+            ),
             Language::Ruby => (
                 "ruby",
                 fresh_languages::tree_sitter_ruby::LANGUAGE.into(),
