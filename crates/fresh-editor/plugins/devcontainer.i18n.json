@@ -66,7 +66,12 @@
     "status.logs_docker_missing": "docker CLI not found on host",
     "status.logs_loading": "Loading container logs...",
     "status.logs_shown": "Container logs shown",
-    "status.logs_empty": "(container has produced no output)"
+    "status.logs_empty": "(container has produced no output)",
+    "indicator.phase_initialize": "Initializing",
+    "indicator.phase_build": "Building",
+    "indicator.error_initialize": "initializeCommand failed",
+    "status.rebuild_parse_failed": "could not parse devcontainer up output",
+    "status.rebuild_missing_container_id": "missing containerId"
   },
   "cs": {
     "cmd.show_info": "Dev Container: Zobrazit info",
@@ -135,7 +140,12 @@
     "status.logs_docker_missing": "docker CLI nebylo nalezeno na hostiteli",
     "status.logs_loading": "Načítám logy kontejneru...",
     "status.logs_shown": "Logy kontejneru zobrazeny",
-    "status.logs_empty": "(kontejner neprodukoval žádný výstup)"
+    "status.logs_empty": "(kontejner neprodukoval žádný výstup)",
+    "indicator.phase_initialize": "Inicializace",
+    "indicator.phase_build": "Sestavování",
+    "indicator.error_initialize": "initializeCommand selhal",
+    "status.rebuild_parse_failed": "nelze zpracovat výstup devcontainer up",
+    "status.rebuild_missing_container_id": "chybí containerId"
   },
   "de": {
     "cmd.show_info": "Dev Container: Info anzeigen",
@@ -204,7 +214,12 @@
     "status.logs_docker_missing": "docker CLI auf dem Host nicht gefunden",
     "status.logs_loading": "Container-Logs werden geladen...",
     "status.logs_shown": "Container-Logs angezeigt",
-    "status.logs_empty": "(Container hat keine Ausgabe produziert)"
+    "status.logs_empty": "(Container hat keine Ausgabe produziert)",
+    "indicator.phase_initialize": "Initialisieren",
+    "indicator.phase_build": "Erstellen",
+    "indicator.error_initialize": "initializeCommand fehlgeschlagen",
+    "status.rebuild_parse_failed": "Ausgabe von devcontainer up konnte nicht analysiert werden",
+    "status.rebuild_missing_container_id": "containerId fehlt"
   },
   "es": {
     "cmd.show_info": "Dev Container: Mostrar Info",
@@ -273,7 +288,12 @@
     "status.logs_docker_missing": "CLI docker no encontrado en el host",
     "status.logs_loading": "Cargando logs del contenedor...",
     "status.logs_shown": "Logs del contenedor mostrados",
-    "status.logs_empty": "(el contenedor no ha producido salida)"
+    "status.logs_empty": "(el contenedor no ha producido salida)",
+    "indicator.phase_initialize": "Inicializando",
+    "indicator.phase_build": "Construyendo",
+    "indicator.error_initialize": "initializeCommand falló",
+    "status.rebuild_parse_failed": "no se pudo analizar la salida de devcontainer up",
+    "status.rebuild_missing_container_id": "falta containerId"
   },
   "fr": {
     "cmd.show_info": "Dev Container: Afficher les infos",
@@ -342,7 +362,12 @@
     "status.logs_docker_missing": "CLI docker introuvable sur l'hôte",
     "status.logs_loading": "Chargement des logs du conteneur...",
     "status.logs_shown": "Logs du conteneur affichés",
-    "status.logs_empty": "(le conteneur n'a produit aucune sortie)"
+    "status.logs_empty": "(le conteneur n'a produit aucune sortie)",
+    "indicator.phase_initialize": "Initialisation",
+    "indicator.phase_build": "Construction",
+    "indicator.error_initialize": "initializeCommand a échoué",
+    "status.rebuild_parse_failed": "impossible d'analyser la sortie de devcontainer up",
+    "status.rebuild_missing_container_id": "containerId manquant"
   },
   "ja": {
     "cmd.show_info": "Dev Container: 情報を表示",
@@ -411,7 +436,12 @@
     "status.logs_docker_missing": "ホストに docker CLI が見つかりません",
     "status.logs_loading": "コンテナログを読み込み中...",
     "status.logs_shown": "コンテナログを表示しました",
-    "status.logs_empty": "（コンテナは出力を生成していません）"
+    "status.logs_empty": "（コンテナは出力を生成していません）",
+    "indicator.phase_initialize": "初期化中",
+    "indicator.phase_build": "ビルド中",
+    "indicator.error_initialize": "initializeCommand が失敗しました",
+    "status.rebuild_parse_failed": "devcontainer up の出力を解析できませんでした",
+    "status.rebuild_missing_container_id": "containerId がありません"
   },
   "ko": {
     "cmd.show_info": "Dev Container: 정보 표시",
@@ -480,7 +510,12 @@
     "status.logs_docker_missing": "호스트에서 docker CLI를 찾을 수 없습니다",
     "status.logs_loading": "컨테이너 로그 불러오는 중...",
     "status.logs_shown": "컨테이너 로그 표시됨",
-    "status.logs_empty": "(컨테이너가 출력을 생성하지 않음)"
+    "status.logs_empty": "(컨테이너가 출력을 생성하지 않음)",
+    "indicator.phase_initialize": "초기화 중",
+    "indicator.phase_build": "빌드 중",
+    "indicator.error_initialize": "initializeCommand 실패",
+    "status.rebuild_parse_failed": "devcontainer up 출력을 파싱할 수 없음",
+    "status.rebuild_missing_container_id": "containerId 누락"
   },
   "zh-CN": {
     "cmd.show_info": "Dev Container: 显示信息",
@@ -549,7 +584,12 @@
     "status.logs_docker_missing": "主机上未找到 docker CLI",
     "status.logs_loading": "正在加载容器日志...",
     "status.logs_shown": "已显示容器日志",
-    "status.logs_empty": "（容器没有产生输出）"
+    "status.logs_empty": "（容器没有产生输出）",
+    "indicator.phase_initialize": "正在初始化",
+    "indicator.phase_build": "正在构建",
+    "indicator.error_initialize": "initializeCommand 失败",
+    "status.rebuild_parse_failed": "无法解析 devcontainer up 的输出",
+    "status.rebuild_missing_container_id": "缺少 containerId"
   },
   "it": {
     "cmd.show_info": "Dev Container: Mostra info",
@@ -618,7 +658,12 @@
     "status.logs_docker_missing": "CLI docker non trovato sull'host",
     "status.logs_loading": "Caricamento log del container...",
     "status.logs_shown": "Log del container mostrati",
-    "status.logs_empty": "(il container non ha prodotto output)"
+    "status.logs_empty": "(il container non ha prodotto output)",
+    "indicator.phase_initialize": "Inizializzazione",
+    "indicator.phase_build": "Compilazione",
+    "indicator.error_initialize": "initializeCommand fallito",
+    "status.rebuild_parse_failed": "impossibile analizzare l'output di devcontainer up",
+    "status.rebuild_missing_container_id": "containerId mancante"
   },
   "pt-BR": {
     "cmd.show_info": "Dev Container: Mostrar informacoes",
@@ -687,7 +732,12 @@
     "status.logs_docker_missing": "CLI docker não encontrado no host",
     "status.logs_loading": "Carregando logs do contêiner...",
     "status.logs_shown": "Logs do contêiner exibidos",
-    "status.logs_empty": "(o contêiner não produziu saída)"
+    "status.logs_empty": "(o contêiner não produziu saída)",
+    "indicator.phase_initialize": "Inicializando",
+    "indicator.phase_build": "Construindo",
+    "indicator.error_initialize": "initializeCommand falhou",
+    "status.rebuild_parse_failed": "não foi possível analisar a saída do devcontainer up",
+    "status.rebuild_missing_container_id": "containerId ausente"
   },
   "ru": {
     "cmd.show_info": "Dev Container: Показать информацию",
@@ -756,7 +806,12 @@
     "status.logs_docker_missing": "CLI docker не найден на хосте",
     "status.logs_loading": "Загрузка логов контейнера...",
     "status.logs_shown": "Логи контейнера показаны",
-    "status.logs_empty": "(контейнер не произвёл вывода)"
+    "status.logs_empty": "(контейнер не произвёл вывода)",
+    "indicator.phase_initialize": "Инициализация",
+    "indicator.phase_build": "Сборка",
+    "indicator.error_initialize": "initializeCommand завершился с ошибкой",
+    "status.rebuild_parse_failed": "не удалось разобрать вывод devcontainer up",
+    "status.rebuild_missing_container_id": "отсутствует containerId"
   },
   "th": {
     "cmd.show_info": "Dev Container: แสดงข้อมูล",
@@ -825,7 +880,12 @@
     "status.logs_docker_missing": "ไม่พบ CLI docker บนโฮสต์",
     "status.logs_loading": "กำลังโหลดล็อกคอนเทนเนอร์...",
     "status.logs_shown": "แสดงล็อกคอนเทนเนอร์แล้ว",
-    "status.logs_empty": "(คอนเทนเนอร์ไม่ได้สร้างเอาต์พุต)"
+    "status.logs_empty": "(คอนเทนเนอร์ไม่ได้สร้างเอาต์พุต)",
+    "indicator.phase_initialize": "กำลังเริ่มต้น",
+    "indicator.phase_build": "กำลังสร้าง",
+    "indicator.error_initialize": "initializeCommand ล้มเหลว",
+    "status.rebuild_parse_failed": "ไม่สามารถแยกวิเคราะห์เอาต์พุตของ devcontainer up",
+    "status.rebuild_missing_container_id": "ขาด containerId"
   },
   "uk": {
     "cmd.show_info": "Dev Container: Показати інформацію",
@@ -894,7 +954,12 @@
     "status.logs_docker_missing": "CLI docker не знайдено на хості",
     "status.logs_loading": "Завантаження логів контейнера...",
     "status.logs_shown": "Логи контейнера показано",
-    "status.logs_empty": "(контейнер не створив вивід)"
+    "status.logs_empty": "(контейнер не створив вивід)",
+    "indicator.phase_initialize": "Ініціалізація",
+    "indicator.phase_build": "Збирання",
+    "indicator.error_initialize": "initializeCommand завершився з помилкою",
+    "status.rebuild_parse_failed": "не вдалося розібрати вивід devcontainer up",
+    "status.rebuild_missing_container_id": "відсутній containerId"
   },
   "vi": {
     "cmd.show_info": "Dev Container: Hiển thị thông tin",
@@ -963,6 +1028,11 @@
     "status.logs_docker_missing": "CLI docker không tìm thấy trên host",
     "status.logs_loading": "Đang tải nhật ký container...",
     "status.logs_shown": "Đã hiện nhật ký container",
-    "status.logs_empty": "(container chưa tạo đầu ra)"
+    "status.logs_empty": "(container chưa tạo đầu ra)",
+    "indicator.phase_initialize": "Đang khởi tạo",
+    "indicator.phase_build": "Đang xây dựng",
+    "indicator.error_initialize": "initializeCommand thất bại",
+    "status.rebuild_parse_failed": "không thể phân tích đầu ra của devcontainer up",
+    "status.rebuild_missing_container_id": "thiếu containerId"
   }
 }

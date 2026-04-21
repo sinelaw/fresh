@@ -1016,36 +1016,61 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
     return;
   }
 
+  // The Remote Indicator goes into "Connecting · <phase>" for the
+  // duration of the attach so users see progress; cleared (or
+  // replaced with FailedAttach) by the explicit transitions below.
+  editor.setRemoteIndicatorState({
+    kind: "connecting",
+    label: editor.t("indicator.phase_initialize"),
+  });
+
   // initializeCommand runs on the host BEFORE `devcontainer up`, per
   // spec. Bail the attach if it fails; the user shouldn't get an
   // attached container after their host-side prologue errored.
   if (!(await runInitializeCommand())) {
+    editor.setRemoteIndicatorState({
+      kind: "failed_attach",
+      error: editor.t("indicator.error_initialize"),
+    });
     return;
   }
 
+  editor.setRemoteIndicatorState({
+    kind: "connecting",
+    label: editor.t("indicator.phase_build"),
+  });
   editor.setStatus(editor.t("status.rebuilding"));
   const args = ["up", "--workspace-folder", cwd, ...extraArgs];
   const result = await editor.spawnHostProcess("devcontainer", args);
   if (result.exit_code !== 0) {
-    editor.setStatus(
-      editor.t("status.rebuild_failed", { error: result.stderr.trim() || "unknown" }),
-    );
+    const errText = result.stderr.trim() || "unknown";
+    editor.setStatus(editor.t("status.rebuild_failed", { error: errText }));
+    editor.setRemoteIndicatorState({
+      kind: "failed_attach",
+      error: errText,
+    });
     return;
   }
 
   const parsed = parseDevcontainerUpOutput(result.stdout);
   if (!parsed || parsed.outcome !== "success" || !parsed.containerId) {
-    editor.setStatus(
-      editor.t("status.rebuild_failed", { error: "could not parse devcontainer up output" }),
-    );
+    const errText = editor.t("status.rebuild_parse_failed");
+    editor.setStatus(editor.t("status.rebuild_failed", { error: errText }));
+    editor.setRemoteIndicatorState({
+      kind: "failed_attach",
+      error: errText,
+    });
     return;
   }
 
   const payload = buildContainerAuthorityPayload(parsed);
   if (!payload) {
-    editor.setStatus(
-      editor.t("status.rebuild_failed", { error: "missing containerId" }),
-    );
+    const errText = editor.t("status.rebuild_missing_container_id");
+    editor.setStatus(editor.t("status.rebuild_failed", { error: errText }));
+    editor.setRemoteIndicatorState({
+      kind: "failed_attach",
+      error: errText,
+    });
     return;
   }
 
