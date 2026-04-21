@@ -340,7 +340,17 @@ impl Editor {
             // not underlined).  Swap the "not running" label for a more
             // actionable "binary not found" when we can see up-front that
             // a start attempt would fail — this is the user-visible half
-            // of the pre-click probe.
+            // of the pre-click probe. The `binary_missing` signal comes
+            // from the authority-routed `command_exists` (L-3c), so the
+            // "not installed" copy says where it actually isn't: in the
+            // container for container authorities, on the host
+            // otherwise.
+            let authority_is_container = self.authority().display_label.starts_with("Container:");
+            let missing_label = if authority_is_container {
+                "not installed in container"
+            } else {
+                "binary not in PATH"
+            };
             let (icon, label) = match status {
                 Some(LspServerStatus::Running) => ("●", "ready"),
                 Some(LspServerStatus::Error) => ("✗", "error"),
@@ -348,7 +358,7 @@ impl Editor {
                 Some(LspServerStatus::Initializing) => ("◌", "initializing"),
                 Some(LspServerStatus::Shutdown) | None => {
                     if binary_missing {
-                        ("○", "binary not in PATH")
+                        ("○", missing_label)
                     } else {
                         ("○", "not running")
                     }
@@ -400,16 +410,17 @@ impl Editor {
             } else if binary_missing {
                 // Show a disabled advisory row instead of an actionable
                 // "Start" — clicking Start here would spawn, fail, and
-                // noise up the status area.  The per-language
-                // Install/Dismiss actions are added once at the end of
-                // the popup, below.
-                items.push(
-                    crate::view::popup::PopupListItem::new(format!(
-                        "    Install {} to enable",
-                        name
-                    ))
-                    .disabled(),
-                );
+                // noise up the status area. Copy shifts with the
+                // authority so the user is pointed at the right
+                // install surface: `devcontainer.json`'s
+                // `postCreateCommand` for containers, the host's
+                // package manager otherwise.
+                let advisory = if authority_is_container {
+                    format!("    Install {name} in container (postCreateCommand)")
+                } else {
+                    format!("    Install {name} to enable")
+                };
+                items.push(crate::view::popup::PopupListItem::new(advisory).disabled());
             } else {
                 // Two sibling rows for a dormant server, in the
                 // order the user most likely wants:
