@@ -849,3 +849,129 @@ With E-1..E-3 merged: `customizations.fresh.plugins` is a documented
 extension point, port forwarding has a dedicated live panel, and
 Phase A's picker still works for quick lookups. All §7 spec items
 within the declared scope are implemented.
+
+---
+
+## Open questions — decide before starting each phase
+
+These are not blockers but decisions that should land before the
+first commit of the phase they gate. Recorded here so the reviewer
+and implementer can align up front.
+
+### Q-A1 · `initializeCommand` run direction for SSH authorities
+
+The spec says `initializeCommand` runs on the host. Fresh's
+`spawnHostProcess` currently means "local machine" regardless of
+authority — correct for plain local attach, wrong for an SSH
+authority that discovered a `devcontainer.json` on the remote and
+wants to attach to a container on that same remote. The first
+version (Phase A) should just run it via `spawnHostProcess`
+(host-local) and accept the SSH-nested-container edge case as a
+known limitation; revisit if we ever grow that workflow.
+
+### Q-B2 · Should `setRemoteIndicatorState` be idempotent-within-a-tick?
+
+If the plugin calls `setRemoteIndicatorState` three times in one
+event loop tick, the first two are overwritten before any render.
+This is fine functionally but means test harness semantic waits on
+intermediate states can miss them. Options:
+
+1. Keep the naive "last writer wins" — simplest, matches every other
+   plugin op.
+2. Queue state transitions so each renders at least once.
+
+Recommendation: option 1. Tests that need to observe intermediate
+states should drive timing with `editor.awaitRenderTick()` (a plugin
+API we don't have yet — if this recommendation doesn't hold up, add
+that op rather than complicate the state machine).
+
+### Q-B3 · Recovery heuristic after unclean shutdown
+
+Phase B-3 says "on plugin load, check for a pending Connecting
+marker; if found and no authority is active, transition to
+FailedAttach." But the marker could also survive a deliberate crash,
+an OOM kill, a `SIGKILL` from the user. How long should a stale
+marker linger before we assume it's unreachable?
+
+Proposal: timestamp the marker; if older than 30 minutes on load,
+quietly clear without surfacing FailedAttach. 30 minutes is a guess
+— adjust based on feedback.
+
+### Q-C1 · Line-buffering vs. raw-byte streaming
+
+Phase C-1 assumes line-delimited events. `devcontainer up` emits
+JSON, which is one line at the end but may include progress updates
+on earlier lines that are reasonable to surface. If a plugin wants
+raw bytes (e.g. a future LSP log streamer), this API won't serve it.
+
+Decision: line-delimited is fine for every current use case and is
+the shape every existing log-streaming API in terminal editors uses.
+If raw-byte arrives as a need, add a second variant
+`SpawnHostProcessStreamingRaw` alongside — don't change C-1's
+shape.
+
+### Q-C2 · Kill signal semantics
+
+`Child::kill()` sends SIGKILL on Unix. `devcontainer up` may own
+child `docker` processes that SIGKILL leaks. We can address this
+later with process-group handling; the initial Phase C cut accepts
+possibly-leaked children, with a log line noting the limitation.
+
+### Q-D1 · Buffer vs. terminal for build output
+
+Fresh has virtual buffers and integrated terminals. Terminals can
+render ANSI color codes; buffers cannot. `devcontainer up` emits
+color when its stdout is a TTY. We have three options:
+
+1. **Virtual buffer, strip ANSI** (simplest; loses color).
+2. **Virtual buffer, translate ANSI to overlays** (most work; color
+   preserved).
+3. **Embedded terminal with the streaming output piped in** (uses
+   existing TTY infra; more plumbing at the plugin boundary).
+
+Recommendation: option 1 for Phase D. Revisit if users complain
+about lost color context. This matches the existing info-panel
+pattern which is also a colored-via-overlay virtual buffer.
+
+### Q-E1 · Plugin load scope for `customizations.fresh.plugins`
+
+If a plugin listed in `customizations` depends on an npm package
+installed by `onCreateCommand`, the plugin file may reference symbols
+that don't exist until the lifecycle hook has run. Phase E-1 runs
+plugin loads after `plugins_loaded`, which fires after authority
+install — but the first run through the state machine may load them
+before `onCreateCommand` output is observable. Any load failure
+becomes a silent log line today.
+
+Proposal: surface load failures via the same action-popup mechanism
+as attach failures. Deferred to a follow-up PR post-E-3.
+
+---
+
+## Summary table
+
+| Phase | Scope | Gap items closed | New plugin API | Lines of Rust added (est.) |
+|-------|-------|------------------|----------------|-----------------------------|
+| Pre | 3 cleanups | — | none | ~20 |
+| A | Plugin-only spec alignment | §1 (partial), §2, §6, §7 (partial) | none | ~30 (scaffold-row wiring) |
+| B | Indicator state machine | §3, §4 (visibility), §8 (display) | `setRemoteIndicatorState` | ~200 |
+| C | Streaming host spawn + cancel | §4 (logs/cancel) | `spawnHostProcessStreaming`, `killHostProcess` | ~250 |
+| D | Build-log buffer + retry popup | §4 (logs shown), §8 (retry) | `appendVirtualBuffer` (conditional) | ~50 |
+| E | Customizations + ports panel | §7 | none | ~0 (pure plugin) |
+
+Each row's estimate is a rough ballpark for review-planning purposes;
+actual numbers will emerge from the PRs.
+
+---
+
+## Closing
+
+Pre-work + five phases close every in-scope spec gap identified in
+`DEVCONTAINER_SPEC_GAP_ANALYSIS.md`. The plan respects Fresh's
+architectural principles (authority opacity, one-slot transition,
+plugin-owned backend lifecycle) and lines up with `CONTRIBUTING.md`
+commit, test, and regeneration discipline throughout. Each phase can
+stand on its own: if Phase C is cancelled after Phase B, the Remote
+Indicator still works as a visible-but-non-cancellable state
+machine, which is strictly more useful than today's always-Local
+display.
