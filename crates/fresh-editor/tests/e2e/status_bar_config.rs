@@ -160,7 +160,10 @@ fn test_compact_cursor_format() {
 #[test]
 fn test_remote_indicator_shows_local() {
     let config = config_with_status_bar(
-        vec![StatusBarElement::RemoteIndicator, StatusBarElement::Filename],
+        vec![
+            StatusBarElement::RemoteIndicator,
+            StatusBarElement::Filename,
+        ],
         vec![],
     );
 
@@ -185,7 +188,10 @@ fn test_remote_indicator_shows_local() {
 #[test]
 fn test_remote_indicator_placed_at_far_left() {
     let config = config_with_status_bar(
-        vec![StatusBarElement::RemoteIndicator, StatusBarElement::Filename],
+        vec![
+            StatusBarElement::RemoteIndicator,
+            StatusBarElement::Filename,
+        ],
         vec![],
     );
 

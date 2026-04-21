@@ -951,9 +951,7 @@ impl StatusBarRenderer {
                         theme.status_error_indicator_bg,
                     ),
                     // Local: neutral status-bar palette.
-                    RemoteIndicatorState::Local => {
-                        (theme.status_bar_fg, theme.status_bar_bg)
-                    }
+                    RemoteIndicatorState::Local => (theme.status_bar_fg, theme.status_bar_bg),
                 };
                 let mut style = Style::default().fg(fg).bg(bg);
                 if is_hovering {
