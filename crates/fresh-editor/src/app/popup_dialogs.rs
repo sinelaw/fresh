@@ -694,6 +694,10 @@ impl Editor {
                             .with_data("plugin:devcontainer_rebuild".to_string()),
                     );
                     items.push(
+                        PopupListItem::new("    Show Container Logs".to_string())
+                            .with_data("plugin:devcontainer_show_logs".to_string()),
+                    );
+                    items.push(
                         PopupListItem::new("    Show Container Info".to_string())
                             .with_data("plugin:devcontainer_show_info".to_string()),
                     );
