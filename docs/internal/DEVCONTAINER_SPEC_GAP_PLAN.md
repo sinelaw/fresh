@@ -153,3 +153,157 @@ establish: every devcontainer-adjacent filesystem probe is
 authority-routed (P-1), every generated artifact is current (P-2,
 P-3). Phases A–E can then add new files and types without inheriting
 drift.
+
+---
+
+## Phase A · Small spec alignments (plugin-only)
+
+Five low-risk items that don't need new Rust surface. All changes live
+in `crates/fresh-editor/plugins/devcontainer.ts` and
+`crates/fresh-editor/plugins/devcontainer.i18n.json`. Each ships as
+its own commit so the `git log` reads as a checklist of spec-aligning
+fixes.
+
+### A-1 · Run `initializeCommand` on the host before `devcontainer up`
+
+**Why.** Gap analysis §6. The spec defines `initializeCommand` as
+running on the host before container creation; the plugin currently
+lists it in the info panel but never invokes it. This is a correctness
+bug, not a UX one.
+
+**Files.**
+
+- `crates/fresh-editor/plugins/devcontainer.ts` — inside
+  `runDevcontainerUp`, add a step before the `devcontainer` CLI call
+  that reads `config.initializeCommand`, formats it per
+  `formatLifecycleCommand`, and runs it via `editor.spawnHostProcess`.
+  Abort the attach on non-zero exit with the existing
+  `status.rebuild_failed` branch.
+- Extend the lifecycle array in `devcontainer_run_lifecycle` to
+  include `initializeCommand` so the palette picker offers it too.
+
+**Tests.** E2E: create a fixture workspace with
+`.devcontainer/devcontainer.json` whose `initializeCommand` writes a
+sentinel file to the fixture's temp dir. Trigger attach, assert the
+sentinel exists before the (mocked) `devcontainer up` invocation
+completes. Mocking is via `PATH`-prepending a fake `devcontainer`
+script written into the fixture — same pattern e2e tests use today for
+`git` and LSPs.
+
+**Commit split.** Two commits. First commit: add the lifecycle entry
+to the runner picker (pure additive, no behavior change to attach).
+Second commit: wire `initializeCommand` into the attach flow —
+`fix:`-prefixed because it closes a spec-violation bug.
+
+### A-2 · Rename attach prompt actions to spec wording
+
+**Why.** Gap analysis §2. Plugin labels "Attach" / "Not now" don't
+match the spec's "Reopen in Container" / "Ignore". Low-risk copy
+change.
+
+**Files.**
+
+- `crates/fresh-editor/plugins/devcontainer.i18n.json` — rename the
+  `popup.attach_action_attach` / `popup.attach_action_dismiss` strings
+  across every locale. Keep the keys; change the English values and
+  re-translate the others or fall back (rust-i18n falls back to `en`
+  when a key is missing).
+- Consider also retitling the popup itself from "Dev Container
+  Detected" to match the spec's "Folder contains a Dev Container
+  configuration" phrasing.
+
+**Tests.** E2E: assert the rendered action popup contains "Reopen in
+Container". The existing attach-prompt e2e test (if absent, add one)
+already renders the popup; the assertion becomes a one-line change.
+
+**Commit split.** One commit, `feat:` or `refactor:` — pure surface
+rename.
+
+### A-3 · Scaffold command: "Create Dev Container Config"
+
+**Why.** Gap analysis §1. Remote Indicator menu shows a disabled "No
+dev container config detected" row when local and no config exists.
+The spec's "Configure Dev Container" option implies a create-flow.
+
+**Files.**
+
+- `crates/fresh-editor/plugins/devcontainer.ts` — new
+  `devcontainer_scaffold_config` handler that writes a minimal
+  template to `.devcontainer/devcontainer.json` via
+  `editor.writeFile`, then opens it. Template content is
+  `{ "name": "<workspace>", "image": "mcr.microsoft.com/devcontainers/base:ubuntu" }`
+  — deliberately conservative so it's obviously a starting point.
+- Register a palette command `Dev Container: Create Config`.
+- Optional: have the Remote Indicator popup in core swap the disabled
+  hint row for an actionable row that dispatches
+  `Action::PluginAction("devcontainer_scaffold_config")`. This is the
+  only core change in Phase A; make it a separate commit.
+
+**Tests.** E2E: open a temp workspace without `.devcontainer`,
+trigger the scaffold command, assert the file exists and is opened in
+a buffer. Second e2e: click the Remote Indicator, assert the
+scaffold row is present and actionable.
+
+**Commit split.** Two commits. First: plugin-only scaffold handler +
+palette command. Second: wire the row into the Remote Indicator popup
+(touches `app/popup_dialogs.rs`).
+
+### A-4 · "Show Container Logs" (one-shot, non-streaming)
+
+**Why.** Gap analysis §1. Remote Indicator popup advertises "Show
+Container Info" but the spec calls out "Show Container Logs"
+separately — today there is no way to see the container's stdout.
+
+**Files.**
+
+- `crates/fresh-editor/plugins/devcontainer.ts` — new
+  `devcontainer_show_logs` handler. Reads the active authority's
+  container id (via a new `editor.getAuthority()` op or by parsing
+  `display_label` — the latter avoids plugin API churn for now),
+  runs `editor.spawnHostProcess("docker", ["logs", "--tail", "1000",
+  id])`, and writes the output into a virtual buffer
+  `*Dev Container Logs*`.
+- Register a palette command `Dev Container: Show Logs`.
+- Wire a popup row `Show Container Logs` in
+  `app/popup_dialogs.rs::show_remote_indicator_popup` that dispatches
+  the plugin action (when attached to a container authority).
+
+**Tests.** E2E: with a fake `docker` shim in `PATH` that emits
+scripted log content, trigger the command and assert the virtual
+buffer contains the scripted lines.
+
+**Commit split.** Two commits. First: plugin handler + palette
+command. Second: core popup row. (Streaming comes later in Phase C —
+this cut uses the existing buffered `spawnHostProcess`.)
+
+### A-5 · "Show Forwarded Ports"
+
+**Why.** Gap analysis §7. `forwardPorts` is shown in the info panel
+but there's no way to see what the running container actually exposes.
+
+**Files.**
+
+- `crates/fresh-editor/plugins/devcontainer.ts` — extend the existing
+  `devcontainer_show_ports` handler to, when a container authority is
+  active, run `docker port <id>` via `spawnHostProcess` and merge the
+  output with the configured `forwardPorts` list in the prompt
+  suggestions.
+- Each row's description becomes
+  `configured: tcp · runtime: <host-port> → <container-port>` (or
+  `configured only` when not bound, or `runtime only` when Docker
+  exposes a port not in config).
+
+**Tests.** E2E with a fake `docker` shim: trigger the command, assert
+the rendered prompt suggestions match the scripted merge.
+
+**Commit split.** One commit. Scoped to
+`devcontainer_show_ports`; doesn't touch other commands.
+
+### Phase A acceptance
+
+With A-1..A-5 merged: `initializeCommand` is honored, the attach
+prompt reads per spec, the "Configure Dev Container" path works end
+to end, container logs are one command away, and users can see which
+configured ports are actually bound. Everything still uses the
+buffered `spawnHostProcess`; no new plugin API surface, no state
+machine, no indicator sub-states.
