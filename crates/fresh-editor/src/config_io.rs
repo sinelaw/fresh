@@ -177,7 +177,7 @@ fn find_changed_paths_recursive(
 
 /// Current config schema version.
 /// Increment this when making breaking changes to config structure.
-pub const CURRENT_CONFIG_VERSION: u32 = 1;
+pub const CURRENT_CONFIG_VERSION: u32 = 2;
 
 /// Apply all necessary migrations to bring a config JSON to the current version.
 pub fn migrate_config(mut value: Value) -> Result<Value, ConfigError> {
@@ -187,8 +187,9 @@ pub fn migrate_config(mut value: Value) -> Result<Value, ConfigError> {
     if version < 1 {
         value = migrate_v0_to_v1(value)?;
     }
-    // Future migrations:
-    // if version < 2 { value = migrate_v1_to_v2(value)?; }
+    if version < 2 {
+        value = migrate_v1_to_v2(value)?;
+    }
 
     Ok(value)
 }
@@ -209,6 +210,36 @@ fn migrate_v0_to_v1(mut value: Value) -> Result<Value, ConfigError> {
             // lineNumbers -> line_numbers
             if let Some(val) = editor_map.remove("lineNumbers") {
                 editor_map.entry("line_numbers").or_insert(val);
+            }
+        }
+    }
+    Ok(value)
+}
+
+/// Migration from v1 to v2.
+///
+/// Injects `"{remote}"` at the front of `editor.status_bar.left` when
+/// the user has customized the list and the element is not already
+/// present. Users who never overrode the default get the element via
+/// `default_status_bar_left` at resolve time — we intentionally skip
+/// inserting a `status_bar` object here so those users stay on the
+/// rolling default if future versions reorder or rename elements.
+fn migrate_v1_to_v2(mut value: Value) -> Result<Value, ConfigError> {
+    if let Value::Object(ref mut map) = value {
+        map.insert("version".to_string(), Value::Number(2.into()));
+
+        let left = map
+            .get_mut("editor")
+            .and_then(|editor| editor.as_object_mut())
+            .and_then(|editor| editor.get_mut("status_bar"))
+            .and_then(|status_bar| status_bar.as_object_mut())
+            .and_then(|status_bar| status_bar.get_mut("left"))
+            .and_then(|left| left.as_array_mut());
+
+        if let Some(left) = left {
+            let already_present = left.iter().any(|v| v.as_str() == Some("{remote}"));
+            if !already_present {
+                left.insert(0, Value::String("{remote}".to_string()));
             }
         }
     }
@@ -1258,7 +1289,86 @@ mod tests {
 
         let migrated = migrate_config(input).unwrap();
 
-        assert_eq!(migrated.get("version"), Some(&serde_json::json!(1)));
+        assert_eq!(
+            migrated.get("version"),
+            Some(&serde_json::json!(CURRENT_CONFIG_VERSION))
+        );
+    }
+
+    #[test]
+    fn migration_v1_to_v2_injects_remote_element() {
+        // User who customized status_bar.left on v1 without the
+        // indicator: v2 migration prepends `"{remote}"`.
+        let input = serde_json::json!({
+            "version": 1,
+            "editor": {
+                "status_bar": {
+                    "left": ["{filename}", "{cursor}"]
+                }
+            }
+        });
+
+        let migrated = migrate_config(input).unwrap();
+
+        assert_eq!(migrated.get("version"), Some(&serde_json::json!(2)));
+        let left = migrated
+            .pointer("/editor/status_bar/left")
+            .and_then(|v| v.as_array())
+            .expect("status_bar.left should remain an array");
+        assert_eq!(left[0], serde_json::json!("{remote}"));
+        assert_eq!(left[1], serde_json::json!("{filename}"));
+        assert_eq!(left[2], serde_json::json!("{cursor}"));
+    }
+
+    #[test]
+    fn migration_v1_to_v2_is_idempotent() {
+        // User already has `"{remote}"` somewhere in left (e.g. they
+        // opted in manually before v2). Don't double-insert.
+        let input = serde_json::json!({
+            "version": 1,
+            "editor": {
+                "status_bar": {
+                    "left": ["{filename}", "{remote}", "{cursor}"]
+                }
+            }
+        });
+
+        let migrated = migrate_config(input).unwrap();
+
+        let left = migrated
+            .pointer("/editor/status_bar/left")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        let remote_count = left
+            .iter()
+            .filter(|v| v.as_str() == Some("{remote}"))
+            .count();
+        assert_eq!(
+            remote_count, 1,
+            "migration should never duplicate an existing {{remote}} entry; left = {:?}",
+            left
+        );
+    }
+
+    #[test]
+    fn migration_v1_to_v2_leaves_default_users_alone() {
+        // User with no `status_bar` override stays on the rolling
+        // default — migration bumps the version but doesn't
+        // materialize a status_bar object.
+        let input = serde_json::json!({
+            "version": 1,
+            "editor": {"tab_size": 4}
+        });
+
+        let migrated = migrate_config(input).unwrap();
+
+        assert_eq!(migrated.get("version"), Some(&serde_json::json!(2)));
+        assert!(
+            migrated.pointer("/editor/status_bar").is_none(),
+            "migration must not fabricate a status_bar object for users \
+             who never overrode the default; migrated = {:?}",
+            migrated
+        );
     }
 
     #[test]
