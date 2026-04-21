@@ -349,6 +349,31 @@ impl LspManager {
         self.long_running_spawner = Some(spawner);
     }
 
+    /// Blocking variant of the authority-routed command probe used by
+    /// the LSP status popup (which runs on the main thread and needs a
+    /// synchronous answer). Blocks on the tokio runtime to drive the
+    /// async trait method; the local spawner resolves immediately via
+    /// `which::which`, the docker spawner runs a short
+    /// `docker exec <id> sh -c 'command -v <cmd>'`.
+    ///
+    /// Falls back to the module-level host probe when the spawner or
+    /// runtime hasn't been wired yet (e.g. during early editor boot
+    /// before `set_boot_authority` runs). The fallback is only
+    /// reachable in test harnesses and a vanishingly small window
+    /// around startup, so routing through the authority is the
+    /// effective behavior in production.
+    pub fn command_exists_via_authority(&self, command: &str) -> bool {
+        if command.is_empty() {
+            return false;
+        }
+        let (Some(runtime), Some(spawner)) =
+            (self.runtime.as_ref(), self.long_running_spawner.as_ref())
+        else {
+            return crate::services::lsp::command_exists(command);
+        };
+        runtime.block_on(spawner.command_exists(command))
+    }
+
     /// Check if a language has been manually enabled (allowing spawn even if auto_start=false)
     pub fn is_language_allowed(&self, language: &str) -> bool {
         self.allowed_languages.contains(language)

@@ -64,6 +64,11 @@ impl Editor {
         // Compute the set of configured servers whose binaries are not
         // resolvable — plugins and the popup itself both need this to
         // decide between "offer to start" and "offer install help".
+        // Probe missing binaries through the active authority. When the
+        // LspManager isn't wired (tests or very early boot), fall
+        // back to the synchronous host-side `which` probe — same path
+        // `command_exists_via_authority` would take after the
+        // long-running spawner bootstrap completes.
         let missing_servers: Vec<String> = self
             .config
             .lsp
@@ -72,7 +77,10 @@ impl Editor {
                 cfg.as_slice()
                     .iter()
                     .filter(|c| c.enabled && !c.command.is_empty())
-                    .filter(|c| !crate::services::lsp::command_exists(&c.command))
+                    .filter(|c| match self.lsp.as_ref() {
+                        Some(mgr) => !mgr.command_exists_via_authority(&c.command),
+                        None => !crate::services::lsp::command_exists(&c.command),
+                    })
                     .map(|c| c.command.clone())
                     .collect()
             })
@@ -239,10 +247,11 @@ impl Editor {
                     .iter()
                     .filter(|c| !c.command.is_empty())
                     .map(|c| {
-                        (
-                            c.display_name(),
-                            !crate::services::lsp::command_exists(&c.command),
-                        )
+                        let missing = match self.lsp.as_ref() {
+                            Some(mgr) => !mgr.command_exists_via_authority(&c.command),
+                            None => !crate::services::lsp::command_exists(&c.command),
+                        };
+                        (c.display_name(), missing)
                     })
                     .collect()
             })
