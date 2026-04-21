@@ -65,3 +65,91 @@ Out of scope (reiterated from the gap analysis):
   `forwardPorts` + `docker port` output.
 
 Everything else from the gap analysis is in scope and covered below.
+
+---
+
+## Pre-work — bugs uncovered by the analysis
+
+Three items surfaced while walking the existing implementation. They
+are small, independent, and should land before Phase A so the baseline
+is clean.
+
+### P-1 · `find_devcontainer_config` bypasses the `FileSystem` trait
+
+**Why.** The helper added in the Remote Indicator popup branch
+(`app/popup_dialogs.rs::find_devcontainer_config`) uses
+`std::path::Path::exists()` directly. That call reaches for
+`std::fs::metadata` under the hood, bypassing
+`authority.filesystem`. On SSH authorities it would probe the host
+filesystem instead of the remote — silently wrong, exactly the failure
+mode `CONTRIBUTING.md` guideline 4 exists to prevent.
+
+**Files.**
+
+- `crates/fresh-editor/src/app/popup_dialogs.rs` — rewrite the helper
+  to call `self.authority.filesystem.exists(&primary)`.
+
+**Tests.** Add a regression unit test in `popup_dialogs.rs` (or the
+closest existing test module) that installs a mock filesystem
+returning `true` for `.devcontainer/devcontainer.json` and asserts the
+helper returns `Some(path)`. Failing-first per the bug-fix rule.
+
+**Commit split.** One commit, `fix:`-prefixed.
+
+### P-2 · Verify `plugins/config-schema.json` matches the generator
+
+**Why.** The Remote Indicator branch hand-edited
+`plugins/config-schema.json` alongside the `JsonSchema` derive impl in
+`config.rs`. Per `CONTRIBUTING.md` guideline 6, the JSON file is an
+auto-generated artifact and must come from `./scripts/gen_schema.sh`.
+If the two diverge by so much as a whitespace diff, future contributors
+will overwrite the hand edit on their next schema regen.
+
+**Files.**
+
+- Run `./scripts/gen_schema.sh`.
+- Review `plugins/config-schema.json` diff and commit the regenerated
+  file.
+- Review `plugins/schemas/theme.schema.json` and
+  `plugins/schemas/package.schema.json` too — the script regenerates
+  all three and we don't want to leave unrelated drift behind.
+
+**Tests.** None — regeneration is mechanical. A CI check that diffs
+the artifact against a fresh regen would catch future drift; adding
+that check is out of scope for this pre-work but worth a follow-up
+issue.
+
+**Commit split.** One commit, `chore:` or `fix:` depending on whether
+the diff is semantic. Mark the generated files as such in the
+message.
+
+### P-3 · Regenerate TypeScript plugin definitions (`fresh.d.ts`)
+
+**Why.** The Remote Indicator branch didn't touch the plugin API
+surface — it added a core action and a status-bar element, neither of
+which is plugin-facing. But the `show_remote_indicator_menu` action
+will appear in `Action::all_names()` if we later wire it into the
+keybinding editor list, and `fresh.d.ts` enumerates action names
+through a `#[derive(TS)]` boundary. Running the regeneration command
+now catches any accidental surface creep and keeps the artifact
+honest before Phase B adds a real new op.
+
+**Files.**
+
+- Run
+  `cargo test -p fresh-plugin-runtime write_fresh_dts_file -- --ignored`.
+- Commit `plugins/lib/fresh.d.ts` only if the regen produced a real
+  diff; otherwise close out with a note in the PR description.
+
+**Tests.** The regen command *is* the test — it runs through the
+generator and diffs against the checked-in file.
+
+**Commit split.** One commit, `chore:` prefix if any diff lands.
+
+### Pre-work acceptance
+
+All three items land before starting Phase A. Collectively they
+establish: every devcontainer-adjacent filesystem probe is
+authority-routed (P-1), every generated artifact is current (P-2,
+P-3). Phases A–E can then add new files and types without inheriting
+drift.
