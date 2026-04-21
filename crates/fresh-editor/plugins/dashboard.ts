@@ -9,15 +9,12 @@ const editor = getEditor();
 //   after the user closes the last file buffer (instead of the
 //   default untitled scratch).
 //
-//   Opt-in. The plugin loads but stays dormant until the user enables
-//   it from `~/.config/fresh/init.ts`:
-//
-//       const dash = editor.getPluginApi("dashboard");
-//       if (dash) dash.enable();
-//
-//   `disable()` reverses it, closing the buffer and unsubscribing all
-//   hooks. Until `enable()` is called, the plugin doesn't create any
-//   buffers, subscribe to any events, or run the refresh loop.
+//   Controlled via the standard plugin config flag
+//   (`plugins.dashboard.enabled` in config.json / Settings UI).
+//   When the plugin is enabled and loaded, it subscribes to the
+//   editor hooks that drive the dashboard's lifecycle; when disabled
+//   it is never loaded, so no buffers are created, no timers run,
+//   and no network fetches fire.
 //
 //   - Auto-centers both horizontally and vertically. Repaints when the
 //     viewport changes (terminal resize, file-explorer toggle, split
@@ -45,6 +42,7 @@ type Span = {
     fg?: string;
     bg?: string;
     bold?: boolean;
+    underline?: boolean;
     url?: string;
 };
 // Click action attached to whole rows — dispatched by the mouse_click
@@ -139,13 +137,17 @@ function emit(
     if (!s) return;
     const start = utf8Len(d.text);
     d.text += s;
-    if (opts?.fg || opts?.bold || opts?.url) {
+    // Anything the user can click gets underlined so it reads as a link
+    // even in terminals that don't render OSC-8 hyperlinks.
+    const clickable = !!(opts?.url || opts?.action);
+    if (opts?.fg || opts?.bold || opts?.url || clickable) {
         d.spans.push({
             start,
             end: start + utf8Len(s),
-            fg: opts.fg,
-            bold: opts.bold,
-            url: opts.url,
+            fg: opts?.fg,
+            bold: opts?.bold,
+            underline: clickable || undefined,
+            url: opts?.url,
         });
     }
     if (opts?.action) {
@@ -315,6 +317,7 @@ function renderFrame(inner: number, leftPad: number): Draw {
                     end: sp.end - lineStart,
                     fg: sp.fg,
                     bold: sp.bold,
+                    underline: sp.underline,
                     url: sp.url,
                 }));
             // Propagate the section-level row action (keyed by section-body
@@ -364,6 +367,7 @@ function drawToEntries(d: Draw): TextPropertyEntry[] {
             const style: Partial<OverlayOptions> = {};
             if (sp.fg) style.fg = sp.fg;
             if (sp.bold) style.bold = true;
+            if (sp.underline) style.underline = true;
             if (sp.url) style.url = sp.url;
             ios.push({ start: s, end: e, style });
         }
@@ -625,10 +629,6 @@ async function fetchWeather(myToken: number) {
     paint();
 }
 
-// Shared across fetchGit and fetchGithub so PRs can link into the same
-// repo without re-invoking git.
-let currentRepoUrl: string | null = null; // e.g. https://github.com/owner/repo
-
 function normalizeRepoUrl(raw: string): string | null {
     const s = trim(raw);
     if (!s) return null;
@@ -639,6 +639,24 @@ function normalizeRepoUrl(raw: string): string | null {
     const httpsMatch = s.match(/^(https?:\/\/[^/]+\/.+?)(\.git)?$/);
     if (httpsMatch) return httpsMatch[1];
     return s;
+}
+
+// Extract "owner/repo" (GitHub "nwo" — name-with-owner) from a git
+// remote URL. Returns null for non-GitHub hosts or unparseable URLs so
+// fetchGithub can surface a clear reason instead of firing off a query
+// against the wrong repo.
+function parseGithubNwo(raw: string): string | null {
+    const s = trim(raw);
+    if (!s) return null;
+    // git@github.com:owner/repo(.git)?
+    const ssh = s.match(/^git@github\.com:([^/]+)\/([^/]+?)(\.git)?$/i);
+    if (ssh) return `${ssh[1]}/${ssh[2]}`;
+    // https://github.com/owner/repo(.git)? (allow optional user:token@ prefix)
+    const https = s.match(
+        /^https?:\/\/(?:[^@/]*@)?github\.com\/([^/]+)\/([^/]+?)(\.git)?\/?$/i,
+    );
+    if (https) return `${https[1]}/${https[2]}`;
+    return null;
 }
 
 // Parse the two numbers produced by `git rev-list --left-right --count`
@@ -677,7 +695,6 @@ async function fetchGit(myToken: number) {
                 }
             }
             const repoUrl = remote.ok ? normalizeRepoUrl(remote.stdout) : null;
-            currentRepoUrl = repoUrl;
             const branchName = trim(branch.stdout);
 
             // "vs master" row: commits ahead/behind of master, or main as a
@@ -793,12 +810,20 @@ type GhPR = {
 let githubLastPrs: GhPR[] | null = null;
 let githubLastError: string | null = null;
 
+// Column widths for PR rows. `num` covers `#` + up to 7 digits so PR
+// numbers in large repos (e.g. the node/k8s ranges) don't overflow and
+// push the state column out of alignment.
+const PR_COL_NUM = 8;
+const PR_COL_STATE = 5;
+const PR_COL_CHECK = 2;
+const PR_COL_CMTS = 6;
+
 function renderPrRows(d: Draw, prs: GhPR[]) {
     if (prs.length === 0) {
-        kv(d, "PRs", "no recent PRs by you", C.muted);
+        kv(d, "PRs", "no open PRs", C.muted);
         return;
     }
-    kv(d, "PRs", `${prs.length} by you`, C.number);
+    kv(d, "PRs", `${prs.length} open`, C.number);
     for (const pr of prs) {
         const state = (pr.state ?? "").toUpperCase();
         const stateTag =
@@ -856,11 +881,21 @@ function renderPrRows(d: Draw, prs: GhPR[]) {
             ? { kind: "open-url", url: prUrl }
             : undefined;
         emit(d, "    ", undefined);
-        emit(d, pad(num, 6), { fg: C.number, url: prUrl, action: prAction });
-        emit(d, pad(stateTag, 5), { fg: stateColor, bold: true });
+        emit(d, pad(num, PR_COL_NUM), {
+            fg: C.number,
+            url: prUrl,
+            action: prAction,
+        });
+        emit(d, pad(stateTag, PR_COL_STATE), { fg: stateColor, bold: true });
         emit(d, " ", undefined);
-        emit(d, checkGlyph + " ", { fg: checkColor, bold: true });
-        const cmtCell = openCmts > 0 ? pad(`${openCmts} cmt`, 6) : pad("", 6);
+        emit(d, pad(checkGlyph, PR_COL_CHECK), {
+            fg: checkColor,
+            bold: true,
+        });
+        const cmtCell =
+            openCmts > 0
+                ? pad(`${openCmts} cmt`, PR_COL_CMTS)
+                : pad("", PR_COL_CMTS);
         emit(d, cmtCell, { fg: openCmts > 0 ? C.warn : C.muted });
         emit(d, " ", undefined);
         emit(d, title, { fg: C.value, url: prUrl });
@@ -899,15 +934,50 @@ function buildGithubSection(): Section {
     };
 }
 
+// Detect the GitHub owner/repo for the working directory. Returns
+// either the nwo ("owner/repo") or a human-readable reason we couldn't
+// determine one — fetchGithub renders that reason in the UI instead of
+// fetching PRs against the wrong repo.
+async function detectGithubNwo(
+    cwd: string,
+): Promise<{ nwo: string } | { err: string }> {
+    const inside = await run(
+        "git",
+        ["rev-parse", "--is-inside-work-tree"],
+        cwd,
+        3000,
+    );
+    if (!inside.ok) return { err: "not a git repo" };
+    const remote = await run("git", ["remote", "get-url", "origin"], cwd, 3000);
+    if (!remote.ok) return { err: "no git remote" };
+    const nwo = parseGithubNwo(remote.stdout);
+    if (!nwo) return { err: "not a github repo" };
+    return { nwo };
+}
+
 async function fetchGithub(myToken: number) {
-    // Recent PRs authored by the current user. One GraphQL round-trip
-    // fetches state (OPEN / MERGED / CLOSED), combined check status
-    // from the tip commit's rollup, and the list of review threads so
-    // we can count *unresolved* comment threads per PR.
+    const cwd = editor.getCwd();
+    const detected = await detectGithubNwo(cwd);
+    if (myToken !== fetchToken) return;
+    if ("err" in detected) {
+        githubLastPrs = null;
+        githubLastError = detected.err;
+        sections.github = buildGithubSection();
+        paint();
+        return;
+    }
+    const nwo = detected.nwo;
+    // Recent PRs in THIS repo. One GraphQL round-trip fetches state
+    // (OPEN / MERGED / CLOSED), combined check status from the tip
+    // commit's rollup, and the list of review threads so we can count
+    // *unresolved* comment threads per PR. `$owner`/`$name` are passed
+    // as variables so the nwo is not interpolated into the query
+    // string.
+    const [owner, name] = nwo.split("/");
     const query = `
-        query {
-            viewer {
-                pullRequests(first: 6, orderBy: {field: UPDATED_AT, direction: DESC}) {
+        query($owner: String!, $name: String!) {
+            repository(owner: $owner, name: $name) {
+                pullRequests(first: 6, states: [OPEN], orderBy: {field: UPDATED_AT, direction: DESC}) {
                     nodes {
                         number
                         title
@@ -935,7 +1005,16 @@ async function fetchGithub(myToken: number) {
     try {
         const res = await run(
             "gh",
-            ["api", "graphql", "-f", `query=${query}`],
+            [
+                "api",
+                "graphql",
+                "-f",
+                `query=${query}`,
+                "-F",
+                `owner=${owner}`,
+                "-F",
+                `name=${name}`,
+            ],
             "",
             7000,
         );
@@ -952,8 +1031,13 @@ async function fetchGithub(myToken: number) {
             try {
                 const parsed = JSON.parse(res.stdout);
                 const prs: GhPR[] =
-                    (parsed as { data?: { viewer?: { pullRequests?: { nodes?: GhPR[] } } } })
-                        ?.data?.viewer?.pullRequests?.nodes ?? [];
+                    (
+                        parsed as {
+                            data?: {
+                                repository?: { pullRequests?: { nodes?: GhPR[] } };
+                            };
+                        }
+                    )?.data?.repository?.pullRequests?.nodes ?? [];
                 githubLastPrs = prs;
                 githubLastError = null;
             } catch {
@@ -1105,14 +1189,12 @@ function shouldShowDashboard(): boolean {
     return realFiles.length === 0;
 }
 
-// ── Opt-in via init.ts ─────────────────────────────────────────────────
+// ── Editor event handlers ─────────────────────────────────────────────
 
 // Named handlers are registered up-front — the plugin runtime requires
-// handlers to exist before `editor.on(...)` subscribes to them — but we
-// don't subscribe to any editor events until init.ts calls `enable()`
-// on the exported plugin API. A user who never opts in pays only the
-// plugin-load cost; no buffers are created, no timers run, no network
-// fetches fire.
+// handlers to exist before `editor.on(...)` subscribes to them. The
+// subscription itself happens at the bottom of the file, once all the
+// handlers below exist.
 registerHandler("dashboardOnReady", async () => {
     if (shouldShowDashboard()) await openDashboard();
 });
@@ -1167,52 +1249,21 @@ registerHandler(
     },
 );
 
-let dashboardEnabled = false;
-
-function enableDashboard() {
-    if (dashboardEnabled) return;
-    dashboardEnabled = true;
-    editor.on("ready", "dashboardOnReady");
-    editor.on("buffer_closed", "dashboardOnBufferClosed");
-    editor.on("viewport_changed", "dashboardOnViewportChanged");
-    editor.on("mouse_click", "dashboardOnMouseClick");
-    // If init.ts enables us at runtime (or re-enables after a disable()),
-    // the `ready` hook may have already fired, so trigger an immediate
-    // check. Startup path: init.ts runs before workspace restore and
-    // before `ready`, so `shouldShowDashboard()` here will see zero
-    // buffers and the dashboard would open prematurely — defer to the
-    // `ready` handler in that case. We key off whether plugins are fully
-    // initialized by inspecting the buffer list: during early startup
-    // there are no buffers at all (listBuffers() returns []), whereas at
-    // runtime there's always at least the current or scratch buffer.
-    if (editor.listBuffers().length > 0 && shouldShowDashboard()) {
-        openDashboard();
-    }
-}
-
-function disableDashboard() {
-    if (!dashboardEnabled) return;
-    dashboardEnabled = false;
-    editor.off("ready", "dashboardOnReady");
-    editor.off("buffer_closed", "dashboardOnBufferClosed");
-    editor.off("viewport_changed", "dashboardOnViewportChanged");
-    editor.off("mouse_click", "dashboardOnMouseClick");
-    if (dashboardBufferId !== null) {
-        editor.closeBuffer(dashboardBufferId);
-        dashboardBufferId = null;
-    }
-}
-
-// Expose enable/disable so init.ts can opt in:
+// Subscribe to the hooks that drive the dashboard. Reaching this code
+// means the plugin has been loaded, which only happens when
+// `plugins.dashboard.enabled` is true in the resolved config — so the
+// standard settings UI is the single enable/disable surface.
 //
-//   // ~/.config/fresh/init.ts
-//   const dash = editor.getPluginApi("dashboard");
-//   if (dash) dash.enable();
-//
-// `plugins_loaded` isn't needed here — init.ts runs after every
-// registry plugin, so getPluginApi("dashboard") is already available
-// at top level.
-editor.exportPluginApi("dashboard", {
-    enable: enableDashboard,
-    disable: disableDashboard,
-});
+// If the plugin loads mid-session (user toggles it on in Settings),
+// the `ready` hook has already fired, so we also run an immediate
+// check. At startup the `listBuffers().length > 0` guard keeps us
+// dormant until the workspace has actually restored: plugins load
+// before restore, and opening a buffer here would race with the
+// restore and leave a stray Dashboard tab even when real files exist.
+editor.on("ready", "dashboardOnReady");
+editor.on("buffer_closed", "dashboardOnBufferClosed");
+editor.on("viewport_changed", "dashboardOnViewportChanged");
+editor.on("mouse_click", "dashboardOnMouseClick");
+if (editor.listBuffers().length > 0 && shouldShowDashboard()) {
+    openDashboard();
+}
