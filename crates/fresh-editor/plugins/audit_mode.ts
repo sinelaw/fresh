@@ -1579,7 +1579,7 @@ function on_review_mouse_click(data: {
                 else state.collapsedSections.add(cat);
                 applyFolds();
                 const sectionRow = state.sectionHeaderRows[cat];
-                if (sectionRow !== undefined) jumpDiffCursorToRow(sectionRow);
+                if (sectionRow !== undefined) jumpDiffCursorToRow(sectionRow, { recenter: false });
                 return;
             }
         }
@@ -1591,7 +1591,7 @@ function on_review_mouse_click(data: {
                 else state.collapsedFiles.add(key);
                 applyFolds();
                 const headerRow = state.fileHeaderRows[key];
-                if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+                if (headerRow !== undefined) jumpDiffCursorToRow(headerRow, { recenter: false });
                 return;
             }
         }
@@ -1602,7 +1602,7 @@ function on_review_mouse_click(data: {
                 else state.collapsedHunks.add(hunkId);
                 applyFolds();
                 const hunkRow = state.hunkRowByHunkId[hunkId];
-                if (hunkRow !== undefined) jumpDiffCursorToRow(hunkRow);
+                if (hunkRow !== undefined) jumpDiffCursorToRow(hunkRow, { recenter: false });
                 return;
             }
         }
@@ -1812,7 +1812,7 @@ function review_toggle_file_collapse() {
         else state.collapsedSections.add(section);
         applyFolds();
         const sectionRow = state.sectionHeaderRows[section];
-        if (sectionRow !== undefined) jumpDiffCursorToRow(sectionRow);
+        if (sectionRow !== undefined) jumpDiffCursorToRow(sectionRow, { recenter: false });
         return;
     }
 
@@ -1824,7 +1824,7 @@ function review_toggle_file_collapse() {
         else state.collapsedFiles.add(key);
         applyFolds();
         const headerRow = state.fileHeaderRows[key];
-        if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+        if (headerRow !== undefined) jumpDiffCursorToRow(headerRow, { recenter: false });
         return;
     }
 
@@ -1835,7 +1835,7 @@ function review_toggle_file_collapse() {
         else state.collapsedHunks.add(hunk.id);
         applyFolds();
         const hunkRow = state.hunkRowByHunkId[hunk.id];
-        if (hunkRow !== undefined) jumpDiffCursorToRow(hunkRow);
+        if (hunkRow !== undefined) jumpDiffCursorToRow(hunkRow, { recenter: false });
         return;
     }
 
@@ -1848,7 +1848,7 @@ function review_toggle_file_collapse() {
     else state.collapsedFiles.add(key);
     applyFolds();
     const headerRow = state.fileHeaderRows[key];
-    if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+    if (headerRow !== undefined) jumpDiffCursorToRow(headerRow, { recenter: false });
 }
 registerHandler("review_toggle_file_collapse", review_toggle_file_collapse);
 
@@ -3147,23 +3147,31 @@ registerHandler("review_drill_down", review_drill_down);
 // --- Hunk navigation for side-by-side diff view ---
 
 /**
- * Move the diff panel's native cursor to the given 1-indexed row, scrolling
- * the viewport so the row is visible.
+ * Move the diff panel's native cursor to the given 1-indexed row.
+ *
+ * `options.recenter` controls whether the viewport is re-centered on the
+ * target row. The default is `true` for user-initiated navigation (next
+ * hunk, jump-to-comment, jump-to-file) — there the caller wants the
+ * target to land at a predictable position in the viewport. Callers
+ * that merely re-anchor the cursor to a nearby header (e.g. after a
+ * collapse/expand toggle) should pass `recenter: false` so the viewport
+ * stays put; `setBufferCursor` still runs `ensure_cursor_visible`, so
+ * the cursor is scrolled into view only when it would otherwise move
+ * off-screen. Without this opt-out every fold toggle re-centers the
+ * cursor's row at ~1/3 from the top of the viewport, which makes the
+ * diff jump around whenever the user is reading anywhere else.
  */
-function jumpDiffCursorToRow(row: number): void {
+function jumpDiffCursorToRow(row: number, options?: { recenter?: boolean }): void {
     const diffId = state.panelBuffers["diff"];
     if (diffId === undefined) return;
     const idx = row - 1;
     if (idx < 0 || idx >= state.diffLineByteOffsets.length) return;
 
-    // Set the cursor by absolute byte offset + scroll the viewport.
-    // Trust setBufferCursor — the previous N × executeAction("move_down")
-    // walk was O(target_row) round-trips into the editor and made
-    // collapsing big diffs visibly slow (thousands of round trips just
-    // to land the cursor on a header).
     const byteOffset = state.diffLineByteOffsets[idx];
     editor.setBufferCursor(diffId, byteOffset);
-    editor.scrollBufferToLine(diffId, idx);
+    if (options?.recenter !== false) {
+        editor.scrollBufferToLine(diffId, idx);
+    }
     state.diffCursorRow = row;
     applyCursorLineOverlay('diff');
     refreshStickyHeader(idx);

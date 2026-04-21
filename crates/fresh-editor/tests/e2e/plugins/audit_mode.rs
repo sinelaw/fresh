@@ -2508,6 +2508,118 @@ fn test_review_diff_collapse_all_and_expand_all() {
     );
 }
 
+/// Regression test for the "Review Diff scroll jumps on collapse/expand"
+/// bug: when the user scrolls the diff cursor via `j` until it sits away
+/// from the re-centering point (roughly the top third of the viewport)
+/// and then presses `Tab` to toggle a fold, the viewport must not jump.
+/// Historically the Tab handler called `editor.scrollBufferToLine` after
+/// every fold toggle, forcing the header row to land at ~1/3 from the top
+/// — which yanked the viewport whenever the cursor was anywhere else.
+#[test]
+fn test_review_diff_tab_preserves_scroll_position() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    // Baseline commit so the modifications below show up as unstaged hunks.
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Add enough tracked files with enough per-file content that the
+    // unified diff comfortably overflows a 40-row viewport.
+    for i in 0..8 {
+        let path = format!("src/mod_{}.rs", i);
+        let content = format!(
+            "fn alpha_{i}() {{\n    let a = {i};\n    let b = a + {i};\n    \
+             println!(\"alpha {i} {{}} {{}}\", a, b);\n}}\n\n\
+             fn beta_{i}() {{\n    let c = {i} * 2;\n    let d = c - 1;\n    \
+             println!(\"beta {i} {{}} {{}}\", c, d);\n}}\n",
+            i = i
+        );
+        repo.create_file(&path, &content);
+    }
+    repo.git_add_all();
+    repo.git_commit("Seed files");
+
+    // Modify every file to produce a multi-hunk diff per file.
+    for i in 0..8 {
+        let path = format!("src/mod_{}.rs", i);
+        let content = format!(
+            "fn alpha_{i}() {{\n    let a = {i} + 100;\n    let b = a + {i} * 3;\n    \
+             let extra = a - b;\n    println!(\"alpha {i} v2 {{}} {{}} {{}}\", a, b, extra);\n}}\n\n\
+             fn beta_{i}() {{\n    let c = {i} * 2 + 5;\n    let d = c - 1;\n    \
+             let more = c + d;\n    println!(\"beta {i} v2 {{}} {{}} {{}}\", c, d, more);\n}}\n",
+            i = i
+        );
+        repo.create_file(&path, &content);
+    }
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+
+    let _ = open_review_diff(&mut harness);
+
+    // Scroll the cursor far down the unified stream using native `j`
+    // motion. `j` delegates to the editor's `move_down`, which moves the
+    // cursor one row at a time and only scrolls the viewport when the
+    // cursor would otherwise step off-screen — so after enough presses
+    // the cursor is pinned near the BOTTOM of the viewport, not at the
+    // ~1/3 mark that `scrollBufferToLine` targets. That mismatch is what
+    // the bug exploits.
+    for _ in 0..100 {
+        harness
+            .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let before = harness.screen_to_string();
+    let top_before = diff_top_anchor(&before);
+
+    // Toggle the fold under the cursor. Without the fix this yanks the
+    // viewport so the cursor row re-centers at ~1/3 from the top, which
+    // changes what's rendered at the top of the diff pane.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let after = harness.screen_to_string();
+    let top_after = diff_top_anchor(&after);
+
+    assert_eq!(
+        top_before, top_after,
+        "Review Diff viewport scrolled unexpectedly after Tab. \
+         Toggling a fold must not re-center the viewport.\n\
+         BEFORE:\n{}\n\nAFTER:\n{}",
+        before, after
+    );
+}
+
+/// Slice the top ~10 rows of the diff content pane out of a rendered
+/// screen string. Used by the scroll-position regression test above.
+/// The layout in tests is: menu bar, tab bar, two toolbar hint rows,
+/// separator, sticky file header, separator, then the diff stream. The
+/// first ~7 rows are chrome that never shifts on a scroll, so we skip
+/// them and compare the first 10 rows of actual diff content.
+fn diff_top_anchor(screen: &str) -> String {
+    screen
+        .lines()
+        .skip(7)
+        .take(10)
+        .map(|l| l.trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Test that the review diff handles symlinks, type changes (file ↔ symlink),
 /// and mode changes (chmod) without errors.
 /// Git reports type changes as 'T' status and mode changes as 'M'.
