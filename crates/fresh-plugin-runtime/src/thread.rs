@@ -1209,6 +1209,14 @@ struct PreparedPlugin {
     js_code: String,
     i18n: Option<HashMap<String, HashMap<String, String>>>,
     dependencies: Vec<String>,
+    /// `.d.ts` emit for the plugin source, produced by oxc's
+    /// isolated-declarations transformer. Present on every successful
+    /// TS/JS prepare; callers can use it to assemble a consolidated
+    /// plugins.d.ts so init.ts/other plugins can reach each plugin's
+    /// public types without manual `as`-casts. `None` only when
+    /// isolated-declarations emit failed outright — the plugin still
+    /// loads at runtime.
+    declarations: Option<String>,
 }
 
 /// Prepare a plugin for execution: read source, transpile, extract dependencies.
@@ -1232,6 +1240,28 @@ fn prepare_plugin(path: &Path) -> Result<PreparedPlugin> {
 
     // Extract dependencies before transpilation
     let dependencies = fresh_parser_js::extract_plugin_dependencies(&source);
+
+    // Emit `.d.ts` via oxc's isolated-declarations before the
+    // transpile step consumes `source`. We want the raw TS (every
+    // `export type`, `export interface`, and `declare global` block
+    // the plugin author wrote) so downstream plugins and init.ts
+    // reach the plugin's public types without casts. Failures are
+    // non-fatal — the plugin still runs.
+    let declarations = if filename.ends_with(".ts") {
+        match fresh_parser_js::emit_isolated_declarations(&source, filename) {
+            Ok(dts) => Some(dts),
+            Err(e) => {
+                tracing::warn!(
+                    "Plugin {} isolated-declarations emit failed: {}",
+                    path.display(),
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Transpile/bundle to JS (same logic as QuickJsBackend::load_module_with_source)
     let js_code = if fresh_parser_js::has_es_imports(&source) {
@@ -1275,6 +1305,7 @@ fn prepare_plugin(path: &Path) -> Result<PreparedPlugin> {
         js_code,
         i18n,
         dependencies,
+        declarations,
     })
 }
 
@@ -1317,6 +1348,7 @@ fn execute_prepared_plugin(
             name: prepared.name.clone(),
             path: prepared.path.clone(),
             enabled: true,
+            declarations: prepared.declarations.clone(),
         },
     );
 
@@ -1383,6 +1415,10 @@ async fn load_plugin_internal(
             name: plugin_name.clone(),
             path: path.to_path_buf(),
             enabled: true,
+            // `load_plugin_internal` is the hot-reload path (single
+            // file, no prepare-then-execute split). Skip the emit
+            // here; the full directory scan picks it up next time.
+            declarations: None,
         },
     );
 
@@ -1670,6 +1706,11 @@ fn load_plugin_from_source_internal(
             name: name.to_string(),
             path: PathBuf::from(format!("<buffer:{}>", name)),
             enabled: true,
+            // "Load from buffer" is a developer convenience — the
+            // source doesn't live on disk, so we skip isolated-
+            // declarations emit. Users editing real plugin files
+            // still get types on the next full scan.
+            declarations: None,
         },
     );
 

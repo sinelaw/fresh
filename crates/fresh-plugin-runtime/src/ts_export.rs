@@ -285,9 +285,30 @@ pub fn write_fresh_dts() -> Result<(), String> {
 
     let ts_types = collect_ts_types();
 
+    // After the macro-generated EditorAPI interface, merge in a
+    // typed overload of `getPluginApi` that looks through the
+    // `FreshPluginRegistry` interface (declared in the preamble,
+    // augmented by each loaded plugin's `plugins.d.ts`). Declared
+    // AFTER the base interface so TypeScript's overload resolution
+    // prefers the typed form when the name is a known key; the
+    // untyped `getPluginApi(name: string): unknown | null` from the
+    // macro output is the fallback.
+    let plugin_api_trailer = r#"
+
+/**
+ * Typed overload of `editor.getPluginApi`. When the caller passes a
+ * key that some loaded plugin declared in `FreshPluginRegistry`, the
+ * return type is narrowed to that plugin's API. Unknown names fall
+ * through to the untyped `unknown | null` signature.
+ */
+interface EditorAPI {
+  getPluginApi<K extends keyof FreshPluginRegistry>(name: K): FreshPluginRegistry[K] | null;
+}
+"#;
+
     let content = format!(
-        "{}\n{}\n{}",
-        JSEDITORAPI_TS_PREAMBLE, ts_types, JSEDITORAPI_TS_EDITOR_API
+        "{}\n{}\n{}{}",
+        JSEDITORAPI_TS_PREAMBLE, ts_types, JSEDITORAPI_TS_EDITOR_API, plugin_api_trailer
     );
 
     // Validate the generated TypeScript syntax

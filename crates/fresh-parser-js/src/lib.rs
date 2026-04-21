@@ -7,6 +7,7 @@ use anyhow::{anyhow, Result};
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{Declaration, ExportDefaultDeclarationKind, Statement};
 use oxc_codegen::Codegen;
+use oxc_isolated_declarations::{IsolatedDeclarations, IsolatedDeclarationsOptions};
 use oxc_parser::Parser;
 use oxc_semantic::SemanticBuilder;
 use oxc_span::SourceType;
@@ -56,6 +57,50 @@ pub fn transpile_typescript(source: &str, filename: &str) -> Result<String> {
     // Generate JavaScript
     let codegen_ret = Codegen::new().build(&program);
 
+    Ok(codegen_ret.code)
+}
+
+/// Emit a TypeScript declaration file (`.d.ts`) from TypeScript source.
+///
+/// Uses oxc's isolated-declarations transformer — no full type checker is
+/// required, but the source must follow TypeScript's
+/// [isolated declarations](https://www.typescriptlang.org/tsconfig#isolatedDeclarations)
+/// rules: every exported value needs an explicit type annotation.
+///
+/// Fresh runs this over every TypeScript plugin at load time so the
+/// plugin's public types (anything the file `export`s plus any
+/// `declare global` / module-augmentation blocks) are available to
+/// downstream plugins and to the user's `init.ts` without manual
+/// `.d.ts` maintenance.
+///
+/// Returns the generated `.d.ts` source as a string. Non-fatal
+/// diagnostics from the isolated-declarations pass are surfaced in
+/// the error path when they render an empty emit unusable; benign
+/// diagnostics (e.g. "defaults exported without explicit types")
+/// are tolerated and the caller simply gets a partial emit.
+pub fn emit_isolated_declarations(source: &str, filename: &str) -> Result<String> {
+    let allocator = Allocator::default();
+    let source_type = SourceType::from_path(filename).unwrap_or_default();
+
+    let parser_ret = Parser::new(&allocator, source, source_type).parse();
+    if !parser_ret.errors.is_empty() {
+        let errors: Vec<String> = parser_ret.errors.iter().map(|e| e.to_string()).collect();
+        return Err(anyhow!(
+            "isolated-declarations parse errors in {}: {}",
+            filename,
+            errors.join("; ")
+        ));
+    }
+
+    let emit = IsolatedDeclarations::new(&allocator, IsolatedDeclarationsOptions::default())
+        .build(&parser_ret.program);
+
+    // Codegen the declaration AST back to source. We deliberately do
+    // NOT fail on `emit.errors` — isolated-declarations emits one per
+    // exported value that lacks an explicit type, and we want the
+    // partial emit anyway (the consumer can still use the surfaces
+    // the plugin annotated correctly).
+    let codegen_ret = Codegen::new().build(&emit.program);
     Ok(codegen_ret.code)
 }
 

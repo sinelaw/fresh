@@ -59,6 +59,7 @@ oxc_codegen = { version = "0.115.0", default-features = false }
 oxc_span = "0.115.0"
 oxc_semantic = "0.115.0"
 oxc_diagnostics = "0.115.0"
+oxc_isolated_declarations = "0.115.0"
 tree-sitter = "0.26.5"
 tree-sitter-highlight = "0.26.3"
 crossterm = "0.29"

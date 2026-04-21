@@ -475,6 +475,20 @@ impl Editor {
                     );
                 }
             }
+
+            // Collect `.d.ts` emits from every loaded plugin into a
+            // single aggregate under `<config_dir>/types/plugins.d.ts`.
+            // This is what makes `getPluginApi("foo")` typed in the
+            // user's init.ts without a hand-written cast — each plugin
+            // that uses `declare global { interface FreshPluginRegistry }`
+            // contributes its augmentation, and init.ts's tsconfig
+            // picks the aggregate up via `files`.
+            let all_plugins = plugin_manager.list_plugins();
+            let declarations: Vec<(String, String)> = all_plugins
+                .into_iter()
+                .filter_map(|info| info.declarations.map(|d| (info.name, d)))
+                .collect();
+            crate::init_script::write_plugin_declarations(&dir_context.config_dir, &declarations);
         }
 
         // Extract config values before moving config into the struct

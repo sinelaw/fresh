@@ -619,6 +619,13 @@ pub struct TsPluginInfo {
     pub name: String,
     pub path: PathBuf,
     pub enabled: bool,
+    /// `.d.ts` emit for this plugin's source, produced by oxc's
+    /// isolated-declarations transformer at load time. Used to build
+    /// a consolidated plugins.d.ts under `<config_dir>/types/` so
+    /// `getPluginApi("foo")` can be typed without manual casts in
+    /// init.ts / downstream plugins. `None` means isolated-
+    /// declarations emit failed (plugin still runs).
+    pub declarations: Option<String>,
 }
 
 /// Handler information for events and actions

@@ -70,6 +70,35 @@ interface MouseClickHookArgs {
 	/** 0-indexed byte column inside the buffer row. */
 	buffer_col: number | null;
 }
+/**
+* Registry of typed plugin APIs surfaced through
+* `editor.exportPluginApi` / `editor.getPluginApi`.
+*
+* Plugins that want their surface to be typed for downstream
+* consumers augment this interface in their own source:
+*
+* ```ts
+* // in my_plugin.ts
+* export type MyPluginApi = { doThing(): void };
+* declare global {
+*   interface FreshPluginRegistry {
+*     "my-plugin": MyPluginApi;
+*   }
+* }
+* ```
+*
+* `editor.getPluginApi("my-plugin")` then returns
+* `MyPluginApi | null` without any `as`-cast on the consumer side.
+* Plugins that skip the augmentation still work — the untyped
+* `getPluginApi<T = unknown>(name: string): T | null` overload
+* takes over.
+*
+* Each plugin's augmentation is emitted to
+* `<config_dir>/types/plugins.d.ts` at load time (via oxc's
+* isolated-declarations), so init.ts sees every loaded plugin's
+* registry entry automatically.
+*/
+interface FreshPluginRegistry {}
 type TextPropertyEntry = {
 	/**
 	* Text content for this entry
@@ -1830,4 +1859,13 @@ interface EditorAPI {
 		path: string;
 		enabled: boolean;
 	}>>;
+}
+/**
+* Typed overload of `editor.getPluginApi`. When the caller passes a
+* key that some loaded plugin declared in `FreshPluginRegistry`, the
+* return type is narrowed to that plugin's API. Unknown names fall
+* through to the untyped `unknown | null` signature.
+*/
+interface EditorAPI {
+	getPluginApi<K extends keyof FreshPluginRegistry>(name: K): FreshPluginRegistry[K] | null;
 }
