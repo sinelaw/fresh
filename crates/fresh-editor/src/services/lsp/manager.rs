@@ -74,7 +74,11 @@ pub enum LspSpawnResult {
     NotAutoStart,
     /// No LSP server is configured for this language
     NotConfigured,
-    /// Server spawn failed or is disabled
+    /// Every configured server for this language has `enabled: false`.
+    /// This is a deliberate user opt-out, not a failure — callers
+    /// should stay silent (or log at debug level) rather than warning.
+    Disabled,
+    /// Server spawn failed (missing runtime, cooldown, or spawn error).
     Failed,
 }
 
@@ -429,7 +433,8 @@ impl LspManager {
     /// - `LspSpawnResult::Spawned` if the server was spawned or already running
     /// - `LspSpawnResult::NotAutoStart` if auto_start is false and not manually allowed
     /// - `LspSpawnResult::NotConfigured` if no LSP server is configured for the language
-    /// - `LspSpawnResult::Failed` if spawn failed or language is disabled
+    /// - `LspSpawnResult::Disabled` if every configured server has `enabled: false`
+    /// - `LspSpawnResult::Failed` if spawn failed (missing runtime, cooldown, etc.)
     ///
     /// The `file_path` is used for workspace root detection via `root_markers`.
     ///
@@ -479,7 +484,7 @@ impl LspManager {
             {
                 return LspSpawnResult::Spawned;
             }
-            return LspSpawnResult::Failed;
+            return LspSpawnResult::Disabled;
         }
 
         // Check if auto_start is enabled (on any per-language config) or language was manually allowed
@@ -1860,6 +1865,39 @@ mod tests {
         // force_spawn should return None for disabled language
         let result = manager.force_spawn("rust", None);
         assert!(result.is_none());
+    }
+
+    // try_spawn must distinguish "user disabled it" (enabled=false for
+    // every configured server) from real spawn failures. Opening a file
+    // of a deliberately-disabled language should return `Disabled`, not
+    // `Failed`, so callers can log at debug level instead of warning on
+    // every file open.
+    #[test]
+    fn test_lsp_manager_try_spawn_returns_disabled_when_all_configs_disabled() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut manager = LspManager::new(None);
+        let async_bridge = AsyncBridge::new();
+        manager.set_runtime(rt.handle().clone(), async_bridge);
+
+        manager.set_language_config(
+            "rust".to_string(),
+            LspServerConfig {
+                enabled: false,
+                command: String::new(),
+                args: vec![],
+                process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
+                auto_start: false,
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            },
+        );
+
+        assert_eq!(manager.try_spawn("rust", None), LspSpawnResult::Disabled);
     }
 
     #[test]

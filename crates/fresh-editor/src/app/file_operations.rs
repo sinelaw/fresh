@@ -972,6 +972,9 @@ impl Editor {
             LspSpawnResult::NotConfigured => {
                 tracing::debug!("No LSP server configured for language: {}", language);
             }
+            LspSpawnResult::Disabled => {
+                tracing::debug!("LSP disabled in config for language: {}", language);
+            }
             LspSpawnResult::Failed => {
                 tracing::warn!("Failed to spawn LSP client for language: {}", language);
             }
