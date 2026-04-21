@@ -205,17 +205,34 @@ impl Authority {
             FilesystemSpec::Local => Arc::new(StdFileSystem),
         };
 
-        let process_spawner: Arc<dyn ProcessSpawner> = match payload.spawner {
-            SpawnerSpec::Local => Arc::new(LocalProcessSpawner),
+        // Both spawner traits need the docker-exec params when the
+        // payload is a container, so destructure once and reuse.
+        let (process_spawner, long_running_spawner): (
+            Arc<dyn ProcessSpawner>,
+            Arc<dyn LongRunningSpawner>,
+        ) = match payload.spawner {
+            SpawnerSpec::Local => (
+                Arc::new(LocalProcessSpawner),
+                Arc::new(LocalLongRunningSpawner),
+            ),
             SpawnerSpec::DockerExec {
                 container_id,
                 user,
                 workspace,
-            } => Arc::new(
-                crate::services::authority::docker_spawner::DockerExecSpawner::new(
-                    container_id,
-                    user,
-                    workspace,
+            } => (
+                Arc::new(
+                    crate::services::authority::docker_spawner::DockerExecSpawner::new(
+                        container_id.clone(),
+                        user.clone(),
+                        workspace.clone(),
+                    ),
+                ),
+                Arc::new(
+                    crate::services::authority::docker_spawner::DockerLongRunningSpawner::new(
+                        container_id,
+                        user,
+                        workspace,
+                    ),
                 ),
             ),
         };
@@ -232,13 +249,6 @@ impl Authority {
                 manages_cwd,
             },
         };
-
-        // Long-running spawner defaults to local until the Docker
-        // variant lands in Phase L-2b. Container authorities built
-        // from this payload will spawn LSP servers on the host in
-        // the meantime — the old pre-Authority behavior — so LSP
-        // behavior does not regress during the rollout.
-        let long_running_spawner: Arc<dyn LongRunningSpawner> = Arc::new(LocalLongRunningSpawner);
 
         Ok(Self {
             filesystem,
