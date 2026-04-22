@@ -372,6 +372,15 @@ type BufferInfo = {
 	* refreshing itself for a preview tab.
 	*/
 	is_preview: boolean;
+	/**
+	* Split ids that currently hold this buffer (empty when the buffer is
+	* open but not visible in any split — e.g. background-opened tabs
+	* that haven't been focused). Lets plugins implement "focus existing
+	* buffer if visible, else open new" without having to track split
+	* ids across editor restarts (which reassign them). The list is a
+	* snapshot at the last `update_plugin_state_snapshot` tick.
+	*/
+	splits: number[];
 };
 type JsDiagnostic = {
 	/**

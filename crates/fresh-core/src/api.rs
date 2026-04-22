@@ -367,6 +367,15 @@ pub struct BufferInfo {
     /// refreshing itself for a preview tab.
     #[serde(default)]
     pub is_preview: bool,
+    /// Split ids that currently hold this buffer (empty when the buffer is
+    /// open but not visible in any split — e.g. background-opened tabs
+    /// that haven't been focused). Lets plugins implement "focus existing
+    /// buffer if visible, else open new" without having to track split
+    /// ids across editor restarts (which reassign them). The list is a
+    /// snapshot at the last `update_plugin_state_snapshot` tick.
+    #[serde(default)]
+    #[ts(type = "number[]")]
+    pub splits: Vec<SplitId>,
 }
 
 fn serialize_path<S: serde::Serializer>(path: &Option<PathBuf>, s: S) -> Result<S::Ok, S::Error> {
@@ -3566,6 +3575,7 @@ mod tests {
                 compose_width: None,
                 language: "text".to_string(),
                 is_preview: false,
+                splits: Vec::new(),
             };
             snapshot.buffers.insert(BufferId(1), buffer_info);
         }
@@ -3611,6 +3621,7 @@ mod tests {
                     compose_width: None,
                     language: "text".to_string(),
                     is_preview: false,
+                    splits: Vec::new(),
                 },
             );
             snapshot.buffers.insert(
@@ -3626,6 +3637,7 @@ mod tests {
                     compose_width: None,
                     language: "text".to_string(),
                     is_preview: false,
+                    splits: Vec::new(),
                 },
             );
             snapshot.buffers.insert(
@@ -3641,6 +3653,7 @@ mod tests {
                     compose_width: None,
                     language: "text".to_string(),
                     is_preview: false,
+                    splits: Vec::new(),
                 },
             );
         }

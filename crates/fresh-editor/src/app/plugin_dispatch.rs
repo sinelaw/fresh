@@ -92,6 +92,17 @@ impl Editor {
                     .get(buffer_id)
                     .map(|m| m.is_preview)
                     .unwrap_or(false);
+                // Which splits currently hold this buffer — lets plugins
+                // implement "focus existing if visible, else open new"
+                // without tracking split ids across editor restarts
+                // (the restart reassigns them). SplitManager has the
+                // authoritative map; we just mirror it.
+                let splits: Vec<fresh_core::SplitId> = self
+                    .split_manager
+                    .splits_for_buffer(*buffer_id)
+                    .into_iter()
+                    .map(|leaf_id| leaf_id.0)
+                    .collect();
                 let buffer_info = BufferInfo {
                     id: *buffer_id,
                     path: state.buffer.file_path().map(|p| p.to_path_buf()),
@@ -103,6 +114,7 @@ impl Editor {
                     compose_width,
                     language: state.language.clone(),
                     is_preview,
+                    splits,
                 };
                 snapshot.buffers.insert(*buffer_id, buffer_info);
 

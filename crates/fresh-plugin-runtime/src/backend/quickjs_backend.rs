@@ -7612,6 +7612,7 @@ mod tests {
                     compose_width: None,
                     language: "text".to_string(),
                     is_preview: false,
+                    splits: Vec::new(),
                 },
             );
             state.buffers.insert(
@@ -7627,6 +7628,7 @@ mod tests {
                     compose_width: None,
                     language: "text".to_string(),
                     is_preview: false,
+                    splits: Vec::new(),
                 },
             );
         }

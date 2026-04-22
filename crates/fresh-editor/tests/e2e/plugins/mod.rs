@@ -3,6 +3,7 @@
 
 pub mod audit_mode;
 pub mod authority_snapshot;
+pub mod buffer_info_splits;
 pub mod command_keybinding_editor;
 pub mod dashboard;
 pub mod devcontainer_failed_attach_popup;
