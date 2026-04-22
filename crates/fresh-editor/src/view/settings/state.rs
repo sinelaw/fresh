@@ -299,7 +299,15 @@ impl SettingsState {
                 SettingControl::Toggle(ref mut state) => state.focus = focus_state,
                 SettingControl::Number(ref mut state) => state.focus = focus_state,
                 SettingControl::Dropdown(ref mut state) => state.focus = focus_state,
-                SettingControl::Text(ref mut state) => state.focus = focus_state,
+                SettingControl::Text(ref mut state) => {
+                    state.focus = focus_state;
+                    // Leaving a text input via navigation also exits
+                    // edit mode, so the cursor never lingers on a row
+                    // the user is no longer looking at.
+                    if !focused {
+                        state.editing = false;
+                    }
+                }
                 SettingControl::Json(_) | SettingControl::Complex { .. } => {} // These don't have focus state
             }
         }
@@ -1511,6 +1519,7 @@ impl SettingsState {
                     dl.editing = true;
                 }
                 SettingControl::Text(ref mut state) => {
+                    state.editing = true;
                     // Mirror the spinner's "select-all on enter edit"
                     // UX: the first printable keystroke replaces the
                     // current value. Arrow keys or deletion cancel it
@@ -1526,8 +1535,14 @@ impl SettingsState {
     pub fn stop_editing(&mut self) {
         self.editing_text = false;
         if let Some(item) = self.current_item_mut() {
-            if let SettingControl::DualList(ref mut dl) = item.control {
-                dl.editing = false;
+            match item.control {
+                SettingControl::DualList(ref mut dl) => {
+                    dl.editing = false;
+                }
+                SettingControl::Text(ref mut state) => {
+                    state.editing = false;
+                }
+                _ => {}
             }
         }
     }

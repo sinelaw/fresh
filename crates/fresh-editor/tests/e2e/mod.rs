@@ -151,6 +151,7 @@ pub mod settings_paste;
 pub mod settings_quicklsp_entry_bug;
 pub mod settings_ruler_keyboard_nav;
 pub mod settings_scrolled_list_click;
+pub mod settings_text_input_focus;
 pub mod settings_ui_usability;
 pub mod shell_command;
 pub mod shift_backspace;

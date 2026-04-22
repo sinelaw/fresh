@@ -33,6 +33,11 @@ pub struct TextInputState {
     pub placeholder: String,
     /// Focus state
     pub focus: FocusState,
+    /// If true, the user is actively editing (Enter was pressed). When
+    /// the control is merely selected/highlighted via navigation this
+    /// stays `false`, which suppresses the cursor block so the caret
+    /// only appears once the user asks to type.
+    pub editing: bool,
     /// If true, validate that value is valid JSON before allowing exit
     pub validate_json: bool,
     /// "Select-all" affordance: when the input gains focus the whole
@@ -52,6 +57,7 @@ impl TextInputState {
             label: label.into(),
             placeholder: String::new(),
             focus: FocusState::Normal,
+            editing: false,
             validate_json: false,
             pending_replace_on_type: false,
         }
@@ -261,7 +267,11 @@ impl TextInputColors {
             border: theme.line_number_fg,
             placeholder: theme.line_number_fg,
             cursor: theme.cursor,
-            focused: theme.selection_bg,
+            // Use a fg-family colour for the focused/editing accent so
+            // the label and bracket highlighting remain readable against
+            // dark row backgrounds. `selection_bg` is a background colour
+            // and renders as dark-on-dark on high-contrast themes.
+            focused: theme.settings_selected_fg,
             disabled: theme.line_number_fg,
         }
     }
@@ -276,7 +286,7 @@ impl TextInputColors {
             border: theme.line_number_fg,
             placeholder: theme.line_number_fg,
             cursor: theme.cursor,
-            focused: theme.selection_bg,
+            focused: theme.settings_selected_fg,
             disabled: theme.line_number_fg,
         }
     }

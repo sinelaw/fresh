@@ -54,16 +54,26 @@ pub fn render_text_input_aligned(
         return TextInputLayout::default();
     }
 
+    // Distinguish three visual states for the label and brackets:
+    //   - Normal / selected-but-not-editing → normal label; muted border.
+    //     (The row's selection-highlight background already indicates
+    //     keyboard focus; the input box stays visually calm.)
+    //   - Focused + editing → normal label; brackets picked out in the
+    //     accent colour to show this is where typing goes.
+    //   - Hovered → accent-coloured brackets as a hover affordance.
+    //   - Disabled → everything dimmed.
     let (label_color, text_color, border_color, placeholder_color) = match state.focus {
         FocusState::Normal => (colors.label, colors.text, colors.border, colors.placeholder),
-        FocusState::Focused => (
-            colors.focused,
-            colors.text,
-            colors.focused,
-            colors.placeholder,
-        ),
+        FocusState::Focused => {
+            let border = if state.editing {
+                colors.focused
+            } else {
+                colors.border
+            };
+            (colors.label, colors.text, border, colors.placeholder)
+        }
         FocusState::Hovered => (
-            colors.focused,
+            colors.label,
             colors.text,
             colors.focused,
             colors.placeholder,
@@ -146,7 +156,7 @@ pub fn render_text_input_aligned(
     let input_start = area.x + final_label_width;
     let input_area = Rect::new(input_start, area.y, actual_field_width + 2, 1);
 
-    let cursor_pos = if state.focus == FocusState::Focused && !is_placeholder {
+    let cursor_pos = if state.focus == FocusState::Focused && state.editing && !is_placeholder {
         // Calculate cursor visual position within the visible area
         let cursor_visual_in_field = cursor_visual_pos.saturating_sub(scroll_visual_offset);
         let cursor_x = input_start + 1 + cursor_visual_in_field as u16;

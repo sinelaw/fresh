@@ -827,8 +827,8 @@ impl EntryDialogState {
             }
             match &mut item.control {
                 SettingControl::Text(state) => {
-                    // TextInputState uses focus state, cursor is already at end from with_value
                     state.cursor = state.value.len();
+                    state.editing = true;
                     self.editing_text = true;
                 }
                 SettingControl::TextList(state) => {
@@ -852,8 +852,10 @@ impl EntryDialogState {
     /// Stop text editing mode
     pub fn stop_editing(&mut self) {
         if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(state) = &mut item.control {
-                state.cancel_editing();
+            match &mut item.control {
+                SettingControl::Number(state) => state.cancel_editing(),
+                SettingControl::Text(state) => state.editing = false,
+                _ => {}
             }
         }
         self.editing_text = false;
