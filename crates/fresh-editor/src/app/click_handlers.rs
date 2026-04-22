@@ -287,6 +287,12 @@ impl Editor {
             return Ok(());
         }
 
+        // A live Quick Open goto-line preview holds a "restore cursor" snapshot
+        // that gets applied on cancel. An editor click is a deliberate new
+        // cursor placement — commit the preview so Esc doesn't rubber-band
+        // the cursor back over the click target.
+        self.quick_open_goto_line_preview = None;
+
         // Focus this split (handles terminal mode exit, tab state, etc.)
         self.focus_split(split_id, buffer_id);
 

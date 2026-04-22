@@ -351,6 +351,58 @@ fn test_quick_open_goto_line_live_preview_cancel_restores() {
     );
 }
 
+/// Clicking in the editor while a goto-line preview is active should commit
+/// the click as the new cursor position — Esc afterwards must NOT restore
+/// the pre-preview snapshot over the user's click.
+#[test]
+fn test_quick_open_goto_line_live_preview_mouse_click_commits() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 30, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let content = "LINE1\nLINE2\nLINE3\nLINE4\nLINE5\nLINE6\nLINE7\nLINE8\nLINE9\nLINE10\n";
+    let jump_path = project_root.join("jump.txt");
+    fs::write(&jump_path, content).unwrap();
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(":8").unwrap();
+    harness.render().unwrap();
+    let line8_start = "LINE1\nLINE2\nLINE3\nLINE4\nLINE5\nLINE6\nLINE7\n".len();
+    assert_eq!(
+        harness.cursor_position(),
+        line8_start,
+        "Preview should have jumped cursor to line 8"
+    );
+
+    // Click in the editor content area. (col=10, row=4 lands on a visible
+    // line near the top of the buffer — past the menu and tab bars.)
+    harness.mouse_click(10, 4).unwrap();
+    let clicked_position = harness.cursor_position();
+    assert_ne!(
+        clicked_position, line8_start,
+        "Mouse click should have moved cursor away from the preview target"
+    );
+
+    // Press Esc — the pre-preview snapshot must NOT override the click.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.cursor_position(),
+        clicked_position,
+        "Cursor should stay where the user clicked; preview snapshot must be committed on click"
+    );
+}
+
 /// Changing the prefix away from ":" should restore the cursor even without
 /// cancelling (so the preview doesn't leak into other providers).
 #[test]
