@@ -81,7 +81,13 @@
     "cmd.show_build_logs": "Dev Container: Show Build Logs",
     "cmd.show_build_logs_desc": "Open the most recent devcontainer up build log",
     "cmd.cancel_attach": "Dev Container: Cancel Startup",
-    "cmd.cancel_attach_desc": "Abort an in-flight dev container attach"
+    "cmd.cancel_attach_desc": "Abort an in-flight dev container attach",
+    "popup.failed_attach_title": "Dev Container Attach Failed",
+    "popup.failed_attach_message": "Dev container attach failed: %{error}",
+    "popup.failed_attach_action_retry": "Retry",
+    "popup.failed_attach_action_show_logs": "Show Build Logs",
+    "popup.failed_attach_action_reopen_local": "Reopen Locally",
+    "popup.failed_attach_action_dismiss": "Dismiss (ESC)"
   },
   "cs": {
     "cmd.show_info": "Dev Container: Zobrazit info",
@@ -165,7 +171,13 @@
     "cmd.show_build_logs": "Dev Container: Zobrazit protokol sestavení",
     "cmd.show_build_logs_desc": "Otevřít protokol posledního devcontainer up",
     "cmd.cancel_attach": "Dev Container: Zrušit spouštění",
-    "cmd.cancel_attach_desc": "Přerušit probíhající připojování dev containeru"
+    "cmd.cancel_attach_desc": "Přerušit probíhající připojování dev containeru",
+    "popup.failed_attach_title": "Pripojeni k dev containeru selhalo",
+    "popup.failed_attach_message": "Pripojeni k dev containeru selhalo: %{error}",
+    "popup.failed_attach_action_retry": "Zkusit znovu",
+    "popup.failed_attach_action_show_logs": "Zobrazit logy sestaveni",
+    "popup.failed_attach_action_reopen_local": "Otevrit lokalne",
+    "popup.failed_attach_action_dismiss": "Zavrit (ESC)"
   },
   "de": {
     "cmd.show_info": "Dev Container: Info anzeigen",
@@ -249,7 +261,13 @@
     "cmd.show_build_logs": "Dev Container: Build-Protokolle anzeigen",
     "cmd.show_build_logs_desc": "Öffnet das letzte devcontainer up Build-Protokoll",
     "cmd.cancel_attach": "Dev Container: Start abbrechen",
-    "cmd.cancel_attach_desc": "Bricht einen laufenden Dev Container-Anhang ab"
+    "cmd.cancel_attach_desc": "Bricht einen laufenden Dev Container-Anhang ab",
+    "popup.failed_attach_title": "Verbindung zum Dev Container fehlgeschlagen",
+    "popup.failed_attach_message": "Verbindung zum Dev Container fehlgeschlagen: %{error}",
+    "popup.failed_attach_action_retry": "Erneut versuchen",
+    "popup.failed_attach_action_show_logs": "Build-Logs anzeigen",
+    "popup.failed_attach_action_reopen_local": "Lokal oeffnen",
+    "popup.failed_attach_action_dismiss": "Schliessen (ESC)"
   },
   "es": {
     "cmd.show_info": "Dev Container: Mostrar Info",
@@ -333,7 +351,13 @@
     "cmd.show_build_logs": "Dev Container: Mostrar registros de compilación",
     "cmd.show_build_logs_desc": "Abre el registro del último devcontainer up",
     "cmd.cancel_attach": "Dev Container: Cancelar inicio",
-    "cmd.cancel_attach_desc": "Aborta una conexión de dev container en curso"
+    "cmd.cancel_attach_desc": "Aborta una conexión de dev container en curso",
+    "popup.failed_attach_title": "Error al conectar al dev container",
+    "popup.failed_attach_message": "Error al conectar al dev container: %{error}",
+    "popup.failed_attach_action_retry": "Reintentar",
+    "popup.failed_attach_action_show_logs": "Mostrar logs de compilacion",
+    "popup.failed_attach_action_reopen_local": "Reabrir en local",
+    "popup.failed_attach_action_dismiss": "Descartar (ESC)"
   },
   "fr": {
     "cmd.show_info": "Dev Container: Afficher les infos",
@@ -417,7 +441,13 @@
     "cmd.show_build_logs": "Dev Container : Afficher les journaux de compilation",
     "cmd.show_build_logs_desc": "Ouvrir le dernier journal de devcontainer up",
     "cmd.cancel_attach": "Dev Container : Annuler le démarrage",
-    "cmd.cancel_attach_desc": "Interrompt un rattachement de dev container en cours"
+    "cmd.cancel_attach_desc": "Interrompt un rattachement de dev container en cours",
+    "popup.failed_attach_title": "Echec de l'attachement au dev container",
+    "popup.failed_attach_message": "Echec de l'attachement au dev container : %{error}",
+    "popup.failed_attach_action_retry": "Reessayer",
+    "popup.failed_attach_action_show_logs": "Afficher les logs de build",
+    "popup.failed_attach_action_reopen_local": "Rouvrir en local",
+    "popup.failed_attach_action_dismiss": "Ignorer (ESC)"
   },
   "ja": {
     "cmd.show_info": "Dev Container: 情報を表示",
@@ -501,7 +531,13 @@
     "cmd.show_build_logs": "Dev Container: ビルドログを表示",
     "cmd.show_build_logs_desc": "最新の devcontainer up のビルドログを開く",
     "cmd.cancel_attach": "Dev Container: 起動をキャンセル",
-    "cmd.cancel_attach_desc": "進行中の Dev Container のアタッチを中断する"
+    "cmd.cancel_attach_desc": "進行中の Dev Container のアタッチを中断する",
+    "popup.failed_attach_title": "Dev Container への接続に失敗しました",
+    "popup.failed_attach_message": "Dev Container への接続に失敗しました: %{error}",
+    "popup.failed_attach_action_retry": "再試行",
+    "popup.failed_attach_action_show_logs": "ビルドログを表示",
+    "popup.failed_attach_action_reopen_local": "ローカルで開きなおす",
+    "popup.failed_attach_action_dismiss": "閉じる (ESC)"
   },
   "ko": {
     "cmd.show_info": "Dev Container: 정보 표시",
@@ -585,7 +621,13 @@
     "cmd.show_build_logs": "Dev Container: 빌드 로그 보기",
     "cmd.show_build_logs_desc": "최근 devcontainer up의 빌드 로그를 엽니다",
     "cmd.cancel_attach": "Dev Container: 시작 취소",
-    "cmd.cancel_attach_desc": "진행 중인 Dev Container 연결을 중단합니다"
+    "cmd.cancel_attach_desc": "진행 중인 Dev Container 연결을 중단합니다",
+    "popup.failed_attach_title": "Dev Container 연결 실패",
+    "popup.failed_attach_message": "Dev Container 연결에 실패했습니다: %{error}",
+    "popup.failed_attach_action_retry": "다시 시도",
+    "popup.failed_attach_action_show_logs": "빌드 로그 보기",
+    "popup.failed_attach_action_reopen_local": "로컬로 다시 열기",
+    "popup.failed_attach_action_dismiss": "닫기 (ESC)"
   },
   "zh-CN": {
     "cmd.show_info": "Dev Container: 显示信息",
@@ -669,7 +711,13 @@
     "cmd.show_build_logs": "Dev Container: 显示构建日志",
     "cmd.show_build_logs_desc": "打开最近一次 devcontainer up 的构建日志",
     "cmd.cancel_attach": "Dev Container: 取消启动",
-    "cmd.cancel_attach_desc": "中止进行中的 Dev Container 连接"
+    "cmd.cancel_attach_desc": "中止进行中的 Dev Container 连接",
+    "popup.failed_attach_title": "连接到开发容器失败",
+    "popup.failed_attach_message": "连接到开发容器失败: %{error}",
+    "popup.failed_attach_action_retry": "重试",
+    "popup.failed_attach_action_show_logs": "查看构建日志",
+    "popup.failed_attach_action_reopen_local": "在本地重新打开",
+    "popup.failed_attach_action_dismiss": "关闭 (ESC)"
   },
   "it": {
     "cmd.show_info": "Dev Container: Mostra info",
@@ -753,7 +801,13 @@
     "cmd.show_build_logs": "Dev Container: Mostra log di build",
     "cmd.show_build_logs_desc": "Apre il log dell'ultimo devcontainer up",
     "cmd.cancel_attach": "Dev Container: Annulla avvio",
-    "cmd.cancel_attach_desc": "Interrompe un collegamento al dev container in corso"
+    "cmd.cancel_attach_desc": "Interrompe un collegamento al dev container in corso",
+    "popup.failed_attach_title": "Connessione al dev container non riuscita",
+    "popup.failed_attach_message": "Connessione al dev container non riuscita: %{error}",
+    "popup.failed_attach_action_retry": "Riprova",
+    "popup.failed_attach_action_show_logs": "Mostra log di build",
+    "popup.failed_attach_action_reopen_local": "Riapri in locale",
+    "popup.failed_attach_action_dismiss": "Chiudi (ESC)"
   },
   "pt-BR": {
     "cmd.show_info": "Dev Container: Mostrar informacoes",
@@ -837,7 +891,13 @@
     "cmd.show_build_logs": "Dev Container: Mostrar logs de build",
     "cmd.show_build_logs_desc": "Abre o log do último devcontainer up",
     "cmd.cancel_attach": "Dev Container: Cancelar inicialização",
-    "cmd.cancel_attach_desc": "Aborta uma conexão de dev container em andamento"
+    "cmd.cancel_attach_desc": "Aborta uma conexão de dev container em andamento",
+    "popup.failed_attach_title": "Falha ao anexar ao dev container",
+    "popup.failed_attach_message": "Falha ao anexar ao dev container: %{error}",
+    "popup.failed_attach_action_retry": "Tentar novamente",
+    "popup.failed_attach_action_show_logs": "Mostrar logs de build",
+    "popup.failed_attach_action_reopen_local": "Reabrir localmente",
+    "popup.failed_attach_action_dismiss": "Descartar (ESC)"
   },
   "ru": {
     "cmd.show_info": "Dev Container: Показать информацию",
@@ -921,7 +981,13 @@
     "cmd.show_build_logs": "Dev Container: Показать журнал сборки",
     "cmd.show_build_logs_desc": "Открывает журнал последнего devcontainer up",
     "cmd.cancel_attach": "Dev Container: Отменить запуск",
-    "cmd.cancel_attach_desc": "Прерывает выполняющееся подключение dev container"
+    "cmd.cancel_attach_desc": "Прерывает выполняющееся подключение dev container",
+    "popup.failed_attach_title": "Ошибка подключения к dev container",
+    "popup.failed_attach_message": "Ошибка подключения к dev container: %{error}",
+    "popup.failed_attach_action_retry": "Повторить",
+    "popup.failed_attach_action_show_logs": "Показать логи сборки",
+    "popup.failed_attach_action_reopen_local": "Открыть локально",
+    "popup.failed_attach_action_dismiss": "Закрыть (ESC)"
   },
   "th": {
     "cmd.show_info": "Dev Container: แสดงข้อมูล",
@@ -1005,7 +1071,13 @@
     "cmd.show_build_logs": "Dev Container: แสดงบันทึกการสร้าง",
     "cmd.show_build_logs_desc": "เปิดบันทึกการสร้าง devcontainer up ล่าสุด",
     "cmd.cancel_attach": "Dev Container: ยกเลิกการเริ่มต้น",
-    "cmd.cancel_attach_desc": "ยกเลิกการเชื่อมต่อ Dev Container ที่กำลังดำเนินการ"
+    "cmd.cancel_attach_desc": "ยกเลิกการเชื่อมต่อ Dev Container ที่กำลังดำเนินการ",
+    "popup.failed_attach_title": "เชื่อมต่อ Dev Container ไม่สำเร็จ",
+    "popup.failed_attach_message": "เชื่อมต่อ Dev Container ไม่สำเร็จ: %{error}",
+    "popup.failed_attach_action_retry": "ลองอีกครั้ง",
+    "popup.failed_attach_action_show_logs": "แสดงบันทึกการสร้าง",
+    "popup.failed_attach_action_reopen_local": "เปิดใหม่ในเครื่อง",
+    "popup.failed_attach_action_dismiss": "ปิด (ESC)"
   },
   "uk": {
     "cmd.show_info": "Dev Container: Показати інформацію",
@@ -1089,7 +1161,13 @@
     "cmd.show_build_logs": "Dev Container: Показати журнал збирання",
     "cmd.show_build_logs_desc": "Відкриває журнал останнього devcontainer up",
     "cmd.cancel_attach": "Dev Container: Скасувати запуск",
-    "cmd.cancel_attach_desc": "Перериває поточне підключення dev container"
+    "cmd.cancel_attach_desc": "Перериває поточне підключення dev container",
+    "popup.failed_attach_title": "Помилка підключення до dev container",
+    "popup.failed_attach_message": "Помилка підключення до dev container: %{error}",
+    "popup.failed_attach_action_retry": "Повторити",
+    "popup.failed_attach_action_show_logs": "Показати логи збирання",
+    "popup.failed_attach_action_reopen_local": "Відкрити локально",
+    "popup.failed_attach_action_dismiss": "Закрити (ESC)"
   },
   "vi": {
     "cmd.show_info": "Dev Container: Hiển thị thông tin",
@@ -1173,6 +1251,12 @@
     "cmd.show_build_logs": "Dev Container: Hiện nhật ký xây dựng",
     "cmd.show_build_logs_desc": "Mở nhật ký devcontainer up gần nhất",
     "cmd.cancel_attach": "Dev Container: Hủy khởi động",
-    "cmd.cancel_attach_desc": "Hủy kết nối dev container đang chạy"
+    "cmd.cancel_attach_desc": "Hủy kết nối dev container đang chạy",
+    "popup.failed_attach_title": "Kết nối dev container thất bại",
+    "popup.failed_attach_message": "Kết nối dev container thất bại: %{error}",
+    "popup.failed_attach_action_retry": "Thử lại",
+    "popup.failed_attach_action_show_logs": "Xem log build",
+    "popup.failed_attach_action_reopen_local": "Mở lại cục bộ",
+    "popup.failed_attach_action_dismiss": "Đóng (ESC)"
   }
 }

@@ -873,9 +873,88 @@ function devcontainer_on_action_result(data: ActionPopupResultData): void {
   }
   if (data.popup_id === "devcontainer-attach") {
     devcontainer_on_attach_popup(data);
+    return;
+  }
+  if (data.popup_id === "devcontainer-failed-attach") {
+    devcontainer_on_failed_attach_popup(data);
   }
 }
 registerHandler("devcontainer_on_action_result", devcontainer_on_action_result);
+
+/// Surface a proactive action popup after a failed attach so users
+/// don't have to notice the Remote Indicator's red state on their own.
+/// Spec §8 calls for "Retry" / "Reopen Locally" on build failure; we
+/// also offer "Show Build Logs" (the file is still on disk — see
+/// `prepareBuildLogFile`) and a "Dismiss" escape so the user can come
+/// back later via the Remote Indicator menu without the popup blocking.
+///
+/// All four actions map to existing handlers:
+///   - Retry → `devcontainer_retry_attach`
+///   - Show Build Logs → `devcontainer_show_build_logs`
+///   - Reopen Locally → `clearRemoteIndicatorState` (no authority was
+///     installed, so nothing to detach; just drop the red override).
+///   - Dismiss → no-op; FailedAttach indicator stays so the user can
+///     revisit the choice from the Remote Indicator popup.
+function showFailedAttachPopup(errText: string): void {
+  editor.showActionPopup({
+    id: "devcontainer-failed-attach",
+    title: editor.t("popup.failed_attach_title"),
+    message: editor.t("popup.failed_attach_message", { error: errText }),
+    actions: [
+      { id: "retry", label: editor.t("popup.failed_attach_action_retry") },
+      {
+        id: "show_build_logs",
+        label: editor.t("popup.failed_attach_action_show_logs"),
+      },
+      {
+        id: "reopen_local",
+        label: editor.t("popup.failed_attach_action_reopen_local"),
+      },
+      { id: "dismiss", label: editor.t("popup.failed_attach_action_dismiss") },
+    ],
+  });
+}
+
+function devcontainer_on_failed_attach_popup(data: ActionPopupResultData): void {
+  if (data.popup_id !== "devcontainer-failed-attach") return;
+  switch (data.action_id) {
+    case "retry":
+      void devcontainer_retry_attach();
+      break;
+    case "show_build_logs":
+      void devcontainer_show_build_logs();
+      break;
+    case "reopen_local":
+      // No authority was installed — failed attach never got that far —
+      // so there is nothing to detach. Just drop the FailedAttach
+      // override so the indicator returns to Local.
+      editor.clearRemoteIndicatorState();
+      break;
+    case "dismiss":
+    case "dismissed":
+      // Leave the FailedAttach indicator visible so the user can revisit
+      // via the Remote Indicator popup later.
+      break;
+  }
+}
+registerHandler(
+  "devcontainer_on_failed_attach_popup",
+  devcontainer_on_failed_attach_popup,
+);
+
+/// Convenience wrapper: flip the indicator to FailedAttach, set the
+/// rebuild-failed status message, and surface the proactive action
+/// popup in one call. Every branch in `runDevcontainerUp` that reaches
+/// the failure state routes through here so the popup surfaces
+/// consistently regardless of which step failed.
+function enterFailedAttach(errText: string): void {
+  editor.setStatus(editor.t("status.rebuild_failed", { error: errText }));
+  editor.setRemoteIndicatorState({
+    kind: "failed_attach",
+    error: errText,
+  });
+  showFailedAttachPopup(errText);
+}
 
 // =============================================================================
 // Authority lifecycle
@@ -1039,10 +1118,7 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
   // spec. Bail the attach if it fails; the user shouldn't get an
   // attached container after their host-side prologue errored.
   if (!(await runInitializeCommand())) {
-    editor.setRemoteIndicatorState({
-      kind: "failed_attach",
-      error: editor.t("indicator.error_initialize"),
-    });
+    enterFailedAttach(editor.t("indicator.error_initialize"));
     return;
   }
 
@@ -1070,12 +1146,7 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
   //     without forcing users to touch their own `.gitignore`.
   const logPath = await prepareBuildLogFile(cwd);
   if (!logPath) {
-    const errText = editor.t("status.build_log_prepare_failed");
-    editor.setStatus(editor.t("status.rebuild_failed", { error: errText }));
-    editor.setRemoteIndicatorState({
-      kind: "failed_attach",
-      error: errText,
-    });
+    enterFailedAttach(editor.t("status.build_log_prepare_failed"));
     return;
   }
   rememberLastBuildLogPath(logPath);
@@ -1124,33 +1195,19 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
     const logText = editor.readFile(logPath) ?? "";
     const errText = extractLastNonEmptyLine(logText)
       ?? `exit ${result.exit_code}`;
-    editor.setStatus(editor.t("status.rebuild_failed", { error: errText }));
-    editor.setRemoteIndicatorState({
-      kind: "failed_attach",
-      error: errText,
-    });
+    enterFailedAttach(errText);
     return;
   }
 
   const parsed = parseDevcontainerUpOutput(result.stdout);
   if (!parsed || parsed.outcome !== "success" || !parsed.containerId) {
-    const errText = editor.t("status.rebuild_parse_failed");
-    editor.setStatus(editor.t("status.rebuild_failed", { error: errText }));
-    editor.setRemoteIndicatorState({
-      kind: "failed_attach",
-      error: errText,
-    });
+    enterFailedAttach(editor.t("status.rebuild_parse_failed"));
     return;
   }
 
   const payload = buildContainerAuthorityPayload(parsed);
   if (!payload) {
-    const errText = editor.t("status.rebuild_missing_container_id");
-    editor.setStatus(editor.t("status.rebuild_failed", { error: errText }));
-    editor.setRemoteIndicatorState({
-      kind: "failed_attach",
-      error: errText,
-    });
+    enterFailedAttach(editor.t("status.rebuild_missing_container_id"));
     return;
   }
 
@@ -1659,12 +1716,16 @@ if (findConfig()) {
         // Matching container authority came up — success path.
         clearAttachAttempt();
       } else {
-        // No container landed but we just tried. Surface it.
-        editor.setRemoteIndicatorState({
-          kind: "failed_attach",
-          error: editor.t("indicator.error_restart_recovery"),
-        });
+        // No container landed but we just tried. Surface it with the
+        // same proactive popup as an in-flight failure so users see
+        // Retry / Reopen Locally without having to click the
+        // indicator.
+        enterFailedAttach(editor.t("indicator.error_restart_recovery"));
         clearAttachAttempt();
+        // Do not also show the attach prompt — the failed-attach
+        // popup is the right next surface; stacking a second popup
+        // on top would bury it.
+        return;
       }
     }
 

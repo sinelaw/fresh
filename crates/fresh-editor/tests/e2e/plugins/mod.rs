@@ -5,6 +5,7 @@ pub mod audit_mode;
 pub mod authority_snapshot;
 pub mod command_keybinding_editor;
 pub mod dashboard;
+pub mod devcontainer_failed_attach_popup;
 pub mod diagnostics_panel_bugs;
 pub mod diagnostics_panel_jump;
 pub mod diff_cursor;
