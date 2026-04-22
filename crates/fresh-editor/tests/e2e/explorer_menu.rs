@@ -90,9 +90,13 @@ fn test_explorer_menu_checkbox_updates_on_toggle() {
         .unwrap();
     harness.render().unwrap();
 
-    // Navigate to Show Hidden Files and select it
-    // Menu items (separators auto-skipped): New File, New Folder, Open, Rename, Delete, Refresh, Show Hidden Files
-    for _ in 0..6 {
+    // Navigate to Show Hidden Files and select it. Menu items with
+    // separators skipped (clipboard is empty so Paste is hidden):
+    //   New File, New Folder, Open, Rename, Delete, Cut, Copy,
+    //   Refresh, Show Hidden Files
+    // That's 8 Down presses to land on "Show Hidden Files" from the
+    // initial highlight on "New File".
+    for _ in 0..8 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness
@@ -416,10 +420,12 @@ fn test_explorer_menu_toggle_hidden_via_menu() {
         .unwrap();
     harness.render().unwrap();
 
-    // Navigate to "Show Hidden Files"
-    // Menu items (separators are auto-skipped): New File -> New Folder -> Open -> Rename -> Delete -> Refresh -> Show Hidden Files
-    // That's 6 Down presses from New File to Show Hidden Files
-    for _ in 0..6 {
+    // Navigate to "Show Hidden Files". With separators auto-skipped and
+    // an empty clipboard (Paste hidden), the Explorer menu shows:
+    //   New File -> New Folder -> Open -> Rename -> Delete -> Cut
+    //   -> Copy -> Refresh -> Show Hidden Files
+    // That's 8 Down presses from New File to Show Hidden Files.
+    for _ in 0..8 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();

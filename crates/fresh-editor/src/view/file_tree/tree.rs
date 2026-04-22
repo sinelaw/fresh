@@ -267,9 +267,15 @@ impl FileTree {
                 self.remove_node_recursive(*cid);
             }
         }
+        // Add nodes for new paths, collecting their ids so we can link them
+        // into the parent's children list. `add_node` only updates the
+        // global maps (`self.nodes`, `self.path_to_node`); the parent's
+        // `children` Vec is this function's responsibility to rebuild.
+        let mut newly_added: Vec<NodeId> = Vec::new();
         for (path, entry) in &new_paths {
             if !existing.contains_key(path) {
-                self.add_node(entry.clone(), Some(id));
+                let new_id = self.add_node(entry.clone(), Some(id));
+                newly_added.push(new_id);
             } else if let Some(&cid) = existing.get(path) {
                 // Path still exists — refresh the cached DirEntry in place so
                 // attributes that changed (mtime, size, git status, etc.) are
@@ -280,7 +286,10 @@ impl FileTree {
             }
         }
 
-        // Collect sort keys upfront to avoid per-comparison HashMap lookups
+        // Build the full set of ids that should appear under this node:
+        // the surviving old children (still present in self.nodes) plus the
+        // ones we just added. Then sort them the same way `expand_node`
+        // does — dirs first, then case-insensitive by name.
         let mut keyed: Vec<(NodeId, bool, String)> = self
             .get_node(id)
             .map(|n| {
@@ -294,6 +303,11 @@ impl FileTree {
                     .collect()
             })
             .unwrap_or_default();
+        for new_id in newly_added {
+            if let Some(cn) = self.nodes.get(&new_id) {
+                keyed.push((new_id, cn.is_dir(), cn.entry.name.to_lowercase()));
+            }
+        }
         keyed.sort_by(
             |(_, a_dir, a_name), (_, b_dir, b_name)| match (a_dir, b_dir) {
                 (true, false) => std::cmp::Ordering::Less,
@@ -861,6 +875,42 @@ mod tests {
             "Node's cached size should track the overwritten file — was {:?}, still {:?} after reload",
             size_before,
             size_after
+        );
+    }
+
+    /// `reload_expanded_node` must link new on-disk entries into the
+    /// parent's `children` list. Without this, a file appearing in the
+    /// directory since the last expand is stored in `self.nodes` and
+    /// `self.path_to_node` but is orphaned — it won't show up in a
+    /// visible-nodes walk, so the explorer doesn't render it.
+    #[tokio::test]
+    async fn test_reload_expanded_node_links_new_children() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path();
+        std_fs::write(temp_path.join("old.txt"), "existing").unwrap();
+
+        let backend = Arc::new(StdFileSystem);
+        let manager = Arc::new(FsManager::new(backend));
+        let mut tree = FileTree::new(temp_path.to_path_buf(), manager)
+            .await
+            .unwrap();
+        tree.expand_node(tree.root_id()).await.unwrap();
+
+        // Create a new file on disk and reload the parent.
+        std_fs::write(temp_path.join("new.txt"), "fresh").unwrap();
+        tree.reload_expanded_node(tree.root_id()).await.unwrap();
+
+        // The parent's children list must include the new file, so
+        // visible-nodes traversal can render it.
+        let visible = tree.get_visible_nodes();
+        let names: Vec<String> = visible
+            .iter()
+            .map(|&cid| tree.get_node(cid).unwrap().entry.name.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "new.txt"),
+            "new.txt must appear in visible tree after reload — visible: {:?}",
+            names
         );
     }
 }
