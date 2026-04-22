@@ -87,7 +87,18 @@
     "popup.failed_attach_action_retry": "Retry",
     "popup.failed_attach_action_show_logs": "Show Build Logs",
     "popup.failed_attach_action_reopen_local": "Reopen Locally",
-    "popup.failed_attach_action_dismiss": "Dismiss (ESC)"
+    "popup.failed_attach_action_dismiss": "Dismiss (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: Show Forwarded Ports",
+    "cmd.show_forwarded_ports_panel_desc": "Open a live panel tabulating configured and runtime-bound container ports",
+    "ports_panel.header": "Forwarded Ports",
+    "ports_panel.col_configured": "Configured",
+    "ports_panel.col_protocol": "Protocol",
+    "ports_panel.col_label": "Label",
+    "ports_panel.col_binding": "Runtime binding",
+    "ports_panel.no_ports": "No configured or runtime ports to show.",
+    "ports_panel.footer": "r: refresh  q/Esc: close",
+    "status.ports_panel_opened": "Dev Container Ports panel opened",
+    "status.ports_panel_refreshed": "Dev Container Ports panel refreshed"
   },
   "cs": {
     "cmd.show_info": "Dev Container: Zobrazit info",
@@ -177,7 +188,18 @@
     "popup.failed_attach_action_retry": "Zkusit znovu",
     "popup.failed_attach_action_show_logs": "Zobrazit logy sestaveni",
     "popup.failed_attach_action_reopen_local": "Otevrit lokalne",
-    "popup.failed_attach_action_dismiss": "Zavrit (ESC)"
+    "popup.failed_attach_action_dismiss": "Zavrit (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: Zobrazit přesměrované porty",
+    "cmd.show_forwarded_ports_panel_desc": "Otevřít panel s přehledem nakonfigurovaných a runtime přesměrovaných portů kontejneru",
+    "ports_panel.header": "Přesměrované porty",
+    "ports_panel.col_configured": "Konfigurovaný",
+    "ports_panel.col_protocol": "Protokol",
+    "ports_panel.col_label": "Popis",
+    "ports_panel.col_binding": "Runtime vazba",
+    "ports_panel.no_ports": "Žádné porty k zobrazení.",
+    "ports_panel.footer": "r: obnovit  q/Esc: zavřít",
+    "status.ports_panel_opened": "Panel přesměrovaných portů otevřen",
+    "status.ports_panel_refreshed": "Panel přesměrovaných portů obnoven"
   },
   "de": {
     "cmd.show_info": "Dev Container: Info anzeigen",
@@ -267,7 +289,18 @@
     "popup.failed_attach_action_retry": "Erneut versuchen",
     "popup.failed_attach_action_show_logs": "Build-Logs anzeigen",
     "popup.failed_attach_action_reopen_local": "Lokal oeffnen",
-    "popup.failed_attach_action_dismiss": "Schliessen (ESC)"
+    "popup.failed_attach_action_dismiss": "Schliessen (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: Weitergeleitete Ports anzeigen",
+    "cmd.show_forwarded_ports_panel_desc": "Live-Panel mit konfigurierten und zur Laufzeit gebundenen Container-Ports oeffnen",
+    "ports_panel.header": "Weitergeleitete Ports",
+    "ports_panel.col_configured": "Konfiguriert",
+    "ports_panel.col_protocol": "Protokoll",
+    "ports_panel.col_label": "Label",
+    "ports_panel.col_binding": "Laufzeit-Bindung",
+    "ports_panel.no_ports": "Keine konfigurierten oder aktiven Ports.",
+    "ports_panel.footer": "r: aktualisieren  q/Esc: schliessen",
+    "status.ports_panel_opened": "Panel fuer weitergeleitete Ports geoeffnet",
+    "status.ports_panel_refreshed": "Panel fuer weitergeleitete Ports aktualisiert"
   },
   "es": {
     "cmd.show_info": "Dev Container: Mostrar Info",
@@ -357,7 +390,18 @@
     "popup.failed_attach_action_retry": "Reintentar",
     "popup.failed_attach_action_show_logs": "Mostrar logs de compilacion",
     "popup.failed_attach_action_reopen_local": "Reabrir en local",
-    "popup.failed_attach_action_dismiss": "Descartar (ESC)"
+    "popup.failed_attach_action_dismiss": "Descartar (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: Mostrar puertos reenviados",
+    "cmd.show_forwarded_ports_panel_desc": "Abrir un panel con los puertos configurados y los enlaces en tiempo de ejecucion",
+    "ports_panel.header": "Puertos reenviados",
+    "ports_panel.col_configured": "Configurado",
+    "ports_panel.col_protocol": "Protocolo",
+    "ports_panel.col_label": "Etiqueta",
+    "ports_panel.col_binding": "Enlace en ejecucion",
+    "ports_panel.no_ports": "No hay puertos configurados ni en ejecucion.",
+    "ports_panel.footer": "r: refrescar  q/Esc: cerrar",
+    "status.ports_panel_opened": "Panel de puertos reenviados abierto",
+    "status.ports_panel_refreshed": "Panel de puertos reenviados actualizado"
   },
   "fr": {
     "cmd.show_info": "Dev Container: Afficher les infos",
@@ -447,7 +491,18 @@
     "popup.failed_attach_action_retry": "Reessayer",
     "popup.failed_attach_action_show_logs": "Afficher les logs de build",
     "popup.failed_attach_action_reopen_local": "Rouvrir en local",
-    "popup.failed_attach_action_dismiss": "Ignorer (ESC)"
+    "popup.failed_attach_action_dismiss": "Ignorer (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container : Afficher les ports redirigés",
+    "cmd.show_forwarded_ports_panel_desc": "Ouvrir un panneau listant les ports configures et les liaisons runtime du container",
+    "ports_panel.header": "Ports redirigés",
+    "ports_panel.col_configured": "Configuré",
+    "ports_panel.col_protocol": "Protocole",
+    "ports_panel.col_label": "Étiquette",
+    "ports_panel.col_binding": "Liaison runtime",
+    "ports_panel.no_ports": "Aucun port configure ou actif.",
+    "ports_panel.footer": "r : actualiser  q/Echap : fermer",
+    "status.ports_panel_opened": "Panneau des ports redirigés ouvert",
+    "status.ports_panel_refreshed": "Panneau des ports redirigés actualisé"
   },
   "ja": {
     "cmd.show_info": "Dev Container: 情報を表示",
@@ -537,7 +592,18 @@
     "popup.failed_attach_action_retry": "再試行",
     "popup.failed_attach_action_show_logs": "ビルドログを表示",
     "popup.failed_attach_action_reopen_local": "ローカルで開きなおす",
-    "popup.failed_attach_action_dismiss": "閉じる (ESC)"
+    "popup.failed_attach_action_dismiss": "閉じる (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: 転送ポートを表示",
+    "cmd.show_forwarded_ports_panel_desc": "設定済みポートとコンテナ実行時のバインドを一覧表示するパネルを開く",
+    "ports_panel.header": "転送ポート",
+    "ports_panel.col_configured": "設定済み",
+    "ports_panel.col_protocol": "プロトコル",
+    "ports_panel.col_label": "ラベル",
+    "ports_panel.col_binding": "実行時バインド",
+    "ports_panel.no_ports": "表示するポートがありません。",
+    "ports_panel.footer": "r: 更新  q/Esc: 閉じる",
+    "status.ports_panel_opened": "転送ポートパネルを開きました",
+    "status.ports_panel_refreshed": "転送ポートパネルを更新しました"
   },
   "ko": {
     "cmd.show_info": "Dev Container: 정보 표시",
@@ -627,7 +693,18 @@
     "popup.failed_attach_action_retry": "다시 시도",
     "popup.failed_attach_action_show_logs": "빌드 로그 보기",
     "popup.failed_attach_action_reopen_local": "로컬로 다시 열기",
-    "popup.failed_attach_action_dismiss": "닫기 (ESC)"
+    "popup.failed_attach_action_dismiss": "닫기 (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: 포워딩 포트 보기",
+    "cmd.show_forwarded_ports_panel_desc": "구성된 포트와 런타임 바인딩을 나열하는 패널 열기",
+    "ports_panel.header": "포워딩 포트",
+    "ports_panel.col_configured": "구성됨",
+    "ports_panel.col_protocol": "프로토콜",
+    "ports_panel.col_label": "라벨",
+    "ports_panel.col_binding": "런타임 바인딩",
+    "ports_panel.no_ports": "표시할 포트가 없습니다.",
+    "ports_panel.footer": "r: 새로고침  q/Esc: 닫기",
+    "status.ports_panel_opened": "포워딩 포트 패널을 열었습니다",
+    "status.ports_panel_refreshed": "포워딩 포트 패널을 갱신했습니다"
   },
   "zh-CN": {
     "cmd.show_info": "Dev Container: 显示信息",
@@ -717,7 +794,18 @@
     "popup.failed_attach_action_retry": "重试",
     "popup.failed_attach_action_show_logs": "查看构建日志",
     "popup.failed_attach_action_reopen_local": "在本地重新打开",
-    "popup.failed_attach_action_dismiss": "关闭 (ESC)"
+    "popup.failed_attach_action_dismiss": "关闭 (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: 显示转发端口",
+    "cmd.show_forwarded_ports_panel_desc": "打开面板列出已配置的端口以及容器运行时的绑定",
+    "ports_panel.header": "转发端口",
+    "ports_panel.col_configured": "已配置",
+    "ports_panel.col_protocol": "协议",
+    "ports_panel.col_label": "标签",
+    "ports_panel.col_binding": "运行时绑定",
+    "ports_panel.no_ports": "没有可显示的端口。",
+    "ports_panel.footer": "r: 刷新  q/Esc: 关闭",
+    "status.ports_panel_opened": "已打开转发端口面板",
+    "status.ports_panel_refreshed": "已刷新转发端口面板"
   },
   "it": {
     "cmd.show_info": "Dev Container: Mostra info",
@@ -807,7 +895,18 @@
     "popup.failed_attach_action_retry": "Riprova",
     "popup.failed_attach_action_show_logs": "Mostra log di build",
     "popup.failed_attach_action_reopen_local": "Riapri in locale",
-    "popup.failed_attach_action_dismiss": "Chiudi (ESC)"
+    "popup.failed_attach_action_dismiss": "Chiudi (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: Mostra porte inoltrate",
+    "cmd.show_forwarded_ports_panel_desc": "Apri un pannello con le porte configurate e i binding a runtime del container",
+    "ports_panel.header": "Porte inoltrate",
+    "ports_panel.col_configured": "Configurata",
+    "ports_panel.col_protocol": "Protocollo",
+    "ports_panel.col_label": "Etichetta",
+    "ports_panel.col_binding": "Binding runtime",
+    "ports_panel.no_ports": "Nessuna porta configurata o attiva.",
+    "ports_panel.footer": "r: aggiorna  q/Esc: chiudi",
+    "status.ports_panel_opened": "Pannello porte inoltrate aperto",
+    "status.ports_panel_refreshed": "Pannello porte inoltrate aggiornato"
   },
   "pt-BR": {
     "cmd.show_info": "Dev Container: Mostrar informacoes",
@@ -897,7 +996,18 @@
     "popup.failed_attach_action_retry": "Tentar novamente",
     "popup.failed_attach_action_show_logs": "Mostrar logs de build",
     "popup.failed_attach_action_reopen_local": "Reabrir localmente",
-    "popup.failed_attach_action_dismiss": "Descartar (ESC)"
+    "popup.failed_attach_action_dismiss": "Descartar (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: Mostrar portas encaminhadas",
+    "cmd.show_forwarded_ports_panel_desc": "Abrir painel listando portas configuradas e vínculos em tempo de execução do container",
+    "ports_panel.header": "Portas encaminhadas",
+    "ports_panel.col_configured": "Configurada",
+    "ports_panel.col_protocol": "Protocolo",
+    "ports_panel.col_label": "Rótulo",
+    "ports_panel.col_binding": "Vínculo em execução",
+    "ports_panel.no_ports": "Nenhuma porta configurada ou em execução.",
+    "ports_panel.footer": "r: atualizar  q/Esc: fechar",
+    "status.ports_panel_opened": "Painel de portas encaminhadas aberto",
+    "status.ports_panel_refreshed": "Painel de portas encaminhadas atualizado"
   },
   "ru": {
     "cmd.show_info": "Dev Container: Показать информацию",
@@ -987,7 +1097,18 @@
     "popup.failed_attach_action_retry": "Повторить",
     "popup.failed_attach_action_show_logs": "Показать логи сборки",
     "popup.failed_attach_action_reopen_local": "Открыть локально",
-    "popup.failed_attach_action_dismiss": "Закрыть (ESC)"
+    "popup.failed_attach_action_dismiss": "Закрыть (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: Показать перенаправленные порты",
+    "cmd.show_forwarded_ports_panel_desc": "Открыть панель со списком настроенных и активных портов контейнера",
+    "ports_panel.header": "Перенаправленные порты",
+    "ports_panel.col_configured": "Настроено",
+    "ports_panel.col_protocol": "Протокол",
+    "ports_panel.col_label": "Метка",
+    "ports_panel.col_binding": "Активная привязка",
+    "ports_panel.no_ports": "Нет портов для отображения.",
+    "ports_panel.footer": "r: обновить  q/Esc: закрыть",
+    "status.ports_panel_opened": "Панель перенаправленных портов открыта",
+    "status.ports_panel_refreshed": "Панель перенаправленных портов обновлена"
   },
   "th": {
     "cmd.show_info": "Dev Container: แสดงข้อมูล",
@@ -1077,7 +1198,18 @@
     "popup.failed_attach_action_retry": "ลองอีกครั้ง",
     "popup.failed_attach_action_show_logs": "แสดงบันทึกการสร้าง",
     "popup.failed_attach_action_reopen_local": "เปิดใหม่ในเครื่อง",
-    "popup.failed_attach_action_dismiss": "ปิด (ESC)"
+    "popup.failed_attach_action_dismiss": "ปิด (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: แสดงพอร์ตที่ส่งต่อ",
+    "cmd.show_forwarded_ports_panel_desc": "เปิดแผงแสดงพอร์ตที่ตั้งค่าและผูกในเวลาทำงานของคอนเทนเนอร์",
+    "ports_panel.header": "พอร์ตที่ส่งต่อ",
+    "ports_panel.col_configured": "ตั้งค่าไว้",
+    "ports_panel.col_protocol": "โปรโตคอล",
+    "ports_panel.col_label": "ป้ายชื่อ",
+    "ports_panel.col_binding": "การผูกขณะทำงาน",
+    "ports_panel.no_ports": "ไม่มีพอร์ตให้แสดง",
+    "ports_panel.footer": "r: รีเฟรช  q/Esc: ปิด",
+    "status.ports_panel_opened": "เปิดแผงพอร์ตที่ส่งต่อแล้ว",
+    "status.ports_panel_refreshed": "รีเฟรชแผงพอร์ตที่ส่งต่อแล้ว"
   },
   "uk": {
     "cmd.show_info": "Dev Container: Показати інформацію",
@@ -1167,7 +1299,18 @@
     "popup.failed_attach_action_retry": "Повторити",
     "popup.failed_attach_action_show_logs": "Показати логи збирання",
     "popup.failed_attach_action_reopen_local": "Відкрити локально",
-    "popup.failed_attach_action_dismiss": "Закрити (ESC)"
+    "popup.failed_attach_action_dismiss": "Закрити (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: Показати перенаправлені порти",
+    "cmd.show_forwarded_ports_panel_desc": "Відкрити панель зі списком налаштованих портів і прив'язок під час виконання",
+    "ports_panel.header": "Перенаправлені порти",
+    "ports_panel.col_configured": "Налаштовано",
+    "ports_panel.col_protocol": "Протокол",
+    "ports_panel.col_label": "Мітка",
+    "ports_panel.col_binding": "Прив'язка виконання",
+    "ports_panel.no_ports": "Немає портів для показу.",
+    "ports_panel.footer": "r: оновити  q/Esc: закрити",
+    "status.ports_panel_opened": "Панель перенаправлених портів відкрито",
+    "status.ports_panel_refreshed": "Панель перенаправлених портів оновлено"
   },
   "vi": {
     "cmd.show_info": "Dev Container: Hiển thị thông tin",
@@ -1257,6 +1400,17 @@
     "popup.failed_attach_action_retry": "Thử lại",
     "popup.failed_attach_action_show_logs": "Xem log build",
     "popup.failed_attach_action_reopen_local": "Mở lại cục bộ",
-    "popup.failed_attach_action_dismiss": "Đóng (ESC)"
+    "popup.failed_attach_action_dismiss": "Đóng (ESC)",
+    "cmd.show_forwarded_ports_panel": "Dev Container: Hiện cổng đã chuyển tiếp",
+    "cmd.show_forwarded_ports_panel_desc": "Mở bảng liệt kê cổng đã cấu hình và liên kết runtime của container",
+    "ports_panel.header": "Cổng đã chuyển tiếp",
+    "ports_panel.col_configured": "Đã cấu hình",
+    "ports_panel.col_protocol": "Giao thức",
+    "ports_panel.col_label": "Nhãn",
+    "ports_panel.col_binding": "Liên kết runtime",
+    "ports_panel.no_ports": "Không có cổng nào để hiển thị.",
+    "ports_panel.footer": "r: làm mới  q/Esc: đóng",
+    "status.ports_panel_opened": "Đã mở bảng cổng chuyển tiếp",
+    "status.ports_panel_refreshed": "Đã làm mới bảng cổng chuyển tiếp"
   }
 }

@@ -839,6 +839,281 @@ async function devcontainer_show_ports(): Promise<void> {
 }
 registerHandler("devcontainer_show_ports", devcontainer_show_ports);
 
+// =============================================================================
+// Forwarded Ports Panel (spec §7)
+// =============================================================================
+//
+// Phase A's `devcontainer_show_ports` is a prompt-picker: quick
+// lookups for "did this port actually bind?" E-3 extends that with a
+// standalone panel so users can see configured + runtime-bound ports
+// at a glance rather than scrolling a picker.
+//
+// Data sources (identical to the picker):
+//   - `config.forwardPorts` — declared port forwards
+//   - `config.portsAttributes` — optional label / protocol / policy
+//   - `docker port <id>` — runtime host binding per (port, proto)
+//
+// Layout: four columns — Configured | Protocol | Label | Runtime binding —
+// followed by any runtime-only ports (container exposed but not in
+// `forwardPorts`). Refresh key `r` re-runs `docker port` and rebuilds
+// the buffer. Close via `q` / Escape.
+
+let portsPanelBufferId: number | null = null;
+let portsPanelSplitId: number | null = null;
+let portsPanelOpen = false;
+
+type PortRow = {
+  port: string;
+  protocol: string;
+  label: string;
+  binding: string;
+  source: "configured" | "runtime";
+};
+
+async function gatherForwardedPortRows(): Promise<PortRow[]> {
+  let runtime: Record<string, string> = {};
+  const authorityLabel = editor.getAuthorityLabel();
+  const prefix = "Container:";
+  if (authorityLabel.startsWith(prefix)) {
+    const containerId = authorityLabel.slice(prefix.length);
+    if (containerId.length > 0) {
+      const which = await editor.spawnHostProcess("which", ["docker"]);
+      if (which.exit_code === 0) {
+        const res = await editor.spawnHostProcess(
+          "docker",
+          ["port", containerId],
+          editor.getCwd(),
+        );
+        if (res.exit_code === 0) {
+          runtime = parseDockerPortOutput(res.stdout);
+        }
+      }
+    }
+  }
+
+  const rows: PortRow[] = [];
+  const configured = config?.forwardPorts ?? [];
+  for (const port of configured) {
+    const attrs = config?.portsAttributes?.[String(port)];
+    const protocol = attrs?.protocol ?? "tcp";
+    const key = `${port}/${protocol.toLowerCase()}`;
+    const binding = runtime[key] ?? "";
+    const labelParts: string[] = [];
+    if (attrs?.label) labelParts.push(attrs.label);
+    if (attrs?.onAutoForward) labelParts.push(`(${attrs.onAutoForward})`);
+    rows.push({
+      port: String(port),
+      protocol,
+      label: labelParts.join(" "),
+      binding,
+      source: "configured",
+    });
+  }
+
+  // Runtime-only ports: the container exposed them but they aren't in
+  // `forwardPorts`. Worth surfacing so users see the full picture.
+  for (const [key, binding] of Object.entries(runtime)) {
+    const slash = key.indexOf("/");
+    const portStr = slash >= 0 ? key.slice(0, slash) : key;
+    const proto = slash >= 0 ? key.slice(slash + 1) : "tcp";
+    const portNum = Number(portStr);
+    const alreadyListed =
+      configured.some((p) => String(p) === portStr) ||
+      (!Number.isNaN(portNum) && configured.some((p) => p === portNum));
+    if (alreadyListed) continue;
+    rows.push({
+      port: portStr,
+      protocol: proto,
+      label: "",
+      binding,
+      source: "runtime",
+    });
+  }
+  return rows;
+}
+
+function buildPortsPanelEntries(rows: PortRow[]): TextPropertyEntry[] {
+  const entries: TextPropertyEntry[] = [];
+
+  entries.push({
+    text: editor.t("ports_panel.header") + "\n",
+    properties: { type: "heading" },
+  });
+  entries.push({ text: "\n", properties: { type: "blank" } });
+
+  if (rows.length === 0) {
+    entries.push({
+      text: "  " + editor.t("ports_panel.no_ports") + "\n",
+      properties: { type: "value" },
+    });
+    entries.push({ text: "\n", properties: { type: "blank" } });
+  } else {
+    // Column widths — pick the larger of the header width or the
+    // longest value so the header stays aligned even when all rows
+    // are shorter than the label.
+    const headers = {
+      port: editor.t("ports_panel.col_configured"),
+      protocol: editor.t("ports_panel.col_protocol"),
+      label: editor.t("ports_panel.col_label"),
+      binding: editor.t("ports_panel.col_binding"),
+    };
+    const width = (label: string, values: string[]): number =>
+      Math.max(label.length, ...values.map((v) => v.length));
+    const portW = width(
+      headers.port,
+      rows.map((r) => r.port),
+    );
+    const protoW = width(
+      headers.protocol,
+      rows.map((r) => r.protocol),
+    );
+    const labelW = width(
+      headers.label,
+      rows.map((r) => r.label),
+    );
+    const bindingW = width(
+      headers.binding,
+      rows.map((r) => r.binding),
+    );
+    const pad = (s: string, n: number): string =>
+      s + " ".repeat(Math.max(0, n - s.length));
+
+    const headerLine =
+      "  " +
+      pad(headers.port, portW) +
+      "  " +
+      pad(headers.protocol, protoW) +
+      "  " +
+      pad(headers.label, labelW) +
+      "  " +
+      pad(headers.binding, bindingW);
+    entries.push({
+      text: headerLine + "\n",
+      properties: { type: "heading" },
+    });
+    const rule =
+      "  " +
+      "─".repeat(portW) +
+      "  " +
+      "─".repeat(protoW) +
+      "  " +
+      "─".repeat(labelW) +
+      "  " +
+      "─".repeat(bindingW);
+    entries.push({
+      text: rule + "\n",
+      properties: { type: "separator" },
+    });
+
+    for (const row of rows) {
+      const rendered =
+        "  " +
+        pad(row.port, portW) +
+        "  " +
+        pad(row.protocol, protoW) +
+        "  " +
+        pad(row.label, labelW) +
+        "  " +
+        pad(row.binding || "—", bindingW);
+      entries.push({
+        text: rendered + "\n",
+        properties: { type: "port-row", source: row.source },
+      });
+    }
+    entries.push({ text: "\n", properties: { type: "blank" } });
+  }
+
+  entries.push({
+    text: editor.t("ports_panel.footer") + "\n",
+    properties: { type: "footer" },
+  });
+
+  return entries;
+}
+
+async function renderPortsPanel(): Promise<void> {
+  if (portsPanelBufferId === null) return;
+  const rows = await gatherForwardedPortRows();
+  const entries = buildPortsPanelEntries(rows);
+  editor.setVirtualBufferContent(portsPanelBufferId, entries);
+}
+
+async function devcontainer_show_forwarded_ports_panel(): Promise<void> {
+  if (!config) {
+    editor.setStatus(editor.t("status.no_config"));
+    return;
+  }
+
+  if (portsPanelOpen && portsPanelBufferId !== null) {
+    await renderPortsPanel();
+    return;
+  }
+
+  const rows = await gatherForwardedPortRows();
+  const entries = buildPortsPanelEntries(rows);
+  const result = await editor.createVirtualBufferInSplit({
+    name: "*Dev Container Ports*",
+    mode: "devcontainer-ports",
+    readOnly: true,
+    showLineNumbers: false,
+    showCursors: true,
+    editingDisabled: true,
+    lineWrap: true,
+    ratio: 0.35,
+    direction: "horizontal",
+    entries,
+  });
+  if (result !== null) {
+    portsPanelOpen = true;
+    portsPanelBufferId = result.bufferId;
+    portsPanelSplitId = result.splitId;
+    editor.setStatus(editor.t("status.ports_panel_opened"));
+  }
+}
+registerHandler(
+  "devcontainer_show_forwarded_ports_panel",
+  devcontainer_show_forwarded_ports_panel,
+);
+
+async function devcontainer_refresh_ports_panel(): Promise<void> {
+  if (!portsPanelOpen) return;
+  await renderPortsPanel();
+  editor.setStatus(editor.t("status.ports_panel_refreshed"));
+}
+registerHandler(
+  "devcontainer_refresh_ports_panel",
+  devcontainer_refresh_ports_panel,
+);
+
+function devcontainer_close_ports_panel(): void {
+  if (!portsPanelOpen) return;
+  if (portsPanelSplitId !== null) {
+    editor.closeSplit(portsPanelSplitId);
+  }
+  if (portsPanelBufferId !== null) {
+    editor.closeBuffer(portsPanelBufferId);
+  }
+  portsPanelOpen = false;
+  portsPanelBufferId = null;
+  portsPanelSplitId = null;
+}
+registerHandler(
+  "devcontainer_close_ports_panel",
+  devcontainer_close_ports_panel,
+);
+
+editor.defineMode(
+  "devcontainer-ports",
+  [
+    ["r", "devcontainer_refresh_ports_panel"],
+    ["q", "devcontainer_close_ports_panel"],
+    ["Escape", "devcontainer_close_ports_panel"],
+  ],
+  true, // read-only
+  false, // allow_text_input
+  true, // inherit Normal-context bindings so arrow keys / page nav still work
+);
+
 const INSTALL_COMMAND = "npm i -g @devcontainers/cli";
 
 interface ActionPopupResultData {
@@ -1743,6 +2018,12 @@ function registerCommands(): void {
     "%cmd.cancel_attach",
     "%cmd.cancel_attach_desc",
     "devcontainer_cancel_attach",
+    null,
+  );
+  editor.registerCommand(
+    "%cmd.show_forwarded_ports_panel",
+    "%cmd.show_forwarded_ports_panel_desc",
+    "devcontainer_show_forwarded_ports_panel",
     null,
   );
 }
