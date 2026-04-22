@@ -255,6 +255,13 @@ pub fn detect_encoding_or_binary(bytes: &[u8], truncated: bool) -> (Encoding, bo
     let check_len = bytes.len().min(8 * 1024);
     let sample = &bytes[..check_len];
 
+    // The caller's `truncated` flag says whether the bytes they passed were
+    // already cut from a larger stream. The detector additionally clamps the
+    // sample to 8 KB internally, which is its own source of truncation — a
+    // multi-byte UTF-8 sequence straddling that cutoff would otherwise fail
+    // strict validation even though the full buffer is valid UTF-8 (#1635).
+    let sample_truncated = truncated || check_len < bytes.len();
+
     // 1. Check for BOM (Byte Order Mark) - highest priority, definitely text
     if sample.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return (Encoding::Utf8Bom, false);
@@ -292,7 +299,7 @@ pub fn detect_encoding_or_binary(bytes: &[u8], truncated: bool) -> (Encoding, bo
     // truncation artifact). Without truncation, require exact validity — a
     // trailing 0xE9 in a short file is a Latin-1 'é', not a truncated codepoint.
     let is_valid_utf8 = utf8_valid_len == sample.len()
-        || (truncated && utf8_valid_len > 0 && utf8_valid_len >= sample.len() - 3);
+        || (sample_truncated && utf8_valid_len > 0 && utf8_valid_len >= sample.len() - 3);
     if is_valid_utf8 {
         let valid_sample = &sample[..utf8_valid_len];
         // Check if it's pure ASCII (subset of UTF-8)
@@ -301,7 +308,11 @@ pub fn detect_encoding_or_binary(bytes: &[u8], truncated: bool) -> (Encoding, bo
         if has_binary_control {
             return (Encoding::Utf8, true);
         }
-        if valid_sample.iter().all(|&b| b < 128) {
+        // If the tolerance branch accepted a trailing incomplete multi-byte
+        // sequence, the file is not pure ASCII — the byte at `utf8_valid_len`
+        // is a UTF-8 lead byte. Classify as UTF-8 in that case.
+        let has_non_ascii_tail = utf8_valid_len < sample.len();
+        if !has_non_ascii_tail && valid_sample.iter().all(|&b| b < 128) {
             return (Encoding::Ascii, false);
         }
         return (Encoding::Utf8, false);
