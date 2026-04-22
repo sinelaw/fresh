@@ -5003,7 +5003,18 @@ impl QuickJsBackend {
                     if (typeof editor._spawnHostProcessStart !== 'function') {
                         throw new Error('editor.spawnHostProcess is not implemented (missing _spawnHostProcessStart)');
                     }
-                    const callbackId = editor._spawnHostProcessStart(command, args || [], cwd || "");
+                    // Pass real strings only. Earlier revisions forwarded
+                    // `""` for a missing cwd, which landed verbatim as
+                    // `Command::current_dir("")` in the dispatcher —
+                    // every host-spawn then failed with ENOENT. Use two
+                    // arity forms so the Rust `Opt<String>` stays `None`
+                    // instead of `Some("")`.
+                    let callbackId;
+                    if (typeof cwd === "string" && cwd.length > 0) {
+                        callbackId = editor._spawnHostProcessStart(command, args || [], cwd);
+                    } else {
+                        callbackId = editor._spawnHostProcessStart(command, args || []);
+                    }
                     const resultPromise = new Promise(function(resolve, reject) {
                         globalThis._pendingCallbacks.set(callbackId, { resolve: resolve, reject: reject });
                     });
