@@ -2408,3 +2408,54 @@ fn test_latin1_trailing_accent_not_misdetected_as_utf8() {
         buffer_content
     );
 }
+
+/// Regression test for #1635: UTF-8 CJK files whose size exceeds the 8 KB
+/// encoding-detection sample must not be mis-decoded as a legacy encoding
+/// when a multi-byte sequence straddles the 8192-byte boundary.
+#[test]
+fn test_utf8_cjk_file_larger_than_8kb_displays_correctly() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("cjk_over_8kb.txt");
+
+    // Build a valid UTF-8 file whose first non-ASCII multi-byte character
+    // straddles the detector's internal 8 KB sampling boundary. Pad with
+    // ASCII 'a' until we've written exactly 8191 bytes, then emit CJK
+    // content — the second and third bytes of the first CJK codepoint
+    // sit at file offsets 8192 and 8193.
+    let mut content = Vec::with_capacity(16 * 1024);
+    content.resize(8 * 1024 - 1, b'a');
+    let cjk = "项目设置 的 CJK 内容 项目设置";
+    content.extend_from_slice(cjk.as_bytes());
+    content.push(b'\n');
+
+    assert!(content.len() > 8 * 1024);
+    assert!(std::str::from_utf8(&content).is_ok());
+    std::fs::write(&file_path, &content).unwrap();
+
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // If detection misfires and picks a legacy encoding, the buffer will
+    // contain mojibake instead of the original CJK characters.
+    let buffer_content = harness.get_buffer_content().unwrap();
+    for ch in ['项', '目', '设', '置'] {
+        assert!(
+            buffer_content.contains(ch),
+            "CJK character {:?} should survive load. Buffer preview: {:?}",
+            ch,
+            &buffer_content[..buffer_content.len().min(200)]
+        );
+    }
+
+    // Status bar should not advertise a legacy encoding for this UTF-8 file.
+    let screen = harness.screen_to_string();
+    for legacy in ["Windows-1252", "Windows-1250", "Windows-1251"] {
+        assert!(
+            !screen.contains(legacy),
+            "UTF-8 CJK file must not be detected as {}. Screen: {:?}",
+            legacy,
+            screen
+        );
+    }
+}

@@ -1141,4 +1141,39 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_detect_utf8_cjk_across_internal_8kb_boundary() {
+        // Regression for #1635: when callers pass the full file bytes with
+        // `truncated=false`, the detector still internally clamps the sample
+        // to the first 8 KB. If a multi-byte UTF-8 sequence straddles that
+        // internal 8192-byte cutoff, the strict UTF-8 check fails and the
+        // CJK continuation bytes get misclassified by the fallback path
+        // (often as Windows-1250/1251/1252), garbling the whole file.
+        //
+        // The full buffer IS valid UTF-8, so detection must return UTF-8.
+
+        // Build padding that is pure ASCII and leaves exactly one byte of
+        // room inside the first 8 KB before we write a 3-byte CJK codepoint.
+        // "项" = [0xE9, 0xA1, 0xB9] — the first byte sits at offset 8191,
+        // the remaining two bytes spill past the internal 8192-byte sample.
+        let mut buffer = Vec::with_capacity(16 * 1024);
+        buffer.resize(8 * 1024 - 1, b'a');
+        // CJK text that crosses the boundary and continues after it.
+        buffer.extend_from_slice("项目设置项目设置项目设置".as_bytes());
+
+        assert!(buffer.len() > 8 * 1024);
+        assert!(std::str::from_utf8(&buffer).is_ok());
+
+        // The caller (load_small_file) passes the full content with
+        // `truncated=false` because no truncation occurred at the call site.
+        // Detection must still return UTF-8.
+        let detected = detect_encoding_or_binary(&buffer, false).0;
+        assert_eq!(
+            detected,
+            Encoding::Utf8,
+            "Valid UTF-8 CJK content must be detected as UTF-8 even when a \
+             multi-byte sequence straddles the detector's internal 8 KB sample boundary"
+        );
+    }
 }
