@@ -45,6 +45,7 @@ pub mod inline_diagnostics;
 pub mod issue_1147_wrapped_line_nav;
 pub mod issue_1288_word_select_whitespace;
 pub mod issue_1502_word_wrap_squished;
+pub mod issue_1540_tab_click_focus;
 pub mod issue_1554_scrollbar_theme_color;
 pub mod issue_1566_arrow_selection;
 pub mod issue_1568_session_fold_restore;
