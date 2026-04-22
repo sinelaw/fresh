@@ -1470,9 +1470,17 @@ impl JsEditorApi {
 
     /// Join path components (variadic - accepts multiple string arguments)
     /// Always uses forward slashes for cross-platform consistency (like Node.js path.posix.join)
+    ///
+    /// Preserves up to 2 leading slashes, which matters on Windows: Rust's
+    /// `Path::canonicalize` returns `\\?\`-prefixed paths, and `editor.getCwd()`
+    /// surfaces that to plugin code verbatim. After the backslash→slash
+    /// normalization the prefix becomes `//?/C:/...`; collapsing the leading
+    /// `//` to a single `/` yields `/?/C:/...`, which every filesystem API on
+    /// Windows rejects, breaking `findConfig()`-style plugin logic.
     pub fn path_join(&self, parts: rquickjs::function::Rest<String>) -> String {
         let mut result_parts: Vec<String> = Vec::new();
-        let mut has_leading_slash = false;
+        // 0 = no leading slash, 1 = POSIX absolute, 2 = Windows UNC (`\\?\` etc).
+        let mut leading_slashes: u8 = 0;
 
         for part in &parts.0 {
             // Normalize separators to forward slashes
@@ -1491,7 +1499,10 @@ impl JsEditorApi {
             if is_absolute {
                 // Reset for absolute paths
                 result_parts.clear();
-                has_leading_slash = normalized.starts_with('/');
+                // Cap at 2 — `\\?\` and `\\server\share` both start with two
+                // backslashes; anything beyond that is meaningless and a sign
+                // of caller confusion, not a deeper namespace.
+                leading_slashes = normalized.chars().take_while(|&c| c == '/').count().min(2) as u8;
             }
 
             // Split and add non-empty parts
@@ -1508,10 +1519,14 @@ impl JsEditorApi {
 
         // Reconstruct with forward slashes
         let joined = result_parts.join("/");
+        let prefix = match leading_slashes {
+            0 => "",
+            1 => "/",
+            _ => "//",
+        };
 
-        // Preserve leading slash for Unix absolute paths
-        if has_leading_slash && !joined.is_empty() {
-            format!("/{}", joined)
+        if leading_slashes > 0 {
+            format!("{}{}", prefix, joined)
         } else {
             joined
         }
@@ -6602,6 +6617,60 @@ mod tests {
                 assert!(global.get::<_, bool>("_isAbsolute").unwrap());
                 assert!(!global.get::<_, bool>("_isRelative").unwrap());
                 assert_eq!(global.get::<_, String>("_joined").unwrap(), "/foo/bar/baz");
+            });
+    }
+
+    /// Rust's `Path::canonicalize` returns `\\?\`-prefixed verbatim paths
+    /// on Windows, which `editor.getCwd()` surfaces to plugins verbatim.
+    /// `pathJoin` must preserve the leading `//` once slashes are
+    /// normalized — otherwise `pathJoin(cwd, ".devcontainer", "devcontainer.json")`
+    /// on Windows resolves to `/?/C:/.../devcontainer.json`, which every
+    /// filesystem API rejects and every plugin-side `findConfig()` call
+    /// silently fails.
+    #[test]
+    fn test_path_join_preserves_unc_prefix() {
+        let (mut backend, _rx) = create_test_backend();
+        backend
+            .execute_js(
+                r#"
+                const editor = getEditor();
+                globalThis._unc = editor.pathJoin("\\\\?\\C:\\workspace", ".devcontainer", "devcontainer.json");
+                globalThis._unc_fwd = editor.pathJoin("//?/C:/workspace", ".devcontainer", "devcontainer.json");
+                globalThis._posix = editor.pathJoin("/foo", "bar");
+                globalThis._drive = editor.pathJoin("C:\\foo", "bar");
+            "#,
+                "test.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                assert_eq!(
+                    global.get::<_, String>("_unc").unwrap(),
+                    "//?/C:/workspace/.devcontainer/devcontainer.json",
+                    "UNC prefix `\\\\?\\` must survive pathJoin normalization",
+                );
+                assert_eq!(
+                    global.get::<_, String>("_unc_fwd").unwrap(),
+                    "//?/C:/workspace/.devcontainer/devcontainer.json",
+                    "UNC prefix in forward-slash form stays as `//`",
+                );
+                assert_eq!(
+                    global.get::<_, String>("_posix").unwrap(),
+                    "/foo/bar",
+                    "POSIX absolute paths keep their single leading slash",
+                );
+                assert_eq!(
+                    global.get::<_, String>("_drive").unwrap(),
+                    "C:/foo/bar",
+                    "Windows drive-letter paths have no leading slash",
+                );
             });
     }
 
