@@ -1275,6 +1275,20 @@ impl Editor {
     ) -> PromptResult {
         use crate::input::quick_open::QuickOpenResult;
 
+        // Any live goto-line preview must be resolved before executing the
+        // result: a GotoLine confirm accepts the preview as-is, everything
+        // else (file/buffer/action/etc.) should see the pre-preview state.
+        match &result {
+            QuickOpenResult::GotoLine(_) => {
+                // Commit the preview: discard the saved snapshot without
+                // restoring, since the cursor is already at the target.
+                self.quick_open_goto_line_preview = None;
+            }
+            _ => {
+                self.restore_goto_line_preview_snapshot();
+            }
+        }
+
         match result {
             QuickOpenResult::ExecuteAction(action) => PromptResult::ExecuteAction(action),
             QuickOpenResult::OpenFile { path, line, column } => {

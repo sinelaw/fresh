@@ -215,6 +215,192 @@ fn test_quick_open_file_path_line_only() {
         .expect("Cursor should jump to Ln 3, Col 1 after Quick Open");
 }
 
+/// Quick Open goto-line (":N") should live-preview the jump as the user types,
+/// so the cursor moves to line N before pressing Enter (issue #1253).
+#[test]
+fn test_quick_open_goto_line_live_preview() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let content = "11111\n22222\nABCDE12345\n44444\n55555\n";
+    let jump_path = project_root.join("jump.txt");
+    fs::write(&jump_path, content).unwrap();
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+    let line1_position = harness.cursor_position();
+
+    // Open Quick Open, clear the ">" prefix, then type ":3".
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(":3").unwrap();
+    harness.render().unwrap();
+
+    // The cursor should already be on line 3 (byte 12, just after "11111\n22222\n")
+    // while the prompt is still open — without ever pressing Enter.
+    let line3_start = "11111\n22222\n".len();
+    assert_ne!(
+        harness.cursor_position(),
+        line1_position,
+        "Cursor should have moved from its starting position"
+    );
+    assert_eq!(
+        harness.cursor_position(),
+        line3_start,
+        "Cursor should live-preview at start of line 3 while typing ':3'"
+    );
+}
+
+/// Extending the live preview to a new number jumps again in the same prompt.
+#[test]
+fn test_quick_open_goto_line_live_preview_updates() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let content = "11111\n22222\nABCDE12345\n44444\n55555\n66666\n";
+    let jump_path = project_root.join("jump.txt");
+    fs::write(&jump_path, content).unwrap();
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+
+    // First preview to line 2.
+    harness.type_text(":2").unwrap();
+    harness.render().unwrap();
+    let line2_start = "11111\n".len();
+    assert_eq!(
+        harness.cursor_position(),
+        line2_start,
+        "Cursor should live-preview at start of line 2"
+    );
+
+    // Change the target to line 5.
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("5").unwrap();
+    harness.render().unwrap();
+    let line5_start = "11111\n22222\nABCDE12345\n44444\n".len();
+    assert_eq!(
+        harness.cursor_position(),
+        line5_start,
+        "Cursor should live-preview at start of line 5 after updating target"
+    );
+}
+
+/// Canceling the Quick Open prompt (Esc) after a live-preview jump should
+/// restore the cursor to where it was before the prompt was opened.
+#[test]
+fn test_quick_open_goto_line_live_preview_cancel_restores() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let content = "11111\n22222\nABCDE12345\n44444\n55555\n";
+    let jump_path = project_root.join("jump.txt");
+    fs::write(&jump_path, content).unwrap();
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+    let original_position = harness.cursor_position();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(":3").unwrap();
+    harness.render().unwrap();
+
+    let line3_start = "11111\n22222\n".len();
+    assert_eq!(
+        harness.cursor_position(),
+        line3_start,
+        "Cursor should live-preview at start of line 3"
+    );
+
+    // Cancel the prompt.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Cursor should be back at its original position.
+    assert_eq!(
+        harness.cursor_position(),
+        original_position,
+        "Cursor should be restored to its pre-preview position after Esc"
+    );
+}
+
+/// Changing the prefix away from ":" should restore the cursor even without
+/// cancelling (so the preview doesn't leak into other providers).
+#[test]
+fn test_quick_open_goto_line_live_preview_restores_when_prefix_changes() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let content = "11111\n22222\nABCDE12345\n44444\n55555\n";
+    let jump_path = project_root.join("jump.txt");
+    fs::write(&jump_path, content).unwrap();
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+    let original_position = harness.cursor_position();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(":3").unwrap();
+    harness.render().unwrap();
+
+    assert_ne!(
+        harness.cursor_position(),
+        original_position,
+        "Cursor should have moved to line 3 during preview"
+    );
+
+    // Replace ":3" with ">toggle" to switch to the command provider.
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(">toggle").unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        harness.cursor_position(),
+        original_position,
+        "Cursor should be restored when the goto-line provider is no longer targeted"
+    );
+}
+
 /// Test command palette fuzzy matching
 #[test]
 fn test_command_palette_fuzzy_matching() {

@@ -281,6 +281,22 @@ pub struct DabbrevCycleState {
     pub index: usize,
 }
 
+/// Snapshot of cursor and viewport state used to restore the original position
+/// when a Quick Open goto-line preview is abandoned (cancel, or the user edits
+/// the input so it no longer targets a line).
+#[derive(Debug, Clone)]
+pub(crate) struct GotoLinePreviewSnapshot {
+    pub buffer_id: BufferId,
+    pub split_id: LeafId,
+    pub cursor_id: crate::model::event::CursorId,
+    pub position: usize,
+    pub anchor: Option<usize>,
+    pub sticky_column: usize,
+    pub viewport_top_byte: usize,
+    pub viewport_top_view_line_offset: usize,
+    pub viewport_left_column: usize,
+}
+
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
     /// All open buffers
@@ -767,6 +783,11 @@ pub struct Editor {
     /// When the prompt is confirmed, the callback is resolved with the input text.
     /// When cancelled, the callback is resolved with null.
     pending_async_prompt_callback: Option<fresh_core::api::JsCallbackId>,
+
+    /// Snapshot of cursor/viewport state saved when a Quick Open goto-line
+    /// preview jump moves the cursor live as the user types ":N". Restored on
+    /// cancel or when the user switches away from the goto-line provider.
+    quick_open_goto_line_preview: Option<GotoLinePreviewSnapshot>,
 
     /// LSP progress tracking (token -> progress info)
     lsp_progress: std::collections::HashMap<String, LspProgressInfo>,

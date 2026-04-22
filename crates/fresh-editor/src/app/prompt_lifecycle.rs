@@ -141,6 +141,10 @@ impl Editor {
         // Clear status message since hints are now shown in the popup
         self.status_message = None;
 
+        // Clear any stale goto-line preview snapshot (paranoia: should already
+        // be None, but a previous failed prompt could leave one behind).
+        self.quick_open_goto_line_preview = None;
+
         // Start with ">" prefix for command mode by default
         let mut prompt = Prompt::with_suggestions(String::new(), PromptType::QuickOpen, vec![]);
         prompt.input = ">".to_string();
@@ -221,6 +225,107 @@ impl Editor {
                 Some(0)
             };
         }
+
+        // Live preview for the goto-line provider: if the input is ":<N>" for a
+        // valid line N, jump there now so the user sees the target as they type
+        // (matches VSCode's Ctrl+P :<N> behavior). Otherwise, restore the
+        // cursor to its pre-preview position.
+        self.apply_goto_line_preview(input);
+    }
+
+    /// Parse `input` for a live goto-line target and either jump to the target
+    /// (saving the original cursor on the first jump) or restore the saved
+    /// cursor if the input no longer targets a line.
+    fn apply_goto_line_preview(&mut self, input: &str) {
+        let target_line = input
+            .strip_prefix(':')
+            .and_then(|rest| rest.trim().parse::<usize>().ok())
+            .filter(|&n| n > 0);
+
+        if let Some(line) = target_line {
+            self.save_goto_line_preview_snapshot();
+            self.goto_line_col(line, None);
+        } else {
+            self.restore_goto_line_preview_snapshot();
+        }
+    }
+
+    /// Save a snapshot of the active buffer's cursor and viewport so the
+    /// goto-line preview can later restore it. No-op if a snapshot is already
+    /// in place (the saved state should always be the pre-preview one).
+    pub(super) fn save_goto_line_preview_snapshot(&mut self) {
+        if self.quick_open_goto_line_preview.is_some() {
+            return;
+        }
+
+        let buffer_id = self.active_buffer();
+        let split_id = self.split_manager.active_split();
+        let (cursor_id, position, anchor, sticky_column) = {
+            let cursors = self.active_cursors();
+            let primary = cursors.primary();
+            (
+                cursors.primary_id(),
+                primary.position,
+                primary.anchor,
+                primary.sticky_column,
+            )
+        };
+        let (viewport_top_byte, viewport_top_view_line_offset, viewport_left_column) = {
+            let vp = self.active_viewport();
+            (vp.top_byte, vp.top_view_line_offset, vp.left_column)
+        };
+
+        self.quick_open_goto_line_preview = Some(super::GotoLinePreviewSnapshot {
+            buffer_id,
+            split_id,
+            cursor_id,
+            position,
+            anchor,
+            sticky_column,
+            viewport_top_byte,
+            viewport_top_view_line_offset,
+            viewport_left_column,
+        });
+    }
+
+    /// If a goto-line preview snapshot exists, restore the active split's
+    /// cursor and viewport to the saved state and clear the snapshot.
+    pub(super) fn restore_goto_line_preview_snapshot(&mut self) {
+        let Some(snap) = self.quick_open_goto_line_preview.take() else {
+            return;
+        };
+
+        // If the active buffer/split has changed (shouldn't happen during a
+        // quick-open prompt, but be defensive), just drop the snapshot.
+        if self.active_buffer() != snap.buffer_id
+            || self.split_manager.active_split() != snap.split_id
+        {
+            return;
+        }
+
+        let cursors = self.active_cursors();
+        let current = cursors.primary();
+        let event = crate::model::event::Event::MoveCursor {
+            cursor_id: snap.cursor_id,
+            old_position: current.position,
+            new_position: snap.position,
+            old_anchor: current.anchor,
+            new_anchor: snap.anchor,
+            old_sticky_column: current.sticky_column,
+            new_sticky_column: snap.sticky_column,
+        };
+
+        let state = self.buffers.get_mut(&snap.buffer_id).unwrap();
+        let view_state = self.split_view_states.get_mut(&snap.split_id).unwrap();
+        state.apply(&mut view_state.cursors, &event);
+
+        let vp = &mut view_state.viewport;
+        vp.top_byte = snap.viewport_top_byte;
+        vp.top_view_line_offset = snap.viewport_top_view_line_offset;
+        vp.left_column = snap.viewport_left_column;
+        // The cursor we just restored is already consistent with this
+        // viewport; don't let ensure_visible re-scroll on the next render.
+        vp.set_skip_ensure_visible();
     }
 
     /// Cancel search/replace prompts if one is active.
@@ -500,6 +605,9 @@ impl Editor {
                             fp.cancel_loading();
                         }
                     }
+                    // Undo any live goto-line preview so the cursor returns to
+                    // where it was before the prompt was opened.
+                    self.restore_goto_line_preview_snapshot();
                 }
                 _ => {}
             }
