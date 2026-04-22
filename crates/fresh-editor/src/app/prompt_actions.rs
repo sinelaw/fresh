@@ -118,10 +118,18 @@ impl Editor {
             }
             PromptType::GotoLine => match input.trim().parse::<usize>() {
                 Ok(line_num) if line_num > 0 => {
+                    // Commit the live preview (if any): the cursor is already
+                    // at the target, so just drop the snapshot rather than
+                    // letting a later focus-loss path restore the pre-preview
+                    // position over the confirmed jump.
+                    self.goto_line_preview = None;
                     self.goto_line_col(line_num, None);
                     self.set_status_message(t!("goto.jumped", line = line_num).to_string());
                 }
                 Ok(_) => {
+                    // Invalid (0): the last `update_prompt_suggestions` call
+                    // already restored the snapshot, leaving the cursor where
+                    // it was before the preview. Nothing to do here.
                     self.set_status_message(t!("goto.line_must_be_positive").to_string());
                 }
                 Err(_) => {
@@ -1414,7 +1422,7 @@ impl Editor {
             QuickOpenResult::GotoLine(_) => {
                 // Commit the preview: discard the saved snapshot without
                 // restoring, since the cursor is already at the target.
-                self.quick_open_goto_line_preview = None;
+                self.goto_line_preview = None;
             }
             _ => {
                 self.restore_goto_line_preview_snapshot();

@@ -527,6 +527,150 @@ fn test_quick_open_goto_line_live_preview_restores_when_prefix_changes() {
         );
 }
 
+/// The standalone `Goto Line` prompt (Ctrl+G) should live-preview the jump as
+/// the user types a line number, mirroring the Quick Open `:N` behavior (same
+/// snapshot/restore plumbing, just a different input parser).
+#[test]
+fn test_goto_line_prompt_live_preview() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let jump_path = project_root.join("jump.txt");
+    write_numbered_lines(&jump_path, 100);
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("LINE80"),
+        "Baseline viewport should not include line 80"
+    );
+
+    // Open the Goto Line prompt (Ctrl+G) and type the target line. Nothing is
+    // pressed to confirm — the preview must take effect as we type.
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("80").unwrap();
+
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 75 │ LINE75") && !screen.contains("  1 │ LINE1")
+        })
+        .expect("Goto Line prompt should live-preview the jump toward line 80");
+}
+
+/// Extending the Goto Line prompt preview to a new number jumps again.
+#[test]
+fn test_goto_line_prompt_live_preview_updates() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let jump_path = project_root.join("jump.txt");
+    write_numbered_lines(&jump_path, 100);
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    harness.type_text("40").unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 35 │ LINE35") && !screen.contains("  1 │ LINE1")
+        })
+        .expect("Preview should scroll toward line 40");
+
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("80").unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 75 │ LINE75") && !screen.contains(" 35 │ LINE35")
+        })
+        .expect("Preview should follow the updated target to line 80");
+}
+
+/// Canceling the Goto Line prompt (Esc) after a live-preview jump should
+/// restore the cursor to where it was before the prompt was opened.
+#[test]
+fn test_goto_line_prompt_live_preview_cancel_restores() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let jump_path = project_root.join("jump.txt");
+    write_numbered_lines(&jump_path, 100);
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("80").unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 75 │ LINE75") && !screen.contains("  1 │ LINE1")
+        })
+        .expect("Preview should scroll toward line 80");
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Ln 1,") && screen.contains("  1 │ LINE1")
+        })
+        .expect("Esc should restore cursor to pre-preview line 1");
+}
+
+/// Confirming the Goto Line prompt commits the live-preview jump: the cursor
+/// stays at the target even after any subsequent focus-loss path fires.
+#[test]
+fn test_goto_line_prompt_live_preview_confirm_keeps_jump() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let jump_path = project_root.join("jump.txt");
+    write_numbered_lines(&jump_path, 100);
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("80").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 80,"))
+        .expect("Enter should confirm the preview and leave the cursor on line 80");
+}
+
 /// Test command palette fuzzy matching
 #[test]
 fn test_command_palette_fuzzy_matching() {

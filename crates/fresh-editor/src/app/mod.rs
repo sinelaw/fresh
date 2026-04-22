@@ -282,8 +282,12 @@ pub struct DabbrevCycleState {
 }
 
 /// Snapshot of cursor and viewport state used to restore the original position
-/// when a Quick Open goto-line preview is abandoned (cancel, or the user edits
-/// the input so it no longer targets a line).
+/// when a goto-line preview is abandoned (cancel, or the user edits the input
+/// so it no longer targets a line).
+///
+/// Shared between Quick Open's `:N` syntax and the standalone `Goto Line`
+/// prompt — both flows save a snapshot on the first preview jump and restore
+/// it if the user cancels or clears the target.
 ///
 /// `last_jump_position` is the byte offset the most recent preview jump put the
 /// cursor at; the restore path only applies the snapshot when the cursor is
@@ -795,10 +799,11 @@ pub struct Editor {
     /// When cancelled, the callback is resolved with null.
     pending_async_prompt_callback: Option<fresh_core::api::JsCallbackId>,
 
-    /// Snapshot of cursor/viewport state saved when a Quick Open goto-line
-    /// preview jump moves the cursor live as the user types ":N". Restored on
-    /// cancel or when the user switches away from the goto-line provider.
-    quick_open_goto_line_preview: Option<GotoLinePreviewSnapshot>,
+    /// Snapshot of cursor/viewport state saved when a goto-line preview jump
+    /// moves the cursor live as the user types a target line. Used by both the
+    /// Quick Open `:N` syntax and the standalone `Goto Line` prompt. Restored
+    /// on cancel or when the user clears the target from the input.
+    goto_line_preview: Option<GotoLinePreviewSnapshot>,
 
     /// LSP progress tracking (token -> progress info)
     lsp_progress: std::collections::HashMap<String, LspProgressInfo>,

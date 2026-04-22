@@ -677,7 +677,7 @@ impl Editor {
                 histories
             },
             pending_async_prompt_callback: None,
-            quick_open_goto_line_preview: None,
+            goto_line_preview: None,
             lsp_progress: std::collections::HashMap::new(),
             lsp_server_statuses: std::collections::HashMap::new(),
             lsp_window_messages: Vec::new(),

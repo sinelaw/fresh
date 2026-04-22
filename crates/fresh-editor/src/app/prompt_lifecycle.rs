@@ -143,7 +143,7 @@ impl Editor {
 
         // Clear any stale goto-line preview snapshot (paranoia: should already
         // be None, but a previous failed prompt could leave one behind).
-        self.quick_open_goto_line_preview = None;
+        self.goto_line_preview = None;
 
         // Start with ">" prefix for command mode by default
         let mut prompt = Prompt::with_suggestions(String::new(), PromptType::QuickOpen, vec![]);
@@ -230,25 +230,32 @@ impl Editor {
         // valid line N, jump there now so the user sees the target as they type
         // (matches VSCode's Ctrl+P :<N> behavior). Otherwise, restore the
         // cursor to its pre-preview position.
-        self.apply_goto_line_preview(input);
+        let target = Self::parse_quick_open_goto_line_target(input);
+        self.apply_goto_line_preview(target);
     }
 
-    /// Parse `input` for a live goto-line target and either jump to the target
-    /// (saving the original cursor on the first jump) or restore the saved
-    /// cursor if the input no longer targets a line.
-    fn apply_goto_line_preview(&mut self, input: &str) {
-        let target_line = input
+    /// Parse a Quick Open input string for a `:<N>` goto-line target.
+    pub(super) fn parse_quick_open_goto_line_target(input: &str) -> Option<usize> {
+        input
             .strip_prefix(':')
             .and_then(|rest| rest.trim().parse::<usize>().ok())
-            .filter(|&n| n > 0);
+            .filter(|&n| n > 0)
+    }
 
+    /// Apply a live goto-line preview: jump to `target_line` (saving the
+    /// original cursor on the first jump) if `Some`, or restore the saved
+    /// cursor if `None`.
+    ///
+    /// Shared between Quick Open's `:N` syntax and the standalone `Goto Line`
+    /// prompt, which differ only in how the target line is parsed from input.
+    pub(super) fn apply_goto_line_preview(&mut self, target_line: Option<usize>) {
         if let Some(line) = target_line {
             self.save_goto_line_preview_snapshot();
             self.goto_line_col(line, None);
             // Record where the jump landed so restore can detect if the cursor
             // has since moved (e.g., mouse click, external buffer edit).
             let new_position = self.active_cursors().primary().position;
-            if let Some(snap) = self.quick_open_goto_line_preview.as_mut() {
+            if let Some(snap) = self.goto_line_preview.as_mut() {
                 snap.last_jump_position = new_position;
             }
         } else {
@@ -260,7 +267,7 @@ impl Editor {
     /// goto-line preview can later restore it. No-op if a snapshot is already
     /// in place (the saved state should always be the pre-preview one).
     pub(super) fn save_goto_line_preview_snapshot(&mut self) {
-        if self.quick_open_goto_line_preview.is_some() {
+        if self.goto_line_preview.is_some() {
             return;
         }
 
@@ -281,7 +288,7 @@ impl Editor {
             (vp.top_byte, vp.top_view_line_offset, vp.left_column)
         };
 
-        self.quick_open_goto_line_preview = Some(super::GotoLinePreviewSnapshot {
+        self.goto_line_preview = Some(super::GotoLinePreviewSnapshot {
             buffer_id,
             split_id,
             cursor_id,
@@ -307,7 +314,7 @@ impl Editor {
     /// an async edit shifted the cursor, focus moved elsewhere, …) means the
     /// pre-preview state is stale and we simply discard the snapshot.
     pub(super) fn restore_goto_line_preview_snapshot(&mut self) {
-        let Some(snap) = self.quick_open_goto_line_preview.take() else {
+        let Some(snap) = self.goto_line_preview.take() else {
             return;
         };
 
@@ -632,6 +639,11 @@ impl Editor {
                     // where it was before the prompt was opened.
                     self.restore_goto_line_preview_snapshot();
                 }
+                PromptType::GotoLine => {
+                    // Undo any live goto-line preview so the cursor returns to
+                    // where it was before the prompt was opened.
+                    self.restore_goto_line_preview_snapshot();
+                }
                 _ => {}
             }
         }
@@ -933,6 +945,11 @@ impl Editor {
                 if let Some(history) = self.prompt_histories.get_mut("goto_line") {
                     history.reset_navigation();
                 }
+                // Live preview the target line as the user types — same
+                // mechanism as Quick Open's `:<N>` syntax, just with the raw
+                // input as the line number.
+                let target = input.trim().parse::<usize>().ok().filter(|&n| n > 0);
+                self.apply_goto_line_preview(target);
             }
             PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs => {
                 // For OpenFile/SwitchProject/SaveFileAs, update the file browser filter (native implementation)
