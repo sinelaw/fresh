@@ -686,13 +686,23 @@ async function git_log_detail_open_file(): Promise<void> {
 registerHandler("git_log_detail_open_file", git_log_detail_open_file);
 
 // File-view mode so `q` closes the tab and returns to the group.
+//
+// j/k alias Up/Down as in the main git-log mode, and we inherit Normal
+// bindings so arrows, PageUp/Down, Home/End, Ctrl+C copy, etc. still work
+// in this read-only buffer — without `inheritNormalBindings`, unbound keys
+// in a read-only mode fall through to the edit actions and trip the
+// `editing_disabled` status message (see #566).
 editor.defineMode(
   "git-log-file-view",
   [
+    ["k", "move_up"],
+    ["j", "move_down"],
     ["q", "git_log_file_view_close"],
     ["Escape", "git_log_file_view_close"],
   ],
-  true
+  true, // read-only
+  false, // allow_text_input
+  true, // inherit Normal-context bindings for unbound keys
 );
 
 function git_log_file_view_close(): void {

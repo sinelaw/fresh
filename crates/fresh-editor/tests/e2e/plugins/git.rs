@@ -2456,3 +2456,168 @@ fn test_git_blame_original_buffer_not_decorated() {
         "Original file should NOT have blame headers after closing blame"
     );
 }
+
+/// Regression test for https://github.com/sinelaw/fresh/issues/566.
+///
+/// The git-log-related read-only buffers advertise `j/k: navigate` in their
+/// footer hints. Pressing j/k used to fall through to the editing actions
+/// and trip the `Editing disabled in this buffer` status message instead of
+/// moving the cursor. The main log and detail panels already bind j/k
+/// explicitly; this test covers the file-view buffer (opened from the detail
+/// panel's `Enter on a diff line` path), which previously did not.
+#[test]
+fn test_git_log_file_view_jk_navigation() {
+    let repo = GitTestRepo::new();
+
+    // A file with several lines so j/k have somewhere to move to.
+    let multiline = "line one\nline two\nline three\nline four\nline five\n";
+    repo.create_file("notes.txt", multiline);
+    repo.git_add(&["notes.txt"]);
+    repo.git_commit("Add notes.txt");
+
+    repo.setup_git_log_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    trigger_git_log(&mut harness);
+
+    // Wait for git log to load and show the commit.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("switch pane") && screen.contains("Add notes.txt")
+        })
+        .unwrap();
+
+    // Tab into the detail panel so Enter-on-a-diff-line opens the file-view.
+    harness
+        .send_key(KeyCode::Tab, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Wait for the commit diff to render in the detail panel.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Author:") && screen.contains("+line one")
+        })
+        .unwrap();
+
+    // The file-view buffer is active when the status bar's leading "current
+    // buffer" field is `*<hash>:notes.txt* [RO]`. Matching on the status bar
+    // rather than the one-shot "(read-only) | Target: line N" ready message
+    // avoids a race: the ready message is later overwritten by any status
+    // the next key produces, but the buffer's name / [RO] indicator stays.
+    let file_view_active = |h: &EditorTestHarness| {
+        h.screen_to_string()
+            .lines()
+            .any(|l| l.contains(":notes.txt*") && l.contains("[RO]") && l.contains("Ln "))
+    };
+
+    // Walk the cursor down the detail panel, trying Enter each time until
+    // the file-view actually opens. The detail panel only accepts Enter on
+    // diff lines that have file context; other rows keep the detail panel
+    // focused and surface "Move cursor to a diff line with file context"
+    // in the status bar. Opening the file-view spawns `git show` under the
+    // hood, so we poll briefly after each Enter for the async result.
+    for _ in 0..40 {
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        for _ in 0..20 {
+            harness.process_async_and_render().unwrap();
+            if file_view_active(&harness) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        if file_view_active(&harness) {
+            break;
+        }
+        harness
+            .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+            .unwrap();
+        harness.process_async_and_render().unwrap();
+    }
+    assert!(
+        file_view_active(&harness),
+        "Did not reach a diff line that opens the file-view. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Record the file-view's starting line so we can assert that j moves
+    // the cursor forward without caring exactly which diff line the walk
+    // above landed on. The pre-fix behaviour for this buffer was: j/k ran
+    // no action, left the cursor where it was, and set the status to
+    // "Editing disabled in this buffer". The assertions below cover both
+    // halves: cursor motion AND the absence of that status message.
+    let start_line: usize = {
+        let screen = harness.screen_to_string();
+        parse_ln(&screen).unwrap_or_else(|| {
+            panic!("Could not parse 'Ln <N>' from file-view status. Screen:\n{screen}")
+        })
+    };
+    assert!(
+        !harness
+            .screen_to_string()
+            .to_lowercase()
+            .contains("editing disabled"),
+        "'Editing disabled' should not appear before pressing j. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Press j — cursor should advance and the editing-disabled message must
+    // not fire (the core #566 regression check).
+    harness
+        .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    let after_j = {
+        let screen = harness.screen_to_string();
+        assert!(
+            !screen.to_lowercase().contains("editing disabled"),
+            "j should move the cursor in git-log-file-view, not trigger 'Editing disabled'. Screen:\n{screen}"
+        );
+        parse_ln(&screen)
+            .unwrap_or_else(|| panic!("Could not parse line after j. Screen:\n{screen}"))
+    };
+    assert!(
+        after_j > start_line,
+        "Expected cursor to advance after pressing j (start_line={start_line}, after_j={after_j})"
+    );
+
+    // Press k — the critical check is again the absence of the
+    // "Editing disabled" status. (Cursor motion on k in a virtual
+    // buffer is covered by the main git-log mode tests; the regression
+    // we're guarding here is specifically the status-message path.)
+    harness
+        .send_key(KeyCode::Char('k'), KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    {
+        let screen = harness.screen_to_string();
+        assert!(
+            !screen.to_lowercase().contains("editing disabled"),
+            "k should not trigger 'Editing disabled' in git-log-file-view. Screen:\n{screen}"
+        );
+    }
+}
+
+/// Extract the line number from a status-bar fragment of the form "Ln N, Col M".
+/// Uses `rfind` so it picks the status bar at the bottom of the screen rather
+/// than any earlier occurrence (e.g. "| Ln" in help text).
+fn parse_ln(screen: &str) -> Option<usize> {
+    let idx = screen.rfind("Ln ")?;
+    let rest = &screen[idx + 3..];
+    let end = rest.find(',')?;
+    rest[..end].trim().parse().ok()
+}

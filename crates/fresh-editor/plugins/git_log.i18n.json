@@ -32,9 +32,7 @@
     "status.move_to_diff": "Move cursor to a diff line",
 
     "panel.commits_header": "Commits:",
-    "panel.no_commits": "  No commits found",
-    "panel.log_footer": "%{count} commits | Up/Down/j/k: navigate | RET: show | y: yank hash | r: refresh | q: quit",
-    "panel.detail_footer": "Up/Down/j/k: navigate | RET: open file at line | q: back to log"
+    "panel.no_commits": "  No commits found"
   },
   "cs": {
     "cmd.git_log": "Git Log",
@@ -69,9 +67,7 @@
     "status.move_to_diff": "Presunte kurzor na radek diffu",
 
     "panel.commits_header": "Commity:",
-    "panel.no_commits": "  Zadne commity nenalezeny",
-    "panel.log_footer": "%{count} commitu | Nahoru/Dolu/j/k: navigace | RET: zobrazit | y: kopirovat hash | r: obnovit | q: ukoncit",
-    "panel.detail_footer": "Nahoru/Dolu/j/k: navigace | RET: otevrit soubor na radku | q: zpet do logu"
+    "panel.no_commits": "  Zadne commity nenalezeny"
   },
   "de": {
     "cmd.git_log": "Git-Protokoll",
@@ -106,9 +102,7 @@
     "status.move_to_diff": "Cursor auf eine Diff-Zeile bewegen",
 
     "panel.commits_header": "Commits:",
-    "panel.no_commits": "  Keine Commits gefunden",
-    "panel.log_footer": "%{count} Commits | Auf/Ab/j/k: navigieren | RET: anzeigen | y: Hash kopieren | r: aktualisieren | q: beenden",
-    "panel.detail_footer": "Auf/Ab/j/k: navigieren | RET: Datei bei Zeile oeffnen | q: zurueck zum Protokoll"
+    "panel.no_commits": "  Keine Commits gefunden"
   },
   "es": {
     "cmd.git_log": "Registro Git",
@@ -143,9 +137,7 @@
     "status.move_to_diff": "Mueve el cursor a una linea de diff",
 
     "panel.commits_header": "Commits:",
-    "panel.no_commits": "  No se encontraron commits",
-    "panel.log_footer": "%{count} commits | Arriba/Abajo/j/k: navegar | RET: mostrar | y: copiar hash | r: actualizar | q: salir",
-    "panel.detail_footer": "Arriba/Abajo/j/k: navegar | RET: abrir archivo en linea | q: volver al registro"
+    "panel.no_commits": "  No se encontraron commits"
   },
   "fr": {
     "cmd.git_log": "Journal Git",
@@ -180,9 +172,7 @@
     "status.move_to_diff": "Deplacez le curseur sur une ligne de diff",
 
     "panel.commits_header": "Commits:",
-    "panel.no_commits": "  Aucun commit trouve",
-    "panel.log_footer": "%{count} commits | Haut/Bas/j/k: naviguer | RET: afficher | y: copier hash | r: actualiser | q: quitter",
-    "panel.detail_footer": "Haut/Bas/j/k: naviguer | RET: ouvrir fichier a la ligne | q: retour au journal"
+    "panel.no_commits": "  Aucun commit trouve"
   },
   "it": {
     "cmd.git_log": "Git Log",
@@ -215,9 +205,7 @@
     "status.move_to_diff_with_context": "Sposta il cursore su una riga di diff con contesto file",
     "status.move_to_diff": "Sposta il cursore su una riga di diff",
     "panel.commits_header": "Commit:",
-    "panel.no_commits": "  Nessun commit trovato",
-    "panel.log_footer": "%{count} commit | Su/Giù/j/k: naviga | RET: mostra | y: copia hash | r: aggiorna | q: esci",
-    "panel.detail_footer": "Su/Giù/j/k: naviga | RET: apri file alla riga | q: torna al log"
+    "panel.no_commits": "  Nessun commit trovato"
   },
   "ja": {
     "cmd.git_log": "Gitログ",
@@ -252,9 +240,7 @@
     "status.move_to_diff": "カーソルを差分行に移動してください",
 
     "panel.commits_header": "コミット:",
-    "panel.no_commits": "  コミットが見つかりません",
-    "panel.log_footer": "%{count}件のコミット | 上/下/j/k: 移動 | RET: 表示 | y: ハッシュをコピー | r: 更新 | q: 終了",
-    "panel.detail_footer": "上/下/j/k: 移動 | RET: ファイルを行で開く | q: ログに戻る"
+    "panel.no_commits": "  コミットが見つかりません"
   },
   "ko": {
     "cmd.git_log": "Git 로그",
@@ -289,9 +275,7 @@
     "status.move_to_diff": "커서를 diff 줄로 이동하세요",
 
     "panel.commits_header": "커밋:",
-    "panel.no_commits": "  커밋을 찾을 수 없습니다",
-    "panel.log_footer": "%{count}개 커밋 | 위/아래/j/k: 탐색 | RET: 표시 | y: 해시 복사 | r: 새로고침 | q: 종료",
-    "panel.detail_footer": "위/아래/j/k: 탐색 | RET: 해당 줄에서 파일 열기 | q: 로그로 돌아가기"
+    "panel.no_commits": "  커밋을 찾을 수 없습니다"
   },
   "pt-BR": {
     "cmd.git_log": "Git Log",
@@ -326,9 +310,7 @@
     "status.move_to_diff": "Mova o cursor para uma linha de diff",
 
     "panel.commits_header": "Commits:",
-    "panel.no_commits": "  Nenhum commit encontrado",
-    "panel.log_footer": "%{count} commits | Cima/Baixo/j/k: navegar | RET: mostrar | y: copiar hash | r: atualizar | q: sair",
-    "panel.detail_footer": "Cima/Baixo/j/k: navegar | RET: abrir arquivo na linha | q: voltar ao log"
+    "panel.no_commits": "  Nenhum commit encontrado"
   },
   "ru": {
     "cmd.git_log": "Git Log",
@@ -363,9 +345,7 @@
     "status.move_to_diff": "Peremesstite kursor na stroku diff",
 
     "panel.commits_header": "Kommity:",
-    "panel.no_commits": "  Kommity ne naydeny",
-    "panel.log_footer": "%{count} kommitov | Vverkh/Vniz/j/k: navigatsiya | RET: pokazat' | y: kopirovat' khesh | r: obnovit' | q: vyyti",
-    "panel.detail_footer": "Vverkh/Vniz/j/k: navigatsiya | RET: otkryt' fayl na stroke | q: nazad k logu"
+    "panel.no_commits": "  Kommity ne naydeny"
   },
   "th": {
     "cmd.git_log": "Git Log",
@@ -400,9 +380,7 @@
     "status.move_to_diff": "เลื่อนเคอร์เซอร์ไปที่บรรทัด diff",
 
     "panel.commits_header": "คอมมิต:",
-    "panel.no_commits": "  ไม่พบคอมมิต",
-    "panel.log_footer": "%{count} คอมมิต | ขึ้น/ลง/j/k: นำทาง | RET: แสดง | y: คัดลอกแฮช | r: รีเฟรช | q: ออก",
-    "panel.detail_footer": "ขึ้น/ลง/j/k: นำทาง | RET: เปิดไฟล์ที่บรรทัด | q: กลับไปที่ log"
+    "panel.no_commits": "  ไม่พบคอมมิต"
   },
   "uk": {
     "cmd.git_log": "Git Log",
@@ -437,9 +415,7 @@
     "status.move_to_diff": "Peremistit' kursor na ryadok diff",
 
     "panel.commits_header": "Komity:",
-    "panel.no_commits": "  Komity ne znaydeno",
-    "panel.log_footer": "%{count} komitiv | Vhoru/Vnyz/j/k: navihatsiya | RET: pokazaty | y: kopiyuvaty khesh | r: onovyty | q: vyyty",
-    "panel.detail_footer": "Vhoru/Vnyz/j/k: navihatsiya | RET: vidkryty fayl na ryadku | q: nazad do lohu"
+    "panel.no_commits": "  Komity ne znaydeno"
   },
   "vi": {
     "cmd.git_log": "Git Log",
@@ -474,9 +450,7 @@
     "status.move_to_diff": "Di chuyển con trỏ đến dòng diff",
 
     "panel.commits_header": "Commit:",
-    "panel.no_commits": "  Không tìm thấy commit",
-    "panel.log_footer": "%{count} commit | Lên/Xuống/j/k: điều hướng | RET: hiển thị | y: sao chép hash | r: làm mới | q: thoát",
-    "panel.detail_footer": "Lên/Xuống/j/k: điều hướng | RET: mở tệp tại dòng | q: quay lại log"
+    "panel.no_commits": "  Không tìm thấy commit"
   },
   "zh-CN": {
     "cmd.git_log": "Git日志",
@@ -511,8 +485,6 @@
     "status.move_to_diff": "请将光标移动到差异行",
 
     "panel.commits_header": "提交:",
-    "panel.no_commits": "  未找到提交",
-    "panel.log_footer": "%{count}个提交 | 上/下/j/k: 导航 | RET: 显示 | y: 复制哈希 | r: 刷新 | q: 退出",
-    "panel.detail_footer": "上/下/j/k: 导航 | RET: 在行处打开文件 | q: 返回日志"
+    "panel.no_commits": "  未找到提交"
   }
 }
