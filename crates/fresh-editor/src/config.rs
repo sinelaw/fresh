@@ -1124,6 +1124,20 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Recovery"))]
     pub hot_exit: bool,
 
+    /// Whether to auto-open previously opened files (session restore) when
+    /// starting Fresh in a directory.  When enabled (the default), tabs,
+    /// splits, cursor positions and the file explorer state are restored
+    /// from the last clean exit in the same working directory.  When
+    /// disabled, Fresh starts with a clean workspace.  The workspace file
+    /// on disk is still written on exit, so re-enabling this setting picks
+    /// up whatever state was saved at the most recent clean exit.  The
+    /// `--no-restore` CLI flag is a stronger override: it skips both
+    /// restoring and saving the workspace.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Recovery"))]
+    pub restore_previous_session: bool,
+
     // ===== Recovery =====
     /// Whether to enable file recovery (Emacs-style auto-save)
     /// When enabled, buffers are periodically saved to recovery files
@@ -1351,6 +1365,7 @@ impl Default for EditorConfig {
             auto_save_enabled: false,
             auto_save_interval_secs: default_auto_save_interval(),
             hot_exit: true,
+            restore_previous_session: true,
             recovery_enabled: true,
             auto_recovery_save_interval_secs: default_auto_recovery_save_interval(),
             highlight_context_bytes: default_highlight_context_bytes(),

@@ -1405,7 +1405,7 @@ impl EditorTestHarness {
         cli_files: &[std::path::PathBuf],
     ) -> anyhow::Result<bool> {
         let mut restored = false;
-        if workspace_enabled {
+        if workspace_enabled && self.editor.config().editor.restore_previous_session {
             restored = self.editor.try_restore_workspace().unwrap_or(false);
         }
 

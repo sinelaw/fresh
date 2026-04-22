@@ -795,16 +795,22 @@ fn handle_first_run_setup(
     }
 
     if workspace_enabled {
-        match editor.try_restore_workspace() {
-            Ok(true) => {
-                tracing::info!("Workspace restored successfully");
+        if editor.config().editor.restore_previous_session {
+            match editor.try_restore_workspace() {
+                Ok(true) => {
+                    tracing::info!("Workspace restored successfully");
+                }
+                Ok(false) => {
+                    tracing::debug!("No previous workspace found");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to restore workspace: {}", e);
+                }
             }
-            Ok(false) => {
-                tracing::debug!("No previous workspace found");
-            }
-            Err(e) => {
-                tracing::warn!("Failed to restore workspace: {}", e);
-            }
+        } else {
+            tracing::info!(
+                "Skipping workspace restore: editor.restore_previous_session is disabled"
+            );
         }
     }
 
@@ -3369,16 +3375,22 @@ fn real_main() -> AnyhowResult<()> {
             tracing::info!("First-run setup complete");
         } else {
             if restore_workspace_on_restart {
-                match editor.try_restore_workspace() {
-                    Ok(true) => {
-                        tracing::info!("Workspace restored successfully");
+                if editor.config().editor.restore_previous_session {
+                    match editor.try_restore_workspace() {
+                        Ok(true) => {
+                            tracing::info!("Workspace restored successfully");
+                        }
+                        Ok(false) => {
+                            tracing::debug!("No previous workspace found");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to restore workspace: {}", e);
+                        }
                     }
-                    Ok(false) => {
-                        tracing::debug!("No previous workspace found");
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to restore workspace: {}", e);
-                    }
+                } else {
+                    tracing::info!(
+                        "Skipping workspace restore on restart: editor.restore_previous_session is disabled"
+                    );
                 }
             }
 

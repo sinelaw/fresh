@@ -99,6 +99,7 @@
         "auto_save_enabled": false,
         "auto_save_interval_secs": 30,
         "hot_exit": true,
+        "restore_previous_session": true,
         "recovery_enabled": true,
         "auto_recovery_save_interval_secs": 2,
         "auto_revert_poll_interval_ms": 2000,
@@ -618,6 +619,12 @@
         },
         "hot_exit": {
           "description": "Whether to preserve unsaved changes in all buffers (file-backed and\nunnamed) across editor sessions (VS Code \"hot exit\" behavior).\nWhen enabled, modified buffers are backed up on clean exit and their\nunsaved changes are restored on next startup.  Unnamed (scratch)\nbuffers are also persisted (Sublime Text / Notepad++ behavior).\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Recovery"
+        },
+        "restore_previous_session": {
+          "description": "Whether to auto-open previously opened files (session restore) when\nstarting Fresh in a directory.  When enabled (the default), tabs,\nsplits, cursor positions and the file explorer state are restored\nfrom the last clean exit in the same working directory.  When\ndisabled, Fresh starts with a clean workspace.  The workspace file\non disk is still written on exit, so re-enabling this setting picks\nup whatever state was saved at the most recent clean exit.  The\n`--no-restore` CLI flag is a stronger override: it skips both\nrestoring and saving the workspace.\nDefault: true",
           "type": "boolean",
           "default": true,
           "x-section": "Recovery"

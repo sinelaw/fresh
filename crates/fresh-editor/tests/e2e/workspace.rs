@@ -233,6 +233,79 @@ fn test_no_session_flag_behavior() {
     }
 }
 
+/// Test that `editor.restore_previous_session = false` disables workspace
+/// restore at startup even when workspace saving is still enabled (issue #1404).
+#[test]
+fn test_restore_previous_session_config_disabled() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file = project_dir.join("persistent.txt");
+    std::fs::write(&file, "This file was open last time").unwrap();
+
+    // First session: open the file and save the workspace so there is
+    // something to restore.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("persistent.txt");
+
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Second session: start with `restore_previous_session = false` and rely
+    // on the harness `startup` helper (which mirrors the production gate in
+    // main.rs).  The file should NOT be restored.
+    let mut config = Config::default();
+    config.editor.restore_previous_session = false;
+    {
+        let mut harness =
+            EditorTestHarness::with_config_and_working_dir(80, 24, config, project_dir.clone())
+                .unwrap();
+
+        let restored = harness.startup(true, &[]).unwrap();
+        assert!(
+            !restored,
+            "Workspace must not be restored when restore_previous_session is false"
+        );
+
+        harness.render().unwrap();
+        harness.assert_screen_contains("[No Name]");
+        harness.assert_screen_not_contains("persistent.txt");
+    }
+
+    // Third session: re-enable `restore_previous_session` and confirm the
+    // workspace file was still on disk and is now picked up.  This guards
+    // against accidentally skipping the save side when restore is disabled.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        let restored = harness.startup(true, &[]).unwrap();
+        assert!(
+            restored,
+            "Workspace should still be on disk and restorable once the config is re-enabled"
+        );
+
+        harness.render().unwrap();
+        harness.assert_screen_contains("persistent.txt");
+    }
+}
+
 /// Test multiple files are all restored
 #[test]
 fn test_session_restores_multiple_files() {

@@ -165,6 +165,7 @@ pub struct PartialEditorConfig {
     pub auto_save_enabled: Option<bool>,
     pub auto_save_interval_secs: Option<u32>,
     pub hot_exit: Option<bool>,
+    pub restore_previous_session: Option<bool>,
     pub highlight_context_bytes: Option<usize>,
     pub mouse_hover_enabled: Option<bool>,
     pub mouse_hover_delay_ms: Option<u64>,
@@ -244,6 +245,8 @@ impl Merge for PartialEditorConfig {
         self.auto_save_interval_secs
             .merge_from(&other.auto_save_interval_secs);
         self.hot_exit.merge_from(&other.hot_exit);
+        self.restore_previous_session
+            .merge_from(&other.restore_previous_session);
         self.highlight_context_bytes
             .merge_from(&other.highlight_context_bytes);
         self.mouse_hover_enabled
@@ -513,6 +516,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             auto_save_enabled: Some(cfg.auto_save_enabled),
             auto_save_interval_secs: Some(cfg.auto_save_interval_secs),
             hot_exit: Some(cfg.hot_exit),
+            restore_previous_session: Some(cfg.restore_previous_session),
             highlight_context_bytes: Some(cfg.highlight_context_bytes),
             mouse_hover_enabled: Some(cfg.mouse_hover_enabled),
             mouse_hover_delay_ms: Some(cfg.mouse_hover_delay_ms),
@@ -611,6 +615,9 @@ impl PartialEditorConfig {
                 .auto_save_interval_secs
                 .unwrap_or(defaults.auto_save_interval_secs),
             hot_exit: self.hot_exit.unwrap_or(defaults.hot_exit),
+            restore_previous_session: self
+                .restore_previous_session
+                .unwrap_or(defaults.restore_previous_session),
             highlight_context_bytes: self
                 .highlight_context_bytes
                 .unwrap_or(defaults.highlight_context_bytes),
