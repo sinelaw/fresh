@@ -2717,29 +2717,49 @@ mod tests {
             "kill path must resolve within 5s — if this times out the \
              select! arm order or kill-then-wait logic is broken",
         );
-        // On Unix, `Child::start_kill()` is SIGKILL. The exit status's
-        // `code()` is `None` for signal-terminated processes, and our
-        // dispatcher's `.unwrap_or(-1)` surfaces that as -1.
-        assert_eq!(
-            exit_code, -1,
-            "SIGKILL on a running child should yield no exit code \
-             (surfaced as -1 by the dispatcher)"
+        // The cross-platform invariant is "the child did not complete
+        // its 30s sleep" — i.e. the exit code is non-success. Platform
+        // specifics:
+        //   - Unix: `start_kill()` sends SIGKILL; `ExitStatus::code()`
+        //     returns None for signal-terminated processes, which our
+        //     dispatcher maps to -1 via `.unwrap_or(-1)`.
+        //   - Windows: `start_kill()` calls `TerminateProcess(..., 1)`;
+        //     `code()` returns `Some(1)`, mapped to 1 by the same
+        //     `.unwrap_or(-1)`.
+        // A successful 30s sleep would yield 0 — that's the
+        // regression case we're guarding against.
+        assert_ne!(
+            exit_code, 0,
+            "killed child must exit non-success (got 0 — did the \
+             kill arm fire too late, or did sleep somehow complete?)"
         );
 
-        // Sanity: the child must be gone. `kill -0 <pid>` returns 0
-        // iff the process still exists / is being reaped; we expect
-        // non-zero (No such process) after our wait(). This rules out
-        // a zombie / leaked child that would indicate we skipped the
-        // wait() on the kill path.
-        let still_alive = std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        assert!(
-            !still_alive,
-            "process {pid} must be reaped after wait() — a still-\
-             alive check means the kill path leaked the child"
-        );
+        // Sanity: on Unix the child must be gone. `kill -0 <pid>`
+        // returns 0 iff the process still exists; we expect non-zero
+        // (No such process) after wait(). This catches a zombie /
+        // leaked child that would indicate we skipped the wait() on
+        // the kill path. Skipped on Windows — `kill` isn't available
+        // and `tasklist` output parsing is more noise than signal
+        // for this one-shot check; the wait() having returned is
+        // already evidence of reap there.
+        #[cfg(unix)]
+        {
+            let still_alive = std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            assert!(
+                !still_alive,
+                "process {pid} must be reaped after wait() — a still-\
+                 alive check means the kill path leaked the child"
+            );
+        }
+        #[cfg(not(unix))]
+        {
+            // Touch `pid` so the unused-variable lint doesn't fire on
+            // non-Unix builds.
+            let _ = pid;
+        }
     }
 }
