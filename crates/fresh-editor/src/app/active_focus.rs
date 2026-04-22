@@ -145,6 +145,16 @@ impl Editor {
             return;
         }
 
+        // Clicking a buffer pane (e.g. a tab) explicitly moves focus to
+        // the editor. If the key context was still on the file explorer
+        // (because the user's previous click landed there), reset it so
+        // subsequent keystrokes target the buffer. The terminal branch
+        // below can still upgrade to KeyContext::Terminal when needed.
+        // Issue #1540.
+        if self.key_context == crate::input::keybindings::KeyContext::FileExplorer {
+            self.key_context = crate::input::keybindings::KeyContext::Normal;
+        }
+
         let previous_split = self.split_manager.active_split();
         let previous_buffer = self.active_buffer(); // Get BEFORE changing split
         let split_changed = previous_split != split_id;
