@@ -54,9 +54,59 @@ fn set_up_workspace() -> (tempfile::TempDir, std::path::PathBuf) {
     (temp, workspace)
 }
 
+/// Wait for the plugin's registered commands AND their i18n
+/// translations to be in place. The palette's filter matches typed
+/// text against each command's **localized** display name (i.e. the
+/// i18n-resolved form of `%cmd.show_forwarded_ports_panel` →
+/// `"Dev Container: Show Forwarded Ports"`). If the plugin's
+/// `.i18n.json` hasn't registered yet, the resolver returns the raw
+/// key and the user's typed "Show Forwarded Ports" filter finds
+/// nothing, hanging the downstream `wait_until`. Check BOTH here so
+/// CI stderr surfaces the specific missing piece.
+fn wait_for_devcontainer_commands(harness: &mut EditorTestHarness) {
+    let want_key = "%cmd.show_forwarded_ports_panel";
+    let want_localized = "Dev Container: Show Forwarded Ports";
+    let mut dumped = 0;
+    harness
+        .wait_until(|h| {
+            let reg = h.editor().command_registry().read().unwrap();
+            let all = reg.get_all();
+            let cmd = all.iter().find(|c| c.name == want_key);
+            let key_present = cmd.is_some();
+            let localized_present = cmd
+                .map(|c| c.get_localized_name() == want_localized)
+                .unwrap_or(false);
+            if (!key_present || !localized_present) && dumped < 3 {
+                let total = all.len();
+                let plugin_cmds: Vec<_> = all
+                    .iter()
+                    .filter(|c| c.name.starts_with('%'))
+                    .map(|c| {
+                        format!(
+                            "{} -> {:?} ({:?})",
+                            c.name,
+                            c.get_localized_name(),
+                            c.source,
+                        )
+                    })
+                    .collect();
+                eprintln!(
+                    "[ports_panel] not ready: key_present={} localized_present={} \
+                     (total {} cmds); plugin-namespaced: {:#?}",
+                    key_present, localized_present, total, plugin_cmds,
+                );
+                dumped += 1;
+            }
+            key_present && localized_present
+        })
+        .unwrap();
+}
+
 /// Walk the command palette to the "Show Forwarded Ports" entry and
 /// activate it. Same keyboard sequence a user would type.
 fn open_ports_panel_via_palette(harness: &mut EditorTestHarness) {
+    eprintln!("[ports_panel] wait for devcontainer commands in registry");
+    wait_for_devcontainer_commands(harness);
     eprintln!("[ports_panel] send Ctrl+P");
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
