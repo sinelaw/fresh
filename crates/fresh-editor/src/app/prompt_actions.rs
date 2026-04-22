@@ -443,6 +443,11 @@ impl Editor {
                 is_cut,
             } => {
                 let (cur_src, cur_dst) = pending.remove(0);
+                // Case matters here: `o` / `s` act on the current conflict
+                // only, `O` / `S` act on all remaining conflicts. No other
+                // prompt uses case-sensitive input, so be strict about
+                // matching a single char and fall through to cancel on
+                // anything unexpected.
                 match input.trim() {
                     "o" | "overwrite" => {
                         let mut new_confirmed = confirmed;
@@ -453,7 +458,7 @@ impl Editor {
                             self.prompt_next_paste_conflict(safe, new_confirmed, pending, is_cut);
                         }
                     }
-                    "O" | "overwrite all" => {
+                    "O" => {
                         let mut new_confirmed = confirmed;
                         new_confirmed.push((cur_src, cur_dst));
                         new_confirmed.extend(pending);
@@ -466,7 +471,7 @@ impl Editor {
                             self.prompt_next_paste_conflict(safe, confirmed, pending, is_cut);
                         }
                     }
-                    "S" | "skip all" => {
+                    "S" => {
                         self.execute_resolved_multi_paste(safe, confirmed, is_cut);
                     }
                     _ => {

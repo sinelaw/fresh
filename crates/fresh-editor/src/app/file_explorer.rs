@@ -1068,7 +1068,7 @@ impl Editor {
             };
             let dst_path = dst_dir.join(&file_name);
 
-            if dst_path == src || src.parent().map(|p| p == dst_dir).unwrap_or(false) {
+            if src.parent().map(|p| p == dst_dir).unwrap_or(false) {
                 if is_cut {
                     self.set_status_message(t!("explorer.paste_same_location").to_string());
                     return;
@@ -1107,8 +1107,7 @@ impl Editor {
                     None => continue,
                 };
                 let dst_path = dst_dir.join(&file_name);
-                let is_same_location =
-                    dst_path == *src || src.parent().map(|p| p == dst_dir).unwrap_or(false);
+                let is_same_location = src.parent().map(|p| p == dst_dir).unwrap_or(false);
 
                 if is_same_location {
                     if !is_cut {
@@ -1158,6 +1157,12 @@ impl Editor {
     }
 
     /// Paste all resolved items (safe + confirmed-overwrite) from a multi-conflict flow.
+    ///
+    /// Runs every filesystem op first, then does a single tree refresh and
+    /// a single navigate to the first successfully pasted item. Each paste
+    /// inside `perform_file_explorer_paste` would otherwise re-reload the
+    /// same parent directories N times and flash N different status
+    /// messages, with only the last one ever being visible.
     pub(super) fn execute_resolved_multi_paste(
         &mut self,
         safe: Vec<(PathBuf, PathBuf)>,
@@ -1165,46 +1170,87 @@ impl Editor {
         is_cut: bool,
     ) {
         let total = safe.len() + to_overwrite.len();
-        for (src, dst) in safe.into_iter().chain(to_overwrite) {
-            self.perform_file_explorer_paste(src, dst, is_cut);
+        if total == 0 {
+            return;
         }
-        if total > 1 {
+
+        let mut succeeded: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(total);
+        let mut first_error: Option<std::io::Error> = None;
+        for (src, dst) in safe.into_iter().chain(to_overwrite) {
+            match self.paste_one_fs_op(&src, &dst, is_cut) {
+                Ok(()) => succeeded.push((src, dst)),
+                Err(e) => {
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
+                }
+            }
+        }
+
+        if !succeeded.is_empty() {
+            let first_dst = succeeded[0].1.clone();
+            let any_src = succeeded[0].0.clone();
+            self.refresh_tree_after_paste(&any_src, &first_dst, is_cut);
+        }
+
+        if let Some(e) = &first_error {
+            let msg = if is_cut {
+                t!("explorer.error_moving", error = e.to_string()).to_string()
+            } else {
+                t!("explorer.error_copying", error = e.to_string()).to_string()
+            };
+            self.set_status_message(msg);
+        } else if total > 1 {
             let msg = if is_cut {
                 t!("explorer.pasted_moved_n", count = total).to_string()
             } else {
                 t!("explorer.pasted_n", count = total).to_string()
             };
             self.set_status_message(msg);
+        } else if let Some((_, dst)) = succeeded.first() {
+            let name = dst
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let msg = if is_cut {
+                t!("explorer.pasted_moved", name = &name).to_string()
+            } else {
+                t!("explorer.pasted", name = &name).to_string()
+            };
+            self.set_status_message(msg);
         }
+
+        if is_cut && first_error.is_none() {
+            self.file_explorer_clipboard = None;
+        }
+        self.key_context = KeyContext::FileExplorer;
     }
 
-    pub fn perform_file_explorer_paste(&mut self, src: PathBuf, dst: PathBuf, is_cut: bool) {
-        let name = dst
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
+    /// Move or copy a single item at the filesystem level. No tree or UI
+    /// state is touched — callers are responsible for refreshing the
+    /// explorer afterwards.
+    fn paste_one_fs_op(&self, src: &Path, dst: &Path, is_cut: bool) -> std::io::Result<()> {
+        let src_is_dir = self.authority.filesystem.is_dir(src).unwrap_or(false);
 
-        let src_is_dir = self.authority.filesystem.is_dir(&src).unwrap_or(false);
-
-        let result = if is_cut {
+        if is_cut {
             // Try rename first (works if same filesystem). Only fall back to
             // copy+delete for cross-device errors — any other rename failure
             // (permission denied, etc.) must surface as-is so we don't
             // silently succeed via a different codepath.
-            match self.authority.filesystem.rename(&src, &dst) {
+            match self.authority.filesystem.rename(src, dst) {
                 Ok(()) => Ok(()),
                 Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
                     let copy_result = if src_is_dir {
-                        self.authority.filesystem.copy_dir_all(&src, &dst)
+                        self.authority.filesystem.copy_dir_all(src, dst)
                     } else {
-                        self.authority.filesystem.copy(&src, &dst).map(|_| ())
+                        self.authority.filesystem.copy(src, dst).map(|_| ())
                     };
                     match copy_result {
                         Ok(()) => {
                             if src_is_dir {
-                                self.authority.filesystem.remove_dir_all(&src)
+                                self.authority.filesystem.remove_dir_all(src)
                             } else {
-                                self.authority.filesystem.remove_file(&src)
+                                self.authority.filesystem.remove_file(src)
                             }
                         }
                         Err(copy_err) => {
@@ -1214,9 +1260,9 @@ impl Editor {
                             // swallowed — the copy error is the interesting
                             // one to surface — but logged.
                             let cleanup = if src_is_dir {
-                                self.authority.filesystem.remove_dir_all(&dst)
+                                self.authority.filesystem.remove_dir_all(dst)
                             } else {
-                                self.authority.filesystem.remove_file(&dst)
+                                self.authority.filesystem.remove_file(dst)
                             };
                             if let Err(cleanup_err) = cleanup {
                                 tracing::warn!(
@@ -1233,76 +1279,76 @@ impl Editor {
                 Err(e) => Err(e),
             }
         } else if src_is_dir {
-            self.authority.filesystem.copy_dir_all(&src, &dst)
+            self.authority.filesystem.copy_dir_all(src, dst)
         } else {
-            self.authority.filesystem.copy(&src, &dst).map(|_| ())
-        };
+            self.authority.filesystem.copy(src, dst).map(|_| ())
+        }
+    }
 
-        match result {
-            Ok(()) => {
-                if let Some(explorer) = &mut self.file_explorer {
-                    if let Some(runtime) = &self.tokio_runtime {
-                        // Refresh destination parent in-place to avoid collapsing it
-                        if let Some(dst_parent) = dst.parent() {
-                            if let Some(dst_parent_node) =
-                                explorer.tree().get_node_by_path(dst_parent)
-                            {
-                                let pid = dst_parent_node.id;
-                                if let Err(e) =
-                                    runtime.block_on(explorer.tree_mut().reload_expanded_node(pid))
-                                {
-                                    tracing::warn!(
-                                        "Failed to reload destination directory after paste: {}",
-                                        e
-                                    );
-                                }
-                            }
-                        }
-                        // Refresh source parent too (if cut). Using
-                        // `reload_expanded_node` here rather than
-                        // `refresh_node` is important: refresh_node collapses
-                        // and re-expands the source parent, which wipes out
-                        // every descendant NodeId — including the
-                        // destination directory that was just expanded
-                        // above. That in turn invalidates the cursor
-                        // (`selected_node`) and any NodeIds held elsewhere
-                        // (e.g. hover, decorations). The in-place reload
-                        // keeps unchanged siblings intact and only drops the
-                        // nodes that really went away.
-                        if is_cut {
-                            if let Some(src_parent) = src.parent() {
-                                if let Some(src_parent_node) =
-                                    explorer.tree().get_node_by_path(src_parent)
-                                {
-                                    let pid = src_parent_node.id;
-                                    if let Err(e) = runtime
-                                        .block_on(explorer.tree_mut().reload_expanded_node(pid))
-                                    {
-                                        tracing::warn!(
-                                            "Failed to refresh source directory after move: {}",
-                                            e
-                                        );
-                                    }
-                                }
-                            }
+    /// Refresh the destination (and source parent, if this was a cut) in
+    /// the explorer tree after paste operations land on disk, then navigate
+    /// the cursor to `dst`. Factored out so multi-paste can invoke it
+    /// exactly once for a whole batch rather than N times.
+    fn refresh_tree_after_paste(&mut self, src: &Path, dst: &Path, is_cut: bool) {
+        let Some(explorer) = &mut self.file_explorer else {
+            return;
+        };
+        if let Some(runtime) = &self.tokio_runtime {
+            // Refresh destination parent in-place to avoid collapsing it
+            if let Some(dst_parent) = dst.parent() {
+                if let Some(dst_parent_node) = explorer.tree().get_node_by_path(dst_parent) {
+                    let pid = dst_parent_node.id;
+                    if let Err(e) = runtime.block_on(explorer.tree_mut().reload_expanded_node(pid))
+                    {
+                        tracing::warn!("Failed to reload destination directory after paste: {}", e);
+                    }
+                }
+            }
+            // Refresh source parent too (if cut). Using `reload_expanded_node`
+            // here rather than `refresh_node` is important: refresh_node
+            // collapses and re-expands the source parent, which wipes out
+            // every descendant NodeId — including the destination directory
+            // that was just expanded above. That in turn invalidates the
+            // cursor (`selected_node`) and any NodeIds held elsewhere
+            // (e.g. hover, decorations). The in-place reload keeps
+            // unchanged siblings intact and only drops the nodes that
+            // really went away.
+            if is_cut {
+                if let Some(src_parent) = src.parent() {
+                    if let Some(src_parent_node) = explorer.tree().get_node_by_path(src_parent) {
+                        let pid = src_parent_node.id;
+                        if let Err(e) =
+                            runtime.block_on(explorer.tree_mut().reload_expanded_node(pid))
+                        {
+                            tracing::warn!("Failed to refresh source directory after move: {}", e);
                         }
                     }
-                    // Any source NodeIds that were in the multi-selection are
-                    // now stale (the tree was reloaded / source parent
-                    // refreshed). Drop the selection so subsequent actions
-                    // act on the fresh cursor, not ghost IDs.
-                    explorer.clear_multi_selection();
-                    // Navigate to the pasted item
-                    explorer.navigate_to_path(&dst);
                 }
+            }
+        }
+        // Any source NodeIds that were in the multi-selection are now stale
+        // (the tree was reloaded / source parent refreshed). Drop the
+        // selection so subsequent actions act on the fresh cursor, not
+        // ghost IDs.
+        explorer.clear_multi_selection();
+        explorer.navigate_to_path(dst);
+    }
 
+    pub fn perform_file_explorer_paste(&mut self, src: PathBuf, dst: PathBuf, is_cut: bool) {
+        let name = dst
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        match self.paste_one_fs_op(&src, &dst, is_cut) {
+            Ok(()) => {
+                self.refresh_tree_after_paste(&src, &dst, is_cut);
                 if is_cut {
                     self.file_explorer_clipboard = None;
                     self.set_status_message(t!("explorer.pasted_moved", name = &name).to_string());
                 } else {
                     self.set_status_message(t!("explorer.pasted", name = &name).to_string());
                 }
-
                 self.key_context = KeyContext::FileExplorer;
             }
             Err(e) => {

@@ -338,7 +338,10 @@ impl FileTreeView {
         self.selection_anchor = None;
     }
 
-    /// True when more than one item is selected.
+    /// True when the explorer is in multi-selection mode — i.e. at least
+    /// one item has been explicitly added to the selection via Shift+arrow,
+    /// Space, or Ctrl+A. Distinguishes "user picked a specific set" from
+    /// plain cursor navigation, even when that set holds just one item.
     pub fn has_multi_selection(&self) -> bool {
         !self.multi_selection.is_empty()
     }
@@ -350,12 +353,21 @@ impl FileTreeView {
 
     /// The nodes that operations (copy/cut/delete) should act on.
     /// Returns the multi-selection when non-empty, otherwise `[cursor]`.
+    ///
+    /// Multi-selected items are returned in visible tree order rather than
+    /// `HashSet` iteration order, so callers (e.g. multi-paste) see a
+    /// deterministic sequence matching what the user sees on screen.
     pub fn effective_selection(&self) -> Vec<NodeId> {
-        if !self.multi_selection.is_empty() {
-            self.multi_selection.iter().copied().collect()
-        } else {
-            self.selected_node.into_iter().collect()
+        if self.multi_selection.is_empty() {
+            return self.selected_node.into_iter().collect();
         }
+        // Walk visible nodes in order and keep those in the selection set.
+        // This also filters out any stale NodeIds that may have lingered
+        // from a prior tree mutation.
+        self.filtered_visible_nodes()
+            .into_iter()
+            .filter(|id| self.multi_selection.contains(id))
+            .collect()
     }
 
     /// Select the parent of the currently selected node
