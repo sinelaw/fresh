@@ -146,7 +146,8 @@
       "description": "Terminal settings",
       "$ref": "#/$defs/TerminalConfig",
       "default": {
-        "jump_to_end_on_output": true
+        "jump_to_end_on_output": true,
+        "shell": null
       }
     },
     "keybindings": {
@@ -936,8 +937,41 @@
           "description": "When viewing terminal scrollback and new output arrives,\nautomatically jump back to terminal mode (default: true)",
           "type": "boolean",
           "default": true
+        },
+        "shell": {
+          "description": "Override the shell used by the integrated terminal.\n\nWhen unset (the default), Fresh launches the shell named by the\n`$SHELL` environment variable (or the platform default if `$SHELL`\nis empty). Set this to run a different program — for example a\nwrapper script that forces an interactive shell — without having\nto change `$SHELL` for the whole process, which other features\nsuch as `format_on_save` also depend on.\n\nOnly affects local authorities; plugin-provided authorities\n(e.g. `docker exec`) keep their own wrapper.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalShellConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       }
+    },
+    "TerminalShellConfig": {
+      "description": "Explicit shell command + args for the integrated terminal.",
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "Executable to launch (e.g. `/usr/bin/fish`, `bash`, or a wrapper\nscript). Resolved via `$PATH` when not absolute.",
+          "type": "string"
+        },
+        "args": {
+          "description": "Arguments passed before any user input.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "command"
+      ]
     },
     "Keybinding": {
       "description": "Keybinding definition",

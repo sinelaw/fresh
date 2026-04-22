@@ -1695,14 +1695,41 @@ pub struct TerminalConfig {
     /// automatically jump back to terminal mode (default: true)
     #[serde(default = "default_true")]
     pub jump_to_end_on_output: bool,
+
+    /// Override the shell used by the integrated terminal.
+    ///
+    /// When unset (the default), Fresh launches the shell named by the
+    /// `$SHELL` environment variable (or the platform default if `$SHELL`
+    /// is empty). Set this to run a different program — for example a
+    /// wrapper script that forces an interactive shell — without having
+    /// to change `$SHELL` for the whole process, which other features
+    /// such as `format_on_save` also depend on.
+    ///
+    /// Only affects local authorities; plugin-provided authorities
+    /// (e.g. `docker exec`) keep their own wrapper.
+    #[serde(default)]
+    pub shell: Option<TerminalShellConfig>,
 }
 
 impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
             jump_to_end_on_output: true,
+            shell: None,
         }
     }
+}
+
+/// Explicit shell command + args for the integrated terminal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TerminalShellConfig {
+    /// Executable to launch (e.g. `/usr/bin/fish`, `bash`, or a wrapper
+    /// script). Resolved via `$PATH` when not absolute.
+    pub command: String,
+
+    /// Arguments passed before any user input.
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 /// Warning notification configuration

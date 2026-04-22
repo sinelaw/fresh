@@ -70,6 +70,26 @@ impl TerminalWrapper {
             manages_cwd: false,
         }
     }
+
+    /// Apply the user's `terminal.shell` config override on top of this
+    /// wrapper. The override replaces `command` and `args` only when the
+    /// wrapper leaves cwd management to the terminal manager
+    /// (`manages_cwd == false`) — that is, for the host-shell wrapper.
+    /// Authorities that re-parent the shell (e.g. `docker exec -w …`,
+    /// `ssh …`) pin cwd through their own args and are left untouched so
+    /// the re-parenting stays intact.
+    pub fn with_user_shell_override(
+        mut self,
+        shell: Option<&crate::config::TerminalShellConfig>,
+    ) -> Self {
+        if let Some(shell) = shell {
+            if !self.manages_cwd {
+                self.command = shell.command.clone();
+                self.args = shell.args.clone();
+            }
+        }
+        self
+    }
 }
 
 /// Tagged payload describing how to build an authority from a plugin.
@@ -345,6 +365,55 @@ mod tests {
         let auth = Authority::from_plugin_payload(payload).expect("payload is valid");
         assert!(auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "");
+    }
+
+    #[test]
+    fn user_shell_override_replaces_host_shell_wrapper() {
+        let override_shell = crate::config::TerminalShellConfig {
+            command: "/usr/local/bin/fish".into(),
+            args: vec!["-l".into(), "-i".into()],
+        };
+        let wrapper = TerminalWrapper::host_shell().with_user_shell_override(Some(&override_shell));
+        assert_eq!(wrapper.command, "/usr/local/bin/fish");
+        assert_eq!(wrapper.args, vec!["-l".to_string(), "-i".to_string()]);
+        assert!(!wrapper.manages_cwd);
+    }
+
+    #[test]
+    fn user_shell_override_is_noop_when_wrapper_manages_cwd() {
+        // Docker/SSH-style wrappers set `manages_cwd = true`; replacing
+        // their command would drop the re-parenting args and spawn the
+        // user's shell on the host, defeating the authority.
+        let docker = TerminalWrapper {
+            command: "docker".into(),
+            args: vec![
+                "exec".into(),
+                "-w".into(),
+                "/workspaces/proj".into(),
+                "abc123".into(),
+                "bash".into(),
+            ],
+            manages_cwd: true,
+        };
+        let override_shell = crate::config::TerminalShellConfig {
+            command: "/usr/local/bin/fish".into(),
+            args: vec![],
+        };
+        let wrapper = docker
+            .clone()
+            .with_user_shell_override(Some(&override_shell));
+        assert_eq!(wrapper.command, docker.command);
+        assert_eq!(wrapper.args, docker.args);
+        assert!(wrapper.manages_cwd);
+    }
+
+    #[test]
+    fn user_shell_override_none_leaves_wrapper_unchanged() {
+        let original = TerminalWrapper::host_shell();
+        let wrapper = original.clone().with_user_shell_override(None);
+        assert_eq!(wrapper.command, original.command);
+        assert_eq!(wrapper.args, original.args);
+        assert_eq!(wrapper.manages_cwd, original.manages_cwd);
     }
 
     #[test]

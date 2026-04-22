@@ -24,11 +24,26 @@
 //!   - Performance: O(1) ≈ 1ms
 
 use super::{BufferId, BufferMetadata, Editor};
+use crate::services::authority::TerminalWrapper;
 use crate::services::terminal::TerminalId;
 use crate::state::EditorState;
 use rust_i18n::t;
 
 impl Editor {
+    /// Resolve the terminal wrapper used to spawn a new integrated
+    /// terminal, applying the `terminal.shell` config override on top of
+    /// the authority's wrapper when appropriate.
+    ///
+    /// See `TerminalWrapper::with_user_shell_override` for the override
+    /// rules; this is just the Editor-side wiring that supplies the
+    /// active config.
+    pub(crate) fn resolved_terminal_wrapper(&self) -> TerminalWrapper {
+        self.authority
+            .terminal_wrapper
+            .clone()
+            .with_user_shell_override(self.config.terminal.shell.as_ref())
+    }
+
     /// Open a new terminal in the current split
     pub fn open_terminal(&mut self) {
         // Get the current split dimensions for the terminal size
@@ -65,7 +80,7 @@ impl Editor {
             Some(self.working_dir.clone()),
             Some(log_path.clone()),
             backing_path_for_spawn,
-            self.authority.terminal_wrapper.clone(),
+            self.resolved_terminal_wrapper(),
         ) {
             Ok(terminal_id) => {
                 // Track log file path (use actual ID in case it differs)

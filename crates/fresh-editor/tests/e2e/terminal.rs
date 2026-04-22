@@ -13,6 +13,7 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::{Config, TerminalShellConfig};
 use fresh::services::terminal::TerminalState;
 use portable_pty::{native_pty_system, PtySize};
 
@@ -3187,4 +3188,63 @@ fn test_arrow_keys_in_less() {
         .unwrap();
 
     eprintln!("[arrow_keys] test complete");
+}
+
+/// Regression test for issue #1637: `terminal.shell` config overrides the
+/// shell command used by the integrated terminal without having to
+/// change `$SHELL`. Picks a command that is definitely not the user's
+/// login shell — `/bin/cat` — and confirms the spawned terminal handle
+/// reports it back.
+#[test]
+fn test_terminal_shell_config_override() {
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+        return;
+    }
+
+    let override_cmd = "/bin/cat";
+    if !std::path::Path::new(override_cmd).exists() {
+        eprintln!("Skipping terminal test: {} not available", override_cmd);
+        return;
+    }
+
+    let mut config = Config::default();
+    config.terminal.shell = Some(TerminalShellConfig {
+        command: override_cmd.to_string(),
+        args: Vec::new(),
+    });
+
+    let mut harness = match EditorTestHarness::with_config(80, 24, config) {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    let terminal_buffer = harness.editor().active_buffer_id();
+    let terminal_id = harness
+        .editor()
+        .get_terminal_id(terminal_buffer)
+        .expect("terminal buffer should have a terminal id");
+    let shell = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .expect("terminal handle should exist")
+        .shell()
+        .to_string();
+
+    assert_eq!(
+        shell, override_cmd,
+        "terminal should spawn with the config-overridden shell"
+    );
 }

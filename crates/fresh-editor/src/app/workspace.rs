@@ -1206,7 +1206,7 @@ impl Editor {
             terminal.cwd.clone(),
             Some(log_path.clone()),
             Some(backing_path.clone()),
-            self.authority.terminal_wrapper.clone(),
+            self.resolved_terminal_wrapper(),
         ) {
             Ok(id) => id,
             Err(e) => {

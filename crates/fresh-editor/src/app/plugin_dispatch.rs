@@ -1889,7 +1889,7 @@ impl Editor {
                     Some(working_dir),
                     Some(log_path.clone()),
                     backing_path_for_spawn,
-                    self.authority.terminal_wrapper.clone(),
+                    self.resolved_terminal_wrapper(),
                 ) {
                     Ok(terminal_id) => {
                         // Track log file path

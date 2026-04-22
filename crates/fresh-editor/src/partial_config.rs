@@ -377,12 +377,14 @@ impl Merge for PartialClipboardConfig {
 #[serde(default)]
 pub struct PartialTerminalConfig {
     pub jump_to_end_on_output: Option<bool>,
+    pub shell: Option<crate::config::TerminalShellConfig>,
 }
 
 impl Merge for PartialTerminalConfig {
     fn merge_from(&mut self, other: &Self) {
         self.jump_to_end_on_output
             .merge_from(&other.jump_to_end_on_output);
+        self.shell.merge_from(&other.shell);
     }
 }
 
@@ -775,6 +777,7 @@ impl From<&TerminalConfig> for PartialTerminalConfig {
     fn from(cfg: &TerminalConfig) -> Self {
         Self {
             jump_to_end_on_output: Some(cfg.jump_to_end_on_output),
+            shell: cfg.shell.clone(),
         }
     }
 }
@@ -785,6 +788,7 @@ impl PartialTerminalConfig {
             jump_to_end_on_output: self
                 .jump_to_end_on_output
                 .unwrap_or(defaults.jump_to_end_on_output),
+            shell: self.shell.or_else(|| defaults.shell.clone()),
         }
     }
 }
