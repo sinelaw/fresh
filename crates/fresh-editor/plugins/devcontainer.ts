@@ -1544,17 +1544,25 @@ function lastBuildLogKey(): string {
 /// the post-attach access path doesn't replace the user's file
 /// either.
 ///
-/// Always splits, even when the log buffer is already open elsewhere
-/// — earlier revisions tried to dedupe via `listBuffers` +
-/// `showBuffer`, but `showBuffer` swaps the buffer in the *active*
-/// pane, which silently steals the user's working split. A new split
-/// is the predictable behavior; the user can close it once they're
-/// done reading.
+/// Dedupe uses `BufferInfo.splits` from `listBuffers()` — if the log
+/// is already visible in some split, focus that split. Otherwise
+/// split + openFile. Reading the current snapshot each call (rather
+/// than tracking split ids in module state) means the dedupe
+/// survives the post-attach editor restart: after setAuthority
+/// rebuilds the editor and workspace restore brings the log buffer
+/// back, the first `Show Build Logs` finds the restored split and
+/// focuses it instead of stacking a new one on top.
 function openBuildLogInSplit(path: string): void {
-  // `split_horizontal` duplicates the current buffer into a new
-  // split below and focuses it; openFile then swaps that split's
-  // buffer for the log file. Result: original buffer stays in the
-  // top split, log opens in the new bottom split.
+  const buffers = editor.listBuffers();
+  const existing = buffers.find((b) => b.path === path);
+  if (existing && existing.splits.length > 0) {
+    editor.focusSplit(existing.splits[0]);
+    return;
+  }
+  // Not visible anywhere → create a new split and open the log
+  // there. openFile reuses the buffer when the path is already
+  // loaded (e.g. open but not in any split), so no duplicate
+  // buffers either way.
   editor.executeAction("split_horizontal");
   editor.openFile(path, null, null);
 }
