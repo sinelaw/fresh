@@ -275,14 +275,17 @@ impl FileTreeView {
         let Some(pos) = visible.iter().position(|&id| id == current) else {
             return;
         };
-        if pos == 0 {
-            return;
-        }
-        let anchor = self.selection_anchor.unwrap_or(current);
+        // Always seed the selection with the cursor row first — even at the
+        // top boundary, so Escape / a subsequent Shift+Down sees a live
+        // selection anchored on wherever the user started the range.
         if self.multi_selection.is_empty() {
             self.multi_selection.insert(current);
             self.selection_anchor = Some(current);
         }
+        if pos == 0 {
+            return;
+        }
+        let anchor = self.selection_anchor.unwrap_or(current);
         let new_pos = pos - 1;
         self.selected_node = Some(visible[new_pos]);
         let anchor_pos = visible
@@ -306,14 +309,17 @@ impl FileTreeView {
         let Some(pos) = visible.iter().position(|&id| id == current) else {
             return;
         };
-        if pos + 1 >= visible.len() {
-            return;
-        }
-        let anchor = self.selection_anchor.unwrap_or(current);
+        // Always seed the selection with the cursor row first — even at the
+        // bottom boundary, so Escape / a subsequent Shift+Up sees a live
+        // selection anchored on wherever the user started the range.
         if self.multi_selection.is_empty() {
             self.multi_selection.insert(current);
             self.selection_anchor = Some(current);
         }
+        if pos + 1 >= visible.len() {
+            return;
+        }
+        let anchor = self.selection_anchor.unwrap_or(current);
         let new_pos = pos + 1;
         self.selected_node = Some(visible[new_pos]);
         let anchor_pos = visible

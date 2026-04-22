@@ -469,7 +469,9 @@ impl Editor {
                                 let parent_id =
                                     get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
                                 let tree = explorer.tree_mut();
-                                if let Err(e) = runtime.block_on(tree.refresh_node(parent_id)) {
+                                if let Err(e) =
+                                    runtime.block_on(tree.reload_expanded_node(parent_id))
+                                {
                                     tracing::warn!("Failed to refresh file tree: {}", e);
                                 }
                                 self.set_status_message(
@@ -525,7 +527,9 @@ impl Editor {
                                 let parent_id =
                                     get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
                                 let tree = explorer.tree_mut();
-                                if let Err(e) = runtime.block_on(tree.refresh_node(parent_id)) {
+                                if let Err(e) =
+                                    runtime.block_on(tree.reload_expanded_node(parent_id))
+                                {
                                     tracing::warn!("Failed to refresh file tree: {}", e);
                                 }
                                 self.set_status_message(
@@ -595,8 +599,17 @@ impl Editor {
         } else {
             let count = paths.len();
             let all_paths: Vec<PathBuf> = paths.into_iter().map(|(p, _)| p).collect();
+            // Preview the first few names so the user can eyeball what's
+            // about to be deleted. Include '…' when there are more than
+            // fit in the minibuffer budget.
+            let names = format_path_preview_for_prompt(&all_paths, 3);
             self.start_prompt(
-                t!("explorer.delete_multi_confirm", count = count).to_string(),
+                t!(
+                    "explorer.delete_multi_confirm",
+                    count = count,
+                    names = &names
+                )
+                .to_string(),
                 PromptType::ConfirmMultiDelete { paths: all_paths },
             );
         }
@@ -632,8 +645,8 @@ impl Editor {
                             // Remember the index of the deleted node in the visible list
                             let deleted_index = explorer.get_selected_index();
 
-                            if let Err(e) =
-                                runtime.block_on(explorer.tree_mut().refresh_node(parent_id))
+                            if let Err(e) = runtime
+                                .block_on(explorer.tree_mut().reload_expanded_node(parent_id))
                             {
                                 tracing::warn!("Failed to refresh file tree after delete: {}", e);
                             }
@@ -716,8 +729,11 @@ impl Editor {
                     let old_path = node.entry.path.clone();
                     let old_name = node.entry.name.clone();
 
-                    // Create a prompt for the new name, pre-filled with the old name
-                    let prompt = crate::view::prompt::Prompt::with_initial_text(
+                    // Create a prompt for the new name, pre-filled with the
+                    // old name and cursor at the end — the user typically
+                    // edits a suffix or extension rather than replacing the
+                    // whole name, so keep the prefill and let them type.
+                    let prompt = crate::view::prompt::Prompt::with_initial_text_for_edit(
                         t!("explorer.rename_prompt").to_string(),
                         crate::view::prompt::PromptType::FileExplorerRename {
                             original_path: old_path,
@@ -745,7 +761,11 @@ impl Editor {
             return;
         }
 
-        if new_name.contains('/') {
+        // Reject any platform path separator — `/` on all OSes plus `\` on
+        // Windows. `is_separator` is const-folded per platform so this keeps
+        // the same behavior on Linux (reject `/`) while also rejecting `\`
+        // when running on Windows.
+        if new_name.chars().any(std::path::is_separator) {
             self.set_status_message(t!("explorer.rename_invalid_separator").to_string());
             return;
         }
@@ -769,10 +789,14 @@ impl Editor {
                         if let Some(selected_id) = explorer.get_selected() {
                             let parent_id = get_parent_node_id(explorer.tree(), selected_id, false);
                             let tree = explorer.tree_mut();
-                            if let Err(e) = runtime.block_on(tree.refresh_node(parent_id)) {
+                            if let Err(e) = runtime.block_on(tree.reload_expanded_node(parent_id)) {
                                 tracing::warn!("Failed to refresh file tree after rename: {}", e);
                             }
                         }
+                        // The renamed node has a new NodeId under the parent;
+                        // drop stale selections before navigating to the new
+                        // path so subsequent ops target the renamed item.
+                        explorer.clear_multi_selection();
                         // Navigate to the renamed file to restore selection
                         explorer.navigate_to_path(&new_path);
                     }
@@ -1232,6 +1256,20 @@ impl Editor {
     fn paste_one_fs_op(&self, src: &Path, dst: &Path, is_cut: bool) -> std::io::Result<()> {
         let src_is_dir = self.authority.filesystem.is_dir(src).unwrap_or(false);
 
+        // Guard against pasting a directory into itself or into one of its
+        // own descendants. Without this, `copy_dir_all(/d, /d/d)` would
+        // create `/d/d`, then iterate `/d` — which now contains the
+        // just-created `/d/d` — and recurse forever until stack overflow
+        // or disk-full. The check applies only when the source is a
+        // directory; file-into-itself is already handled by the
+        // same-location check in `file_explorer_paste`.
+        if src_is_dir && dst.starts_with(src) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Cannot paste a directory into itself",
+            ));
+        }
+
         if is_cut {
             // Try rename first (works if same filesystem). Only fall back to
             // copy+delete for cross-device errors — any other rename failure
@@ -1405,6 +1443,30 @@ pub(super) fn truncate_name_for_prompt(name: &str, max: usize) -> String {
     } else {
         let truncated: String = name.chars().take(max.saturating_sub(1)).collect();
         format!("{}\u{2026}", truncated)
+    }
+}
+
+/// Build a short, comma-separated preview of file names for a bulk-operation
+/// prompt — e.g. `'foo.rs', 'bar.rs', 'baz.rs'` or `'a.rs', 'b.rs', … (5 more)`.
+/// Each individual name is truncated at 24 unicode chars to keep the
+/// preview on one minibuffer row.
+pub(super) fn format_path_preview_for_prompt(paths: &[PathBuf], max_shown: usize) -> String {
+    let names: Vec<String> = paths
+        .iter()
+        .map(|p| {
+            let raw = p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            format!("'{}'", truncate_name_for_prompt(&raw, 24))
+        })
+        .collect();
+    if names.len() <= max_shown {
+        names.join(", ")
+    } else {
+        let shown = names[..max_shown].join(", ");
+        let more = names.len() - max_shown;
+        format!("{}, \u{2026} ({} more)", shown, more)
     }
 }
 

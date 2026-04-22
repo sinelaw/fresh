@@ -270,6 +270,13 @@ impl FileTree {
         for (path, entry) in &new_paths {
             if !existing.contains_key(path) {
                 self.add_node(entry.clone(), Some(id));
+            } else if let Some(&cid) = existing.get(path) {
+                // Path still exists — refresh the cached DirEntry in place so
+                // attributes that changed (mtime, size, git status, etc.) are
+                // visible without waiting for a collapse/expand cycle.
+                if let Some(node) = self.nodes.get_mut(&cid) {
+                    node.entry = entry.clone();
+                }
             }
         }
 
@@ -797,5 +804,63 @@ mod tests {
         let result = tree.expand_to_path(&nonexistent_path).await;
 
         assert!(result.is_none(), "Should return None for nonexistent paths");
+    }
+
+    /// `reload_expanded_node` must refresh cached metadata for paths that are
+    /// still present — if a file was overwritten, the node's cached size in
+    /// `entry.metadata` should reflect the new length without having to
+    /// collapse and re-expand.
+    #[tokio::test]
+    async fn test_reload_expanded_node_refreshes_metadata() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path();
+        std_fs::write(temp_path.join("file.txt"), "short").unwrap();
+
+        let backend = Arc::new(StdFileSystem);
+        let manager = Arc::new(FsManager::new(backend));
+        let mut tree = FileTree::new(temp_path.to_path_buf(), manager)
+            .await
+            .unwrap();
+        tree.expand_node(tree.root_id()).await.unwrap();
+
+        let file_id = tree
+            .get_node(tree.root_id())
+            .unwrap()
+            .children
+            .iter()
+            .copied()
+            .find(|&cid| tree.get_node(cid).unwrap().entry.name == "file.txt")
+            .expect("file.txt should be in the tree");
+        let size_before = tree
+            .get_node(file_id)
+            .unwrap()
+            .entry
+            .metadata
+            .as_ref()
+            .map(|m| m.size);
+        assert_eq!(
+            size_before,
+            Some(5),
+            "initial size should be len(\"short\")"
+        );
+
+        // Overwrite the file with a much larger payload and reload.
+        std_fs::write(temp_path.join("file.txt"), "x".repeat(10_000)).unwrap();
+        tree.reload_expanded_node(tree.root_id()).await.unwrap();
+
+        let size_after = tree
+            .get_node(file_id)
+            .unwrap()
+            .entry
+            .metadata
+            .as_ref()
+            .map(|m| m.size);
+        assert_eq!(
+            size_after,
+            Some(10_000),
+            "Node's cached size should track the overwritten file — was {:?}, still {:?} after reload",
+            size_before,
+            size_after
+        );
     }
 }

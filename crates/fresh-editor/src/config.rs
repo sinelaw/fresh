@@ -2992,6 +2992,28 @@ impl MenuConfig {
                     },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
+                        label: t!("menu.explorer.cut").to_string(),
+                        action: "cut".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_COPY.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.copy").to_string(),
+                        action: "copy".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_COPY.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.paste").to_string(),
+                        action: "paste".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_PASTE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
                         label: t!("menu.explorer.refresh").to_string(),
                         action: "file_explorer_refresh".to_string(),
                         args: HashMap::new(),

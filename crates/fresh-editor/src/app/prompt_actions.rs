@@ -397,8 +397,22 @@ impl Editor {
                             initial,
                         );
                     }
-                    _ => {
+                    "" | "c" | "cancel" => {
                         self.set_status_message(t!("explorer.paste_cancelled").to_string());
+                    }
+                    _ => {
+                        // Unknown input — re-prompt rather than silently
+                        // cancel. Losing the clipboard on a typo is
+                        // frustrating; make the user explicitly pick a
+                        // valid choice.
+                        let name = crate::app::file_explorer::truncate_name_for_prompt(
+                            &dst.file_name().unwrap_or_default().to_string_lossy(),
+                            40,
+                        );
+                        self.start_prompt(
+                            t!("explorer.paste_conflict", name = &name).to_string(),
+                            PromptType::ConfirmPasteConflict { src, dst, is_cut },
+                        );
                     }
                 }
             }
@@ -446,8 +460,8 @@ impl Editor {
                 // Case matters here: `o` / `s` act on the current conflict
                 // only, `O` / `S` act on all remaining conflicts. No other
                 // prompt uses case-sensitive input, so be strict about
-                // matching a single char and fall through to cancel on
-                // anything unexpected.
+                // matching a single char; cancel on explicit `c`; re-prompt
+                // on anything else so a typo doesn't drop the whole batch.
                 match input.trim() {
                     "o" | "overwrite" => {
                         let mut new_confirmed = confirmed;
@@ -474,8 +488,20 @@ impl Editor {
                     "S" => {
                         self.execute_resolved_multi_paste(safe, confirmed, is_cut);
                     }
-                    _ => {
+                    "" | "c" | "cancel" => {
                         self.set_status_message(t!("explorer.paste_cancelled").to_string());
+                    }
+                    _ => {
+                        // Unknown input — re-prompt for the CURRENT conflict
+                        // so a typo doesn't cancel the whole pending queue.
+                        let mut pending_with_current = vec![(cur_src, cur_dst)];
+                        pending_with_current.extend(pending);
+                        self.prompt_next_paste_conflict(
+                            safe,
+                            confirmed,
+                            pending_with_current,
+                            is_cut,
+                        );
                     }
                 }
             }

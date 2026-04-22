@@ -237,18 +237,38 @@ impl Prompt {
         }
     }
 
+    /// Create a new prompt with initial text, cursor at end, ready for
+    /// incremental editing (no selection). Use for rename-style flows where
+    /// the user typically keeps most of the prefilled name and only
+    /// appends or tweaks a suffix.
+    pub fn with_initial_text_for_edit(
+        message: String,
+        prompt_type: PromptType,
+        initial_text: String,
+    ) -> Self {
+        Self::with_initial_text_inner(message, prompt_type, initial_text, false)
+    }
+
     /// Create a new prompt with initial text (selected so typing replaces it)
     pub fn with_initial_text(
         message: String,
         prompt_type: PromptType,
         initial_text: String,
     ) -> Self {
+        Self::with_initial_text_inner(message, prompt_type, initial_text, true)
+    }
+
+    fn with_initial_text_inner(
+        message: String,
+        prompt_type: PromptType,
+        initial_text: String,
+        select_all: bool,
+    ) -> Self {
         let cursor_pos = initial_text.len();
-        // Select all initial text so typing immediately replaces it
-        let selection_anchor = if initial_text.is_empty() {
-            None
-        } else {
+        let selection_anchor = if select_all && !initial_text.is_empty() {
             Some(0)
+        } else {
+            None
         };
         Self {
             message,
