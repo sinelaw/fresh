@@ -140,9 +140,7 @@ pub enum PromptType {
         is_cut: bool,
     },
     /// Confirm deleting multiple items from the file explorer
-    ConfirmMultiDelete {
-        paths: Vec<std::path::PathBuf>,
-    },
+    ConfirmMultiDelete { paths: Vec<std::path::PathBuf> },
     /// Per-conflict prompt for multi-file paste.
     /// `pending[0]` is the conflict currently being shown.
     /// User choices: (o)verwrite this, (O) all, (s)kip this, (S) all, (c)ancel.

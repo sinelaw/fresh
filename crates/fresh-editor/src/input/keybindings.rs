@@ -2289,7 +2289,9 @@ impl KeybindingResolver {
             Action::FileExplorerCut => t!("action.file_explorer_cut"),
             Action::FileExplorerPaste => t!("action.file_explorer_paste"),
             Action::FileExplorerExtendSelectionUp => t!("action.file_explorer_extend_selection_up"),
-            Action::FileExplorerExtendSelectionDown => t!("action.file_explorer_extend_selection_down"),
+            Action::FileExplorerExtendSelectionDown => {
+                t!("action.file_explorer_extend_selection_down")
+            }
             Action::FileExplorerToggleSelect => t!("action.file_explorer_toggle_select"),
             Action::FileExplorerSelectAll => t!("action.file_explorer_select_all"),
             Action::LspCompletion => t!("action.lsp_completion"),

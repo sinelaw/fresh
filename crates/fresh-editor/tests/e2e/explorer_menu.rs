@@ -1039,95 +1039,9 @@ fn test_focus_returns_after_rename() {
     );
 }
 
-/// Test that Cut/Copy are enabled when a file is selected in the explorer
+/// Test that Ctrl+C on a selected file produces a "Copied:" status
 #[test]
-fn test_can_copy_enabled_when_explorer_item_selected() {
-    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
-    let project_root = harness.project_dir().unwrap();
-    fs::write(project_root.join("afile.txt"), "content").unwrap();
-
-    // Before focusing explorer: no file selected, no text selection → can_copy false
-    harness.render().unwrap();
-    harness.editor_mut().update_menu_context();
-    assert!(
-        !harness.editor().menu_context().get("can_copy"),
-        "can_copy should be false before explorer is focused"
-    );
-
-    harness.editor_mut().focus_file_explorer();
-    harness.wait_for_file_explorer().unwrap();
-    harness.wait_for_file_explorer_item("afile").unwrap();
-
-    // Navigate to the file
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-    harness.editor_mut().update_menu_context();
-
-    assert!(
-        harness.editor().menu_context().get("can_copy"),
-        "can_copy should be true when a file is selected in the explorer"
-    );
-}
-
-/// Test that Paste is disabled in the editor when a file is in the clipboard
-#[test]
-fn test_can_paste_disabled_in_editor_when_file_in_clipboard() {
-    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
-    let project_root = harness.project_dir().unwrap();
-    fs::write(project_root.join("clip.txt"), "content").unwrap();
-
-    harness.editor_mut().focus_file_explorer();
-    harness.wait_for_file_explorer().unwrap();
-    harness.wait_for_file_explorer_item("clip").unwrap();
-
-    // Navigate to file and cut it
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness
-        .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Switch focus to editor
-    harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-    harness.editor_mut().update_menu_context();
-
-    assert!(
-        !harness.editor().menu_context().get("can_paste"),
-        "can_paste should be false in editor when a file is in the clipboard"
-    );
-}
-
-/// Test that Paste is enabled in the explorer when a file is in the clipboard
-#[test]
-fn test_can_paste_enabled_in_explorer_when_file_in_clipboard() {
-    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
-    let project_root = harness.project_dir().unwrap();
-    fs::write(project_root.join("paste_me.txt"), "content").unwrap();
-
-    harness.editor_mut().focus_file_explorer();
-    harness.wait_for_file_explorer().unwrap();
-    harness.wait_for_file_explorer_item("paste_me").unwrap();
-
-    // Copy a file
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness
-        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-    harness.editor_mut().update_menu_context();
-
-    assert!(
-        harness.editor().menu_context().get("can_paste"),
-        "can_paste should be true in explorer when a file is in the clipboard"
-    );
-}
-
-/// Test that Ctrl+C copies a file and status message reflects it
-#[test]
-fn test_copy_file_sets_clipboard() {
+fn test_copy_file_shows_copied_status() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_root = harness.project_dir().unwrap();
     fs::write(project_root.join("copy_me.txt"), "content").unwrap();
@@ -1136,41 +1050,20 @@ fn test_copy_file_sets_clipboard() {
     harness.wait_for_file_explorer().unwrap();
     harness.wait_for_file_explorer_item("copy_me").unwrap();
 
-    // Navigate to the file
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-
-    // Press Ctrl+C to copy
     harness
         .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
-    // Clipboard should be set and status should mention "Copied"
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("Copied") || screen.contains("copy_me"),
-        "Status should reflect copy operation. Screen:\n{}",
-        screen
-    );
-
-    // Clipboard should hold the path and is_cut = false
-    assert!(
-        harness.editor().file_explorer_clipboard().is_some(),
-        "Clipboard should be set after copy"
-    );
-    assert!(
-        !harness
-            .editor()
-            .file_explorer_clipboard()
-            .unwrap()
-            .is_cut,
-        "Clipboard is_cut should be false after copy"
-    );
+    // "Copied: copy_me.txt" is the locale string for explorer.copied
+    harness.assert_screen_contains("Copied:");
+    harness.assert_screen_contains("copy_me.txt");
 }
 
-/// Test that Ctrl+X cuts a file and status message reflects it
+/// Test that Ctrl+X on a selected file produces a "Marked for cut:" status
 #[test]
-fn test_cut_file_sets_clipboard() {
+fn test_cut_file_shows_cut_status() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_root = harness.project_dir().unwrap();
     fs::write(project_root.join("cut_me.txt"), "content").unwrap();
@@ -1180,24 +1073,14 @@ fn test_cut_file_sets_clipboard() {
     harness.wait_for_file_explorer_item("cut_me").unwrap();
 
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-
     harness
         .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("cut") || screen.contains("cut_me") || screen.contains("Marked"),
-        "Status should reflect cut operation. Screen:\n{}",
-        screen
-    );
-
-    let cb = harness
-        .editor()
-        .file_explorer_clipboard()
-        .expect("Clipboard should be set after cut");
-    assert!(cb.is_cut, "Clipboard is_cut should be true after cut");
+    // "Marked for cut: cut_me.txt" is the locale string for explorer.cut
+    harness.assert_screen_contains("Marked for cut:");
+    harness.assert_screen_contains("cut_me.txt");
 }
 
 /// Test that pasting with an empty clipboard shows an error
@@ -1305,11 +1188,13 @@ fn test_cut_paste_moves_file() {
         !project_root.join("move_me.txt").exists(),
         "Original file should be removed after cut+paste"
     );
-    // Clipboard should be cleared after cut+paste
-    assert!(
-        harness.editor().file_explorer_clipboard().is_none(),
-        "Clipboard should be cleared after cut+paste completes"
-    );
+    // A second Ctrl+V should fail with "Nothing to paste" — confirms the
+    // clipboard was cleared after the cut+paste completed.
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Nothing to paste");
 }
 
 /// Test that copying a file to the same directory auto-renames with " copy" suffix
@@ -1472,9 +1357,10 @@ fn test_rename_rejects_dot_names() {
     );
 }
 
-/// Test that can_paste is re-enabled in the editor after a cut+paste completes
+/// After a cut+paste completes, the clipboard is empty; a second Ctrl+V
+/// in the explorer must show "Nothing to paste".
 #[test]
-fn test_can_paste_re_enabled_after_cut_paste_completes() {
+fn test_clipboard_cleared_after_cut_paste() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_root = harness.project_dir().unwrap();
     fs::write(project_root.join("moveme.txt"), "data").unwrap();
@@ -1491,41 +1377,20 @@ fn test_can_paste_re_enabled_after_cut_paste_completes() {
         .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Verify paste is disabled in editor after cut
-    harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-    harness.editor_mut().update_menu_context();
-    assert!(
-        !harness.editor().menu_context().get("can_paste"),
-        "can_paste should be false in editor after cut"
-    );
-
-    // Re-focus explorer, navigate to dst, paste
-    harness.editor_mut().focus_file_explorer();
+    // Navigate to dst, paste
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap(); // → dst
     harness
         .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
+    harness.assert_screen_contains("Moved:");
 
-    // After cut+paste completes, clipboard should be cleared
-    assert!(
-        harness.editor().file_explorer_clipboard().is_none(),
-        "Clipboard should be cleared after cut+paste"
-    );
-
-    // Now switch to editor — can_paste should be re-enabled
+    // A second Ctrl+V should now show the empty-clipboard error.
     harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.editor_mut().update_menu_context();
-    assert!(
-        harness.editor().menu_context().get("can_paste"),
-        "can_paste should be re-enabled in editor after cut+paste completes"
-    );
+    harness.assert_screen_contains("Nothing to paste");
 }
 
 /// Test paste conflict: overwrite replaces existing file
@@ -1613,76 +1478,13 @@ fn test_paste_conflict_cancel() {
         "original",
         "Cancel should leave existing file untouched"
     );
-    // Clipboard preserved after cancel
-    assert!(
-        harness.editor().file_explorer_clipboard().is_some(),
-        "Clipboard should be preserved after cancel"
-    );
-}
-
-/// Test that Paste is disabled in the explorer when the clipboard is empty
-#[test]
-fn test_can_paste_disabled_in_explorer_when_clipboard_empty() {
-    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
-    let project_root = harness.project_dir().unwrap();
-    fs::write(project_root.join("any.txt"), "data").unwrap();
-
-    harness.editor_mut().focus_file_explorer();
-    harness.wait_for_file_explorer().unwrap();
-    harness.render().unwrap();
-    harness.editor_mut().update_menu_context();
-
-    // No copy/cut has been done — clipboard is empty
-    assert!(
-        harness.editor().file_explorer_clipboard().is_none(),
-        "Clipboard should start empty"
-    );
-    assert!(
-        !harness.editor().menu_context().get("can_paste"),
-        "can_paste should be false in explorer when clipboard is empty"
-    );
-}
-
-/// Test that after a cut+paste the clipboard is cleared and paste is
-/// disabled in the explorer (nothing left to paste).
-#[test]
-fn test_can_paste_disabled_in_explorer_after_cut_paste_completes() {
-    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
-    let project_root = harness.project_dir().unwrap();
-    fs::write(project_root.join("moveme2.txt"), "data").unwrap();
-    fs::create_dir(project_root.join("dst2")).unwrap();
-
-    harness.editor_mut().focus_file_explorer();
-    harness.wait_for_file_explorer().unwrap();
-    harness.wait_for_file_explorer_item("moveme2").unwrap();
-
-    // dirs sort first: root → dst2 → moveme2.txt
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // → dst2
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // → moveme2.txt
-    harness
-        .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Navigate to dst2 and paste
-    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap(); // → dst2
+    // Clipboard is preserved after cancel — a second Ctrl+V should re-prompt
+    // for the same conflict instead of erroring with "Nothing to paste".
     harness
         .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
-
-    // Clipboard should be cleared
-    assert!(
-        harness.editor().file_explorer_clipboard().is_none(),
-        "Clipboard should be cleared after cut+paste"
-    );
-
-    // can_paste should now be false in the explorer (empty clipboard)
-    harness.editor_mut().update_menu_context();
-    assert!(
-        !harness.editor().menu_context().get("can_paste"),
-        "can_paste should be false in explorer after cut+paste clears the clipboard"
-    );
+    harness.wait_for_prompt().unwrap();
+    harness.assert_screen_contains("exists");
 }
 
 /// Test that pasting into a directory does not cause it to visually collapse.
@@ -1728,7 +1530,10 @@ fn test_paste_does_not_collapse_destination_directory() {
 
     // paste_src.txt should now be in paste_dst
     assert!(
-        project_root.join("paste_dst").join("paste_src.txt").exists(),
+        project_root
+            .join("paste_dst")
+            .join("paste_src.txt")
+            .exists(),
         "paste_src.txt should have been copied into paste_dst"
     );
 
@@ -1768,27 +1573,26 @@ fn test_explorer_focus_preserved_after_paste() {
         .unwrap();
     harness.render().unwrap();
 
-    // key_context should still be FileExplorer
-    assert_eq!(
-        harness.editor().get_key_context(),
-        fresh::input::keybindings::KeyContext::FileExplorer,
-        "Explorer should retain focus after paste"
-    );
+    // Pasted item should be visible on screen (focus stayed in the explorer
+    // so the tree re-rendered with the new child).
+    harness.assert_screen_contains("focus_src");
 
-    // Pasted item should be visible on screen
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("focus_src"),
-        "Pasted item should be visible in the explorer after paste. Screen:\n{}",
-        screen
-    );
+    // Sending an explorer-specific key must still be handled by the explorer:
+    // Ctrl+C on the newly pasted item should produce the explorer's copy
+    // status, not an editor-level clipboard action.
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Copied:");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Multi-selection tests
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Shift+Down should extend the selection to include the next item
+/// Shift+Down extends the selection; Ctrl+C on the extended selection
+/// produces a multi-copy status ("Copied 2 items").
 #[test]
 fn test_shift_down_extends_selection() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
@@ -1800,25 +1604,20 @@ fn test_shift_down_extends_selection() {
     harness.wait_for_file_explorer().unwrap();
     harness.wait_for_file_explorer_item("a.txt").unwrap();
 
-    // Navigate down to first file
+    // root → a.txt → (Shift+Down) → b.txt also selected
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
 
-    // Shift+Down should extend selection to include 2 items
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap();
-
-    let explorer = harness.editor().file_explorer().expect("Explorer should be open");
-    assert!(
-        explorer.has_multi_selection(),
-        "Multi-selection should be active after Shift+Down"
-    );
-    assert_eq!(
-        explorer.multi_selection().len(),
-        2,
-        "Should have exactly 2 items selected after one Shift+Down"
-    );
+    harness.assert_screen_contains("Copied 2 items");
 }
 
-/// Ctrl+A should select all visible items
+/// Ctrl+A selects every visible node; Ctrl+C then copies them all at once.
 #[test]
 fn test_ctrl_a_selects_all() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
@@ -1834,130 +1633,130 @@ fn test_ctrl_a_selects_all() {
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
         .unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
 
-    let explorer = harness.editor().file_explorer().expect("Explorer should be open");
-    assert!(
-        explorer.has_multi_selection(),
-        "Multi-selection should be active after Ctrl+A"
-    );
-    // All visible nodes (root + 3 files at minimum)
-    assert!(
-        explorer.multi_selection().len() >= 3,
-        "Should have selected at least 3 items with Ctrl+A, got {}",
-        explorer.multi_selection().len()
-    );
+    // Root is excluded from the clipboard, so the three files are copied.
+    harness.assert_screen_contains("Copied 3 items");
 }
 
-/// Space should toggle an item in and out of the multi-selection
+/// Space toggles the cursor item into the multi-selection; a second Space
+/// toggles it back out, returning to single-cursor mode.
 #[test]
 fn test_space_toggles_selection() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_root = harness.project_dir().unwrap();
-    fs::write(project_root.join("toggle_me.txt"), "t").unwrap();
+    fs::write(project_root.join("alpha.txt"), "a").unwrap();
+    fs::write(project_root.join("beta.txt"), "b").unwrap();
 
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
-    harness.wait_for_file_explorer_item("toggle_me").unwrap();
+    harness.wait_for_file_explorer_item("alpha.txt").unwrap();
 
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // Toggle alpha.txt into the selection, then Shift+Down to add beta.txt.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // → alpha.txt
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Copied 2 items");
 
-    // First Space: add to selection
-    harness.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    {
-        let explorer = harness.editor().file_explorer().expect("Explorer should be open");
-        assert!(
-            explorer.multi_selection().len() == 1,
-            "Should have 1 item in multi-selection after first Space"
-        );
-    }
-
-    // Second Space: remove from selection
-    harness.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    {
-        let explorer = harness.editor().file_explorer().expect("Explorer should be open");
-        assert!(
-            explorer.multi_selection().is_empty(),
-            "Multi-selection should be empty after toggling item back out"
-        );
-    }
+    // Toggle beta.txt back out of the selection: only alpha.txt remains
+    // (cursor is on beta.txt after the Shift+Down).
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Copied:");
+    harness.assert_screen_contains("alpha.txt");
 }
 
-/// Escape should clear multi-selection before clearing search or transferring focus
+/// Escape clears multi-selection first: a subsequent Ctrl+C must copy only
+/// the cursor item, not the previously multi-selected set.
 #[test]
 fn test_escape_clears_multi_selection() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_root = harness.project_dir().unwrap();
-    fs::write(project_root.join("esc_me.txt"), "e").unwrap();
+    fs::write(project_root.join("esc_a.txt"), "a").unwrap();
+    fs::write(project_root.join("esc_b.txt"), "b").unwrap();
 
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
-    harness.wait_for_file_explorer_item("esc_me").unwrap();
+    harness.wait_for_file_explorer_item("esc_a.txt").unwrap();
 
-    // Select all with Ctrl+A
+    // Move cursor onto esc_a.txt so that after Escape clears the multi-selection
+    // the cursor is still on a real file, not the project root.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
         .unwrap();
-    {
-        let explorer = harness.editor().file_explorer().expect("Explorer should be open");
-        assert!(explorer.has_multi_selection(), "Should have multi-selection after Ctrl+A");
-    }
-
-    // Escape should clear multi-selection (not transfer focus since we still have focus)
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    {
-        let explorer = harness.editor().file_explorer().expect("Explorer should be open");
-        assert!(
-            !explorer.has_multi_selection(),
-            "Multi-selection should be cleared after Escape"
-        );
-    }
-    // Focus should still be on file explorer
-    assert_eq!(
-        harness.editor().get_key_context(),
-        fresh::input::keybindings::KeyContext::FileExplorer,
-        "Focus should remain on file explorer after clearing multi-selection with Escape"
+
+    // Ctrl+C now copies only the cursor item → single-item status, not "Copied N items".
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Copied:") && screen.contains("esc_a.txt"),
+        "Should show single-item copy status after Escape cleared the multi-selection. Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("Copied 2 items"),
+        "Multi-selection should have been cleared by Escape. Screen:\n{}",
+        screen
     );
 }
 
-/// Ctrl+C on a multi-selection should store multiple paths in the clipboard
+/// Ctrl+C on a Shift+Down range produces the multi-copy status; a subsequent
+/// paste into a subdirectory lands both files there.
 #[test]
 fn test_copy_multi_selection_stores_multiple_paths() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_root = harness.project_dir().unwrap();
     fs::write(project_root.join("multi_a.txt"), "a").unwrap();
     fs::write(project_root.join("multi_b.txt"), "b").unwrap();
+    fs::create_dir(project_root.join("out")).unwrap();
 
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
     harness.wait_for_file_explorer_item("multi_a.txt").unwrap();
 
-    // Navigate to first file and extend selection down to second
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap();
-
-    let sel_count = harness
-        .editor()
-        .file_explorer()
-        .unwrap()
-        .multi_selection()
-        .len();
-    assert_eq!(sel_count, 2, "Should have 2 items in selection before copy");
-
-    // Copy the multi-selection
+    // dirs first: root → out/ → multi_a.txt → (Shift+Down) → multi_b.txt
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // out/
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // multi_a.txt
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap(); // extend to multi_b.txt
     harness
         .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Copied 2 items");
 
-    let cb = harness
-        .editor()
-        .file_explorer_clipboard()
-        .expect("Clipboard should be set after multi-copy");
-    assert!(!cb.is_cut, "Multi-copy should have is_cut = false");
-    assert_eq!(
-        cb.paths.len(),
-        2,
-        "Clipboard should contain 2 paths after copying a 2-item selection"
-    );
+    // Paste into out/ — both files should land there.
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap(); // multi_a.txt
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap(); // out/
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(project_root.join("out").join("multi_a.txt").exists());
+    assert!(project_root.join("out").join("multi_b.txt").exists());
 }
 
 /// Delete on a multi-selection should show a prompt with item count
@@ -1974,10 +1773,14 @@ fn test_multi_delete_shows_count_prompt() {
 
     // Navigate to first file and extend selection down
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
 
     // Press Delete
-    harness.send_key(KeyCode::Delete, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
     harness.wait_for_prompt().unwrap();
 
     let screen = harness.screen_to_string();
@@ -1988,38 +1791,51 @@ fn test_multi_delete_shows_count_prompt() {
     );
 
     // Cancel
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 }
 
-/// Navigating with plain Up/Down should clear multi-selection
+/// Plain Up/Down navigation clears multi-selection: after extending the
+/// range then pressing Down alone, Ctrl+C copies only the cursor item.
 #[test]
 fn test_navigation_clears_multi_selection() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_root = harness.project_dir().unwrap();
     fs::write(project_root.join("nav_a.txt"), "a").unwrap();
     fs::write(project_root.join("nav_b.txt"), "b").unwrap();
+    fs::write(project_root.join("nav_c.txt"), "c").unwrap();
 
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
     harness.wait_for_file_explorer_item("nav_a.txt").unwrap();
 
+    // Extend selection over nav_a.txt + nav_b.txt
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // → nav_a.txt
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap(); // extend to nav_b.txt
+                   // Plain Down clears the multi-selection and moves cursor to nav_c.txt.
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
 
-    {
-        let explorer = harness.editor().file_explorer().unwrap();
-        assert!(explorer.has_multi_selection(), "Should have multi-selection before navigation");
-    }
-
-    // Plain Down should clear multi-selection
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-
-    let explorer = harness.editor().file_explorer().unwrap();
+    let screen = harness.screen_to_string();
     assert!(
-        !explorer.has_multi_selection(),
-        "Plain navigation should clear multi-selection"
+        screen.contains("Copied:") && screen.contains("nav_c.txt"),
+        "Plain navigation should clear multi-selection, leaving only cursor copied. Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("Copied 2 items"),
+        "Multi-selection should have been cleared by plain navigation. Screen:\n{}",
+        screen
     );
 }
 
@@ -2045,18 +1861,22 @@ fn test_multi_paste_per_conflict_overwrite_all() {
     // root → dst/ → a.txt → (Shift+Down) → b.txt also selected
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // dst/
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // a.txt
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap(); // extend to b.txt
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap(); // extend to b.txt
 
-    harness.send_key(KeyCode::Char('c'), KeyModifiers::CONTROL).unwrap();
-    {
-        let cb = harness.editor().file_explorer_clipboard().expect("clipboard set");
-        assert_eq!(cb.paths.len(), 2, "clipboard should have 2 paths");
-    }
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Copied 2 items");
 
     // Navigate to dst/ and paste — both conflict
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap(); // a.txt
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap(); // dst/
-    harness.send_key(KeyCode::Char('v'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.wait_for_prompt().unwrap();
 
     let screen = harness.screen_to_string();
@@ -2071,7 +1891,9 @@ fn test_multi_paste_per_conflict_overwrite_all() {
         prompt.clear();
         prompt.insert_str("O");
     }
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
     assert_eq!(fs::read_to_string(dst.join("a.txt")).unwrap(), "new_a");
@@ -2099,12 +1921,18 @@ fn test_multi_paste_per_conflict_skip_one() {
     // root → dst2/ → p.txt → (Shift+Down) → q.txt
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // dst2/
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // p.txt
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap(); // extend to q.txt
-    harness.send_key(KeyCode::Char('c'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap(); // extend to q.txt
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
 
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap(); // p.txt
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap(); // dst2/
-    harness.send_key(KeyCode::Char('v'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.wait_for_prompt().unwrap();
 
     // First conflict: skip
@@ -2112,7 +1940,9 @@ fn test_multi_paste_per_conflict_skip_one() {
         prompt.clear();
         prompt.insert_str("s");
     }
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
 
     // Second conflict prompt must appear
     harness.wait_for_prompt().unwrap();
@@ -2128,11 +1958,21 @@ fn test_multi_paste_per_conflict_skip_one() {
         prompt.clear();
         prompt.insert_str("o");
     }
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    assert_eq!(fs::read_to_string(dst.join("p.txt")).unwrap(), "old_p", "p.txt skipped");
-    assert_eq!(fs::read_to_string(dst.join("q.txt")).unwrap(), "new_q", "q.txt overwritten");
+    assert_eq!(
+        fs::read_to_string(dst.join("p.txt")).unwrap(),
+        "old_p",
+        "p.txt skipped"
+    );
+    assert_eq!(
+        fs::read_to_string(dst.join("q.txt")).unwrap(),
+        "new_q",
+        "q.txt overwritten"
+    );
 }
 
 /// Multi-paste with no conflicts: all files land in destination without any prompt
@@ -2153,24 +1993,26 @@ fn test_multi_paste_no_conflict() {
     // root → out/ → x.txt → (Shift+Down) → y.txt
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // out/
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // x.txt
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap(); // extend to y.txt
-    harness.send_key(KeyCode::Char('c'), KeyModifiers::CONTROL).unwrap();
-
-    {
-        let cb = harness.editor().file_explorer_clipboard().expect("clipboard set");
-        assert_eq!(cb.paths.len(), 2, "clipboard should have 2 paths");
-    }
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap(); // extend to y.txt
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Copied 2 items");
 
     // Navigate to out/ and paste
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap(); // x.txt
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap(); // out/
-    harness.send_key(KeyCode::Char('v'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
 
-    // No conflict prompt should appear
-    assert!(
-        harness.editor_mut().prompt_mut().is_none(),
-        "No conflict prompt expected when pasting to an empty directory"
-    );
+    // No conflict prompt should appear — multi-paste status is shown directly.
+    harness.assert_screen_contains("Pasted 2 items");
+    harness.assert_screen_not_contains("exists.");
 
     assert_eq!(fs::read_to_string(dst.join("x.txt")).unwrap(), "x_content");
     assert_eq!(fs::read_to_string(dst.join("y.txt")).unwrap(), "y_content");

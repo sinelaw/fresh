@@ -269,8 +269,12 @@ impl FileTreeView {
         if visible.is_empty() {
             return;
         }
-        let Some(current) = self.selected_node else { return };
-        let Some(pos) = visible.iter().position(|&id| id == current) else { return };
+        let Some(current) = self.selected_node else {
+            return;
+        };
+        let Some(pos) = visible.iter().position(|&id| id == current) else {
+            return;
+        };
         if pos == 0 {
             return;
         }
@@ -281,7 +285,10 @@ impl FileTreeView {
         }
         let new_pos = pos - 1;
         self.selected_node = Some(visible[new_pos]);
-        let anchor_pos = visible.iter().position(|&id| id == anchor).unwrap_or(new_pos);
+        let anchor_pos = visible
+            .iter()
+            .position(|&id| id == anchor)
+            .unwrap_or(new_pos);
         let (lo, hi) = (new_pos.min(anchor_pos), new_pos.max(anchor_pos));
         self.multi_selection = visible[lo..=hi].iter().copied().collect();
         self.update_scroll_with_nodes(&visible);
@@ -293,8 +300,12 @@ impl FileTreeView {
         if visible.is_empty() {
             return;
         }
-        let Some(current) = self.selected_node else { return };
-        let Some(pos) = visible.iter().position(|&id| id == current) else { return };
+        let Some(current) = self.selected_node else {
+            return;
+        };
+        let Some(pos) = visible.iter().position(|&id| id == current) else {
+            return;
+        };
         if pos + 1 >= visible.len() {
             return;
         }
@@ -305,7 +316,10 @@ impl FileTreeView {
         }
         let new_pos = pos + 1;
         self.selected_node = Some(visible[new_pos]);
-        let anchor_pos = visible.iter().position(|&id| id == anchor).unwrap_or(new_pos);
+        let anchor_pos = visible
+            .iter()
+            .position(|&id| id == anchor)
+            .unwrap_or(new_pos);
         let (lo, hi) = (new_pos.min(anchor_pos), new_pos.max(anchor_pos));
         self.multi_selection = visible[lo..=hi].iter().copied().collect();
         self.update_scroll_with_nodes(&visible);

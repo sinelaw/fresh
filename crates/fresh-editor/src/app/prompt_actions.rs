@@ -389,7 +389,11 @@ impl Editor {
                             .unwrap_or_else(|| dst.clone());
                         self.start_prompt_with_initial_text(
                             t!("explorer.paste_rename_prompt").to_string(),
-                            PromptType::FileExplorerPasteRename { src, dst_dir, is_cut },
+                            PromptType::FileExplorerPasteRename {
+                                src,
+                                dst_dir,
+                                is_cut,
+                            },
                             initial,
                         );
                     }
@@ -398,7 +402,11 @@ impl Editor {
                     }
                 }
             }
-            PromptType::FileExplorerPasteRename { src, dst_dir, is_cut } => {
+            PromptType::FileExplorerPasteRename {
+                src,
+                dst_dir,
+                is_cut,
+            } => {
                 if input.trim().is_empty() {
                     self.set_status_message(t!("explorer.paste_cancelled").to_string());
                     return PromptResult::Done;
@@ -407,7 +415,11 @@ impl Editor {
                 if self.authority.filesystem.exists(&new_dst) {
                     self.start_prompt(
                         t!("explorer.paste_conflict", name = input.trim()).to_string(),
-                        PromptType::ConfirmPasteConflict { src, dst: new_dst, is_cut },
+                        PromptType::ConfirmPasteConflict {
+                            src,
+                            dst: new_dst,
+                            is_cut,
+                        },
                     );
                 } else {
                     self.perform_file_explorer_paste(src, new_dst, is_cut);
@@ -424,7 +436,12 @@ impl Editor {
                     self.set_status_message(t!("explorer.delete_cancelled").to_string());
                 }
             }
-            PromptType::ConfirmMultiPasteConflict { safe, confirmed, mut pending, is_cut } => {
+            PromptType::ConfirmMultiPasteConflict {
+                safe,
+                confirmed,
+                mut pending,
+                is_cut,
+            } => {
                 let (cur_src, cur_dst) = pending.remove(0);
                 match input.trim() {
                     "o" | "overwrite" => {
@@ -1438,12 +1455,21 @@ impl Editor {
         is_cut: bool,
     ) {
         let name = crate::app::file_explorer::truncate_name_for_prompt(
-            &pending[0].1.file_name().unwrap_or_default().to_string_lossy(),
+            &pending[0]
+                .1
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy(),
             40,
         );
         self.start_prompt(
             t!("explorer.paste_conflict_multi", name = &name).to_string(),
-            PromptType::ConfirmMultiPasteConflict { safe, confirmed, pending, is_cut },
+            PromptType::ConfirmMultiPasteConflict {
+                safe,
+                confirmed,
+                pending,
+                is_cut,
+            },
         );
     }
 }
