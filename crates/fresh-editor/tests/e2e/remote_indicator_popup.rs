@@ -14,6 +14,9 @@
 //! plumbing the `setRemoteIndicatorState` plugin op drives.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
+use fresh::services::authority::{
+    Authority, AuthorityPayload, FilesystemSpec, SpawnerSpec, TerminalWrapperSpec,
+};
 use fresh::view::ui::status_bar::RemoteIndicatorOverride;
 use std::fs;
 
@@ -205,6 +208,54 @@ fn test_remote_indicator_popup_failed_attach_offers_retry() -> anyhow::Result<()
         .find(|(t, _, _)| t.contains("Show Build Logs"))
         .unwrap_or_else(|| {
             panic!("FailedAttach popup lacks a Show Build Logs row. Rows: {rows:#?}")
+        });
+    assert_eq!(
+        logs.1.as_deref(),
+        Some("plugin:devcontainer_show_build_logs"),
+        "Show Build Logs must dispatch the plugin show-build-logs handler. Row: {logs:?}"
+    );
+    assert!(
+        !logs.2,
+        "Show Build Logs must not be disabled. Row: {logs:?}"
+    );
+    Ok(())
+}
+
+/// Once the user is attached to a container, the Remote Indicator
+/// popup must surface a "Show Build Logs" row so they can revisit the
+/// `devcontainer up` log without hunting through `.fresh-cache/`. The
+/// row dispatches the same plugin handler as the Connecting /
+/// FailedAttach branches.
+#[test]
+fn test_remote_indicator_popup_connected_container_offers_show_build_logs() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new().with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    // Drop the editor into the Connected/container state by installing
+    // a container authority — same path main.rs takes after a
+    // `devcontainer up` succeeds. Display label is what the popup
+    // branch keys off (`is_container = label.starts_with("Container:")`).
+    let authority = Authority::from_plugin_payload(AuthorityPayload {
+        filesystem: FilesystemSpec::Local,
+        spawner: SpawnerSpec::Local,
+        terminal_wrapper: TerminalWrapperSpec::HostShell,
+        display_label: "Container:deadbeef".to_string(),
+    })?;
+    harness.editor_mut().set_boot_authority(authority);
+
+    harness.editor_mut().show_remote_indicator_popup();
+    harness.render()?;
+
+    let rows = popup_item_rows(&harness);
+    let logs = rows
+        .iter()
+        .find(|(t, _, _)| t.contains("Show Build Logs"))
+        .unwrap_or_else(|| {
+            panic!("Connected/container popup lacks a Show Build Logs row. Rows: {rows:#?}")
         });
     assert_eq!(
         logs.1.as_deref(),

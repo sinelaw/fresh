@@ -759,6 +759,18 @@ impl Editor {
                             PopupListItem::new("    Show Container Info".to_string())
                                 .with_data("plugin:devcontainer_show_info".to_string()),
                         );
+                        // The build log file from the most recent
+                        // `devcontainer up` survives the post-attach
+                        // restart (path stashed in plugin global state,
+                        // file lives under the workspace's
+                        // `.fresh-cache/`). Surfacing it here means
+                        // users can revisit "what did the build
+                        // actually do" any time after attach without
+                        // hunting through the file tree.
+                        items.push(
+                            PopupListItem::new("    Show Build Logs".to_string())
+                                .with_data("plugin:devcontainer_show_build_logs".to_string()),
+                        );
                     } else if is_ssh {
                         items.push(
                             PopupListItem::new("    Disconnect Remote".to_string())

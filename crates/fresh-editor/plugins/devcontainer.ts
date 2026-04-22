@@ -1425,10 +1425,13 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
     return;
   }
   rememberLastBuildLogPath(logPath);
-  // Open the log immediately so auto-revert will poll it and the
-  // user sees lines stream in. Non-fatal if openFile fails — the
-  // build continues either way.
-  editor.openFile(logPath, null, null);
+  // Open the log in a split below so the user sees lines stream in
+  // (auto-revert polls every 2s) without losing the buffer they were
+  // editing. `split_horizontal` duplicates the current buffer into a
+  // new split and focuses it; openFile then swaps the new split's
+  // buffer for the log. Non-fatal if either step fails — the build
+  // continues either way.
+  openBuildLogInSplit(logPath);
 
   // `sh -c 'exec devcontainer "$@" 2> "$LOG"' sh <log> <args...>` —
   // positional-arg form so the log path and cwd never get
@@ -1534,6 +1537,28 @@ function lastBuildLogKey(): string {
   return "last-build-log:" + editor.getCwd();
 }
 
+/// Open the build log file in a horizontal split below the current
+/// pane, leaving whatever the user was editing in the top split. Used
+/// both during the live build (so users see progress without losing
+/// their working buffer) and from `devcontainer_show_build_logs` so
+/// the post-attach access path doesn't replace the user's file
+/// either.
+///
+/// Always splits, even when the log buffer is already open elsewhere
+/// — earlier revisions tried to dedupe via `listBuffers` +
+/// `showBuffer`, but `showBuffer` swaps the buffer in the *active*
+/// pane, which silently steals the user's working split. A new split
+/// is the predictable behavior; the user can close it once they're
+/// done reading.
+function openBuildLogInSplit(path: string): void {
+  // `split_horizontal` duplicates the current buffer into a new
+  // split below and focuses it; openFile then swaps that split's
+  // buffer for the log file. Result: original buffer stays in the
+  // top split, log opens in the new bottom split.
+  editor.executeAction("split_horizontal");
+  editor.openFile(path, null, null);
+}
+
 function rememberLastBuildLogPath(path: string): void {
   editor.setGlobalState(lastBuildLogKey(), path);
 }
@@ -1630,7 +1655,7 @@ async function devcontainer_show_build_logs(): Promise<void> {
     editor.setStatus(editor.t("status.build_log_missing"));
     return;
   }
-  editor.openFile(path, null, null);
+  openBuildLogInSplit(path);
 }
 registerHandler("devcontainer_show_build_logs", devcontainer_show_build_logs);
 
