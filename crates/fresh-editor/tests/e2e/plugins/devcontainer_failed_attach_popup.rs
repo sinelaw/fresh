@@ -56,6 +56,21 @@ fn set_up_workspace() -> (tempfile::TempDir, std::path::PathBuf) {
     (temp, workspace)
 }
 
+/// Fail fast if the plugin didn't load — otherwise a `wait_until`
+/// downstream hangs for the full 180s nextest deadline with no
+/// diagnostic. Runs after the harness ticks once so the plugin
+/// registration has time to complete.
+fn assert_devcontainer_plugin_ready(harness: &EditorTestHarness) {
+    let plugins = harness.editor().plugin_manager().list_plugins();
+    let loaded: Vec<_> = plugins.iter().map(|p| p.name.clone()).collect();
+    assert!(
+        plugins.iter().any(|p| p.name == "devcontainer"),
+        "`devcontainer` plugin must be loaded before driving its \
+         commands. Loaded plugins: {:?}",
+        loaded,
+    );
+}
+
 /// Drive the exact `ShowActionPopup` the plugin's `enterFailedAttach`
 /// would emit. Lets us test the popup surface + keyboard dispatch
 /// without waiting on the plugin-loaded hook — which fires
@@ -99,6 +114,7 @@ fn devcontainer_failed_attach_popup_has_four_action_rows() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = EditorTestHarness::with_working_dir(140, 40, workspace).unwrap();
     harness.tick_and_render().unwrap();
+    assert_devcontainer_plugin_ready(&harness);
 
     show_failed_attach_popup(&mut harness);
     harness.render().unwrap();
@@ -130,6 +146,7 @@ fn devcontainer_failed_attach_popup_reopen_local_clears_override() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = EditorTestHarness::with_working_dir(140, 40, workspace).unwrap();
     harness.tick_and_render().unwrap();
+    assert_devcontainer_plugin_ready(&harness);
 
     // Plant the FailedAttach override manually — normally set by the
     // plugin's `enterFailedAttach`, but that path races the
