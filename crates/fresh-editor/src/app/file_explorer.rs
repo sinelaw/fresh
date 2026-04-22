@@ -638,6 +638,12 @@ impl Editor {
                                 tracing::warn!("Failed to refresh file tree after delete: {}", e);
                             }
 
+                            // The deleted node's NodeId (and any siblings
+                            // that went away with the parent refresh) can
+                            // still be in multi_selection. Drop the stale
+                            // entries so the next op targets the fresh cursor.
+                            explorer.clear_multi_selection();
+
                             // After refresh, select the next best node:
                             // Try to stay at the same index, or select the last visible item
                             let count = explorer.visible_count();
@@ -1181,33 +1187,55 @@ impl Editor {
         let src_is_dir = self.authority.filesystem.is_dir(&src).unwrap_or(false);
 
         let result = if is_cut {
-            // Try rename first (works if same filesystem)
+            // Try rename first (works if same filesystem). Only fall back to
+            // copy+delete for cross-device errors — any other rename failure
+            // (permission denied, etc.) must surface as-is so we don't
+            // silently succeed via a different codepath.
             match self.authority.filesystem.rename(&src, &dst) {
                 Ok(()) => Ok(()),
-                Err(_) => {
-                    // Cross-filesystem: copy then delete
+                Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
                     let copy_result = if src_is_dir {
                         self.authority.filesystem.copy_dir_all(&src, &dst)
                     } else {
                         self.authority.filesystem.copy(&src, &dst).map(|_| ())
                     };
-                    if copy_result.is_ok() {
-                        if src_is_dir {
-                            self.authority.filesystem.remove_dir_all(&src)
-                        } else {
-                            self.authority.filesystem.remove_file(&src)
+                    match copy_result {
+                        Ok(()) => {
+                            if src_is_dir {
+                                self.authority.filesystem.remove_dir_all(&src)
+                            } else {
+                                self.authority.filesystem.remove_file(&src)
+                            }
                         }
-                    } else {
-                        copy_result
+                        Err(copy_err) => {
+                            // Roll back the half-written destination so the
+                            // user isn't left with a partial copy alongside
+                            // the intact source. Cleanup errors are
+                            // swallowed — the copy error is the interesting
+                            // one to surface — but logged.
+                            let cleanup = if src_is_dir {
+                                self.authority.filesystem.remove_dir_all(&dst)
+                            } else {
+                                self.authority.filesystem.remove_file(&dst)
+                            };
+                            if let Err(cleanup_err) = cleanup {
+                                tracing::warn!(
+                                    "Failed to roll back partial destination {:?} after copy \
+                                     fallback failed: {}",
+                                    dst,
+                                    cleanup_err
+                                );
+                            }
+                            Err(copy_err)
+                        }
                     }
                 }
+                Err(e) => Err(e),
             }
+        } else if src_is_dir {
+            self.authority.filesystem.copy_dir_all(&src, &dst)
         } else {
-            if src_is_dir {
-                self.authority.filesystem.copy_dir_all(&src, &dst)
-            } else {
-                self.authority.filesystem.copy(&src, &dst).map(|_| ())
-            }
+            self.authority.filesystem.copy(&src, &dst).map(|_| ())
         };
 
         match result {
@@ -1230,15 +1258,25 @@ impl Editor {
                                 }
                             }
                         }
-                        // Refresh source parent too (if cut)
+                        // Refresh source parent too (if cut). Using
+                        // `reload_expanded_node` here rather than
+                        // `refresh_node` is important: refresh_node collapses
+                        // and re-expands the source parent, which wipes out
+                        // every descendant NodeId — including the
+                        // destination directory that was just expanded
+                        // above. That in turn invalidates the cursor
+                        // (`selected_node`) and any NodeIds held elsewhere
+                        // (e.g. hover, decorations). The in-place reload
+                        // keeps unchanged siblings intact and only drops the
+                        // nodes that really went away.
                         if is_cut {
                             if let Some(src_parent) = src.parent() {
                                 if let Some(src_parent_node) =
                                     explorer.tree().get_node_by_path(src_parent)
                                 {
                                     let pid = src_parent_node.id;
-                                    if let Err(e) =
-                                        runtime.block_on(explorer.tree_mut().refresh_node(pid))
+                                    if let Err(e) = runtime
+                                        .block_on(explorer.tree_mut().reload_expanded_node(pid))
                                     {
                                         tracing::warn!(
                                             "Failed to refresh source directory after move: {}",
@@ -1249,6 +1287,11 @@ impl Editor {
                             }
                         }
                     }
+                    // Any source NodeIds that were in the multi-selection are
+                    // now stale (the tree was reloaded / source parent
+                    // refreshed). Drop the selection so subsequent actions
+                    // act on the fresh cursor, not ghost IDs.
+                    explorer.clear_multi_selection();
                     // Navigate to the pasted item
                     explorer.navigate_to_path(&dst);
                 }
