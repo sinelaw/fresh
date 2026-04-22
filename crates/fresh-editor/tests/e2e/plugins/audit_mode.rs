@@ -3733,15 +3733,15 @@ fn test_review_diff_n_auto_expands_collapsed_file() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
-
-    let after_n = harness.screen_to_string();
-    assert!(
-        after_n.contains("HUNK_A") || after_n.contains("HUNK_B"),
-        "After `n`, the previously-collapsed file's hunk content should be \
-         revealed. Screen:\n{}",
-        after_n
-    );
+    // The plugin's `review_next_hunk` handler rebuilds the diff buffer
+    // asynchronously via `updateMagitDisplay`; wait for the expansion to
+    // land on screen rather than assuming a single render flushes it.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("HUNK_A") || s.contains("HUNK_B")
+        })
+        .unwrap();
 }
 
 /// The sticky panel sits between the toolbar and the diff stream.
