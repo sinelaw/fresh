@@ -312,6 +312,15 @@ impl Editor {
             if let Some(line) = known_line {
                 state.primary_cursor_line_number = crate::model::buffer::LineNumber::Absolute(line);
             }
+
+            // Center the target line in the viewport. The default
+            // `ensure_visible` behavior only scrolls just enough to reveal
+            // the cursor, which pins a forward jump to the bottom row — and
+            // for live-preview jumps (Quick Open `:N`, Goto Line prompt) the
+            // suggestion/prompt popup overlays the bottom of the screen,
+            // obscuring the very line the user is navigating to. Recentering
+            // puts the target in the middle so it stays visible.
+            self.apply_event_to_active_buffer(&Event::Recenter);
         }
     }
 

@@ -527,6 +527,84 @@ fn test_quick_open_goto_line_live_preview_restores_when_prefix_changes() {
         );
 }
 
+/// Quick Open `:N` preview must center the target line in the viewport, not
+/// pin it to the bottom edge. Without centering, the suggestion popup (which
+/// overlays the bottom rows) obscures the line the user is trying to navigate
+/// to, making the live preview useless for its stated purpose.
+///
+/// Discriminator: when previewing line 50 in a 100-line file, a line BELOW
+/// the target (e.g. LINE55) must be visible — that's only possible when the
+/// viewport is centered around line 50. If the cursor is pinned to the
+/// bottom of the viewport (old `ensure_visible` behavior), nothing past the
+/// cursor line can be visible.
+#[test]
+fn test_quick_open_goto_line_live_preview_centers_target() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 30, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let jump_path = project_root.join("jump.txt");
+    write_numbered_lines(&jump_path, 100);
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(":50").unwrap();
+
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // A line below the target (LINE55) is visible → the viewport is
+            // centered around line 50, not bottom-pinned.
+            screen.contains(" 55 │ LINE55")
+        })
+        .expect(
+            "Quick Open ':50' preview should center line 50 in the viewport so lines \
+             below it (like LINE55) are visible — otherwise the target line is obscured \
+             by the suggestion popup at the bottom of the screen",
+        );
+}
+
+/// The standalone `Goto Line` prompt should likewise center the target line in
+/// the viewport during live preview, rather than pinning it to the bottom.
+#[test]
+fn test_goto_line_prompt_live_preview_centers_target() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 30, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let jump_path = project_root.join("jump.txt");
+    write_numbered_lines(&jump_path, 100);
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("50").unwrap();
+
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 55 │ LINE55")
+        })
+        .expect(
+            "Goto Line prompt '50' preview should center line 50 so lines below it \
+             (like LINE55) are visible — otherwise the target is obscured by the prompt",
+        );
+}
+
 /// The standalone `Goto Line` prompt (Ctrl+G) should live-preview the jump as
 /// the user types a line number, mirroring the Quick Open `:N` behavior (same
 /// snapshot/restore plumbing, just a different input parser).
