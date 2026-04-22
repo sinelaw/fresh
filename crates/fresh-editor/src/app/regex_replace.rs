@@ -60,6 +60,39 @@ pub fn build_regex(
         .ok()
 }
 
+/// Interpret the common backslash escapes in a replacement template:
+/// `\n`, `\t`, `\r` become their control-character equivalents and `\\`
+/// becomes a single backslash. Unknown escapes (e.g. `\q`) are preserved
+/// verbatim as `\q` so users who didn't mean to type an escape sequence
+/// don't get surprising behaviour. A trailing lone backslash is likewise
+/// passed through unchanged.
+///
+/// Only applied in regex-replace mode — plain-text replacement stays
+/// literal, which matches the user expectation that plain-text search is
+/// symmetric with plain-text replace.
+fn interpret_escapes(template: &str) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut chars = template.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 /// Normalize `$N` capture references to `${N}` so the regex crate doesn't
 /// greedily consume trailing letters as part of the group name.
 /// E.g. `oo$1oo` → `oo${1}oo`, matching Python/PCRE semantics.
@@ -115,7 +148,8 @@ pub fn collect_regex_matches(
     haystack: &[u8],
     replacement_template: &str,
 ) -> Vec<ReplaceMatch> {
-    let normalized = normalize_replacement(replacement_template);
+    let escaped = interpret_escapes(replacement_template);
+    let normalized = normalize_replacement(&escaped);
     regex
         .captures_iter(haystack)
         .map(|caps| {
@@ -138,13 +172,14 @@ pub fn expand_replacement(
     matched_bytes: &[u8],
     replacement_template: &str,
 ) -> String {
+    let escaped = interpret_escapes(replacement_template);
     if let Some(caps) = regex.captures(matched_bytes) {
-        let normalized = normalize_replacement(replacement_template);
+        let normalized = normalize_replacement(&escaped);
         let mut dst = Vec::new();
         caps.expand(normalized.as_bytes(), &mut dst);
         String::from_utf8_lossy(&dst).into_owned()
     } else {
-        replacement_template.to_string()
+        escaped
     }
 }
 
@@ -274,6 +309,73 @@ mod tests {
         assert_eq!(normalize_replacement("$name"), "$name");
         // Literal $$ → passed through ($ not followed by digit)
         assert_eq!(normalize_replacement("$$"), "$$");
+    }
+
+    #[test]
+    fn interpret_escapes_basic_controls() {
+        assert_eq!(interpret_escapes(r"\n"), "\n");
+        assert_eq!(interpret_escapes(r"\t"), "\t");
+        assert_eq!(interpret_escapes(r"\r"), "\r");
+        assert_eq!(interpret_escapes(r"\\"), "\\");
+    }
+
+    #[test]
+    fn interpret_escapes_literal_backslash_round_trip() {
+        // User types "\\n" to mean literal backslash + n
+        assert_eq!(interpret_escapes(r"\\n"), r"\n");
+        // User types "\\\\" to mean literal "\\"
+        assert_eq!(interpret_escapes(r"\\\\"), r"\\");
+    }
+
+    #[test]
+    fn interpret_escapes_unknown_escape_is_preserved() {
+        // Unknown escapes pass through untouched: don't surprise users who
+        // weren't trying to use escape syntax.
+        assert_eq!(interpret_escapes(r"\q"), r"\q");
+        assert_eq!(interpret_escapes(r"hello \q world"), r"hello \q world");
+    }
+
+    #[test]
+    fn interpret_escapes_trailing_backslash_preserved() {
+        assert_eq!(interpret_escapes(r"foo\"), r"foo\");
+    }
+
+    #[test]
+    fn interpret_escapes_mixed_content() {
+        assert_eq!(interpret_escapes(r"line1\nline2\tcol"), "line1\nline2\tcol");
+    }
+
+    #[test]
+    fn interpret_escapes_does_not_touch_dollar_group_refs() {
+        // Must not interfere with the regex crate's $N / ${N} expansion syntax.
+        assert_eq!(interpret_escapes(r"$1\n$2"), "$1\n$2");
+    }
+
+    #[test]
+    fn collect_regex_matches_expands_newline_escape() {
+        let re = build_regex(" +", true, false, true).unwrap();
+        let input = b"foo   bar";
+        let matches = collect_regex_matches(&re, input, r"\n");
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].replacement, "\n");
+    }
+
+    #[test]
+    fn collect_regex_matches_combines_escapes_and_capture_groups() {
+        let re = build_regex(r"(\w+)=(\w+)", true, false, true).unwrap();
+        let input = b"key=value";
+        let matches = collect_regex_matches(&re, input, r"$1\n$2");
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].replacement, "key\nvalue");
+    }
+
+    #[test]
+    fn expand_replacement_interprets_escapes() {
+        let re = build_regex(r"(\w+)", true, false, true).unwrap();
+        let result = expand_replacement(&re, b"hello", r"$1\tend");
+        assert_eq!(result, "hello\tend");
     }
 
     /// Matches Python: re.sub(r'bla(bla)', r'oo\1oo', 'blablabla') == 'ooblaoobla'
