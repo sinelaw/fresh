@@ -178,6 +178,18 @@
             70,
             70
           ]
+        },
+        "after_eof_bg": {
+          "description": "Background color for lines after end-of-file (optional override).\nWhen not set, computed as a slightly contrasting shade of `bg`\n(lighter for dark themes, darker for light themes) to give post-EOF\nrows a subtle visual separation from the buffer content.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       }
     },

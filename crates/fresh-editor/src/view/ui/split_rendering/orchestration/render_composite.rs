@@ -212,15 +212,22 @@ pub(crate) fn render_composite_buffer(
     for view_row in 0..visible_rows {
         let display_row = scroll_row + view_row;
         if display_row >= total_rows {
-            if show_tilde {
-                let mut x = area.x;
-                for &width in &pane_widths {
-                    let tilde_area = Rect::new(x, content_y + view_row as u16, width, 1);
-                    let tilde =
-                        Paragraph::new("~").style(Style::default().fg(theme.line_number_fg));
-                    frame.render_widget(tilde, tilde_area);
-                    x += width + separator_width;
-                }
+            let mut x = area.x;
+            for &width in &pane_widths {
+                let eof_area = Rect::new(x, content_y + view_row as u16, width, 1);
+                let pad_width = width as usize;
+                let text = if show_tilde && pad_width > 0 {
+                    format!("~{}", " ".repeat(pad_width.saturating_sub(1)))
+                } else {
+                    " ".repeat(pad_width)
+                };
+                let eof = Paragraph::new(text).style(
+                    Style::default()
+                        .fg(theme.line_number_fg)
+                        .bg(theme.after_eof_bg),
+                );
+                frame.render_widget(eof, eof_area);
+                x += width + separator_width;
             }
             continue;
         }

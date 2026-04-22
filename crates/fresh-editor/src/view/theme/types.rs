@@ -119,6 +119,34 @@ pub fn brighten_color(color: Color, amount: u8) -> Color {
     }
 }
 
+/// Shift an RGB color a small amount toward the opposite end of the
+/// brightness spectrum: dark colors become slightly brighter, light colors
+/// slightly darker. Non-RGB colors are returned unchanged.
+///
+/// Used to derive subtle visual cues (e.g. post-EOF background shade) from
+/// a theme's editor background without requiring theme authors to pick an
+/// explicit color.
+pub fn shade_toward_contrast(color: Color, amount: u8) -> Color {
+    if let Some((r, g, b)) = color_to_rgb(color) {
+        let avg = (u16::from(r) + u16::from(g) + u16::from(b)) / 3;
+        if avg < 128 {
+            Color::Rgb(
+                r.saturating_add(amount),
+                g.saturating_add(amount),
+                b.saturating_add(amount),
+            )
+        } else {
+            Color::Rgb(
+                r.saturating_sub(amount),
+                g.saturating_sub(amount),
+                b.saturating_sub(amount),
+            )
+        }
+    } else {
+        color
+    }
+}
+
 /// Serializable color representation
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
@@ -283,6 +311,12 @@ pub struct EditorColors {
     /// Whitespace indicator foreground color (for tab arrows and space dots)
     #[serde(default = "default_whitespace_indicator_fg")]
     pub whitespace_indicator_fg: ColorDef,
+    /// Background color for lines after end-of-file (optional override).
+    /// When not set, computed as a slightly contrasting shade of `bg`
+    /// (lighter for dark themes, darker for light themes) to give post-EOF
+    /// rows a subtle visual separation from the buffer content.
+    #[serde(default)]
+    pub after_eof_bg: Option<ColorDef>,
 }
 
 // Default editor colors (for minimal themes)
@@ -900,6 +934,9 @@ pub struct Theme {
     pub line_number_fg: Color,
     pub line_number_bg: Color,
 
+    /// Background color for rows past end-of-file
+    pub after_eof_bg: Color,
+
     // Vertical ruler color
     pub ruler_bg: Color,
 
@@ -1043,7 +1080,7 @@ impl From<ThemeFile> for Theme {
     fn from(file: ThemeFile) -> Self {
         Self {
             name: file.name,
-            editor_bg: file.editor.bg.into(),
+            editor_bg: file.editor.bg.clone().into(),
             editor_fg: file.editor.fg.into(),
             cursor: file.editor.cursor.into(),
             inactive_cursor: file.editor.inactive_cursor.into(),
@@ -1051,6 +1088,14 @@ impl From<ThemeFile> for Theme {
             current_line_bg: file.editor.current_line_bg.into(),
             line_number_fg: file.editor.line_number_fg.into(),
             line_number_bg: file.editor.line_number_bg.into(),
+            // Use explicit override if provided, otherwise derive a subtle
+            // contrasting shade from the editor background.
+            after_eof_bg: file
+                .editor
+                .after_eof_bg
+                .clone()
+                .map(|c| c.into())
+                .unwrap_or_else(|| shade_toward_contrast(file.editor.bg.clone().into(), 10)),
             ruler_bg: file.editor.ruler_bg.into(),
             whitespace_indicator_fg: file.editor.whitespace_indicator_fg.into(),
             diff_add_bg: file.editor.diff_add_bg.clone().into(),
@@ -1204,6 +1249,7 @@ impl From<Theme> for ThemeFile {
                 diff_modify_bg: theme.diff_modify_bg.into(),
                 ruler_bg: theme.ruler_bg.into(),
                 whitespace_indicator_fg: theme.whitespace_indicator_fg.into(),
+                after_eof_bg: Some(theme.after_eof_bg.into()),
             },
             ui: UiColors {
                 tab_active_fg: theme.tab_active_fg.into(),

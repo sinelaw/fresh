@@ -1438,26 +1438,28 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         }
     }
 
-    // Fill remaining rows with tilde characters to indicate EOF (like vim/neovim).
-    // This also ensures proper clearing in differential rendering because tildes
-    // are guaranteed to differ from previous content, forcing ratatui to update.
-    // See: https://github.com/ratatui/ratatui/issues/1606
+    // Fill remaining rows past EOF. Two orthogonal visual cues are applied:
+    //   - `show_tilde` draws a vim-style `~` at column 0 of each row.
+    //   - `theme.after_eof_bg` is applied as the row background, giving a
+    //     subtle shade that distinguishes post-EOF space from buffer content
+    //     (see https://github.com/sinelaw/fresh/issues/779).
+    // Always emitting filled lines here also ensures proper clearing in
+    // differential rendering; see https://github.com/ratatui/ratatui/issues/1606.
     //
     // NOTE: We use a computed darker color instead of Modifier::DIM because the DIM
     // modifier can bleed through to overlays (like menus) rendered on top of these
     // lines due to how terminal escape sequences are output.
     // See: https://github.com/sinelaw/fresh/issues/458
-    if show_tilde {
-        let eof_fg = dim_color_for_tilde(theme.line_number_fg);
-        let eof_style = Style::default().fg(eof_fg);
-        while lines.len() < render_area.height as usize {
-            // Show tilde with dim styling, padded with spaces to fill the line
-            let tilde_line = format!(
-                "~{}",
-                " ".repeat(render_area.width.saturating_sub(1) as usize)
-            );
-            lines.push(Line::styled(tilde_line, eof_style));
-        }
+    let eof_fg = dim_color_for_tilde(theme.line_number_fg);
+    let eof_style = Style::default().fg(eof_fg).bg(theme.after_eof_bg);
+    while lines.len() < render_area.height as usize {
+        let width = render_area.width as usize;
+        let eof_line = if show_tilde && width > 0 {
+            format!("~{}", " ".repeat(width.saturating_sub(1)))
+        } else {
+            " ".repeat(width)
+        };
+        lines.push(Line::styled(eof_line, eof_style));
     }
 
     LineRenderOutput {
