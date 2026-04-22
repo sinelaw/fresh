@@ -250,7 +250,13 @@ impl FileTree {
         // directory's own children load.
         for path in expanded_paths {
             if let Some(target_id) = self.expand_to_path(&path).await {
-                let _ = self.expand_node(target_id).await;
+                if let Err(e) = self.expand_node(target_id).await {
+                    tracing::warn!(
+                        "Failed to re-expand {:?} after tree reload: {}",
+                        path,
+                        e
+                    );
+                }
             }
         }
         Ok(())
