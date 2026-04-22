@@ -32,8 +32,9 @@ fn set_up_workspace() -> (tempfile::TempDir, std::path::PathBuf) {
 
     let dc = workspace.join(".devcontainer");
     fs::create_dir_all(&dc).unwrap();
+    let dc_json = dc.join("devcontainer.json");
     fs::write(
-        dc.join("devcontainer.json"),
+        &dc_json,
         r#"{
             "name": "fake",
             "image": "ubuntu:22.04",
@@ -46,10 +47,32 @@ fn set_up_workspace() -> (tempfile::TempDir, std::path::PathBuf) {
     )
     .unwrap();
 
+    // Verify the fixture file is readable from Rust — if it's not, the
+    // plugin's `findConfig` won't find it either and every downstream
+    // wait hangs silently. Surface the mismatch upfront.
+    let content = fs::read_to_string(&dc_json)
+        .unwrap_or_else(|e| panic!("devcontainer.json must be readable at {:?}: {}", dc_json, e));
+    eprintln!(
+        "[ports_panel] fixture at {:?} ({} bytes)",
+        dc_json,
+        content.len()
+    );
+
     let plugins_dir = workspace.join("plugins");
     fs::create_dir_all(&plugins_dir).unwrap();
     copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "devcontainer");
+
+    // Verify both the .ts and .i18n.json made it across.
+    for fname in ["devcontainer.ts", "devcontainer.i18n.json"] {
+        let p = plugins_dir.join(fname);
+        assert!(
+            p.is_file(),
+            "copy_plugin should have placed {} at {:?}",
+            fname,
+            p
+        );
+    }
 
     (temp, workspace)
 }
