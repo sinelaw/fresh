@@ -22,6 +22,12 @@ use fresh::view::ui::status_bar::RemoteIndicatorOverride;
 use std::fs;
 
 fn set_up_workspace() -> (tempfile::TempDir, std::path::PathBuf) {
+    // Pin the locale to English so the popup-title screen assertions
+    // below don't race whatever `LANG` the CI host happens to set.
+    // Nextest runs each test in its own subprocess, so this is
+    // process-local — no interaction with other tests.
+    fresh::i18n::set_locale("en");
+
     let temp = tempfile::tempdir().unwrap();
     let workspace = temp.path().to_path_buf();
     let dc = workspace.join(".devcontainer");
@@ -86,6 +92,23 @@ fn devcontainer_failed_attach_surfaces_action_popup() {
 
     drive_failed_attach(&mut harness, &workspace);
 
+    // Wait on `remote_indicator_override = FailedAttach` — set by the
+    // same `enterFailedAttach` call that also emits the popup, and
+    // locale-independent so CI hosts that default to non-English
+    // `LANG` don't race the rendered-text check. The popup content
+    // assertions below still go through screen text but only run
+    // after we've confirmed the plugin handler got that far.
+    harness
+        .wait_until(|h| {
+            matches!(
+                h.editor().remote_indicator_override,
+                Some(RemoteIndicatorOverride::FailedAttach { .. })
+            )
+        })
+        .unwrap();
+    // One more tick after the override flips — the popup is shown via
+    // a plugin command that needs a processing pass to reach the
+    // editor's popup stack.
     harness
         .wait_until(|h| h.screen_to_string().contains("Dev Container Attach Failed"))
         .unwrap();
@@ -114,17 +137,20 @@ fn devcontainer_failed_attach_popup_reopen_local_clears_override() {
     harness.tick_and_render().unwrap();
     drive_failed_attach(&mut harness, &workspace);
 
+    // Wait for the state flip first (locale-independent), then for
+    // the popup's rendered title so key-driven row selection lands
+    // on a real popup.
+    harness
+        .wait_until(|h| {
+            matches!(
+                h.editor().remote_indicator_override,
+                Some(RemoteIndicatorOverride::FailedAttach { .. })
+            )
+        })
+        .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Dev Container Attach Failed"))
         .unwrap();
-
-    assert!(
-        matches!(
-            harness.editor().remote_indicator_override,
-            Some(RemoteIndicatorOverride::FailedAttach { .. })
-        ),
-        "enterFailedAttach must set a FailedAttach override before the popup action clears it"
-    );
 
     // Rows render in the order Retry (selected), Show Build Logs,
     // Reopen Locally, Dismiss. Arrow down twice to land on Reopen
