@@ -2499,9 +2499,7 @@ fn test_git_log_file_view_jk_navigation() {
         .unwrap();
 
     // Tab into the detail panel so Enter-on-a-diff-line opens the file-view.
-    harness
-        .send_key(KeyCode::Tab, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.process_async_and_render().unwrap();
 
     // Wait for the commit diff to render in the detail panel.
