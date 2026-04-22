@@ -362,8 +362,10 @@ fn test_issue_1001_theme_persists_after_restart_with_name_mismatch() {
     .unwrap();
     harness.render().unwrap();
 
-    // Verify default theme is high-contrast (the fallback)
-    let default_style = harness.get_cell_style(5, 3);
+    // Verify default theme is high-contrast (the fallback).
+    // Sample the first content row (row 2) inside the editor area so we hit
+    // `editor.bg` rather than the post-EOF shade (`editor.after_eof_bg`).
+    let default_style = harness.get_cell_style(5, 2);
     let default_bg = default_style.and_then(|s| s.bg);
     assert_eq!(
         default_bg,
@@ -408,7 +410,7 @@ fn test_issue_1001_theme_persists_after_restart_with_name_mismatch() {
     // Verify the theme was applied by checking rendered editor background color.
     // Catppuccin Mocha uses Rgb(30, 30, 46), NOT black.
     let catppuccin_bg = Color::Rgb(30, 30, 46);
-    let applied_style = harness.get_cell_style(5, 3);
+    let applied_style = harness.get_cell_style(5, 2);
     let applied_bg = applied_style.and_then(|s| s.bg);
     assert_eq!(
         applied_bg,
@@ -465,7 +467,7 @@ fn test_issue_1001_theme_persists_after_restart_with_name_mismatch() {
 
     // The restarted editor should load catppuccin-mocha, NOT fall back to high-contrast.
     // Verify by checking the rendered editor background color.
-    let restarted_style = harness2.get_cell_style(5, 3);
+    let restarted_style = harness2.get_cell_style(5, 2);
     let restarted_bg = restarted_style.and_then(|s| s.bg);
     assert_eq!(
         restarted_bg,
@@ -527,7 +529,7 @@ fn test_issue_1001_config_with_spaces_in_theme_name_loads_correctly() {
     // The editor should normalize "Catppuccin Mocha" → "catppuccin-mocha" on lookup
     // and find the theme. Verify by checking rendered background.
     let catppuccin_bg = Color::Rgb(30, 30, 46);
-    let style = harness.get_cell_style(5, 3);
+    let style = harness.get_cell_style(5, 2);
     let bg = style.and_then(|s| s.bg);
     assert_eq!(
         bg,
