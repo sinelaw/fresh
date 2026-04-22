@@ -217,6 +217,150 @@ impl Editor {
         Ok(self.recovery_service.discard_all_recovery()?)
     }
 
+    /// Restore only the hot-exit content from the previous clean exit:
+    /// files with unsaved modifications and unnamed buffers that held
+    /// content.  Called when full session restore is opted out (via
+    /// `--no-restore` or `editor.restore_previous_session = false`) so
+    /// the user does not lose in-progress work just because they asked
+    /// to skip restoring the workspace layout.
+    ///
+    /// Unlike [`Editor::recover_all_buffers`], this path uses
+    /// `load_recovery` and leaves the recovery files in place so the
+    /// current session's hot-exit pipeline keeps owning them (the files
+    /// are cleaned up on the next clean shutdown via
+    /// `end_session_preserving`).
+    ///
+    /// Returns the number of buffers restored.
+    pub fn try_restore_hot_exit_buffers(&mut self) -> AnyhowResult<usize> {
+        use crate::services::recovery::RecoveryResult;
+
+        if !self.config.editor.hot_exit {
+            return Ok(0);
+        }
+
+        let entries = self.recovery_service.list_recoverable()?;
+        if entries.is_empty() {
+            return Ok(0);
+        }
+
+        let mut restored = 0;
+        for entry in entries {
+            match self.recovery_service.load_recovery(&entry) {
+                Ok(RecoveryResult::Recovered {
+                    original_path,
+                    content,
+                }) => {
+                    let text = String::from_utf8_lossy(&content).into_owned();
+                    if let Some(path) = original_path {
+                        match self.open_file(&path) {
+                            Ok(_) => {
+                                {
+                                    let state = self.active_state_mut();
+                                    let total = state.buffer.total_bytes();
+                                    state.buffer.delete(0..total);
+                                    state.buffer.insert(0, &text);
+                                    state.buffer.set_modified(true);
+                                    state.buffer.set_recovery_pending(false);
+                                }
+                                self.active_event_log_mut().clear_saved_position();
+                                restored += 1;
+                                tracing::info!(
+                                    "Hot-exit restore: reopened {} with unsaved changes",
+                                    path.display()
+                                );
+                            }
+                            Err(e) => {
+                                if let Some(confirmation) = e.downcast_ref::<
+                                    crate::model::buffer::LargeFileEncodingConfirmation,
+                                >() {
+                                    self.start_large_file_encoding_confirmation(confirmation);
+                                } else {
+                                    tracing::warn!(
+                                        "Hot-exit restore failed to open {}: {}",
+                                        path.display(),
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    } else {
+                        // Unnamed buffer with content — create a fresh
+                        // buffer, drop the recovery ID into metadata so
+                        // future hot-exit saves hit the same file.
+                        let buffer_id = self.new_buffer();
+                        {
+                            let state = self.active_state_mut();
+                            state.buffer.insert(0, &text);
+                            state.buffer.set_modified(true);
+                            state.buffer.set_recovery_pending(false);
+                        }
+                        self.active_event_log_mut().clear_saved_position();
+                        if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                            meta.recovery_id = Some(entry.id.clone());
+                        }
+                        restored += 1;
+                        tracing::info!(
+                            "Hot-exit restore: reopened unnamed buffer (recovery_id={})",
+                            entry.id
+                        );
+                    }
+                }
+                Ok(RecoveryResult::RecoveredChunks {
+                    original_path,
+                    chunks,
+                }) => match self.open_file(&original_path) {
+                    Ok(_) => {
+                        {
+                            let state = self.active_state_mut();
+                            for chunk in chunks.into_iter().rev() {
+                                let text = String::from_utf8_lossy(&chunk.content).into_owned();
+                                if chunk.original_len > 0 {
+                                    state
+                                        .buffer
+                                        .delete(chunk.offset..chunk.offset + chunk.original_len);
+                                }
+                                state.buffer.insert(chunk.offset, &text);
+                            }
+                            state.buffer.set_modified(true);
+                            state.buffer.set_recovery_pending(false);
+                        }
+                        self.active_event_log_mut().clear_saved_position();
+                        restored += 1;
+                        tracing::info!(
+                            "Hot-exit restore: reopened {} with chunked changes",
+                            original_path.display()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Hot-exit restore failed to open {}: {}",
+                            original_path.display(),
+                            e
+                        );
+                    }
+                },
+                Ok(RecoveryResult::OriginalFileModified { id, original_path }) => {
+                    tracing::warn!(
+                        "Hot-exit restore skipped {}: original file {} changed on disk",
+                        id,
+                        original_path.display()
+                    );
+                }
+                Ok(RecoveryResult::Corrupted { id, reason }) => {
+                    tracing::warn!("Hot-exit restore skipped {}: corrupted ({})", id, reason);
+                }
+                Ok(RecoveryResult::NotFound { id }) => {
+                    tracing::warn!("Hot-exit restore: recovery file {} missing", id);
+                }
+                Err(e) => {
+                    tracing::warn!("Hot-exit restore: failed to load {}: {}", entry.id, e);
+                }
+            }
+        }
+
+        Ok(restored)
+    }
+
     /// Perform auto-recovery-save for all modified buffers if needed.
     /// Called frequently (every frame); rate-limited by `auto_recovery_save_interval_secs`.
     pub fn auto_recovery_save_dirty_buffers(&mut self) -> AnyhowResult<usize> {

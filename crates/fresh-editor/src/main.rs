@@ -128,9 +128,17 @@ struct Cli {
     #[arg(long, value_name = "LOG_FILE")]
     event_log: Option<PathBuf>,
 
-    /// Don't restore previous workspace
-    #[arg(long, alias = "no-session")]
+    /// Don't restore previous workspace (only hot-exit content — unsaved
+    /// modified files and unnamed buffers with content — is still restored
+    /// so in-progress work is not lost)
+    #[arg(long, alias = "no-session", conflicts_with = "restore")]
     no_restore: bool,
+
+    /// Force restore of previous workspace, overriding
+    /// `editor.restore_previous_session = false` in the config.  Cannot be
+    /// combined with `--no-restore`.
+    #[arg(long)]
+    restore: bool,
 
     /// Disable upgrade checking and anonymous telemetry
     #[arg(long)]
@@ -192,6 +200,9 @@ struct Args {
     log_file: Option<PathBuf>,
     event_log: Option<PathBuf>,
     no_session: bool,
+    /// Force workspace restore even if `editor.restore_previous_session`
+    /// is disabled in the config.
+    force_restore: bool,
     no_upgrade_check: bool,
     dump_config: bool,
     show_paths: bool,
@@ -441,6 +452,7 @@ impl From<Cli> for Args {
             log_file: cli.log_file,
             event_log: cli.event_log,
             no_session: cli.no_restore,
+            force_restore: cli.restore,
             no_upgrade_check: cli.no_upgrade_check,
             dump_config,
             show_paths,
@@ -794,23 +806,43 @@ fn handle_first_run_setup(
         editor.set_status_log_path(handles.status.path);
     }
 
-    if workspace_enabled {
-        if editor.config().editor.restore_previous_session {
-            match editor.try_restore_workspace() {
-                Ok(true) => {
-                    tracing::info!("Workspace restored successfully");
-                }
-                Ok(false) => {
-                    tracing::debug!("No previous workspace found");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to restore workspace: {}", e);
-                }
+    let restore_full_session = workspace_enabled
+        && (args.force_restore || editor.config().editor.restore_previous_session);
+
+    if restore_full_session {
+        match editor.try_restore_workspace() {
+            Ok(true) => {
+                tracing::info!("Workspace restored successfully");
             }
+            Ok(false) => {
+                tracing::debug!("No previous workspace found");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to restore workspace: {}", e);
+            }
+        }
+    } else {
+        if !workspace_enabled {
+            tracing::info!("Skipping workspace restore: --no-restore was specified");
         } else {
             tracing::info!(
                 "Skipping workspace restore: editor.restore_previous_session is disabled"
             );
+        }
+        // Session restore opted out, but hot-exit content (unsaved
+        // modified files + unnamed buffers with content) is still
+        // restored so the user does not lose in-progress work.
+        match editor.try_restore_hot_exit_buffers() {
+            Ok(n) if n > 0 => {
+                tracing::info!(
+                    "Restored {} hot-exit buffer(s) despite skipping session restore",
+                    n
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("Failed to restore hot-exit buffers: {}", e);
+            }
         }
     }
 
@@ -3383,7 +3415,7 @@ fn real_main() -> AnyhowResult<()> {
             tracing::info!("First-run setup complete");
         } else {
             if restore_workspace_on_restart {
-                if editor.config().editor.restore_previous_session {
+                if args.force_restore || editor.config().editor.restore_previous_session {
                     match editor.try_restore_workspace() {
                         Ok(true) => {
                             tracing::info!("Workspace restored successfully");
@@ -3399,6 +3431,20 @@ fn real_main() -> AnyhowResult<()> {
                     tracing::info!(
                         "Skipping workspace restore on restart: editor.restore_previous_session is disabled"
                     );
+                    // Session restore opted out, but hot-exit content
+                    // for the newly-switched project is still restored.
+                    match editor.try_restore_hot_exit_buffers() {
+                        Ok(n) if n > 0 => {
+                            tracing::info!(
+                                "Restored {} hot-exit buffer(s) on restart despite skipping session restore",
+                                n
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!("Failed to restore hot-exit buffers on restart: {}", e);
+                        }
+                    }
                 }
             }
 

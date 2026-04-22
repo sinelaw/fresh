@@ -3,9 +3,10 @@
 //! These tests verify the full session save/restore cycle works correctly
 //! by examining rendered screen output rather than internal state.
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use fresh::config_io::DirectoryContext;
 use fresh::workspace::get_workspace_path;
 use tempfile::TempDir;
 
@@ -2066,4 +2067,280 @@ fn test_user_opened_terminal_still_persists_in_workspace() {
         1,
         "User-opened terminal should still be serialized (no regression)",
     );
+}
+
+// ============================================================================
+// Hot-exit restore when session restore is skipped
+// ============================================================================
+//
+// When the user opts out of full workspace restore (`--no-restore` CLI flag
+// OR `editor.restore_previous_session = false`), hot-exit content — unsaved
+// modified files and unnamed buffers with content — must still be restored
+// so they don't lose in-progress work.  Clean (saved) file tabs that had no
+// unsaved changes are NOT reopened; that's what "don't restore the session"
+// means.
+
+/// Session restore disabled via config still reopens unsaved modified files
+/// with their hot-exit content, but leaves clean tabs closed.
+#[test]
+fn test_hot_exit_restores_dirty_file_when_session_restore_disabled() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let clean_file = project_dir.join("clean.txt");
+    let dirty_file = project_dir.join("dirty.txt");
+    std::fs::write(&clean_file, "clean-on-disk").unwrap();
+    std::fs::write(&dirty_file, "original-on-disk").unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Session 1: open both files, modify one, clean shutdown
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.editor_mut().set_session_mode(true);
+
+        harness.open_file(&clean_file).unwrap();
+        harness.open_file(&dirty_file).unwrap();
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.type_text(" UNSAVED").unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("UNSAVED");
+
+        harness.shutdown(true).unwrap();
+    }
+
+    // File on disk stays unchanged (hot-exit doesn't save).
+    assert_eq!(
+        std::fs::read_to_string(&dirty_file).unwrap(),
+        "original-on-disk",
+    );
+
+    // Session 2: restore_previous_session = false.  The workspace file
+    // still lists both tabs, but only the dirty one must be reopened.
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+        config.editor.restore_previous_session = false;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.editor_mut().set_session_mode(true);
+
+        let restored = harness.startup(true, &[]).unwrap();
+        assert!(
+            !restored,
+            "Full workspace must not be restored when restore_previous_session is false",
+        );
+
+        harness.render().unwrap();
+        harness.assert_screen_contains("dirty.txt");
+        harness.assert_screen_contains("UNSAVED");
+        harness.assert_screen_not_contains("clean.txt");
+    }
+}
+
+/// `--no-restore` (simulated via `workspace_enabled = false` in the harness)
+/// still restores hot-exit content — the CLI flag is no longer a hammer
+/// that drops unsaved work.
+#[test]
+fn test_hot_exit_restores_dirty_file_when_no_restore_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let dirty_file = project_dir.join("notes.txt");
+    std::fs::write(&dirty_file, "on-disk").unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Session 1: open file, edit, clean shutdown
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.editor_mut().set_session_mode(true);
+
+        harness.open_file(&dirty_file).unwrap();
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.type_text(" DRAFT").unwrap();
+        harness.render().unwrap();
+        harness.shutdown(true).unwrap();
+    }
+
+    // Session 2: simulate `--no-restore` — workspace_enabled = false.
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.editor_mut().set_session_mode(true);
+
+        harness.startup(false, &[]).unwrap();
+        harness.render().unwrap();
+
+        // Unsaved edits from the prior session are still available.
+        harness.assert_screen_contains("notes.txt");
+        harness.assert_screen_contains("DRAFT");
+    }
+}
+
+/// Unnamed (scratch) buffers with content are hot-exit state, so they must
+/// also be restored when session restore is skipped.
+#[test]
+fn test_hot_exit_restores_unnamed_buffer_when_session_restore_disabled() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Session 1: scratch buffer with content, clean shutdown
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.editor_mut().set_session_mode(true);
+
+        harness.new_buffer().unwrap();
+        harness.type_text("scratch pad data").unwrap();
+        harness.render().unwrap();
+        harness.shutdown(true).unwrap();
+    }
+
+    // Session 2: restore_previous_session = false.  The scratch buffer
+    // content must still come back.
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+        config.editor.restore_previous_session = false;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.editor_mut().set_session_mode(true);
+
+        harness.startup(true, &[]).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("scratch pad data");
+    }
+}
+
+/// `--restore` (simulated via `force_restore = true`) overrides
+/// `restore_previous_session = false` and performs a full workspace
+/// restore, reopening clean tabs as well.
+#[test]
+fn test_restore_flag_overrides_disabled_config() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file = project_dir.join("tracked.txt");
+    std::fs::write(&file, "workspace content").unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Session 1: open file, save workspace, clean shutdown.
+    {
+        let config = Config::default();
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.editor_mut().set_session_mode(true);
+
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+        harness.shutdown(true).unwrap();
+    }
+
+    // Session 2: config disables restore, but --restore forces it on.
+    {
+        let mut config = Config::default();
+        config.editor.restore_previous_session = false;
+
+        let mut harness = EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.editor_mut().set_session_mode(true);
+
+        let restored = harness.startup_with_force_restore(true, true, &[]).unwrap();
+        assert!(
+            restored,
+            "--restore must force a full workspace restore even when restore_previous_session is false",
+        );
+
+        harness.render().unwrap();
+        harness.assert_screen_contains("tracked.txt");
+        harness.assert_screen_contains("workspace content");
+    }
 }

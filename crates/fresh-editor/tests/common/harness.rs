@@ -1404,9 +1404,28 @@ impl EditorTestHarness {
         workspace_enabled: bool,
         cli_files: &[std::path::PathBuf],
     ) -> anyhow::Result<bool> {
+        self.startup_with_force_restore(workspace_enabled, false, cli_files)
+    }
+
+    /// Variant of [`Self::startup`] that can force workspace restore even
+    /// when `editor.restore_previous_session` is disabled — mirrors the
+    /// `--restore` CLI flag in `main.rs`.
+    pub fn startup_with_force_restore(
+        &mut self,
+        workspace_enabled: bool,
+        force_restore: bool,
+        cli_files: &[std::path::PathBuf],
+    ) -> anyhow::Result<bool> {
+        let restore_full_session = workspace_enabled
+            && (force_restore || self.editor.config().editor.restore_previous_session);
         let mut restored = false;
-        if workspace_enabled && self.editor.config().editor.restore_previous_session {
+        if restore_full_session {
             restored = self.editor.try_restore_workspace().unwrap_or(false);
+        } else {
+            // Session restore opted out, but hot-exit content (unsaved
+            // modified files + unnamed buffers with content) is still
+            // restored — matches production behaviour in `main.rs`.
+            let _ = self.editor.try_restore_hot_exit_buffers();
         }
 
         let has_cli_files = !cli_files.is_empty();
