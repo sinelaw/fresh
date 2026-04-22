@@ -28,6 +28,7 @@ pub const INIT_PLUGIN_NAME: &str = "init.ts";
 /// keybindings, themes, reusable features) so users don't reach for this
 /// file when another surface is the right tool.
 pub const STARTER_TEMPLATE: &str = r#"/// <reference path="./types/fresh.d.ts" />
+/// <reference path="./types/plugins.d.ts" />
 const editor = getEditor();
 
 // Fresh init.ts — decisions that depend on the environment at startup.
@@ -243,12 +244,17 @@ pub fn write_plugin_declarations(config_dir: &Path, declarations: &[(String, Str
          // contributes its augmentation.\n\n",
     );
     for (name, dts) in sorted {
+        let trimmed = dts.trim();
+        // Script-style plugins with no exports get `export {};` appended
+        // in the parser to force module mode. After isolated-declarations
+        // strips internals, that's all that remains — a per-plugin
+        // section with just `export {};` is pure noise in the aggregate.
+        if trimmed.is_empty() || trimmed == "export {};" {
+            continue;
+        }
         body.push_str(&format!("// ── {name} ─────────────────────\n"));
         body.push_str(dts.trim_end());
-        if !dts.ends_with('\n') {
-            body.push('\n');
-        }
-        body.push('\n');
+        body.push_str("\n\n");
     }
 
     if let Err(e) = std::fs::write(&dest, &body) {
@@ -680,5 +686,51 @@ mod tests {
         assert!(!report.ok);
         assert!(!report.diagnostics.is_empty());
         assert_eq!(report.diagnostics[0].severity, CheckSeverity::Error);
+    }
+
+    #[test]
+    fn starter_template_references_both_dts_files() {
+        assert!(
+            STARTER_TEMPLATE.contains(r#"/// <reference path="./types/fresh.d.ts" />"#),
+            "starter template must reference fresh.d.ts"
+        );
+        assert!(
+            STARTER_TEMPLATE.contains(r#"/// <reference path="./types/plugins.d.ts" />"#),
+            "starter template must reference plugins.d.ts so plugin APIs are typed"
+        );
+    }
+
+    #[test]
+    fn write_plugin_declarations_skips_empty_export_plugins() {
+        let tmp = TempDir::new().unwrap();
+        let decls = vec![
+            ("noop".to_string(), "export {};\n".to_string()),
+            ("blank".to_string(), "".to_string()),
+            (
+                "dashboard".to_string(),
+                "export type DashboardApi = { foo(): void; };\n\
+                 declare global { interface FreshPluginRegistry { dashboard: DashboardApi; } }\n\
+                 export {};\n"
+                    .to_string(),
+            ),
+        ];
+        write_plugin_declarations(tmp.path(), &decls);
+        let body = std::fs::read_to_string(tmp.path().join("types/plugins.d.ts")).unwrap();
+        assert!(
+            body.contains("// ── dashboard ─"),
+            "dashboard section missing: {body}"
+        );
+        assert!(
+            body.contains("DashboardApi"),
+            "dashboard API missing: {body}"
+        );
+        assert!(
+            !body.contains("// ── noop ─"),
+            "empty-export plugin should not get a section header: {body}"
+        );
+        assert!(
+            !body.contains("// ── blank ─"),
+            "blank-emit plugin should not get a section header: {body}"
+        );
     }
 }
