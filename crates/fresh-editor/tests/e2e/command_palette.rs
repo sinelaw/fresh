@@ -215,6 +215,19 @@ fn test_quick_open_file_path_line_only() {
         .expect("Cursor should jump to Ln 3, Col 1 after Quick Open");
 }
 
+/// Helper: write a fixture file with `n` lines of the form `LINEn\n`.
+///
+/// Tests here use long files so the live-preview jump scrolls the viewport
+/// noticeably, which is observable in the rendered output (per CONTRIBUTING.md:
+/// e2e tests examine rendered output, not internal state).
+fn write_numbered_lines(path: &std::path::Path, n: usize) {
+    let mut s = String::new();
+    for i in 1..=n {
+        s.push_str(&format!("LINE{i}\n"));
+    }
+    fs::write(path, s).unwrap();
+}
+
 /// Quick Open goto-line (":N") should live-preview the jump as the user types,
 /// so the cursor moves to line N before pressing Enter (issue #1253).
 #[test]
@@ -225,37 +238,37 @@ fn test_quick_open_goto_line_live_preview() {
         EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
     let project_root = harness.project_dir().unwrap();
 
-    let content = "11111\n22222\nABCDE12345\n44444\n55555\n";
     let jump_path = project_root.join("jump.txt");
-    fs::write(&jump_path, content).unwrap();
+    write_numbered_lines(&jump_path, 100);
 
     harness.open_file(&jump_path).unwrap();
     harness.render().unwrap();
-    let line1_position = harness.cursor_position();
+    // Baseline: viewport starts at the top, LINE80 is far off-screen.
+    assert!(
+        !harness.screen_to_string().contains("LINE80"),
+        "Baseline viewport should not include line 80"
+    );
 
-    // Open Quick Open, clear the ">" prefix, then type ":3".
+    // Open Quick Open, clear the ">" prefix, then type ":80".
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
-    harness.type_text(":3").unwrap();
-    harness.render().unwrap();
+    harness.type_text(":80").unwrap();
 
-    // The cursor should already be on line 3 (byte 12, just after "11111\n22222\n")
-    // while the prompt is still open — without ever pressing Enter.
-    let line3_start = "11111\n22222\n".len();
-    assert_ne!(
-        harness.cursor_position(),
-        line1_position,
-        "Cursor should have moved from its starting position"
-    );
-    assert_eq!(
-        harness.cursor_position(),
-        line3_start,
-        "Cursor should live-preview at start of line 3 while typing ':3'"
-    );
+    // Live preview must have scrolled the viewport toward line 80, while the
+    // prompt is still open (no Enter pressed). The suggestion popup overlays
+    // the bottom rows, so line 80 itself may render behind it; check a line
+    // that's guaranteed to be in the visible content area and confirm the
+    // original top-of-file line is gone.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 75 │ LINE75") && !screen.contains("  1 │ LINE1")
+        })
+        .expect("Viewport should scroll toward line 80 during ':80' preview");
 }
 
 /// Extending the live preview to a new number jumps again in the same prompt.
@@ -267,9 +280,8 @@ fn test_quick_open_goto_line_live_preview_updates() {
         EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
     let project_root = harness.project_dir().unwrap();
 
-    let content = "11111\n22222\nABCDE12345\n44444\n55555\n66666\n";
     let jump_path = project_root.join("jump.txt");
-    fs::write(&jump_path, content).unwrap();
+    write_numbered_lines(&jump_path, 100);
 
     harness.open_file(&jump_path).unwrap();
     harness.render().unwrap();
@@ -281,32 +293,35 @@ fn test_quick_open_goto_line_live_preview_updates() {
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
 
-    // First preview to line 2.
-    harness.type_text(":2").unwrap();
-    harness.render().unwrap();
-    let line2_start = "11111\n".len();
-    assert_eq!(
-        harness.cursor_position(),
-        line2_start,
-        "Cursor should live-preview at start of line 2"
-    );
+    // First preview to line 40 — viewport scrolls so line 35 is visible.
+    harness.type_text(":40").unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 35 │ LINE35") && !screen.contains("  1 │ LINE1")
+        })
+        .expect("Viewport should scroll toward line 40");
 
-    // Change the target to line 5.
+    // Change the target to line 80 — viewport should follow.
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
-    harness.type_text("5").unwrap();
-    harness.render().unwrap();
-    let line5_start = "11111\n22222\nABCDE12345\n44444\n".len();
-    assert_eq!(
-        harness.cursor_position(),
-        line5_start,
-        "Cursor should live-preview at start of line 5 after updating target"
-    );
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("80").unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 75 │ LINE75") && !screen.contains(" 35 │ LINE35")
+        })
+        .expect("Viewport should follow the updated target to line 80");
 }
 
 /// Canceling the Quick Open prompt (Esc) after a live-preview jump should
-/// restore the cursor to where it was before the prompt was opened.
+/// restore the cursor to where it was before the prompt was opened. Observable
+/// in the rendered output as the viewport scrolling back and the status bar
+/// reporting the original line.
 #[test]
 fn test_quick_open_goto_line_live_preview_cancel_restores() {
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -315,13 +330,11 @@ fn test_quick_open_goto_line_live_preview_cancel_restores() {
         EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
     let project_root = harness.project_dir().unwrap();
 
-    let content = "11111\n22222\nABCDE12345\n44444\n55555\n";
     let jump_path = project_root.join("jump.txt");
-    fs::write(&jump_path, content).unwrap();
+    write_numbered_lines(&jump_path, 100);
 
     harness.open_file(&jump_path).unwrap();
     harness.render().unwrap();
-    let original_position = harness.cursor_position();
 
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -329,26 +342,24 @@ fn test_quick_open_goto_line_live_preview_cancel_restores() {
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
-    harness.type_text(":3").unwrap();
-    harness.render().unwrap();
+    harness.type_text(":80").unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 75 │ LINE75") && !screen.contains("  1 │ LINE1")
+        })
+        .expect("Preview should scroll toward line 80");
 
-    let line3_start = "11111\n22222\n".len();
-    assert_eq!(
-        harness.cursor_position(),
-        line3_start,
-        "Cursor should live-preview at start of line 3"
-    );
-
-    // Cancel the prompt.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
 
-    // Cursor should be back at its original position.
-    assert_eq!(
-        harness.cursor_position(),
-        original_position,
-        "Cursor should be restored to its pre-preview position after Esc"
-    );
+    // After Esc, the prompt closes and the status bar becomes visible; the
+    // cursor must be back on line 1 and the viewport scrolled back to it.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Ln 1,") && screen.contains("  1 │ LINE1")
+        })
+        .expect("Esc should restore cursor to pre-preview line 1");
 }
 
 /// Clicking in the editor while a goto-line preview is active should commit
@@ -362,9 +373,8 @@ fn test_quick_open_goto_line_live_preview_mouse_click_commits() {
         EditorTestHarness::with_temp_project_and_config(100, 30, Default::default()).unwrap();
     let project_root = harness.project_dir().unwrap();
 
-    let content = "LINE1\nLINE2\nLINE3\nLINE4\nLINE5\nLINE6\nLINE7\nLINE8\nLINE9\nLINE10\n";
     let jump_path = project_root.join("jump.txt");
-    fs::write(&jump_path, content).unwrap();
+    write_numbered_lines(&jump_path, 100);
 
     harness.open_file(&jump_path).unwrap();
     harness.render().unwrap();
@@ -375,38 +385,34 @@ fn test_quick_open_goto_line_live_preview_mouse_click_commits() {
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
-    harness.type_text(":8").unwrap();
-    harness.render().unwrap();
-    let line8_start = "LINE1\nLINE2\nLINE3\nLINE4\nLINE5\nLINE6\nLINE7\n".len();
-    assert_eq!(
-        harness.cursor_position(),
-        line8_start,
-        "Preview should have jumped cursor to line 8"
-    );
+    harness.type_text(":80").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(" 78 │ LINE78"))
+        .expect("Preview should scroll so LINE78 is on screen near LINE80");
 
-    // Click in the editor content area. (col=10, row=4 lands on a visible
-    // line near the top of the buffer — past the menu and tab bars.)
-    harness.mouse_click(10, 4).unwrap();
-    let clicked_position = harness.cursor_position();
-    assert_ne!(
-        clicked_position, line8_start,
-        "Mouse click should have moved cursor away from the preview target"
-    );
+    // Locate a visible line's rendered position and click on it. Using a line
+    // different from the preview target proves the click overrides the preview.
+    let (col, row) = harness
+        .find_text_on_screen("LINE78")
+        .expect("LINE78 should be visible while previewing line 80");
+    harness.mouse_click(col, row).unwrap();
 
-    // Press Esc — the pre-preview snapshot must NOT override the click.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-    assert_eq!(
-        harness.cursor_position(),
-        clicked_position,
-        "Cursor should stay where the user clicked; preview snapshot must be committed on click"
-    );
+
+    // The pre-preview snapshot (line 1) must NOT overwrite the click target
+    // (line 78) — status bar must report line 78 after the prompt closes.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 78,"))
+        .expect(
+            "Cursor should stay on the clicked line 78 — pre-preview snapshot must be \
+             dropped on editor click",
+        );
 }
 
-/// A buffer edit that lands before the preview cursor (shifting it forward
-/// via `adjust_for_edit`) invalidates the snapshot: Esc afterwards must NOT
-/// restore, because the pre-preview byte position is meaningless relative to
-/// the edited buffer.
+/// A buffer edit that shifts the cursor via `adjust_for_edit` while the
+/// preview is active invalidates the snapshot: Esc afterwards must NOT restore
+/// the pre-preview byte position, which no longer corresponds to the original
+/// line number.
 #[test]
 fn test_quick_open_goto_line_live_preview_buffer_edit_invalidates() {
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -416,9 +422,8 @@ fn test_quick_open_goto_line_live_preview_buffer_edit_invalidates() {
         EditorTestHarness::with_temp_project_and_config(100, 30, Default::default()).unwrap();
     let project_root = harness.project_dir().unwrap();
 
-    let content = "LINE1\nLINE2\nLINE3\nLINE4\nLINE5\nLINE6\nLINE7\nLINE8\nLINE9\nLINE10\n";
     let jump_path = project_root.join("jump.txt");
-    fs::write(&jump_path, content).unwrap();
+    write_numbered_lines(&jump_path, 100);
 
     harness.open_file(&jump_path).unwrap();
     harness.render().unwrap();
@@ -429,15 +434,18 @@ fn test_quick_open_goto_line_live_preview_buffer_edit_invalidates() {
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
-    harness.type_text(":5").unwrap();
-    harness.render().unwrap();
-    let line5_before_edit = "LINE1\nLINE2\nLINE3\nLINE4\n".len();
-    assert_eq!(harness.cursor_position(), line5_before_edit);
+    harness.type_text(":50").unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 45 │ LINE45") && !screen.contains("  1 │ LINE1")
+        })
+        .expect("Preview should scroll toward line 50");
 
-    // External edit (e.g. LSP code action, plugin, format-on-save) inserts
-    // at the start of the buffer. Use a cursor_id that doesn't exist so the
-    // primary cursor only receives `adjust_for_edit` (no end-of-insertion
-    // move) — this models the "async edit came in" scenario.
+    // Simulate an async external edit (LSP code action, plugin, format-on-save)
+    // inserting a single line at the start of the buffer. Use a cursor_id that
+    // doesn't match any cursor so the primary cursor only receives
+    // `adjust_for_edit` (no end-of-insertion jump).
     harness
         .apply_event(Event::Insert {
             position: 0,
@@ -445,19 +453,25 @@ fn test_quick_open_goto_line_live_preview_buffer_edit_invalidates() {
             cursor_id: CursorId(999_999),
         })
         .unwrap();
-    let cursor_after_edit = harness.cursor_position();
-    assert_ne!(
-        cursor_after_edit, line5_before_edit,
-        "Cursor should have shifted via adjust_for_edit after inserting at position 0"
-    );
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-    assert_eq!(
-        harness.cursor_position(),
-        cursor_after_edit,
-        "Esc must not restore the stale pre-preview snapshot after an external edit shifted the cursor"
-    );
+
+    // Inserting one line before the cursor shifts it via `adjust_for_edit`
+    // from line 50 to physical line 51 of the edited buffer (LINE50 text).
+    // If the restore had fired, the viewport would have snapped back to the
+    // top of the buffer (gutter line "  1 │ PREFIX") and LINE50 would scroll
+    // out of view. Rendered-output evidence that the snapshot was dropped:
+    // the viewport still shows content around the adjusted cursor.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 51 │ LINE50") && !screen.contains("  1 │ PREFIX")
+        })
+        .expect(
+            "Esc must not restore the stale pre-preview snapshot after an external edit \
+             shifted the cursor — expected viewport to stay near line 51 (LINE50), \
+             not snap back to the PREFIX line at the top",
+        );
 }
 
 /// Changing the prefix away from ":" should restore the cursor even without
@@ -470,13 +484,11 @@ fn test_quick_open_goto_line_live_preview_restores_when_prefix_changes() {
         EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
     let project_root = harness.project_dir().unwrap();
 
-    let content = "11111\n22222\nABCDE12345\n44444\n55555\n";
     let jump_path = project_root.join("jump.txt");
-    fs::write(&jump_path, content).unwrap();
+    write_numbered_lines(&jump_path, 100);
 
     harness.open_file(&jump_path).unwrap();
     harness.render().unwrap();
-    let original_position = harness.cursor_position();
 
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -484,16 +496,19 @@ fn test_quick_open_goto_line_live_preview_restores_when_prefix_changes() {
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
-    harness.type_text(":3").unwrap();
-    harness.render().unwrap();
+    harness.type_text(":80").unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 75 │ LINE75") && !screen.contains("  1 │ LINE1")
+        })
+        .expect("Preview should scroll toward line 80");
 
-    assert_ne!(
-        harness.cursor_position(),
-        original_position,
-        "Cursor should have moved to line 3 during preview"
-    );
-
-    // Replace ":3" with ">toggle" to switch to the command provider.
+    // Replace ":80" with ">toggle" to switch to the command provider — this
+    // should restore the pre-preview viewport (line 1 visible again).
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
@@ -501,13 +516,15 @@ fn test_quick_open_goto_line_live_preview_restores_when_prefix_changes() {
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
     harness.type_text(">toggle").unwrap();
-    harness.render().unwrap();
-
-    assert_eq!(
-        harness.cursor_position(),
-        original_position,
-        "Cursor should be restored when the goto-line provider is no longer targeted"
-    );
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("  1 │ LINE1") && !screen.contains(" 75 │ LINE75")
+        })
+        .expect(
+            "Switching providers should restore the pre-preview viewport — line 1 visible, \
+             line 75 no longer visible",
+        );
 }
 
 /// Test command palette fuzzy matching
