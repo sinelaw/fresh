@@ -3,7 +3,13 @@ use rust_i18n::t;
 
 use super::*;
 use crate::view::file_tree::TreeNode;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone)]
+pub struct FileExplorerClipboard {
+    pub paths: Vec<PathBuf>,
+    pub is_cut: bool,
+}
 
 /// Get the parent directory path from a file tree node.
 /// If the node is a directory, returns its path. If it's a file, returns the parent directory.
@@ -552,27 +558,38 @@ impl Editor {
     }
 
     pub fn file_explorer_delete(&mut self) {
-        if let Some(explorer) = &self.file_explorer {
-            if let Some(selected_id) = explorer.get_selected() {
-                // Don't allow deleting the root directory
-                if selected_id == explorer.tree().root_id() {
-                    self.set_status_message(t!("explorer.cannot_delete_root").to_string());
-                    return;
-                }
+        let Some(explorer) = &self.file_explorer else { return };
+        let root_id = explorer.tree().root_id();
+        let selected_ids = explorer.effective_selection();
 
-                let node = explorer.tree().get_node(selected_id);
-                if let Some(node) = node {
-                    let path = node.entry.path.clone();
-                    let name = node.entry.name.clone();
-                    let is_dir = node.is_dir();
+        let paths: Vec<(PathBuf, bool)> = selected_ids
+            .iter()
+            .filter(|&&id| id != root_id)
+            .filter_map(|&id| {
+                explorer.tree().get_node(id).map(|n| (n.entry.path.clone(), n.is_dir()))
+            })
+            .collect();
 
-                    let type_str = if is_dir { "directory" } else { "file" };
-                    self.start_prompt(
-                        t!("explorer.delete_confirm", "type" = type_str, name = &name).to_string(),
-                        PromptType::ConfirmDeleteFile { path, is_dir },
-                    );
-                }
-            }
+        if paths.is_empty() {
+            self.set_status_message(t!("explorer.cannot_delete_root").to_string());
+            return;
+        }
+
+        if paths.len() == 1 {
+            let (path, is_dir) = paths.into_iter().next().unwrap();
+            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let type_str = if is_dir { "directory" } else { "file" };
+            self.start_prompt(
+                t!("explorer.delete_confirm", "type" = type_str, name = &name).to_string(),
+                PromptType::ConfirmDeleteFile { path, is_dir },
+            );
+        } else {
+            let count = paths.len();
+            let all_paths: Vec<PathBuf> = paths.into_iter().map(|(p, _)| p).collect();
+            self.start_prompt(
+                t!("explorer.delete_multi_confirm", count = count).to_string(),
+                PromptType::ConfirmMultiDelete { paths: all_paths },
+            );
         }
     }
 
@@ -713,6 +730,15 @@ impl Editor {
             return;
         }
 
+        if new_name.contains('/') {
+            self.set_status_message(t!("explorer.rename_invalid_separator").to_string());
+            return;
+        }
+        if new_name == "." || new_name == ".." {
+            self.set_status_message(t!("explorer.rename_invalid_dot").to_string());
+            return;
+        }
+
         let new_path = original_path
             .parent()
             .map(|p| p.join(&new_name))
@@ -833,15 +859,40 @@ impl Editor {
         );
     }
 
-    /// Clear the file explorer search
+    /// Clear the file explorer search (or multi-selection, or transfer focus)
     pub fn file_explorer_search_clear(&mut self) {
         if let Some(explorer) = &mut self.file_explorer {
-            if explorer.is_search_active() {
+            if explorer.has_multi_selection() {
+                explorer.clear_multi_selection();
+            } else if explorer.is_search_active() {
                 explorer.search_clear();
             } else {
-                // No active search — Escape transfers focus to the editor
                 self.focus_editor();
             }
+        }
+    }
+
+    pub fn file_explorer_extend_selection_up(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.extend_selection_up();
+        }
+    }
+
+    pub fn file_explorer_extend_selection_down(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.extend_selection_down();
+        }
+    }
+
+    pub fn file_explorer_toggle_select(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.toggle_select();
+        }
+    }
+
+    pub fn file_explorer_select_all(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.select_all();
         }
     }
 
@@ -913,4 +964,314 @@ impl Editor {
                 &symlink_mappings,
             );
     }
+
+    pub fn file_explorer_clipboard(&self) -> Option<&FileExplorerClipboard> {
+        self.file_explorer_clipboard.as_ref()
+    }
+
+    pub fn file_explorer_copy(&mut self) {
+        self.set_explorer_clipboard(false);
+    }
+
+    pub fn file_explorer_cut(&mut self) {
+        self.set_explorer_clipboard(true);
+    }
+
+    fn set_explorer_clipboard(&mut self, is_cut: bool) {
+        let Some(explorer) = &self.file_explorer else { return };
+        let root_id = explorer.tree().root_id();
+        let selected_ids = explorer.effective_selection();
+        let paths: Vec<PathBuf> = selected_ids
+            .iter()
+            .filter(|&&id| id != root_id)
+            .filter_map(|&id| explorer.tree().get_node(id).map(|n| n.entry.path.clone()))
+            .collect();
+        if paths.is_empty() {
+            let msg = if is_cut {
+                t!("explorer.cannot_cut_root").to_string()
+            } else {
+                t!("explorer.cannot_copy_root").to_string()
+            };
+            self.set_status_message(msg);
+            return;
+        }
+        let msg = if paths.len() == 1 {
+            let name = paths[0].file_name().unwrap_or_default().to_string_lossy().to_string();
+            if is_cut {
+                t!("explorer.cut", name = &name).to_string()
+            } else {
+                t!("explorer.copied", name = &name).to_string()
+            }
+        } else {
+            let count = paths.len();
+            if is_cut {
+                t!("explorer.cut_n", count = count).to_string()
+            } else {
+                t!("explorer.copied_n", count = count).to_string()
+            }
+        };
+        self.file_explorer_clipboard = Some(FileExplorerClipboard { paths, is_cut });
+        self.set_status_message(msg);
+    }
+
+    pub fn file_explorer_paste(&mut self) {
+        let clipboard = match self.file_explorer_clipboard.clone() {
+            Some(c) => c,
+            None => {
+                self.set_status_message(t!("explorer.paste_no_source").to_string());
+                return;
+            }
+        };
+
+        let dst_dir = if let Some(explorer) = &self.file_explorer {
+            if let Some(selected_id) = explorer.get_selected() {
+                if let Some(node) = explorer.tree().get_node(selected_id) {
+                    get_parent_dir_path(node)
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            }
+        } else {
+            return;
+        };
+
+        let is_cut = clipboard.is_cut;
+
+        if clipboard.paths.len() == 1 {
+            let src = clipboard.paths[0].clone();
+            let file_name = match src.file_name() {
+                Some(n) => n.to_os_string(),
+                None => return,
+            };
+            let dst_path = dst_dir.join(&file_name);
+
+            if dst_path == src || src.parent().map(|p| p == dst_dir).unwrap_or(false) {
+                if is_cut {
+                    self.set_status_message(t!("explorer.paste_same_location").to_string());
+                    return;
+                } else {
+                    let unique = unique_paste_name(&*self.authority.filesystem, &dst_dir, &file_name.to_string_lossy());
+                    self.perform_file_explorer_paste(src, unique, false);
+                    return;
+                }
+            }
+
+            if self.authority.filesystem.exists(&dst_path) {
+                let name = truncate_name_for_prompt(&file_name.to_string_lossy(), 40);
+                self.start_prompt(
+                    t!("explorer.paste_conflict", name = &name).to_string(),
+                    crate::view::prompt::PromptType::ConfirmPasteConflict { src, dst: dst_path, is_cut },
+                );
+            } else {
+                self.perform_file_explorer_paste(src, dst_path, is_cut);
+            }
+        } else {
+            // Multi-path: categorize into safe and conflicting destinations
+            let mut safe: Vec<(PathBuf, PathBuf)> = Vec::new();
+            let mut conflicts: Vec<(PathBuf, PathBuf)> = Vec::new();
+
+            for src in &clipboard.paths {
+                let file_name = match src.file_name() {
+                    Some(n) => n.to_os_string(),
+                    None => continue,
+                };
+                let dst_path = dst_dir.join(&file_name);
+                let is_same_location = dst_path == *src
+                    || src.parent().map(|p| p == dst_dir).unwrap_or(false);
+
+                if is_same_location {
+                    if !is_cut {
+                        // Copy to same dir: auto-rename so it lands in safe
+                        let unique = unique_paste_name(
+                            &*self.authority.filesystem,
+                            &dst_dir,
+                            &file_name.to_string_lossy(),
+                        );
+                        safe.push((src.clone(), unique));
+                    }
+                    // Cut to same dir: skip — nothing to do
+                } else if self.authority.filesystem.exists(&dst_path) {
+                    conflicts.push((src.clone(), dst_path));
+                } else {
+                    safe.push((src.clone(), dst_path));
+                }
+            }
+
+            if safe.is_empty() && conflicts.is_empty() {
+                self.set_status_message(t!("explorer.paste_same_location").to_string());
+                return;
+            }
+
+            if conflicts.is_empty() {
+                self.execute_resolved_multi_paste(safe, vec![], is_cut);
+            } else {
+                let name = truncate_name_for_prompt(
+                    &conflicts[0].1.file_name().unwrap_or_default().to_string_lossy(),
+                    40,
+                );
+                self.start_prompt(
+                    t!("explorer.paste_conflict_multi", name = &name).to_string(),
+                    crate::view::prompt::PromptType::ConfirmMultiPasteConflict {
+                        safe,
+                        confirmed: Vec::new(),
+                        pending: conflicts,
+                        is_cut,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Paste all resolved items (safe + confirmed-overwrite) from a multi-conflict flow.
+    pub(super) fn execute_resolved_multi_paste(
+        &mut self,
+        safe: Vec<(PathBuf, PathBuf)>,
+        to_overwrite: Vec<(PathBuf, PathBuf)>,
+        is_cut: bool,
+    ) {
+        let total = safe.len() + to_overwrite.len();
+        for (src, dst) in safe.into_iter().chain(to_overwrite) {
+            self.perform_file_explorer_paste(src, dst, is_cut);
+        }
+        if total > 1 {
+            let msg = if is_cut {
+                t!("explorer.pasted_moved_n", count = total).to_string()
+            } else {
+                t!("explorer.pasted_n", count = total).to_string()
+            };
+            self.set_status_message(msg);
+        }
+    }
+
+    pub fn perform_file_explorer_paste(&mut self, src: PathBuf, dst: PathBuf, is_cut: bool) {
+        let name = dst
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let src_is_dir = self
+            .authority
+            .filesystem
+            .is_dir(&src)
+            .unwrap_or(false);
+
+        let result = if is_cut {
+            // Try rename first (works if same filesystem)
+            match self.authority.filesystem.rename(&src, &dst) {
+                Ok(()) => Ok(()),
+                Err(_) => {
+                    // Cross-filesystem: copy then delete
+                    let copy_result = if src_is_dir {
+                        self.authority.filesystem.copy_dir_all(&src, &dst)
+                    } else {
+                        self.authority.filesystem.copy(&src, &dst).map(|_| ())
+                    };
+                    if copy_result.is_ok() {
+                        if src_is_dir {
+                            self.authority.filesystem.remove_dir_all(&src)
+                        } else {
+                            self.authority.filesystem.remove_file(&src)
+                        }
+                    } else {
+                        copy_result
+                    }
+                }
+            }
+        } else {
+            if src_is_dir {
+                self.authority.filesystem.copy_dir_all(&src, &dst)
+            } else {
+                self.authority.filesystem.copy(&src, &dst).map(|_| ())
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                if let Some(explorer) = &mut self.file_explorer {
+                    if let Some(runtime) = &self.tokio_runtime {
+                        // Refresh destination parent in-place to avoid collapsing it
+                        if let Some(dst_parent) = dst.parent() {
+                            if let Some(dst_parent_node) = explorer.tree().get_node_by_path(dst_parent) {
+                                let pid = dst_parent_node.id;
+                                let _ = runtime.block_on(explorer.tree_mut().reload_expanded_node(pid));
+                            }
+                        }
+                        // Refresh source parent too (if cut)
+                        if is_cut {
+                            if let Some(src_parent) = src.parent() {
+                                if let Some(src_parent_node) = explorer.tree().get_node_by_path(src_parent) {
+                                    let pid = src_parent_node.id;
+                                    let _ = runtime.block_on(explorer.tree_mut().refresh_node(pid));
+                                }
+                            }
+                        }
+                    }
+                    // Navigate to the pasted item
+                    explorer.navigate_to_path(&dst);
+                }
+
+                if is_cut {
+                    self.file_explorer_clipboard = None;
+                    self.set_status_message(t!("explorer.pasted_moved", name = &name).to_string());
+                } else {
+                    self.set_status_message(t!("explorer.pasted", name = &name).to_string());
+                }
+
+                self.key_context = KeyContext::FileExplorer;
+            }
+            Err(e) => {
+                let msg = if is_cut {
+                    t!("explorer.error_moving", error = e.to_string()).to_string()
+                } else {
+                    t!("explorer.error_copying", error = e.to_string()).to_string()
+                };
+                self.set_status_message(msg);
+            }
+        }
+    }
+}
+
+/// Generate a unique non-conflicting paste name in dst_dir for a file/dir named `name`.
+/// Returns `dst_dir/name copy.ext`, `dst_dir/name copy 2.ext`, etc.
+fn unique_paste_name(fs: &dyn crate::model::filesystem::FileSystem, dst_dir: &Path, name: &str) -> PathBuf {
+    let (stem, ext) = split_stem_ext(name);
+    let mut n = 1u32;
+    loop {
+        let candidate = if n == 1 {
+            if ext.is_empty() { format!("{} copy", stem) } else { format!("{} copy.{}", stem, ext) }
+        } else {
+            if ext.is_empty() { format!("{} copy {}", stem, n) } else { format!("{} copy {}.{}", stem, n, ext) }
+        };
+        let path = dst_dir.join(&candidate);
+        if !fs.exists(&path) {
+            return path;
+        }
+        n += 1;
+        if n > 1000 {
+            // Fallback: use a timestamp-based name to avoid an infinite loop
+            return dst_dir.join(format!("{} copy {}", stem, timestamp_suffix()));
+        }
+    }
+}
+
+/// Truncate a filename to at most `max` Unicode chars for display in a minibuffer prompt.
+pub(super) fn truncate_name_for_prompt(name: &str, max: usize) -> String {
+    if name.chars().count() <= max {
+        name.to_string()
+    } else {
+        let truncated: String = name.chars().take(max.saturating_sub(1)).collect();
+        format!("{}\u{2026}", truncated)
+    }
+}
+
+fn split_stem_ext(name: &str) -> (&str, &str) {
+    // Hidden files like ".gitignore" have no extension; treat the whole name as stem
+    if let Some(dot_pos) = name.rfind('.') {
+        if dot_pos > 0 {
+            return (&name[..dot_pos], &name[dot_pos + 1..]);
+        }
+    }
+    (name, "")
 }

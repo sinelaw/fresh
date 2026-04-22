@@ -45,6 +45,20 @@ impl Editor {
         let mouse_hover = self.config.editor.mouse_hover_enabled;
         let inlay_hints = self.config.editor.enable_inlay_hints;
         let has_selection = self.has_active_selection();
+        let can_copy = has_selection
+            || file_explorer_focused
+            || self
+                .file_explorer
+                .as_ref()
+                .map(|fe| fe.get_selected().is_some())
+                .unwrap_or(false);
+        // Paste is available in the explorer only when a file is in the clipboard,
+        // or in the editor only when no file is in the clipboard
+        let can_paste = if file_explorer_focused {
+            self.file_explorer_clipboard.is_some()
+        } else {
+            self.file_explorer_clipboard.is_none()
+        };
         let menu_bar = self.menu_bar_visible;
         let vertical_scrollbar = self.config.editor.show_vertical_scrollbar;
         let horizontal_scrollbar = self.config.editor.show_horizontal_scrollbar;
@@ -88,6 +102,8 @@ impl Editor {
             .set(context_keys::FILE_EXPLORER_SHOW_HIDDEN, show_hidden)
             .set(context_keys::FILE_EXPLORER_SHOW_GITIGNORED, show_gitignored)
             .set(context_keys::HAS_SELECTION, has_selection)
+            .set(context_keys::CAN_COPY, can_copy)
+            .set(context_keys::CAN_PASTE, can_paste)
             .set(context_keys::MENU_BAR, menu_bar)
             .set(context_keys::FORMATTER_AVAILABLE, formatter_available)
             .set(context_keys::SESSION_MODE, session_mode)

@@ -4,7 +4,7 @@ use super::search::FileExplorerSearch;
 use super::tree::FileTree;
 use crate::input::fuzzy::FuzzyMatch;
 use crate::model::filesystem::DirEntry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// View state for file tree navigation and filtering
@@ -12,8 +12,12 @@ use std::path::PathBuf;
 pub struct FileTreeView {
     /// The underlying tree model
     tree: FileTree,
-    /// Currently selected node
+    /// Cursor / focus node (always a single item)
     selected_node: Option<NodeId>,
+    /// Multi-selection set — empty means single-cursor mode
+    multi_selection: HashSet<NodeId>,
+    /// Anchor for Shift+range extension
+    selection_anchor: Option<NodeId>,
     /// Scroll offset (index into visible nodes)
     scroll_offset: usize,
     /// Sort mode for entries
@@ -44,6 +48,8 @@ impl FileTreeView {
         Self {
             tree,
             selected_node: Some(root_id),
+            multi_selection: HashSet::new(),
+            selection_anchor: None,
             scroll_offset: 0,
             sort_mode: SortMode::Type,
             ignore_patterns: IgnorePatterns::new(),
@@ -119,8 +125,9 @@ impl FileTreeView {
         self.selected_node = node_id;
     }
 
-    /// Select the next visible node
+    /// Select the next visible node (clears multi-selection)
     pub fn select_next(&mut self) {
+        self.clear_multi_selection();
         let visible = self.filtered_visible_nodes();
         if visible.is_empty() {
             return;
@@ -137,8 +144,9 @@ impl FileTreeView {
         }
     }
 
-    /// Select the previous visible node
+    /// Select the previous visible node (clears multi-selection)
     pub fn select_prev(&mut self) {
+        self.clear_multi_selection();
         let visible = self.filtered_visible_nodes();
         if visible.is_empty() {
             return;
@@ -208,22 +216,21 @@ impl FileTreeView {
         if self.viewport_height == 0 {
             return;
         }
+        let visible = self.filtered_visible_nodes();
+        self.update_scroll_with_nodes(&visible);
+    }
 
+    fn update_scroll_with_nodes(&mut self, visible: &[NodeId]) {
+        if self.viewport_height == 0 {
+            return;
+        }
         if let Some(selected) = self.selected_node {
-            let visible = self.filtered_visible_nodes();
             if let Some(pos) = visible.iter().position(|&id| id == selected) {
-                // Only scroll if cursor goes PAST the viewport edges
-                // This implements symmetric scrolling behavior
-
-                // If selection is above the visible area, scroll up
                 if pos < self.scroll_offset {
                     self.scroll_offset = pos;
-                }
-                // If selection is below the visible area, scroll down
-                else if pos >= self.scroll_offset + self.viewport_height {
+                } else if pos >= self.scroll_offset + self.viewport_height {
                     self.scroll_offset = pos - self.viewport_height + 1;
                 }
-                // Otherwise, cursor is within viewport - don't scroll
             }
         }
     }
@@ -241,6 +248,99 @@ impl FileTreeView {
         let visible = self.filtered_visible_nodes();
         if !visible.is_empty() {
             self.selected_node = Some(*visible.last().unwrap());
+        }
+    }
+
+    /// Toggle the cursor item in/out of the multi-selection and set the anchor.
+    pub fn toggle_select(&mut self) {
+        if let Some(cursor) = self.selected_node {
+            if self.multi_selection.contains(&cursor) {
+                self.multi_selection.remove(&cursor);
+            } else {
+                self.multi_selection.insert(cursor);
+            }
+            self.selection_anchor = Some(cursor);
+        }
+    }
+
+    /// Extend the selection one step upward from the current cursor.
+    pub fn extend_selection_up(&mut self) {
+        let visible = self.filtered_visible_nodes();
+        if visible.is_empty() {
+            return;
+        }
+        let Some(current) = self.selected_node else { return };
+        let Some(pos) = visible.iter().position(|&id| id == current) else { return };
+        if pos == 0 {
+            return;
+        }
+        let anchor = self.selection_anchor.unwrap_or(current);
+        if self.multi_selection.is_empty() {
+            self.multi_selection.insert(current);
+            self.selection_anchor = Some(current);
+        }
+        let new_pos = pos - 1;
+        self.selected_node = Some(visible[new_pos]);
+        let anchor_pos = visible.iter().position(|&id| id == anchor).unwrap_or(new_pos);
+        let (lo, hi) = (new_pos.min(anchor_pos), new_pos.max(anchor_pos));
+        self.multi_selection = visible[lo..=hi].iter().copied().collect();
+        self.update_scroll_with_nodes(&visible);
+    }
+
+    /// Extend the selection one step downward from the current cursor.
+    pub fn extend_selection_down(&mut self) {
+        let visible = self.filtered_visible_nodes();
+        if visible.is_empty() {
+            return;
+        }
+        let Some(current) = self.selected_node else { return };
+        let Some(pos) = visible.iter().position(|&id| id == current) else { return };
+        if pos + 1 >= visible.len() {
+            return;
+        }
+        let anchor = self.selection_anchor.unwrap_or(current);
+        if self.multi_selection.is_empty() {
+            self.multi_selection.insert(current);
+            self.selection_anchor = Some(current);
+        }
+        let new_pos = pos + 1;
+        self.selected_node = Some(visible[new_pos]);
+        let anchor_pos = visible.iter().position(|&id| id == anchor).unwrap_or(new_pos);
+        let (lo, hi) = (new_pos.min(anchor_pos), new_pos.max(anchor_pos));
+        self.multi_selection = visible[lo..=hi].iter().copied().collect();
+        self.update_scroll_with_nodes(&visible);
+    }
+
+    /// Select all currently visible nodes.
+    pub fn select_all(&mut self) {
+        let visible = self.filtered_visible_nodes();
+        self.multi_selection = visible.iter().copied().collect();
+        self.selection_anchor = self.selected_node;
+    }
+
+    /// Clear multi-selection (return to single-cursor mode).
+    pub fn clear_multi_selection(&mut self) {
+        self.multi_selection.clear();
+        self.selection_anchor = None;
+    }
+
+    /// True when more than one item is selected.
+    pub fn has_multi_selection(&self) -> bool {
+        !self.multi_selection.is_empty()
+    }
+
+    /// Returns the set of multi-selected nodes (empty in single-cursor mode).
+    pub fn multi_selection(&self) -> &HashSet<NodeId> {
+        &self.multi_selection
+    }
+
+    /// The nodes that operations (copy/cut/delete) should act on.
+    /// Returns the multi-selection when non-empty, otherwise `[cursor]`.
+    pub fn effective_selection(&self) -> Vec<NodeId> {
+        if !self.multi_selection.is_empty() {
+            self.multi_selection.iter().copied().collect()
+        } else {
+            self.selected_node.into_iter().collect()
         }
     }
 
@@ -314,6 +414,7 @@ impl FileTreeView {
     pub fn navigate_to_path(&mut self, path: &std::path::Path) {
         if let Some(node) = self.tree.get_node_by_path(path) {
             self.selected_node = Some(node.id);
+            self.update_scroll_for_selection();
         }
     }
 

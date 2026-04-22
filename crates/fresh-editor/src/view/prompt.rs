@@ -127,6 +127,31 @@ pub enum PromptType {
         path: std::path::PathBuf,
         is_dir: bool,
     },
+    /// Confirm overwriting, renaming, or cancelling a paste conflict
+    ConfirmPasteConflict {
+        src: std::path::PathBuf,
+        dst: std::path::PathBuf,
+        is_cut: bool,
+    },
+    /// Rename destination when pasting (user chose 'r' in conflict prompt)
+    FileExplorerPasteRename {
+        src: std::path::PathBuf,
+        dst_dir: std::path::PathBuf,
+        is_cut: bool,
+    },
+    /// Confirm deleting multiple items from the file explorer
+    ConfirmMultiDelete {
+        paths: Vec<std::path::PathBuf>,
+    },
+    /// Per-conflict prompt for multi-file paste.
+    /// `pending[0]` is the conflict currently being shown.
+    /// User choices: (o)verwrite this, (O) all, (s)kip this, (S) all, (c)ancel.
+    ConfirmMultiPasteConflict {
+        safe: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+        confirmed: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+        pending: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+        is_cut: bool,
+    },
     /// Confirm loading a large file with non-resynchronizable encoding
     /// (like GB18030, GBK, Shift-JIS, EUC-KR) that requires full file loading
     ConfirmLargeFileEncoding { path: std::path::PathBuf },

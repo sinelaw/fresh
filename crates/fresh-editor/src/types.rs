@@ -26,6 +26,8 @@ pub mod context_keys {
     pub const FILE_EXPLORER_SHOW_HIDDEN: &str = "file_explorer_show_hidden";
     pub const FILE_EXPLORER_SHOW_GITIGNORED: &str = "file_explorer_show_gitignored";
     pub const HAS_SELECTION: &str = "has_selection";
+    pub const CAN_COPY: &str = "can_copy";
+    pub const CAN_PASTE: &str = "can_paste";
     pub const FORMATTER_AVAILABLE: &str = "formatter_available";
     pub const INLAY_HINTS: &str = "inlay_hints";
     pub const SESSION_MODE: &str = "session_mode";

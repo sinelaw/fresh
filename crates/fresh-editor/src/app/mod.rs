@@ -540,6 +540,9 @@ pub struct Editor {
     /// Cached file explorer decorations (resolved + bubbled)
     file_explorer_decoration_cache: crate::view::file_tree::FileExplorerDecorationCache,
 
+    /// File explorer clipboard for cut/copy/paste of files and directories
+    pub(crate) file_explorer_clipboard: Option<crate::app::file_explorer::FileExplorerClipboard>,
+
     /// Whether menu bar is visible
     menu_bar_visible: bool,
 

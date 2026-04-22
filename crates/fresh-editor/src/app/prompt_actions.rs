@@ -373,6 +373,90 @@ impl Editor {
                     self.set_status_message(t!("explorer.delete_cancelled").to_string());
                 }
             }
+            PromptType::ConfirmPasteConflict { src, dst, is_cut } => {
+                match input.trim().to_lowercase().as_str() {
+                    "o" | "overwrite" => {
+                        self.perform_file_explorer_paste(src, dst, is_cut);
+                    }
+                    "r" | "rename" => {
+                        let initial = dst
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        let dst_dir = dst
+                            .parent()
+                            .map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| dst.clone());
+                        self.start_prompt_with_initial_text(
+                            t!("explorer.paste_rename_prompt").to_string(),
+                            PromptType::FileExplorerPasteRename { src, dst_dir, is_cut },
+                            initial,
+                        );
+                    }
+                    _ => {
+                        self.set_status_message(t!("explorer.paste_cancelled").to_string());
+                    }
+                }
+            }
+            PromptType::FileExplorerPasteRename { src, dst_dir, is_cut } => {
+                if input.trim().is_empty() {
+                    self.set_status_message(t!("explorer.paste_cancelled").to_string());
+                    return PromptResult::Done;
+                }
+                let new_dst = dst_dir.join(input.trim());
+                if self.authority.filesystem.exists(&new_dst) {
+                    self.start_prompt(
+                        t!("explorer.paste_conflict", name = input.trim()).to_string(),
+                        PromptType::ConfirmPasteConflict { src, dst: new_dst, is_cut },
+                    );
+                } else {
+                    self.perform_file_explorer_paste(src, new_dst, is_cut);
+                }
+            }
+            PromptType::ConfirmMultiDelete { paths } => {
+                let input_lower = input.trim().to_lowercase();
+                if input_lower == "y" || input_lower == "yes" {
+                    for path in paths {
+                        let is_dir = self.authority.filesystem.is_dir(&path).unwrap_or(false);
+                        self.perform_file_explorer_delete(path, is_dir);
+                    }
+                } else {
+                    self.set_status_message(t!("explorer.delete_cancelled").to_string());
+                }
+            }
+            PromptType::ConfirmMultiPasteConflict { safe, confirmed, mut pending, is_cut } => {
+                let (cur_src, cur_dst) = pending.remove(0);
+                match input.trim() {
+                    "o" | "overwrite" => {
+                        let mut new_confirmed = confirmed;
+                        new_confirmed.push((cur_src, cur_dst));
+                        if pending.is_empty() {
+                            self.execute_resolved_multi_paste(safe, new_confirmed, is_cut);
+                        } else {
+                            self.prompt_next_paste_conflict(safe, new_confirmed, pending, is_cut);
+                        }
+                    }
+                    "O" | "overwrite all" => {
+                        let mut new_confirmed = confirmed;
+                        new_confirmed.push((cur_src, cur_dst));
+                        new_confirmed.extend(pending);
+                        self.execute_resolved_multi_paste(safe, new_confirmed, is_cut);
+                    }
+                    "s" | "skip" => {
+                        if pending.is_empty() {
+                            self.execute_resolved_multi_paste(safe, confirmed, is_cut);
+                        } else {
+                            self.prompt_next_paste_conflict(safe, confirmed, pending, is_cut);
+                        }
+                    }
+                    "S" | "skip all" => {
+                        self.execute_resolved_multi_paste(safe, confirmed, is_cut);
+                    }
+                    _ => {
+                        self.set_status_message(t!("explorer.paste_cancelled").to_string());
+                    }
+                }
+            }
             PromptType::ConfirmLargeFileEncoding { path } => {
                 let input_lower = input.trim().to_lowercase();
                 let load_key = t!("file.large_encoding.key.load")
@@ -1343,6 +1427,24 @@ impl Editor {
                 }
             }
         }
+    }
+
+    /// Show the next per-conflict prompt in a multi-paste conflict chain.
+    fn prompt_next_paste_conflict(
+        &mut self,
+        safe: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+        confirmed: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+        pending: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+        is_cut: bool,
+    ) {
+        let name = crate::app::file_explorer::truncate_name_for_prompt(
+            &pending[0].1.file_name().unwrap_or_default().to_string_lossy(),
+            40,
+        );
+        self.start_prompt(
+            t!("explorer.paste_conflict_multi", name = &name).to_string(),
+            PromptType::ConfirmMultiPasteConflict { safe, confirmed, pending, is_cut },
+        );
     }
 }
 

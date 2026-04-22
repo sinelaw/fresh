@@ -509,6 +509,32 @@ pub trait FileSystem: Send + Sync {
     /// Remove an empty directory
     fn remove_dir(&self, path: &Path) -> io::Result<()>;
 
+    /// Recursively remove a directory and all its contents
+    fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+        for entry in self.read_dir(path)? {
+            if entry.is_dir() {
+                self.remove_dir_all(&entry.path)?;
+            } else {
+                self.remove_file(&entry.path)?;
+            }
+        }
+        self.remove_dir(path)
+    }
+
+    /// Recursively copy a directory and all its contents to dst
+    fn copy_dir_all(&self, src: &Path, dst: &Path) -> io::Result<()> {
+        self.create_dir_all(dst)?;
+        for entry in self.read_dir(src)? {
+            let dst_child = dst.join(&entry.name);
+            if entry.is_dir() {
+                self.copy_dir_all(&entry.path, &dst_child)?;
+            } else {
+                self.copy(&entry.path, &dst_child)?;
+            }
+        }
+        Ok(())
+    }
+
     // ========================================================================
     // Metadata Operations
     // ========================================================================

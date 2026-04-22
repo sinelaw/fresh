@@ -2994,6 +2994,13 @@ pub fn action_to_events(
         | Action::FileExplorerToggleGitignored
         | Action::FileExplorerSearchClear
         | Action::FileExplorerSearchBackspace
+        | Action::FileExplorerCopy
+        | Action::FileExplorerCut
+        | Action::FileExplorerPaste
+        | Action::FileExplorerExtendSelectionUp
+        | Action::FileExplorerExtendSelectionDown
+        | Action::FileExplorerToggleSelect
+        | Action::FileExplorerSelectAll
         | Action::LspCompletion
         | Action::LspGotoDefinition
         | Action::LspReferences

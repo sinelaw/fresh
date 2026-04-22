@@ -447,8 +447,7 @@ impl Editor {
                 }
             },
             Action::Copy => {
-                // Check if there's an active popup with text selection.
-                // Editor-level popups take precedence over buffer popups.
+                // Editor-level popups take precedence over everything, including the file explorer.
                 let popup = self
                     .global_popups
                     .top()
@@ -462,6 +461,10 @@ impl Editor {
                         }
                     }
                 }
+                if self.key_context == crate::input::keybindings::KeyContext::FileExplorer {
+                    self.file_explorer_copy();
+                    return Ok(());
+                }
                 // Check if active buffer is a composite buffer
                 let buffer_id = self.active_buffer();
                 if self.is_composite_buffer(buffer_id) {
@@ -473,6 +476,10 @@ impl Editor {
             }
             Action::CopyWithTheme(theme) => self.copy_selection_with_theme(&theme),
             Action::Cut => {
+                if self.key_context == crate::input::keybindings::KeyContext::FileExplorer {
+                    self.file_explorer_cut();
+                    return Ok(());
+                }
                 if self.is_editing_disabled() {
                     self.set_status_message(t!("buffer.editing_disabled").to_string());
                     return Ok(());
@@ -480,6 +487,10 @@ impl Editor {
                 self.cut_selection()
             }
             Action::Paste => {
+                if self.key_context == crate::input::keybindings::KeyContext::FileExplorer {
+                    self.file_explorer_paste();
+                    return Ok(());
+                }
                 if self.is_editing_disabled() {
                     self.set_status_message(t!("buffer.editing_disabled").to_string());
                     return Ok(());
@@ -880,6 +891,13 @@ impl Editor {
             Action::FileExplorerToggleGitignored => self.file_explorer_toggle_gitignored(),
             Action::FileExplorerSearchClear => self.file_explorer_search_clear(),
             Action::FileExplorerSearchBackspace => self.file_explorer_search_pop_char(),
+            Action::FileExplorerCopy => self.file_explorer_copy(),
+            Action::FileExplorerCut => self.file_explorer_cut(),
+            Action::FileExplorerPaste => self.file_explorer_paste(),
+            Action::FileExplorerExtendSelectionUp => self.file_explorer_extend_selection_up(),
+            Action::FileExplorerExtendSelectionDown => self.file_explorer_extend_selection_down(),
+            Action::FileExplorerToggleSelect => self.file_explorer_toggle_select(),
+            Action::FileExplorerSelectAll => self.file_explorer_select_all(),
             Action::RemoveSecondaryCursors => {
                 // Convert action to events and apply them
                 if let Some(events) = self.action_to_events(Action::RemoveSecondaryCursors) {

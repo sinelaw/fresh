@@ -227,6 +227,86 @@ impl FileTree {
         self.expand_node(id).await
     }
 
+    /// Reload an already-expanded directory node in-place without collapsing it.
+    ///
+    /// Unlike `refresh_node`, this does not remove existing children first, so
+    /// sub-directories that were already expanded keep their state. New entries
+    /// are added, entries that no longer exist are removed, and the child list is
+    /// re-sorted. If the node is not currently expanded, falls back to `refresh_node`.
+    pub async fn reload_expanded_node(&mut self, id: NodeId) -> io::Result<()> {
+        let is_expanded = self
+            .get_node(id)
+            .map(|n| n.is_expanded())
+            .unwrap_or(false);
+
+        if !is_expanded {
+            return self.refresh_node(id).await;
+        }
+
+        let path = self
+            .get_node(id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Node not found"))?
+            .entry
+            .path
+            .clone();
+
+        let entries = self.fs_manager.list_dir_with_metadata(path).await?;
+        let new_paths: HashMap<PathBuf, DirEntry> =
+            entries.into_iter().map(|e| (e.path.clone(), e)).collect();
+
+        // Map existing children by path for O(1) lookup
+        let existing: HashMap<PathBuf, NodeId> = self
+            .get_node(id)
+            .map(|n| {
+                n.children
+                    .iter()
+                    .filter_map(|&cid| {
+                        self.nodes.get(&cid).map(|cn| (cn.entry.path.clone(), cid))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for (path, cid) in &existing {
+            if !new_paths.contains_key(path) {
+                self.remove_node_recursive(*cid);
+            }
+        }
+        for (path, entry) in &new_paths {
+            if !existing.contains_key(path) {
+                self.add_node(entry.clone(), Some(id));
+            }
+        }
+
+        // Collect sort keys upfront to avoid per-comparison HashMap lookups
+        let mut keyed: Vec<(NodeId, bool, String)> = self
+            .get_node(id)
+            .map(|n| {
+                n.children
+                    .iter()
+                    .filter_map(|&cid| {
+                        self.nodes
+                            .get(&cid)
+                            .map(|cn| (cid, cn.is_dir(), cn.entry.name.to_lowercase()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        keyed.sort_by(|(_, a_dir, a_name), (_, b_dir, b_name)| {
+            match (a_dir, b_dir) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a_name.cmp(b_name),
+            }
+        });
+
+        if let Some(node) = self.get_node_mut(id) {
+            node.children = keyed.into_iter().map(|(cid, _, _)| cid).collect();
+        }
+
+        Ok(())
+    }
+
     /// Get all visible nodes in tree order
     ///
     /// Returns a flat list of nodes that should be visible, respecting

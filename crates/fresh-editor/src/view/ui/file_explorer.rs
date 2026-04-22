@@ -43,6 +43,7 @@ impl FileExplorerRenderer {
         theme: &Theme,
         close_button_hovered: bool,
         remote_connection: Option<&str>,
+        cut_paths: &[PathBuf],
     ) {
         let search_active = view.is_search_active();
 
@@ -68,15 +69,16 @@ impl FileExplorerRenderer {
         // Available width for content (subtract borders and cursor indicator)
         let content_width = area.width.saturating_sub(3) as usize;
 
+        let multi_selection = view.multi_selection();
+
         // Create list items for visible nodes only
         let items: Vec<ListItem> = visible_items
             .iter()
             .enumerate()
             .map(|(viewport_idx, &(node_id, indent))| {
-                // The actual index in the full list
                 let actual_idx = scroll_offset + viewport_idx;
                 let is_selected = selected_index == Some(actual_idx);
-                // Get match positions for highlighting
+                let is_multi_selected = multi_selection.contains(&node_id);
                 let fuzzy_match = if search_active {
                     view.get_match_for_node(node_id)
                 } else {
@@ -87,12 +89,14 @@ impl FileExplorerRenderer {
                     node_id,
                     indent,
                     is_selected,
+                    is_multi_selected,
                     is_focused,
                     files_with_unsaved_changes,
                     decorations,
                     theme,
                     content_width,
                     fuzzy_match.as_ref(),
+                    cut_paths,
                 )
             })
             .collect();
@@ -221,12 +225,14 @@ impl FileExplorerRenderer {
         node_id: NodeId,
         indent: usize,
         is_selected: bool,
+        is_multi_selected: bool,
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
         decorations: &FileExplorerDecorationCache,
         theme: &Theme,
         content_width: usize,
         fuzzy_match: Option<&FuzzyMatch>,
+        cut_paths: &[PathBuf],
     ) -> ListItem<'static> {
         let node = view.tree().get_node(node_id).expect("Node should exist");
 
@@ -265,7 +271,11 @@ impl FileExplorerRenderer {
         }
 
         // Name styling using theme colors
-        let base_fg = if is_selected && is_focused {
+        let is_pending_cut = cut_paths.iter().any(|cp| cp == &node.entry.path);
+
+        let base_fg = if is_pending_cut {
+            theme.line_number_fg
+        } else if (is_selected || is_multi_selected) && is_focused {
             theme.editor_fg
         } else if node
             .entry
@@ -362,7 +372,12 @@ impl FileExplorerRenderer {
             ));
         }
 
-        ListItem::new(Line::from(spans)).style(Style::default().bg(theme.editor_bg))
+        let row_bg = if (is_selected || is_multi_selected) && is_focused {
+            theme.selection_bg
+        } else {
+            theme.editor_bg
+        };
+        ListItem::new(Line::from(spans)).style(Style::default().bg(row_bg))
     }
 
     fn decoration_symbol(symbol: &str) -> String {

@@ -207,6 +207,13 @@ impl Editor {
                     Some(HoverTarget::FileExplorerCloseButton)
                 );
                 let keybindings = self.keybindings.read().unwrap();
+                let empty: Vec<std::path::PathBuf> = Vec::new();
+                let cut_paths = self
+                    .file_explorer_clipboard
+                    .as_ref()
+                    .filter(|cb| cb.is_cut)
+                    .map(|cb| cb.paths.as_slice())
+                    .unwrap_or(empty.as_slice());
                 FileExplorerRenderer::render(
                     explorer,
                     frame,
@@ -219,6 +226,7 @@ impl Editor {
                     &self.theme,
                     close_button_hovered,
                     remote_connection.as_deref(),
+                    cut_paths,
                 );
             }
             // Note: if file_explorer is None but sync_in_progress is true,

@@ -1519,6 +1519,55 @@
       "when": "file_explorer"
     },
     {
+      "key": "Up",
+      "modifiers": ["shift"],
+      "action": "file_explorer_extend_selection_up",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["shift"],
+      "action": "file_explorer_extend_selection_down",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": " ",
+      "modifiers": [],
+      "action": "file_explorer_toggle_select",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "a",
+      "modifiers": ["ctrl"],
+      "action": "file_explorer_select_all",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "c",
+      "modifiers": ["ctrl"],
+      "action": "copy",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "x",
+      "modifiers": ["ctrl"],
+      "action": "cut",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "v",
+      "modifiers": ["ctrl"],
+      "action": "paste",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
       "comment": "Menu context",
       "key": "Left",
       "modifiers": [],
