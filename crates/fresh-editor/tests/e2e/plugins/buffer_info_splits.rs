@@ -11,18 +11,25 @@
 #![cfg(feature = "plugins")]
 
 use crate::common::harness::EditorTestHarness;
+use fresh_core::BufferId;
 use std::fs;
 
-fn snapshot_splits_for_path(
+/// Look the buffer up by id in the plugin state snapshot and return
+/// its `splits` as plain `usize`s. Going through buffer id — not
+/// path — sidesteps the filesystem canonicalisation that
+/// `open_file_no_focus` applies: the path stored on `BufferInfo` is
+/// the canonical form (symlinks resolved), which may or may not
+/// match `tempfile::tempdir()` output depending on the CI host's
+/// `/tmp` layout.
+fn snapshot_splits_for_buffer(
     harness: &EditorTestHarness,
-    path: &std::path::Path,
+    buffer_id: BufferId,
 ) -> Option<Vec<usize>> {
     let snapshot_handle = harness.editor().plugin_manager().state_snapshot_handle()?;
     let snapshot = snapshot_handle.read().ok()?;
     snapshot
         .buffers
-        .values()
-        .find(|b| b.path.as_deref() == Some(path))
+        .get(&buffer_id)
         .map(|b| b.splits.iter().map(|s| s.0).collect())
 }
 
@@ -41,10 +48,10 @@ fn buffer_info_splits_reports_single_split() {
     fs::write(&path, "hi\n").unwrap();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    harness.open_file(&path).unwrap();
+    let buffer_id = harness.editor_mut().open_file(&path).unwrap();
     harness.tick_and_render().unwrap();
 
-    let splits = snapshot_splits_for_path(&harness, &path)
+    let splits = snapshot_splits_for_buffer(&harness, buffer_id)
         .expect("snapshot should know the buffer we just opened");
     assert_eq!(
         splits.len(),
@@ -65,7 +72,7 @@ fn buffer_info_splits_reports_both_splits_after_split_horizontal() {
     fs::write(&path, "hi\n").unwrap();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    harness.open_file(&path).unwrap();
+    let buffer_id = harness.editor_mut().open_file(&path).unwrap();
     harness.tick_and_render().unwrap();
 
     harness
@@ -73,7 +80,7 @@ fn buffer_info_splits_reports_both_splits_after_split_horizontal() {
         .dispatch_action_for_tests(fresh::input::keybindings::Action::SplitHorizontal);
     harness.tick_and_render().unwrap();
 
-    let splits = snapshot_splits_for_path(&harness, &path)
+    let splits = snapshot_splits_for_buffer(&harness, buffer_id)
         .expect("snapshot should still know the buffer after the split");
     assert_eq!(
         splits.len(),
@@ -103,7 +110,7 @@ fn buffer_info_splits_drives_refocus_pattern() {
     fs::write(&world, "world\n").unwrap();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    harness.open_file(&hello).unwrap();
+    let hello_id = harness.editor_mut().open_file(&hello).unwrap();
     harness.tick_and_render().unwrap();
 
     // Split horizontal and open world.txt in the new (now-active)
@@ -111,12 +118,12 @@ fn buffer_info_splits_drives_refocus_pattern() {
     harness
         .editor_mut()
         .dispatch_action_for_tests(fresh::input::keybindings::Action::SplitHorizontal);
-    harness.open_file(&world).unwrap();
+    harness.editor_mut().open_file(&world).unwrap();
     harness.tick_and_render().unwrap();
 
     // The active split is the bottom one (world.txt). Now simulate
     // a plugin that wants to focus the hello.txt split.
-    let hello_splits = snapshot_splits_for_path(&harness, &hello)
+    let hello_splits = snapshot_splits_for_buffer(&harness, hello_id)
         .expect("hello.txt must still be in the snapshot");
     assert_eq!(hello_splits.len(), 1, "hello.txt is in exactly one split");
     let hello_split = hello_splits[0];
