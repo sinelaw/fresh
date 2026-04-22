@@ -5,45 +5,26 @@
 //! that tabulates configured ports, port attributes, and runtime
 //! `docker port <id>` bindings so users can see everything at once.
 //!
-//! The tests drive the panel via `PluginCommand::ExecuteAction`
-//! (the same path the palette uses) and wait on the rendered screen
-//! text. That chain hops through the plugin thread multiple times
-//! (plugin handler runs → `createVirtualBufferInSplit` async roundtrip
-//! → editor receives result → screen repaints). Environment
-//! requirements are asserted up front — missing plugin, missing
-//! registered command — so the tests fail with a clear message
-//! instead of silently timing out on the `wait_until` if the
-//! environment is wrong.
+//! These tests drive the panel the same way a user does: keyboard
+//! input through the command palette, keyboard input to close. No
+//! internal plugin-command dispatch, no poking at editor state —
+//! the assertions are against the rendered screen.
+//!
+//! Progress prints (`eprintln!`) before each wait so a CI timeout
+//! surfaces the last step the test reached rather than a silent
+//! 180s hang. nextest captures stderr into its failure report.
 
 #![cfg(feature = "plugins")]
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
-use fresh::services::plugins::api::PluginCommand;
+use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
-
-/// Fail fast if the plugin environment isn't what these tests expect.
-/// A silent `wait_until` timeout leaves nothing diagnostic in CI logs
-/// other than "TIMEOUT 180s"; surfacing the real cause (plugin didn't
-/// load, action didn't register) turns those into actionable failures.
-fn assert_devcontainer_plugin_ready(harness: &EditorTestHarness) {
-    let plugins = harness.editor().plugin_manager().list_plugins();
-    let loaded: Vec<_> = plugins.iter().map(|p| p.name.clone()).collect();
-    assert!(
-        plugins.iter().any(|p| p.name == "devcontainer"),
-        "`devcontainer` plugin must be loaded before driving its \
-         commands. Loaded plugins: {:?}",
-        loaded,
-    );
-}
 
 /// Set up a workspace with a devcontainer config that declares a few
 /// `forwardPorts` entries and `portsAttributes` labels. No container
 /// authority is active so the panel has no runtime bindings to
 /// display — that's the "configured only" branch of the renderer.
 fn set_up_workspace() -> (tempfile::TempDir, std::path::PathBuf) {
-    // Pin the locale to English so screen-text assertions against
-    // the plugin's `editor.t()` output are deterministic regardless
-    // of the host's `LANG`.
     fresh::i18n::set_locale("en");
 
     let temp = tempfile::tempdir().unwrap();
@@ -73,40 +54,68 @@ fn set_up_workspace() -> (tempfile::TempDir, std::path::PathBuf) {
     (temp, workspace)
 }
 
-/// Trigger the panel via the plugin command we registered. Works even
-/// though the harness doesn't fire `plugins_loaded` — the command is
-/// in `registered_actions` because it went through `registerCommand`.
-///
-/// Windows CI has timed out on this test (180s nextest deadline) —
-/// the async chain `ExecuteAction` → plugin-thread handler →
-/// `createVirtualBufferInSplit` async roundtrip → screen repaint
-/// didn't complete in the window. The upfront
-/// `assert_devcontainer_plugin_ready` surfaces the most common
-/// environmental cause (plugin not loaded) before we enter the
-/// `wait_until`. Genuine plugin-runtime hangs on Windows will still
-/// surface as timeouts, but with `plugin_ready` passing the failure
-/// is pinned to the async-chain flakiness rather than environment.
-#[test]
-fn devcontainer_show_forwarded_ports_panel_lists_configured_ports() {
-    let (_temp, workspace) = set_up_workspace();
-    let mut harness = EditorTestHarness::with_working_dir(160, 40, workspace).unwrap();
-
-    harness.tick_and_render().unwrap();
-    assert_devcontainer_plugin_ready(&harness);
-
+/// Walk the command palette to the "Show Forwarded Ports" entry and
+/// activate it. Same keyboard sequence a user would type.
+fn open_ports_panel_via_palette(harness: &mut EditorTestHarness) {
+    eprintln!("[ports_panel] send Ctrl+P");
     harness
-        .editor_mut()
-        .handle_plugin_command(PluginCommand::ExecuteAction {
-            action_name: "devcontainer_show_forwarded_ports_panel".to_string(),
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    eprintln!("[ports_panel] wait for palette prompt");
+    harness.wait_for_prompt().unwrap();
+    eprintln!("[ports_panel] type 'Show Forwarded Ports'");
+    harness.type_text("Show Forwarded Ports").unwrap();
+    eprintln!("[ports_panel] wait for palette suggestion 'Dev Container: Show Forwarded Ports'");
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Dev Container: Show Forwarded Ports")
         })
         .unwrap();
+    eprintln!("[ports_panel] send Enter to activate command");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+}
 
+/// User invokes `Dev Container: Show Forwarded Ports` from the
+/// palette; the panel renders below with the four column headers
+/// and a row per configured port.
+#[test]
+fn devcontainer_show_forwarded_ports_panel_lists_configured_ports() {
+    eprintln!("[ports_panel] setting up workspace");
+    let (_temp, workspace) = set_up_workspace();
+    eprintln!(
+        "[ports_panel] constructing harness with workspace={:?}",
+        workspace
+    );
+    let mut harness = EditorTestHarness::with_working_dir(160, 40, workspace).unwrap();
+    eprintln!("[ports_panel] initial tick_and_render");
+    harness.tick_and_render().unwrap();
+
+    let plugin_names: Vec<_> = harness
+        .editor()
+        .plugin_manager()
+        .list_plugins()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    eprintln!("[ports_panel] loaded plugins: {:?}", plugin_names);
+    assert!(
+        plugin_names.iter().any(|n| n == "devcontainer"),
+        "`devcontainer` plugin must be loaded. Loaded: {:?}",
+        plugin_names
+    );
+
+    open_ports_panel_via_palette(&mut harness);
+
+    eprintln!("[ports_panel] wait for 'Forwarded Ports' on screen");
     harness
         .wait_until(|h| h.screen_to_string().contains("Forwarded Ports"))
         .unwrap();
 
+    eprintln!("[ports_panel] verifying panel content");
     let screen = harness.screen_to_string();
-    // Headers must render so users know what each column means.
     for header in [
         "Forwarded Ports",
         "Configured",
@@ -121,7 +130,6 @@ fn devcontainer_show_forwarded_ports_panel_lists_configured_ports() {
             screen,
         );
     }
-    // Each configured port with its label should appear on a row.
     for content in ["3000", "http", "Web App", "5432", "Postgres"] {
         assert!(
             screen.contains(content),
@@ -130,45 +138,53 @@ fn devcontainer_show_forwarded_ports_panel_lists_configured_ports() {
             screen,
         );
     }
-    // The footer calls out the refresh/close bindings.
     assert!(
         screen.contains("r: refresh"),
         "Panel footer must advertise the refresh key. Screen:\n{}",
         screen,
     );
+    eprintln!("[ports_panel] done");
 }
 
-/// The panel is a virtual buffer in a mode that registers `r` for
-/// refresh, `q`/Escape for close. Close dismisses the split and
-/// clears the module-level buffer-id state so a subsequent open
-/// rebuilds cleanly.
+/// The panel's mode binds `q` to close. User presses `q`, the
+/// panel disappears from the screen.
 #[test]
 fn devcontainer_ports_panel_closes_on_q() {
+    eprintln!("[ports_panel_close] setting up workspace");
     let (_temp, workspace) = set_up_workspace();
     let mut harness = EditorTestHarness::with_working_dir(160, 40, workspace).unwrap();
-
+    eprintln!("[ports_panel_close] initial tick_and_render");
     harness.tick_and_render().unwrap();
-    assert_devcontainer_plugin_ready(&harness);
 
-    harness
-        .editor_mut()
-        .handle_plugin_command(PluginCommand::ExecuteAction {
-            action_name: "devcontainer_show_forwarded_ports_panel".to_string(),
-        })
-        .unwrap();
+    let plugin_names: Vec<_> = harness
+        .editor()
+        .plugin_manager()
+        .list_plugins()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    eprintln!("[ports_panel_close] loaded plugins: {:?}", plugin_names);
+    assert!(
+        plugin_names.iter().any(|n| n == "devcontainer"),
+        "`devcontainer` plugin must be loaded. Loaded: {:?}",
+        plugin_names
+    );
+
+    open_ports_panel_via_palette(&mut harness);
+
+    eprintln!("[ports_panel_close] wait for 'Forwarded Ports' on screen");
     harness
         .wait_until(|h| h.screen_to_string().contains("Forwarded Ports"))
         .unwrap();
 
-    // `q` in the ports panel mode closes the split.
+    eprintln!("[ports_panel_close] send 'q' to close");
     harness
-        .editor_mut()
-        .handle_plugin_command(PluginCommand::ExecuteAction {
-            action_name: "devcontainer_close_ports_panel".to_string(),
-        })
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
         .unwrap();
 
+    eprintln!("[ports_panel_close] wait for panel to close");
     harness
         .wait_until(|h| !h.screen_to_string().contains("Forwarded Ports"))
         .unwrap();
+    eprintln!("[ports_panel_close] done");
 }
