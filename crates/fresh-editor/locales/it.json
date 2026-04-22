@@ -1345,5 +1345,7 @@
   "whitespace.already_has_newline": "Il file termina già con una nuova riga",
   "whitespace.newline_added": "Nuova riga finale aggiunta",
   "whitespace.no_trailing": "Nessuno spazio bianco finale da rimuovere",
-  "whitespace.trimmed": "Spazi bianchi finali rimossi"
+  "whitespace.trimmed": "Spazi bianchi finali rimossi",
+  "explorer.move_source_removal_failed": "Copiato nella destinazione ma impossibile rimuovere l'origine '%{name}': %{error}",
+  "explorer.move_source_removal_failed_n": "Copiato nella destinazione ma %{count} origini non potevano essere rimosse"
 }

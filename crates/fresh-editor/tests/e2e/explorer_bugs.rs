@@ -42,10 +42,17 @@ struct FaultInjectingFileSystem {
     /// we can observe whether the caller incorrectly falls back to
     /// copy+delete.
     fail_rename_with_eacces: AtomicBool,
+    /// When true, rename() returns CrossesDevices (EXDEV) so the caller
+    /// exercises the cross-fs copy+delete fallback path.
+    fail_rename_with_exdev: AtomicBool,
     /// When set, copy() returns PermissionDenied whenever the *destination*
     /// path's file name contains this substring. Lets tests simulate a
     /// recursive copy that succeeds for some children and fails for others.
     poison_copy_substring: std::sync::Mutex<Option<String>>,
+    /// When true, remove_file / remove_dir return PermissionDenied — used
+    /// to exercise the "copy succeeded but source could not be removed"
+    /// edge case of the cross-fs cut fallback.
+    fail_remove_with_eacces: AtomicBool,
 }
 
 impl FaultInjectingFileSystem {
@@ -53,12 +60,22 @@ impl FaultInjectingFileSystem {
         Self {
             inner,
             fail_rename_with_eacces: AtomicBool::new(false),
+            fail_rename_with_exdev: AtomicBool::new(false),
             poison_copy_substring: std::sync::Mutex::new(None),
+            fail_remove_with_eacces: AtomicBool::new(false),
         }
     }
 
     fn arm_rename_eacces(&self) {
         self.fail_rename_with_eacces.store(true, Ordering::SeqCst);
+    }
+
+    fn arm_rename_exdev(&self) {
+        self.fail_rename_with_exdev.store(true, Ordering::SeqCst);
+    }
+
+    fn arm_remove_eacces(&self) {
+        self.fail_remove_with_eacces.store(true, Ordering::SeqCst);
     }
 
     fn arm_copy_poison(&self, substring: &str) {
@@ -82,6 +99,12 @@ impl FileSystem for FaultInjectingFileSystem {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "fault-injected: rename not permitted (EACCES)",
+            ));
+        }
+        if self.fail_rename_with_exdev.load(Ordering::SeqCst) {
+            return Err(io::Error::new(
+                io::ErrorKind::CrossesDevices,
+                "fault-injected: rename across filesystems (EXDEV)",
             ));
         }
         self.inner.rename(from, to)
@@ -123,9 +146,21 @@ impl FileSystem for FaultInjectingFileSystem {
         self.inner.set_file_length(path, len)
     }
     fn remove_file(&self, path: &Path) -> io::Result<()> {
+        if self.fail_remove_with_eacces.load(Ordering::SeqCst) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "fault-injected: remove_file not permitted",
+            ));
+        }
         self.inner.remove_file(path)
     }
     fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        if self.fail_remove_with_eacces.load(Ordering::SeqCst) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "fault-injected: remove_dir not permitted",
+            ));
+        }
         self.inner.remove_dir(path)
     }
     fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
@@ -890,4 +925,74 @@ fn test_shift_up_at_top_seeds_selection_before_escape_unfocuses() {
 
     harness.assert_screen_not_contains("File Explorer (Ctrl+E)");
     harness.assert_screen_contains("File Explorer");
+}
+
+// ---------------------------------------------------------------------------
+// Bug: cross-fs cut where copy succeeds but source removal fails
+// ---------------------------------------------------------------------------
+
+/// Cross-filesystem cut fallback: after rename fails with EXDEV, we copy to
+/// the destination and then delete the source. If the delete fails (source
+/// on a read-only volume, permission change, etc.) the user ends up with
+/// the file at BOTH locations — the copy at dst and the original source
+/// still in place. The status line should say so explicitly, and the
+/// clipboard should NOT be cleared so the user can retry or clean up
+/// manually.
+#[test]
+fn test_cross_fs_cut_source_delete_failure_is_reported() {
+    let fault_fs = Arc::new(FaultInjectingFileSystem::new(Arc::new(StdFileSystem)));
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .with_project_root()
+            .with_filesystem(fault_fs.clone()),
+    )
+    .unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::create_dir(project_root.join("dst")).unwrap();
+    fs::write(project_root.join("stuck.txt"), "payload").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("stuck.txt").unwrap();
+
+    // dirs first: root → dst → stuck.txt
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // dst/
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // stuck.txt
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Arm the fault just before paste: rename returns EXDEV so the code
+    // falls into the copy+delete fallback; copy succeeds (inner fs is
+    // the real StdFileSystem), then remove_file fails.
+    fault_fs.arm_rename_exdev();
+    fault_fs.arm_remove_eacces();
+
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap(); // dst/
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Copy landed.
+    assert!(
+        project_root.join("dst/stuck.txt").exists(),
+        "After a cross-fs cut with source-delete failure, the copy should be at dst."
+    );
+    // Source still there.
+    assert!(
+        project_root.join("stuck.txt").exists(),
+        "Source must still exist when its removal failed after the cross-fs copy."
+    );
+    // Status line should name BOTH sides so the user knows what happened.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("stuck.txt") && screen.contains("could not"),
+        "Status should mention the filename and that the source could not be \
+         removed. Screen:\n{}",
+        screen
+    );
 }

@@ -1345,5 +1345,7 @@
   "whitespace.already_has_newline": "Datei endet bereits mit Zeilenumbruch",
   "whitespace.newline_added": "Abschließender Zeilenumbruch hinzugefügt",
   "whitespace.no_trailing": "Keine Leerzeichen am Zeilenende vorhanden",
-  "whitespace.trimmed": "Leerzeichen am Zeilenende entfernt"
+  "whitespace.trimmed": "Leerzeichen am Zeilenende entfernt",
+  "explorer.move_source_removal_failed": "Ins Ziel kopiert, aber Quelle '%{name}' konnte nicht entfernt werden: %{error}",
+  "explorer.move_source_removal_failed_n": "Ins Ziel kopiert, aber %{count} Quellen konnten nicht entfernt werden"
 }

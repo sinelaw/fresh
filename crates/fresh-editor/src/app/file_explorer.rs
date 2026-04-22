@@ -11,6 +11,23 @@ pub struct FileExplorerClipboard {
     pub is_cut: bool,
 }
 
+/// Outcome of a single filesystem-level paste op (`paste_one_fs_op`).
+/// The `SourceRemovalFailed` variant is a partial success: the destination
+/// exists but the original source could not be removed, so the file is
+/// effectively at both locations. Callers must surface this to the user —
+/// returning just an `Err` would hide the fact that the copy landed.
+#[derive(Debug)]
+enum PasteOpOutcome {
+    /// Move / copy completed end-to-end.
+    Ok,
+    /// Cross-filesystem cut: copy succeeded, but removing the source failed.
+    /// The file now exists at both `dst` and the original location.
+    SourceRemovalFailed { dst: PathBuf, err: std::io::Error },
+    /// Any other failure. Destination (if partially created) has already
+    /// been cleaned up by `paste_one_fs_op`.
+    Failed(std::io::Error),
+}
+
 /// Get the parent directory path from a file tree node.
 /// If the node is a directory, returns its path. If it's a file, returns the parent directory.
 fn get_parent_dir_path(node: &TreeNode) -> PathBuf {
@@ -1200,10 +1217,21 @@ impl Editor {
 
         let mut succeeded: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(total);
         let mut first_error: Option<std::io::Error> = None;
+        let mut partial_moves: Vec<(PathBuf, std::io::Error)> = Vec::new();
         for (src, dst) in safe.into_iter().chain(to_overwrite) {
             match self.paste_one_fs_op(&src, &dst, is_cut) {
-                Ok(()) => succeeded.push((src, dst)),
-                Err(e) => {
+                PasteOpOutcome::Ok => succeeded.push((src, dst)),
+                PasteOpOutcome::SourceRemovalFailed {
+                    dst: landed_dst,
+                    err,
+                } => {
+                    // Copy landed; count the dst as visible in the tree
+                    // (so the refresh below picks it up), but track the
+                    // partial state so the status message calls it out.
+                    succeeded.push((src, landed_dst.clone()));
+                    partial_moves.push((landed_dst, err));
+                }
+                PasteOpOutcome::Failed(e) => {
                     if first_error.is_none() {
                         first_error = Some(e);
                     }
@@ -1217,7 +1245,30 @@ impl Editor {
             self.refresh_tree_after_paste(&any_src, &first_dst, is_cut);
         }
 
-        if let Some(e) = &first_error {
+        if !partial_moves.is_empty() {
+            // Partial-move always wins the status line: the user needs to
+            // know some sources are still present.
+            let (first_dst, first_err) = &partial_moves[0];
+            let name = first_dst
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let msg = if partial_moves.len() == 1 {
+                t!(
+                    "explorer.move_source_removal_failed",
+                    name = &name,
+                    error = first_err.to_string()
+                )
+                .to_string()
+            } else {
+                t!(
+                    "explorer.move_source_removal_failed_n",
+                    count = partial_moves.len()
+                )
+                .to_string()
+            };
+            self.set_status_message(msg);
+        } else if let Some(e) = &first_error {
             let msg = if is_cut {
                 t!("explorer.error_moving", error = e.to_string()).to_string()
             } else {
@@ -1244,7 +1295,10 @@ impl Editor {
             self.set_status_message(msg);
         }
 
-        if is_cut && first_error.is_none() {
+        // Clear the clipboard only when the move was fully clean — if a
+        // source is still sitting at its original location the user may
+        // want to retry, and the clipboard still contains the right path.
+        if is_cut && first_error.is_none() && partial_moves.is_empty() {
             self.file_explorer_clipboard = None;
         }
         self.key_context = KeyContext::FileExplorer;
@@ -1253,7 +1307,7 @@ impl Editor {
     /// Move or copy a single item at the filesystem level. No tree or UI
     /// state is touched — callers are responsible for refreshing the
     /// explorer afterwards.
-    fn paste_one_fs_op(&self, src: &Path, dst: &Path, is_cut: bool) -> std::io::Result<()> {
+    fn paste_one_fs_op(&self, src: &Path, dst: &Path, is_cut: bool) -> PasteOpOutcome {
         let src_is_dir = self.authority.filesystem.is_dir(src).unwrap_or(false);
 
         // Guard against pasting a directory into itself or into one of its
@@ -1264,7 +1318,7 @@ impl Editor {
         // directory; file-into-itself is already handled by the
         // same-location check in `file_explorer_paste`.
         if src_is_dir && dst.starts_with(src) {
-            return Err(std::io::Error::new(
+            return PasteOpOutcome::Failed(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "Cannot paste a directory into itself",
             ));
@@ -1276,7 +1330,7 @@ impl Editor {
             // (permission denied, etc.) must surface as-is so we don't
             // silently succeed via a different codepath.
             match self.authority.filesystem.rename(src, dst) {
-                Ok(()) => Ok(()),
+                Ok(()) => PasteOpOutcome::Ok,
                 Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
                     let copy_result = if src_is_dir {
                         self.authority.filesystem.copy_dir_all(src, dst)
@@ -1285,10 +1339,22 @@ impl Editor {
                     };
                     match copy_result {
                         Ok(()) => {
-                            if src_is_dir {
+                            // Copy landed. Now remove the source to complete
+                            // the move. If that fails, surface it as a
+                            // distinct outcome — the user needs to know the
+                            // copy is at `dst` AND the original is still at
+                            // `src`, so they can decide what to do.
+                            let remove_result = if src_is_dir {
                                 self.authority.filesystem.remove_dir_all(src)
                             } else {
                                 self.authority.filesystem.remove_file(src)
+                            };
+                            match remove_result {
+                                Ok(()) => PasteOpOutcome::Ok,
+                                Err(remove_err) => PasteOpOutcome::SourceRemovalFailed {
+                                    dst: dst.to_path_buf(),
+                                    err: remove_err,
+                                },
                             }
                         }
                         Err(copy_err) => {
@@ -1310,16 +1376,22 @@ impl Editor {
                                     cleanup_err
                                 );
                             }
-                            Err(copy_err)
+                            PasteOpOutcome::Failed(copy_err)
                         }
                     }
                 }
-                Err(e) => Err(e),
+                Err(e) => PasteOpOutcome::Failed(e),
             }
         } else if src_is_dir {
-            self.authority.filesystem.copy_dir_all(src, dst)
+            match self.authority.filesystem.copy_dir_all(src, dst) {
+                Ok(()) => PasteOpOutcome::Ok,
+                Err(e) => PasteOpOutcome::Failed(e),
+            }
         } else {
-            self.authority.filesystem.copy(src, dst).map(|_| ())
+            match self.authority.filesystem.copy(src, dst) {
+                Ok(_) => PasteOpOutcome::Ok,
+                Err(e) => PasteOpOutcome::Failed(e),
+            }
         }
     }
 
@@ -1379,7 +1451,7 @@ impl Editor {
             .unwrap_or_default();
 
         match self.paste_one_fs_op(&src, &dst, is_cut) {
-            Ok(()) => {
+            PasteOpOutcome::Ok => {
                 self.refresh_tree_after_paste(&src, &dst, is_cut);
                 if is_cut {
                     self.file_explorer_clipboard = None;
@@ -1389,7 +1461,28 @@ impl Editor {
                 }
                 self.key_context = KeyContext::FileExplorer;
             }
-            Err(e) => {
+            PasteOpOutcome::SourceRemovalFailed {
+                dst: landed_dst,
+                err,
+            } => {
+                // The copy is at landed_dst; the source is still at src.
+                // Refresh the tree so both are visible, keep the clipboard
+                // populated so the user can retry, and spell out both
+                // sides of the partial state in the status line.
+                self.refresh_tree_after_paste(&src, &landed_dst, is_cut);
+                self.set_status_message(
+                    t!(
+                        "explorer.move_source_removal_failed",
+                        name = &name,
+                        error = err.to_string()
+                    )
+                    .to_string(),
+                );
+                // NB: don't clear the clipboard — source is still at its
+                // original location and the user may want to retry.
+                self.key_context = KeyContext::FileExplorer;
+            }
+            PasteOpOutcome::Failed(e) => {
                 let msg = if is_cut {
                     t!("explorer.error_moving", error = e.to_string()).to_string()
                 } else {

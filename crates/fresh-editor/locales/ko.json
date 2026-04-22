@@ -1345,5 +1345,7 @@
   "whitespace.already_has_newline": "파일이 이미 줄바꿈으로 끝납니다",
   "whitespace.newline_added": "마지막 줄바꿈이 추가되었습니다",
   "whitespace.no_trailing": "제거할 후행 공백이 없습니다",
-  "whitespace.trimmed": "후행 공백이 제거되었습니다"
+  "whitespace.trimmed": "후행 공백이 제거되었습니다",
+  "explorer.move_source_removal_failed": "대상으로 복사했으나 원본 '%{name}'을(를) 제거하지 못했습니다: %{error}",
+  "explorer.move_source_removal_failed_n": "대상으로 복사했으나 %{count}개의 원본을 제거하지 못했습니다"
 }

@@ -1345,5 +1345,7 @@
   "whitespace.already_has_newline": "Le fichier se termine déjà par un saut de ligne",
   "whitespace.newline_added": "Saut de ligne final ajouté",
   "whitespace.no_trailing": "Aucun espace de fin à supprimer",
-  "whitespace.trimmed": "Espaces de fin supprimés"
+  "whitespace.trimmed": "Espaces de fin supprimés",
+  "explorer.move_source_removal_failed": "Copié vers la destination, mais impossible de supprimer la source '%{name}' : %{error}",
+  "explorer.move_source_removal_failed_n": "Copié vers la destination, mais %{count} sources n'ont pas pu être supprimées"
 }

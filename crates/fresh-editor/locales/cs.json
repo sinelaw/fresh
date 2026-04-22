@@ -1345,5 +1345,7 @@
   "whitespace.already_has_newline": "Soubor již končí novým řádkem",
   "whitespace.newline_added": "Přidán koncový nový řádek",
   "whitespace.no_trailing": "Žádné koncové mezery k odstranění",
-  "whitespace.trimmed": "Koncové mezery odstraněny"
+  "whitespace.trimmed": "Koncové mezery odstraněny",
+  "explorer.move_source_removal_failed": "Zkopírováno do cíle, ale zdroj '%{name}' nebylo možné odstranit: %{error}",
+  "explorer.move_source_removal_failed_n": "Zkopírováno do cíle, ale %{count} zdrojů nebylo možné odstranit"
 }

@@ -1345,5 +1345,7 @@
   "whitespace.already_has_newline": "Файл уже заканчивается переводом строки",
   "whitespace.newline_added": "Добавлен завершающий перевод строки",
   "whitespace.no_trailing": "Нет конечных пробелов для удаления",
-  "whitespace.trimmed": "Конечные пробелы удалены"
+  "whitespace.trimmed": "Конечные пробелы удалены",
+  "explorer.move_source_removal_failed": "Скопировано в место назначения, но не удалось удалить источник '%{name}': %{error}",
+  "explorer.move_source_removal_failed_n": "Скопировано в место назначения, но %{count} источников не удалось удалить"
 }

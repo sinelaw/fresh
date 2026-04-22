@@ -1345,5 +1345,7 @@
   "whitespace.already_has_newline": "ファイルは既に改行で終わっています",
   "whitespace.newline_added": "最終改行を追加しました",
   "whitespace.no_trailing": "削除する末尾の空白がありません",
-  "whitespace.trimmed": "末尾の空白を削除しました"
+  "whitespace.trimmed": "末尾の空白を削除しました",
+  "explorer.move_source_removal_failed": "コピー先には保存しましたが、元の '%{name}' を削除できませんでした: %{error}",
+  "explorer.move_source_removal_failed_n": "コピー先には保存しましたが、%{count} 件の元ファイルを削除できませんでした"
 }

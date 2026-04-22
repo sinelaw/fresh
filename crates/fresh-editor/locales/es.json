@@ -1345,5 +1345,7 @@
   "whitespace.already_has_newline": "El archivo ya termina con nueva línea",
   "whitespace.newline_added": "Nueva línea final añadida",
   "whitespace.no_trailing": "No hay espacios en blanco finales que eliminar",
-  "whitespace.trimmed": "Espacios en blanco finales eliminados"
+  "whitespace.trimmed": "Espacios en blanco finales eliminados",
+  "explorer.move_source_removal_failed": "Copiado al destino pero no se pudo eliminar el origen '%{name}': %{error}",
+  "explorer.move_source_removal_failed_n": "Copiado al destino pero no se pudieron eliminar %{count} orígenes"
 }

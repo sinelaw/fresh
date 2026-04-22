@@ -1345,5 +1345,7 @@
   "whitespace.already_has_newline": "Файл вже закінчується переносом рядка",
   "whitespace.newline_added": "Додано завершальний перенос рядка",
   "whitespace.no_trailing": "Немає кінцевих пробілів для видалення",
-  "whitespace.trimmed": "Кінцеві пробіли видалено"
+  "whitespace.trimmed": "Кінцеві пробіли видалено",
+  "explorer.move_source_removal_failed": "Скопійовано до місця призначення, але не вдалося видалити джерело '%{name}': %{error}",
+  "explorer.move_source_removal_failed_n": "Скопійовано до місця призначення, але не вдалося видалити %{count} джерел"
 }

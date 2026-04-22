@@ -1345,5 +1345,7 @@
   "whitespace.already_has_newline": "文件已以换行符结尾",
   "whitespace.newline_added": "已添加最终换行符",
   "whitespace.no_trailing": "没有尾随空格需要删除",
-  "whitespace.trimmed": "已删除尾随空格"
+  "whitespace.trimmed": "已删除尾随空格",
+  "explorer.move_source_removal_failed": "已复制到目标位置，但无法删除源 '%{name}': %{error}",
+  "explorer.move_source_removal_failed_n": "已复制到目标位置，但有 %{count} 个源文件无法删除"
 }
