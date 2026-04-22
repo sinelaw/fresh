@@ -767,3 +767,111 @@ fn test_current_line_highlight_follows_cursor_movement() {
         "Line 1 should be highlighted after cursor moves there"
     );
 }
+
+/// `highlight_current_column` paints the cursor's column (across the full
+/// viewport height) with the same tint as the current line.
+#[test]
+fn test_current_column_highlight_tints_full_column() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+    use ratatui::style::Color;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("col_highlight_test.txt");
+    std::fs::write(&file_path, "abcdef\nghijkl\nmnopqr\n").unwrap();
+
+    let mut config = Config {
+        theme: "dark".into(),
+        ..Default::default()
+    };
+    config.editor.highlight_current_column = true;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Move the cursor to column 3 (byte 3) on line 0.
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    let cursor_x = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("cursor should be visible after moving")
+        .0;
+
+    let (content_row, _) = harness.content_area_rows();
+    let current_line_bg = Color::Rgb(40, 40, 40);
+    let other_row = content_row as u16 + 1;
+
+    // Cursor column should be tinted on a non-cursor line (e.g. line 1),
+    // where it would otherwise have the default editor background.
+    let col_cell = harness
+        .get_cell_style(cursor_x, other_row)
+        .expect("cell should exist");
+    assert_eq!(
+        col_cell.bg,
+        Some(current_line_bg),
+        "Cursor column should be tinted on non-cursor lines when highlight_current_column is enabled"
+    );
+
+    // A cell one column over on the same non-cursor line should NOT be tinted.
+    let neighbor_cell = harness
+        .get_cell_style(cursor_x + 1, other_row)
+        .expect("cell should exist");
+    assert_ne!(
+        neighbor_cell.bg,
+        Some(current_line_bg),
+        "Neighboring column should not be tinted"
+    );
+
+    // The gutter on non-cursor lines should remain untouched (highlight only
+    // tints the text column).
+    let gutter_cell = harness
+        .get_cell_style(1, other_row)
+        .expect("gutter cell should exist");
+    assert_ne!(
+        gutter_cell.bg,
+        Some(current_line_bg),
+        "Gutter on non-cursor lines should not be tinted by column highlight"
+    );
+}
+
+/// When `highlight_current_column` is disabled, no extra column is tinted.
+#[test]
+fn test_current_column_highlight_disabled_is_noop() {
+    use fresh::config::Config;
+    use ratatui::style::Color;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("col_highlight_off_test.txt");
+    std::fs::write(&file_path, "abcdef\nghijkl\nmnopqr\n").unwrap();
+
+    // Default keeps current line highlight but leaves column highlight off.
+    let config = Config {
+        theme: "dark".into(),
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    let cursor_x = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("cursor should be visible")
+        .0;
+
+    let (content_row, _) = harness.content_area_rows();
+    let current_line_bg = Color::Rgb(40, 40, 40);
+
+    // On a non-cursor line, the cursor's column should not be tinted.
+    let col_cell = harness
+        .get_cell_style(cursor_x, content_row as u16 + 1)
+        .expect("cell should exist");
+    assert_ne!(
+        col_cell.bg,
+        Some(current_line_bg),
+        "No column should be tinted when highlight_current_column is disabled"
+    );
+}

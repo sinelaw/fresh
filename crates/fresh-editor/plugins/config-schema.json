@@ -33,6 +33,7 @@
         "line_numbers": true,
         "relative_line_numbers": false,
         "highlight_current_line": true,
+        "highlight_current_column": false,
         "line_wrap": true,
         "wrap_indent": true,
         "wrap_column": null,
@@ -283,6 +284,12 @@
           "description": "Highlight the line containing the cursor",
           "type": "boolean",
           "default": true,
+          "x-section": "Display"
+        },
+        "highlight_current_column": {
+          "description": "Highlight the column containing the cursor",
+          "type": "boolean",
+          "default": false,
           "x-section": "Display"
         },
         "line_wrap": {

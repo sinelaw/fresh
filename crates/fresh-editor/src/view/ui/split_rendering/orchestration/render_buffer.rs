@@ -11,7 +11,9 @@ use super::super::gutter::render_compose_margins;
 use super::super::layout::{
     calculate_compose_layout, calculate_view_anchor, calculate_viewport_end, ComposeLayout,
 };
-use super::super::post_pass::{apply_background_to_lines, render_column_guides, render_ruler_bg};
+use super::super::post_pass::{
+    apply_background_to_lines, render_column_guides, render_cursor_column_bg, render_ruler_bg,
+};
 use super::super::view_data::build_view_data;
 use super::contexts::SelectionContext;
 use super::overlays::{decoration_context, selection_context};
@@ -395,6 +397,7 @@ pub(crate) fn draw_buffer_in_split(
     software_cursor_only: bool,
     rulers: &[usize],
     compose_column_guides: Option<Vec<u16>>,
+    highlight_current_column: bool,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
 ) {
     let render_area = layout_output.render_area;
@@ -466,6 +469,24 @@ pub(crate) fn draw_buffer_in_split(
             layout_output.render_output.content_lines_rendered,
             layout_output.left_column,
         );
+    }
+
+    // Highlight the cursor column (same bg tint as the current line) when
+    // `highlight_current_column` is enabled and the split is active.
+    if highlight_current_column && is_active && !hide_cursor {
+        if let Some((cx, _)) = cursor {
+            // `cx` already accounts for the gutter offset from render_area.x,
+            // so skip highlighting if it falls inside the gutter.
+            if (cx as usize) >= gutter_width {
+                render_cursor_column_bg(
+                    frame,
+                    render_area,
+                    cx,
+                    theme.current_line_bg,
+                    layout_output.render_output.content_lines_rendered,
+                );
+            }
+        }
     }
 
     // Render compose column guides
@@ -550,6 +571,7 @@ pub(crate) fn render_buffer_in_split(
     highlight_current_line: bool,
     diagnostics_inline_text: bool,
     show_tilde: bool,
+    highlight_current_column: bool,
     cell_theme_map: &mut Vec<CellThemeInfo>,
     screen_width: u16,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
@@ -596,6 +618,7 @@ pub(crate) fn render_buffer_in_split(
         software_cursor_only,
         rulers,
         compose_column_guides,
+        highlight_current_column,
         pending_hardware_cursor,
     );
 

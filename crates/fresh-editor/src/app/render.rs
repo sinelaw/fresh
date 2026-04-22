@@ -478,6 +478,7 @@ impl Editor {
             self.config.editor.show_horizontal_scrollbar,
             self.config.editor.diagnostics_inline_text,
             self.config.editor.show_tilde,
+            self.config.editor.highlight_current_column,
             &mut self.cached_layout.cell_theme_map,
             size.width,
             &mut pending_hardware_cursor,

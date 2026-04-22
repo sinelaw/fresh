@@ -1169,6 +1169,13 @@ interface EditorAPI {
 	/**
 	* Join path components (variadic - accepts multiple string arguments)
 	* Always uses forward slashes for cross-platform consistency (like Node.js path.posix.join)
+	* 
+	* Preserves up to 2 leading slashes, which matters on Windows: Rust's
+	* `Path::canonicalize` returns `\\?\`-prefixed paths, and `editor.getCwd()`
+	* surfaces that to plugin code verbatim. After the backslash→slash
+	* normalization the prefix becomes `//?/C:/...`; collapsing the leading
+	* `//` to a single `/` yields `/?/C:/...`, which every filesystem API on
+	* Windows rejects, breaking `findConfig()`-style plugin logic.
 	*/
 	pathJoin(...parts: string[]): string;
 	/**

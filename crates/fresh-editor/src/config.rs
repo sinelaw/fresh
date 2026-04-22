@@ -756,6 +756,11 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub highlight_current_line: bool,
 
+    /// Highlight the column containing the cursor
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub highlight_current_column: bool,
+
     /// Wrap long lines to fit the window width (default for new views)
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
@@ -1351,6 +1356,7 @@ impl Default for EditorConfig {
             scroll_offset: default_scroll_offset(),
             syntax_highlighting: true,
             highlight_current_line: true,
+            highlight_current_column: false,
             line_wrap: true,
             wrap_indent: true,
             wrap_column: None,

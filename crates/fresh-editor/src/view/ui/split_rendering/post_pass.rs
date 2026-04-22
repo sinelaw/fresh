@@ -46,6 +46,28 @@ pub(super) fn render_column_guides(
     }
 }
 
+/// Tint the background of a single column (the cursor's column) to make it
+/// easier to track vertical alignment. `column_x` is relative to
+/// `render_area.x` (i.e. the same coordinate as `cursor` from
+/// `resolve_cursor_fallback`), and already includes any gutter offset.
+pub(super) fn render_cursor_column_bg(
+    frame: &mut Frame,
+    render_area: Rect,
+    column_x: u16,
+    color: Color,
+    content_height: usize,
+) {
+    if column_x >= render_area.width {
+        return;
+    }
+    let guide_x = render_area.x + column_x;
+    let guide_height = content_height.min(render_area.height as usize);
+    for row in 0..guide_height {
+        let cell = &mut frame.buffer_mut()[(guide_x, render_area.y + row as u16)];
+        cell.set_bg(color);
+    }
+}
+
 /// Render vertical rulers as a subtle background color tint.
 /// Unlike `render_column_guides` which draws │ characters (for compose guides),
 /// this preserves the existing text content and only adjusts the background color.
