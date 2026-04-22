@@ -687,6 +687,9 @@ pub enum Action {
     // Event debug
     EventDebug, // Open the event debug dialog
 
+    // Process control
+    SuspendProcess, // Suspend the editor process (SIGTSTP on Unix); resume with `fg`
+
     // Keybinding editor
     OpenKeybindingEditor, // Open the keybinding editor modal
 
@@ -1085,6 +1088,7 @@ impl Action {
 
             "calibrate_input" => CalibrateInput,
             "event_debug" => EventDebug,
+            "suspend_process" => SuspendProcess,
             "load_plugin_from_buffer" => LoadPluginFromBuffer,
             "init_reload" => InitReload,
             "init_edit" => InitEdit,
@@ -2376,6 +2380,7 @@ impl KeybindingResolver {
             Action::SortLines => t!("action.sort_lines"),
             Action::CalibrateInput => t!("action.calibrate_input"),
             Action::EventDebug => t!("action.event_debug"),
+            Action::SuspendProcess => t!("action.suspend_process"),
             Action::LoadPluginFromBuffer => "Load Plugin from Buffer".into(),
             Action::InitReload => "Reload init.ts".into(),
             Action::InitEdit => "Edit init.ts".into(),

@@ -975,6 +975,10 @@ pub struct Editor {
     /// Request a full terminal clear and redraw on the next frame
     full_redraw_requested: bool,
 
+    /// Request the event loop to suspend the process (SIGTSTP on Unix).
+    /// Consumed by the outer event loop after the current action returns.
+    suspend_requested: bool,
+
     /// Time source for testable time operations
     time_source: SharedTimeSource,
 

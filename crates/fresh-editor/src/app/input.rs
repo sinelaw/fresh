@@ -1437,6 +1437,9 @@ impl Editor {
             Action::EventDebug => {
                 self.open_event_debug();
             }
+            Action::SuspendProcess => {
+                self.request_suspend();
+            }
             Action::OpenKeybindingEditor => {
                 self.open_keybinding_editor();
             }

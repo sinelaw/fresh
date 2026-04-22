@@ -319,6 +319,34 @@ impl Drop for TerminalModes {
     }
 }
 
+/// Suspend the editor process with SIGTSTP and restore terminal modes on resume.
+///
+/// Tears the terminal back down to a normal cooked-mode shell, raises SIGTSTP
+/// so the shell regains control (the user can then `fg` to resume), and on
+/// resume re-enables the same set of modes we started with.
+///
+/// The caller is responsible for requesting a full redraw after this returns —
+/// the screen has been wiped and repainted by the shell.
+#[cfg(unix)]
+pub fn suspend_and_resume(
+    terminal_modes: &mut TerminalModes,
+    keyboard_config: Option<&KeyboardConfig>,
+) -> Result<()> {
+    use nix::sys::signal::{raise, Signal};
+
+    terminal_modes.undo();
+
+    // Block until the shell sends SIGCONT (typically via `fg`).
+    raise(Signal::SIGTSTP)?;
+
+    // Re-enable everything we tore down. If enable() fails we drop the
+    // old (empty) TerminalModes and return the error — the caller can
+    // surface it and still keep running in a degraded state.
+    let restored = TerminalModes::enable(keyboard_config)?;
+    *terminal_modes = restored;
+    Ok(())
+}
+
 /// Unconditionally restore terminal state without tracking.
 ///
 /// This is intended for use in panic hooks where we don't have access

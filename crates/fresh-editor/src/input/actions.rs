@@ -3080,6 +3080,7 @@ pub fn action_to_events(
         | Action::ShellCommandReplace
         | Action::CalibrateInput
         | Action::EventDebug
+        | Action::SuspendProcess
         | Action::LoadPluginFromBuffer
         | Action::InitReload
         | Action::InitEdit

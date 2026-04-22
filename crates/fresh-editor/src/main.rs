@@ -1666,6 +1666,7 @@ fn run_editor_iteration(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     key_translator: &KeyTranslator,
     #[cfg(target_os = "linux")] gpm_client: &Option<GpmClient>,
+    terminal_modes: &mut TerminalModes,
 ) -> AnyhowResult<IterationOutcome> {
     #[cfg(target_os = "linux")]
     let loop_result = run_event_loop(
@@ -1674,9 +1675,16 @@ fn run_editor_iteration(
         workspace_enabled,
         key_translator,
         gpm_client,
+        terminal_modes,
     );
     #[cfg(not(target_os = "linux"))]
-    let loop_result = run_event_loop(editor, terminal, workspace_enabled, key_translator);
+    let loop_result = run_event_loop(
+        editor,
+        terminal,
+        workspace_enabled,
+        key_translator,
+        terminal_modes,
+    );
 
     if let Err(e) = editor.end_recovery_session() {
         tracing::warn!("Failed to end recovery session: {}", e);
@@ -3414,6 +3422,7 @@ fn real_main() -> AnyhowResult<()> {
             &key_translator,
             #[cfg(target_os = "linux")]
             &gpm_client,
+            &mut terminal_modes,
         )
         .context("Editor iteration failed")?;
 
@@ -3484,6 +3493,40 @@ fn real_main() -> AnyhowResult<()> {
     result.context("Editor loop returned an error")
 }
 
+/// Handle a pending suspend request from the editor.
+///
+/// Tears down the TUI, raises SIGTSTP so the user drops back to the shell,
+/// and on resume (`fg`) re-enables the modes we just undid and asks for a
+/// full redraw. Windows doesn't have Unix job control, so the action is a
+/// no-op there beyond a status message.
+fn handle_suspend_request(
+    editor: &mut Editor,
+    terminal_modes: &mut TerminalModes,
+) -> AnyhowResult<()> {
+    #[cfg(unix)]
+    {
+        let keyboard_config = KeyboardConfig {
+            disambiguate_escape_codes: editor.config().editor.keyboard_disambiguate_escape_codes,
+            report_event_types: editor.config().editor.keyboard_report_event_types,
+            report_alternate_keys: editor.config().editor.keyboard_report_alternate_keys,
+            report_all_keys_as_escape_codes: editor
+                .config()
+                .editor
+                .keyboard_report_all_keys_as_escape_codes,
+        };
+        terminal_modes::suspend_and_resume(terminal_modes, Some(&keyboard_config))
+            .context("Failed to suspend process")?;
+        editor.request_full_redraw();
+        editor.set_status_message(fresh::i18n::resumed_after_suspend_message());
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = terminal_modes;
+        editor.set_status_message(fresh::i18n::suspend_unsupported_message());
+    }
+    Ok(())
+}
+
 /// Main event loop
 #[cfg(target_os = "linux")]
 fn run_event_loop(
@@ -3492,12 +3535,14 @@ fn run_event_loop(
     workspace_enabled: bool,
     key_translator: &KeyTranslator,
     gpm_client: &Option<GpmClient>,
+    terminal_modes: &mut TerminalModes,
 ) -> AnyhowResult<()> {
     run_event_loop_common(
         editor,
         terminal,
         workspace_enabled,
         key_translator,
+        terminal_modes,
         |timeout| poll_with_gpm(gpm_client.as_ref(), timeout),
     )
 }
@@ -3509,6 +3554,7 @@ fn run_event_loop(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     workspace_enabled: bool,
     key_translator: &KeyTranslator,
+    terminal_modes: &mut TerminalModes,
 ) -> AnyhowResult<()> {
     use fresh::server::input_parser::InputParser;
     use fresh_winterm::{VtInputEvent, VtInputReader};
@@ -3539,6 +3585,7 @@ fn run_event_loop(
         terminal,
         workspace_enabled,
         key_translator,
+        terminal_modes,
         |timeout| -> AnyhowResult<Option<CrosstermEvent>> {
             // Return buffered events first
             if let Some(event) = event_buffer.pop_front() {
@@ -3607,12 +3654,14 @@ fn run_event_loop(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     workspace_enabled: bool,
     key_translator: &KeyTranslator,
+    terminal_modes: &mut TerminalModes,
 ) -> AnyhowResult<()> {
     run_event_loop_common(
         editor,
         terminal,
         workspace_enabled,
         key_translator,
+        terminal_modes,
         |timeout| {
             if event_poll(timeout)? {
                 Ok(Some(event_read()?))
@@ -3628,6 +3677,7 @@ fn run_event_loop_common<F>(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     workspace_enabled: bool,
     _key_translator: &KeyTranslator,
+    terminal_modes: &mut TerminalModes,
     mut poll_event: F,
 ) -> AnyhowResult<()>
 where
@@ -3679,6 +3729,13 @@ where
                 }
             }
             break;
+        }
+
+        if editor.take_suspend_request() {
+            handle_suspend_request(editor, terminal_modes)?;
+            needs_render = true;
+            last_render = Instant::now() - FRAME_DURATION;
+            continue;
         }
 
         if needs_render && last_render.elapsed() >= FRAME_DURATION {

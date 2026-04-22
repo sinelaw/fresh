@@ -223,6 +223,17 @@ pub fn switched_to_project_message(path: &str) -> String {
     rust_i18n::t!("file.switched_to_project", path = path).to_string()
 }
 
+/// Status line shown after the editor resumes from SIGTSTP / `fg`.
+pub fn resumed_after_suspend_message() -> String {
+    rust_i18n::t!("status.resumed_after_suspend").to_string()
+}
+
+/// Status line shown when the suspend action is invoked on a platform
+/// without Unix job control (e.g. Windows).
+pub fn suspend_unsupported_message() -> String {
+    rust_i18n::t!("status.suspend_unsupported").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

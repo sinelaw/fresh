@@ -1262,6 +1262,14 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[],
         custom_contexts: &[],
     },
+    // Process control (Unix job-control suspend)
+    CommandDef {
+        name_key: "cmd.suspend_process",
+        desc_key: "cmd.suspend_process_desc",
+        action: || Action::SuspendProcess,
+        contexts: &[Normal, FileExplorer, Terminal],
+        custom_contexts: &[],
+    },
     // Plugin development
     CommandDef {
         name_key: "cmd.load_plugin_from_buffer",

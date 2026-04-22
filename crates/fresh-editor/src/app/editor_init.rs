@@ -725,6 +725,7 @@ impl Editor {
                 RecoveryService::with_config_and_dir(recovery_config, dir_context.recovery_dir())
             },
             full_redraw_requested: false,
+            suspend_requested: false,
             time_source: time_source.clone(),
             last_auto_recovery_save: time_source.now(),
             last_persistent_auto_save: time_source.now(),

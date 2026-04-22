@@ -114,6 +114,20 @@ impl Editor {
         requested
     }
 
+    /// Request the event loop to suspend the editor process (SIGTSTP on Unix).
+    /// The loop tears down terminal modes, raises the signal, then re-enables
+    /// modes once the shell sends SIGCONT (e.g. via `fg`).
+    pub fn request_suspend(&mut self) {
+        self.suspend_requested = true;
+    }
+
+    /// Check if a suspend was requested, and clear the flag.
+    pub fn take_suspend_request(&mut self) -> bool {
+        let requested = self.suspend_requested;
+        self.suspend_requested = false;
+        requested
+    }
+
     pub fn request_restart(&mut self, new_working_dir: PathBuf) {
         tracing::info!(
             "Restart requested with new working directory: {}",
