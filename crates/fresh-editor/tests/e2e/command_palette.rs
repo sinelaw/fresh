@@ -403,6 +403,63 @@ fn test_quick_open_goto_line_live_preview_mouse_click_commits() {
     );
 }
 
+/// A buffer edit that lands before the preview cursor (shifting it forward
+/// via `adjust_for_edit`) invalidates the snapshot: Esc afterwards must NOT
+/// restore, because the pre-preview byte position is meaningless relative to
+/// the edited buffer.
+#[test]
+fn test_quick_open_goto_line_live_preview_buffer_edit_invalidates() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::model::event::{CursorId, Event};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 30, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let content = "LINE1\nLINE2\nLINE3\nLINE4\nLINE5\nLINE6\nLINE7\nLINE8\nLINE9\nLINE10\n";
+    let jump_path = project_root.join("jump.txt");
+    fs::write(&jump_path, content).unwrap();
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(":5").unwrap();
+    harness.render().unwrap();
+    let line5_before_edit = "LINE1\nLINE2\nLINE3\nLINE4\n".len();
+    assert_eq!(harness.cursor_position(), line5_before_edit);
+
+    // External edit (e.g. LSP code action, plugin, format-on-save) inserts
+    // at the start of the buffer. Use a cursor_id that doesn't exist so the
+    // primary cursor only receives `adjust_for_edit` (no end-of-insertion
+    // move) — this models the "async edit came in" scenario.
+    harness
+        .apply_event(Event::Insert {
+            position: 0,
+            text: "PREFIX\n".to_string(),
+            cursor_id: CursorId(999_999),
+        })
+        .unwrap();
+    let cursor_after_edit = harness.cursor_position();
+    assert_ne!(
+        cursor_after_edit, line5_before_edit,
+        "Cursor should have shifted via adjust_for_edit after inserting at position 0"
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.cursor_position(),
+        cursor_after_edit,
+        "Esc must not restore the stale pre-preview snapshot after an external edit shifted the cursor"
+    );
+}
+
 /// Changing the prefix away from ":" should restore the cursor even without
 /// cancelling (so the preview doesn't leak into other providers).
 #[test]

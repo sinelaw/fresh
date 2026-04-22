@@ -188,6 +188,11 @@ impl Editor {
             self.apply_event_to_active_buffer(&remove_overlay_event);
         }
         self.hover.set_symbol_range(None);
+
+        // Any focus change (buffer switch, file explorer, menus, …) ends the
+        // Quick Open goto-line preview flow. Drop the snapshot so a later Esc
+        // cannot rubber-band the cursor over state the user has moved past.
+        self.quick_open_goto_line_preview = None;
     }
 
     /// Clear all popups

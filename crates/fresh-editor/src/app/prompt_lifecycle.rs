@@ -245,6 +245,12 @@ impl Editor {
         if let Some(line) = target_line {
             self.save_goto_line_preview_snapshot();
             self.goto_line_col(line, None);
+            // Record where the jump landed so restore can detect if the cursor
+            // has since moved (e.g., mouse click, external buffer edit).
+            let new_position = self.active_cursors().primary().position;
+            if let Some(snap) = self.quick_open_goto_line_preview.as_mut() {
+                snap.last_jump_position = new_position;
+            }
         } else {
             self.restore_goto_line_preview_snapshot();
         }
@@ -285,11 +291,21 @@ impl Editor {
             viewport_top_byte,
             viewport_top_view_line_offset,
             viewport_left_column,
+            // Before the first jump the cursor is still at the pre-preview
+            // position; `apply_goto_line_preview` overwrites this with the
+            // jump target immediately after calling `goto_line_col`.
+            last_jump_position: position,
         });
     }
 
     /// If a goto-line preview snapshot exists, restore the active split's
     /// cursor and viewport to the saved state and clear the snapshot.
+    ///
+    /// The snapshot is only applied if the editor is still in exactly the
+    /// state the last preview jump left it in: same active buffer, same split,
+    /// cursor still at `last_jump_position`. Any deviation (user mouse-clicked,
+    /// an async edit shifted the cursor, focus moved elsewhere, …) means the
+    /// pre-preview state is stale and we simply discard the snapshot.
     pub(super) fn restore_goto_line_preview_snapshot(&mut self) {
         let Some(snap) = self.quick_open_goto_line_preview.take() else {
             return;
@@ -305,6 +321,13 @@ impl Editor {
 
         let cursors = self.active_cursors();
         let current = cursors.primary();
+
+        // Cursor no longer where the preview left it → someone else moved it
+        // (mouse click, external edit via `adjust_for_edit`, …). Drop without
+        // restoring to avoid rubber-banding over that deliberate state.
+        if current.position != snap.last_jump_position {
+            return;
+        }
         let event = crate::model::event::Event::MoveCursor {
             cursor_id: snap.cursor_id,
             old_position: current.position,

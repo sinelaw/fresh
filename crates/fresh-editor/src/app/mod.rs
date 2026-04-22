@@ -284,6 +284,13 @@ pub struct DabbrevCycleState {
 /// Snapshot of cursor and viewport state used to restore the original position
 /// when a Quick Open goto-line preview is abandoned (cancel, or the user edits
 /// the input so it no longer targets a line).
+///
+/// `last_jump_position` is the byte offset the most recent preview jump put the
+/// cursor at; the restore path only applies the snapshot when the cursor is
+/// still exactly there. If anything else moved the cursor (mouse click, an
+/// async buffer edit shifting positions via `adjust_for_edit`, …) the snapshot
+/// is considered stale and simply dropped. This is the single staleness check
+/// that replaces per-site invalidation across many call paths.
 #[derive(Debug, Clone)]
 pub(crate) struct GotoLinePreviewSnapshot {
     pub buffer_id: BufferId,
@@ -295,6 +302,7 @@ pub(crate) struct GotoLinePreviewSnapshot {
     pub viewport_top_byte: usize,
     pub viewport_top_view_line_offset: usize,
     pub viewport_left_column: usize,
+    pub last_jump_position: usize,
 }
 
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
