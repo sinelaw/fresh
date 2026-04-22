@@ -166,6 +166,13 @@ pub enum ServerControl {
         /// Whether to use native system clipboard (arboard)
         use_system_clipboard: bool,
     },
+    /// Tell this client to suspend itself (SIGTSTP on Unix) and resume on `fg`.
+    ///
+    /// Dispatched when the user triggers `Action::SuspendProcess` in session
+    /// mode: only the client should drop back to the shell — the server
+    /// keeps running so the editor state is preserved and picked up cleanly
+    /// when the client resumes.
+    SuspendClient,
 }
 
 /// Wrapper for control channel messages (used for JSON serialization)
@@ -323,6 +330,7 @@ mod tests {
                 use_osc52: true,
                 use_system_clipboard: true,
             },
+            ServerControl::SuspendClient,
         ];
 
         for variant in variants {

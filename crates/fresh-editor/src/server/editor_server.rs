@@ -376,6 +376,37 @@ impl EditorServer {
                 continue;
             }
 
+            // Check if the client should suspend itself (SIGTSTP). The server
+            // keeps running — only the client drops back to the shell. On
+            // resume, the client sends a Resize to nudge a full redraw; we
+            // pre-mark `needs_full_render` so the next rendered frame after
+            // resume re-emits setup sequences and a complete paint.
+            let suspend_requested = self
+                .editor
+                .as_mut()
+                .map(|e| e.take_suspend_request())
+                .unwrap_or(false);
+            if suspend_requested {
+                if let Some(idx) = self.last_input_client {
+                    if idx < self.clients.len() {
+                        let client_id = self.clients[idx].id;
+                        tracing::info!("Client {} requested suspend", client_id);
+                        let suspend_msg = serde_json::to_string(&ServerControl::SuspendClient)
+                            .unwrap_or_default();
+                        // Best-effort: client may already be disconnected
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = self.clients[idx].conn.write_control(&suspend_msg);
+                        // Mark so the next render re-emits setup sequences and a
+                        // full paint once the client resumes and reconnects its
+                        // terminal.
+                        self.clients[idx].needs_full_render = true;
+                    }
+                } else {
+                    tracing::warn!("Suspend requested but no input source; ignoring");
+                }
+                continue;
+            }
+
             // Handle resize
             if resize_occurred {
                 self.update_terminal_size()?;

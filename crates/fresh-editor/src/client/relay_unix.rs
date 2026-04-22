@@ -120,6 +120,9 @@ pub fn relay_loop(
                         } => {
                             super::set_client_clipboard(&text, use_osc52, use_system_clipboard);
                         }
+                        crate::server::protocol::ServerControl::SuspendClient => {
+                            suspend_client(&mut stdout, conn)?;
+                        }
                         crate::server::protocol::ServerControl::Pong => {
                             // Ignore pong responses
                         }
@@ -140,6 +143,58 @@ pub fn relay_loop(
             return Ok(ClientExitReason::ServerQuit);
         }
     }
+}
+
+/// Suspend the client with SIGTSTP and restore its terminal on resume.
+///
+/// The server keeps running in session mode, so the client is the only piece
+/// that has a real foreground shell to hand control back to. We emit the same
+/// teardown bytes the server would have sent had the client detached, drop
+/// raw mode, raise SIGTSTP, and on resume re-enable raw mode and nudge the
+/// server to repaint by echoing the current terminal size back.
+fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::Result<()> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use nix::sys::signal::{raise, Signal};
+
+    // Leave alternate screen, disable mouse + bracketed paste, etc. — mirrors
+    // what `TerminalModes::undo()` does in direct mode. The server already
+    // marked this client `needs_full_render`, so the bytes it queues next
+    // will include the matching setup sequences + a full paint.
+    let teardown = crate::server::capture_backend::terminal_teardown_sequences();
+    stdout.write_all(&teardown)?;
+    stdout.flush()?;
+
+    if let Err(e) = disable_raw_mode() {
+        tracing::warn!("Failed to disable raw mode before suspend: {}", e);
+    }
+
+    // Block until the parent shell sends SIGCONT (typically via `fg`).
+    if let Err(e) = raise(Signal::SIGTSTP) {
+        tracing::error!("Failed to raise SIGTSTP: {}", e);
+        // Best-effort re-enable so we don't leave the terminal in a bad state.
+        let _ = enable_raw_mode();
+        return Err(io::Error::other(format!("raise(SIGTSTP) failed: {}", e)));
+    }
+
+    // Resumed. Re-enable raw mode; the server will repaint on its next tick
+    // because `needs_full_render` was set before we left.
+    if let Err(e) = enable_raw_mode() {
+        tracing::error!("Failed to re-enable raw mode after resume: {}", e);
+        return Err(io::Error::other(format!("enable_raw_mode failed: {}", e)));
+    }
+
+    // Echo our current size back so the server is guaranteed to tick a
+    // render (Resize always flips `needs_render`) without waiting on input.
+    if let Ok(size) = super::get_terminal_size() {
+        let resize_msg = serde_json::to_string(&ClientControl::Resize {
+            cols: size.cols,
+            rows: size.rows,
+        })
+        .unwrap_or_default();
+        let _ = conn.write_control(&resize_msg);
+    }
+
+    Ok(())
 }
 
 /// Set up SIGWINCH handler for terminal resize
