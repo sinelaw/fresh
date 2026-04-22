@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "Aucun espace de fin à supprimer",
   "whitespace.trimmed": "Espaces de fin supprimés",
   "explorer.move_source_removal_failed": "Copié vers la destination, mais impossible de supprimer la source '%{name}' : %{error}",
-  "explorer.move_source_removal_failed_n": "Copié vers la destination, mais %{count} sources n'ont pas pu être supprimées"
+  "explorer.move_source_removal_failed_n": "Copié vers la destination, mais %{count} sources n'ont pas pu être supprimées",
+  "action.suspend_process": "Suspendre le processus de l'éditeur (reprendre avec `fg`)",
+  "cmd.suspend_process": "Suspendre le processus",
+  "cmd.suspend_process_desc": "Suspendre l'éditeur avec SIGTSTP (Unix) ; reprendre avec `fg` dans le shell parent",
+  "status.resumed_after_suspend": "Repris",
+  "status.suspend_unsupported": "La suspension n'est pas prise en charge sur cette plateforme"
 }

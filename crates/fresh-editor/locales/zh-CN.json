@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "没有尾随空格需要删除",
   "whitespace.trimmed": "已删除尾随空格",
   "explorer.move_source_removal_failed": "已复制到目标位置，但无法删除源 '%{name}': %{error}",
-  "explorer.move_source_removal_failed_n": "已复制到目标位置，但有 %{count} 个源文件无法删除"
+  "explorer.move_source_removal_failed_n": "已复制到目标位置，但有 %{count} 个源文件无法删除",
+  "action.suspend_process": "挂起编辑器进程（用 `fg` 恢复）",
+  "cmd.suspend_process": "挂起进程",
+  "cmd.suspend_process_desc": "使用 SIGTSTP 挂起编辑器（Unix）；在父 shell 中用 `fg` 恢复",
+  "status.resumed_after_suspend": "已恢复",
+  "status.suspend_unsupported": "此平台不支持挂起"
 }

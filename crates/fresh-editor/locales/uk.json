@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "Немає кінцевих пробілів для видалення",
   "whitespace.trimmed": "Кінцеві пробіли видалено",
   "explorer.move_source_removal_failed": "Скопійовано до місця призначення, але не вдалося видалити джерело '%{name}': %{error}",
-  "explorer.move_source_removal_failed_n": "Скопійовано до місця призначення, але не вдалося видалити %{count} джерел"
+  "explorer.move_source_removal_failed_n": "Скопійовано до місця призначення, але не вдалося видалити %{count} джерел",
+  "action.suspend_process": "Призупинити процес редактора (відновити через `fg`)",
+  "cmd.suspend_process": "Призупинити процес",
+  "cmd.suspend_process_desc": "Призупинити редактор через SIGTSTP (Unix); відновити через `fg` у батьківській оболонці",
+  "status.resumed_after_suspend": "Відновлено",
+  "status.suspend_unsupported": "Призупинення не підтримується на цій платформі"
 }

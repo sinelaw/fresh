@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "削除する末尾の空白がありません",
   "whitespace.trimmed": "末尾の空白を削除しました",
   "explorer.move_source_removal_failed": "コピー先には保存しましたが、元の '%{name}' を削除できませんでした: %{error}",
-  "explorer.move_source_removal_failed_n": "コピー先には保存しましたが、%{count} 件の元ファイルを削除できませんでした"
+  "explorer.move_source_removal_failed_n": "コピー先には保存しましたが、%{count} 件の元ファイルを削除できませんでした",
+  "action.suspend_process": "エディタプロセスを一時停止（`fg` で再開）",
+  "cmd.suspend_process": "プロセスを一時停止",
+  "cmd.suspend_process_desc": "SIGTSTP でエディタを一時停止（Unix）。親シェルで `fg` を実行すると再開",
+  "status.resumed_after_suspend": "再開しました",
+  "status.suspend_unsupported": "このプラットフォームでは一時停止はサポートされていません"
 }

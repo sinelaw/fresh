@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "제거할 후행 공백이 없습니다",
   "whitespace.trimmed": "후행 공백이 제거되었습니다",
   "explorer.move_source_removal_failed": "대상으로 복사했으나 원본 '%{name}'을(를) 제거하지 못했습니다: %{error}",
-  "explorer.move_source_removal_failed_n": "대상으로 복사했으나 %{count}개의 원본을 제거하지 못했습니다"
+  "explorer.move_source_removal_failed_n": "대상으로 복사했으나 %{count}개의 원본을 제거하지 못했습니다",
+  "action.suspend_process": "에디터 프로세스 일시 중단 (`fg`로 재개)",
+  "cmd.suspend_process": "프로세스 일시 중단",
+  "cmd.suspend_process_desc": "SIGTSTP로 에디터 일시 중단 (Unix); 상위 셸에서 `fg`로 재개",
+  "status.resumed_after_suspend": "재개됨",
+  "status.suspend_unsupported": "이 플랫폼에서는 일시 중단이 지원되지 않습니다"
 }

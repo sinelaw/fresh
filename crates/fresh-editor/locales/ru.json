@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "Нет конечных пробелов для удаления",
   "whitespace.trimmed": "Конечные пробелы удалены",
   "explorer.move_source_removal_failed": "Скопировано в место назначения, но не удалось удалить источник '%{name}': %{error}",
-  "explorer.move_source_removal_failed_n": "Скопировано в место назначения, но %{count} источников не удалось удалить"
+  "explorer.move_source_removal_failed_n": "Скопировано в место назначения, но %{count} источников не удалось удалить",
+  "action.suspend_process": "Приостановить процесс редактора (возобновить через `fg`)",
+  "cmd.suspend_process": "Приостановить процесс",
+  "cmd.suspend_process_desc": "Приостановить редактор через SIGTSTP (Unix); возобновить через `fg` в родительской оболочке",
+  "status.resumed_after_suspend": "Возобновлено",
+  "status.suspend_unsupported": "Приостановка не поддерживается на этой платформе"
 }

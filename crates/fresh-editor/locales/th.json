@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "ไม่มีช่องว่างท้ายบรรทัดให้ลบ",
   "whitespace.trimmed": "ตัดช่องว่างท้ายบรรทัดแล้ว",
   "explorer.move_source_removal_failed": "คัดลอกไปยังปลายทางแล้ว แต่ไม่สามารถลบต้นฉบับ '%{name}': %{error}",
-  "explorer.move_source_removal_failed_n": "คัดลอกไปยังปลายทางแล้ว แต่ไม่สามารถลบต้นฉบับ %{count} ไฟล์"
+  "explorer.move_source_removal_failed_n": "คัดลอกไปยังปลายทางแล้ว แต่ไม่สามารถลบต้นฉบับ %{count} ไฟล์",
+  "action.suspend_process": "พักการทำงานของโปรแกรมแก้ไข (กลับมาด้วย `fg`)",
+  "cmd.suspend_process": "พักกระบวนการ",
+  "cmd.suspend_process_desc": "พักโปรแกรมแก้ไขด้วย SIGTSTP (Unix); กลับมาทำงานด้วย `fg` ในเชลล์หลัก",
+  "status.resumed_after_suspend": "กลับมาทำงานแล้ว",
+  "status.suspend_unsupported": "แพลตฟอร์มนี้ไม่รองรับการพักการทำงาน"
 }

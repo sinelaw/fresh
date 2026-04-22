@@ -172,7 +172,9 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
     if let Err(e) = raise(Signal::SIGTSTP) {
         tracing::error!("Failed to raise SIGTSTP: {}", e);
         // Best-effort re-enable so we don't leave the terminal in a bad state.
-        let _ = enable_raw_mode();
+        if let Err(re) = enable_raw_mode() {
+            tracing::error!("Failed to re-enable raw mode after failed suspend: {}", re);
+        }
         return Err(io::Error::other(format!("raise(SIGTSTP) failed: {}", e)));
     }
 
@@ -191,7 +193,9 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
             rows: size.rows,
         })
         .unwrap_or_default();
-        let _ = conn.write_control(&resize_msg);
+        if let Err(e) = conn.write_control(&resize_msg) {
+            tracing::warn!("Failed to send post-resume resize to server: {}", e);
+        }
     }
 
     Ok(())

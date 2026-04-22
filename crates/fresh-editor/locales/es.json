@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "No hay espacios en blanco finales que eliminar",
   "whitespace.trimmed": "Espacios en blanco finales eliminados",
   "explorer.move_source_removal_failed": "Copiado al destino pero no se pudo eliminar el origen '%{name}': %{error}",
-  "explorer.move_source_removal_failed_n": "Copiado al destino pero no se pudieron eliminar %{count} orígenes"
+  "explorer.move_source_removal_failed_n": "Copiado al destino pero no se pudieron eliminar %{count} orígenes",
+  "action.suspend_process": "Suspender el proceso del editor (reanudar con `fg`)",
+  "cmd.suspend_process": "Suspender proceso",
+  "cmd.suspend_process_desc": "Suspender el editor con SIGTSTP (Unix); reanudar con `fg` en el shell padre",
+  "status.resumed_after_suspend": "Reanudado",
+  "status.suspend_unsupported": "La suspensión no es compatible con esta plataforma"
 }

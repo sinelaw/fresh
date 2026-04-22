@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "Žádné koncové mezery k odstranění",
   "whitespace.trimmed": "Koncové mezery odstraněny",
   "explorer.move_source_removal_failed": "Zkopírováno do cíle, ale zdroj '%{name}' nebylo možné odstranit: %{error}",
-  "explorer.move_source_removal_failed_n": "Zkopírováno do cíle, ale %{count} zdrojů nebylo možné odstranit"
+  "explorer.move_source_removal_failed_n": "Zkopírováno do cíle, ale %{count} zdrojů nebylo možné odstranit",
+  "action.suspend_process": "Pozastavit proces editoru (obnovit pomocí `fg`)",
+  "cmd.suspend_process": "Pozastavit proces",
+  "cmd.suspend_process_desc": "Pozastavit editor pomocí SIGTSTP (Unix); obnovit pomocí `fg` v nadřazeném shellu",
+  "status.resumed_after_suspend": "Obnoveno",
+  "status.suspend_unsupported": "Pozastavení není na této platformě podporováno"
 }

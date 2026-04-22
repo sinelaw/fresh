@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "Không có khoảng trắng cuối dòng để xóa",
   "whitespace.trimmed": "Đã xóa khoảng trắng cuối dòng",
   "explorer.move_source_removal_failed": "Đã sao chép đến đích nhưng không thể xóa nguồn '%{name}': %{error}",
-  "explorer.move_source_removal_failed_n": "Đã sao chép đến đích nhưng không thể xóa %{count} nguồn"
+  "explorer.move_source_removal_failed_n": "Đã sao chép đến đích nhưng không thể xóa %{count} nguồn",
+  "action.suspend_process": "Tạm dừng tiến trình trình soạn thảo (tiếp tục với `fg`)",
+  "cmd.suspend_process": "Tạm dừng tiến trình",
+  "cmd.suspend_process_desc": "Tạm dừng trình soạn thảo bằng SIGTSTP (Unix); tiếp tục bằng `fg` trong shell cha",
+  "status.resumed_after_suspend": "Đã tiếp tục",
+  "status.suspend_unsupported": "Nền tảng này không hỗ trợ tạm dừng"
 }

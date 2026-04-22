@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "Keine Leerzeichen am Zeilenende vorhanden",
   "whitespace.trimmed": "Leerzeichen am Zeilenende entfernt",
   "explorer.move_source_removal_failed": "Ins Ziel kopiert, aber Quelle '%{name}' konnte nicht entfernt werden: %{error}",
-  "explorer.move_source_removal_failed_n": "Ins Ziel kopiert, aber %{count} Quellen konnten nicht entfernt werden"
+  "explorer.move_source_removal_failed_n": "Ins Ziel kopiert, aber %{count} Quellen konnten nicht entfernt werden",
+  "action.suspend_process": "Editor-Prozess anhalten (mit `fg` fortsetzen)",
+  "cmd.suspend_process": "Prozess anhalten",
+  "cmd.suspend_process_desc": "Editor mit SIGTSTP anhalten (Unix); in der übergeordneten Shell mit `fg` fortsetzen",
+  "status.resumed_after_suspend": "Fortgesetzt",
+  "status.suspend_unsupported": "Anhalten wird auf dieser Plattform nicht unterstützt"
 }

@@ -1347,5 +1347,10 @@
   "whitespace.no_trailing": "Nessuno spazio bianco finale da rimuovere",
   "whitespace.trimmed": "Spazi bianchi finali rimossi",
   "explorer.move_source_removal_failed": "Copiato nella destinazione ma impossibile rimuovere l'origine '%{name}': %{error}",
-  "explorer.move_source_removal_failed_n": "Copiato nella destinazione ma %{count} origini non potevano essere rimosse"
+  "explorer.move_source_removal_failed_n": "Copiato nella destinazione ma %{count} origini non potevano essere rimosse",
+  "action.suspend_process": "Sospendi processo editor (riprendi con `fg`)",
+  "cmd.suspend_process": "Sospendi processo",
+  "cmd.suspend_process_desc": "Sospendi l'editor con SIGTSTP (Unix); riprendi con `fg` nella shell padre",
+  "status.resumed_after_suspend": "Ripreso",
+  "status.suspend_unsupported": "La sospensione non è supportata su questa piattaforma"
 }
