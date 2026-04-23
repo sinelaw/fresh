@@ -4,7 +4,20 @@
 
 ### Features
 
-* **`init.ts`**: Fresh now auto-loads `~/.config/fresh/init.ts`! Allows you to run plugin code on startup, which complements the purely declarative config system with imperative, environment-aware logic. Use command palette `init: Edit` to generate a template with some examples. Enable LSP to get help and completions when editing your init file. Use `init: Reload` to run it after editing. Use `--no-init` / `--safe` to skip loading.
+* **`init.ts`**: Fresh now auto-loads `~/.config/fresh/init.ts`! Allows you to run plugin code on startup, which complements the purely declarative config system with imperative, environment-aware logic. Use command palette `init: Edit` to generate a template with some examples. Enable LSP to get help and completions when editing your init file. Use `init: Reload` to run it after editing. Use `--no-init` / `--safe` to skip loading. Example (for the Dashboard plugin):
+    ```typescript
+    const dash = editor.getPluginApi("dashboard");
+    if (dash) {
+      dash.registerSection("env", async (ctx) => {
+        ctx.kv("USER", editor.getEnv("USER") || "?");
+      });
+    }
+    ```
+    Will add a line like this:
+    ```
+    │ ▎  ENV                              │
+    │    USER      someone                │
+    ```
 
 * **Dashboard plugin**: Built-in TUI dashboard that replaces the usual "[No Name]" with weather info, git status + repo URL, a "vs master" row (commits ahead/behind), open GitHub PRs for the current repo, and disk usage for common mounts. Enable via `plugins.dashboard.enabled` in `config.json` or the Settings UI. Third-party plugins and `init.ts` can contribute their own rows via the `registerSection()` API.
 
