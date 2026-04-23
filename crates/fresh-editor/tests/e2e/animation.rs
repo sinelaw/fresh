@@ -4,8 +4,11 @@
 //! the plugin system (tab switches in particular). Plugin-driven
 //! dashboard animations live in `e2e/plugins/dashboard.rs`.
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{copy_plugin_lib, EditorTestHarness};
+use crate::common::tracing::init_tracing_from_env;
+use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use std::fs;
 
 /// Cycling to the next tab fires a slide-in effect over the active
 /// split's content area. We don't assert the direction of the slide
@@ -58,6 +61,97 @@ fn next_buffer_kicks_off_a_slide_animation() {
     assert!(
         harness.screen_to_string().contains("ALPHA_BUFFER_CONTENT"),
         "after tab-switch animation settles, alpha buffer should be visible — screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Reproduces a bug reported during development: cycling from a
+/// buffer-group tab (e.g. `*Git Log*`, created via createBufferGroup)
+/// to a plain file buffer silently skipped the tab-switch animation.
+/// The reverse direction (file → group) already animated. Root cause
+/// was that `animate_tab_switch` looks up the split's content Rect in
+/// cached_layout.split_areas by the OUTER split id — but when a group
+/// is active, the split_areas entries are keyed by the group's INNER
+/// leaf ids (each panel is its own entry), and no entry exists for
+/// the outer split id. The lookup missed and the animation silently
+/// returned.
+///
+/// This test exercises the buggy path: open a file, activate a group,
+/// cycle away. Before the fix the assertion `is_active()` never flips
+/// true and the test hangs (external nextest timeout surfaces the
+/// regression). After the fix the animation fires as expected.
+#[test]
+fn tab_switch_from_group_to_file_animates() {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Drop the tiny test_buffer_groups plugin next to the test so we
+    // can create a group with deterministic panels without pulling in
+    // git_log (which needs a real repo).
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    const PLUGIN_SRC: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/plugins/test_buffer_groups.ts"
+    ));
+    fs::write(plugins_dir.join("test_buffer_groups.ts"), PLUGIN_SRC).unwrap();
+
+    // Write a file so we have a real file buffer to cycle to.
+    let file_path = project_root.join("somefile.txt");
+    fs::write(&file_path, "FILE_BUFFER_CONTENT").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), project_root)
+            .unwrap();
+    harness.render().unwrap();
+
+    // Open the file first, then the buffer-group, so `open_buffers`
+    // has both targets and we can cycle between them.
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("FILE_BUFFER_CONTENT"))
+        .unwrap();
+
+    // Trigger the group via the palette, then wait for its markers.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("TestBG: Create").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("LEFT") && s.contains("RIGHT")
+        })
+        .unwrap();
+
+    // Wait for any open-time animation to settle so is_active is a
+    // clean false baseline.
+    harness
+        .wait_until(|h| !h.editor().animations.is_active())
+        .unwrap();
+
+    // Cycle to the previous tab: group → file. Before the fix,
+    // is_active stayed false forever and this wait never returned.
+    harness.editor_mut().prev_buffer();
+    harness
+        .wait_until(|h| h.editor().animations.is_active())
+        .unwrap();
+
+    harness
+        .wait_until(|h| !h.editor().animations.is_active())
+        .unwrap();
+    assert!(
+        harness.screen_to_string().contains("FILE_BUFFER_CONTENT"),
+        "after tab-switch animation settles, file buffer should be visible — screen:\n{}",
         harness.screen_to_string()
     );
 }

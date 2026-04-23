@@ -87,13 +87,7 @@ impl Editor {
         if !self.config.editor.animations {
             return;
         }
-        let Some(area) = self
-            .cached_layout
-            .split_areas
-            .iter()
-            .find(|(sid, _, _, _, _, _)| *sid == split_id)
-            .map(|(_, _, content_rect, _, _, _)| *content_rect)
-        else {
+        let Some(area) = self.split_or_group_content_rect(split_id) else {
             return;
         };
         if area.width == 0 || area.height == 0 {
@@ -113,4 +107,75 @@ impl Editor {
             },
         );
     }
+
+    /// Resolve the on-screen Rect that covers the split `split_id` from
+    /// the cached layout.
+    ///
+    /// Normally a split_id maps 1:1 to a single entry in
+    /// `cached_layout.split_areas` (the split's content rect). When a
+    /// buffer-group tab is active, however, the split renders the
+    /// group's inner subtree — split_areas then has one entry per
+    /// inner panel (log / detail / toolbar etc.) and NO entry for the
+    /// outer split id. In that case we walk the stashed group subtree
+    /// to collect every inner LeafId, look each one up in split_areas,
+    /// and return the bounding box. That gives us the overall area the
+    /// group occupies on screen.
+    fn split_or_group_content_rect(&self, split_id: LeafId) -> Option<ratatui::layout::Rect> {
+        if let Some(rect) = self
+            .cached_layout
+            .split_areas
+            .iter()
+            .find(|(sid, _, _, _, _, _)| *sid == split_id)
+            .map(|(_, _, content_rect, _, _, _)| *content_rect)
+        {
+            return Some(rect);
+        }
+
+        // Fallback: is this split hosting a buffer-group tab? If so,
+        // walk the group's inner subtree to collect its leaf ids and
+        // union their cached content rects.
+        let group_leaf = self
+            .split_view_states
+            .get(&split_id)
+            .and_then(|vs| vs.active_group_tab)?;
+        let subtree = self.grouped_subtrees.get(&group_leaf)?;
+
+        let mut inner_leaves: Vec<LeafId> = Vec::new();
+        collect_leaf_ids(subtree, &mut inner_leaves);
+
+        let mut union: Option<ratatui::layout::Rect> = None;
+        for (sid, _, content, _, _, _) in &self.cached_layout.split_areas {
+            if !inner_leaves.contains(sid) {
+                continue;
+            }
+            union = Some(match union {
+                None => *content,
+                Some(prev) => rect_union(prev, *content),
+            });
+        }
+        union
+    }
+}
+
+/// Walk a SplitNode collecting every Leaf's `split_id`.
+fn collect_leaf_ids(node: &crate::view::split::SplitNode, out: &mut Vec<LeafId>) {
+    use crate::view::split::SplitNode;
+    match node {
+        SplitNode::Leaf { split_id, .. } => out.push(*split_id),
+        SplitNode::Split { first, second, .. } => {
+            collect_leaf_ids(first, out);
+            collect_leaf_ids(second, out);
+        }
+        SplitNode::Grouped { layout, .. } => collect_leaf_ids(layout, out),
+    }
+}
+
+fn rect_union(a: ratatui::layout::Rect, b: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    let x = a.x.min(b.x);
+    let y = a.y.min(b.y);
+    let right = a.x.saturating_add(a.width).max(b.x.saturating_add(b.width));
+    let bottom =
+        a.y.saturating_add(a.height)
+            .max(b.y.saturating_add(b.height));
+    ratatui::layout::Rect::new(x, y, right.saturating_sub(x), bottom.saturating_sub(y))
 }
