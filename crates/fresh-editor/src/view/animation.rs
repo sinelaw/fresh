@@ -272,7 +272,20 @@ impl AnimationRunner {
     /// Start an effect using a caller-supplied ID. Intended for the plugin
     /// bridge, where the plugin-side counter is the source of truth so the
     /// JS call can return the ID synchronously.
+    ///
+    /// Replaces any existing active effect covering exactly the same
+    /// area. Without this, rapid re-triggers over the same Rect (tab
+    /// cycling, dashboard data refresh) stack effects whose snapshots
+    /// contaminate each other: the second effect's "after" snapshot is
+    /// taken from a buffer the first effect has already shifted, so
+    /// when both finish the final image is frozen mid-transition.
+    /// Replacement keeps exactly one effect per area — the latest one
+    /// wins, its before-snapshot (read from the runner's last_frame)
+    /// captures whatever the user is actually seeing right now,
+    /// including any in-flight shift, and the new push-over-blanks
+    /// starts from there.
     pub fn start_with_id(&mut self, id: AnimationId, area: Rect, kind: AnimationKind) {
+        self.active.retain(|e| e.area != area);
         let now = Instant::now();
         let (effect, delay, duration): (Box<dyn FrameEffect + Send>, Duration, Duration) =
             match kind {
@@ -616,10 +629,13 @@ mod tests {
 
     #[test]
     fn next_deadline_is_earliest() {
-        let area = Rect::new(0, 0, 2, 2);
+        // Use two DIFFERENT areas so neither effect replaces the other
+        // (`start_with_id` drops any existing effect on the same Rect).
+        let area_a = Rect::new(0, 0, 2, 2);
+        let area_b = Rect::new(0, 2, 2, 2);
         let mut runner = AnimationRunner::new();
         runner.start(
-            area,
+            area_a,
             AnimationKind::SlideIn {
                 from: Edge::Bottom,
                 duration: Duration::from_millis(100),
@@ -628,7 +644,7 @@ mod tests {
         );
         let d1 = runner.next_deadline().unwrap();
         runner.start(
-            area,
+            area_b,
             AnimationKind::SlideIn {
                 from: Edge::Bottom,
                 duration: Duration::from_millis(1000),
@@ -637,6 +653,33 @@ mod tests {
         );
         let d2 = runner.next_deadline().unwrap();
         assert!(d2 <= d1 + Duration::from_millis(5));
+    }
+
+    #[test]
+    fn starting_effect_on_same_area_replaces_previous() {
+        let area = Rect::new(0, 0, 2, 2);
+        let mut runner = AnimationRunner::new();
+        let first = runner.start(
+            area,
+            AnimationKind::SlideIn {
+                from: Edge::Bottom,
+                duration: Duration::from_millis(500),
+                delay: Duration::ZERO,
+            },
+        );
+        assert_eq!(runner.active.len(), 1);
+        let second = runner.start(
+            area,
+            AnimationKind::SlideIn {
+                from: Edge::Top,
+                duration: Duration::from_millis(500),
+                delay: Duration::ZERO,
+            },
+        );
+        // Exactly one effect still active, and it's the newer one.
+        assert_eq!(runner.active.len(), 1);
+        assert_eq!(runner.active[0].id, second);
+        assert_ne!(first, second);
     }
 
     #[test]

@@ -155,3 +155,70 @@ fn tab_switch_from_group_to_file_animates() {
         harness.screen_to_string()
     );
 }
+
+/// Reproducer for the "stuck mid-slide" bug: rapidly cycling
+/// buffers kicks a new slide while the previous one is still in
+/// flight. Without a replacement rule the new effect snapshots
+/// the old effect's mid-slide pixels as its "after" frame, and
+/// once both finish the buffer ends up frozen at an intermediate
+/// state (half the old content, half blank). The assert on the
+/// final screen catches that — after all animations settle, the
+/// target buffer's content must be fully visible.
+#[test]
+fn rapid_tab_switches_settle_on_target_content() {
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Config::default()).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    // Three files so we can bounce between them multiple times and
+    // reliably land back on a predictable one at the end.
+    let file_a = project_dir.join("alpha.txt");
+    let file_b = project_dir.join("bravo.txt");
+    let file_c = project_dir.join("charlie.txt");
+    std::fs::write(&file_a, "ALPHA_BUFFER_CONTENT").unwrap();
+    std::fs::write(&file_b, "BRAVO_BUFFER_CONTENT").unwrap();
+    std::fs::write(&file_c, "CHARLIE_BUFFER_CONTENT").unwrap();
+
+    harness.open_file(&file_a).unwrap();
+    harness.open_file(&file_b).unwrap();
+    harness.open_file(&file_c).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("CHARLIE_BUFFER_CONTENT"))
+        .unwrap();
+    // Let the post-open animation settle so the rapid-switch
+    // sequence starts from a clean baseline.
+    harness
+        .wait_until(|h| !h.editor().animations.is_active())
+        .unwrap();
+
+    // Fire four switches back-to-back without waiting for any to
+    // settle. Net motion lands on charlie: prev/prev/next/next from
+    // charlie → bravo → alpha → bravo → charlie.
+    harness.editor_mut().prev_buffer();
+    harness.editor_mut().prev_buffer();
+    harness.editor_mut().next_buffer();
+    harness.editor_mut().next_buffer();
+
+    // Wait for everything to settle, then confirm the target is the
+    // only buffer content visible on screen.
+    harness
+        .wait_until(|h| !h.editor().animations.is_active())
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("CHARLIE_BUFFER_CONTENT"),
+        "after rapid switches settle, charlie should be visible — screen:\n{}",
+        screen
+    );
+    // No residue from the bouncing switches should remain.
+    assert!(
+        !screen.contains("ALPHA_BUFFER_CONTENT"),
+        "alpha must not linger after the animations finish — screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("BRAVO_BUFFER_CONTENT"),
+        "bravo must not linger after the animations finish — screen:\n{}",
+        screen
+    );
+}
