@@ -255,6 +255,123 @@ impl LineWrapCache {
     }
 }
 
+/// Materialise a line's layout as `Vec<ViewLine>` from plain text
+/// alone — no buffer iteration, no soft breaks, no conceals.
+///
+/// Useful at sites that have `line_text: &str` in hand and can't
+/// easily reach `EditorState` (or are inside a `line_iterator` borrow).
+/// The produced `ViewLine`s match the renderer's word-boundary wrap
+/// on the same text at the same geometry, so row counts and cursor
+/// mappings agree with `layout_for_line` in the absence of soft
+/// breaks / conceals.  When soft breaks or conceals ARE active for
+/// the line, callers should prefer `layout_for_line` to get accurate
+/// layout.
+pub fn layout_for_plain_text(
+    line_text: &str,
+    effective_width: usize,
+    gutter_width: usize,
+    hanging_indent: bool,
+    tab_size: usize,
+) -> Vec<ViewLine> {
+    use fresh_core::api::ViewTokenWire;
+    let tokens = vec![ViewTokenWire {
+        source_offset: Some(0),
+        kind: ViewTokenWireKind::Text(line_text.to_string()),
+        style: None,
+    }];
+    let wrapped = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
+    ViewLineIterator::new(&wrapped, false, true, tab_size, false).collect()
+}
+
+/// Look up a line's layout in the cache, running the mini-pipeline to
+/// fill on miss.  The primary read-path entry point for consumers that
+/// need full `ViewLine` layout (not just row count).
+///
+/// Guarantees that the value returned matches what the renderer would
+/// produce for the same line under the same pipeline inputs: same
+/// function chain is called either way, so cache hit and miss are
+/// indistinguishable to the caller.
+pub fn layout_for_line(
+    state: &mut EditorState,
+    line_start: usize,
+    line_end: usize,
+    geom: &WrapGeometry,
+) -> Arc<Vec<ViewLine>> {
+    let version = pipeline_inputs_version(
+        state.buffer.version(),
+        state.soft_breaks.version(),
+        state.conceals.version(),
+    );
+    let key = geom.key(line_start, version);
+    if let Some(cached) = state.line_wrap_cache.get(&key) {
+        return cached;
+    }
+    let layout = compute_line_layout(state, line_start, line_end, geom);
+    let arc = Arc::new(layout);
+    state.line_wrap_cache.put(key, arc.clone());
+    arc
+}
+
+/// Given a logical line's layout and a character position within the
+/// LOGICAL line (not the ViewLine), return `(segment_idx,
+/// col_in_segment)` — the index of the `ViewLine` the character falls
+/// into, and the visual column within that `ViewLine`.
+///
+/// Replaces `primitives::line_wrapping::char_position_to_segment` for
+/// callers that have a cached `Vec<ViewLine>`.
+///
+/// The trick: continuation `ViewLine`s can carry hanging-indent
+/// characters at their start whose `source_offset` is `None` (they
+/// don't correspond to any source byte).  Those chars must NOT count
+/// toward the source-character position we're walking past.  So we
+/// sum *source* characters per row (char_source_bytes entries that
+/// are `Some(_)`) to find the row containing `char_pos_in_line`, and
+/// within that row we locate the specific char whose source_offset
+/// matches.
+///
+/// If `layout` is empty, returns `(0, 0)`.  If the position is past
+/// the end of the last row, returns the last row with the last
+/// visual column of that row.
+pub fn char_position_in_layout(layout: &[ViewLine], char_pos_in_line: usize) -> (usize, usize) {
+    if layout.is_empty() {
+        return (0, 0);
+    }
+    let mut source_chars_consumed = 0usize;
+    for (i, line) in layout.iter().enumerate() {
+        let source_chars_in_row = line
+            .char_source_bytes
+            .iter()
+            .filter(|b| b.is_some())
+            .count();
+        if char_pos_in_line < source_chars_consumed + source_chars_in_row {
+            // The target source-char is in this row.  Find the
+            // `char_idx` whose position-among-source-chars equals
+            // the within-row offset, then convert to visual column.
+            let within_row = char_pos_in_line - source_chars_consumed;
+            let mut source_count = 0usize;
+            for (char_idx, byte) in line.char_source_bytes.iter().enumerate() {
+                if byte.is_some() {
+                    if source_count == within_row {
+                        return (i, line.visual_col_at_char(char_idx));
+                    }
+                    source_count += 1;
+                }
+            }
+            // Fallback: shouldn't happen given the length check above,
+            // but don't return garbage if it does.
+            return (i, line.visual_width().saturating_sub(1));
+        }
+        source_chars_consumed += source_chars_in_row;
+    }
+    // Past the end: return the last row's last visual column.  (A
+    // cursor one past the last source char on the last row lands
+    // here.)
+    let last_idx = layout.len() - 1;
+    let last = &layout[last_idx];
+    let last_col = last.visual_width().saturating_sub(1);
+    (last_idx, last_col)
+}
+
 /// Geometry + view config inputs to the wrap pipeline that aren't carried
 /// by `EditorState`.  Bundled so the plumbing through call sites doesn't
 /// grow a laundry list of parameters.

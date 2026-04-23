@@ -1,7 +1,7 @@
 use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursor;
 use crate::primitives::display_width::{char_width, str_width};
-use crate::primitives::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
+use crate::primitives::line_wrapping::WrapConfig;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 /// The viewport - what portion of the buffer is visible
 #[derive(Debug, Clone)]
@@ -1602,17 +1602,35 @@ impl Viewport {
                             String::new()
                         };
 
-                        // Wrap the line (even if empty, it still takes 1 row)
-                        let segments = wrap_line(&line_content, &wrap_config);
-                        let segments_count = segments.len().max(1); // Empty line is 1 row
+                        // Wrap the line via the renderer's word-boundary
+                        // wrap so row counts and cursor positioning agree
+                        // with what's actually drawn.  (See
+                        // docs/internal/line-wrap-cache-plan.md — the
+                        // whole branch is about eliminating the
+                        // `wrap_line` / `apply_wrapping_transform` drift.)
+                        let effective_width = wrap_config
+                            .first_line_width
+                            .saturating_add(wrap_config.gutter_width)
+                            .max(2);
+                        let layout = crate::view::line_wrap_cache::layout_for_plain_text(
+                            &line_content,
+                            effective_width,
+                            wrap_config.gutter_width,
+                            wrap_config.hanging_indent,
+                            4,
+                        );
+                        let segments_count = layout.len().max(1); // empty line = 1 row
 
-                        // Find which segment the cursor is in
+                        // Find which ViewLine the cursor is in.
                         let cursor_column = cursor.position.saturating_sub(cursor_line_start);
                         let (cursor_segment_idx, _) =
-                            char_position_to_segment(cursor_column, &segments);
+                            crate::view::line_wrap_cache::char_position_in_layout(
+                                &layout,
+                                cursor_column,
+                            );
 
-                        // Add the rows for this line up to and including the cursor's segment
-                        // For empty lines, cursor_segment_idx is 0, so we add 1 row
+                        // Add the rows for this line up to and including the cursor's segment.
+                        // Empty lines have cursor_segment_idx = 0 → 1 row.
                         visual_rows += cursor_segment_idx.min(segments_count - 1) + 1;
 
                         // Check if cursor's row is within viewport with scroll offset applied.
@@ -1647,10 +1665,20 @@ impl Viewport {
 
                 // Get the next line
                 if let Some((_line_start, line_content)) = iter.next_line() {
-                    // Wrap this line to count how many visual rows it takes
+                    // Count visual rows via the renderer's word-boundary wrap.
                     let line_text = line_content.trim_end_matches('\n');
-                    let segments = wrap_line(line_text, &wrap_config);
-                    visual_rows += segments.len();
+                    let effective_width = wrap_config
+                        .first_line_width
+                        .saturating_add(wrap_config.gutter_width)
+                        .max(2);
+                    let layout = crate::view::line_wrap_cache::layout_for_plain_text(
+                        line_text,
+                        effective_width,
+                        wrap_config.gutter_width,
+                        wrap_config.hanging_indent,
+                        4,
+                    );
+                    visual_rows += layout.len();
 
                     // If we've exceeded the viewport, cursor is not visible
                     if visual_rows >= viewport_lines {
@@ -1746,17 +1774,30 @@ impl Viewport {
                 // #1574, Up-arrow jumpy variant at step 16).
                 let mut cursor_segment_idx_in_line: usize = 0;
 
-                // First, count how many rows the cursor's line takes up to the cursor position
+                // First, count how many rows the cursor's line takes up to the cursor position.
                 if let Some((_line_start, line_content)) = iter.next_line() {
                     let line_text = if line_content.ends_with('\n') {
                         &line_content[..line_content.len() - 1]
                     } else {
                         &line_content
                     };
-                    let segments = wrap_line(line_text, &wrap_config);
+                    let effective_width = wrap_config
+                        .first_line_width
+                        .saturating_add(wrap_config.gutter_width)
+                        .max(2);
+                    let layout = crate::view::line_wrap_cache::layout_for_plain_text(
+                        line_text,
+                        effective_width,
+                        wrap_config.gutter_width,
+                        wrap_config.hanging_indent,
+                        4,
+                    );
                     let cursor_column = cursor.position.saturating_sub(cursor_line_start);
                     let (cursor_segment_idx, _) =
-                        char_position_to_segment(cursor_column, &segments);
+                        crate::view::line_wrap_cache::char_position_in_layout(
+                            &layout,
+                            cursor_column,
+                        );
                     cursor_segment_idx_in_line = cursor_segment_idx;
                     visual_rows_counted += cursor_segment_idx + 1;
                 } else {
@@ -1814,8 +1855,18 @@ impl Viewport {
                         } else {
                             &line_content
                         };
-                        let segments = wrap_line(line_text, &wrap_config);
-                        let added = segments.len().max(1);
+                        let effective_width = wrap_config
+                            .first_line_width
+                            .saturating_add(wrap_config.gutter_width)
+                            .max(2);
+                        let layout = crate::view::line_wrap_cache::layout_for_plain_text(
+                            line_text,
+                            effective_width,
+                            wrap_config.gutter_width,
+                            wrap_config.hanging_indent,
+                            4,
+                        );
+                        let added = layout.len().max(1);
                         let new_total = visual_rows_counted + added;
                         if cursor_near_top && new_total >= target_visual_rows {
                             let rows_from_this_line =
@@ -2112,11 +2163,24 @@ impl Viewport {
                 String::new()
             };
 
-            // Wrap the line
-            let segments = wrap_line(&line_text, &config);
+            // Wrap the line via the renderer's word-boundary wrap so the
+            // returned screen coordinates match where the renderer draws
+            // the cursor.
+            let effective_width = config
+                .first_line_width
+                .saturating_add(config.gutter_width)
+                .max(2);
+            let layout = crate::view::line_wrap_cache::layout_for_plain_text(
+                &line_text,
+                effective_width,
+                config.gutter_width,
+                config.hanging_indent,
+                4,
+            );
 
-            // Find which segment the cursor is in
-            let (segment_idx, col_in_segment) = char_position_to_segment(column, &segments);
+            // Find which ViewLine the cursor is in and its visual column.
+            let (segment_idx, col_in_segment) =
+                crate::view::line_wrap_cache::char_position_in_layout(&layout, column);
 
             (col_in_segment as u16, segment_idx)
         } else {
