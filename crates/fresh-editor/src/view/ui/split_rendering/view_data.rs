@@ -157,9 +157,7 @@ pub(super) fn build_view_data(
     //   - Line wrap is off (1 row per logical line is trivial; no
     //     benefit from caching).
     if !has_view_transform && line_wrap_enabled {
-        use crate::view::line_wrap_cache::{
-            pipeline_inputs_version, CacheViewMode, LineWrapKey,
-        };
+        use crate::view::line_wrap_cache::{pipeline_inputs_version, CacheViewMode, LineWrapKey};
         use fresh_core::api::ViewTokenWireKind;
 
         // Scroll math uses `CacheViewMode::Source` as its writer

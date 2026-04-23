@@ -83,12 +83,7 @@ fn current_keys(harness: &EditorTestHarness, line_start: usize) -> (LineWrapKey,
         let content_width = viewport.width as usize;
         let effective = content_width.saturating_sub(1).max(1);
         let wrap_col = viewport.wrap_column.map(|c| c as u32);
-        (
-            effective as u32,
-            gutter,
-            viewport.wrap_indent,
-            wrap_col,
-        )
+        (effective as u32, gutter, viewport.wrap_indent, wrap_col)
     };
     let pipeline_ver = {
         let editor = harness.editor();
@@ -133,9 +128,7 @@ fn enumerate_lines(harness: &mut EditorTestHarness, max_lines: usize) -> Vec<(us
     let state = editor.active_state_mut();
     let mut iter = state.buffer.line_iterator(0, 80);
     while let Some((start, content)) = iter.next_line() {
-        let text = content
-            .trim_end_matches(['\n', '\r'])
-            .to_string();
+        let text = content.trim_end_matches(['\n', '\r']).to_string();
         out.push((start, text));
         if out.len() >= max_lines {
             break;
@@ -432,7 +425,9 @@ fn edit_invalidates_cache_visibly() {
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .expect("ctrl+home");
-    harness.send_key(KeyCode::End, KeyModifiers::NONE).expect("end");
+    harness
+        .send_key(KeyCode::End, KeyModifiers::NONE)
+        .expect("end");
     harness.type_text("X").expect("type X");
     harness.render().expect("render");
 

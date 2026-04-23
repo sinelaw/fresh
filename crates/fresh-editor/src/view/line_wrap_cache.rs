@@ -123,8 +123,11 @@ impl LineWrapCache {
     }
 
     pub fn len(&self) -> usize {
-        debug_assert_eq!(self.map.len(), self.order.len(),
-            "LineWrapCache invariant: map.len() == order.len()");
+        debug_assert_eq!(
+            self.map.len(),
+            self.order.len(),
+            "LineWrapCache invariant: map.len() == order.len()"
+        );
         self.map.len()
     }
 
@@ -517,9 +520,21 @@ mod tests {
     #[test]
     fn pipeline_inputs_version_changes_when_any_source_changes() {
         let a = pipeline_inputs_version(100, 5, 3);
-        assert_ne!(a, pipeline_inputs_version(101, 5, 3), "buffer bump changes version");
-        assert_ne!(a, pipeline_inputs_version(100, 6, 3), "soft-break bump changes version");
-        assert_ne!(a, pipeline_inputs_version(100, 5, 4), "conceal bump changes version");
+        assert_ne!(
+            a,
+            pipeline_inputs_version(101, 5, 3),
+            "buffer bump changes version"
+        );
+        assert_ne!(
+            a,
+            pipeline_inputs_version(100, 6, 3),
+            "soft-break bump changes version"
+        );
+        assert_ne!(
+            a,
+            pipeline_inputs_version(100, 5, 4),
+            "conceal bump changes version"
+        );
     }
 
     #[test]
@@ -603,7 +618,10 @@ mod tests {
             ("x", 80),
             ("", 2), // near-minimum width
             ("abc", 3),
-            ("a very long line with lots of words that will definitely wrap", 20),
+            (
+                "a very long line with lots of words that will definitely wrap",
+                20,
+            ),
         ];
         for (text, w) in cases {
             assert!(
@@ -754,7 +772,11 @@ mod tests {
         assert_eq!(v, 7);
         assert_eq!(miss_called, 1);
         assert_eq!(cache.get(&key_v1), Some(7));
-        assert_eq!(cache.get(&key_v0), Some(5), "v0 entry preserved until evicted");
+        assert_eq!(
+            cache.get(&key_v0),
+            Some(5),
+            "v0 entry preserved until evicted"
+        );
     }
 
     /// All geometry dimensions in the key are distinct — changing any one
@@ -774,14 +796,38 @@ mod tests {
 
         // Vary each field in turn; each variation must be a distinct key.
         let variations: [LineWrapKey; 8] = [
-            LineWrapKey { pipeline_inputs_version: 2, ..base },
-            LineWrapKey { view_mode: CacheViewMode::Compose, ..base },
-            LineWrapKey { line_start: 11, ..base },
-            LineWrapKey { effective_width: 81, ..base },
-            LineWrapKey { gutter_width: 7, ..base },
-            LineWrapKey { wrap_column: Some(70), ..base },
-            LineWrapKey { hanging_indent: true, ..base },
-            LineWrapKey { line_wrap_enabled: false, ..base },
+            LineWrapKey {
+                pipeline_inputs_version: 2,
+                ..base
+            },
+            LineWrapKey {
+                view_mode: CacheViewMode::Compose,
+                ..base
+            },
+            LineWrapKey {
+                line_start: 11,
+                ..base
+            },
+            LineWrapKey {
+                effective_width: 81,
+                ..base
+            },
+            LineWrapKey {
+                gutter_width: 7,
+                ..base
+            },
+            LineWrapKey {
+                wrap_column: Some(70),
+                ..base
+            },
+            LineWrapKey {
+                hanging_indent: true,
+                ..base
+            },
+            LineWrapKey {
+                line_wrap_enabled: false,
+                ..base
+            },
         ];
 
         let mut cache = LineWrapCache::with_capacity(16);

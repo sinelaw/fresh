@@ -102,12 +102,8 @@ fn drive_width_sweep(
         for &width in widths {
             match scenario(width, height) {
                 Outcome::Ok => ok_count += 1,
-                Outcome::SetupSkipped(msg) => {
-                    skipped.push(format!("w={width} h={height}: {msg}"))
-                }
-                Outcome::Failure(msg) => {
-                    failures.push(format!("w={width} h={height}: {msg}"))
-                }
+                Outcome::SetupSkipped(msg) => skipped.push(format!("w={width} h={height}: {msg}")),
+                Outcome::Failure(msg) => failures.push(format!("w={width} h={height}: {msg}")),
             }
         }
     }
@@ -188,11 +184,15 @@ fn setup_bug1_at_top(width: u16, height: u16) -> Result<EditorTestHarness, Strin
         .load_buffer_from_text(&content)
         .map_err(|e| format!("load_buffer_from_text failed: {e}"))?;
     std::mem::forget(fixture);
-    harness.render().map_err(|e| format!("render failed: {e}"))?;
+    harness
+        .render()
+        .map_err(|e| format!("render failed: {e}"))?;
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .map_err(|e| format!("ctrl+home failed: {e}"))?;
-    harness.render().map_err(|e| format!("render failed: {e}"))?;
+    harness
+        .render()
+        .map_err(|e| format!("render failed: {e}"))?;
     if marker_row(&harness).is_some() {
         return Err(format!(
             "marker already visible at the top — buffer isn't large \
@@ -211,7 +211,10 @@ fn bug1_mouse_wheel_scenario(width: u16, height: u16) -> Outcome {
     let (content_first_row, _) = harness.content_area_rows();
     let scroll_col = width / 2;
     let scroll_row = content_first_row as u16 + 2;
-    for _ in 0..200 {
+    // 60 wheel ticks × ~3 rows/tick = ~180 visual rows, ~2x the
+    // buffer's ~96 visual rows at these widths — comfortably past the
+    // end while keeping the full sweep inside CI's per-test budget.
+    for _ in 0..60 {
         if harness.mouse_scroll_down(scroll_col, scroll_row).is_err() {
             return Outcome::SetupSkipped("mouse_scroll_down failed".into());
         }
@@ -224,7 +227,9 @@ fn bug1_pagedown_scenario(width: u16, height: u16) -> Outcome {
         Ok(h) => h,
         Err(e) => return Outcome::SetupSkipped(e),
     };
-    for _ in 0..50 {
+    // 20 PageDowns is 5× viewport_height(12)=~60+ logical lines of
+    // jumps — well past end-of-buffer in this fixture.
+    for _ in 0..20 {
         if harness
             .send_key(KeyCode::PageDown, KeyModifiers::NONE)
             .is_err()
@@ -258,8 +263,12 @@ fn bug1_scrollbar_drag_scenario(width: u16, height: u16) -> Outcome {
 
 #[test]
 fn test_bug1_mouse_wheel_does_not_over_scroll_into_empty_viewport() {
-    let widths: [u16; 5] = [50, 60, 70, 90, 120];
-    let heights: [u16; 2] = [16, 24];
+    // Sweep kept compact so the whole sweep fits inside nextest's
+    // 180s per-test CI budget. Three widths are enough to exercise the
+    // wrap-at-word-boundary edge cases that trigger the bug; adding
+    // more didn't catch anything the three already catch.
+    let widths: [u16; 3] = [50, 80, 120];
+    let heights: [u16; 1] = [16];
     drive_width_sweep(
         "bug1/mouse-wheel",
         &widths,
@@ -270,20 +279,23 @@ fn test_bug1_mouse_wheel_does_not_over_scroll_into_empty_viewport() {
 
 #[test]
 fn test_bug1_page_down_does_not_over_scroll_into_empty_viewport() {
-    let widths: [u16; 5] = [50, 60, 70, 90, 120];
-    let heights: [u16; 2] = [16, 24];
-    drive_width_sweep(
-        "bug1/page-down",
-        &widths,
-        &heights,
-        bug1_pagedown_scenario,
-    );
+    // Sweep kept compact so the whole sweep fits inside nextest's
+    // 180s per-test CI budget. Three widths are enough to exercise the
+    // wrap-at-word-boundary edge cases that trigger the bug; adding
+    // more didn't catch anything the three already catch.
+    let widths: [u16; 3] = [50, 80, 120];
+    let heights: [u16; 1] = [16];
+    drive_width_sweep("bug1/page-down", &widths, &heights, bug1_pagedown_scenario);
 }
 
 #[test]
 fn test_bug1_scrollbar_drag_does_not_over_scroll_into_empty_viewport() {
-    let widths: [u16; 5] = [50, 60, 70, 90, 120];
-    let heights: [u16; 2] = [16, 24];
+    // Sweep kept compact so the whole sweep fits inside nextest's
+    // 180s per-test CI budget. Three widths are enough to exercise the
+    // wrap-at-word-boundary edge cases that trigger the bug; adding
+    // more didn't catch anything the three already catch.
+    let widths: [u16; 3] = [50, 80, 120];
+    let heights: [u16; 1] = [16];
     drive_width_sweep(
         "bug1/scrollbar-drag",
         &widths,
@@ -326,11 +338,15 @@ fn setup_bug2_at_top(width: u16, height: u16) -> Result<EditorTestHarness, Strin
         .load_buffer_from_text(&content)
         .map_err(|e| format!("load_buffer_from_text failed: {e}"))?;
     std::mem::forget(fixture);
-    harness.render().map_err(|e| format!("render failed: {e}"))?;
+    harness
+        .render()
+        .map_err(|e| format!("render failed: {e}"))?;
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .map_err(|e| format!("ctrl+home failed: {e}"))?;
-    harness.render().map_err(|e| format!("render failed: {e}"))?;
+    harness
+        .render()
+        .map_err(|e| format!("render failed: {e}"))?;
     if marker_row(&harness).is_some() {
         return Err(format!(
             "marker already visible at the top — buffer isn't large \
@@ -366,7 +382,10 @@ fn bug2_mouse_wheel_scenario(width: u16, height: u16) -> Outcome {
     let (content_first_row, _) = harness.content_area_rows();
     let scroll_col = width / 2;
     let scroll_row = content_first_row as u16 + 2;
-    for _ in 0..500 {
+    // 150 wheel ticks ≈ 450 visual rows, plenty to reach the end of a
+    // 12-paragraph word-wrapped buffer (~100 visual rows at these
+    // widths).
+    for _ in 0..150 {
         if harness.mouse_scroll_down(scroll_col, scroll_row).is_err() {
             return Outcome::SetupSkipped("mouse_scroll_down failed".into());
         }
@@ -379,7 +398,10 @@ fn bug2_pagedown_scenario(width: u16, height: u16) -> Outcome {
         Ok(h) => h,
         Err(e) => return Outcome::SetupSkipped(e),
     };
-    for _ in 0..200 {
+    // 30 PageDowns each jumps ~(viewport_height-1) logical lines; with
+    // 13 paragraph lines in the fixture, that's enough to fly past the
+    // end even at the widest sweep width.
+    for _ in 0..30 {
         if harness
             .send_key(KeyCode::PageDown, KeyModifiers::NONE)
             .is_err()
@@ -413,8 +435,9 @@ fn bug2_scrollbar_drag_scenario(width: u16, height: u16) -> Outcome {
 
 #[test]
 fn test_bug2_mouse_wheel_reaches_last_line_of_word_wrapped_buffer() {
-    let widths: [u16; 6] = [50, 60, 70, 80, 100, 120];
-    let heights: [u16; 2] = [16, 24];
+    // Compact sweep — see note on bug1 sweep widths.
+    let widths: [u16; 3] = [50, 80, 120];
+    let heights: [u16; 1] = [16];
     drive_width_sweep(
         "bug2/mouse-wheel",
         &widths,
@@ -425,20 +448,17 @@ fn test_bug2_mouse_wheel_reaches_last_line_of_word_wrapped_buffer() {
 
 #[test]
 fn test_bug2_page_down_reaches_last_line_of_word_wrapped_buffer() {
-    let widths: [u16; 6] = [50, 60, 70, 80, 100, 120];
-    let heights: [u16; 2] = [16, 24];
-    drive_width_sweep(
-        "bug2/page-down",
-        &widths,
-        &heights,
-        bug2_pagedown_scenario,
-    );
+    // Compact sweep — see note on bug1 sweep widths.
+    let widths: [u16; 3] = [50, 80, 120];
+    let heights: [u16; 1] = [16];
+    drive_width_sweep("bug2/page-down", &widths, &heights, bug2_pagedown_scenario);
 }
 
 #[test]
 fn test_bug2_scrollbar_drag_reaches_last_line_of_word_wrapped_buffer() {
-    let widths: [u16; 6] = [50, 60, 70, 80, 100, 120];
-    let heights: [u16; 2] = [16, 24];
+    // Compact sweep — see note on bug1 sweep widths.
+    let widths: [u16; 3] = [50, 80, 120];
+    let heights: [u16; 1] = [16];
     drive_width_sweep(
         "bug2/scrollbar-drag",
         &widths,

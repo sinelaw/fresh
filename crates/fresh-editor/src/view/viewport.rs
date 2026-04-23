@@ -243,12 +243,14 @@ impl Viewport {
 
             // Cache lookup — miss path computes via apply_wrapping_transform.
             // Cache is typed on u32; fits row counts far past any realistic line.
-            let compute = || compute_wrap_row_count_for_text(
-                line_text,
-                effective_width,
-                wrap_config.gutter_width,
-                wrap_config.hanging_indent,
-            );
+            let compute = || {
+                compute_wrap_row_count_for_text(
+                    line_text,
+                    effective_width,
+                    wrap_config.gutter_width,
+                    wrap_config.hanging_indent,
+                )
+            };
             if let Some((cache, pipeline_inputs_ver)) = cache {
                 use crate::view::line_wrap_cache::{CacheViewMode, LineWrapKey};
                 let key = LineWrapKey {
@@ -326,7 +328,6 @@ fn compute_wrap_row_count_for_text(
 }
 
 impl Viewport {
-
     /// Scroll up by N lines (byte-based)
     /// When line_wrap_enabled is true, scrolls by visual rows instead of logical lines
     ///

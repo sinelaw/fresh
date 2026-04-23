@@ -34,7 +34,12 @@ fn estimated_gutter_width(buffer: &Buffer) -> usize {
 /// `apply_wrapping_transform` output, walking tokens and counting
 /// non-empty rows (a trailing `Break` from a chunk that exactly fills
 /// the effective width is NOT followed by content and must not count).
-fn count_row_from_wrap(line_text: &str, effective_width: usize, gutter_width: usize, hanging_indent: bool) -> u32 {
+fn count_row_from_wrap(
+    line_text: &str,
+    effective_width: usize,
+    gutter_width: usize,
+    hanging_indent: bool,
+) -> u32 {
     use crate::view::ui::split_rendering::transforms::apply_wrapping_transform;
     use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 
